@@ -119,17 +119,13 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		{ timeout: 10000 }
 	);
 
-	// Verify URL contains session path
-	const url = page.url();
-	if (!url.includes('/session/')) {
-		throw new Error(`Expected to be on session page, but URL is: ${url}`);
-	}
-
-	// Verify we're in a chat view (message input should be visible)
-	// Use more specific selector to avoid matching Neo panel textbox
-	// Session textareas have "Ask" in placeholder, but Neo panel has "Ask Neo…"
+	// Verify we're in a chat view (message input should be visible).
+	// Use the specific selector to avoid matching the Neo panel's textarea.
+	// Supports both room coordinator and standalone session textareas.
 	const messageInput = page
-		.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+		.locator(
+			'textarea[placeholder="Ask or make anything..."], textarea[placeholder*="room coordinator"]'
+		)
 		.first();
 	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
