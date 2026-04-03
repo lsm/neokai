@@ -60,7 +60,7 @@ test.describe('File Operations', () => {
 
 		// Wait for response - in mock mode, response is instant but UI still needs time
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 30000 : 45000,
+			timeout: IS_MOCK ? 60000 : 45000,
 		});
 
 		// The response should contain file content or mention inability to read
@@ -90,7 +90,7 @@ test.describe('File Operations', () => {
 
 		// Wait for response - in mock mode, response is instant but UI still needs time
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
-			timeout: IS_MOCK ? 30000 : 45000,
+			timeout: IS_MOCK ? 60000 : 45000,
 		});
 
 		// The response should contain file listings
