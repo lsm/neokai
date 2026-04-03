@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import {
 	Dialog,
+	DialogBackdrop,
 	DialogPanel,
 	Label,
 	Listbox,
@@ -12,6 +13,7 @@ import {
 	MenuItem,
 	MenuItems,
 	Transition,
+	TransitionChild,
 } from '../../src/mod.ts';
 import {
 	Bell,
@@ -857,21 +859,32 @@ function DetailScreensSidebar() {
 	return (
 		<div class="bg-white dark:bg-gray-900 min-h-0">
 			<Dialog open={sidebarOpen} onClose={setSidebarOpen} class="relative z-50 xl:hidden">
-				<Transition
-					show={sidebarOpen}
-					class="fixed inset-0 bg-gray-900/80 transition-opacity duration-300 ease-linear data-closed:opacity-0"
-				>
+				<Transition show={sidebarOpen}>
+					<DialogBackdrop
+						transition
+						class="fixed inset-0 bg-gray-900/80 transition-opacity duration-300 ease-linear data-[closed]:opacity-0"
+					/>
+
 					<div class="fixed inset-0 flex">
-						<Transition
-							show={sidebarOpen}
-							class="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-closed:-translate-x-full"
+						<DialogPanel
+							transition
+							class="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-[closed]:-translate-x-full"
 						>
-							<div class="absolute top-0 left-full flex w-16 justify-center pt-5 duration-300 ease-in-out data-closed:opacity-0">
-								<button type="button" onClick={() => setSidebarOpen(false)} class="-m-2.5 p-2.5">
-									<span class="sr-only">Close sidebar</span>
-									<X class="size-6 text-white" />
-								</button>
-							</div>
+							<TransitionChild
+								enter="transition duration-300 ease-in-out"
+								enterFrom="opacity-0"
+								enterTo="opacity-100"
+								leave="transition duration-300 ease-in-out"
+								leaveFrom="opacity-100"
+								leaveTo="opacity-0"
+							>
+								<div class="absolute top-0 left-full flex w-16 justify-center pt-5 duration-300 ease-in-out data-[closed]:opacity-0">
+									<button type="button" onClick={() => setSidebarOpen(false)} class="-m-2.5 p-2.5">
+										<span class="sr-only">Close sidebar</span>
+										<X class="size-6 text-white" />
+									</button>
+								</div>
+							</TransitionChild>
 
 							{/* Sidebar component */}
 							<div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-gray-50 px-6 dark:bg-gray-900 dark:ring dark:ring-white/10 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
@@ -964,7 +977,7 @@ function DetailScreensSidebar() {
 									</ul>
 								</nav>
 							</div>
-						</Transition>
+						</DialogPanel>
 					</div>
 				</Transition>
 			</Dialog>

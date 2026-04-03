@@ -1163,7 +1163,7 @@ export function HomeScreensDemo() {
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">
 					Home screen — Stacked layout (Deployments)
 				</h3>
-				<div class="page-preview rounded-xl border border-surface-border overflow-auto xl:h-screen xl:overflow-hidden">
+				<div class="page-preview rounded-xl border border-surface-border overflow-auto">
 					<HomeScreensStacked />
 				</div>
 			</div>

@@ -407,14 +407,27 @@ function SettingsScreensStacked() {
 	return (
 		<div class="bg-white dark:bg-gray-900">
 			<Dialog open={sidebarOpen} onClose={setSidebarOpen} class="relative z-50 xl:hidden">
-				<Transition>
-					<DialogBackdrop class="fixed inset-0 bg-gray-900/80 transition-opacity duration-300 ease-linear data-[closed]:opacity-0" />
+				<Transition show={sidebarOpen}>
+					<DialogBackdrop
+						transition
+						class="fixed inset-0 bg-gray-900/80 transition-opacity duration-300 ease-linear data-[closed]:opacity-0"
+					/>
 				</Transition>
 
 				<div class="fixed inset-0 flex">
-					<Transition>
-						<DialogPanel class="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-[closed]:-translate-x-full">
-							<TransitionChild>
+					<Transition show={sidebarOpen}>
+						<DialogPanel
+							transition
+							class="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-[closed]:-translate-x-full"
+						>
+							<TransitionChild
+								enter="transition duration-300 ease-in-out"
+								enterFrom="opacity-0"
+								enterTo="opacity-100"
+								leave="transition duration-300 ease-in-out"
+								leaveFrom="opacity-100"
+								leaveTo="opacity-0"
+							>
 								<div class="absolute top-0 left-full flex w-16 justify-center pt-5 duration-300 ease-in-out data-[closed]:opacity-0">
 									<button type="button" onClick={() => setSidebarOpen(false)} class="-m-2.5 p-2.5">
 										<span class="sr-only">Close sidebar</span>
