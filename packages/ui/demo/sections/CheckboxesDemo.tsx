@@ -11,16 +11,23 @@ const indeterminateSvgClass =
 	'pointer-events-none col-start-1 row-start-1 size-3.5 self-center justify-self-center stroke-white peer-checked:opacity-0 peer-indeterminate:opacity-100 opacity-0 transition-opacity';
 
 // Reusable checkbox component using peer pattern
-function Checkbox({ id, name, label, description, defaultChecked = false, class: inputClass = '' }: {
+function Checkbox({
+	id,
+	name,
+	label,
+	description,
+	defaultChecked = false,
+	wrapperClass = '',
+}: {
 	id: string;
 	name: string;
 	label: string;
 	description?: string;
 	defaultChecked?: boolean;
-	class?: string;
+	wrapperClass?: string;
 }) {
 	return (
-		<div class={`flex items-start gap-3 ${class}`}>
+		<div class={`flex items-start gap-3 ${wrapperClass}`}>
 			<div class="relative grid size-5 grid-cols-1 place-content-center">
 				<input
 					type="checkbox"
@@ -41,21 +48,14 @@ function Checkbox({ id, name, label, description, defaultChecked = false, class:
 				</svg>
 				{/* Indeterminate dash SVG */}
 				<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
-					<path
-						d="M3 7h8"
-						stroke="currentColor"
-						stroke-width="2"
-						stroke-linecap="round"
-					/>
+					<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
 				</svg>
 			</div>
 			<div class="min-w-0 flex-1">
 				<label for={id} class="text-sm font-medium text-gray-900 dark:text-white">
 					{label}
 				</label>
-				{description && (
-					<p class="text-xs text-gray-500 dark:text-gray-400">{description}</p>
-				)}
+				{description && <p class="text-xs text-gray-500 dark:text-gray-400">{description}</p>}
 			</div>
 		</div>
 	);
@@ -103,7 +103,7 @@ export function CheckboxesDemo() {
 							label="New comments"
 							description="Get notified when someone posts a comment on a posting."
 							defaultChecked={true}
-							class="pt-4 first:pt-0"
+							wrapperClass="pt-4 first:pt-0"
 						/>
 					</div>
 					<div class="py-4">
@@ -147,7 +147,13 @@ export function CheckboxesDemo() {
 									class={`peer ${checkboxInputClass}`}
 								/>
 								<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-									<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+									<path
+										d="M3 7l3 3 5-5"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
 								</svg>
 								<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 									<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -171,7 +177,13 @@ export function CheckboxesDemo() {
 									class={`peer ${checkboxInputClass}`}
 								/>
 								<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-									<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+									<path
+										d="M3 7l3 3 5-5"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
 								</svg>
 								<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 									<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -195,7 +207,13 @@ export function CheckboxesDemo() {
 									class={`peer ${checkboxInputClass}`}
 								/>
 								<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-									<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+									<path
+										d="M3 7l3 3 5-5"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
 								</svg>
 								<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 									<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -221,7 +239,13 @@ export function CheckboxesDemo() {
 								class={`peer ${checkboxInputClass}`}
 							/>
 							<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-								<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+								<path
+									d="M3 7l3 3 5-5"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								/>
 							</svg>
 							<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 								<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -241,7 +265,13 @@ export function CheckboxesDemo() {
 								class={`peer ${checkboxInputClass}`}
 							/>
 							<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-								<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+								<path
+									d="M3 7l3 3 5-5"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								/>
 							</svg>
 							<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 								<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -260,7 +290,13 @@ export function CheckboxesDemo() {
 								class={`peer ${checkboxInputClass}`}
 							/>
 							<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-								<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+								<path
+									d="M3 7l3 3 5-5"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								/>
 							</svg>
 							<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 								<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -279,7 +315,13 @@ export function CheckboxesDemo() {
 								class={`peer ${checkboxInputClass}`}
 							/>
 							<svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
-								<path d="M3 7l3 3 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+								<path
+									d="M3 7l3 3 5-5"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								/>
 							</svg>
 							<svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
 								<path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />

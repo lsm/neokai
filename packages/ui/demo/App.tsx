@@ -317,9 +317,13 @@ export function App() {
 								<Category
 									key={category.id}
 									category={category}
-									defaultOpen={['application-shells', 'elements', 'headings', 'layout', 'forms'].includes(
-										category.id
-									)}
+									defaultOpen={[
+										'application-shells',
+										'elements',
+										'headings',
+										'layout',
+										'forms',
+									].includes(category.id)}
 								/>
 							))}
 						</ul>

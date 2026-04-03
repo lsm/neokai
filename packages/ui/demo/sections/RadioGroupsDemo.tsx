@@ -1,4 +1,3 @@
-import { useState } from 'preact/hooks';
 import { CheckCircle } from 'lucide-preact';
 
 // Shared radio input class - works with native <input> :checked pseudo-class
@@ -9,10 +8,18 @@ const radioInputClass =
 function Example1() {
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Notifications</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Notifications
+			</legend>
 			<div class="space-y-2">
 				<label class="flex items-center gap-3 cursor-pointer select-none">
-					<input type="radio" name="notifications" value="email" defaultChecked class={radioInputClass} />
+					<input
+						type="radio"
+						name="notifications"
+						value="email"
+						defaultChecked
+						class={radioInputClass}
+					/>
 					<span class="text-sm text-gray-900 dark:text-white">Email</span>
 				</label>
 				<label class="flex items-center gap-3 cursor-pointer select-none">
@@ -32,10 +39,18 @@ function Example1() {
 function Example2() {
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Notifications</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Notifications
+			</legend>
 			<div class="flex items-center gap-6">
 				<label class="flex items-center gap-2 cursor-pointer select-none">
-					<input type="radio" name="notifications-inline" value="email" defaultChecked class={radioInputClass} />
+					<input
+						type="radio"
+						name="notifications-inline"
+						value="email"
+						defaultChecked
+						class={radioInputClass}
+					/>
 					<span class="text-sm text-gray-900 dark:text-white">Email</span>
 				</label>
 				<label class="flex items-center gap-2 cursor-pointer select-none">
@@ -60,14 +75,22 @@ function Example3() {
 	];
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Select a plan</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Select a plan
+			</legend>
 			<div class="space-y-3">
 				{plans.map((plan) => (
 					<label
 						key={plan.id}
 						class="flex items-start gap-3 cursor-pointer select-none p-3 rounded-lg border border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20"
 					>
-						<input type="radio" name="plan" value={plan.id} defaultChecked={plan.id === '2gb'} class={`mt-0.5 ${radioInputClass}`} />
+						<input
+							type="radio"
+							name="plan"
+							value={plan.id}
+							defaultChecked={plan.id === '2gb'}
+							class={`mt-0.5 ${radioInputClass}`}
+						/>
 						<div>
 							<span class="text-sm font-medium text-gray-900 dark:text-white block">
 								{plan.label}
@@ -85,10 +108,18 @@ function Example3() {
 function Example4() {
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Privacy setting</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Privacy setting
+			</legend>
 			<div class="space-y-2">
 				<label class="flex items-center gap-3 cursor-pointer select-none">
-					<input type="radio" name="privacy" value="public" defaultChecked class={radioInputClass} />
+					<input
+						type="radio"
+						name="privacy"
+						value="public"
+						defaultChecked
+						class={radioInputClass}
+					/>
 					<div>
 						<span class="text-sm text-gray-900 dark:text-white">Public</span>
 						<span class="text-sm text-gray-500 dark:text-gray-400 ml-2">
@@ -121,7 +152,13 @@ function Example5() {
 						<span class="text-sm text-gray-900 dark:text-white block">Newest</span>
 						<span class="text-xs text-gray-500 dark:text-gray-400">Most recent activity</span>
 					</div>
-					<input type="radio" name="sort" value="newest" defaultChecked class={`ml-auto ${radioInputClass}`} />
+					<input
+						type="radio"
+						name="sort"
+						value="newest"
+						defaultChecked
+						class={`ml-auto ${radioInputClass}`}
+					/>
 				</label>
 				<label class="flex items-center gap-3 cursor-pointer select-none">
 					<div>
@@ -139,7 +176,9 @@ function Example5() {
 function Example6() {
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Transfer frequency</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Transfer frequency
+			</legend>
 			<div class="space-y-2">
 				<label class="flex items-center gap-3 cursor-pointer select-none p-3 rounded-lg border border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20">
 					<span class="text-sm text-gray-900 dark:text-white">Daily</span>
@@ -147,11 +186,22 @@ function Example6() {
 				</label>
 				<label class="flex items-center gap-3 cursor-pointer select-none p-3 rounded-lg border border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20">
 					<span class="text-sm text-gray-900 dark:text-white">Weekly</span>
-					<input type="radio" name="frequency" value="weekly" defaultChecked class={`ml-auto ${radioInputClass}`} />
+					<input
+						type="radio"
+						name="frequency"
+						value="weekly"
+						defaultChecked
+						class={`ml-auto ${radioInputClass}`}
+					/>
 				</label>
 				<label class="flex items-center gap-3 cursor-pointer select-none p-3 rounded-lg border border-gray-200 hover:border-gray-300 dark:border-white/10 dark:hover:border-white/20">
 					<span class="text-sm text-gray-900 dark:text-white">Monthly</span>
-					<input type="radio" name="frequency" value="monthly" class={`ml-auto ${radioInputClass}`} />
+					<input
+						type="radio"
+						name="frequency"
+						value="monthly"
+						class={`ml-auto ${radioInputClass}`}
+					/>
 				</label>
 			</div>
 		</fieldset>
@@ -167,21 +217,37 @@ function Example7() {
 					<td class="py-3 px-4 font-medium text-gray-900 dark:text-white">Email</td>
 					<td class="py-3 px-4 text-gray-500 dark:text-gray-400">andy@example.com</td>
 					<td class="py-3 px-4 text-right">
-						<input type="radio" name="contact" value="email" defaultChecked class="inline-flex justify-end checked:bg-indigo-600 checked:border-indigo-600 dark:checked:bg-indigo-500 dark:checked:border-indigo-500" />
+						<input
+							type="radio"
+							name="contact"
+							value="email"
+							defaultChecked
+							class="inline-flex justify-end checked:bg-indigo-600 checked:border-indigo-600 dark:checked:bg-indigo-500 dark:checked:border-indigo-500"
+						/>
 					</td>
 				</tr>
 				<tr class="hover:bg-gray-50 dark:hover:bg-white/5">
 					<td class="py-3 px-4 font-medium text-gray-900 dark:text-white">SMS</td>
 					<td class="py-3 px-4 text-gray-500 dark:text-gray-400">+1 (555) 123-4567</td>
 					<td class="py-3 px-4 text-right">
-						<input type="radio" name="contact" value="sms" class="inline-flex justify-end checked:bg-indigo-600 checked:border-indigo-600 dark:checked:bg-indigo-500 dark:checked:border-indigo-500" />
+						<input
+							type="radio"
+							name="contact"
+							value="sms"
+							class="inline-flex justify-end checked:bg-indigo-600 checked:border-indigo-600 dark:checked:bg-indigo-500 dark:checked:border-indigo-500"
+						/>
 					</td>
 				</tr>
 				<tr class="hover:bg-gray-50 dark:hover:bg-white/5">
 					<td class="py-3 px-4 font-medium text-gray-900 dark:text-white">Push</td>
 					<td class="py-3 px-4 text-gray-500 dark:text-gray-400">Smartphone</td>
 					<td class="py-3 px-4 text-right">
-						<input type="radio" name="contact" value="push" class="inline-flex justify-end checked:bg-indigo-600 checked:border-indigo-600 dark:checked:bg-indigo-500 dark:checked:border-indigo-500" />
+						<input
+							type="radio"
+							name="contact"
+							value="push"
+							class="inline-flex justify-end checked:bg-indigo-600 checked:border-indigo-600 dark:checked:bg-indigo-500 dark:checked:border-indigo-500"
+						/>
 					</td>
 				</tr>
 			</tbody>
@@ -193,10 +259,18 @@ function Example7() {
 function Example8() {
 	return (
 		<fieldset class="border border-gray-200 dark:border-white/10 rounded-lg p-4">
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Background Sync</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Background Sync
+			</legend>
 			<div class="space-y-2">
 				<label class="flex items-start gap-3 cursor-pointer select-none">
-					<input type="radio" name="sync" value="all" defaultChecked class={`mt-0.5 ${radioInputClass}`} />
+					<input
+						type="radio"
+						name="sync"
+						value="all"
+						defaultChecked
+						class={`mt-0.5 ${radioInputClass}`}
+					/>
 					<div>
 						<span class="text-sm font-medium text-gray-900 dark:text-white block">
 							Allow all Background Sync
@@ -240,14 +314,22 @@ function Example9() {
 	];
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Choose a label color</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Choose a label color
+			</legend>
 			<div class="flex items-center gap-3">
 				{colors.map((c, i) => (
 					<label
 						key={c.id}
 						class={`relative flex items-center justify-center w-8 h-8 rounded-full cursor-pointer ${c.color} ring-1 ring-black/10`}
 					>
-						<input type="radio" name="color" value={c.id} defaultChecked={i === 0} class="sr-only" />
+						<input
+							type="radio"
+							name="color"
+							value={c.id}
+							defaultChecked={i === 0}
+							class="sr-only"
+						/>
 						<span class="sr-only">{c.id}</span>
 						{i === 0 && <CheckCircle class="w-5 h-5 text-white" />}
 					</label>
@@ -260,24 +342,51 @@ function Example9() {
 // 10. Cards (mailing list)
 function Example10() {
 	const plans = [
-		{ id: 'starter', name: 'Starter', description: 'Perfect for small teams and projects', price: 'Free' },
-		{ id: 'standard', name: 'Standard', description: 'For growing teams with advanced needs', price: '$29/mo' },
-		{ id: 'enterprise', name: 'Enterprise', description: 'Dedicated support and custom integrations', price: '$99/mo' },
+		{
+			id: 'starter',
+			name: 'Starter',
+			description: 'Perfect for small teams and projects',
+			price: 'Free',
+		},
+		{
+			id: 'standard',
+			name: 'Standard',
+			description: 'For growing teams with advanced needs',
+			price: '$29/mo',
+		},
+		{
+			id: 'enterprise',
+			name: 'Enterprise',
+			description: 'Dedicated support and custom integrations',
+			price: '$99/mo',
+		},
 	];
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Select a mailing list</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Select a mailing list
+			</legend>
 			<div class="grid grid-cols-3 gap-4">
 				{plans.map((plan, i) => (
 					<label
 						key={plan.id}
 						class="relative flex flex-col p-4 rounded-lg border border-gray-200 hover:border-gray-300 cursor-pointer dark:border-white/10 dark:hover:border-white/20"
 					>
-						<input type="radio" name="mailing-list" value={plan.id} defaultChecked={i === 0} class="sr-only" />
+						<input
+							type="radio"
+							name="mailing-list"
+							value={plan.id}
+							defaultChecked={i === 0}
+							class="sr-only"
+						/>
 						<span class="text-sm font-medium text-gray-900 dark:text-white">{plan.name}</span>
 						<span class="text-xs text-gray-500 dark:text-gray-400 mt-1">{plan.description}</span>
-						<span class="text-sm font-semibold text-gray-900 dark:text-white mt-3">{plan.price}</span>
-						{i === 0 && <CheckCircle class="absolute top-4 right-4 w-5 h-5 text-indigo-600 dark:text-indigo-400" />}
+						<span class="text-sm font-semibold text-gray-900 dark:text-white mt-3">
+							{plan.price}
+						</span>
+						{i === 0 && (
+							<CheckCircle class="absolute top-4 right-4 w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+						)}
 					</label>
 				))}
 			</div>
@@ -297,7 +406,9 @@ function Example11() {
 	];
 	return (
 		<fieldset>
-			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Choose a memory option</legend>
+			<legend class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+				Choose a memory option
+			</legend>
 			<div class="grid grid-cols-3 gap-3">
 				{options.map((opt, i) => (
 					<label
@@ -316,7 +427,9 @@ function Example11() {
 							defaultChecked={i === 2}
 							class="sr-only"
 						/>
-						<span class="text-sm font-medium text-gray-900 dark:text-white uppercase">{opt.label}</span>
+						<span class="text-sm font-medium text-gray-900 dark:text-white uppercase">
+							{opt.label}
+						</span>
 						{i === 2 && !opt.disabled && (
 							<CheckCircle class="absolute top-2 right-2 w-4 h-4 text-indigo-600 dark:text-indigo-400" />
 						)}
