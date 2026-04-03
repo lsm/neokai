@@ -4,7 +4,7 @@
 
 This audit compares the `@neokai/ui` headless component library (v0.8.0) against the Tailwind Application UI v4 React examples (364 files across 11 categories) and the Tailwind Catalyst UI Kit (27 styled components). The goal is to identify missing components, API improvements, and design system gaps that would benefit NeoKai's UI/UX work.
 
-**Key finding:** `@neokai/ui` is a well-built headless library with 64 named exports (20 export statements) across 19 component families and comprehensive test coverage (19 component test files + 9 internal utility test files = 28 test files), but it is **not used anywhere** in the NeoKai web application. The web app has 20 parallel UI component implementations in `packages/web/src/components/ui/` that are imported **105 times** across the codebase (31 Button, 18 Modal, 9 Spinner, 6 Tooltip, 6 ConfirmModal, 6 IconButton, etc.) — duplicating functionality with weaker accessibility and positioning. This duplication is the most impactful gap to address.
+**Key finding:** `@neokai/ui` is a well-built headless library with 64 named exports (20 export statements) across 19 component families and comprehensive test coverage (18 component test files + 9 internal utility test files = 27 test files), but it is **not used anywhere** in the NeoKai web application. The web app has 20 parallel UI component implementations in `packages/web/src/components/ui/` with **92 migration-relevant imports** (components that have @neokai/ui equivalents: 31 Button, 19 Modal, 9 Spinner, 8 Tooltip, 8 ConfirmModal, 7 IconButton, 4 Skeleton, 3 RejectModal, 2 Dropdown, 1 Toast) — duplicating functionality with weaker accessibility and positioning. This duplication is the most impactful gap to address.
 
 **Secondary finding:** The Tailwind v4 reference demonstrates patterns across data display, navigation, feedback, layout, and application shells that @neokai/ui lacks entirely. While the headless primitives for interactive components (Dialog, Menu, Combobox, etc.) are solid, there is no styled/pre-themed component layer and no shared design token system between the UI library and the web app. The design token unification (R1) is a prerequisite for any migration work.
 
@@ -49,7 +49,7 @@ Plus one hook: `useClose`.
 - **Floating UI integration**: Menu and Popover use `@floating-ui/dom` v1.7.6 for robust positioned panels with collision detection.
 - **Transition system**: RAF-based `data-enter` / `data-leave` / `data-closed` / `data-transition` attributes enable pure CSS transitions. Uses `CSSTransition` via `getAnimations()` API.
 - **Full WAI-ARIA support**: Focus trapping, scroll locking, inert tree handling, `aria-labelledby`, `aria-describedby`, `aria-expanded`, `aria-selected`.
-- **Comprehensive tests**: 28 test files (19 component test files + 9 internal utility test files) covering all component families plus internal utilities.
+- **Comprehensive tests**: 27 test files (18 component test files + 9 internal utility test files) covering all component families plus internal utilities.
 
 ### 1.3 Dependencies
 
@@ -155,26 +155,21 @@ The web app has **20 UI component files** in `packages/web/src/components/ui/` (
 
 ### 4.2 Where Web App UI Components Are Used
 
-Web UI components are imported **105 times** across **9 island files** and **30+ component files**. This is the full migration surface:
+Web UI components have **92 migration-relevant imports** (components with @neokai/ui equivalents) across **9 island files** and **30+ component files**. An additional 21 imports are for web-only components (MobileMenuButton, NavIconButton, InboxBadge, ContentContainer, CopyButton, CircularProgressIndicator, ActionBar, Collapsible) that have no @neokai/ui equivalent and are out of scope for migration.
 
-**By component** (sorted by import count):
+**Migration-relevant imports by component** (sorted by import count):
 - `Button` — 31 imports (heaviest consumer across islands and components)
-- `Modal` — 18 imports (islands + many dialog components)
+- `Modal` — 19 imports (islands + many dialog components)
 - `Spinner` — 9 imports
-- `Tooltip` — 6 imports
-- `MobileMenuButton` — 6 imports
-- `IconButton` — 6 imports
-- `ConfirmModal` — 6 imports
+- `Tooltip` — 8 imports
+- `ConfirmModal` — 8 imports
+- `IconButton` — 7 imports
 - `Skeleton` — 4 imports
 - `RejectModal` — 3 imports
-- `NavIconButton` — 3 imports
-- `ContentContainer` — 3 imports
-- `InboxBadge` — 2 imports
 - `Dropdown` — 2 imports
-- `CopyButton` — 2 imports
-- `Toast`, `Collapsible`, `CircularProgressIndicator`, `ActionBar` — 1 import each
+- `Toast` — 1 import
 
-**Key observation:** The initial audit counted only island-level imports (21), but the actual migration surface is 105 imports spanning both islands and non-island components. Additionally, wrapper components like `ConfirmModal` (6 imports) and `RejectModal` (3 imports) add indirect dependencies — any migration must account for the types and behavioral contracts these wrappers expose to their consumers (e.g., `ConfirmModal`'s `onConfirm`/`onCancel` callbacks, `Dropdown`'s `setTimeout` delay on close).
+**Key observation:** Wrapper components like `ConfirmModal` (8 imports) and `RejectModal` (3 imports) add indirect dependencies — any migration must account for the types and behavioral contracts these wrappers expose to their consumers (e.g., `ConfirmModal`'s `onConfirm`/`onCancel` callbacks, `Dropdown`'s `setTimeout` delay on close).
 
 ---
 
@@ -244,19 +239,19 @@ The Catalyst UI Kit demonstrates an elegant theming approach worth studying:
 
 **Depends on:** R1 (shared design tokens must exist first).
 
-**Migration surface analysis** (verified from source — 105 total import occurrences across the web app):
+**Migration surface analysis** (verified from source — 92 migration-relevant import occurrences):
 
 | Web Component | Import Count | @neokai/ui Target | API Change Required |
 |---|---|---|---|
-| Modal | 18 | Dialog + DialogPanel + DialogBackdrop | **Significant.** Web's `Modal` uses props API (`title`, `size`, `showCloseButton`). @neokai/ui's `Dialog` uses composition (`DialogTitle`, `DialogPanel`, `DialogBackdrop` as children). Requires: (a) a styled adapter component that wraps Dialog with NeoKai's Modal-like props API, or (b) updating all 18 call sites to composition pattern. Also gains: inert tree, nested dialog support, transitions, proper ARIA. |
-| ConfirmModal | 6 | Dialog with `role="alertdialog"` | **Medium.** ConfirmModal wraps Modal with confirmation UI. Adapter needed or call sites updated. |
+| Modal | 19 | Dialog + DialogPanel + DialogBackdrop | **Significant.** Web's `Modal` uses props API (`title`, `size`, `showCloseButton`). @neokai/ui's `Dialog` uses composition (`DialogTitle`, `DialogPanel`, `DialogBackdrop` as children). Requires: (a) a styled adapter component that wraps Dialog with NeoKai's Modal-like props API, or (b) updating all 19 call sites to composition pattern. Also gains: inert tree, nested dialog support, transitions, proper ARIA. |
+| ConfirmModal | 8 | Dialog with `role="alertdialog"` | **Medium.** ConfirmModal wraps Modal with confirmation UI. Adapter needed or call sites updated. |
 | RejectModal | 3 | Dialog | **Medium.** Similar to ConfirmModal — a Modal wrapper with rejection UI. |
 | Button | 31 | Button | **Low.** Web's Button is a simple styled `<button>`. @neokai/ui's Button provides `data-hover`, `data-focus`, `data-active` states. Mostly a styling change. |
-| Tooltip | 6 | Tooltip + TooltipPanel + TooltipTrigger | **Medium.** Web's Tooltip uses CSS absolute positioning with configurable delay. @neokai/ui's uses @floating-ui (gains: collision detection). API differs: web uses `content` prop, @neokai/ui uses composition. |
+| Tooltip | 8 | Tooltip + TooltipPanel + TooltipTrigger | **Medium.** Web's Tooltip uses CSS absolute positioning with configurable delay. @neokai/ui's uses @floating-ui (gains: collision detection). API differs: web uses `content` prop, @neokai/ui uses composition. |
 | Dropdown | 2 | Menu + MenuButton + MenuItems + MenuItem | **Significant.** Web's Dropdown accepts `items: DropdownMenuItem[]` with `icon`, `danger`, `disabled` fields. @neokai/ui's Menu uses JSX children composition. Requires adapter or call site migration. Gains: @floating-ui positioning, collision detection. |
 | Spinner | 9 | Spinner | **Low.** Both are headless with sr-only label. |
 | Skeleton | 4 | Skeleton | **Low.** Both are headless with animation variant. |
-| IconButton | 6 | IconButton | **Low.** @neokai/ui adds data-attribute states. |
+| IconButton | 7 | IconButton | **Low.** @neokai/ui adds data-attribute states. |
 | Toast | 1 | Toast + Toaster + useToast | **Medium.** See R3 for variant enhancement first. |
 
 **Task breakdown:**
@@ -266,8 +261,14 @@ The Catalyst UI Kit demonstrates an elegant theming approach worth studying:
 | 2.1 | Create a styled adapter component `NeoModal` that wraps @neokai/ui `Dialog` with the web app's props API (`title`, `size`, `showCloseButton`) | Component accepts the same props as current `Modal.tsx`. Uses `Dialog` + `DialogPanel` + `DialogBackdrop` internally. Styled with shared tokens from R1. All 18 Modal call sites work unchanged when importing NeoModal. |
 | 2.2 | Create a styled adapter `NeoDropdown` wrapping @neokai/ui `Menu` | Accepts `items: MenuItem[]` prop for backward compatibility. Internally renders `Menu` + `MenuItems` + `MenuItem`. Uses @floating-ui positioning. |
 | 2.3 | Create a styled adapter `NeoTooltip` wrapping @neokai/ui `Tooltip` | Accepts `content` and `delay` props for backward compatibility. Uses @floating-ui positioning with collision detection. |
-| 2.4 | Migrate all 105 import occurrences to use new adapters | All imports in `packages/web/src/` updated. No functional regressions. E2E tests pass. |
-| 2.5 | Delete old web app UI component files (`Modal.tsx`, `Dropdown.tsx`, `Tooltip.tsx`, `ConfirmModal.tsx`, `RejectModal.tsx`) | Files removed. No remaining imports. Knip reports no dead exports. |
+| 2.4 | Migrate Modal imports (19 occurrences) to use `NeoModal` adapter | All 19 `Modal` import sites in `packages/web/src/` updated to import from the adapter. No functional regressions. |
+| 2.5 | Migrate ConfirmModal imports (8 occurrences) to use `Dialog` with `role="alertdialog"` | All 8 `ConfirmModal` import sites updated. Adapter preserves `onConfirm`/`onCancel` callback API. |
+| 2.6 | Migrate RejectModal imports (3 occurrences) to use `Dialog` | All 3 `RejectModal` import sites updated. Adapter preserves rejection callback API. |
+| 2.7 | Migrate Tooltip imports (8 occurrences) to use `NeoTooltip` adapter | All 8 `Tooltip` import sites updated. Configurable delay preserved. |
+| 2.8 | Migrate Dropdown imports (2 occurrences) to use `NeoDropdown` adapter | Both `Dropdown` import sites updated. `items` prop API preserved via adapter. |
+| 2.9 | Migrate Button imports (31 occurrences) to use @neokai/ui `Button` | All 31 `Button` import sites updated. Styling preserved via shared tokens. |
+| 2.10 | Migrate remaining imports (Spinner: 9, IconButton: 7, Skeleton: 4, Toast: 1 = 21 total) | All remaining migration-relevant import sites updated. |
+| 2.11 | Delete old web app UI component files (`Modal.tsx`, `Dropdown.tsx`, `Tooltip.tsx`, `ConfirmModal.tsx`, `RejectModal.tsx`, `Button.tsx`) | Files removed. No remaining imports. Knip reports no dead exports. |
 
 **Estimated effort:** 3-4 sessions (higher than initially estimated due to the 105 import surface and API adapter requirements).
 
@@ -378,15 +379,15 @@ The Catalyst UI Kit demonstrates an elegant theming approach worth studying:
 
 ```
 R1 (Tokens) ──┬── R2 (Migrate Overlays) ── R4 (Styled Layer)
+              │                              ── R5 (New Primitives)
+              │                              ── R6 (TouchTarget, part of R4)
+              │                              ── R7 (Layout Components)
               │
               └── R3 (Toast Variants) ── R4
-                                        ── R5 (New Primitives)
-                                        ── R6 (TouchTarget, part of R4)
-                                        ── R7 (Layout Components)
-                                        ── R8 (Composable Patterns)
+                                     ── R8 (Composable Patterns)
 ```
 
-R1 is the prerequisite for all subsequent work. R2 and R3 can run in parallel after R1. R4, R5, R7, R8 can run in parallel after R2/R3.
+R1 is the prerequisite for all subsequent work. R2 and R3 can run in parallel after R1. R4, R5, R6, R7 can run in parallel after R2. R8 depends on R3 (typed Notification example requires Toast variants).
 
 ---
 
