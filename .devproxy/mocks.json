@@ -1078,7 +1078,7 @@
 			}
 		},
 		{
-			"comment": "CATCH-ALL for beta messages \u2014 must be last. All probe-specific and follow-up mocks must precede this entry.",
+			"comment": "CATCH-ALL for beta messages \u2014 must be last. All probe-specific and follow-up mocks must precede this entry.\n\nNOTE: Mock 22 (E2E catch-all) also matches all beta POST requests but comes first due to Dev Proxy's\nfirst-match ordering. This generic catch-all serves as a fallback for non-E2E test runs (e.g., manual\ntesting with the test API key) and ensures the mocks configuration is self-contained even when not\nrunning E2E tests.",
 			"request": {
 				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
 				"method": "POST"
