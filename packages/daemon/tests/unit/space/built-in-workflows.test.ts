@@ -152,7 +152,9 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
-		expect(gate.script!.source).toContain('gh pr view');
+		expect(gate.script!.source).toContain('gh pr view --json state');
+		expect(gate.script!.source).toContain('"OPEN"');
+		expect(gate.script!.source).toContain('exit 1');
 		expect(gate.script!.source).toContain('git status --porcelain');
 		expect(gate.script!.source).toContain('pr_created');
 		expect(gate.script!.source).toContain('worktree_clean');

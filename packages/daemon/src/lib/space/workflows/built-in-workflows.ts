@@ -136,9 +136,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			script: {
 				interpreter: 'bash',
 				source: [
-					'cd "$NEOKAI_WORKSPACE_PATH"',
-					'if ! gh pr view --json number >/dev/null 2>&1; then',
-					'  echo "No open PR found for current branch" >&2',
+					"PR_STATE=$(gh pr view --json state --jq '.state' 2>/dev/null)",
+					'if [ "$PR_STATE" != "OPEN" ]; then',
+					'  echo "No open PR found for current branch (state: ${PR_STATE:-none})" >&2',
 					'  exit 1',
 					'fi',
 					'if [ -n "$(git status --porcelain)" ]; then',
