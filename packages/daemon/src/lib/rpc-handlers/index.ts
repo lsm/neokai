@@ -215,6 +215,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		skillsManager: deps.skillsManager,
 		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
 		roomSkillOverrideRepo: deps.reactiveDb.db.roomSkillOverrides,
+		dbPath: deps.db.getDatabasePath(),
 	});
 
 	// Seed an initial room.tick job for every room after startup, and for each
@@ -388,6 +389,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceTaskRepository: spaceTaskRepo,
 	};
 	deps.neoAgentManager.setToolsConfig(neoToolsConfig, deps.appMcpManager);
+	deps.neoAgentManager.setDbPath(deps.db.getDatabasePath());
 
 	const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
@@ -419,6 +421,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
 	const spaceRuntimeService = new SpaceRuntimeService({
 		db: deps.db.getDatabase(),
+		dbPath: deps.db.getDatabasePath(),
 		spaceManager: deps.spaceManager,
 		spaceAgentManager: deps.spaceAgentManager,
 		spaceWorkflowManager,
@@ -475,6 +478,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		skillsManager: deps.skillsManager,
 		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
 		nodeExecutionRepo,
+		dbPath: deps.db.getDatabasePath(),
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

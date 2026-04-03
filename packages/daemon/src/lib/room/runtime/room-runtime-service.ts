@@ -37,6 +37,7 @@ import { TaskManager } from '../managers/task-manager';
 import { GoalManager } from '../managers/goal-manager';
 import { AgentSession } from '../../agent/agent-session';
 import { createRoomAgentMcpServer } from '../tools/room-agent-tools';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { buildRoomChatSystemPrompt } from '../agents/room-chat-agent';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
@@ -84,6 +85,9 @@ export interface RoomRuntimeServiceConfig {
 	appMcpServerRepo?: AppMcpServerRepository;
 	/** Room skill override repository for fetching per-room skill enablement overrides. Optional for backwards compatibility. */
 	roomSkillOverrideRepo?: RoomSkillOverrideRepository;
+	/** Absolute path to the SQLite database file. When provided, a db-query MCP server
+	 * with room scope is attached to each room chat session. */
+	dbPath?: string;
 }
 
 export class RoomRuntimeService {
@@ -93,6 +97,8 @@ export class RoomRuntimeService {
 	private unsubscribers: Array<() => void> = [];
 	/** Stores the room-agent-tools McpServerConfig per room for hot-reload on registry changes */
 	private roomAgentMcpServers = new Map<string, McpServerConfig>();
+	/** Stores the db-query server instances per room for cleanup on session teardown */
+	private roomDbQueryServers = new Map<string, DbQueryMcpServer>();
 
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
 
@@ -210,6 +216,16 @@ export class RoomRuntimeService {
 		this.runtimes.delete(roomId);
 		this.observers.delete(roomId);
 		this.roomAgentMcpServers.delete(roomId);
+		// Close db-query server connection for this room.
+		const dbQueryServer = this.roomDbQueryServers.get(roomId);
+		if (dbQueryServer) {
+			try {
+				dbQueryServer.close();
+			} catch (err) {
+				log.warn(`Failed to close db-query server on stopRuntime for room ${roomId}:`, err);
+			}
+			this.roomDbQueryServers.delete(roomId);
+		}
 		this.persistRuntimePreference(roomId, 'stopped');
 		return true;
 	}
@@ -233,6 +249,16 @@ export class RoomRuntimeService {
 			// Clear the cached room-agent-tools server; createOrGetRuntime() →
 			// setupRoomAgentSession() will repopulate it for the fresh runtime.
 			this.roomAgentMcpServers.delete(roomId);
+			// Close old db-query server; setupRoomAgentSession() will create a fresh one.
+			const oldDbQueryServer = this.roomDbQueryServers.get(roomId);
+			if (oldDbQueryServer) {
+				try {
+					oldDbQueryServer.close();
+				} catch (err) {
+					log.warn(`Failed to close old db-query server on startRuntime for room ${roomId}:`, err);
+				}
+				this.roomDbQueryServers.delete(roomId);
+			}
 		}
 
 		// Create a fresh runtime - autoStart=true starts it immediately
@@ -264,6 +290,16 @@ export class RoomRuntimeService {
 		}
 		this.agentSessions.clear();
 		this.roomAgentMcpServers.clear();
+
+		// Close all db-query server connections to release read-only SQLite handles.
+		for (const [roomId, server] of this.roomDbQueryServers) {
+			try {
+				server.close();
+			} catch (error) {
+				log.warn(`Failed to close db-query server for room ${roomId}:`, error);
+			}
+		}
+		this.roomDbQueryServers.clear();
 
 		for (const unsub of this.unsubscribers) {
 			unsub();
@@ -806,11 +842,35 @@ export class RoomRuntimeService {
 				const fileMcpServers = this.ctx.settingsManager.getEnabledMcpServersConfig();
 				const registryMcpServers =
 					this.ctx.appMcpManager?.getEnabledMcpConfigsForRoom(room.id) ?? {};
-				roomChatSession.setRuntimeMcpServers({
+
+				// Create a room-scoped db-query server (auto-injects WHERE room_id = ?).
+				// Only created when dbPath is configured; close any existing instance first to
+				// prevent connection leaks on re-setup.
+				const existingDbQueryServer = this.roomDbQueryServers.get(room.id);
+				if (existingDbQueryServer) {
+					try {
+						existingDbQueryServer.close();
+					} catch (err) {
+						log.warn(`Failed to close stale db-query server for room ${room.id}:`, err);
+					}
+				}
+
+				const roomMcpServers: Record<string, McpServerConfig> = {
 					...fileMcpServers,
 					...registryMcpServers,
 					'room-agent-tools': roomAgentMcpServer,
-				});
+				};
+				if (this.ctx.dbPath) {
+					const dbQueryServer = createDbQueryMcpServer({
+						dbPath: this.ctx.dbPath,
+						scopeType: 'room',
+						scopeValue: room.id,
+					});
+					this.roomDbQueryServers.set(room.id, dbQueryServer);
+					roomMcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
+				}
+
+				roomChatSession.setRuntimeMcpServers(roomMcpServers);
 				// Inject the room chat system prompt so the agent knows the proper
 				// goal → plan → approval → task workflow and never creates tasks
 				// prematurely when a goal is created.
@@ -862,6 +922,19 @@ export class RoomRuntimeService {
 							this.runtimes.delete(event.roomId);
 							this.observers.delete(event.roomId);
 							this.roomAgentMcpServers.delete(event.roomId);
+							// Close old db-query server; createOrGetRuntime() → setupRoomAgentSession() creates a fresh one.
+							const oldDbQueryServer = this.roomDbQueryServers.get(event.roomId);
+							if (oldDbQueryServer) {
+								try {
+									oldDbQueryServer.close();
+								} catch (err) {
+									log.warn(
+										`Failed to close db-query server on room.updated for room ${event.roomId}:`,
+										err
+									);
+								}
+								this.roomDbQueryServers.delete(event.roomId);
+							}
 							this.createOrGetRuntime(room);
 							return;
 						}
@@ -928,6 +1001,11 @@ export class RoomRuntimeService {
 							const roomAgentMcpServer = this.roomAgentMcpServers.get(roomId);
 							if (roomAgentMcpServer) {
 								merged['room-agent-tools'] = roomAgentMcpServer;
+							}
+							// Re-include the db-query server so it survives registry refreshes.
+							const dbQueryServer = this.roomDbQueryServers.get(roomId);
+							if (dbQueryServer) {
+								merged['db-query'] = dbQueryServer as unknown as McpServerConfig;
 							}
 							session.setRuntimeMcpServers(merged);
 						})

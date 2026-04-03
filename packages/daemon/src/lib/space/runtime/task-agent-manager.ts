@@ -74,6 +74,7 @@ import type {
 } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
 import { CompletionDetector } from './completion-detector';
@@ -190,6 +191,9 @@ export interface TaskAgentManagerConfig {
 	appMcpServerRepo: AppMcpServerRepository;
 	/** Node execution repository — for CompletionDetector to query workflow-internal execution state */
 	nodeExecutionRepo: NodeExecutionRepository;
+	/** Absolute path to the SQLite database file. When provided, a space-scoped db-query MCP
+	 * server is attached to each task agent session. */
+	dbPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +255,12 @@ export class TaskAgentManager {
 	 * Also populated during rehydrateTaskAgent() from the workflow run config.
 	 */
 	private taskWorktreePaths = new Map<string, string>();
+
+	/**
+	 * Maps taskId → db-query MCP server instance for active Task Agent sessions.
+	 * Closed when the task agent session is cleaned up.
+	 */
+	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
 
 	constructor(private readonly config: TaskAgentManagerConfig) {}
 
@@ -681,10 +691,22 @@ export class TaskAgentManager {
 					);
 				}
 			}
-			agentSession.setRuntimeMcpServers({
+			const taskMcpServers: Record<string, McpServerConfig> = {
 				...registryMcpServers,
 				'task-agent': mcpServer as unknown as McpServerConfig,
-			});
+			};
+			// Create a space-scoped db-query server when dbPath is configured.
+			if (this.config.dbPath) {
+				const dbQueryServer = createDbQueryMcpServer({
+					dbPath: this.config.dbPath,
+					scopeType: 'space',
+					scopeValue: spaceId,
+				});
+				this.taskDbQueryServers.set(taskId, dbQueryServer);
+				taskMcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
+			}
+
+			agentSession.setRuntimeMcpServers(taskMcpServers);
 
 			// --- Persist taskAgentSessionId on the SpaceTask
 			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: sessionId });
@@ -1021,6 +1043,17 @@ export class TaskAgentManager {
 		}
 		// Always remove from in-memory path map regardless of worktreeManager presence.
 		this.taskWorktreePaths.delete(taskId);
+
+		// Close db-query server connection for this task.
+		const dbQueryServer = this.taskDbQueryServers.get(taskId);
+		if (dbQueryServer) {
+			try {
+				dbQueryServer.close();
+			} catch (err) {
+				log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
+			}
+			this.taskDbQueryServers.delete(taskId);
+		}
 
 		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId} (reason: ${reason})`);
 	}
@@ -1491,10 +1524,34 @@ export class TaskAgentManager {
 				);
 			}
 		}
-		agentSession.setRuntimeMcpServers({
+		const rehydrateMcpServers: Record<string, McpServerConfig> = {
 			...rehydrateRegistryMcpServers,
 			'task-agent': mcpServer as unknown as McpServerConfig,
-		});
+		};
+		// Create a space-scoped db-query server when dbPath is configured.
+		if (this.config.dbPath) {
+			const rehydrateDbQueryServer = createDbQueryMcpServer({
+				dbPath: this.config.dbPath,
+				scopeType: 'space',
+				scopeValue: spaceId,
+			});
+			// Close any stale server for this taskId before storing the new one.
+			const staleDbQueryServer = this.taskDbQueryServers.get(taskId);
+			if (staleDbQueryServer) {
+				try {
+					staleDbQueryServer.close();
+				} catch (err) {
+					log.warn(
+						`Failed to close stale db-query server during rehydration for task ${taskId}:`,
+						err
+					);
+				}
+			}
+			this.taskDbQueryServers.set(taskId, rehydrateDbQueryServer);
+			rehydrateMcpServers['db-query'] = rehydrateDbQueryServer as unknown as McpServerConfig;
+		}
+
+		agentSession.setRuntimeMcpServers(rehydrateMcpServers);
 
 		// Re-attach system prompt (runtime-only, not persisted).
 		// Generated fresh from createTaskAgentInit() so it reflects the current task/workflow state.
