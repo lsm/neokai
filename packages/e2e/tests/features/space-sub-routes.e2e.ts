@@ -126,13 +126,8 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Tab bar should be visible — scoped to the space tab bar container
-		const tabBar = page.locator('[data-testid="space-tab-bar"]');
-		await expect(tabBar).toBeVisible({ timeout: 5000 });
-		await expect(tabBar.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
-		await expect(tabBar.getByRole('button', { name: 'Agents', exact: true })).toBeVisible();
-		await expect(tabBar.getByRole('button', { name: 'Workflows', exact: true })).toBeVisible();
-		await expect(tabBar.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+		// Space overview should be visible (default route renders SpaceDashboard)
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// No ChatContainer or task pane
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
@@ -146,8 +141,8 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Tab bar should not be visible (ChatContainer replaced it)
-		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
+		// Space overview should not be visible (ChatContainer replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 
 		// No task pane
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
@@ -161,8 +156,8 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Tab bar should not be visible (ChatContainer replaced it)
-		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
+		// Space overview should not be visible (ChatContainer replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 
 		// No task pane
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
@@ -175,15 +170,15 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		// Full-width task pane should be visible
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 5000 });
 
-		// Tab bar should not be visible (task pane replaced it)
-		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
+		// Space overview should not be visible (task pane replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 	});
 
 	test('browser back/forward navigates correctly between space views', async ({ page }) => {
 		// Step 1: Start at dashboard
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// Step 2: Navigate to agent chat
 		await page.goto(`/space/${spaceId}/agent`);
@@ -208,7 +203,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		// Step 5: Browser back — should return to dashboard
 		await page.goBack();
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// Step 6: Browser forward — should return to agent chat
 		await page.goForward();
@@ -224,7 +219,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// Click "Space Agent" in the SpaceDetailPanel sidebar
 		await page.getByRole('button', { name: 'Space Agent', exact: true }).click();
@@ -234,12 +229,12 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
 			timeout: 10000,
 		});
-		// Tab bar should be hidden (ChatContainer replaced the tab view)
-		await expect(page.locator('[data-testid="space-tab-bar"]')).not.toBeAttached();
+		// Space overview should be hidden (ChatContainer replaced the overview)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 
 		// Browser back returns to dashboard
 		await page.goBack();
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.locator('[data-testid="space-tab-bar"]')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 	});
 });

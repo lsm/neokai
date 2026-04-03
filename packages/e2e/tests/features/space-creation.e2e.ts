@@ -129,7 +129,7 @@ test.describe('Space Creation UX', () => {
 			createdSpaceId = match[1];
 		}
 
-		// Space overview (dashboard) should be visible
+		// Space overview should be visible after navigation
 		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// The tabbed layout with Active / Review / Done tabs should render.
