@@ -179,17 +179,31 @@ export function setupNeoHandlers(
 
 	// ── neo.isProvisioned ─────────────────────────────────────────────────────
 	/**
-	 * Check whether Neo credentials are configured and the session is provisioned.
+	 * Check whether the Neo session is provisioned AND the LLM is expected to respond.
 	 *
 	 * This is a lightweight, synchronous check — no LLM call is made.
-	 * Returns { provisioned: boolean } where `true` means the session exists and
-	 * credentials are configured.
+	 * Returns { provisioned: boolean }.
 	 *
-	 * Used by E2E tests to skip AI-dependent tests when no credentials are present,
-	 * without relying on error cards that only appear after a failed send attempt.
+	 * Two conditions must hold:
+	 * 1. `neoAgentManager.getSession() !== null` — the session was provisioned
+	 *    (a DB record exists and the session is held in memory).
+	 * 2. `NEOKAI_NEO_LLM_AVAILABLE !== '0'` — the LLM backend is expected to be
+	 *    reachable. Set `NEOKAI_NEO_LLM_AVAILABLE=0` in environments where the
+	 *    session can be provisioned (e.g., a dummy API key satisfies isAvailable())
+	 *    but the LLM will never respond (e.g., no-LLM CI with a devproxy test key).
+	 *
+	 * Session existence alone is NOT a reliable proxy for credential validity:
+	 * `provision()` succeeds whenever any API key is present, even a dummy one.
+	 * The env var provides an explicit opt-out for no-LLM CI environments where
+	 * a dummy key is used to satisfy availability checks for non-Neo tests.
+	 *
+	 * Used by E2E tests in `beforeEach` to skip AI-dependent scenarios without
+	 * waiting 90 s for an LLM response that will never arrive.
 	 */
 	messageHub.onRequest('neo.isProvisioned', () => {
-		return { provisioned: neoAgentManager.getSession() !== null };
+		const sessionExists = neoAgentManager.getSession() !== null;
+		const llmAvailable = process.env.NEOKAI_NEO_LLM_AVAILABLE !== '0';
+		return { provisioned: sessionExists && llmAvailable };
 	});
 
 	// ── neo.getSettings ───────────────────────────────────────────────────────

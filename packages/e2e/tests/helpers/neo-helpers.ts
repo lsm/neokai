@@ -2,7 +2,12 @@
  * Shared helpers for Neo panel E2E tests.
  *
  * These helpers encapsulate common Neo panel interactions used across multiple
- * test files. Keep only UI-driven actions here — no direct RPC calls.
+ * test files. The primary rule is that test actions and assertions must go
+ * through the UI. The one allowed exception is `isNeoAvailable()`, which is an
+ * infrastructure probe (analogous to a `beforeEach` guard) — it calls the
+ * `neo.isProvisioned` RPC via `page.evaluate()` to determine whether the
+ * daemon has real LLM credentials configured, so that AI-dependent scenarios
+ * can be skipped cleanly in no-LLM CI instead of timing out.
  */
 
 import type { Page } from '@playwright/test';
@@ -86,23 +91,6 @@ export async function waitForNeoAssistantResponse(
 }
 
 // ─── Availability helpers ──────────────────────────────────────────────────────
-
-/**
- * Wait for the Neo chat panel content to reach a stable state after opening.
- * Resolves once the empty state or an error card is attached to the DOM,
- * preventing a race between `isNeoAvailable` and async store initialisation.
- */
-export async function waitForNeoChatReady(page: Page): Promise<void> {
-	await page
-		.locator(
-			'[data-testid="neo-empty-state"], [data-testid="neo-error-no-credentials"], [data-testid="neo-error-provider-unavailable"]'
-		)
-		.first()
-		.waitFor({ state: 'attached', timeout: 10000 })
-		.catch(() => {
-			// Tolerate timeout — isNeoAvailable will return false below, which is safe
-		});
-}
 
 /**
  * Check whether the Neo agent is provisioned (credentials configured and session active).

@@ -350,7 +350,7 @@ describe('Neo RPC Handlers', () => {
 	// ── neo.isProvisioned ─────────────────────────────────────────────────────
 
 	describe('neo.isProvisioned', () => {
-		it('returns provisioned:true when a session exists', async () => {
+		it('returns provisioned:true when a session exists and LLM is available', async () => {
 			const handler = hubData.handlers.get('neo.isProvisioned');
 			expect(handler).toBeDefined();
 
@@ -359,19 +359,34 @@ describe('Neo RPC Handlers', () => {
 		});
 
 		it('returns provisioned:false when session is null (no credentials)', async () => {
-			// Reset hubData with a manager that has no session
-			const { hub, handlers } = createMockMessageHub();
-			const nullSessionManager = createMockNeoAgentManager(null);
-			const sm = createMockSessionManager();
-			const stm = createMockSettingsManager();
-			const mockDb = createMockDb();
-			setupNeoHandlers(hub, nullSessionManager, sm, stm, mockDb);
+			// Use a fresh hub with a manager that returns no session
+			const { hub: nullHub, handlers: nullHandlers } = createMockMessageHub();
+			const nullNeoManager = createMockNeoAgentManager(null);
+			setupNeoHandlers(nullHub, nullNeoManager, sessionManager, settingsManager, db);
 
-			const handler = handlers.get('neo.isProvisioned');
+			const handler = nullHandlers.get('neo.isProvisioned');
 			expect(handler).toBeDefined();
 
 			const result = (await handler!({}, {})) as { provisioned: boolean };
 			expect(result.provisioned).toBe(false);
+		});
+
+		it('returns provisioned:false when NEOKAI_NEO_LLM_AVAILABLE=0 even if session exists', async () => {
+			const original = process.env.NEOKAI_NEO_LLM_AVAILABLE;
+			process.env.NEOKAI_NEO_LLM_AVAILABLE = '0';
+			try {
+				const handler = hubData.handlers.get('neo.isProvisioned');
+				expect(handler).toBeDefined();
+
+				const result = (await handler!({}, {})) as { provisioned: boolean };
+				expect(result.provisioned).toBe(false);
+			} finally {
+				if (original === undefined) {
+					delete process.env.NEOKAI_NEO_LLM_AVAILABLE;
+				} else {
+					process.env.NEOKAI_NEO_LLM_AVAILABLE = original;
+				}
+			}
 		});
 	});
 
