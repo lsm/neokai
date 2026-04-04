@@ -462,7 +462,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
+          sudo apt-get install -y bubblewrap socat
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -527,7 +527,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
+          sudo apt-get install -y bubblewrap socat
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -1137,6 +1137,7 @@ jobs:
           ANTHROPIC_API_KEY: "sk-devproxy-test-key"
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           CI: true
 
       - name: Stop Dev Proxy

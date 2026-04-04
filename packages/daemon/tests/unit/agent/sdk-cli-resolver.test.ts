@@ -308,6 +308,46 @@ describe('sdk-cli-resolver', () => {
 				// Symlink already exists — must NOT call symlinkSync again
 				expect(symlinkSyncSpy).not.toHaveBeenCalled();
 			});
+
+			it('skips vendor ripgrep linking on Windows (win32 platform)', () => {
+				const originalReadFileSync = fs.readFileSync.bind(fs);
+
+				// Simulate Windows by temporarily overriding process.platform
+				const originalPlatform = process.platform;
+				Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+					const p = String(path);
+					if (p.includes('node_modules')) return false;
+					// cli.js not yet extracted
+					if (p.includes('neokai-sdk') && p.endsWith('cli.js')) return false;
+					return false;
+				});
+
+				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
+					(path: fs.PathOrFileDescriptor, options?: unknown) => {
+						return originalReadFileSync(path, options as undefined);
+					}
+				);
+
+				mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
+					() => undefined as unknown as string
+				);
+				writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+				try {
+					setEmbeddedCliPath(testFile);
+					resolveSDKCliPath();
+
+					// On Windows, linkSystemRipgrepToVendor no-ops — symlinkSync must NOT be called
+					expect(symlinkSyncSpy).not.toHaveBeenCalled();
+				} finally {
+					Object.defineProperty(process, 'platform', {
+						value: originalPlatform,
+						configurable: true,
+					});
+				}
+			});
 		});
 	});
 
