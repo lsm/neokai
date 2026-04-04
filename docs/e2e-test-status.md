@@ -1,30 +1,7 @@
-# E2E Test Status — 2026-04-04
+# E2E Test Status
 
-CI Run: 23971370596 (fix(e2e): stabilize neo-panel tests)
-Result: 27 failures / 55 passes
+The E2E health check findings are recorded in **[`docs/e2e-health-check-log.md`](e2e-health-check-log.md)**.
 
-## Root Causes Identified
+For the most recent status (2026-04-04, CI run [#23971370596](https://github.com/lsm/neokai/actions/runs/23971370596)), see the **[2026-04-04 section](e2e-health-check-log.md#2026-04-04--check-run-23971370596)** of that log.
 
-### A: SpaceDashboard hidden by WorkflowCanvas (md+)
-Built-in workflows seeded on space creation → showCanvas=true → SpaceDashboard md:hidden.
-Affects: space-navigation, space-task-fullwidth, space-task-creation, space-creation, space-happy-path-pipeline
-
-### B: Sandbox ripgrep missing in CI
-SDK expects /tmp/neokai-sdk/vendor/ripgrep/x64-linux/rg, CI only installs bubblewrap+socat.
-Affects: core-connection-resilience, features-provider-model-switching, features-neo-conversation, all LLM tests
-
-### C: neo-conversation needs same fixes as neo-panel (#1297)
-Affects: features-neo-conversation (close/Escape/backdrop/tab tests)
-
-### D: neo-panel role=dialog causes strict mode violations
-Affects: features-space-creation, features-space-task-fullwidth, features-space-task-creation
-
-### E: Individual test bugs
-- features-space-settings-crud: locator('text='+path) creates invalid regex for paths with slashes
-- settings-tools-modal: button[aria-label] should be button[title] for Session options
-- features-space-agent-chat: textarea selector matches neo-panel after navigation
-- features-space-agent-centric-workflow: selectOption timeout
-- features-space-context-panel-switching: space click navigation timeout
-- features-space-approval-gate-rejection + features-reviewer-feedback-loop: gate UI changes
-- features-space-multi-agent-editor + features-visual-workflow-editor: UI changes
-- settings-mcp-servers: isChecked timeout
+**Current state**: 26 E2E job failures across 5 root causes; 6 fix PRs open and unmerged (#1351, #1353, #1354, #1355, #1356, #1357).
