@@ -169,6 +169,159 @@ function makeNoiseRows() {
 	];
 }
 
+function makeMultiAgentRows() {
+	return [
+		// Task Agent message (task_agent kind) at time 0
+		{
+			id: 'multi-1',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'task',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'ma1',
+				session_id: 'space:space-1:task:task-1',
+				message: {
+					content: [{ type: 'text', text: 'Task agent is planning the implementation.' }],
+				},
+			}),
+			createdAt: 1_710_000_000_000,
+		},
+		// Coder Agent message (node_agent kind) at time 1
+		{
+			id: 'multi-2',
+			sessionId: 'space:space-1:task:task-1:node:coder',
+			kind: 'node_agent',
+			role: 'coder',
+			label: 'Coder Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'ma2',
+				session_id: 'space:space-1:task:task-1:node:coder',
+				message: {
+					content: [{ type: 'text', text: 'Coder agent writing the code changes.' }],
+				},
+			}),
+			createdAt: 1_710_000_001_000,
+		},
+		// Reviewer Agent message (node_agent kind) at time 2
+		{
+			id: 'multi-3',
+			sessionId: 'space:space-1:task:task-1:node:reviewer',
+			kind: 'node_agent',
+			role: 'reviewer',
+			label: 'Reviewer Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'ma3',
+				session_id: 'space:space-1:task:task-1:node:reviewer',
+				message: {
+					content: [{ type: 'text', text: 'Reviewer agent checking the changes.' }],
+				},
+			}),
+			createdAt: 1_710_000_002_000,
+		},
+		// Task Agent again at time 3 (interleaved)
+		{
+			id: 'multi-4',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'task',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'ma4',
+				session_id: 'space:space-1:task:task-1',
+				message: {
+					content: [{ type: 'text', text: 'Task agent completing final steps.' }],
+				},
+			}),
+			createdAt: 1_710_000_003_000,
+		},
+	];
+}
+
+// Rows containing thinking/tool events so agent-label spans are rendered in compact mode.
+// (Text events use a simplified code path that omits the inline agent-label span; tool/thinking
+// events use the generic compact path which always shows the label.)
+function makeMultiAgentNonTextRows() {
+	return [
+		// Task Agent: thinking block
+		{
+			id: 'label-1',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'task',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'la1',
+				session_id: 'space:space-1:task:task-1',
+				message: {
+					content: [{ type: 'thinking', thinking: 'Deciding the next step.' }],
+				},
+			}),
+			createdAt: 1_710_000_000_000,
+		},
+		// Coder Agent: tool_use block
+		{
+			id: 'label-2',
+			sessionId: 'space:space-1:task:task-1:node:coder',
+			kind: 'node_agent',
+			role: 'coder',
+			label: 'Coder Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'la2',
+				session_id: 'space:space-1:task:task-1:node:coder',
+				message: {
+					content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'npm test' } }],
+				},
+			}),
+			createdAt: 1_710_000_001_000,
+		},
+		// Reviewer Agent: tool_use block
+		{
+			id: 'label-3',
+			sessionId: 'space:space-1:task:task-1:node:reviewer',
+			kind: 'node_agent',
+			role: 'reviewer',
+			label: 'Reviewer Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'la3',
+				session_id: 'space:space-1:task:task-1:node:reviewer',
+				message: {
+					content: [{ type: 'tool_use', id: 'tu2', name: 'Glob', input: { pattern: '*.ts' } }],
+				},
+			}),
+			createdAt: 1_710_000_002_000,
+		},
+	];
+}
+
 describe('SpaceTaskUnifiedThread', () => {
 	beforeEach(() => {
 		cleanup();
@@ -211,5 +364,122 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.queryByText('System')).toBeNull();
 		expect(screen.getByText('Rate Limit')).toBeTruthy();
 		expect(screen.getByText('five hour · rejected')).toBeTruthy();
+	});
+
+	it('renders messages from multiple agents (task_agent + node_agent) in compact mode', () => {
+		mockRows = makeMultiAgentRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
+
+		// All four text messages should be visible
+		expect(screen.getByText('Task agent is planning the implementation.')).toBeTruthy();
+		expect(screen.getByText('Coder agent writing the code changes.')).toBeTruthy();
+		expect(screen.getByText('Reviewer agent checking the changes.')).toBeTruthy();
+		expect(screen.getByText('Task agent completing final steps.')).toBeTruthy();
+	});
+
+	it('renders messages from different agents with distinct colored side rails', () => {
+		mockRows = makeMultiAgentRows();
+		const { container } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		// All event rows should have border-color side rails
+		const borderedElements = container.querySelectorAll('[style*="border-color"]');
+		expect(borderedElements.length).toBeGreaterThanOrEqual(4);
+
+		// Collect all border-color values
+		const borderColors = new Set<string>();
+		borderedElements.forEach((el) => {
+			const color = (el as HTMLElement).style.borderColor;
+			if (color) borderColors.add(color);
+		});
+
+		// At minimum 2 distinct colors (task agent + coder/reviewer agents)
+		expect(borderColors.size).toBeGreaterThanOrEqual(2);
+	});
+
+	it('renders task agent messages visually distinct from node agent messages via agent labels', () => {
+		// Use rows with thinking/tool events: these render the inline agent-label span in compact mode.
+		// (Text events use a simplified path that omits the label span.)
+		mockRows = makeMultiAgentNonTextRows();
+		const { container } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		// shortAgentLabel strips " Agent" suffix and uppercases, so:
+		// "Task Agent" → "TASK", "Coder Agent" → "CODER", "Reviewer Agent" → "REVIEWER"
+		const allSpans = container.querySelectorAll('span[style]');
+		const labelTexts = Array.from(allSpans).map((el) => el.textContent);
+
+		expect(labelTexts.some((t) => t === 'TASK')).toBe(true);
+		expect(labelTexts.some((t) => t === 'CODER')).toBe(true);
+		expect(labelTexts.some((t) => t === 'REVIEWER')).toBe(true);
+	});
+
+	it('applies correct color to Task Agent vs node agent agent labels', () => {
+		// Use rows with thinking/tool events to get agent-label spans rendered.
+		mockRows = makeMultiAgentNonTextRows();
+		const { container } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		const allSpans = container.querySelectorAll('span[style]');
+		const taskLabelSpan = Array.from(allSpans).find((el) => el.textContent === 'TASK');
+		const coderLabelSpan = Array.from(allSpans).find((el) => el.textContent === 'CODER');
+
+		expect(taskLabelSpan).toBeTruthy();
+		expect(coderLabelSpan).toBeTruthy();
+
+		// Task Agent (#66A7FF) and Coder Agent (#42C7B5) must have different colors.
+		const taskColor = (taskLabelSpan as HTMLElement).style.color;
+		const coderColor = (coderLabelSpan as HTMLElement).style.color;
+		expect(taskColor).not.toBe('');
+		expect(coderColor).not.toBe('');
+		expect(taskColor).not.toBe(coderColor);
+	});
+
+	it('preserves chronological ordering of messages across agents', () => {
+		mockRows = makeMultiAgentRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		// All four messages must appear in chronological order
+		const allText = screen.getByTestId('space-task-event-feed-compact').textContent ?? '';
+		const taskPlanIdx = allText.indexOf('Task agent is planning');
+		const coderIdx = allText.indexOf('Coder agent writing');
+		const reviewerIdx = allText.indexOf('Reviewer agent checking');
+		const taskFinalIdx = allText.indexOf('Task agent completing');
+
+		expect(taskPlanIdx).toBeGreaterThanOrEqual(0);
+		expect(coderIdx).toBeGreaterThan(taskPlanIdx);
+		expect(reviewerIdx).toBeGreaterThan(coderIdx);
+		expect(taskFinalIdx).toBeGreaterThan(reviewerIdx);
+	});
+
+	it('renders multiple agents in verbose mode with SDKMessageRenderer per agent', () => {
+		mockRows = makeMultiAgentRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+		fireEvent.click(screen.getByTestId('space-task-thread-mode-verbose'));
+		expect(screen.getByTestId('space-task-event-feed-verbose')).toBeTruthy();
+
+		// All 4 messages should be rendered
+		const renderers = screen.getAllByTestId('sdk-message-renderer');
+		expect(renderers.length).toBe(4);
+	});
+
+	it('shows loading state when isLoading is true', () => {
+		mockIsLoading = true;
+		mockRows = [];
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.getByText('Loading task thread…')).toBeTruthy();
+	});
+
+	it('shows reconnecting state when isReconnecting is true', () => {
+		mockIsReconnecting = true;
+		mockRows = [];
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.getByText('Reconnecting task thread…')).toBeTruthy();
+	});
+
+	it('shows empty state when no rows exist', () => {
+		mockRows = [];
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
 	});
 });
