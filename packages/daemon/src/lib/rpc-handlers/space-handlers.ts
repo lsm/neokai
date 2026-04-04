@@ -14,6 +14,7 @@
 import type { MessageHub } from '@neokai/shared';
 import type {
 	Space,
+	SpaceCreateResult,
 	SpaceAutonomyLevel,
 	CreateSpaceParams,
 	UpdateSpaceParams,
@@ -153,7 +154,7 @@ export function setupSpaceHandlers(
 			});
 
 		if (seedWarnings.length > 0) {
-			return { ...space, seedWarnings };
+			return { ...space, seedWarnings } satisfies SpaceCreateResult;
 		}
 		return space;
 	});

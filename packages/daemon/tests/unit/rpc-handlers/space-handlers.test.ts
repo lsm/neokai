@@ -14,7 +14,7 @@
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
+import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
 import { setupSpaceHandlers } from '../../../src/lib/rpc-handlers/space-handlers';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
 import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
@@ -142,15 +142,13 @@ const mockAgents = [
 	{ id: 'agent-qa', name: 'QA', spaceId: 'space-1' },
 ];
 
-let agentCreateCallCount = 0;
-
 function createMockSpaceAgentManager(opts?: {
 	createFail?: (name: string) => boolean;
 }): SpaceAgentManager {
-	agentCreateCallCount = 0;
+	let callCount = 0;
 	return {
 		create: mock(async (params: { name?: string }) => {
-			const idx = agentCreateCallCount++;
+			const idx = callCount++;
 			if (opts?.createFail?.(params.name ?? '')) {
 				return { ok: false, error: `Agent ${params.name} already exists` };
 			}
@@ -383,7 +381,7 @@ describe('space-handlers', () => {
 			const result = (await call('space.create', {
 				workspacePath: '/tmp/x',
 				name: 'X',
-			})) as Space & { seedWarnings?: string[] };
+			})) as SpaceCreateResult;
 
 			// Space is still created successfully
 			expect(result.id).toBe(mockSpace.id);
@@ -416,7 +414,7 @@ describe('space-handlers', () => {
 			const result = (await call('space.create', {
 				workspacePath: '/tmp/x',
 				name: 'X',
-			})) as Space & { seedWarnings?: string[] };
+			})) as SpaceCreateResult;
 
 			// Space is still created
 			expect(result.id).toBe(mockSpace.id);
@@ -434,7 +432,7 @@ describe('space-handlers', () => {
 			const result = (await call('space.create', {
 				workspacePath: '/tmp/x',
 				name: 'X',
-			})) as Space & { seedWarnings?: string[] };
+			})) as SpaceCreateResult;
 
 			expect(result.id).toBe(mockSpace.id);
 			expect(result.seedWarnings).toBeDefined();
@@ -451,7 +449,7 @@ describe('space-handlers', () => {
 			const result = (await call('space.create', {
 				workspacePath: '/tmp/x',
 				name: 'X',
-			})) as Space & { seedWarnings?: string[] };
+			})) as SpaceCreateResult;
 
 			// Space is still created and returned
 			expect(result.id).toBe(mockSpace.id);
