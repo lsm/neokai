@@ -36,6 +36,11 @@ import {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 test.describe('Neo Chat Rendering', () => {
+	// Serial mode: all tests share the singleton neo:global session. Parallel
+	// execution causes cross-worker interference — e.g., test 2 (sendNeoMessage)
+	// stores an SDK message that the LiveQuery pushes to test 1's frontend,
+	// breaking the empty-state assertion. Running serially avoids this.
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: { width: 1280, height: 720 } });
 
 	test.beforeEach(async ({ page }) => {
