@@ -6,7 +6,10 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { ROLE_TOOLS, SUB_SESSION_FEATURES } from '../../../src/lib/space/agents/seed-agents';
+import {
+	PRESET_AGENT_TOOLS,
+	SUB_SESSION_FEATURES,
+} from '../../../src/lib/space/agents/seed-agents';
 import {
 	createCustomAgentInit,
 	composePromptLayer,
@@ -77,9 +80,9 @@ function makeConfig(tools?: string[]): CustomAgentConfig {
 // Tool access per preset agent
 // ============================================================================
 
-describe('ROLE_TOOLS', () => {
+describe('PRESET_AGENT_TOOLS', () => {
 	it('coder has full tool access (Read, Write, Edit, Bash, Grep, Glob)', () => {
-		const tools = ROLE_TOOLS.coder;
+		const tools = PRESET_AGENT_TOOLS.coder;
 		expect(tools).toContain('Read');
 		expect(tools).toContain('Write');
 		expect(tools).toContain('Edit');
@@ -89,14 +92,14 @@ describe('ROLE_TOOLS', () => {
 	});
 
 	it('coder does not have Task/TaskOutput/TaskStop', () => {
-		const tools = ROLE_TOOLS.coder;
+		const tools = PRESET_AGENT_TOOLS.coder;
 		expect(tools).not.toContain('Task');
 		expect(tools).not.toContain('TaskOutput');
 		expect(tools).not.toContain('TaskStop');
 	});
 
 	it('planner has full tool access', () => {
-		const tools = ROLE_TOOLS.planner;
+		const tools = PRESET_AGENT_TOOLS.planner;
 		expect(tools).toContain('Read');
 		expect(tools).toContain('Write');
 		expect(tools).toContain('Edit');
@@ -106,13 +109,13 @@ describe('ROLE_TOOLS', () => {
 	});
 
 	it('reviewer cannot Write or Edit', () => {
-		const tools = ROLE_TOOLS.reviewer;
+		const tools = PRESET_AGENT_TOOLS.reviewer;
 		expect(tools).not.toContain('Write');
 		expect(tools).not.toContain('Edit');
 	});
 
 	it('reviewer has read-only tools', () => {
-		const tools = ROLE_TOOLS.reviewer;
+		const tools = PRESET_AGENT_TOOLS.reviewer;
 		expect(tools).toContain('Read');
 		expect(tools).toContain('Bash');
 		expect(tools).toContain('Grep');
@@ -120,23 +123,23 @@ describe('ROLE_TOOLS', () => {
 	});
 
 	it('qa cannot Write or Edit', () => {
-		const tools = ROLE_TOOLS.qa;
+		const tools = PRESET_AGENT_TOOLS.qa;
 		expect(tools).not.toContain('Write');
 		expect(tools).not.toContain('Edit');
 	});
 
 	it('qa has read-only + bash tools for running tests', () => {
-		const tools = ROLE_TOOLS.qa;
+		const tools = PRESET_AGENT_TOOLS.qa;
 		expect(tools).toContain('Read');
 		expect(tools).toContain('Bash');
 		expect(tools).toContain('Grep');
 		expect(tools).toContain('Glob');
 	});
 
-	it('general (Done node) has read-only tools — no Write or Edit', () => {
-		const tools = ROLE_TOOLS.general;
-		expect(tools).not.toContain('Write');
-		expect(tools).not.toContain('Edit');
+	it('general has full coding toolset', () => {
+		const tools = PRESET_AGENT_TOOLS.general;
+		expect(tools).toContain('Write');
+		expect(tools).toContain('Edit');
 		expect(tools).toContain('Read');
 		expect(tools).toContain('Bash');
 		expect(tools).toContain('Grep');
@@ -316,12 +319,12 @@ describe('composePromptLayer', () => {
 
 describe('createCustomAgentInit — sub-session features', () => {
 	it('applies SUB_SESSION_FEATURES for agent with tools', () => {
-		const init = createCustomAgentInit(makeConfig(ROLE_TOOLS.coder));
+		const init = createCustomAgentInit(makeConfig(PRESET_AGENT_TOOLS.coder));
 		expect(init.features).toEqual(SUB_SESSION_FEATURES);
 	});
 
 	it('applies SUB_SESSION_FEATURES for agent with restricted tools', () => {
-		const init = createCustomAgentInit(makeConfig(ROLE_TOOLS.reviewer));
+		const init = createCustomAgentInit(makeConfig(PRESET_AGENT_TOOLS.reviewer));
 		expect(init.features).toEqual(SUB_SESSION_FEATURES);
 	});
 
@@ -331,7 +334,7 @@ describe('createCustomAgentInit — sub-session features', () => {
 	});
 
 	it('reviewer init uses agents pattern with restricted tools', () => {
-		const config = makeConfig(ROLE_TOOLS.reviewer);
+		const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
 		const init = createCustomAgentInit(config);
 
 		// When tools are specified, the agents pattern is used
@@ -341,13 +344,13 @@ describe('createCustomAgentInit — sub-session features', () => {
 		// The agent definition should use the reviewer's restricted tools
 		const agentKey = init.agent as string;
 		const agentDef = init.agents![agentKey];
-		expect(agentDef.tools).toEqual(ROLE_TOOLS.reviewer);
+		expect(agentDef.tools).toEqual(PRESET_AGENT_TOOLS.reviewer);
 		expect(agentDef.tools).not.toContain('Write');
 		expect(agentDef.tools).not.toContain('Edit');
 	});
 
 	it('qa init uses agents pattern with restricted tools', () => {
-		const config = makeConfig(ROLE_TOOLS.qa);
+		const config = makeConfig(PRESET_AGENT_TOOLS.qa);
 		const init = createCustomAgentInit(config);
 
 		expect(init.agent).toBeDefined();
@@ -355,13 +358,13 @@ describe('createCustomAgentInit — sub-session features', () => {
 
 		const agentKey = init.agent as string;
 		const agentDef = init.agents![agentKey];
-		expect(agentDef.tools).toEqual(ROLE_TOOLS.qa);
+		expect(agentDef.tools).toEqual(PRESET_AGENT_TOOLS.qa);
 		expect(agentDef.tools).not.toContain('Write');
 		expect(agentDef.tools).not.toContain('Edit');
 	});
 
 	it('coder init uses agents pattern with full tools', () => {
-		const config = makeConfig(ROLE_TOOLS.coder);
+		const config = makeConfig(PRESET_AGENT_TOOLS.coder);
 		const init = createCustomAgentInit(config);
 
 		expect(init.agent).toBeDefined();
@@ -382,7 +385,7 @@ describe('createCustomAgentInit — sub-session features', () => {
 	});
 
 	it('applies systemPrompt override mode in system prompt', () => {
-		const config = makeConfig(ROLE_TOOLS.coder);
+		const config = makeConfig(PRESET_AGENT_TOOLS.coder);
 		config.slotOverrides = {
 			systemPrompt: { mode: 'override', value: 'Override prompt' },
 		};

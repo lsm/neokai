@@ -1088,7 +1088,7 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
-		// 'general' is used by FULL_CYCLE_CODING_WORKFLOW (Done node).
+		// 'general' is used by FULL_CYCLE_CODING_WORKFLOW.
 		// Pre-validation catches missing roles before any workflow is persisted.
 		const brokenResolver = (role: string): string | undefined =>
 			role === 'general' ? undefined : roleMap[role];
