@@ -53,10 +53,6 @@
  * - Removing a tag via × button
  * - Adding tag via keyboard Enter
  *
- * Rules section
- * - Renders toggle button
- * - Shows WorkflowRulesEditor when toggled
- * - Hides WorkflowRulesEditor after second toggle
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -1189,30 +1185,6 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 			expect(getByTestId('task-agent-overlay')).toBeTruthy();
-		});
-	});
-
-	// -------------------------------------------------------------------------
-	// Rules section
-	// -------------------------------------------------------------------------
-
-	describe('Rules section', () => {
-		it('renders the toggle rules button', () => {
-			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(getByTestId('toggle-rules-button')).toBeTruthy();
-		});
-
-		it('shows WorkflowRulesEditor when toggled', () => {
-			const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			fireEvent.click(getByTestId('toggle-rules-button'));
-			expect(getByText('Add Rule')).toBeTruthy();
-		});
-
-		it('hides WorkflowRulesEditor after second toggle click', () => {
-			const { getByTestId, queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			fireEvent.click(getByTestId('toggle-rules-button'));
-			fireEvent.click(getByTestId('toggle-rules-button'));
-			expect(queryByText('Add Rule')).toBeNull();
 		});
 	});
 });

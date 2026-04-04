@@ -23,9 +23,6 @@ import { generateUUID } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { WorkflowNodeCard } from './WorkflowNodeCard';
 import type { NodeDraft, ConditionDraft, AgentTaskState } from './WorkflowNodeCard';
-import { WorkflowRulesEditor } from './WorkflowRulesEditor';
-import type { RuleDraft } from './WorkflowRulesEditor';
-import { ChannelEditor } from './ChannelEditor';
 
 // ============================================================================
 // Tags constants
@@ -331,7 +328,6 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 export function initFromWorkflow(wf: SpaceWorkflow): {
 	steps: NodeDraft[];
 	transitions: ConditionDraft[];
-	rules: RuleDraft[];
 	tags: string[];
 	channels: WorkflowChannel[];
 	gates: Gate[];
@@ -388,7 +384,6 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 	return {
 		steps: ordered,
 		transitions: conditions,
-		rules: [],
 		tags: wf.tags ?? [],
 		channels: wf.channels ?? [],
 		gates: wf.gates ?? [],
@@ -420,7 +415,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [transitions, setTransitions] = useState<ConditionDraft[]>(initial?.transitions ?? []);
 	const [channels, setChannels] = useState<WorkflowChannel[]>(initial?.channels ?? []);
 	const [gates, setGates] = useState<Gate[]>(initial?.gates ?? []);
-	const [rules, setRules] = useState<RuleDraft[]>(initial?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
 	const [tagInput, setTagInput] = useState('');
 	const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
@@ -831,16 +825,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					</button>
 				</div>
 
-				{/* Channels */}
-				<div class="space-y-3">
-					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Channels</h2>
-					<ChannelEditor
-						channels={channels}
-						onChange={setChannels}
-						agentRoles={agents.map((a) => a.name).filter(Boolean)}
-					/>
-				</div>
-
 				{/* Tags */}
 				<div class="space-y-3">
 					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</h2>
@@ -891,17 +875,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						))}
 					</div>
 				</div>
-
-				{/* Rules */}
-				<WorkflowRulesEditor
-					rules={rules}
-					steps={steps.map((s, i) => ({
-						id: s.id ?? s.localId,
-						name: s.name || `Step ${i + 1}`,
-						agents: s.agents ?? [],
-					}))}
-					onChange={setRules}
-				/>
 			</div>
 		</div>
 	);
