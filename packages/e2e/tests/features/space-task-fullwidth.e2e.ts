@@ -86,9 +86,11 @@ test.describe('Space Task Full-Width View', () => {
 		// Full-width task pane should now be visible
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
-		// Tab bar should be hidden (full-width task view replaced the tab layout)
-		await expect(page.getByRole('button', { name: 'Overview', exact: true })).not.toBeVisible();
-		await expect(page.getByRole('button', { name: 'Active', exact: true })).not.toBeVisible();
+		// Tab bar should be hidden (full-width task view replaced the tab layout).
+		// SpaceIsland unmounts the space-tab-bar element from DOM in fullwidth mode.
+		// The Overview button in SpaceDetailPanel (left sidebar) always remains visible,
+		// so check for the tab bar testid instead.
+		await expect(page.getByTestId('space-tab-bar')).not.toBeAttached({ timeout: 3000 });
 	});
 
 	test('back button in task view returns to the tabbed dashboard', async ({ page }) => {

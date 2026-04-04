@@ -330,8 +330,9 @@ test.describe
 				const codingNodeEl = page.getByTestId('canvas-panel').getByTestId(`node-${codingNodeId}`);
 				await expect(codingNodeEl).toBeVisible({ timeout: 30000 });
 
-				// Active nodes have animate-pulse CSS class
-				await expect(codingNodeEl).toHaveClass(/animate-pulse/, { timeout: 5000 });
+				// Active nodes have animate-pulse CSS class.
+				// Allow extra time for the live query to propagate task status to the canvas.
+				await expect(codingNodeEl).toHaveClass(/animate-pulse/, { timeout: 15000 });
 			});
 		});
 

@@ -403,7 +403,10 @@ test.describe('Neo Settings – Security mode', () => {
 
 		// Change back to balanced
 		await modeSelect.selectOption('balanced');
-		await page.locator('text=Security mode updated').waitFor({ state: 'visible', timeout: 15000 });
+		await page
+			.getByText('Security mode updated')
+			.first()
+			.waitFor({ state: 'visible', timeout: 15000 });
 		await expect(modeSelect).toHaveValue('balanced');
 	});
 
@@ -552,14 +555,16 @@ test.describe('Neo – Activity feed', () => {
 		// Switch to Activity
 		const activityTab = page.getByTestId('neo-tab-activity');
 		await activityTab.click();
-		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeVisible();
-		await expect(page.getByTestId('neo-chat-view')).toBeHidden();
+		// NeoPanel uses conditional rendering: chat and activity views are swapped in/out of DOM.
+		// Use toBeVisible with explicit timeout + not.toBeAttached (removed from DOM, not just hidden).
+		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('neo-chat-view')).not.toBeAttached();
 
 		// Switch back to Chat
 		const chatTab = page.getByTestId('neo-tab-chat');
 		await chatTab.click();
-		await expect(page.getByTestId('neo-chat-view')).toBeVisible();
-		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeHidden();
+		await expect(page.getByTestId('neo-chat-view')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).not.toBeAttached();
 	});
 
 	test('activity entries with timestamps appear after Neo performs a tool call', async ({
