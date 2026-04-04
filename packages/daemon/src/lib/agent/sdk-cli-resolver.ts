@@ -17,6 +17,7 @@ import {
 	lstatSync,
 	mkdirSync,
 	readFileSync,
+	unlinkSync,
 	writeFileSync,
 } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -134,11 +135,11 @@ function extractEmbeddedCli(): string | undefined {
 			writeFileSync(extractPath, content, { mode: 0o755 });
 		}
 
-		// Ensure vendor ripgrep exists for sandbox mode.
+		// Ensure vendor ripgrep binary exists for sandbox mode.
 		// The SDK checks for ripgrep at vendor/ripgrep/<platform>/rg relative to cli.js.
 		// In compiled binary mode the vendor directory is not bundled, so we copy
 		// the system-installed ripgrep (from apt-get / brew) if available.
-		linkSystemRipgrepToVendor(extractDir);
+		copySystemRipgrepToVendor(extractDir);
 
 		return extractPath;
 	} catch {
@@ -206,21 +207,26 @@ function findSystemRipgrep(): string | undefined {
  * No-op if:
  *  - Platform is Windows (unsupported)
  *  - System ripgrep is not installed
- *  - The vendor binary already exists (valid file, not a broken symlink)
+ *  - The vendor binary already exists as a valid, non-empty regular file
+ *
+ * Replaces broken symlinks or empty files left by previous binary versions.
  */
-function linkSystemRipgrepToVendor(extractDir: string): void {
+function copySystemRipgrepToVendor(extractDir: string): void {
 	const platform = getSdkVendorPlatform();
 	if (!platform) return;
 
 	const ripgrepDir = join(extractDir, 'vendor', 'ripgrep', platform);
 	const ripgrepDest = join(ripgrepDir, 'rg');
 
-	// Check with lstatSync to detect broken symlinks (existsSync follows symlinks
-	// and returns false for a dangling symlink, preventing re-creation).
+	// Use lstatSync (not existsSync) so broken symlinks are detected — existsSync
+	// follows symlinks and returns false for a dangling one, preventing re-creation.
 	try {
 		const stat = lstatSync(ripgrepDest);
 		if (stat.isFile() && stat.size > 0) return; // Already a real, non-empty file
-		// It's a broken symlink or empty file — remove and replace with a real copy
+		// Broken symlink or zero-size file from a previous run — remove it so
+		// copyFileSync can write to this path (on Linux, copying to a dangling
+		// symlink target fails because the OS tries to dereference it).
+		unlinkSync(ripgrepDest);
 	} catch {
 		// Path doesn't exist at all — proceed to copy
 	}
