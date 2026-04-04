@@ -34,7 +34,7 @@ test.describe('Tools Modal - Redesigned', () => {
 
 	/** Open the Tools modal for the current session and return the dialog locator */
 	async function openToolsModal(page: import('@playwright/test').Page) {
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 		// Scope the menu to the session options menu container to avoid matching stray "Tools" buttons
 		await page
