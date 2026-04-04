@@ -989,11 +989,18 @@ export function WorkflowCanvas({
 		setLocalGateAssignments(map);
 	}, [workflow]);
 
+	// Clear gate data when switching to a different run so stale data from the previous
+	// run doesn't appear on the new run's channels. Clearing here (on runId change) rather
+	// than inside fetchGateData prevents the gate icons from flickering mid-fetch on every
+	// refetch triggered by status changes or reconnects — which was causing Playwright's
+	// click() actionability "stable" check to never settle.
+	useEffect(() => {
+		setGateDataMap(new Map());
+	}, [runId]);
+
 	// ---- Fetch gate data for runtime mode ----
 	const fetchGateData = useCallback(async () => {
 		if (!runId) return;
-		// Clear stale data immediately so old run's gate states don't flash on the new run's channels.
-		setGateDataMap(new Map());
 		setGateDataLoading(true);
 		try {
 			// Use getHub() instead of getHubIfConnected() so we wait for the hub to be

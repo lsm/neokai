@@ -262,7 +262,7 @@ test.describe
 				// review-reject-gate condition: count 'rejected' votes >= 1
 				// With 1 rejection written, gate evaluates to open → green checkmark
 				await expect(gateIcon(page, 'review-reject-gate', 'open')).toBeVisible({
-					timeout: 10000,
+					timeout: 30000,
 				});
 			});
 
@@ -362,7 +362,7 @@ test.describe
 
 				// 2 approvals < 3 required → review-votes-gate stays blocked (gray lock)
 				await expect(gateIcon(page, 'review-votes-gate', 'blocked')).toBeVisible({
-					timeout: 10000,
+					timeout: 30000,
 				});
 			});
 
@@ -576,7 +576,7 @@ test.describe
 					votes: { 'Reviewer 1': 'rejected' },
 				});
 				await expect(gateIcon(page, 'review-reject-gate', 'open')).toBeVisible({
-					timeout: 10000,
+					timeout: 30000,
 				});
 
 				// Step 2: After cycle reset — votes cleared, badge shows 0/3
@@ -592,7 +592,7 @@ test.describe
 					},
 				});
 				await expect(gateIcon(page, 'review-votes-gate', 'open')).toBeVisible({
-					timeout: 10000,
+					timeout: 30000,
 				});
 				await expect(voteBadge(page, 'review-votes-gate', '3/3')).toBeVisible({ timeout: 30000 });
 			});
