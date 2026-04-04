@@ -790,7 +790,7 @@ export function StackedShellsDemo() {
 		<div class="flex flex-col gap-8">
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Stacked with bottom border</h3>
-				<div class="rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<StackedWithBottomBorder />
 				</div>
 			</div>
@@ -799,7 +799,7 @@ export function StackedShellsDemo() {
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">
 					Stacked with lighter page header
 				</h3>
-				<div class="rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<StackedWithLighterPageHeader />
 				</div>
 			</div>
@@ -808,14 +808,14 @@ export function StackedShellsDemo() {
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">
 					Branded nav with lighter page header
 				</h3>
-				<div class="rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<BrandedNavWithLighterPageHeader />
 				</div>
 			</div>
 
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Two row navigation with overlap</h3>
-				<div class="rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<TwoRowNavigationWithOverlap />
 				</div>
 			</div>
