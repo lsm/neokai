@@ -556,15 +556,23 @@ test.describe('Neo – Activity feed', () => {
 		const activityTab = page.getByTestId('neo-tab-activity');
 		await activityTab.click();
 		// NeoPanel uses conditional rendering: chat and activity views are swapped in/out of DOM.
-		// Use toBeVisible with explicit timeout + not.toBeAttached (removed from DOM, not just hidden).
-		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeVisible({ timeout: 5000 });
+		// NeoActivityView renders one of three testids depending on state:
+		//   - "neo-activity-view"    when there are activity entries
+		//   - "neo-activity-empty"   when there are no entries (most common in no-LLM tests)
+		//   - "neo-activity-loading" while loading
+		// We check that at least one of these is visible to confirm the Activity tab is active.
+		const activityViewAny = page.locator(
+			'[data-testid="neo-activity-view"], [data-testid="neo-activity-empty"], [data-testid="neo-activity-loading"]'
+		);
+		await expect(activityViewAny.first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByTestId('neo-chat-view')).not.toBeAttached();
 
 		// Switch back to Chat
 		const chatTab = page.getByTestId('neo-tab-chat');
 		await chatTab.click();
 		await expect(page.getByTestId('neo-chat-view')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).not.toBeAttached();
+		// Verify activity view is gone (none of its states should be attached)
+		await expect(activityViewAny).toHaveCount(0);
 	});
 
 	test('activity entries with timestamps appear after Neo performs a tool call', async ({
