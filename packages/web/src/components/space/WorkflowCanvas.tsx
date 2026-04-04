@@ -604,6 +604,7 @@ interface NodeBoxProps {
 	status: NodeStatus;
 	tasks: SpaceTask[];
 	isRuntimeMode: boolean;
+	onNodeClick?: (nodeId: string, tasks: SpaceTask[]) => void;
 }
 
 function NodeBox({
@@ -612,6 +613,7 @@ function NodeBox({
 	status,
 	tasks,
 	isRuntimeMode: _isRuntimeMode,
+	onNodeClick,
 }: NodeBoxProps): JSX.Element {
 	const { x, y, width, height } = layout;
 
@@ -715,7 +717,12 @@ function NodeBox({
 	const agentLabel = agentCount > 1 ? `×${agentCount}` : null;
 
 	return (
-		<g data-testid={`node-${node.id}`} class={status === 'active' ? pulseClass : undefined}>
+		<g
+			data-testid={`node-${node.id}`}
+			class={status === 'active' ? pulseClass : undefined}
+			style={onNodeClick ? { cursor: 'pointer' } : undefined}
+			onClick={onNodeClick ? () => onNodeClick(node.id, tasks) : undefined}
+		>
 			{/* Shadow */}
 			<rect x={x + 2} y={y + 2} width={width} height={height} rx={6} fill="rgba(0,0,0,0.4)" />
 			{/* Main box */}
@@ -932,6 +939,12 @@ export interface WorkflowCanvasProps {
 	spaceId: string;
 	/** Optional additional class name */
 	class?: string;
+	/**
+	 * Optional callback fired when a workflow node box is clicked.
+	 * Receives the node ID and the tasks currently associated with that node.
+	 * Only available in runtime mode when `runId` is provided.
+	 */
+	onNodeClick?: (nodeId: string, tasks: SpaceTask[]) => void;
 }
 
 export function WorkflowCanvas({
@@ -939,6 +952,7 @@ export function WorkflowCanvas({
 	runId,
 	spaceId,
 	class: className,
+	onNodeClick,
 }: WorkflowCanvasProps): JSX.Element {
 	const isRuntimeMode = !!runId;
 
@@ -1318,6 +1332,7 @@ export function WorkflowCanvas({
 							status={status}
 							tasks={nodeTasks}
 							isRuntimeMode={isRuntimeMode}
+							onNodeClick={isRuntimeMode ? onNodeClick : undefined}
 						/>
 					);
 				})}
