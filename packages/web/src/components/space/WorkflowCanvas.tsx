@@ -27,7 +27,6 @@ import type {
 	SpaceWorkflowRun,
 	SpaceTask,
 	NodeExecution,
-	SpaceTask,
 	Gate,
 	GateField,
 	WorkflowNode,
@@ -607,8 +606,6 @@ interface NodeBoxProps {
 	executions: NodeExecution[];
 	nodeTasks: SpaceTask[];
 	isRuntimeMode: boolean;
-	/** All tasks for the current workflow run, passed through to the onNodeClick callback. */
-	nodeTasks: SpaceTask[];
 	onNodeClick?: (nodeId: string, tasks: SpaceTask[]) => void;
 }
 
@@ -619,7 +616,6 @@ function NodeBox({
 	executions,
 	nodeTasks,
 	isRuntimeMode: _isRuntimeMode,
-	nodeTasks,
 	onNodeClick,
 }: NodeBoxProps): JSX.Element {
 	const { x, y, width, height } = layout;
@@ -1321,7 +1317,6 @@ export function WorkflowCanvas({
 					const nodeExecs = (nodeExecsByNodeId.get(node.id) ?? []).filter(
 						(e) => e.workflowRunId === runId
 					);
-					const nodeTasks = run ? tasks.filter((task) => task.nodeId === node.id) : [];
 					const status = isRuntimeMode ? getNodeStatus(nodeExecs, run) : 'pending';
 
 					return (
@@ -1331,9 +1326,8 @@ export function WorkflowCanvas({
 							layout={nodeLayout}
 							status={status}
 							executions={nodeExecs}
-							nodeTasks={nodeTasks}
-							isRuntimeMode={isRuntimeMode}
 							nodeTasks={runTasks}
+							isRuntimeMode={isRuntimeMode}
 							onNodeClick={isRuntimeMode ? onNodeClick : undefined}
 						/>
 					);
