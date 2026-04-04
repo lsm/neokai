@@ -16,6 +16,8 @@
  * - Confirming delete calls onDelete; cancelling dismisses dialog
  * - Start node badge shown in header when isStartNode=true
  * - End node badge shown in header when isEndNode=true
+ * - System prompt field with OverrideModeSelector for single-agent mode
+ * - Per-slot instructions and system prompt fields with OverrideModeSelector for multi-agent mode
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -295,14 +297,16 @@ describe('NodeConfigPanel', () => {
 			);
 		});
 
-		it('calls onUpdate with new system prompt when textarea changes', () => {
+		it('calls onUpdate with new system prompt as WorkflowNodeAgentOverride when textarea changes', () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
 			fireEvent.input(getByTestId('node-system-prompt-input'), {
 				target: { value: 'Custom system prompt.' },
 			});
 			expect(onUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({ systemPrompt: 'Custom system prompt.' })
+				expect.objectContaining({
+					systemPrompt: { mode: 'override', value: 'Custom system prompt.' },
+				})
 			);
 		});
 
@@ -648,6 +652,21 @@ describe('NodeConfigPanel', () => {
 			expect(getByTestId('override-badge')).toBeTruthy();
 		});
 
+		it('shows override-badge when slot has systemPrompt override', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [
+					{
+						agentId: 'agent-1',
+						name: 'planner',
+						systemPrompt: { mode: 'override', value: 'Custom prompt.' },
+					},
+				],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('override-badge')).toBeTruthy();
+		});
+
 		it('does not show override-badge when slot has no overrides', () => {
 			const step = makeStep({
 				agentId: '',
@@ -679,7 +698,7 @@ describe('NodeConfigPanel', () => {
 			expect(updatedStep.agents[0].agentId).toBe('agent-2');
 		});
 
-		it('inline system prompt editor is used for multi-agent nodes too', () => {
+		it('inline system prompt editor produces WorkflowNodeAgentOverride for multi-agent nodes', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
@@ -690,7 +709,10 @@ describe('NodeConfigPanel', () => {
 				target: { value: 'Be very strict.' },
 			});
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.systemPrompt).toBe('Be very strict.');
+			expect(updatedStep.systemPrompt).toEqual({
+				mode: 'override',
+				value: 'Be very strict.',
+			});
 		});
 
 		it('adding same agent twice with different roles: both slots shown', () => {
@@ -749,6 +771,150 @@ describe('NodeConfigPanel', () => {
 			});
 
 			expect(queryByTestId('node-system-prompt-input')).toBeTruthy();
+		});
+	});
+
+	// ============================================================================
+	// Single-agent mode: system prompt with OverrideModeSelector
+	// ============================================================================
+
+	describe('single-agent system prompt with mode selector', () => {
+		it('shows single-agent system prompt field with mode selector', () => {
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(getByTestId('single-agent-system-prompt')).toBeTruthy();
+			// The AgentsSection (single-agent mode) has an OverrideModeSelector
+			// There may be multiple selectors on the page (agents section + node-level section),
+			// so just check at least one exists
+			expect(getByTestId('override-mode-selector')).toBeTruthy();
+		});
+
+		it('system prompt mode selector toggles between override and expand', async () => {
+			const onUpdate = vi.fn();
+			const step = makeStep();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+
+			// The AgentsSection in single-agent mode has an OverrideModeSelector for systemPrompt
+			const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
+			expect(modeSelectors.length).toBeGreaterThanOrEqual(1);
+
+			// Switch to expand mode
+			const expandButton = modeSelectors[0].querySelector(
+				'[data-testid="mode-expand"]'
+			) as HTMLElement;
+			fireEvent.click(expandButton);
+
+			// Now type a system prompt
+			await act(async () => {
+				fireEvent.input(getByTestId('single-agent-system-prompt'), {
+					target: { value: 'Extra context.' },
+				});
+			});
+
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					systemPrompt: { mode: 'expand', value: 'Extra context.' },
+				})
+			);
+		});
+	});
+
+	// ============================================================================
+	// Multi-agent mode: per-slot fields with OverrideModeSelector
+	// ============================================================================
+
+	describe('multi-agent per-slot fields with mode selectors', () => {
+		it('shows per-slot instructions field with mode selector', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'coder' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('agent-slot-instructions')).toBeTruthy();
+		});
+
+		it('shows per-slot system prompt field with mode selector', () => {
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'coder' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+			expect(getByTestId('agent-slot-system-prompt')).toBeTruthy();
+		});
+
+		it('per-slot instructions use correct override mode', async () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'coder' }],
+			});
+			const { container, getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+
+			// Find all override mode selectors in the agents-list
+			const agentsList = getByTestId('agents-list');
+			const modeSelectors = agentsList.querySelectorAll('[data-testid="override-mode-selector"]');
+			// First selector is for instructions
+			const instructionsSelector = modeSelectors[0];
+
+			// Switch to expand mode
+			const expandButton = instructionsSelector.querySelector(
+				'[data-testid="mode-expand"]'
+			) as HTMLElement;
+			fireEvent.click(expandButton);
+
+			// Type instructions
+			await act(async () => {
+				fireEvent.input(getByTestId('agent-slot-instructions'), {
+					target: { value: 'Extra instructions.' },
+				});
+			});
+
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agents: [
+						expect.objectContaining({
+							instructions: { mode: 'expand', value: 'Extra instructions.' },
+						}),
+					],
+				})
+			);
+		});
+
+		it('per-slot system prompt uses correct override mode', async () => {
+			const onUpdate = vi.fn();
+			const step = makeStep({
+				agentId: '',
+				agents: [{ agentId: 'agent-1', name: 'coder' }],
+			});
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+
+			// Find all override mode selectors in the agents-list
+			const agentsList = getByTestId('agents-list');
+			const modeSelectors = agentsList.querySelectorAll('[data-testid="override-mode-selector"]');
+			// Second selector is for system prompt
+			const systemPromptSelector = modeSelectors[1];
+
+			// Switch to expand mode
+			const expandButton = systemPromptSelector.querySelector(
+				'[data-testid="mode-expand"]'
+			) as HTMLElement;
+			fireEvent.click(expandButton);
+
+			// Type system prompt
+			await act(async () => {
+				fireEvent.input(getByTestId('agent-slot-system-prompt'), {
+					target: { value: 'Extra system prompt.' },
+				});
+			});
+
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agents: [
+						expect.objectContaining({
+							systemPrompt: { mode: 'expand', value: 'Extra system prompt.' },
+						}),
+					],
+				})
+			);
 		});
 	});
 });

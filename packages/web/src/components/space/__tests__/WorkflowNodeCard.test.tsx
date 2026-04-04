@@ -10,14 +10,19 @@
  * - Up/down reorder buttons disabled at boundaries
  * - Remove button fires onRemove
  * - Expand/collapse toggle
+ * - OverrideModeSelector component
+ * - extractOverrideValue and buildOverride helpers
+ * - Single-agent system prompt field
+ * - Multi-agent per-agent mode selectors for instructions and system prompt
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
+import type { SpaceAgent, WorkflowNodeAgentOverride } from '@neokai/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
+import { extractOverrideValue, buildOverride, OverrideModeSelector } from '../WorkflowNodeCard';
 
 vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -166,9 +171,9 @@ describe('WorkflowNodeCard', () => {
 			const selects = container.querySelectorAll('select');
 			const agentSelect = selects[0] as HTMLSelectElement;
 			const options = Array.from(agentSelect.querySelectorAll('option')).map((o) => o.textContent);
-			expect(options).toContain('planner (planner)');
-			expect(options).toContain('coder (coder)');
-			expect(options).toContain('general (general)');
+			expect(options).toContain('planner');
+			expect(options).toContain('coder');
+			expect(options).toContain('general');
 		});
 
 		it('shows currently selected agent in dropdown', () => {
@@ -205,10 +210,54 @@ describe('WorkflowNodeCard', () => {
 			const { container } = render(
 				<WorkflowNodeCard {...makeProps({ expanded: true, onUpdate })} />
 			);
-			const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-			fireEvent.input(textarea, { target: { value: 'Do the thing.' } });
+			// The expanded view now has two textareas: system prompt (first) and instructions (second).
+			// Find the instructions textarea by index.
+			const textareas = container.querySelectorAll('textarea');
+			const instructionsTextarea = textareas[1] as HTMLTextAreaElement;
+			fireEvent.input(instructionsTextarea, { target: { value: 'Do the thing.' } });
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({ instructions: 'Do the thing.' })
+			);
+		});
+
+		it('shows system prompt textarea for single-agent nodes when expanded', () => {
+			const { container } = render(<WorkflowNodeCard {...makeProps({ expanded: true })} />);
+			const systemPromptTextarea = container.querySelector(
+				'[data-testid="single-agent-system-prompt"]'
+			) as HTMLTextAreaElement;
+			expect(systemPromptTextarea).toBeTruthy();
+		});
+
+		it('system prompt calls onUpdate with WorkflowNodeAgentOverride', () => {
+			const onUpdate = vi.fn();
+			const { container } = render(
+				<WorkflowNodeCard {...makeProps({ expanded: true, onUpdate })} />
+			);
+			const systemPromptTextarea = container.querySelector(
+				'[data-testid="single-agent-system-prompt"]'
+			) as HTMLTextAreaElement;
+			fireEvent.input(systemPromptTextarea, { target: { value: 'Custom system prompt.' } });
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					systemPrompt: { mode: 'override', value: 'Custom system prompt.' },
+				})
+			);
+		});
+
+		it('system prompt clears to undefined when value is emptied', () => {
+			const onUpdate = vi.fn();
+			const node = makeStep({
+				systemPrompt: { mode: 'override', value: 'Existing prompt.' },
+			});
+			const { container } = render(
+				<WorkflowNodeCard {...makeProps({ node, expanded: true, onUpdate })} />
+			);
+			const systemPromptTextarea = container.querySelector(
+				'[data-testid="single-agent-system-prompt"]'
+			) as HTMLTextAreaElement;
+			fireEvent.input(systemPromptTextarea, { target: { value: '' } });
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({ systemPrompt: undefined })
 			);
 		});
 	});
@@ -390,6 +439,79 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 });
 
 // ============================================================================
+// Multi-agent per-agent mode selectors
+// ============================================================================
+
+describe('WorkflowNodeCard — multi-agent per-agent mode selectors', () => {
+	afterEach(() => cleanup());
+
+	it('per-agent instructions include OverrideModeSelector', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', name: 'coder' }],
+		});
+		const { getAllByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: true })} />);
+		// One override-mode-selector for instructions in the always-visible per-agent section
+		const selectors = getAllByTestId('override-mode-selector');
+		expect(selectors.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('per-agent system prompt includes OverrideModeSelector after expanding slot overrides', () => {
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', name: 'coder' }],
+		});
+		const { getAllByTestId, getByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
+		);
+		// Before expanding, there is 1 selector (for instructions)
+		expect(getAllByTestId('override-mode-selector')).toHaveLength(1);
+		// Expand slot overrides to see system prompt mode selector
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+		// Now there should be 2 selectors: instructions + system prompt
+		expect(getAllByTestId('override-mode-selector')).toHaveLength(2);
+	});
+
+	it('toggling mode selector changes the mode used in override for system prompt', async () => {
+		const onUpdate = vi.fn();
+		const node = makeStep({
+			agentId: '',
+			agents: [{ agentId: 'agent-1', name: 'coder' }],
+		});
+		const { getByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: true, onUpdate })} />
+		);
+		// Expand slot overrides to see system prompt
+		fireEvent.click(getByTestId('toggle-overrides-button'));
+
+		// Switch to 'expand' mode for system prompt
+		const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
+		// The second selector is for system prompt (first is for instructions)
+		const systemPromptSelector = modeSelectors[1];
+		const expandButton = systemPromptSelector.querySelector(
+			'[data-testid="mode-expand"]'
+		) as HTMLElement;
+		fireEvent.click(expandButton);
+
+		// Now type a system prompt
+		const systemPromptInput = getByTestId('agent-system-prompt-input');
+		await act(async () => {
+			fireEvent.input(systemPromptInput, { target: { value: 'Extra context.' } });
+		});
+
+		expect(onUpdate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agents: [
+					expect.objectContaining({
+						systemPrompt: { mode: 'expand', value: 'Extra context.' },
+					}),
+				],
+			})
+		);
+	});
+});
+
+// ============================================================================
 // Agent completion state
 // ============================================================================
 
@@ -495,5 +617,115 @@ describe('WorkflowNodeCard — agent completion state', () => {
 		// The outer border should include 'green'
 		const outer = container.firstElementChild as HTMLElement;
 		expect(outer.className).toContain('green');
+	});
+});
+
+// ============================================================================
+// OverrideModeSelector component
+// ============================================================================
+
+describe('OverrideModeSelector', () => {
+	afterEach(() => cleanup());
+
+	it('renders with both Override and Expand buttons', () => {
+		const onChange = vi.fn();
+		const { getByText } = render(<OverrideModeSelector mode="override" onChange={onChange} />);
+		expect(getByText('Override')).toBeTruthy();
+		expect(getByText('Expand')).toBeTruthy();
+	});
+
+	it('renders correct active state for override mode', () => {
+		const onChange = vi.fn();
+		const { getByTestId } = render(<OverrideModeSelector mode="override" onChange={onChange} />);
+		const overrideButton = getByTestId('mode-override');
+		expect(overrideButton.className).toContain('bg-blue-700');
+	});
+
+	it('renders correct active state for expand mode', () => {
+		const onChange = vi.fn();
+		const { getByTestId } = render(<OverrideModeSelector mode="expand" onChange={onChange} />);
+		const expandButton = getByTestId('mode-expand');
+		expect(expandButton.className).toContain('bg-teal-700');
+	});
+
+	it('calls onChange when Override button is clicked', () => {
+		const onChange = vi.fn();
+		const { getByTestId } = render(<OverrideModeSelector mode="expand" onChange={onChange} />);
+		fireEvent.click(getByTestId('mode-override'));
+		expect(onChange).toHaveBeenCalledWith('override');
+	});
+
+	it('calls onChange when Expand button is clicked', () => {
+		const onChange = vi.fn();
+		const { getByTestId } = render(<OverrideModeSelector mode="override" onChange={onChange} />);
+		fireEvent.click(getByTestId('mode-expand'));
+		expect(onChange).toHaveBeenCalledWith('expand');
+	});
+});
+
+// ============================================================================
+// extractOverrideValue helper
+// ============================================================================
+
+describe('extractOverrideValue', () => {
+	it('returns empty string for undefined', () => {
+		expect(extractOverrideValue(undefined)).toBe('');
+	});
+
+	it('returns empty string for null', () => {
+		expect(extractOverrideValue(null as unknown as WorkflowNodeAgentOverride)).toBe('');
+	});
+
+	it('returns the string value for plain string input', () => {
+		expect(extractOverrideValue('hello world')).toBe('hello world');
+	});
+
+	it('returns the value property for override object', () => {
+		expect(
+			extractOverrideValue({ mode: 'override', value: 'system prompt text' })
+		).toBe('system prompt text');
+	});
+
+	it('returns the value property for expand object', () => {
+		expect(extractOverrideValue({ mode: 'expand', value: 'extra context' })).toBe(
+			'extra context'
+		);
+	});
+
+	it('returns empty string when override value is empty', () => {
+		expect(extractOverrideValue({ mode: 'override', value: '' })).toBe('');
+	});
+
+	it('returns empty string when override value is undefined', () => {
+		expect(extractOverrideValue({ mode: 'override', value: undefined as unknown as string })).toBe('');
+	});
+});
+
+// ============================================================================
+// buildOverride helper
+// ============================================================================
+
+describe('buildOverride', () => {
+	it('returns override object for non-empty value with override mode', () => {
+		const result = buildOverride('Custom prompt.', 'override');
+		expect(result).toEqual({ mode: 'override', value: 'Custom prompt.' });
+	});
+
+	it('returns override object for non-empty value with expand mode', () => {
+		const result = buildOverride('Extra context.', 'expand');
+		expect(result).toEqual({ mode: 'expand', value: 'Extra context.' });
+	});
+
+	it('returns undefined for empty string', () => {
+		expect(buildOverride('', 'override')).toBeUndefined();
+	});
+
+	it('returns undefined for whitespace-only string', () => {
+		expect(buildOverride('   ', 'expand')).toBeUndefined();
+	});
+
+	it('trims the value', () => {
+		const result = buildOverride('  Custom prompt.  ', 'override');
+		expect(result).toEqual({ mode: 'override', value: 'Custom prompt.' });
 	});
 });
