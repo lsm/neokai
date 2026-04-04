@@ -34,6 +34,8 @@ import {
 	createRoomWithTaskAndGoal,
 	deleteRoom,
 	createTask,
+	createTestFile,
+	deleteTestFile,
 } from '../helpers/room-helpers';
 import {
 	typeInChatInput,
@@ -160,6 +162,7 @@ test.describe('Reference Autocomplete — Dropdown Appearance', () => {
 
 test.describe('Reference Selection — Input Insertion', () => {
 	let roomId = '';
+	const fixtureFilePath = 'e2e-ref-fixtures/pack-fixture.ts';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -169,6 +172,7 @@ test.describe('Reference Selection — Input Insertion', () => {
 	});
 
 	test.afterEach(async ({ page }) => {
+		await deleteTestFile(page, fixtureFilePath);
 		await deleteRoom(page, roomId);
 		roomId = '';
 	});
@@ -225,9 +229,9 @@ test.describe('Reference Selection — Input Insertion', () => {
 	});
 
 	test('selecting a file result inserts @ref{file:…} or @ref{folder:…}', async ({ page }) => {
-		// File search requires non-empty query. Try to find files matching "pack".
-		// Note: This test depends on file index being populated for the test workspace.
-		await typeInChatInput(page, '@pack');
+		// Create deterministic fixture file so file autocomplete always has a match in CI.
+		await createTestFile(page, fixtureFilePath, 'export const fixture = true;\n');
+		await typeInChatInput(page, '@pack-fixture');
 		// Wait longer for file search results to load
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
 		await dropdown.waitFor({ state: 'visible', timeout: 15000 });
@@ -400,15 +404,18 @@ test.describe('Reference Token — Entity-Specific Title Rendering', () => {
 
 test.describe('Reference Autocomplete — Standalone Session', () => {
 	let sessionId: string | null = null;
+	const fixtureFilePath = 'e2e-ref-fixtures/plain-session-file.ts';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		await createTestFile(page, fixtureFilePath, 'export const standalone = true;\n');
 		// createSessionViaUI may fail in some environments - let it throw so CI catches issues
 		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
+		await deleteTestFile(page, fixtureFilePath);
 		if (sessionId) {
 			await cleanupTestSession(page, sessionId);
 			sessionId = null;
@@ -416,9 +423,9 @@ test.describe('Reference Autocomplete — Standalone Session', () => {
 	});
 
 	test('typing @ shows only file/folder results (no tasks or goals)', async ({ page }) => {
-		// Note: File search requires a non-empty query. Use @p to search for files starting with "p".
+		// Query deterministic fixture file created in beforeEach.
 		// For standalone sessions, tasks and goals are not available.
-		await typeInChatInput(page, '@p');
+		await typeInChatInput(page, '@plain-session-file');
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
 		// Wait longer for file search results
 		await dropdown.waitFor({ state: 'visible', timeout: 15000 });
