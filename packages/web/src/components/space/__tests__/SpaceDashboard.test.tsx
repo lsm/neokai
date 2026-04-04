@@ -13,6 +13,7 @@ let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockActiveRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -22,6 +23,7 @@ vi.mock('../../../lib/space-store', () => ({
 			tasks: mockTasks,
 			activeRuns: mockActiveRuns,
 			workflowRuns: mockWorkflowRuns,
+			workflows: mockWorkflows,
 		};
 	},
 }));
@@ -55,6 +57,7 @@ mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
 mockActiveRuns = signal<SpaceWorkflowRun[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockWorkflows = signal([]);
 
 import { SpaceDashboard } from '../SpaceDashboard';
 
@@ -127,6 +130,7 @@ describe('SpaceDashboard', () => {
 		mockTasks.value = [];
 		mockActiveRuns.value = [];
 		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [];
 	});
 
 	afterEach(() => {
@@ -255,5 +259,31 @@ describe('SpaceDashboard', () => {
 		mockWorkflowRuns.value = [];
 		const { container } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(container.querySelector('[data-testid="workflow-canvas-svg"]')).toBeNull();
+	});
+
+	it('renders Create Task and Start Workflow Run action buttons', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByRole('button', { name: 'Create Task' })).toBeTruthy();
+		expect(getByRole('button', { name: 'Start Workflow Run' })).toBeTruthy();
+	});
+
+	it('clicking Create Task button opens the Create Task dialog', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByRole('button', { name: 'Create Task' }));
+		// Modal renders via Portal into document.body
+		const dialog = document.body.querySelector('[role="dialog"]');
+		expect(dialog).toBeTruthy();
+		expect(dialog?.querySelector('h2')?.textContent).toBe('Create Task');
+	});
+
+	it('clicking Start Workflow Run button opens the Start Workflow Run dialog', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByRole('button', { name: 'Start Workflow Run' }));
+		const dialog = document.body.querySelector('[role="dialog"]');
+		expect(dialog).toBeTruthy();
+		expect(dialog?.querySelector('h2')?.textContent).toBe('Start Workflow Run');
 	});
 });

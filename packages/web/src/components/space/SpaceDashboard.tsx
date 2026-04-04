@@ -2,6 +2,8 @@ import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 import { WorkflowCanvas } from './WorkflowCanvas';
+import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
+import { WorkflowRunStartDialog } from './WorkflowRunStartDialog';
 
 interface SpaceDashboardProps {
 	spaceId: string;
@@ -261,6 +263,8 @@ export function SpaceDashboard({
 	compact = false,
 }: SpaceDashboardProps) {
 	const [activeTab, setActiveTab] = useState<OverviewTab>('active');
+	const [showCreateTask, setShowCreateTask] = useState(false);
+	const [showStartWorkflow, setShowStartWorkflow] = useState(false);
 	const loading = spaceStore.loading.value;
 	const space = spaceStore.space.value;
 	const tasks = [...spaceStore.tasks.value].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -305,7 +309,28 @@ export function SpaceDashboard({
 
 	return (
 		<div class={cn('flex h-full min-h-0 flex-col overflow-y-auto', compact ? 'p-4' : 'p-6')}>
+			<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
+			<WorkflowRunStartDialog
+				isOpen={showStartWorkflow}
+				onClose={() => setShowStartWorkflow(false)}
+			/>
 			<div class="flex w-full flex-1 min-h-0 flex-col gap-6">
+				<div class="flex items-center justify-end gap-2">
+					<button
+						type="button"
+						onClick={() => setShowStartWorkflow(true)}
+						class="flex items-center gap-1.5 rounded-lg border border-dark-600 bg-dark-800 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:border-dark-500 hover:bg-dark-700 hover:text-gray-100"
+					>
+						Start Workflow Run
+					</button>
+					<button
+						type="button"
+						onClick={() => setShowCreateTask(true)}
+						class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+					>
+						Create Task
+					</button>
+				</div>
 				{activeRun && (
 					<section class="rounded-[28px] border border-dark-700 bg-dark-950/70 overflow-hidden">
 						<WorkflowCanvas
