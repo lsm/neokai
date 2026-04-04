@@ -1238,7 +1238,12 @@ export function WorkflowCanvas({
 					</marker>
 				</defs>
 
-				{/* Channel lines */}
+				{/* Channel lines — rendered in two layers so gate icons are always
+				    above ALL channel hitbox paths. Without this separation, a later
+				    channel's transparent hitbox (pointerEvents: 'stroke') could overlap
+				    an earlier channel's gate icon and intercept clicks. */}
+
+				{/* Layer 1: Channel paths + hitboxes */}
 				{renderedChannels.map((ch) => {
 					const fromLayout = layout.get(ch.fromId);
 					const toLayout = layout.get(ch.toId);
@@ -1270,16 +1275,8 @@ export function WorkflowCanvas({
 						else strokeColor = '#44403c';
 					}
 
-					// Channels without gates are always available (plain arrows)
-					const isHumanGate = gate ? isHumanApprovalGate(gate.fields ?? []) : false;
-					const voteCount =
-						gate && isRuntimeMode ? computeVoteCount(gate.fields ?? [], gateData) : undefined;
-
-					// Script error reason from gate data (for display below the gate icon)
-					const scriptErrorReason = scriptResult.reason;
-
 					return (
-						<g key={`ch-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
+						<g key={`ch-line-${ch.id}-${ch.toId}`} data-testid={`channel-${ch.id}`}>
 							{/* Invisible wider hitbox */}
 							<path
 								d={d}
@@ -1301,7 +1298,56 @@ export function WorkflowCanvas({
 								markerEnd={`url(#${hasGate ? arrowMarkerGatedId : arrowMarkerId})`}
 								style={{ pointerEvents: 'none' }}
 							/>
+						</g>
+					);
+				})}
 
+				{/* Layer 2: Nodes (above channel paths, below gate icons) */}
+				{workflow.nodes.map((node) => {
+					const nodeLayout = layout.get(node.id);
+					if (!nodeLayout) return null;
+
+					const nodeTasks = runTasks.filter((t) => t.workflowRunId === node.id);
+					const status = isRuntimeMode ? getNodeStatus(node.id, runTasks, run) : 'pending';
+
+					return (
+						<NodeBox
+							key={node.id}
+							node={node}
+							layout={nodeLayout}
+							status={status}
+							tasks={nodeTasks}
+							isRuntimeMode={isRuntimeMode}
+						/>
+					);
+				})}
+
+				{/* Layer 3: Gate icons + controls (above all channel hitboxes AND nodes,
+				    so gate action popups are never obscured by overlapping elements) */}
+				{renderedChannels.map((ch) => {
+					const fromLayout = layout.get(ch.fromId);
+					const toLayout = layout.get(ch.toId);
+					if (!fromLayout || !toLayout) return null;
+
+					const pts = computeChannelPath(fromLayout, toLayout);
+					const hasGate = !!ch.gateId;
+					const gate = ch.gateId ? gatesById.get(ch.gateId) : undefined;
+					const gateData = ch.gateId ? (gateDataMap.get(ch.gateId) ?? {}) : {};
+					const scriptResult =
+						gate && isRuntimeMode ? parseScriptResult(gateData) : { failed: false };
+					const gateStatus: GateStatus = gate
+						? evaluateGateStatus(gate, gateData, scriptResult.failed)
+						: 'open';
+					const isHumanGate = gate ? isHumanApprovalGate(gate.fields ?? []) : false;
+					const voteCount =
+						gate && isRuntimeMode ? computeVoteCount(gate.fields ?? [], gateData) : undefined;
+					const scriptErrorReason = scriptResult.reason;
+
+					// Skip channels that have no gate/controls to render
+					if (!hasGate && isRuntimeMode) return null;
+
+					return (
+						<g key={`ch-gate-${ch.id}-${ch.toId}`}>
 							{/* Gate icon ON the channel line (at midpoint) */}
 							{hasGate && gate && (
 								<GateIcon
@@ -1379,26 +1425,6 @@ export function WorkflowCanvas({
 								</g>
 							)}
 						</g>
-					);
-				})}
-
-				{/* Nodes */}
-				{workflow.nodes.map((node) => {
-					const nodeLayout = layout.get(node.id);
-					if (!nodeLayout) return null;
-
-					const nodeTasks = runTasks.filter((t) => t.workflowRunId === node.id);
-					const status = isRuntimeMode ? getNodeStatus(node.id, runTasks, run) : 'pending';
-
-					return (
-						<NodeBox
-							key={node.id}
-							node={node}
-							layout={nodeLayout}
-							status={status}
-							tasks={nodeTasks}
-							isRuntimeMode={isRuntimeMode}
-						/>
 					);
 				})}
 			</svg>
