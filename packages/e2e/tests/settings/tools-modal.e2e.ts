@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI, getModal } from '../helpers/wait-helpers';
 
 /**
  * Tools Modal E2E Tests (Redesigned)
@@ -43,9 +43,7 @@ test.describe('Tools Modal - Redesigned', () => {
 			)
 			.first()
 			.click();
-		const dialog = page.locator('[role="dialog"]').first();
-		await expect(dialog).toBeVisible({ timeout: 5000 });
-		return dialog;
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 	}
 
 	test('should open tools modal and show group sections', async ({ page }) => {
@@ -136,7 +134,7 @@ test.describe('Tools Modal - Redesigned', () => {
 		const dialog = await openToolsModal(page);
 
 		// Wait for MCP loading to finish before checking collapse
-		await expect(dialog.getByText('Loading servers...')).not.toBeVisible({
+		await expect(getModal(page).getByText('Loading servers...')).not.toBeVisible({
 			timeout: 10000,
 		});
 
@@ -191,7 +189,9 @@ test.describe('Tools Modal - Redesigned', () => {
 	test('should close modal with Cancel without saving', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		const dialog = await openToolsModal(page);
+		await openToolsModal(page);
+
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible();
 
 		// Click Cancel
@@ -220,7 +220,7 @@ test.describe('Tools Modal - Redesigned', () => {
 			const saveBtn = dialog.getByRole('button', { name: 'Save' });
 			if (await saveBtn.isEnabled()) {
 				await saveBtn.click();
-				await expect(dialog).not.toBeVisible({ timeout: 5000 });
+				await expect(getModal(page)).not.toBeVisible({ timeout: 5000 });
 
 				// Reopen modal
 				dialog = await openToolsModal(page);
