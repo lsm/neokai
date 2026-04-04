@@ -48,10 +48,15 @@ test.describe('Tools Modal - Redesigned', () => {
 
 		await openToolsModal(page);
 
-		// Should show the group section headers
-		await expect(page.getByText('App MCP Servers')).toBeVisible();
-		await expect(page.getByText('Project MCP Servers')).toBeVisible();
-		await expect(page.getByText('NeoKai Tools')).toBeVisible();
+		// Should show the group section headers.
+		// "App MCP Servers" renders as a <button> (GroupHeader) when skills exist, or a plain
+		// <span> when no app skills are configured. The button's full text includes the item count
+		// (e.g. "App MCP Servers (2)"), so { exact: true } matches only the inner <span> whose
+		// text is exactly "App MCP Servers" — correct in both DOM states without strict-mode issues.
+		await expect(page.getByText('App MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
+		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
+		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 	});
 
 	test('should show Advanced section collapsed by default', async ({ page }) => {
@@ -77,8 +82,10 @@ test.describe('Tools Modal - Redesigned', () => {
 		// Claude Code Preset should now be visible
 		await expect(page.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
-		// Setting Sources should also be visible
-		await expect(page.getByText('Setting Sources')).toBeVisible();
+		// Setting Sources should also be visible.
+		// .first() is required: getByText matches both the <h4> element and its parent <div>
+		// (whose text content is a superset), causing a strict-mode violation without it.
+		await expect(page.getByText('Setting Sources').first()).toBeVisible();
 	});
 
 	test('should show scope badges for groups', async ({ page }) => {
