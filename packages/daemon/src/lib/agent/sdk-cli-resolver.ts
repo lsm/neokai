@@ -10,7 +10,7 @@
  * it to a real filesystem path.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -105,6 +105,9 @@ function resolveFromNodeModules(): string | undefined {
  * Child processes can't access /$bunfs/root/ virtual paths, so we extract
  * the file to a temp directory. The path is content-hashed so SDK upgrades
  * get a fresh extraction.
+ *
+ * After extraction, attempts to link system ripgrep into the SDK's expected
+ * vendor path so that sandbox mode works on Linux/macOS CI environments.
  */
 function extractEmbeddedCli(): string | undefined {
 	if (!embeddedCliPath) return undefined;
@@ -117,16 +120,88 @@ function extractEmbeddedCli(): string | undefined {
 		const extractDir = join(tmpdir(), 'neokai-sdk', hash);
 		const extractPath = join(extractDir, 'cli.js');
 
-		if (existsSync(extractPath)) {
-			return extractPath;
+		if (!existsSync(extractPath)) {
+			mkdirSync(extractDir, { recursive: true });
+			writeFileSync(extractPath, content, { mode: 0o755 });
 		}
 
-		mkdirSync(extractDir, { recursive: true });
-		writeFileSync(extractPath, content, { mode: 0o755 });
+		// Ensure vendor ripgrep is linked for sandbox mode.
+		// The SDK checks for ripgrep at vendor/ripgrep/<platform>/rg relative to cli.js.
+		// In compiled binary mode the vendor directory is not bundled, so we symlink
+		// the system-installed ripgrep (from apt-get / brew) if available.
+		linkSystemRipgrepToVendor(extractDir);
 
 		return extractPath;
 	} catch {
 		return undefined;
+	}
+}
+
+/**
+ * Return the SDK vendor platform string (e.g. "x64-linux") matching the
+ * directory names inside @anthropic-ai/claude-agent-sdk/vendor/ripgrep/.
+ * Returns undefined on unsupported platforms (Windows).
+ */
+function getSdkVendorPlatform(): string | undefined {
+	const { platform, arch } = process;
+	if (platform === 'win32') return undefined;
+	const os = platform === 'darwin' ? 'darwin' : 'linux';
+	const cpu = arch === 'arm64' ? 'arm64' : 'x64';
+	return `${cpu}-${os}`;
+}
+
+/**
+ * Common locations for a system-installed ripgrep binary.
+ * Checked in order; the first existing path wins.
+ */
+const SYSTEM_RIPGREP_PATHS = [
+	'/usr/bin/rg',
+	'/usr/local/bin/rg',
+	'/opt/homebrew/bin/rg',
+	'/opt/homebrew/opt/ripgrep/bin/rg',
+];
+
+/**
+ * Locate the system ripgrep executable, or return undefined if not found.
+ */
+function findSystemRipgrep(): string | undefined {
+	for (const p of SYSTEM_RIPGREP_PATHS) {
+		if (existsSync(p)) return p;
+	}
+	return undefined;
+}
+
+/**
+ * Symlink the system ripgrep into the SDK's expected vendor directory.
+ *
+ * When the compiled binary extracts cli.js to extractDir, the SDK will look
+ * for ripgrep at `<extractDir>/vendor/ripgrep/<platform>/rg`.  This function
+ * creates that symlink pointing to the system ripgrep so that sandbox mode
+ * works without needing the full vendor bundle embedded in the binary.
+ *
+ * No-op if:
+ *  - Platform is Windows (unsupported)
+ *  - System ripgrep is not installed
+ *  - The vendor symlink already exists
+ */
+function linkSystemRipgrepToVendor(extractDir: string): void {
+	const platform = getSdkVendorPlatform();
+	if (!platform) return;
+
+	const ripgrepDir = join(extractDir, 'vendor', 'ripgrep', platform);
+	const ripgrepLink = join(ripgrepDir, 'rg');
+
+	if (existsSync(ripgrepLink)) return;
+
+	const systemRg = findSystemRipgrep();
+	if (!systemRg) return;
+
+	try {
+		mkdirSync(ripgrepDir, { recursive: true });
+		symlinkSync(systemRg, ripgrepLink);
+	} catch {
+		// Race condition: another process created it, or filesystem doesn't support symlinks.
+		// Silently ignore — the SDK will either find the symlink or report its own error.
 	}
 }
 

@@ -30,6 +30,7 @@ import {
 	createUniqueSpaceDir,
 	createSpaceTaskViaRpc,
 	deleteSpaceViaRpc,
+	deleteSpaceWorkflowsViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -56,6 +57,9 @@ test.describe('Comprehensive Space Navigation', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'nav');
 		spaceName = `E2E SpaceNav ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 		taskTitle = `Nav Task ${Date.now()}`;
 		taskId = await createSpaceTaskViaRpc(page, spaceId, taskTitle);
 	});

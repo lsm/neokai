@@ -377,9 +377,9 @@ test.describe('Visual Workflow Editor', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 
 		// Add a step (so validation reaches the name check)
-		// Task Agent is always present, so 1 regular node + Task Agent = 2 total
+		// Task Agent is not rendered as a workflow-node-* element, so only 1 node after clicking add-step-button
 		await editor.getByTestId('add-step-button').click();
-		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(2, {
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
 			timeout: 3000,
 		});
 
@@ -406,9 +406,9 @@ test.describe('Visual Workflow Editor', () => {
 		await editor.getByTestId('workflow-name-input').fill('Test Validation Workflow');
 
 		// Add a step but do not assign an agent
-		// Task Agent is always present, so 1 regular node + Task Agent = 2 total
+		// Task Agent is not rendered as a workflow-node-* element, so only 1 node after clicking add-step-button
 		await editor.getByTestId('add-step-button').click();
-		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(2, {
+		await expect(editor.locator('[data-testid^="workflow-node-"]')).toHaveCount(1, {
 			timeout: 3000,
 		});
 

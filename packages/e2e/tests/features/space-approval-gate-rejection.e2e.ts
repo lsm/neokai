@@ -29,7 +29,8 @@
  * transitions to `needs_attention` with failureReason `humanRejected`.
  *
  * Timeout conventions:
- *   - 10000ms: state transitions requiring a server round-trip (gate data load, run status)
+ *   - 30000ms: canvas/SVG and gate-icon visibility (workflow data from live query may be slow under load)
+ *   - 10000ms: server round-trips that don't need canvas-level wait (gate data load, run status)
  *   - 5000ms: UI-only changes (popup visibility, overlay open/close, tab content)
  */
 
@@ -117,12 +118,17 @@ async function deleteSpace(
 async function rejectViaPopup(page: Page): Promise<void> {
 	// Wait for canvas to be in runtime mode with gate data fetched.
 	// Both the container and SVG must be visible before gate icons appear.
-	await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 10000 });
-	await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
+	// Use 30s timeout — workflow data from the store (live query) may load slowly under load.
+	await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas')).toBeVisible({
+		timeout: 30000,
+	});
+	await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')).toBeVisible({
+		timeout: 30000,
+	});
 
 	// Gate data is fetched async after canvas renders; wait for the gate icon.
-	const waitingGate = page.getByTestId('gate-icon-waiting_human');
-	await expect(waitingGate).toBeVisible({ timeout: 10000 });
+	const waitingGate = page.getByTestId('canvas-panel').getByTestId('gate-icon-waiting_human');
+	await expect(waitingGate).toBeVisible({ timeout: 30000 });
 
 	// Open the action popup.
 	await waitingGate.click();
@@ -132,12 +138,18 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	await page.locator('button:has-text("Reject")').first().click();
 
 	// Wait for the server round-trip: run transitions to needs_attention + gate becomes blocked.
-	await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
+	await expect(page.getByTestId('canvas-panel').getByTestId('gate-icon-blocked')).toBeVisible({
+		timeout: 10000,
+	});
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Approval Gate Rejection', () => {
+	// Run tests sequentially to avoid overloading the server with parallel task-agent
+	// SDK startup timeouts — parallel execution caused tests 1-2 to time out waiting
+	// for the gate-icon-waiting_human to appear on the canvas.
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
@@ -170,12 +182,18 @@ test.describe('Approval Gate Rejection', () => {
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
 		// Wait for canvas to be fully initialized (container + SVG + gate data).
-		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 10000 });
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
+		// Use 30s here — the canvas panel requires workflow data from the store (live query),
+		// which may take longer when the server is under load at test start.
+		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas')).toBeVisible({
+			timeout: 30000,
+		});
+		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')).toBeVisible({
+			timeout: 30000,
+		});
 
 		// The plan-approval-gate starts in waiting_human (amber pulsing).
-		const waitingGate = page.getByTestId('gate-icon-waiting_human');
-		await expect(waitingGate).toBeVisible({ timeout: 10000 });
+		const waitingGate = page.getByTestId('canvas-panel').getByTestId('gate-icon-waiting_human');
+		await expect(waitingGate).toBeVisible({ timeout: 30000 });
 
 		// Open the action popup.
 		await waitingGate.click();
@@ -196,7 +214,9 @@ test.describe('Approval Gate Rejection', () => {
 		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
 
 		// The gate should now show as "blocked" (red lock) on the canvas.
-		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('canvas-panel').getByTestId('gate-icon-blocked')).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Canvas banner: "Workflow paused — awaiting approval" (run.failureReason === 'humanRejected').
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
@@ -237,8 +257,12 @@ test.describe('Approval Gate Rejection', () => {
 		});
 
 		// The canvas container and SVG are still present (not replaced by an error fallback).
-		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas')).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	// ─── Test 4: Space remains usable after rejection ─────────────────────────
@@ -260,8 +284,12 @@ test.describe('Approval Gate Rejection', () => {
 
 		// Navigate back to Overview — canvas should still be visible with the blocked state.
 		await page.locator('[data-testid="space-detail-dashboard"]').click();
-		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas')).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.getByTestId('canvas-panel').getByTestId('gate-icon-blocked')).toBeVisible({
+			timeout: 5000,
+		});
 
 		// The attention banner must still be present.
 		await expect(page.locator('text=Workflow paused — awaiting approval')).toBeVisible({
@@ -278,19 +306,27 @@ test.describe('Approval Gate Rejection', () => {
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
 		// Initially: amber waiting_human gate is visible.
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 10000 });
-		await expect(page.getByTestId('gate-icon-waiting_human')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')).toBeVisible({
+			timeout: 10000,
+		});
+		await expect(
+			page.getByTestId('canvas-panel').getByTestId('gate-icon-waiting_human')
+		).toBeVisible({ timeout: 10000 });
 
 		await rejectViaPopup(page);
 
 		// After rejection: blocked gate is visible.
-		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('canvas-panel').getByTestId('gate-icon-blocked')).toBeVisible({
+			timeout: 10000,
+		});
 
 		// The waiting_human gate should no longer be visible.
 		// Assumption: FULL_CYCLE_CODING_WORKFLOW has exactly one human-approval gate in the
 		// pre-coding phase (plan-approval-gate). If the workflow adds more human gates
 		// in the future, this assertion would need revisiting — but for the current
 		// template it confirms the gate correctly transitioned away from waiting_human.
-		await expect(page.getByTestId('gate-icon-waiting_human')).toBeHidden({ timeout: 10000 });
+		await expect(
+			page.getByTestId('canvas-panel').getByTestId('gate-icon-waiting_human')
+		).toBeHidden({ timeout: 10000 });
 	});
 });

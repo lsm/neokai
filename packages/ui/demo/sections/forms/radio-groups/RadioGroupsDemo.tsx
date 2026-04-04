@@ -23,10 +23,7 @@ export function RadioGroupsDemo() {
 						{sides.map((side, sideIdx) => (
 							<div key={sideIdx} class="relative flex items-start py-4">
 								<div class="min-w-0 flex-1 text-sm/6">
-									<label
-										htmlFor={`side-${side.id}`}
-										class="font-medium text-text-primary select-none"
-									>
+									<label for={`side-${side.id}`} class="font-medium text-text-primary select-none">
 										{side.name}
 									</label>
 								</div>

@@ -12,11 +12,12 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getWorkspaceRoot, getModal } from '../helpers/wait-helpers';
 import {
 	createSpaceViaRpc,
 	createUniqueSpaceDir,
 	deleteSpaceViaRpc,
+	deleteSpaceWorkflowsViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -36,6 +37,9 @@ test.describe('Space Task Full-Width View', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-fullwidth');
 		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
@@ -60,7 +64,7 @@ test.describe('Space Task Full-Width View', () => {
 		// Create a task via UI — click "Create Task" quick action
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
-		const dialog = page.getByRole('dialog');
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 3000 });
 
 		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
@@ -93,7 +97,7 @@ test.describe('Space Task Full-Width View', () => {
 		// Create task via UI
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
-		const dialog = page.getByRole('dialog');
+		const dialog = getModal(page);
 		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
 		await dialog.getByRole('button', { name: 'Create Task' }).click();
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });

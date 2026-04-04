@@ -40,7 +40,7 @@ test.describe('Session Export', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Open session options menu (3 dots button)
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await expect(optionsButton).toBeVisible();
 		await optionsButton.click();
 
@@ -73,7 +73,7 @@ test.describe('Session Export', () => {
 		const downloadPromise = page.waitForEvent('download');
 
 		// Open session options menu and click Export
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 		await page.locator('text=Export Chat').click();
 
@@ -107,7 +107,7 @@ test.describe('Session Export', () => {
 		const downloadPromise = page.waitForEvent('download');
 
 		// Open session options menu and click Export
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 		await page.locator('text=Export Chat').click();
 
@@ -150,7 +150,7 @@ test.describe('Session Export', () => {
 		const downloadPromise = page.waitForEvent('download');
 
 		// Open session options menu and click Export
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 		await page.locator('text=Export Chat').click();
 
@@ -168,7 +168,7 @@ test.describe('Session Export', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Verify Export is clickable when connected
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 		const exportOption = page.locator('[role="menuitem"]:has-text("Export Chat")');
 		await expect(exportOption).toBeVisible();

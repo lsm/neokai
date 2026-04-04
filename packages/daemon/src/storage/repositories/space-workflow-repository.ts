@@ -199,7 +199,9 @@ export class SpaceWorkflowRepository {
 
 	listWorkflows(spaceId: string): SpaceWorkflow[] {
 		const rows = this.db
-			.prepare(`SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC`)
+			.prepare(
+				`SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC, rowid ASC`
+			)
 			.all(spaceId) as WorkflowRow[];
 		return rows.map((r) => rowToWorkflow(r, this.fetchNodes(r.id)));
 	}

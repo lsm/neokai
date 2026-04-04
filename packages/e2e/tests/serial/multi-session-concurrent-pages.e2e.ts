@@ -321,7 +321,7 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 			await pages[1].click(`[data-session-id="${sessionId}"]`);
 			await waitForElement(pages[1], 'textarea');
 
-			await pages[1].click('button[aria-label="Session options"]');
+			await pages[1].getByTitle('Session options').click();
 			await pages[1].click('text=Delete Chat');
 			const confirmButton = await waitForElement(
 				pages[1],

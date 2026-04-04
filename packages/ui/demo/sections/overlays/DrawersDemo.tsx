@@ -569,8 +569,8 @@ function CreateProjectFormDrawer() {
 														<div class="relative flex items-start">
 															<div class="absolute flex h-6 items-center">
 																<input
-																	defaultValue="public"
-																	defaultChecked
+																	value="public"
+																	checked
 																	id="privacy-public"
 																	name="privacy"
 																	type="radio"
@@ -580,7 +580,7 @@ function CreateProjectFormDrawer() {
 															</div>
 															<div class="pl-7 text-sm/6">
 																<label
-																	htmlFor="privacy-public"
+																	for="privacy-public"
 																	class="font-medium text-gray-900 dark:text-white"
 																>
 																	Public access
@@ -596,7 +596,7 @@ function CreateProjectFormDrawer() {
 														<div class="relative flex items-start">
 															<div class="absolute flex h-6 items-center">
 																<input
-																	defaultValue="private-to-project"
+																	value="private-to-project"
 																	id="privacy-private-to-project"
 																	name="privacy"
 																	type="radio"
@@ -606,7 +606,7 @@ function CreateProjectFormDrawer() {
 															</div>
 															<div class="pl-7 text-sm/6">
 																<label
-																	htmlFor="privacy-private-to-project"
+																	for="privacy-private-to-project"
 																	class="font-medium text-gray-900 dark:text-white"
 																>
 																	Private to project members
@@ -619,7 +619,7 @@ function CreateProjectFormDrawer() {
 														<div class="relative flex items-start">
 															<div class="absolute flex h-6 items-center">
 																<input
-																	defaultValue="private"
+																	value="private"
 																	id="privacy-private"
 																	name="privacy"
 																	type="radio"
@@ -628,7 +628,7 @@ function CreateProjectFormDrawer() {
 															</div>
 															<div class="pl-7 text-sm/6">
 																<label
-																	htmlFor="privacy-private"
+																	for="privacy-private"
 																	class="font-medium text-gray-900 dark:text-white"
 																>
 																	Private to you
@@ -821,8 +821,8 @@ function WideCreateProjectFormDrawer() {
 															<div class="relative flex items-start">
 																<div class="absolute flex h-6 items-center">
 																	<input
-																		defaultValue="public"
-																		defaultChecked
+																		value="public"
+																		checked
 																		id="privacy-public-2"
 																		name="privacy-2"
 																		type="radio"
@@ -831,7 +831,7 @@ function WideCreateProjectFormDrawer() {
 																</div>
 																<div class="pl-7 text-sm/6">
 																	<label
-																		htmlFor="privacy-public-2"
+																		for="privacy-public-2"
 																		class="font-medium text-gray-900 dark:text-gray-100"
 																	>
 																		Public access
@@ -845,7 +845,7 @@ function WideCreateProjectFormDrawer() {
 																<div class="relative flex items-start">
 																	<div class="absolute flex h-6 items-center">
 																		<input
-																			defaultValue="private-to-project"
+																			value="private-to-project"
 																			id="privacy-private-to-project-2"
 																			name="privacy-2"
 																			type="radio"
@@ -854,7 +854,7 @@ function WideCreateProjectFormDrawer() {
 																	</div>
 																	<div class="pl-7 text-sm/6">
 																		<label
-																			htmlFor="privacy-private-to-project-2"
+																			for="privacy-private-to-project-2"
 																			class="font-medium text-gray-900 dark:text-gray-100"
 																		>
 																			Private to project members
@@ -869,7 +869,7 @@ function WideCreateProjectFormDrawer() {
 																<div class="relative flex items-start">
 																	<div class="absolute flex h-6 items-center">
 																		<input
-																			defaultValue="private"
+																			value="private"
 																			id="privacy-private-2"
 																			name="privacy-2"
 																			type="radio"
@@ -878,7 +878,7 @@ function WideCreateProjectFormDrawer() {
 																	</div>
 																	<div class="pl-7 text-sm/6">
 																		<label
-																			htmlFor="privacy-private-2"
+																			for="privacy-private-2"
 																			class="font-medium text-gray-900 dark:text-gray-100"
 																		>
 																			Private to you
