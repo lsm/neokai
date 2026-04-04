@@ -858,7 +858,10 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	}
 
 	return (
-		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
+		<div
+			class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+			data-testid="chat-container"
+		>
 			{/* Loading overlay for archive/delete operations */}
 			{(sessionActions.archiving || sessionActions.deleting) && (
 				<div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">

@@ -65,7 +65,8 @@ test.describe('Space Agent Chat', () => {
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
 		// ChatContainer should render — message input textarea should be visible
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		// Scope to chat-container to avoid matching the Neo panel's "Ask Neo…" textarea
+		const messageInput = page.getByTestId('chat-container').locator('textarea');
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
 		// The space overview should no longer be visible (ChatContainer replaced it)
@@ -78,7 +79,8 @@ test.describe('Space Agent Chat', () => {
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
 		// Message input should be visible
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		// Scope to chat-container to avoid matching the Neo panel's "Ask Neo…" textarea
+		const messageInput = page.getByTestId('chat-container').locator('textarea');
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
 		// Navigate back to space overview
