@@ -31,7 +31,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
@@ -70,6 +70,7 @@ interface SpaceRunTask {
 	spaceId: string;
 	runId: string;
 	taskId: string;
+	wsPath: string;
 }
 
 async function createSpaceWithRunAndChanges(
@@ -86,7 +87,7 @@ async function createSpaceWithRunAndChanges(
 	// repo must already be initialised when the RPC is invoked from the UI.
 	setupGitRepoWithChanges(wsPath);
 
-	return page.evaluate(
+	const ids = await page.evaluate(
 		async ({ wsPath }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
@@ -118,6 +119,8 @@ async function createSpaceWithRunAndChanges(
 		},
 		{ wsPath }
 	);
+
+	return { ...ids, wsPath };
 }
 
 async function cancelRun(
@@ -153,11 +156,16 @@ async function deleteSpace(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Artifacts Side Panel', () => {
+	// Serial mode: tests share describe-scoped state (spaceId/runId/taskId) and
+	// each beforeEach creates a new space. Running in parallel would race on the
+	// same module-level variables and produce unpredictable failures.
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
 	let runId = '';
 	let taskId = '';
+	let wsPath = ''; // tracked for cleanup in afterEach
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -165,6 +173,7 @@ test.describe('Artifacts Side Panel', () => {
 		spaceId = ids.spaceId;
 		runId = ids.runId;
 		taskId = ids.taskId;
+		wsPath = ids.wsPath;
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -177,6 +186,16 @@ test.describe('Artifacts Side Panel', () => {
 			spaceId = '';
 		}
 		taskId = '';
+		// Remove the unique workspace directory created for this test to avoid
+		// accumulating orphaned directories across test runs.
+		if (wsPath && existsSync(wsPath)) {
+			try {
+				rmSync(wsPath, { recursive: true, force: true });
+			} catch {
+				// Best-effort cleanup
+			}
+			wsPath = '';
+		}
 	});
 
 	// ─── Test 1: Toggle button is visible for tasks with a workflowRunId ────
@@ -259,13 +278,12 @@ test.describe('Artifacts Side Panel', () => {
 		// Wait for the diff fetch to complete.
 		await expect(page.getByTestId('diff-loading')).toBeHidden({ timeout: 10000 });
 
-		// The diff should render a table (feature.ts has 3 added lines) or show empty.
-		// Both diff-table and diff-empty are acceptable — what matters is the view rendered.
-		const diffRendered =
-			(await page.getByTestId('diff-table').isVisible()) ||
-			(await page.getByTestId('diff-empty').isVisible()) ||
-			(await page.getByTestId('diff-error').isVisible());
-		expect(diffRendered).toBe(true);
+		// The diff fetch must not have failed.
+		await expect(page.getByTestId('diff-error')).toBeHidden({ timeout: 5000 });
+
+		// feature.ts was staged with 3 new lines, so the diff table must be present.
+		// diff-empty would indicate git returned no output, which is a test setup failure.
+		await expect(page.getByTestId('diff-table')).toBeVisible({ timeout: 5000 });
 
 		// Back button returns to the file list.
 		await page.getByTestId('file-diff-back').click();
