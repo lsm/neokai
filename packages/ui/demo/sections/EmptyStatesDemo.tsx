@@ -16,10 +16,10 @@ export function EmptyStatesDemo() {
 					>
 						<path
 							d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
-							strokeWidth={2}
-							vectorEffect="non-scaling-stroke"
-							strokeLinecap="round"
-							strokeLinejoin="round"
+							stroke-width="2"
+							vector-effect="non-scaling-stroke"
+							stroke-linecap="round"
+							stroke-linejoin="round"
 						/>
 					</svg>
 					<h3 class="mt-2 text-sm font-semibold text-text-primary dark:text-white">No projects</h3>
@@ -72,10 +72,10 @@ export function EmptyStatesDemo() {
 					>
 						<path
 							d="M20 7h-9m9 10h-9M4 7h.01M4 17h.01M4 12h16"
-							strokeWidth={2}
-							vectorEffect="non-scaling-stroke"
-							strokeLinecap="round"
-							strokeLinejoin="round"
+							stroke-width="2"
+							vector-effect="non-scaling-stroke"
+							stroke-linecap="round"
+							stroke-linejoin="round"
 						/>
 					</svg>
 					<h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">
@@ -109,10 +109,10 @@ export function EmptyStatesDemo() {
 					>
 						<path
 							d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
-							strokeWidth={2}
-							vectorEffect="non-scaling-stroke"
-							strokeLinecap="round"
-							strokeLinejoin="round"
+							stroke-width="2"
+							vector-effect="non-scaling-stroke"
+							stroke-linecap="round"
+							stroke-linejoin="round"
 						/>
 					</svg>
 					<h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">
