@@ -1,5 +1,10 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI, getModal } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	getModal,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
 
 /**
  * Tools Modal E2E Tests (Redesigned)
@@ -34,6 +39,9 @@ test.describe('Tools Modal - Redesigned', () => {
 
 	/** Open the Tools modal for the current session and return the dialog locator */
 	async function openToolsModal(page: import('@playwright/test').Page) {
+		// Ensure WebSocket is connected before clicking — the button title changes to
+		// "Not connected" when disconnected, so we must wait for the connected state first.
+		await waitForWebSocketConnected(page);
 		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 		// Scope the menu to the session options menu container to avoid matching stray "Tools" buttons
