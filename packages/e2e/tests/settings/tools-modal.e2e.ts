@@ -32,84 +32,90 @@ test.describe('Tools Modal - Redesigned', () => {
 		}
 	});
 
-	/** Open the Tools modal for the current session */
+	/** Open the Tools modal for the current session and return the dialog locator */
 	async function openToolsModal(page: import('@playwright/test').Page) {
 		const optionsButton = page.locator('button[aria-label="Session options"]');
 		await optionsButton.click();
+		// Scope the menu to the session options menu container to avoid matching stray "Tools" buttons
 		await page
-			.locator('[role="menuitem"]:has-text("Tools"), button:has-text("Tools")')
+			.locator(
+				'[role="menu"] [role="menuitem"]:has-text("Tools"), [role="menuitem"]:has-text("Tools")'
+			)
 			.first()
 			.click();
-		await expect(page.locator('[role="dialog"]').first()).toBeVisible({ timeout: 5000 });
+		const dialog = page.locator('[role="dialog"]').first();
+		await expect(dialog).toBeVisible({ timeout: 5000 });
+		return dialog;
 	}
 
 	test('should open tools modal and show group sections', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
-		// Should show the group section headers.
+		// Should show the group section headers — scoped to dialog to avoid page-level duplicates.
 		// "App MCP Servers" renders as a <button> (GroupHeader) when skills exist, or a plain
 		// <span> when no app skills are configured. The button's full text includes the item count
 		// (e.g. "App MCP Servers (2)"), so { exact: true } matches only the inner <span> whose
 		// text is exactly "App MCP Servers" — correct in both DOM states without strict-mode issues.
-		await expect(page.getByText('App MCP Servers', { exact: true })).toBeVisible();
+		await expect(dialog.getByText('App MCP Servers', { exact: true })).toBeVisible();
 		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
-		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
-		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
+		await expect(dialog.locator('button:has-text("Project MCP Servers")')).toBeVisible();
+		await expect(dialog.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 	});
 
 	test('should show Advanced section collapsed by default', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
 		// Advanced section should be visible but collapsed
-		await expect(page.getByRole('button', { name: /Advanced/i })).toBeVisible();
+		await expect(dialog.getByRole('button', { name: /Advanced/i })).toBeVisible();
 
 		// Claude Code Preset should NOT be visible initially (hidden in Advanced)
-		await expect(page.getByText('Claude Code Preset')).not.toBeVisible();
+		// Scoping to dialog ensures this assertion targets the modal state, not a stray page node
+		await expect(dialog.getByText('Claude Code Preset')).not.toBeVisible();
 	});
 
 	test('should expand Advanced section and show Claude Code Preset', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
 		// Click Advanced to expand
-		await page.getByRole('button', { name: /Advanced/i }).click();
+		await dialog.getByRole('button', { name: /Advanced/i }).click();
 
 		// Claude Code Preset should now be visible
-		await expect(page.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
+		await expect(dialog.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
-		// Setting Sources should also be visible.
-		// .first() is required: getByText matches both the <h4> element and its parent <div>
-		// (whose text content is a superset), causing a strict-mode violation without it.
-		await expect(page.getByText('Setting Sources').first()).toBeVisible();
+		// Setting Sources should also be visible — scoped to dialog to avoid page-level duplicates.
+		// .first() is still required within the dialog: getByText matches both the <h4> element
+		// and its parent <div> (whose text content is a superset), causing a strict-mode violation.
+		await expect(dialog.getByText('Setting Sources').first()).toBeVisible();
 	});
 
 	test('should show scope badges for groups', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
 		// App MCP group should show "All sessions" scope badge
-		await expect(page.getByText('All sessions').first()).toBeVisible();
+		await expect(dialog.getByText('All sessions').first()).toBeVisible();
 
 		// Project MCP group should show "This session" scope badge
-		await expect(page.getByText('This session').first()).toBeVisible();
+		await expect(dialog.getByText('This session').first()).toBeVisible();
 	});
 
 	test('should collapse NeoKai Tools group and hide Memory child', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
-		const neoKaiHeader = page.locator('button:has-text("NeoKai Tools")');
+		const neoKaiHeader = dialog.locator('button:has-text("NeoKai Tools")');
 		await expect(neoKaiHeader).toBeVisible();
 
 		// Initially expanded — Memory child should be visible
 		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'true');
-		await expect(page.locator('label:has-text("Memory")').first()).toBeVisible();
+		await expect(dialog.locator('label:has-text("Memory")').first()).toBeVisible();
 
 		// Collapse
 		await neoKaiHeader.click();
@@ -117,24 +123,24 @@ test.describe('Tools Modal - Redesigned', () => {
 		// Header reports collapsed
 		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'false');
 		// Child content is removed from DOM (Preact conditional render)
-		await expect(page.locator('label:has-text("Memory")').first()).not.toBeAttached();
+		await expect(dialog.locator('label:has-text("Memory")').first()).not.toBeAttached();
 
 		// Re-expand — child reappears
 		await neoKaiHeader.click();
 		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'true');
-		await expect(page.locator('label:has-text("Memory")').first()).toBeVisible();
+		await expect(dialog.locator('label:has-text("Memory")').first()).toBeVisible();
 	});
 
 	test('should collapse Project MCP Servers group and hide content', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
 		// Wait for MCP loading to finish before checking collapse
-		await expect(page.locator('[role="dialog"]').getByText('Loading servers...')).not.toBeVisible({
+		await expect(dialog.getByText('Loading servers...')).not.toBeVisible({
 			timeout: 10000,
 		});
 
-		const fileMcpHeader = page.locator('button:has-text("Project MCP Servers")');
+		const fileMcpHeader = dialog.locator('button:has-text("Project MCP Servers")');
 		await expect(fileMcpHeader).toBeVisible();
 
 		// Initially expanded
@@ -156,25 +162,25 @@ test.describe('Tools Modal - Redesigned', () => {
 	test('should show NeoKai Tools with Memory toggle', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
 		// NeoKai Tools group should be expanded showing Memory
-		await expect(page.getByText('NeoKai Tools')).toBeVisible();
-		await expect(page.getByText('Memory')).toBeVisible();
-		await expect(page.getByText('Persistent key-value storage')).toBeVisible();
+		await expect(dialog.getByText('NeoKai Tools')).toBeVisible();
+		await expect(dialog.getByText('Memory').first()).toBeVisible();
+		await expect(dialog.getByText('Persistent key-value storage')).toBeVisible();
 	});
 
 	test('should enable Save button when session-local setting is toggled', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		const dialog = await openToolsModal(page);
 
 		// Save should be disabled initially (no changes)
-		const saveBtn = page.getByRole('button', { name: 'Save' });
+		const saveBtn = dialog.getByRole('button', { name: 'Save' });
 		await expect(saveBtn).toBeDisabled();
 
 		// Toggle Memory (always present in NeoKai Tools group)
-		const memoryLabel = page.locator('label:has-text("Memory")').first();
+		const memoryLabel = dialog.locator('label:has-text("Memory")').first();
 		await expect(memoryLabel).toBeVisible();
 		await memoryLabel.click();
 
@@ -185,13 +191,11 @@ test.describe('Tools Modal - Redesigned', () => {
 	test('should close modal with Cancel without saving', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
-
-		const dialog = page.locator('[role="dialog"]').first();
+		const dialog = await openToolsModal(page);
 		await expect(dialog).toBeVisible();
 
 		// Click Cancel
-		await page.getByRole('button', { name: 'Cancel' }).click();
+		await dialog.getByRole('button', { name: 'Cancel' }).click();
 
 		// Modal should close
 		await expect(dialog).not.toBeVisible({ timeout: 3000 });
@@ -200,10 +204,10 @@ test.describe('Tools Modal - Redesigned', () => {
 	test('should persist state: save and reopen modal shows same config', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		await openToolsModal(page);
+		let dialog = await openToolsModal(page);
 
 		// Toggle memory on
-		const memoryLabel = page.locator('label:has-text("Memory")').first();
+		const memoryLabel = dialog.locator('label:has-text("Memory")').first();
 		if ((await memoryLabel.count()) > 0) {
 			const memoryCheckbox = memoryLabel.locator('input[type="checkbox"]');
 			const isChecked = await memoryCheckbox.isChecked();
@@ -213,16 +217,16 @@ test.describe('Tools Modal - Redesigned', () => {
 			await expect(memoryCheckbox).toHaveJSProperty('checked', !isChecked, { timeout: 2000 });
 
 			// Save
-			const saveBtn = page.getByRole('button', { name: 'Save' });
+			const saveBtn = dialog.getByRole('button', { name: 'Save' });
 			if (await saveBtn.isEnabled()) {
 				await saveBtn.click();
-				await expect(page.locator('[role="dialog"]').first()).not.toBeVisible({ timeout: 5000 });
+				await expect(dialog).not.toBeVisible({ timeout: 5000 });
 
 				// Reopen modal
-				await openToolsModal(page);
+				dialog = await openToolsModal(page);
 
 				// Memory should reflect saved state
-				const memoryCheckboxAfter = page
+				const memoryCheckboxAfter = dialog
 					.locator('label:has-text("Memory")')
 					.first()
 					.locator('input[type="checkbox"]');
