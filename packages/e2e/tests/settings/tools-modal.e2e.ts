@@ -52,6 +52,7 @@ test.describe('Tools Modal - Redesigned', () => {
 			.first()
 			.click();
 		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
+		return getModal(page);
 	}
 
 	test('should open tools modal and show group sections', async ({ page }) => {
