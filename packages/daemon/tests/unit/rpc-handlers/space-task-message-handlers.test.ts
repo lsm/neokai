@@ -372,18 +372,35 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		});
 
 		it('message injected via sendMessage is visible in getMessages response', async () => {
-			const injectedMessage: SDKMessage = {
-				type: 'user',
-				uuid: 'msg-injected' as import('crypto').UUID,
-				session_id: 'space:space-1:task:task-1',
-				parent_tool_use_id: null,
-				message: { role: 'user', content: [{ type: 'text', text: 'Please continue the work' }] },
-			} as unknown as SDKMessage;
+			// Use a mutable array: starts with only the initial messages (no injected message yet).
+			// injectTaskAgentMessage will push to this array, simulating what the real session does.
+			const sessionMessages: SDKMessage[] = [...mockSDKMessages];
+			const liveSession: Partial<AgentSession> = {
+				getSDKMessages: mock((_limit?: number, _before?: number) => ({
+					messages: sessionMessages,
+					hasMore: false,
+				})),
+			};
 
-			const liveSession = createMockAgentSession([...mockSDKMessages, injectedMessage]);
 			setup(mockTaskWithSession, liveSession);
 
-			// Inject message
+			// Override inject to push into the shared mutable array (mirrors real session behavior)
+			(taskAgentManager.injectTaskAgentMessage as ReturnType<typeof mock>).mockImplementation(
+				async (_taskId: string, message: string) => {
+					sessionMessages.push({
+						type: 'user',
+						uuid: 'msg-injected' as import('crypto').UUID,
+						session_id: 'space:space-1:task:task-1',
+						parent_tool_use_id: null,
+						message: { role: 'user', content: [{ type: 'text', text: message }] },
+					} as unknown as SDKMessage);
+				}
+			);
+
+			// Before send: message is NOT in the session
+			expect(sessionMessages).not.toContainEqual(expect.objectContaining({ uuid: 'msg-injected' }));
+
+			// Inject message via handler
 			const sendResult = await call('space.task.sendMessage', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
@@ -391,14 +408,23 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 			expect(sendResult).toEqual({ ok: true });
 
-			// Retrieve messages — the injected message should appear in the unified thread
+			// After send: getMessages should return the injected message in the unified thread
 			const getResult = (await call('space.task.getMessages', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
 			})) as { messages: SDKMessage[]; hasMore: boolean; sessionId: string };
 
 			expect(getResult.sessionId).toBe('space:space-1:task:task-1');
-			expect(getResult.messages).toContainEqual(expect.objectContaining({ uuid: 'msg-injected' }));
+			expect(getResult.messages).toContainEqual(
+				expect.objectContaining({
+					uuid: 'msg-injected',
+					message: expect.objectContaining({
+						content: expect.arrayContaining([
+							expect.objectContaining({ text: 'Please continue the work' }),
+						]),
+					}),
+				})
+			);
 		});
 
 		it('emits space.task.updated after injecting message when session was missing', async () => {
@@ -416,7 +442,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			});
 
 			const emitCalls = (daemonHub.emit as ReturnType<typeof mock>).mock.calls;
-			expect(emitCalls.length).toBeGreaterThan(0);
+			expect(emitCalls.length).toBe(1);
 			expect(emitCalls[0]?.[0]).toBe('space.task.updated');
 			expect(emitCalls[0]?.[1]).toMatchObject({ task: expect.objectContaining({ id: 'task-2' }) });
 		});
