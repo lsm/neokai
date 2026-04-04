@@ -225,7 +225,7 @@ describe('seedPresetAgents', () => {
 		const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
 		expect(reviewer?.systemPrompt).toContain('code reviewer');
-		expect(reviewer?.instructions).toContain('report_done');
+		expect(reviewer?.instructions).toContain('specific feedback');
 	});
 
 	it('Planner system prompt mentions planning', async () => {
@@ -422,8 +422,8 @@ describe('preset agent exact definitions', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
 		expect(reviewer.instructions).toBe(
-			'Review the open PR thoroughly. If satisfied, call report_done(). If changes are needed, provide ' +
-				'specific feedback and send back for revision.'
+			'Review the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide ' +
+				'specific feedback.'
 		);
 	});
 
@@ -431,7 +431,7 @@ describe('preset agent exact definitions', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.name === 'QA')!;
 		expect(qa.instructions).toBe(
-			"Run the full test suite. Write result='passed' or result='failed' to the gate with specific details on any failures."
+			'Run the full test suite and report results with specific details on any failures.'
 		);
 	});
 

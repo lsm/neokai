@@ -141,8 +141,8 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'You are an expert code reviewer. You review pull requests for correctness, security, performance, ' +
 			'style, and test coverage. You give specific, actionable feedback.',
 		instructions:
-			'Review the open PR thoroughly. If satisfied, call report_done(). If changes are needed, provide ' +
-			'specific feedback and send back for revision.',
+			'Review the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide ' +
+			'specific feedback.',
 	},
 	{
 		name: 'QA',
@@ -153,7 +153,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
 			'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
 			'and ensure the codebase meets quality standards before release.',
 		instructions:
-			"Run the full test suite. Write result='passed' or result='failed' to the gate with specific details on any failures.",
+			'Run the full test suite and report results with specific details on any failures.',
 	},
 ];
 
