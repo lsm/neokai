@@ -375,13 +375,17 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	// -------------------------------------------------------------------------
 
 	describe('processCompletedTasks error isolation', () => {
-		test('error in one run does not prevent processing other runs', async () => {
-			// Create two runs — one with valid tasks, one that will cause an error.
-			// The runtime should process both; the error from the first is re-thrown
-			// but the second run's tasks should still be processed.
+		test('error in one run does not prevent processing the other run', async () => {
+			// Strategy: create two runs with the real spaceManager, then build a
+			// fresh runtime with a faulty spaceManager that throws for SPACE_ID.
+			// The fresh runtime rehydrates both runs on first tick, then
+			// processRunTick throws for run1 but succeeds for run2.
 			const spawned: string[] = [];
 			const tam = makeMockTaskAgentManager(taskRepo, {
-				isTaskAgentAlive: () => true,
+				isTaskAgentAlive: (taskId: string) => {
+					const task = taskRepo.getTask(taskId);
+					return !!task?.taskAgentSessionId;
+				},
 				spawnTaskAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawned.push(t.id);
@@ -389,7 +393,46 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					return `session:${t.id}`;
 				},
 			});
-			const rt = new SpaceRuntime(buildConfig(tam));
+
+			// Create runs with real spaceManager so startWorkflowRun succeeds
+			const realRt = new SpaceRuntime(buildConfig(tam));
+			const wf1 = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+			]);
+			const wf2 = buildLinearWorkflow(SPACE_ID_2, workflowManager, [
+				{ id: STEP_B, name: 'Code', agentId: `${AGENT_CODER}-s2` },
+			]);
+			await realRt.startWorkflowRun(SPACE_ID, wf1.id, 'Failing Run');
+			const { tasks: tasks2 } = await realRt.startWorkflowRun(SPACE_ID_2, wf2.id, 'Good Run');
+
+			// Now build a fresh runtime with a faulty spaceManager
+			const faultySpaceManager = {
+				getSpace: async (id: string) => {
+					if (id === SPACE_ID) {
+						throw new Error('Simulated DB corruption for space-tick-1');
+					}
+					return spaceManager.getSpace(id);
+				},
+				listSpaces: async () => spaceManager.listSpaces(false),
+			};
+			const faultyRt = new SpaceRuntime({
+				...buildConfig(tam),
+				spaceManager: faultySpaceManager as never,
+			});
+
+			// executeTick rehydrates both runs, then processRunTick throws for run1
+			// but continues to process run2. Re-throws the first error at the end.
+			await expect(faultyRt.executeTick()).rejects.toThrow('Simulated DB corruption');
+
+			// The good run's task was spawned successfully despite the sibling error
+			expect(spawned).toContain(tasks2[0].id);
+			expect(taskRepo.getTask(tasks2[0].id)!.status).toBe('in_progress');
+		});
+
+		test('first error is re-thrown after all runs are processed', async () => {
+			// Create two runs with real spaceManager first
+			const tam = makeMockTaskAgentManager(taskRepo);
+			const realRt = new SpaceRuntime(buildConfig(tam));
 
 			const wf1 = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
@@ -397,16 +440,27 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			const wf2 = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_B, name: 'Code', agentId: AGENT_CODER },
 			]);
+			await realRt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
+			await realRt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-			// Start both runs
-			const { tasks: tasks1 } = await rt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
-			const { tasks: tasks2 } = await rt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
+			// Build fresh runtime with getSpace that always throws
+			const faultySpaceManager = {
+				getSpace: async () => {
+					throw new Error('getSpace always fails');
+				},
+				listSpaces: async () => spaceManager.listSpaces(false),
+			};
+			const faultyRt = new SpaceRuntime({
+				...buildConfig(tam),
+				spaceManager: faultySpaceManager as never,
+			});
 
-			// First tick spawns both tasks
-			await rt.executeTick();
+			// Both runs error, but executeTick re-throws (first error only)
+			// after processing all runs — it doesn't bail on the first error.
+			await expect(faultyRt.executeTick()).rejects.toThrow('getSpace always fails');
 
-			expect(spawned).toContain(tasks1[0].id);
-			expect(spawned).toContain(tasks2[0].id);
+			// Both executors are still in the map (error doesn't remove them)
+			expect(faultyRt.executorCount).toBe(2);
 		});
 	});
 
@@ -656,47 +710,47 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	// -------------------------------------------------------------------------
 
 	describe('start() / stop() lifecycle', () => {
-		test('start() is idempotent — calling twice does not create duplicate timers', async () => {
-			const rt = new SpaceRuntime(buildConfig());
+		test('start() is idempotent — calling twice does not create duplicate timers', () => {
+			// Intercept setInterval to count how many timers are created
+			const origSetInterval = globalThis.setInterval;
+			let intervalCount = 0;
+			globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+				intervalCount++;
+				return origSetInterval(...args);
+			}) as typeof setInterval;
 
-			rt.start();
-			rt.start(); // second call should be no-op
+			try {
+				const rt = new SpaceRuntime(buildConfig());
+				rt.start();
+				rt.start(); // second call should be no-op
 
-			// If duplicate timers existed, stop() would only clear one.
-			// Wait briefly to let at most one tick fire, then stop.
-			await new Promise((resolve) => setTimeout(resolve, 50));
-			rt.stop();
-
-			// No crash, no assertion error — the test passes if it doesn't hang or double-fire.
-			expect(true).toBe(true);
+				// Only one interval should have been created
+				expect(intervalCount).toBe(1);
+				rt.stop();
+			} finally {
+				globalThis.setInterval = origSetInterval;
+			}
 		});
 
-		test('stop() clears the timer — no ticks fire after stop()', async () => {
-			let tickCount = 0;
-			const rt = new SpaceRuntime({
-				...buildConfig(),
-				tickIntervalMs: 20, // very fast for testing
-			});
+		test('stop() clears the timer — clearInterval is called', () => {
+			// Use a deterministic approach: intercept clearInterval to verify it's called
+			const origClearInterval = globalThis.clearInterval;
+			let clearCalled = false;
+			globalThis.clearInterval = ((...args: Parameters<typeof clearInterval>) => {
+				clearCalled = true;
+				return origClearInterval(...args);
+			}) as typeof clearInterval;
 
-			// Patch executeTick to count calls
-			const originalTick = rt.executeTick.bind(rt);
-			rt.executeTick = async () => {
-				tickCount++;
-				await originalTick();
-			};
+			try {
+				const rt = new SpaceRuntime(buildConfig());
+				rt.start();
+				expect(clearCalled).toBe(false);
 
-			rt.start();
-
-			// Let a few ticks fire
-			await new Promise((resolve) => setTimeout(resolve, 80));
-			rt.stop();
-
-			const countAtStop = tickCount;
-
-			// Wait more — no additional ticks should fire
-			await new Promise((resolve) => setTimeout(resolve, 80));
-
-			expect(tickCount).toBe(countAtStop);
+				rt.stop();
+				expect(clearCalled).toBe(true);
+			} finally {
+				globalThis.clearInterval = origClearInterval;
+			}
 		});
 
 		test('stop() when not started is a no-op', () => {
@@ -706,32 +760,30 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			expect(() => rt.stop()).not.toThrow();
 		});
 
-		test('start() can be called again after stop()', async () => {
-			const rt = new SpaceRuntime({
-				...buildConfig(),
-				tickIntervalMs: 10,
-			});
+		test('start() can be called again after stop() — creates a new timer', () => {
+			const origSetInterval = globalThis.setInterval;
+			let intervalCount = 0;
+			globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+				intervalCount++;
+				return origSetInterval(...args);
+			}) as typeof setInterval;
 
-			let tickCount = 0;
-			const originalTick = rt.executeTick.bind(rt);
-			rt.executeTick = async () => {
-				tickCount++;
-				await originalTick();
-			};
+			try {
+				const rt = new SpaceRuntime(buildConfig());
 
-			rt.start();
-			await new Promise((resolve) => setTimeout(resolve, 50));
-			rt.stop();
+				rt.start();
+				expect(intervalCount).toBe(1);
 
-			const afterFirstStop = tickCount;
-			expect(afterFirstStop).toBeGreaterThan(0);
+				rt.stop();
 
-			// Restart
-			rt.start();
-			await new Promise((resolve) => setTimeout(resolve, 50));
-			rt.stop();
+				// Restart — should create a new interval
+				rt.start();
+				expect(intervalCount).toBe(2);
 
-			expect(tickCount).toBeGreaterThan(afterFirstStop);
+				rt.stop();
+			} finally {
+				globalThis.setInterval = origSetInterval;
+			}
 		});
 	});
 
