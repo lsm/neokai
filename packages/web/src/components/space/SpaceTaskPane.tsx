@@ -2,7 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
+import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
+import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -51,10 +53,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
 	const [reopeningTask, setReopeningTask] = useState(false);
+	const [showArtifacts, setShowArtifacts] = useState(false);
 
 	useEffect(() => {
 		setThreadSendError(null);
 		setThreadDraft('');
+		setShowArtifacts(false);
 	}, [taskId]);
 
 	useEffect(() => {
@@ -197,6 +201,22 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 					</div>
+					{task.workflowRunId && (
+						<button
+							type="button"
+							onClick={() => setShowArtifacts((v) => !v)}
+							class={cn(
+								'flex-shrink-0 px-2 py-1 text-xs font-medium transition-colors',
+								showArtifacts
+									? 'text-blue-300 hover:text-blue-200'
+									: 'text-gray-400 hover:text-gray-200'
+							)}
+							data-testid="artifacts-toggle"
+							aria-pressed={showArtifacts}
+						>
+							Artifacts
+						</button>
+					)}
 					{showHeaderSessionAction && (
 						<button
 							type="button"
@@ -225,81 +245,91 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			)}
 
 			<div class="flex-1 min-h-0 overflow-hidden px-4">
-				<div class="h-full flex flex-col">
-					<div class="flex-1 min-h-0" data-testid="task-thread-panel">
-						{agentSessionId ? (
-							<SpaceTaskUnifiedThread taskId={task.id} />
-						) : (
-							<div class="h-full px-4 py-10 text-center">
-								<p class="text-sm text-gray-300">
-									{ensuringThread ? 'Starting task thread...' : 'Task thread is not available yet.'}
-								</p>
-								<p class="mt-2 text-xs text-gray-500">
-									{ensuringThread
-										? 'Connecting task and node-agent streams.'
-										: 'Keep this view open while the task thread starts.'}
-								</p>
-							</div>
-						)}
-					</div>
-
-					<div class="py-3 space-y-3 border-t border-dark-800">
-						{showInlineComposer && (
-							<form onSubmit={handleThreadSend} class="space-y-3">
-								<textarea
-									value={threadDraft}
-									onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && !e.shiftKey) {
-											e.preventDefault();
-											(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
-										}
-									}}
-									rows={3}
-									placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
-									disabled={sendingThread}
-									class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
-								/>
-								<div class="flex items-center justify-between gap-3">
-									<p class="text-xs text-gray-500">
-										Reply here to steer the task. Agent updates appear in the thread above.
+				{showArtifacts && task.workflowRunId ? (
+					<TaskArtifactsPanel
+						runId={task.workflowRunId}
+						onClose={() => setShowArtifacts(false)}
+						class="h-full"
+					/>
+				) : (
+					<div class="h-full flex flex-col">
+						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
+							{agentSessionId ? (
+								<SpaceTaskUnifiedThread taskId={task.id} />
+							) : (
+								<div class="h-full px-4 py-10 text-center">
+									<p class="text-sm text-gray-300">
+										{ensuringThread
+											? 'Starting task thread...'
+											: 'Task thread is not available yet.'}
 									</p>
-									<button
-										type="submit"
-										disabled={!canSendThreadMessage || !threadDraft.trim()}
-										class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-									>
-										{sendingThread ? 'Sending...' : 'Send to Task Agent'}
-									</button>
+									<p class="mt-2 text-xs text-gray-500">
+										{ensuringThread
+											? 'Connecting task and node-agent streams.'
+											: 'Keep this view open while the task thread starts.'}
+									</p>
 								</div>
-							</form>
-						)}
+							)}
+						</div>
 
-						{!agentSessionId && (
-							<p class="text-xs text-gray-500">
-								Waiting for task thread before messages can be sent.
-							</p>
-						)}
+						<div class="py-3 space-y-3 border-t border-dark-800">
+							{showInlineComposer && (
+								<form onSubmit={handleThreadSend} class="space-y-3">
+									<textarea
+										value={threadDraft}
+										onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' && !e.shiftKey) {
+												e.preventDefault();
+												(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+											}
+										}}
+										rows={3}
+										placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
+										disabled={sendingThread}
+										class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
+									/>
+									<div class="flex items-center justify-between gap-3">
+										<p class="text-xs text-gray-500">
+											Reply here to steer the task. Agent updates appear in the thread above.
+										</p>
+										<button
+											type="submit"
+											disabled={!canSendThreadMessage || !threadDraft.trim()}
+											class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+										>
+											{sendingThread ? 'Sending...' : 'Send to Task Agent'}
+										</button>
+									</div>
+								</form>
+							)}
 
-						{isTerminalTask && (
-							<div class="flex flex-wrap items-center gap-3">
-								<p class="text-xs text-gray-500">This task is read-only in its current state.</p>
-								{task.status === 'done' && (
-									<button
-										type="button"
-										onClick={() => void handleReopenTask()}
-										disabled={reopeningTask}
-										class="px-2 py-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors disabled:opacity-50"
-									>
-										{reopeningTask ? 'Reopening...' : 'Reopen Task'}
-									</button>
-								)}
-							</div>
-						)}
+							{!agentSessionId && (
+								<p class="text-xs text-gray-500">
+									Waiting for task thread before messages can be sent.
+								</p>
+							)}
 
-						{threadSendError && <p class="text-xs text-red-300">{threadSendError}</p>}
+							{isTerminalTask && (
+								<div class="flex flex-wrap items-center gap-3">
+									<p class="text-xs text-gray-500">This task is read-only in its current state.</p>
+									{task.status === 'done' && (
+										<button
+											type="button"
+											onClick={() => void handleReopenTask()}
+											disabled={reopeningTask}
+											class="px-2 py-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors disabled:opacity-50"
+										>
+											{reopeningTask ? 'Reopening...' : 'Reopen Task'}
+										</button>
+									)}
+								</div>
+							)}
+
+							{threadSendError && <p class="text-xs text-red-300">{threadSendError}</p>}
+						</div>
 					</div>
-				</div>
+				)}
 			</div>
 		</div>
 	);
