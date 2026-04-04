@@ -17,6 +17,7 @@ import {
 	createSpaceViaRpc,
 	createUniqueSpaceDir,
 	deleteSpaceViaRpc,
+	deleteSpaceWorkflowsViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -36,6 +37,9 @@ test.describe('Space Task Full-Width View', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-fullwidth');
 		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
