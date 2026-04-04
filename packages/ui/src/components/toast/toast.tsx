@@ -1,5 +1,5 @@
 import { type ComponentChildren, createContext, createElement } from 'preact';
-import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Portal } from '../../internal/portal.ts';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
@@ -175,17 +175,31 @@ function ToastFn({
 		setOpen(false);
 	}, []);
 
-	const ctx: ToastState = {
-		id,
-		open,
-		dismiss,
-		titleId,
-		setTitleId,
-		descriptionId,
-		setDescriptionId,
-		variant,
-		progress: showProgress ? progress : undefined,
-	};
+	const ctx = useMemo<ToastState>(
+		() => ({
+			id,
+			open,
+			dismiss,
+			titleId,
+			setTitleId,
+			descriptionId,
+			setDescriptionId,
+			variant,
+			progress: showProgress ? progress : undefined,
+		}),
+		[
+			id,
+			open,
+			dismiss,
+			titleId,
+			setTitleId,
+			descriptionId,
+			setDescriptionId,
+			variant,
+			showProgress,
+			progress,
+		]
+	);
 
 	const slot = { open };
 
