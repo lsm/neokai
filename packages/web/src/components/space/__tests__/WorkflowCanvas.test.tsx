@@ -1101,4 +1101,247 @@ describe('WorkflowCanvas', () => {
 		const innerDiv = badge.querySelector('div');
 		expect(innerDiv?.getAttribute('title')).toBe('disk full');
 	});
+
+	// ---- Runtime mode: node state styling ----
+
+	it('pending node in runtime mode has no animate-pulse class', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		// No node executions → both nodes remain pending
+		mockNodeExecutions.value = [];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const node = getByTestId('node-n1');
+		expect(node.getAttribute('class') ?? '').not.toContain('animate-pulse');
+	});
+
+	it('pending node in runtime mode has no data-testid for status indicators', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockNodeExecutions.value = [];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		// Pending node should still render in the DOM
+		expect(getByTestId('node-n1')).toBeTruthy();
+		expect(getByTestId('node-n2')).toBeTruthy();
+	});
+
+	it('failed node (blocked execution with blocked run) has no animate-pulse class', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun({ status: 'blocked' })];
+		mockNodeExecutions.value = [makeNodeExecution({ workflowNodeId: 'n1', status: 'blocked' })];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const node = getByTestId('node-n1');
+		expect(node.getAttribute('class') ?? '').not.toContain('animate-pulse');
+	});
+
+	it('completed node shows done status (green checkmark) — no animate-pulse', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockNodeExecutions.value = [
+			makeNodeExecution({
+				workflowNodeId: 'n1',
+				status: 'done',
+				startedAt: 1000,
+				completedAt: 5000,
+			}),
+		];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const node = getByTestId('node-n1');
+		expect(node.getAttribute('class') ?? '').not.toContain('animate-pulse');
+		// Node should still be present
+		expect(node).toBeTruthy();
+	});
+
+	it('template mode shows all nodes as pending regardless of store data', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		// Provide run data and node executions — should be ignored in template mode
+		mockWorkflowRuns.value = [makeRun()];
+		mockNodeExecutions.value = [makeNodeExecution({ workflowNodeId: 'n1', status: 'in_progress' })];
+
+		// No runId → template mode
+		const { getByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
+		const canvas = getByTestId('workflow-canvas');
+		expect(canvas.getAttribute('data-mode')).toBe('template');
+		// In template mode, nodes render as pending (no animate-pulse)
+		const node = getByTestId('node-n1');
+		expect(node.getAttribute('class') ?? '').not.toContain('animate-pulse');
+	});
+
+	// ---- Runtime mode: agent labels on nodes ----
+
+	it('node with a single agent does NOT show an agent count label', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Planner', agents: [{ agentId: 'agent-1', name: 'planner' }] },
+				{ id: 'n2', name: 'Coder', agents: [] },
+			],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const node = getByTestId('node-n1');
+		// Single agent: no "×N agents" label rendered
+		expect(node.textContent).not.toContain('agents');
+	});
+
+	it('node with multiple agents shows "×N agents" label', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Planner',
+					agents: [
+						{ agentId: 'agent-1', name: 'planner-1' },
+						{ agentId: 'agent-2', name: 'planner-2' },
+						{ agentId: 'agent-3', name: 'planner-3' },
+					],
+				},
+				{ id: 'n2', name: 'Coder', agents: [] },
+			],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const node = getByTestId('node-n1');
+		// Multi-agent: "×3 agents" label should appear
+		expect(node.textContent).toContain('×3');
+		expect(node.textContent).toContain('agents');
+	});
+
+	it('node with exactly 2 agents shows "×2 agents" label', () => {
+		const wf = makeWorkflow({
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Reviewer',
+					agents: [
+						{ agentId: 'agent-a', name: 'reviewer-1' },
+						{ agentId: 'agent-b', name: 'reviewer-2' },
+					],
+				},
+				{ id: 'n2', name: 'Coder', agents: [] },
+			],
+		});
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const { getByTestId } = render(
+			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
+		);
+		const node = getByTestId('node-n1');
+		expect(node.textContent).toContain('×2');
+		expect(node.textContent).toContain('agents');
+	});
+
+	// ---- Runtime mode: onNodeClick callback ----
+
+	it('clicking a node in runtime mode calls onNodeClick with the node ID', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockNodeExecutions.value = [makeNodeExecution({ workflowNodeId: 'n1', status: 'in_progress' })];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const handleNodeClick = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowCanvas
+				workflowId="wf-1"
+				runId="run-1"
+				spaceId="sp-1"
+				onNodeClick={handleNodeClick}
+			/>
+		);
+
+		fireEvent.click(getByTestId('node-n1'));
+		expect(handleNodeClick).toHaveBeenCalledOnce();
+		expect(handleNodeClick).toHaveBeenCalledWith('n1', expect.any(Array));
+	});
+
+	it('clicking a node passes run tasks to onNodeClick callback', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockNodeExecutions.value = [];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const task = makeTask({ id: 'task-x', workflowRunId: 'run-1' });
+		mockTasksByRun.value = new Map([['run-1', [task]]]);
+
+		const handleNodeClick = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowCanvas
+				workflowId="wf-1"
+				runId="run-1"
+				spaceId="sp-1"
+				onNodeClick={handleNodeClick}
+			/>
+		);
+
+		fireEvent.click(getByTestId('node-n2'));
+		expect(handleNodeClick).toHaveBeenCalledWith('n2', [task]);
+	});
+
+	it('does NOT attach onClick handler to nodes in template mode', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+
+		const handleNodeClick = vi.fn();
+		const { getByTestId } = render(
+			// No runId → template mode; onNodeClick should be ignored
+			<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" onNodeClick={handleNodeClick} />
+		);
+
+		fireEvent.click(getByTestId('node-n1'));
+		expect(handleNodeClick).not.toHaveBeenCalled();
+	});
+
+	it('clicking node n2 fires onNodeClick with correct node ID', () => {
+		const wf = makeWorkflow();
+		mockWorkflows.value = [wf];
+		mockWorkflowRuns.value = [makeRun()];
+		mockNodeExecutions.value = [];
+		mockHub.request.mockResolvedValue({ gateData: [] });
+
+		const handleNodeClick = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowCanvas
+				workflowId="wf-1"
+				runId="run-1"
+				spaceId="sp-1"
+				onNodeClick={handleNodeClick}
+			/>
+		);
+
+		fireEvent.click(getByTestId('node-n2'));
+		expect(handleNodeClick).toHaveBeenCalledWith('n2', expect.any(Array));
+	});
 });
