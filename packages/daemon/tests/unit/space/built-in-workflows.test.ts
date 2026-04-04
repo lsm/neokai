@@ -1384,6 +1384,16 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(templates[0].name).toBe(FULL_CYCLE_CODING_WORKFLOW.name);
 	});
 
+	test('listWorkflows returns FULL_CYCLE_CODING_WORKFLOW first after DB seeding', () => {
+		// Verifies the DB-level ordering guarantee: listWorkflows uses
+		// ORDER BY created_at ASC, rowid ASC. When all workflows are seeded within
+		// the same millisecond, rowid (insertion order) is the tiebreaker, so
+		// FULL_CYCLE_CODING_WORKFLOW (seeded first) must be returned at index 0.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		expect(workflows[0].name).toBe(FULL_CYCLE_CODING_WORKFLOW.name);
+	});
+
 	test('getBuiltInWorkflows returns all four templates', () => {
 		const templates = getBuiltInWorkflows();
 		expect(templates).toHaveLength(4);
