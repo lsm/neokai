@@ -1,0 +1,348 @@
+// @ts-nocheck
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+import { signal } from '@preact/signals';
+import type {
+	SpaceAgent,
+	SpaceTask,
+	SpaceTaskActivityMember,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+} from '@neokai/shared';
+
+vi.mock('../../../lib/router', () => ({
+	navigateToSpaceAgent: vi.fn(),
+}));
+
+const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal } = vi.hoisted(() => ({
+	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
+	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
+}));
+vi.mock('../../../lib/signals', async (importOriginal) => {
+	const actual = await importOriginal();
+	return {
+		...actual,
+		get spaceOverlaySessionIdSignal() {
+			return mockSpaceOverlaySessionIdSignal;
+		},
+		get spaceOverlayAgentNameSignal() {
+			return mockSpaceOverlayAgentNameSignal;
+		},
+	};
+});
+
+let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
+let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
+let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
+
+const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+const mockEnsureTaskAgentSession = vi.fn();
+const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
+const mockSubscribeTaskActivity = vi.fn().mockResolvedValue(undefined);
+const mockUnsubscribeTaskActivity = vi.fn();
+
+vi.mock('../../../lib/space-store', () => ({
+	get spaceStore() {
+		return {
+			tasks: mockTasks,
+			agents: mockAgents,
+			workflows: mockWorkflows,
+			workflowRuns: mockWorkflowRuns,
+			taskActivity: mockTaskActivity,
+			updateTask: mockUpdateTask,
+			ensureTaskAgentSession: mockEnsureTaskAgentSession,
+			sendTaskMessage: mockSendTaskMessage,
+			subscribeTaskActivity: mockSubscribeTaskActivity,
+			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
+		};
+	},
+}));
+
+vi.mock('../SpaceTaskUnifiedThread', () => ({
+	SpaceTaskUnifiedThread: ({ taskId }: { taskId: string }) => (
+		<div data-testid="space-task-unified-thread" data-task-id={taskId} />
+	),
+}));
+
+vi.mock('../../../lib/utils', () => ({
+	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
+}));
+
+vi.mock('../../../lib/design-tokens', () => ({
+	borderColors: {
+		ui: { default: 'border-dark-700' },
+	},
+}));
+
+mockTasks = signal<SpaceTask[]>([]);
+mockAgents = signal<SpaceAgent[]>([]);
+mockWorkflows = signal<SpaceWorkflow[]>([]);
+mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
+
+import { SpaceTaskPane } from '../SpaceTaskPane';
+
+function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+	return {
+		id: 'task-1',
+		spaceId: 'space-1',
+		title: 'Fix the bug',
+		description: 'Task description',
+		status: 'in_progress',
+		priority: 'normal',
+		dependsOn: [],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		taskAgentSessionId: 'session-abc',
+		...overrides,
+	};
+}
+
+describe('SpaceTaskPane — @mention autocomplete', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockAgents.value = [
+			{
+				id: '1',
+				name: 'Coder',
+				spaceId: 'space-1',
+				instructions: '',
+				tools: [],
+				createdAt: 0,
+				updatedAt: 0,
+			},
+			{
+				id: '2',
+				name: 'Reviewer',
+				spaceId: 'space-1',
+				instructions: '',
+				tools: [],
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
+		mockWorkflows.value = [];
+		mockWorkflowRuns.value = [];
+		mockTaskActivity.value = new Map();
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ taskAgentSessionId: 'session-ensured' })
+		);
+		mockSendTaskMessage.mockClear();
+		mockSubscribeTaskActivity.mockClear();
+		mockUnsubscribeTaskActivity.mockClear();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	function getTextarea(container: ReturnType<typeof render>) {
+		return container.getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		) as HTMLTextAreaElement;
+	}
+
+	function typeIntoTextarea(textarea: HTMLTextAreaElement, value: string) {
+		// Set value and selectionStart to end, then fire input
+		Object.defineProperty(textarea, 'selectionStart', {
+			get: () => value.length,
+			configurable: true,
+		});
+		fireEvent.input(textarea, { target: { value } });
+	}
+
+	it('shows dropdown when user types @', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+	});
+
+	it('shows all agents when @ is typed alone', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			expect(items.length).toBe(2);
+			expect(items[0].textContent).toContain('@Coder');
+			expect(items[1].textContent).toContain('@Reviewer');
+		});
+	});
+
+	it('filters agents when @partial is typed', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@Co');
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			expect(items.length).toBe(1);
+			expect(items[0].textContent).toContain('@Coder');
+		});
+	});
+
+	it('shows no dropdown when filter matches nothing', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@zzz');
+
+		// No dropdown since no agents match
+		expect(container.queryByTestId('mention-autocomplete')).toBeNull();
+	});
+
+	it('hides dropdown when Escape is pressed', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+
+		fireEvent.keyDown(textarea, { key: 'Escape' });
+
+		await waitFor(() => {
+			expect(container.queryByTestId('mention-autocomplete')).toBeNull();
+		});
+	});
+
+	it('selects agent on Enter and inserts mention into textarea', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@Co');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+
+		fireEvent.keyDown(textarea, { key: 'Enter' });
+
+		await waitFor(() => {
+			expect(container.queryByTestId('mention-autocomplete')).toBeNull();
+		});
+		// Draft should now contain the mention
+		expect(textarea.value).toContain('@Coder');
+	});
+
+	it('closes dropdown after clicking an agent name', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+
+		const items = container.getAllByTestId('mention-item');
+		fireEvent.click(items[0]);
+
+		await waitFor(() => {
+			expect(container.queryByTestId('mention-autocomplete')).toBeNull();
+		});
+	});
+
+	it('inserts correct mention text when agent is clicked', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@Re');
+
+		await waitFor(() => {
+			expect(container.getAllByTestId('mention-item').length).toBeGreaterThan(0);
+		});
+
+		const items = container.getAllByTestId('mention-item');
+		fireEvent.click(items[0]);
+
+		await waitFor(() => {
+			expect(textarea.value).toContain('@Reviewer');
+		});
+	});
+
+	it('does not show dropdown when no @ is in the text', () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, 'hello world');
+
+		expect(container.queryByTestId('mention-autocomplete')).toBeNull();
+	});
+
+	it('navigates down in the dropdown list with ArrowDown', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+
+		const itemsBefore = container.getAllByTestId('mention-item');
+		// Initially, first item should be highlighted
+		expect(itemsBefore[0].className).toContain('bg-blue-500/20');
+
+		fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			expect(items[1].className).toContain('bg-blue-500/20');
+		});
+	});
+
+	it('navigates up in the dropdown list with ArrowUp', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+
+		// Go down first
+		fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			expect(items[1].className).toContain('bg-blue-500/20');
+		});
+
+		// Go back up
+		fireEvent.keyDown(textarea, { key: 'ArrowUp' });
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			expect(items[0].className).toContain('bg-blue-500/20');
+		});
+	});
+});
