@@ -16,7 +16,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getWorkspaceRoot, getModal } from '../helpers/wait-helpers';
 import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -65,7 +65,7 @@ test.describe('Space Creation UX', () => {
 		await createButton.click();
 
 		// Dialog should appear
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('text=Workspace Path')).toBeVisible({ timeout: 3000 });
 	});
 
@@ -73,10 +73,10 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Submit without filling workspace path
-		const submitButton = page.getByRole('dialog').getByRole('button', { name: 'Create Space' });
+		const submitButton = getModal(page).getByRole('button', { name: 'Create Space' });
 		await submitButton.click();
 
 		// Should show validation error
@@ -87,7 +87,7 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Type a workspace path
 		const pathInput = page.locator('input[placeholder*="/Users/you/projects"]');
@@ -107,7 +107,7 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Fill workspace path with a unique subdirectory (guaranteed to exist)
 		const pathInput = page.locator('input[placeholder*="/Users/you/projects"]');
@@ -118,7 +118,7 @@ test.describe('Space Creation UX', () => {
 		await nameInput.fill(`E2E Space ${Date.now()}`);
 
 		// Submit
-		const submitButton = page.getByRole('dialog').getByRole('button', { name: 'Create Space' });
+		const submitButton = getModal(page).getByRole('button', { name: 'Create Space' });
 		await submitButton.click();
 
 		// Wait for navigation to the new space
@@ -146,13 +146,13 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Click Cancel
 		await page.getByRole('button', { name: 'Cancel', exact: true }).click();
 
 		// Dialog should close
-		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+		await expect(getModal(page)).not.toBeVisible({ timeout: 3000 });
 	});
 
 	test('configure page shows all 6 preset agents and built-in workflows', async ({ page }) => {
@@ -163,14 +163,14 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		const pathInput = page.locator('input[placeholder*="/Users/you/projects"]');
 		await pathInput.fill(spaceWorkspacePath);
 		const nameInput = page.locator('input[placeholder="e.g., My App"]');
 		await nameInput.fill(`E2E Configure ${Date.now()}`);
 
-		const submitButton = page.getByRole('dialog').getByRole('button', { name: 'Create Space' });
+		const submitButton = getModal(page).getByRole('button', { name: 'Create Space' });
 		await submitButton.click();
 
 		// Wait for navigation to the new space
