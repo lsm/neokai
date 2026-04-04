@@ -16,6 +16,37 @@ import { Logger } from '../logger';
 const log = new Logger('space-task-message-handlers');
 
 /**
+ * Extract @AgentName mentions from message text.
+ * Matches patterns like @Coder, @code-reviewer, @planner_1
+ * Returns a deduplicated list of mentioned agent names (preserving first occurrence order).
+ * Names must start with a letter; digits, hyphens, underscores are allowed subsequently.
+ */
+export function parseMentions(text: string): string[] {
+	const mentionRegex = /@([A-Za-z][A-Za-z0-9_-]*)/g;
+	const seen = new Set<string>();
+	const matches: string[] = [];
+	let match: RegExpExecArray | null;
+	while ((match = mentionRegex.exec(text)) !== null) {
+		const name = match[1];
+		if (name && !seen.has(name)) {
+			seen.add(name);
+			matches.push(name);
+		}
+	}
+	return matches;
+}
+
+/**
+ * Minimal interface for NodeExecution lookup.
+ * Allows the handler to resolve @mention targets without depending on the concrete repository class.
+ */
+export interface NodeExecutionLookup {
+	listByWorkflowRun(
+		workflowRunId: string
+	): Array<{ agentName: string; agentSessionId: string | null; status: string }>;
+}
+
+/**
  * Minimal interface for interacting with the Task Agent manager.
  * Decouples RPC handlers from the concrete TaskAgentManager class.
  */
@@ -26,6 +57,11 @@ export interface TaskAgentManagerInterface {
 	injectTaskAgentMessage(taskId: string, message: string): Promise<void>;
 	/** Returns the live AgentSession for the given task, or undefined if not spawned. */
 	getTaskAgent(taskId: string): AgentSession | undefined;
+	/**
+	 * Optional: inject a message directly into a node agent sub-session by its session ID.
+	 * Required for @mention routing to specific agents.
+	 */
+	injectSubSessionMessage?(subSessionId: string, message: string): Promise<void>;
 }
 
 /**
@@ -42,7 +78,8 @@ export function setupSpaceTaskMessageHandlers(
 	messageHub: MessageHub,
 	taskAgentManager: TaskAgentManagerInterface,
 	db: Database,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	nodeExecutionRepo?: NodeExecutionLookup
 ): void {
 	const taskRepo = new SpaceTaskRepository(db.getDatabase());
 
@@ -110,6 +147,65 @@ export function setupSpaceTaskMessageHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
+		// ── @mention routing ──────────────────────────────────────────────────────
+		// If the message contains @AgentName patterns AND the task is linked to a
+		// workflow run, route directly to the matched node agent sessions.
+		const mentions = parseMentions(params.message);
+
+		if (
+			mentions.length > 0 &&
+			task.workflowRunId &&
+			nodeExecutionRepo &&
+			taskAgentManager.injectSubSessionMessage
+		) {
+			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+			// Only route to agents that are actively running — exclude done/cancelled/blocked
+			// to avoid injecting into sessions that will never process the message.
+			const activeAgents = executions.filter(
+				(e) => e.agentSessionId !== null && (e.status === 'in_progress' || e.status === 'pending')
+			);
+
+			const routedTo: string[] = [];
+			const notFound: string[] = [];
+
+			for (const mention of mentions) {
+				const matches = activeAgents.filter(
+					(e) => e.agentName.toLowerCase() === mention.toLowerCase()
+				);
+				if (matches.length === 0) {
+					notFound.push(mention);
+				} else {
+					// Inject into all matching sessions in parallel (independent operations)
+					await Promise.all(
+						matches.map((exec) =>
+							taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, params.message)
+						)
+					);
+					routedTo.push(mention);
+				}
+			}
+
+			if (routedTo.length === 0) {
+				// No mentions resolved — throw with available agent names
+				const available = [...new Set(activeAgents.map((e) => e.agentName))].sort();
+				throw new Error(
+					`@mention not found: ${notFound.join(', ')}. Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+				);
+			}
+
+			log.info(
+				`space.task.sendMessage: @mention routing to [${routedTo.join(', ')}] for task ${params.taskId}`
+			);
+
+			return {
+				ok: true,
+				routedTo,
+				...(notFound.length > 0 ? { notFound } : {}),
+			};
+		}
+		// ── end @mention routing ───────────────────────────────────────────────────
+
+		// No @mentions (or routing prerequisites not met): route to Task Agent
 		// Ensure a live Task Agent session exists before injecting. This recovers from:
 		// - first message on a task that has not spawned yet
 		// - persisted-but-not-live sessions after daemon restart

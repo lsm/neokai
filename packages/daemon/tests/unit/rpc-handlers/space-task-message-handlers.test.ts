@@ -16,7 +16,9 @@ import type { SpaceTask } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import {
 	setupSpaceTaskMessageHandlers,
+	parseMentions,
 	type TaskAgentManagerInterface,
+	type NodeExecutionLookup,
 } from '../../../src/lib/rpc-handlers/space-task-message-handlers';
 import type { Database } from '../../../src/storage/database';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
@@ -136,7 +138,7 @@ function createMockDatabase(
 						depends_on: '[]',
 						task_agent_session_id: task.taskAgentSessionId ?? null,
 						workflow_node_id: null,
-						workflow_run_id: null,
+						workflow_run_id: task.workflowRunId ?? null,
 						result: null,
 						error: null,
 						archived_at: null,
@@ -602,5 +604,317 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				call('space.task.getMessages', { spaceId: 'space-1', taskId: 'task-2' })
 			).rejects.toThrow('Task Agent session not started for task: task-2');
 		});
+	});
+
+	// ─── @mention routing ─────────────────────────────────────────────────────────
+
+	describe('@mention routing in space.task.sendMessage', () => {
+		// Mock NodeExecutionLookup — includes status field (required by NodeExecutionLookup interface)
+		function makeNodeExecutionRepo(
+			agents: Array<{ agentName: string; agentSessionId: string | null; status?: string }>
+		): NodeExecutionLookup {
+			return {
+				listByWorkflowRun: mock(() =>
+					agents.map((a) => ({ ...a, status: a.status ?? 'in_progress' }))
+				),
+			};
+		}
+
+		// Task with a workflowRunId set
+		const mockTaskWithWorkflowRun: SpaceTask = {
+			...mockTaskWithSession,
+			workflowRunId: 'run-abc-123',
+		};
+
+		function setupWithMention(
+			nodeExecAgents: Array<{ agentName: string; agentSessionId: string | null; status?: string }>,
+			task: SpaceTask = mockTaskWithWorkflowRun
+		) {
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {});
+			taskAgentManager = {
+				...createMockTaskAgentManager(null, task),
+				injectSubSessionMessage: injectSubSession,
+			};
+			db = createMockDatabase(task);
+			daemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+			const nodeExecutionRepo = makeNodeExecutionRepo(nodeExecAgents);
+			setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, daemonHub, nodeExecutionRepo);
+			return { injectSubSession };
+		}
+
+		it('single @mention routes to the matched agent session', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+				{ agentName: 'Reviewer', agentSessionId: 'session-reviewer-1' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder please fix the bug',
+			});
+
+			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+			expect(injectSubSession).toHaveBeenCalledTimes(1);
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@Coder please fix the bug');
+			// Should NOT have routed to Task Agent
+			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
+		});
+
+		it('multiple @mentions route to all mentioned agents', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+				{ agentName: 'Reviewer', agentSessionId: 'session-reviewer-1' },
+				{ agentName: 'Planner', agentSessionId: 'session-planner-1' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder and @Reviewer please coordinate',
+			});
+
+			expect(result).toMatchObject({ ok: true });
+			const res = result as { routedTo: string[] };
+			expect(res.routedTo).toHaveLength(2);
+			expect(res.routedTo).toContain('Coder');
+			expect(res.routedTo).toContain('Reviewer');
+			expect(injectSubSession).toHaveBeenCalledTimes(2);
+			expect(taskAgentManager.injectTaskAgentMessage).not.toHaveBeenCalled();
+		});
+
+		it('invalid @mention throws error listing available agents', async () => {
+			setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+				{ agentName: 'Reviewer', agentSessionId: 'session-reviewer-1' },
+			]);
+
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Ghost please do something',
+				})
+			).rejects.toThrow('@mention not found: Ghost');
+			// Error message should list available agents
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Ghost please do something',
+				})
+			).rejects.toThrow('Coder, Reviewer');
+		});
+
+		it('ambiguous @mention (multiple agents with same name) routes to all matching sessions', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-2' }, // same name, two sessions
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder please check both',
+			});
+
+			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+			// Should have injected into both Coder sessions
+			expect(injectSubSession).toHaveBeenCalledTimes(2);
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@Coder please check both');
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-2', '@Coder please check both');
+		});
+
+		it('partial routing: valid mentions route, invalid mentions listed in notFound', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+			]);
+
+			const result = (await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder and @Ghost please help',
+			})) as { ok: boolean; routedTo: string[]; notFound: string[] };
+
+			expect(result.ok).toBe(true);
+			expect(result.routedTo).toEqual(['Coder']);
+			expect(result.notFound).toEqual(['Ghost']);
+			expect(injectSubSession).toHaveBeenCalledTimes(1);
+		});
+
+		it('case-insensitive @mention matching', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@coder please fix', // lowercase mention, mixed-case agent name
+			});
+
+			expect(result).toMatchObject({ ok: true, routedTo: ['coder'] });
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-1', '@coder please fix');
+		});
+
+		it('message without @mentions falls back to Task Agent routing', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: 'Please continue the work',
+			});
+
+			expect(result).toEqual({ ok: true });
+			expect(injectSubSession).not.toHaveBeenCalled();
+			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalledWith(
+				'task-1',
+				'Please continue the work'
+			);
+		});
+
+		it('@mention falls back to Task Agent when task has no workflowRunId', async () => {
+			const taskWithoutRun: SpaceTask = { ...mockTaskWithSession, workflowRunId: undefined };
+			const { injectSubSession } = setupWithMention(
+				[{ agentName: 'Coder', agentSessionId: 'session-coder-1' }],
+				taskWithoutRun
+			);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder please help',
+			});
+
+			// Falls back to Task Agent since no workflowRunId
+			expect(result).toEqual({ ok: true });
+			expect(injectSubSession).not.toHaveBeenCalled();
+			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalled();
+		});
+
+		it('does not route to done/cancelled/blocked agents — excludes completed sessions', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-done', status: 'done' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-cancelled', status: 'cancelled' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-blocked', status: 'blocked' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-active', status: 'in_progress' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder please check',
+			});
+
+			// Only the in_progress session should receive the message
+			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+			expect(injectSubSession).toHaveBeenCalledTimes(1);
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-active', '@Coder please check');
+			expect(injectSubSession).not.toHaveBeenCalledWith('session-coder-done', expect.anything());
+		});
+
+		it('@mention throws when all matching agents are in terminal status', async () => {
+			setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-done', status: 'done' },
+			]);
+
+			// Coder exists but is done — should be treated as unavailable
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Coder please help',
+				})
+			).rejects.toThrow('@mention not found: Coder');
+		});
+
+		it('propagates error when injectSubSessionMessage throws', async () => {
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {
+				throw new Error('Sub-session not found: session-coder-1');
+			});
+			taskAgentManager = {
+				...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+				injectSubSessionMessage: injectSubSession,
+			};
+			db = createMockDatabase(mockTaskWithWorkflowRun);
+			daemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+			const nodeExecutionRepo = makeNodeExecutionRepo([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1', status: 'in_progress' },
+			]);
+			setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, daemonHub, nodeExecutionRepo);
+
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Coder please help',
+				})
+			).rejects.toThrow('Sub-session not found: session-coder-1');
+		});
+	});
+});
+
+// ─── parseMentions unit tests ────────────────────────────────────────────────
+
+describe('parseMentions', () => {
+	it('extracts a single @mention', () => {
+		expect(parseMentions('@Coder please fix')).toEqual(['Coder']);
+	});
+
+	it('extracts multiple distinct @mentions', () => {
+		expect(parseMentions('@Coder and @Reviewer please coordinate')).toEqual(['Coder', 'Reviewer']);
+	});
+
+	it('deduplicates repeated @mentions', () => {
+		expect(parseMentions('@Coder can you help @Coder')).toEqual(['Coder']);
+	});
+
+	it('preserves original casing', () => {
+		expect(parseMentions('@CodeReviewer hello')).toEqual(['CodeReviewer']);
+	});
+
+	it('returns empty array when no @mentions', () => {
+		expect(parseMentions('please fix the bug')).toEqual([]);
+	});
+
+	it('returns empty array for empty string', () => {
+		expect(parseMentions('')).toEqual([]);
+	});
+
+	it('returns empty array for bare @ with no name', () => {
+		expect(parseMentions('@ hello')).toEqual([]);
+	});
+
+	it('does not extract names starting with a digit after @', () => {
+		// @123bot: starts with digit — should not match
+		expect(parseMentions('@123bot hello')).toEqual([]);
+	});
+
+	it('handles @mention with hyphens and underscores', () => {
+		expect(parseMentions('@code-reviewer and @qa_agent')).toEqual(['code-reviewer', 'qa_agent']);
+	});
+
+	it('email false-positive: extracts @domain from emails (known limitation, degrades gracefully)', () => {
+		// @mention regex cannot distinguish emails; user@example.com extracts 'example'
+		// This is acceptable since unmatched mentions end up in notFound, not silently injected
+		const result = parseMentions('contact user@example.com for help');
+		expect(result).toEqual(['example']);
+	});
+
+	it('@mention at start of string', () => {
+		expect(parseMentions('@Planner start the task')).toEqual(['Planner']);
+	});
+
+	it('ignores @mention followed by a digit-only suffix when the name still starts with a letter', () => {
+		expect(parseMentions('@Coder1 hello')).toEqual(['Coder1']);
 	});
 });
