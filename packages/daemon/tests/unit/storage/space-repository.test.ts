@@ -136,6 +136,63 @@ describe('SpaceRepository', () => {
 			expect(updated!.description).toBe('New desc');
 		});
 
+		it('updates description individually', () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/a',
+				slug: 'a',
+				name: 'A',
+				description: 'Original',
+			});
+			const updated = repo.updateSpace(space.id, { description: 'Updated description' });
+			expect(updated!.description).toBe('Updated description');
+			expect(updated!.name).toBe('A'); // name unchanged
+		});
+
+		it('updates backgroundContext individually', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			expect(space.backgroundContext).toBe('');
+
+			const updated = repo.updateSpace(space.id, {
+				backgroundContext: 'This project uses Bun runtime',
+			});
+			expect(updated!.backgroundContext).toBe('This project uses Bun runtime');
+			expect(updated!.name).toBe('A'); // other fields unchanged
+		});
+
+		it('updates instructions individually', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			expect(space.instructions).toBe('');
+
+			const updated = repo.updateSpace(space.id, {
+				instructions: 'Always write tests before code',
+			});
+			expect(updated!.instructions).toBe('Always write tests before code');
+			expect(updated!.name).toBe('A'); // other fields unchanged
+		});
+
+		it('updates allowedModels individually', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			expect(space.allowedModels).toBeUndefined(); // defaults to empty array → undefined
+
+			const updated = repo.updateSpace(space.id, {
+				allowedModels: ['claude-sonnet', 'claude-haiku'],
+			});
+			expect(updated!.allowedModels).toEqual(['claude-sonnet', 'claude-haiku']);
+		});
+
+		it('clears allowedModels to empty array', () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/a',
+				slug: 'a',
+				name: 'A',
+				allowedModels: ['claude-opus'],
+			});
+			expect(space.allowedModels).toEqual(['claude-opus']);
+
+			const updated = repo.updateSpace(space.id, { allowedModels: [] });
+			expect(updated!.allowedModels).toBeUndefined(); // empty array → undefined
+		});
+
 		it('clears defaultModel when set to null', () => {
 			const space = repo.createSpace({
 				workspacePath: '/workspace/a',
@@ -145,6 +202,14 @@ describe('SpaceRepository', () => {
 			});
 			const updated = repo.updateSpace(space.id, { defaultModel: null });
 			expect(updated!.defaultModel).toBeUndefined();
+		});
+
+		it('sets defaultModel from undefined', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			expect(space.defaultModel).toBeUndefined();
+
+			const updated = repo.updateSpace(space.id, { defaultModel: 'claude-sonnet' });
+			expect(updated!.defaultModel).toBe('claude-sonnet');
 		});
 
 		it("updates autonomyLevel to 'semi_autonomous'", () => {
@@ -174,8 +239,171 @@ describe('SpaceRepository', () => {
 			expect(updated!.config).toEqual({ maxConcurrentTasks: 5, taskTimeoutMs: 30000 });
 		});
 
+		it('clears config by replacing with empty object', () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/a',
+				slug: 'a',
+				name: 'A',
+				config: { maxConcurrentTasks: 3, taskTimeoutMs: 60000 },
+			});
+			expect(space.config).toBeDefined();
+
+			// Replace config with a new value to verify it persists
+			const updated = repo.updateSpace(space.id, {
+				config: { maxConcurrentTasks: 1, taskTimeoutMs: 5000 },
+			});
+			expect(updated!.config).toEqual({ maxConcurrentTasks: 1, taskTimeoutMs: 5000 });
+		});
+
+		it('does not clobber other fields when updating a single field', () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/a',
+				slug: 'a',
+				name: 'Original Name',
+				description: 'Original desc',
+				backgroundContext: 'Original context',
+				instructions: 'Original instructions',
+				defaultModel: 'claude-opus',
+				allowedModels: ['claude-opus', 'claude-sonnet'],
+				autonomyLevel: 'semi_autonomous',
+				config: { maxConcurrentTasks: 3, taskTimeoutMs: 60000 },
+			});
+
+			// Update only name
+			const updated = repo.updateSpace(space.id, { name: 'New Name' });
+
+			expect(updated!.name).toBe('New Name');
+			expect(updated!.description).toBe('Original desc');
+			expect(updated!.backgroundContext).toBe('Original context');
+			expect(updated!.instructions).toBe('Original instructions');
+			expect(updated!.defaultModel).toBe('claude-opus');
+			expect(updated!.allowedModels).toEqual(['claude-opus', 'claude-sonnet']);
+			expect(updated!.autonomyLevel).toBe('semi_autonomous');
+			expect(updated!.config).toEqual({ maxConcurrentTasks: 3, taskTimeoutMs: 60000 });
+			expect(updated!.workspacePath).toBe('/workspace/a');
+		});
+
 		it('returns null for unknown ID', () => {
 			expect(repo.updateSpace('nonexistent', { name: 'X' })).toBeNull();
+		});
+
+		it('updates updatedAt timestamp on change', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			const originalUpdatedAt = space.updatedAt;
+
+			// Small delay to ensure timestamp difference
+			const updated = repo.updateSpace(space.id, { name: 'B' });
+			expect(updated!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
+		});
+
+		it('does not change updatedAt when no fields are provided', () => {
+			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+			const originalUpdatedAt = space.updatedAt;
+
+			const updated = repo.updateSpace(space.id, {});
+			expect(updated!.updatedAt).toBe(originalUpdatedAt);
+			expect(updated!.name).toBe('A');
+		});
+	});
+
+	describe('field round-trip: create with all fields → getSpace → verify', () => {
+		it('round-trips all configuration fields through create and read', () => {
+			const created = repo.createSpace({
+				workspacePath: '/workspace/full-roundtrip',
+				slug: 'full-roundtrip',
+				name: 'Full Roundtrip',
+				description: 'A comprehensive test',
+				backgroundContext: 'This is the project background',
+				instructions: 'Follow TDD practices',
+				defaultModel: 'claude-opus',
+				allowedModels: ['claude-opus', 'claude-sonnet', 'claude-haiku'],
+				autonomyLevel: 'semi_autonomous',
+				config: { maxConcurrentTasks: 10, taskTimeoutMs: 120000 },
+			});
+
+			// Re-read from DB to verify persistence
+			const readBack = repo.getSpace(created.id);
+
+			expect(readBack).not.toBeNull();
+			expect(readBack!.id).toBe(created.id);
+			expect(readBack!.slug).toBe('full-roundtrip');
+			expect(readBack!.workspacePath).toBe('/workspace/full-roundtrip');
+			expect(readBack!.name).toBe('Full Roundtrip');
+			expect(readBack!.description).toBe('A comprehensive test');
+			expect(readBack!.backgroundContext).toBe('This is the project background');
+			expect(readBack!.instructions).toBe('Follow TDD practices');
+			expect(readBack!.defaultModel).toBe('claude-opus');
+			expect(readBack!.allowedModels).toEqual(['claude-opus', 'claude-sonnet', 'claude-haiku']);
+			expect(readBack!.autonomyLevel).toBe('semi_autonomous');
+			expect(readBack!.config).toEqual({ maxConcurrentTasks: 10, taskTimeoutMs: 120000 });
+			expect(readBack!.status).toBe('active');
+			expect(readBack!.sessionIds).toEqual([]);
+			expect(readBack!.createdAt).toBeGreaterThan(0);
+			expect(readBack!.updatedAt).toBeGreaterThan(0);
+		});
+
+		it('round-trips updated fields through update and read', () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/update-roundtrip',
+				slug: 'update-roundtrip',
+				name: 'Before Update',
+				description: 'Before',
+				backgroundContext: 'Before context',
+				instructions: 'Before instructions',
+				defaultModel: 'claude-opus',
+				allowedModels: ['claude-opus'],
+				autonomyLevel: 'supervised',
+			});
+
+			// Update all mutable fields
+			repo.updateSpace(space.id, {
+				name: 'After Update',
+				description: 'After',
+				backgroundContext: 'After context',
+				instructions: 'After instructions',
+				defaultModel: 'claude-sonnet',
+				allowedModels: ['claude-sonnet', 'claude-haiku'],
+				autonomyLevel: 'semi_autonomous',
+				config: { maxConcurrentTasks: 5, taskTimeoutMs: 30000 },
+			});
+
+			// Re-read from DB
+			const readBack = repo.getSpace(space.id);
+
+			expect(readBack!.name).toBe('After Update');
+			expect(readBack!.description).toBe('After');
+			expect(readBack!.backgroundContext).toBe('After context');
+			expect(readBack!.instructions).toBe('After instructions');
+			expect(readBack!.defaultModel).toBe('claude-sonnet');
+			expect(readBack!.allowedModels).toEqual(['claude-sonnet', 'claude-haiku']);
+			expect(readBack!.autonomyLevel).toBe('semi_autonomous');
+			expect(readBack!.config).toEqual({ maxConcurrentTasks: 5, taskTimeoutMs: 30000 });
+			// Immutable fields should be unchanged
+			expect(readBack!.workspacePath).toBe('/workspace/update-roundtrip');
+			expect(readBack!.slug).toBe('update-roundtrip');
+		});
+
+		it('persists empty string values for text fields', () => {
+			const space = repo.createSpace({
+				workspacePath: '/workspace/empty-strings',
+				slug: 'empty-strings',
+				name: 'Empty Strings Test',
+				description: 'Has content',
+				backgroundContext: 'Has context',
+				instructions: 'Has instructions',
+			});
+
+			const updated = repo.updateSpace(space.id, {
+				description: '',
+				backgroundContext: '',
+				instructions: '',
+			});
+
+			const readBack = repo.getSpace(space.id);
+			expect(readBack!.description).toBe('');
+			expect(readBack!.backgroundContext).toBe('');
+			expect(readBack!.instructions).toBe('');
+			expect(readBack!.name).toBe('Empty Strings Test'); // unchanged
 		});
 	});
 
