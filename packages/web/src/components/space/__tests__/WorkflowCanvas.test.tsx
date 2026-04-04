@@ -1119,7 +1119,7 @@ describe('WorkflowCanvas', () => {
 		expect(node.getAttribute('class') ?? '').not.toContain('animate-pulse');
 	});
 
-	it('pending node in runtime mode has no data-testid for status indicators', () => {
+	it('pending nodes in runtime mode still render in the DOM', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
 		mockWorkflowRuns.value = [makeRun()];
@@ -1129,7 +1129,7 @@ describe('WorkflowCanvas', () => {
 		const { getByTestId } = render(
 			<WorkflowCanvas workflowId="wf-1" runId="run-1" spaceId="sp-1" />
 		);
-		// Pending node should still render in the DOM
+		// Pending nodes should still appear in the DOM (no executions → pending)
 		expect(getByTestId('node-n1')).toBeTruthy();
 		expect(getByTestId('node-n2')).toBeTruthy();
 	});
