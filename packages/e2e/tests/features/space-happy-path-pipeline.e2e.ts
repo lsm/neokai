@@ -13,7 +13,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createUniqueSpaceDir } from '../helpers/space-helpers';
+import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
@@ -63,21 +63,6 @@ async function cancelRun(
 	}
 }
 
-async function deleteSpace(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// best-effort cleanup
-	}
-}
-
 async function getRunTaskId(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
 	spaceId: string,
@@ -100,6 +85,21 @@ async function getRunTaskId(
 	return taskId;
 }
 
+/**
+ * Navigate to a route and wait for WebSocket to reconnect.
+ *
+ * page.goto() triggers a full page load which drops the existing WebSocket.
+ * Without waiting for reconnection, subsequent page.evaluate() calls that use
+ * hub.request() will throw "Not connected to transport".
+ */
+async function gotoAndWaitForConnection(
+	page: Parameters<typeof waitForWebSocketConnected>[0],
+	url: string
+): Promise<void> {
+	await page.goto(url);
+	await waitForWebSocketConnected(page);
+}
+
 test.describe('Space Happy Path Pipeline (Task-First)', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
@@ -114,12 +114,22 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 	});
 
 	test.afterEach(async ({ page }) => {
+		// Navigate back to root and wait for connection before cleanup RPC calls.
+		// The page may be on a space sub-route where the WebSocket is disconnected
+		// (e.g. due to navigation or test failure), so we need a connected hub.
+		try {
+			await page.goto('/');
+			await waitForWebSocketConnected(page, 5000);
+		} catch {
+			// If navigation/connection fails, cleanup below will be best-effort
+		}
+
 		if (runId) {
 			await cancelRun(page, runId);
 			runId = '';
 		}
 		if (spaceId) {
-			await deleteSpace(page, spaceId);
+			await deleteSpaceViaRpc(page, spaceId);
 			spaceId = '';
 		}
 	});
@@ -127,7 +137,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 	test('seeded agents/workflows are present and V2 review node carries 3 reviewer slots', async ({
 		page,
 	}) => {
-		await page.goto(`/space/${spaceId}`);
+		await gotoAndWaitForConnection(page, `/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
 		await page.locator('button:has-text("Agents")').click();
@@ -167,7 +177,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 	test('workflow run task opens task route and shows thread activity', async ({ page }) => {
 		const taskId = await getRunTaskId(page, spaceId, runId);
 
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 		await expect(page.getByTestId('task-thread-panel')).toBeVisible({ timeout: 5000 });
 
@@ -192,7 +202,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 	test('task completion is reflected in task pane', async ({ page }) => {
 		const taskId = await getRunTaskId(page, spaceId, runId);
 
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await gotoAndWaitForConnection(page, `/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
 		await page.evaluate(
