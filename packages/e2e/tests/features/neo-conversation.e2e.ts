@@ -197,6 +197,10 @@ async function resetSecurityMode(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 test.describe('Neo Panel – UI mechanics', () => {
+	// Lock viewport to 1280×720 so the backdrop-click position (x=500) is reliably
+	// outside the panel's `md:w-96` (384 px) width — matching neo-panel.e2e.ts.
+	test.use({ viewport: { width: 1280, height: 720 } });
+
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
@@ -230,7 +234,9 @@ test.describe('Neo Panel – UI mechanics', () => {
 		await openNeoPanel(page);
 		await closeNeoPanel(page);
 		// Panel uses CSS transform to go off-screen — verify via class, not toBeHidden()
-		await expect(page.getByTestId(NEO_PANEL_TESTID)).toHaveClass(/-translate-x-full/);
+		await expect(page.getByTestId(NEO_PANEL_TESTID)).toHaveClass(/-translate-x-full/, {
+			timeout: 5000,
+		});
 	});
 
 	test('closes via backdrop click', async ({ page }) => {
