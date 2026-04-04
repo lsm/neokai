@@ -1,3 +1,4 @@
+import { Fragment } from 'preact';
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { classNames } from '../../src/internal/class-names.ts';
 
@@ -1722,7 +1723,7 @@ export function GroupedRows() {
 							</thead>
 							<tbody class="bg-surface-0 dark:bg-surface-2">
 								{locations.map((location) => (
-									<tbody key={location.name}>
+									<Fragment key={location.name}>
 										<tr class="border-t border-surface-border">
 											<th
 												scope="colgroup"
@@ -1756,7 +1757,7 @@ export function GroupedRows() {
 												</td>
 											</tr>
 										))}
-									</tbody>
+									</Fragment>
 								))}
 							</tbody>
 						</table>
@@ -1889,7 +1890,7 @@ export function SummaryRows() {
 							</thead>
 							<tbody>
 								{days.map((day) => (
-									<tbody key={day.dateTime}>
+									<Fragment key={day.dateTime}>
 										<tr class="text-sm/6 text-text-primary">
 											<th scope="colgroup" colSpan={3} class="relative isolate py-2 font-semibold">
 												<time dateTime={day.dateTime}>{day.date}</time>
@@ -1964,7 +1965,7 @@ export function SummaryRows() {
 												</td>
 											</tr>
 										))}
-									</tbody>
+									</Fragment>
 								))}
 							</tbody>
 						</table>
