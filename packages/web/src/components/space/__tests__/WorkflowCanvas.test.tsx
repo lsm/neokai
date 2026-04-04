@@ -77,6 +77,14 @@ mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTasks = signal<SpaceTask[]>([]);
 mockTasksByRun = signal<Map<string, SpaceTask[]>>(new Map());
 
+vi.mock('../../../lib/state.ts', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../lib/state.ts')>();
+	return {
+		...actual,
+		connectionState: { value: 'connected' },
+	};
+});
+
 import { WorkflowCanvas } from '../WorkflowCanvas';
 
 // ============================================================================
@@ -336,7 +344,9 @@ describe('WorkflowCanvas', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
 		mockWorkflowRuns.value = [makeRun()];
-		mockTasksByRun.value = new Map([['run-1', [makeTask({ status: 'in_progress' })]]]);
+		mockTasksByRun.value = new Map([
+			['run-1', [makeTask({ status: 'in_progress', workflowRunId: 'n1' })]],
+		]);
 		mockHub.request.mockResolvedValue({ gateData: [] });
 
 		const { getByTestId } = render(

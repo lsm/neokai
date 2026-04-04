@@ -499,16 +499,14 @@ jobs:
 
   # ============================================
   # WEB TESTS
-  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
-  # NOTE: Reverted from "skip on push to dev" — web tests have 47 pre-existing failures
-  # on dev that would block all PRs. Re-enable after those are fixed separately.
+  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
   # ============================================
 
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: (github.event_name == 'pull_request' && (github.base_ref == 'dev' || github.base_ref == 'main') || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v4
@@ -1208,7 +1206,7 @@ jobs:
             FAILED=1
           fi
 
-          # test-web: PR to main, push to main (skip on PR to dev and push to dev)
+          # test-web: PR to dev, PR to main, push to main (skip on push to dev)
           if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
             echo "❌ test-web failed"
             FAILED=1

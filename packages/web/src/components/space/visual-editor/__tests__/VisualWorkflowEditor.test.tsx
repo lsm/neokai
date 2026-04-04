@@ -1077,8 +1077,13 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(firstChannelHitbox!);
 			fireEvent.click(getByTestId('convert-channel-relation-button'));
 
-			await waitFor(() => expect(getAllByTestId('delete-channel-button')).toHaveLength(2));
-			fireEvent.click(getAllByTestId('delete-channel-button')[1]);
+			const relationPanel = getByTestId('channel-relation-config-panel');
+			await waitFor(() =>
+				expect(
+					relationPanel.querySelectorAll('[data-testid="delete-channel-button"]')
+				).toHaveLength(2)
+			);
+			fireEvent.click(relationPanel.querySelectorAll('[data-testid="delete-channel-button"]')[1]);
 
 			await waitFor(() => {
 				expect(getByTestId('channel-relation-config-panel').textContent).toContain(
@@ -1155,7 +1160,10 @@ describe('VisualWorkflowEditor', () => {
 			);
 			fireEvent.click(v2Option!);
 
-			fireEvent.click(getByText('Code Review'));
+			const codeReviewNode = getAllByTestId('step-name').find((el) =>
+				el.textContent?.includes('Code Review')
+			);
+			fireEvent.click(codeReviewNode!.closest('[data-testid^="workflow-node-"]')!);
 			expect(getByTestId('node-config-panel')).toBeTruthy();
 
 			const linkButtons = queryAllByTestId('node-channel-link-button');

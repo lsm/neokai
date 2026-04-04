@@ -234,9 +234,7 @@ describe('TaskView — awaiting_human badge', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const badge = container.querySelector('.animate-pulse');
-		expect(badge).toBeTruthy();
-		expect(badge?.textContent).toContain('Awaiting your review');
+		expect(container.textContent).toContain('Awaiting your approval');
 	});
 
 	it('does NOT show pulsing badge when group.state is not awaiting_human', async () => {
@@ -252,7 +250,7 @@ describe('TaskView — awaiting_human badge', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.textContent).not.toContain('Awaiting your review');
+		expect(container.textContent).not.toContain('Awaiting your approval');
 	});
 
 	it('does NOT show pulsing badge when group is null', async () => {
@@ -268,7 +266,7 @@ describe('TaskView — awaiting_human badge', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		expect(container.textContent).not.toContain('Awaiting your review');
+		expect(container.textContent).not.toContain('Awaiting your approval');
 	});
 
 	it('does not show review bar when group is not submitted for review', async () => {
@@ -1694,10 +1692,8 @@ describe('TaskView — Interrupt button', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const stopButton = container.querySelector(
-			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
-		);
-		expect(stopButton).not.toBeNull();
+		fireEvent.click(container.querySelector('[data-testid="task-info-panel-trigger"]')!);
+		expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).not.toBeNull();
 	});
 
 	it('shows interrupt button for review tasks', async () => {
@@ -1713,10 +1709,8 @@ describe('TaskView — Interrupt button', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		const stopButton = container.querySelector(
-			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
-		);
-		expect(stopButton).not.toBeNull();
+		fireEvent.click(container.querySelector('[data-testid="task-info-panel-trigger"]')!);
+		expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).not.toBeNull();
 	});
 
 	it('does NOT show interrupt button for pending tasks', async () => {
@@ -2853,7 +2847,7 @@ describe('TaskView — task.getGroup retry on failure', () => {
 		// Advance by 1000ms so waitFor's internal polling timers (50ms intervals)
 		// also fire enough times for the assertion to be checked.
 		await act(async () => {
-			vi.advanceTimersByTime(1000);
+			await vi.advanceTimersByTimeAsync(1000);
 			await Promise.resolve();
 		});
 
@@ -2862,11 +2856,9 @@ describe('TaskView — task.getGroup retry on failure', () => {
 			expect(getGroupCallCount).toBe(2);
 		});
 
-		// The "Awaiting your review" badge (from group.submittedForReview) should be visible.
+		// The "Awaiting your approval" badge (from group.submittedForReview) should be visible.
 		await waitFor(() => {
-			expect(container.querySelector('.animate-pulse')?.textContent).toContain(
-				'Awaiting your review'
-			);
+			expect(container.textContent).toContain('Awaiting your approval');
 		});
 	});
 
