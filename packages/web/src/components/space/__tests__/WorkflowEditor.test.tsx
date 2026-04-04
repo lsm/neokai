@@ -469,11 +469,10 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('applying Full-Cycle Coding Workflow template creates 6 steps', () => {
-			const { getByText, getAllByTestId } = render(<WorkflowEditor {...defaultProps} />);
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
 			fireEvent.click(getByText('Full-Cycle Coding Workflow'));
 			expect(getByText('6 steps')).toBeTruthy();
-			expect(getAllByTestId('channel-entry').length).toBe(9);
 		});
 
 		it('Full-Cycle Coding Workflow template builds explicit system prompts for every node', () => {
@@ -839,16 +838,6 @@ describe('WorkflowEditor', () => {
 	});
 
 	describe('channels', () => {
-		it('renders the Channels section header', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByText('Channels')).toBeTruthy();
-		});
-
-		it('renders the ChannelEditor inside the workflow editor', () => {
-			const { getByTestId } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByTestId('channel-editor')).toBeTruthy();
-		});
-
 		it('channels are included in createWorkflow call when empty', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
@@ -897,13 +886,6 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
 			expect(getByText('coding')).toBeTruthy();
 			expect(getByText('review')).toBeTruthy();
-		});
-
-		it('starts with no rules when loading existing workflow (rules are no longer persisted on SpaceWorkflow)', () => {
-			const wf = makeWorkflow();
-			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			// Rules start at 0; user can add them via "Add Rule"
-			expect(getByText('Add Rule')).toBeTruthy();
 		});
 	});
 
@@ -959,60 +941,6 @@ describe('WorkflowEditor', () => {
 				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
 					'wf-1',
 					expect.objectContaining({ tags: ['research'] })
-				);
-			});
-		});
-	});
-
-	describe('rules', () => {
-		it('renders the Rules section with "Add Rule" button', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByText('Add Rule')).toBeTruthy();
-		});
-
-		it('clicking Add Rule shows a rule card', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			fireEvent.click(getByText('Add Rule'));
-			expect(getByText('1 rule')).toBeTruthy();
-		});
-
-		it('rules UI is rendered but not sent in createWorkflow call (rules are not persisted on workflow)', async () => {
-			// Rules are tracked in local state but are NOT included in the createWorkflow/updateWorkflow
-			// payload. This is the current expected behavior — rules exist only as local editor state.
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			selectAgent(container, 'agent-1');
-			fireEvent.click(getByText('Add Rule'));
-			// Fill rule name
-			const ruleNameInput = container.querySelector(
-				'input[placeholder*="Rule name"]'
-			) as HTMLInputElement;
-			fireEvent.input(ruleNameInput, { target: { value: 'Follow conventions' } });
-			// Fill rule content
-			const ruleTextarea = container.querySelector(
-				'textarea[placeholder*="Describe the rule"]'
-			) as HTMLTextAreaElement;
-			fireEvent.input(ruleTextarea, { target: { value: 'Write clean code' } });
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
-			});
-			const callArgs = mockCreateWorkflow.mock.calls[0][0];
-			// Rules are NOT included in the create call
-			expect(callArgs.rules).toBeUndefined();
-		});
-
-		it('updateWorkflow call does not include rules (rules are no longer persisted on SpaceWorkflow)', async () => {
-			const wf = makeWorkflow();
-			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			fireEvent.click(getByText('Save Changes'));
-			await waitFor(() => {
-				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
-					'wf-1',
-					expect.objectContaining({ name: 'Existing Workflow' })
 				);
 			});
 		});

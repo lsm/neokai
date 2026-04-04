@@ -15,8 +15,6 @@
  *   preserved through load/save so they are not silently stripped.
  * - `VisualEdge` represents a canvas-only directed edge for the visual editor.
  *   Transitions have been removed from the backend; edges are visual-only.
- * - Blank rules (name and content both empty/whitespace) are silently filtered out
- *   before submission, matching the behaviour of `WorkflowEditor.tsx`.
  * - New steps (no `step.id`) receive a generated UUID inside `buildWorkflowFields`.
  *   This UUID is stable within a single call but differs across calls — callers must
  *   not invoke `visualStateToCreateParams` / `visualStateToUpdateParams` twice on the
@@ -33,7 +31,6 @@ import type {
 	Gate,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
-import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { Point, WorkflowCondition } from './types';
 import { autoLayout } from './layout';
 
@@ -87,7 +84,6 @@ export interface VisualEditorState {
 	 * run auto-completes when the end node's execution calls `report_done`.
 	 */
 	endNodeId?: string;
-	rules: RuleDraft[];
 	tags: string[];
 	/** Directed messaging channels at the workflow level. */
 	channels: WorkflowChannel[];
@@ -170,7 +166,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		edges,
 		startNodeId: startKey,
 		endNodeId: endKey,
-		rules: [],
 		tags: workflow.tags ?? [],
 		channels: (workflow.channels ?? []).map((channel) => ({
 			...channel,
@@ -221,9 +216,6 @@ function resolveStepId(node: VisualNode, generatedIds: Map<string, string>): str
  * Build the serialized workflow fields from a VisualEditorState.
  * Shared between create and update serialisation.
  *
- * Blank rules (both name and content empty/whitespace) are silently filtered out
- * before submission, matching the behaviour of `WorkflowEditor.tsx`. Callers
- * should be aware that `fields.rules.length` may be less than `state.rules.length`.
  */
 function buildWorkflowFields(state: VisualEditorState): {
 	fields: BuiltWorkflowFields;
@@ -252,7 +244,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 		localIdMap.set(entry.node.step.localId, entry);
 	}
 
-	// Build key -> persisted ID map for channel and rule appliesTo remapping
+	// Build key -> persisted ID map for channel endpoint remapping
 	const keyToPersistedId = new Map<string, string>();
 	for (const [key, { persistedId }] of nodeMap) {
 		keyToPersistedId.set(key, persistedId);

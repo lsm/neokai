@@ -5,7 +5,7 @@
  * - workflowToVisualState: position restoration from layout, auto-layout fallback,
  *   empty edge initialization, startNodeId pass-through, endNodeId pass-through
  * - visualStateToCreateParams / visualStateToUpdateParams: round-trip,
- *   layout output, rules remapping, endNodeId pass-through
+ *   layout output, endNodeId pass-through
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,7 +16,6 @@ import {
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
 import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
-import type { WorkflowRule } from '../../WorkflowRulesEditor';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
@@ -41,10 +40,6 @@ afterEach(() => {
 
 function makeStep(id: string, name?: string, agentId?: string): WorkflowNode {
 	return { id, name: name ?? id, agents: [{ agentId: agentId ?? 'agent-1', name: 'coder' }] };
-}
-
-function makeRule(id: string, name: string, content: string, appliesTo?: string[]): WorkflowRule {
-	return { id, name, content, appliesTo };
 }
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
@@ -166,15 +161,6 @@ describe('workflowToVisualState', () => {
 		expect(state.edges).toHaveLength(0);
 	});
 
-	it('returns empty rules array (rules removed from SpaceWorkflow)', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1')],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		expect(state.rules).toHaveLength(0);
-	});
-
 	it('passes tags through', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
@@ -287,7 +273,6 @@ describe('visualStateToCreateParams', () => {
 				},
 			],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -371,35 +356,6 @@ describe('visualStateToCreateParams', () => {
 		expect(params.tags).toEqual(['coding']);
 	});
 
-	it('rules are not included in create params (rules removed from SpaceWorkflow)', () => {
-		const state = makeState({
-			rules: [
-				{
-					localId: 'lr1',
-					id: undefined,
-					name: 'My Rule',
-					content: 'Content',
-					appliesTo: ['s1'],
-				},
-			],
-		});
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		// rules no longer part of CreateSpaceWorkflowParams
-		expect((params as unknown as Record<string, unknown>)['rules']).toBeUndefined();
-	});
-
-	it('blank rules do not affect create params (rules removed from SpaceWorkflow)', () => {
-		const state = makeState({
-			rules: [
-				{ localId: 'lr1', name: '', content: '', appliesTo: [] },
-				{ localId: 'lr2', name: 'Real Rule', content: 'Content', appliesTo: [] },
-			],
-		});
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		// rules no longer part of CreateSpaceWorkflowParams
-		expect((params as unknown as Record<string, unknown>)['rules']).toBeUndefined();
-	});
-
 	it('generates a new UUID for steps without id', () => {
 		const state: VisualEditorState = {
 			nodes: [
@@ -410,7 +366,6 @@ describe('visualStateToCreateParams', () => {
 			],
 			edges: [],
 			startNodeId: 'local-new',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -425,7 +380,6 @@ describe('visualStateToCreateParams', () => {
 			nodes: [],
 			edges: [],
 			startNodeId: '',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -515,16 +469,6 @@ describe('round-trip serialization', () => {
 		expect(params.tags).toEqual(['research', 'review']);
 	});
 
-	it('rules not present in update params (rules removed from SpaceWorkflow)', () => {
-		const original = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2')],
-			startNodeId: 's1',
-		});
-		const params = visualStateToUpdateParams(workflowToVisualState(original));
-		// rules no longer part of UpdateSpaceWorkflowParams
-		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
-	});
-
 	it('edges are empty after round-trip (transitions removed from backend)', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
@@ -606,7 +550,6 @@ describe('visualStateToUpdateParams', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -617,28 +560,6 @@ describe('visualStateToUpdateParams', () => {
 		});
 		expect(params.name).toBe('Updated Name');
 		expect(params.description).toBe('New desc');
-	});
-
-	it('rules are not included in update params (rules removed from SpaceWorkflow)', () => {
-		const state: VisualEditorState = {
-			nodes: [
-				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
-					position: { x: 0, y: 0 },
-				},
-			],
-			edges: [],
-			startNodeId: 's1',
-			rules: [
-				{ localId: 'lr1', id: undefined, name: 'New Rule', content: 'Content', appliesTo: [] },
-			],
-			tags: [],
-			channels: [],
-			gates: [],
-		};
-		const params = visualStateToUpdateParams(state);
-		// rules no longer part of UpdateSpaceWorkflowParams
-		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
 	});
 
 	it('passes endNodeId through to update params', () => {
@@ -656,7 +577,6 @@ describe('visualStateToUpdateParams', () => {
 			edges: [],
 			startNodeId: 's1',
 			endNodeId: 's2',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -675,7 +595,6 @@ describe('visualStateToUpdateParams', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -766,7 +685,6 @@ describe('multi-agent step serialization', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -797,7 +715,6 @@ describe('multi-agent step serialization', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -835,7 +752,6 @@ describe('multi-agent step serialization', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [
 				{
