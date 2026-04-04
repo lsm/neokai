@@ -74,7 +74,9 @@ export async function getDefaultAgentId(page: Page, spaceId: string): Promise<st
 export async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
-	await expect(page.locator('text=Dashboard').first()).toBeVisible({ timeout: 15000 });
+	// Wait for the space overview to render. The space dashboard was refactored and
+	// no longer shows a "Dashboard" tab — use the testid on the overview container instead.
+	await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 15000 });
 }
 
 // ─── Editor mode helpers ───────────────────────────────────────────────────────
@@ -90,9 +92,24 @@ export async function resetEditorModeStorage(page: Page): Promise<void> {
 	});
 }
 
-/** Navigate to Workflows tab and open the workflow editor for a new workflow. */
+/**
+ * Navigate to Workflows tab and open the workflow editor for a new workflow.
+ *
+ * The Workflows tab lives inside the Configure page (/space/:id/configure).
+ * If the current page is not the configure view, this helper first clicks the
+ * "Configure space" gear button in the context panel to get there.
+ */
 export async function openNewWorkflowEditor(page: Page): Promise<void> {
-	await page.locator('text=Workflows').first().click();
+	// Navigate to configure view if not already there.
+	const configureView = page.getByTestId('space-configure-view');
+	if (!(await configureView.isVisible().catch(() => false))) {
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(configureView).toBeVisible({ timeout: 5000 });
+	}
+
+	// Switch to Workflows tab within the configure page.
+	await page.getByTestId('space-configure-tab-workflows').click();
+
 	const createBtn = page.getByRole('button', { name: 'Create Workflow' });
 	await expect(createBtn).toBeVisible({ timeout: 5000 });
 	await createBtn.click();
@@ -125,9 +142,22 @@ export async function switchToVisualMode(page: Page): Promise<void> {
 /**
  * Open the workflow edit UI for an existing workflow in the list.
  * The edit button is CSS group-hover only, so opacity is forced via JS before clicking.
+ *
+ * The Workflows tab lives inside the Configure page (/space/:id/configure).
+ * If the current page is not the configure view, this helper first clicks the
+ * "Configure space" gear button in the context panel to get there.
  */
 export async function openWorkflowForEdit(page: Page, workflowName: string): Promise<void> {
-	await page.locator('text=Workflows').first().click();
+	// Navigate to configure view if not already there.
+	const configureView = page.getByTestId('space-configure-view');
+	if (!(await configureView.isVisible().catch(() => false))) {
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(configureView).toBeVisible({ timeout: 5000 });
+	}
+
+	// Switch to Workflows tab within the configure page.
+	await page.getByTestId('space-configure-tab-workflows').click();
+
 	await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
 
 	const workflowCard = page
