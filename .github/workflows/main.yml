@@ -997,6 +997,7 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
+          NEOKAI_TEST_DISABLE_SANDBOX: "1"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
