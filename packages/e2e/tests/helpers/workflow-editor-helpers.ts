@@ -63,10 +63,8 @@ export async function getDefaultAgentId(page: Page, spaceId: string): Promise<st
 export async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
-	// Wait for the space tab bar to appear — this confirms the space data has loaded
-	// and the overview view is rendered. Using the testid avoids brittleness from
-	// tab label text changes (e.g. "Dashboard" → "Overview").
-	await expect(page.getByTestId('space-tab-bar')).toBeVisible({ timeout: 15000 });
+	// Wait for the overview surface to appear. This confirms space data has loaded.
+	await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 15000 });
 }
 
 // ─── Editor mode helpers ───────────────────────────────────────────────────────

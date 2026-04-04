@@ -3,7 +3,6 @@
  *
  * Verifies:
  * - "Create Task" action button opens SpaceCreateTaskDialog
- * - "Start Workflow Run" action button opens WorkflowRunStartDialog
  * - Filling and submitting the Create Task form creates a task
  * - Created task title appears in SpaceDashboard's Active task list
  * - Cancelling the dialog dismisses it without creating a task
@@ -18,7 +17,6 @@ import {
 	createSpaceViaRpc,
 	createUniqueSpaceDir,
 	deleteSpaceViaRpc,
-	deleteSpaceWorkflowsViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -38,9 +36,6 @@ test.describe('Space Task Creation', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-creation');
 		const spaceName = `E2E Task Creation Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
-		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
-		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
-		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 
 		// Navigate directly to the space (overview is the default view)
 		await page.goto(`/space/${spaceId}`);
@@ -70,18 +65,6 @@ test.describe('Space Task Creation', () => {
 		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 3000 });
 		await expect(dialog.getByRole('heading', { name: 'Create Task' })).toBeVisible();
-	});
-
-	test('Start Workflow Run button opens WorkflowRunStartDialog', async ({ page }) => {
-		const startWorkflowBtn = page.getByRole('button', { name: 'Start Workflow Run' }).first();
-		await expect(startWorkflowBtn).toBeVisible({ timeout: 5000 });
-
-		await startWorkflowBtn.click();
-
-		// The Start Workflow Run modal should open — scope assertions to the dialog
-		const dialog = getModal(page);
-		await expect(dialog).toBeVisible({ timeout: 3000 });
-		await expect(dialog.getByRole('heading', { name: 'Start Workflow Run' })).toBeVisible();
 	});
 
 	test('submitting the Create Task form creates a task in Recent Activity', async ({ page }) => {

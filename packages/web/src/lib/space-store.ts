@@ -27,7 +27,6 @@ import type {
 	CreateSpaceAgentParams,
 	CreateSpaceTaskParams,
 	CreateSpaceWorkflowParams,
-	CreateWorkflowRunParams,
 	LiveQueryDeltaEvent,
 	LiveQuerySnapshotEvent,
 	NodeExecution,
@@ -1279,30 +1278,6 @@ class SpaceStore {
 			hasMore: result?.hasMore ?? false,
 			sessionId: result?.sessionId ?? '',
 		};
-	}
-
-	// ========================================
-	// Workflow Run Methods
-	// ========================================
-
-	/**
-	 * Start a new workflow run.
-	 */
-	async startWorkflowRun(
-		params: Omit<CreateWorkflowRunParams, 'spaceId'>
-	): Promise<SpaceWorkflowRun> {
-		const spaceId = this.spaceId.value;
-		if (!spaceId) throw new Error('No space selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		const { run } = await hub.request<{ run: SpaceWorkflowRun }>('spaceWorkflowRun.start', {
-			...params,
-			spaceId,
-		});
-		if (!run) throw new Error('Server returned no run data');
-		return run;
 	}
 
 	// ========================================
