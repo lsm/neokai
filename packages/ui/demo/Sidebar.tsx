@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'preact/hooks';
-import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-preact';
+import { ChevronUp } from 'lucide-preact';
 
 export interface NavItem {
 	id: string;
@@ -161,93 +160,16 @@ export const appUiCategories: NavCategory[] = [
 	},
 ];
 
-// ─── Category component ───────────────────────────────────────────────────────
-
-interface CategoryProps {
-	category: NavCategory;
-	forceOpen?: boolean;
-	activeSection: string;
-	searchQuery: string;
-}
-
-function Category({ category, forceOpen, activeSection, searchQuery }: CategoryProps) {
-	const [isOpen, setIsOpen] = useState(false);
-	// Tracks whether the user has explicitly collapsed this category to prevent auto-reopen
-	const [userCollapsed, setUserCollapsed] = useState(false);
-
-	const hasActiveSection = category.sections.some((s) => s.id === activeSection);
-	const autoOpen = hasActiveSection || (forceOpen ?? false);
-
-	// When auto-open conditions go away, clear the user-collapsed flag so the next
-	// time the section becomes active it auto-expands again
-	useEffect(() => {
-		if (!autoOpen) setUserCollapsed(false);
-	}, [autoOpen]);
-
-	// Open if: explicitly opened by user OR (auto-open AND user hasn't explicitly closed it)
-	const shouldBeOpen = isOpen || (autoOpen && !userCollapsed);
-
-	function toggle() {
-		if (shouldBeOpen) {
-			setIsOpen(false);
-			setUserCollapsed(true);
-		} else {
-			setIsOpen(true);
-			setUserCollapsed(false);
-		}
-	}
-
-	return (
-		<li>
-			<button
-				type="button"
-				onClick={toggle}
-				class="flex items-center w-full px-3 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
-			>
-				{shouldBeOpen ? (
-					<ChevronDown class="w-4 h-4 mr-2 flex-shrink-0" />
-				) : (
-					<ChevronRight class="w-4 h-4 mr-2 flex-shrink-0" />
-				)}
-				{category.label}
-			</button>
-			{shouldBeOpen && (
-				<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
-					{category.sections.map((section) => {
-						const matchesSearch =
-							searchQuery === '' || section.label.toLowerCase().includes(searchQuery.toLowerCase());
-						if (!matchesSearch) return null;
-						const isActive = section.id === activeSection;
-						return (
-							<li key={section.id}>
-								<a
-									href={`#${section.id}`}
-									class={`block px-3 py-1.5 text-xs rounded transition-colors ${
-										isActive
-											? 'text-text-primary bg-surface-2 font-medium'
-											: 'text-text-tertiary hover:text-text-primary hover:bg-surface-2'
-									}`}
-								>
-									{section.label}
-								</a>
-							</li>
-						);
-					})}
-				</ul>
-			)}
-		</li>
-	);
-}
-
 // ─── Sidebar component ────────────────────────────────────────────────────────
 
 interface SidebarProps {
+	currentPage: string;
 	activeSection: string;
 	searchQuery: string;
 	setSearchQuery: (q: string) => void;
 }
 
-export function Sidebar({ activeSection, searchQuery, setSearchQuery }: SidebarProps) {
+export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuery }: SidebarProps) {
 	const q = searchQuery.toLowerCase();
 
 	const filteredHeadless =
@@ -256,8 +178,10 @@ export function Sidebar({ activeSection, searchQuery, setSearchQuery }: SidebarP
 	const filteredCategories =
 		q === ''
 			? appUiCategories
-			: appUiCategories.filter((cat) =>
-					cat.sections.some((s) => s.label.toLowerCase().includes(q))
+			: appUiCategories.filter(
+					(cat) =>
+						cat.label.toLowerCase().includes(q) ||
+						cat.sections.some((s) => s.label.toLowerCase().includes(q))
 				);
 
 	return (
@@ -282,7 +206,7 @@ export function Sidebar({ activeSection, searchQuery, setSearchQuery }: SidebarP
 						</p>
 						<ul class="space-y-0.5">
 							{filteredHeadless.map((s) => {
-								const isActive = s.id === activeSection;
+								const isActive = currentPage === '' && s.id === activeSection;
 								return (
 									<li key={s.id}>
 										<a
@@ -308,16 +232,75 @@ export function Sidebar({ activeSection, searchQuery, setSearchQuery }: SidebarP
 						<p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
 							Application UI
 						</p>
-						<ul class="space-y-1">
-							{filteredCategories.map((category) => (
-								<Category
-									key={category.id}
-									category={category}
-									forceOpen={searchQuery !== ''}
-									activeSection={activeSection}
-									searchQuery={searchQuery}
-								/>
-							))}
+						<ul class="space-y-0.5">
+							{filteredCategories.map((category) => {
+								const isCategoryActive = currentPage === category.id;
+								const filteredSections =
+									q === ''
+										? category.sections
+										: category.sections.filter((s) => s.label.toLowerCase().includes(q));
+
+								return (
+									<li key={category.id}>
+										<a
+											href={`#/${category.id}`}
+											class={`flex items-center px-3 py-2 text-sm rounded transition-colors ${
+												isCategoryActive
+													? 'text-text-primary bg-surface-2 font-medium'
+													: 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
+											}`}
+										>
+											{category.label}
+										</a>
+										{/* Sub-sections: shown when this category is the active page */}
+										{isCategoryActive && (
+											<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
+												{filteredSections.map((section) => {
+													const isActive = section.id === activeSection;
+													return (
+														<li key={section.id}>
+															<button
+																type="button"
+																onClick={(e) => {
+																	e.preventDefault();
+																	const el = document.getElementById(section.id);
+																	if (el) {
+																		el.scrollIntoView({
+																			behavior: 'smooth',
+																		});
+																	}
+																}}
+																class={`block w-full text-left px-3 py-1.5 text-xs rounded transition-colors cursor-pointer ${
+																	isActive
+																		? 'text-text-primary bg-surface-2 font-medium'
+																		: 'text-text-tertiary hover:text-text-primary hover:bg-surface-2'
+																}`}
+															>
+																{section.label}
+															</button>
+														</li>
+													);
+												})}
+											</ul>
+										)}
+										{/* When searching and category is not active but has matching sections */}
+										{!isCategoryActive && q !== '' && filteredSections.length > 0 && (
+											<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
+												{filteredSections.map((section) => (
+													<li key={section.id}>
+														<a
+															href={`#/${category.id}`}
+															class="block px-3 py-1.5 text-xs rounded transition-colors text-text-tertiary hover:text-text-primary hover:bg-surface-2"
+														>
+															{section.label}
+														</a>
+													</li>
+												))}
+											</ul>
+										)}
+									</li>
+								);
+							})}
 						</ul>
 					</div>
 				)}
