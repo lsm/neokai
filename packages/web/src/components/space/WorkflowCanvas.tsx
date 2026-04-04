@@ -605,7 +605,7 @@ interface NodeBoxProps {
 	status: NodeStatus;
 	executions: NodeExecution[];
 	isRuntimeMode: boolean;
-	/** Tasks currently associated with this node (from tasksByRun, filtered by node). */
+	/** All tasks for the current workflow run, passed through to the onNodeClick callback. */
 	nodeTasks: SpaceTask[];
 	onNodeClick?: (nodeId: string, tasks: SpaceTask[]) => void;
 }
