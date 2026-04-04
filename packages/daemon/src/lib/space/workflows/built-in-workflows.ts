@@ -676,6 +676,15 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 	return [CODING_WORKFLOW, FULL_CYCLE_CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
+export interface SeedBuiltInWorkflowsResult {
+	/** Workflows that were successfully created */
+	seeded: string[];
+	/** Errors for workflows that failed to seed */
+	errors: Array<{ name: string; error: string }>;
+	/** True if seeding was skipped because workflows already exist */
+	skipped: boolean;
+}
+
 /**
  * Seeds all four built-in workflow templates into the given space.
  *
@@ -684,7 +693,11 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
  * If any name cannot be resolved, this function throws — persisting a
  * placeholder string as an `agentId` would create broken workflow data.
  *
- * Idempotent: if the space already has at least one workflow, this is a no-op.
+ * Idempotent: if the space already has at least one workflow, this is a no-op
+ * (returns `{ seeded: [], errors: [], skipped: true }`).
+ *
+ * Individual workflow creation errors are captured per-workflow and do not
+ * abort the remaining seeds.
  *
  * NOTE: This function must be called after preset SpaceAgent records have been
  * seeded (inside the `space.create` RPC handler).
@@ -701,11 +714,11 @@ export function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
 	resolveAgentId: (name: string) => string | undefined
-): void {
+): SeedBuiltInWorkflowsResult {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
 		// Already seeded — nothing to do.
-		return;
+		return { seeded: [], errors: [], skipped: true };
 	}
 
 	// Pre-validate: resolve every agent name needed across ALL templates before
@@ -732,52 +745,66 @@ export function seedBuiltInWorkflows(
 	}
 
 	// All names resolved — safe to persist.
+	const seeded: string[] = [];
+	const errors: Array<{ name: string; error: string }> = [];
+
 	for (const template of templates) {
-		// Assign real UUIDs to template node IDs
-		const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
-		for (const node of template.nodes) {
-			nodeIdMap.set(node.id, generateUUID());
-		}
+		try {
+			// Assign real UUIDs to template node IDs
+			const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
+			for (const node of template.nodes) {
+				nodeIdMap.set(node.id, generateUUID());
+			}
 
-		const nodes = template.nodes.map((s) => ({
-			id: nodeIdMap.get(s.id)!,
-			name: s.name,
-			agents: s.agents.map((a) => ({
-				...a,
-				agentId: resolvedIds.get(a.agentId)!,
-			})),
-			instructions: s.instructions,
-		}));
+			const nodes = template.nodes.map((s) => ({
+				id: nodeIdMap.get(s.id)!,
+				name: s.name,
+				agents: s.agents.map((a) => ({
+					...a,
+					agentId: resolvedIds.get(a.agentId)!,
+				})),
+				instructions: s.instructions,
+			}));
 
-		const startNodeId = nodeIdMap.get(template.startNodeId);
-		if (!startNodeId) {
-			throw new Error(
-				`seedBuiltInWorkflows: template '${template.name}' has invalid startNodeId '${template.startNodeId}'.`
-			);
-		}
+			const startNodeId = nodeIdMap.get(template.startNodeId);
+			if (!startNodeId) {
+				throw new Error(
+					`seedBuiltInWorkflows: template '${template.name}' has invalid startNodeId '${template.startNodeId}'.`
+				);
+			}
 
-		if (!template.endNodeId) {
-			throw new Error(
-				`seedBuiltInWorkflows: template '${template.name}' is missing required endNodeId.`
-			);
-		}
-		const endNodeId = nodeIdMap.get(template.endNodeId);
-		if (!endNodeId) {
-			throw new Error(
-				`seedBuiltInWorkflows: template '${template.name}' has invalid endNodeId '${template.endNodeId}'.`
-			);
-		}
+			if (!template.endNodeId) {
+				throw new Error(
+					`seedBuiltInWorkflows: template '${template.name}' is missing required endNodeId.`
+				);
+			}
+			const endNodeId = nodeIdMap.get(template.endNodeId);
+			if (!endNodeId) {
+				throw new Error(
+					`seedBuiltInWorkflows: template '${template.name}' has invalid endNodeId '${template.endNodeId}'.`
+				);
+			}
 
-		workflowManager.createWorkflow({
-			spaceId,
-			name: template.name,
-			description: template.description,
-			nodes,
-			startNodeId,
-			endNodeId,
-			tags: [...template.tags],
-			channels: template.channels ? [...template.channels] : undefined,
-			gates: template.gates ? [...template.gates] : undefined,
-		});
+			workflowManager.createWorkflow({
+				spaceId,
+				name: template.name,
+				description: template.description,
+				nodes,
+				startNodeId,
+				endNodeId,
+				tags: [...template.tags],
+				channels: template.channels ? [...template.channels] : undefined,
+				gates: template.gates ? [...template.gates] : undefined,
+			});
+
+			seeded.push(template.name);
+		} catch (err) {
+			errors.push({
+				name: template.name,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
 	}
+
+	return { seeded, errors, skipped: false };
 }
