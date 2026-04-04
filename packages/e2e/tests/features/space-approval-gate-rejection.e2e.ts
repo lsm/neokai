@@ -117,16 +117,17 @@ async function deleteSpace(
 async function rejectViaPopup(page: Page): Promise<void> {
 	// Wait for canvas to be in runtime mode with gate data fetched.
 	// Both the container and SVG must be visible before gate icons appear.
+	// Use 30s timeout — workflow data from the store (live query) may load slowly under load.
 	await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas')).toBeVisible({
-		timeout: 10000,
+		timeout: 30000,
 	});
 	await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')).toBeVisible({
-		timeout: 10000,
+		timeout: 30000,
 	});
 
 	// Gate data is fetched async after canvas renders; wait for the gate icon.
 	const waitingGate = page.getByTestId('canvas-panel').getByTestId('gate-icon-waiting_human');
-	await expect(waitingGate).toBeVisible({ timeout: 10000 });
+	await expect(waitingGate).toBeVisible({ timeout: 30000 });
 
 	// Open the action popup.
 	await waitingGate.click();
@@ -144,6 +145,10 @@ async function rejectViaPopup(page: Page): Promise<void> {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Approval Gate Rejection', () => {
+	// Run tests sequentially to avoid overloading the server with parallel task-agent
+	// SDK startup timeouts — parallel execution caused tests 1-2 to time out waiting
+	// for the gate-icon-waiting_human to appear on the canvas.
+	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
@@ -176,16 +181,18 @@ test.describe('Approval Gate Rejection', () => {
 		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
 		// Wait for canvas to be fully initialized (container + SVG + gate data).
+		// Use 30s here — the canvas panel requires workflow data from the store (live query),
+		// which may take longer when the server is under load at test start.
 		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas')).toBeVisible({
-			timeout: 10000,
+			timeout: 30000,
 		});
 		await expect(page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')).toBeVisible({
-			timeout: 10000,
+			timeout: 30000,
 		});
 
 		// The plan-approval-gate starts in waiting_human (amber pulsing).
 		const waitingGate = page.getByTestId('canvas-panel').getByTestId('gate-icon-waiting_human');
-		await expect(waitingGate).toBeVisible({ timeout: 10000 });
+		await expect(waitingGate).toBeVisible({ timeout: 30000 });
 
 		// Open the action popup.
 		await waitingGate.click();

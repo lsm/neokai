@@ -32,6 +32,7 @@ import type {
 } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
+import { connectionState } from '../../lib/state.ts';
 import { cn } from '../../lib/utils';
 import { GateArtifactsView } from './GateArtifactsView';
 
@@ -941,6 +942,11 @@ export function WorkflowCanvas({
 }: WorkflowCanvasProps): JSX.Element {
 	const isRuntimeMode = !!runId;
 
+	// Track hub connection state so effects can retry when the hub connects.
+	// Preact signals are tracked in the render function; reading .value here means
+	// the component re-renders (and effects re-run) when connection state changes.
+	const isConnected = connectionState.value === 'connected';
+
 	// ---- Data from store ----
 	const workflow = useMemo(
 		() => spaceStore.workflows.value.find((w) => w.id === workflowId) ?? null,
@@ -1009,15 +1015,21 @@ export function WorkflowCanvas({
 	}, [runId]);
 
 	useEffect(() => {
+		// Re-fetch when switching to runtime mode OR when the hub connects/reconnects.
+		// Adding isConnected as a dependency ensures fetchGateData is retried when the hub
+		// connects for the first time (e.g. after a page navigation where the hub wasn't
+		// ready when the canvas first mounted and the initial fetch bailed silently).
 		if (isRuntimeMode) {
 			void fetchGateData();
 		}
-	}, [isRuntimeMode, fetchGateData]);
+	}, [isRuntimeMode, fetchGateData, isConnected]);
 
 	// ---- Subscribe to gate data events ----
 	useEffect(() => {
 		if (!runId) return;
 
+		// Re-subscribe when the hub connects/reconnects — isConnected is in the dep array
+		// so this effect re-runs (and re-subscribes) after a reconnection.
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) return;
 
@@ -1037,7 +1049,8 @@ export function WorkflowCanvas({
 		});
 
 		return unsub;
-	}, [runId, spaceId]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [runId, spaceId, isConnected]);
 
 	// Re-fetch gate data when run status changes (catches approveGate responses)
 	const prevRunStatus = useRef<string | null>(null);
