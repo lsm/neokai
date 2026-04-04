@@ -5,6 +5,7 @@
  *   neo.send           — message injection, missing session, provider errors, model errors
  *   neo.history        — paginated history via AgentSession and DB fallback
  *   neo.clearSession   — delegates to NeoAgentManager.clearSession(); surfaces errors
+ *   neo.isProvisioned  — returns provisioned:true/false without any LLM call
  *   neo.getSettings    — returns security mode + model from NeoAgentManager
  *   neo.updateSettings — validates and persists settings via SettingsManager
  *   neo.confirmAction  — retrieves + executes pending action, injects result message
@@ -343,6 +344,49 @@ describe('Neo RPC Handlers', () => {
 			const result = (await handler!({}, {})) as { success: boolean; error?: string };
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('provision failed');
+		});
+	});
+
+	// ── neo.isProvisioned ─────────────────────────────────────────────────────
+
+	describe('neo.isProvisioned', () => {
+		it('returns provisioned:true when a session exists and LLM is available', async () => {
+			const handler = hubData.handlers.get('neo.isProvisioned');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { provisioned: boolean };
+			expect(result.provisioned).toBe(true);
+		});
+
+		it('returns provisioned:false when session is null (no credentials)', async () => {
+			// Use a fresh hub with a manager that returns no session
+			const { hub: nullHub, handlers: nullHandlers } = createMockMessageHub();
+			const nullNeoManager = createMockNeoAgentManager(null);
+			setupNeoHandlers(nullHub, nullNeoManager, sessionManager, settingsManager, db);
+
+			const handler = nullHandlers.get('neo.isProvisioned');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { provisioned: boolean };
+			expect(result.provisioned).toBe(false);
+		});
+
+		it('returns provisioned:false when NEOKAI_NEO_LLM_AVAILABLE=0 even if session exists', async () => {
+			const original = process.env.NEOKAI_NEO_LLM_AVAILABLE;
+			process.env.NEOKAI_NEO_LLM_AVAILABLE = '0';
+			try {
+				const handler = hubData.handlers.get('neo.isProvisioned');
+				expect(handler).toBeDefined();
+
+				const result = (await handler!({}, {})) as { provisioned: boolean };
+				expect(result.provisioned).toBe(false);
+			} finally {
+				if (original === undefined) {
+					delete process.env.NEOKAI_NEO_LLM_AVAILABLE;
+				} else {
+					process.env.NEOKAI_NEO_LLM_AVAILABLE = original;
+				}
+			}
 		});
 	});
 

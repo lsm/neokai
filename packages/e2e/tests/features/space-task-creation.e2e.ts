@@ -2,19 +2,23 @@
  * Space Task Creation E2E Tests
  *
  * Verifies:
- * - "Create Task" quick action button opens SpaceCreateTaskDialog
- * - "Start Workflow Run" quick action button opens WorkflowRunStartDialog
+ * - "Create Task" action button opens SpaceCreateTaskDialog
+ * - "Start Workflow Run" action button opens WorkflowRunStartDialog
  * - Filling and submitting the Create Task form creates a task
- * - Created task title appears in SpaceDashboard's Recent Activity section
+ * - Created task title appears in SpaceDashboard's Active task list
  * - Cancelling the dialog dismisses it without creating a task
  *
- * Setup: creates a space via RPC (infrastructure), navigates to its Dashboard tab
+ * Setup: creates a space via RPC (infrastructure), navigates to its overview view
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
  */
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -28,15 +32,18 @@ test.describe('Space Task Creation', () => {
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-creation');
 		const spaceName = `E2E Task Creation Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 
-		// Navigate directly to the space (Dashboard tab is default)
+		// Navigate directly to the space (overview is the default view)
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Wait for the Dashboard tab to be active
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		// Wait for the space overview to be visible
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -49,7 +56,7 @@ test.describe('Space Task Creation', () => {
 	});
 
 	test('Create Task button opens SpaceCreateTaskDialog', async ({ page }) => {
-		// Fresh space has no workflows → SpaceDashboard fallback is shown with quick actions
+		// SpaceDashboard always shows action buttons in the header row
 		const createTaskBtn = page.getByRole('button', { name: 'Create Task' }).first();
 		await expect(createTaskBtn).toBeVisible({ timeout: 5000 });
 
@@ -94,7 +101,8 @@ test.describe('Space Task Creation', () => {
 		// Dialog should close after successful submission
 		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
 
-		// The task title should appear in SpaceDashboard's Recent Activity section.
+		// The task title should appear in SpaceDashboard's Active task list.
+		// Newly created tasks have status 'open' and appear in the Active tab.
 		// The store updates reactively via live-query after creation.
 		// Use exact: true to avoid matching the taskTitle substring in the toast.
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });

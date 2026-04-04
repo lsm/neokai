@@ -13,7 +13,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getModal } from '../helpers/wait-helpers';
 import { deleteRoom } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ test.describe('Task Action Buttons', () => {
 		await page.locator('[data-testid="task-cancel-button"]').click();
 
 		// Cancel dialog should appear with the task name
-		const cancelDialog = page.locator('[role="dialog"]');
+		const cancelDialog = getModal(page);
 		await expect(cancelDialog.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -207,7 +207,7 @@ test.describe('Task Action Buttons', () => {
 		await page.locator('[data-testid="task-action-complete"]').click();
 
 		// Complete dialog should appear with the task name
-		const completeDialog = page.locator('[role="dialog"]');
+		const completeDialog = getModal(page);
 		await expect(completeDialog.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});

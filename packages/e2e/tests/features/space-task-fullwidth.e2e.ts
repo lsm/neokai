@@ -13,7 +13,11 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -27,15 +31,18 @@ test.describe('Space Task Full-Width View', () => {
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-fullwidth');
 		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Wait for the Dashboard tab to be visible
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		// Wait for the Overview button to be visible (confirms SpaceDashboard is loaded)
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -63,7 +70,7 @@ test.describe('Space Task Full-Width View', () => {
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// Tab bar should be visible before clicking a task
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
 
 		// Click the task title link in SpaceDetailPanel (context panel) or SpaceDashboard
 		// The task title appears as a clickable element in the context panel's task list
@@ -76,8 +83,8 @@ test.describe('Space Task Full-Width View', () => {
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
 		// Tab bar should be hidden (full-width task view replaced the tab layout)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
-		await expect(page.getByRole('button', { name: 'Agents', exact: true })).not.toBeVisible();
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).not.toBeVisible();
+		await expect(page.getByRole('button', { name: 'Active', exact: true })).not.toBeVisible();
 	});
 
 	test('back button in task view returns to the tabbed dashboard', async ({ page }) => {
@@ -105,7 +112,7 @@ test.describe('Space Task Full-Width View', () => {
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 5000 });
 
 		// Tab bar should be visible again
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
 			timeout: 3000,
 		});
 

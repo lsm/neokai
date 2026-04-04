@@ -398,7 +398,7 @@ describe('Space Workflow — Edge Cases', () => {
 
 				// ── Step 2: open code-pr-gate to unblock Reviewer nodes ────────
 				await writeGateData(daemon, runId, 'code-pr-gate', {
-					pr_created: true,
+					pr_url: 'https://github.com/org/repo/pull/42',
 				});
 				// Wait for at least Reviewer 1 to activate (parallel fan-in pattern)
 				await waitForNodeActivated(daemon, space.id, runId, 'Reviewer 1', NODE_ACTIVATION_TIMEOUT);

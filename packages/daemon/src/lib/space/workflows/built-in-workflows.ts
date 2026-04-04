@@ -40,13 +40,14 @@ const V2_QA_STEP = 'tpl-v2-qa';
 const V2_DONE_STEP = 'tpl-v2-done';
 
 const PR_READY_BASH_SCRIPT = [
-	'if [ -n "$(git status --porcelain)" ]; then',
-	'  echo "Working tree has uncommitted changes or untracked files" >&2',
+	'# Single atomic call to avoid state changing between checks',
+	'if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
 	'  exit 1',
 	'fi',
-	'# Single atomic call to avoid state changing between checks',
-	'if ! PR_JSON=$(gh pr view --json state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
+	'PR_URL=$(jq -r \'.url\' <<< "$PR_JSON")',
+	'if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then',
+	'  echo "No PR URL found for current branch" >&2',
 	'  exit 1',
 	'fi',
 	'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
@@ -66,33 +67,86 @@ const PR_READY_BASH_SCRIPT = [
 	'  echo "PR merge checks not satisfied (mergeStateStatus: ${PR_STATUS:-unknown})" >&2',
 	'  exit 1',
 	'fi',
-	'echo \'{"pr_created": true, "worktree_clean": true}\'',
+	'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
 
 const V2_PLANNING_PROMPT =
-	'You are the Planning node for this workflow. Turn the task into a concrete implementation plan ' +
-	'that downstream nodes can execute without guessing. Surface assumptions, dependencies, sequencing, ' +
-	'and open questions explicitly.';
+	'You are the Planning node in a Full-Cycle Coding Workflow. Your role is to turn the task into a ' +
+	'concrete, actionable implementation plan that downstream nodes (Code, Review, QA) can execute ' +
+	'without guessing.\n\n' +
+	'Your plan must include:\n' +
+	'- Scope: what is being changed and what is explicitly out of scope\n' +
+	'- Steps: ordered list of implementation steps with file paths where possible\n' +
+	'- Dependencies: external libraries, APIs, or prior work required\n' +
+	'- Testing strategy: what tests to write, what to verify\n' +
+	'- Risk areas: edge cases, backward compatibility, performance concerns\n' +
+	'- Open questions: anything you cannot resolve from the codebase alone\n\n' +
+	'Write the plan to a file (e.g. `plan.md`) and commit it. When the plan is ready, ' +
+	'write to the plan-pr-gate (field: plan_submitted) so the Plan Reviewer can evaluate it.';
 
 const V2_PLAN_REVIEW_PROMPT =
-	'You are the Plan Review node for this workflow. Critically review the proposed plan for scope, ' +
-	'correctness, feasibility, testing strategy, and risk. Approve only when the plan is actionable and complete.';
+	'You are the Plan Review node in a Full-Cycle Coding Workflow. You receive a plan from the ' +
+	'Planning node and must critically evaluate it before coding begins.\n\n' +
+	'Evaluate the plan against these criteria:\n' +
+	'- Completeness: are all requirements addressed? Are edge cases considered?\n' +
+	'- Feasibility: can each step be implemented as described? Are estimates realistic?\n' +
+	'- Testing: is the testing strategy sufficient? Are integration tests included?\n' +
+	'- Risk: are risks identified and mitigated? Is the rollback strategy clear?\n' +
+	'- Scope: is the scope well-bounded? Does it avoid unnecessary changes?\n\n' +
+	'If the plan is sound, approve it by writing to plan-approval-gate (field: approved = true). ' +
+	'If changes are needed, send specific feedback to the Planning node via the feedback channel ' +
+	'explaining what must be revised.';
 
 const V2_CODING_PROMPT =
-	'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the ' +
-	'changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.';
+	'You are the Coding node in a Full-Cycle Coding Workflow. You receive an approved plan from ' +
+	'Plan Review and must implement it faithfully.\n\n' +
+	'Implementation guidelines:\n' +
+	'- Follow the plan step-by-step; do not deviate without documenting why\n' +
+	"- Write clean, well-structured code following the project's existing conventions\n" +
+	"- Write tests as specified in the plan's testing strategy\n" +
+	'- Make atomic commits with clear messages describing each change\n' +
+	'- Ensure all existing tests still pass after your changes\n' +
+	'- Open a pull request with a clear title and description summarizing the changes\n\n' +
+	'If the plan has gaps or you encounter unexpected issues, send feedback to the Planning node ' +
+	'via the Coding→Planning channel before proceeding with assumptions.\n\n' +
+	'When implementation is complete, write the PR URL to code-pr-gate (field: pr_url) ' +
+	'so Code Review can begin.';
 
 const V2_CODE_REVIEW_PROMPT =
-	'You are part of the Code Review node for this workflow. Review the implementation independently for ' +
-	'correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.';
+	'You are one of three parallel reviewers in the Code Review node of a Full-Cycle Coding Workflow. ' +
+	'You review the implementation independently — do not coordinate with other reviewers.\n\n' +
+	'Review criteria:\n' +
+	'- Correctness: does the code implement the plan correctly? Are there logic errors?\n' +
+	'- Regressions: could these changes break existing functionality?\n' +
+	'- Maintainability: is the code readable, well-structured, and documented?\n' +
+	'- Test coverage: are new behaviors covered? Are edge cases tested?\n' +
+	'- Security: are there injection risks, auth bypasses, or data leaks?\n' +
+	'- Performance: are there N+1 queries, unbounded loops, or memory leaks?\n\n' +
+	'Record a clear APPROVE or REJECT vote with concise reasoning. Use the read-merge-write ' +
+	"pattern for the votes map to avoid overwriting other reviewers' votes.";
 
 const V2_QA_PROMPT =
-	'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness ' +
-	'perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.';
+	'You are the QA node in a Full-Cycle Coding Workflow. You receive code that has passed ' +
+	'Code Review (all 3 reviewers approved) and must validate it from an execution and ' +
+	'release-readiness perspective.\n\n' +
+	'QA checklist:\n' +
+	'- Run the full test suite and verify all tests pass\n' +
+	'- Check CI pipeline status on the PR\n' +
+	'- Verify the PR is mergeable (no conflicts, required checks passing)\n' +
+	'- Confirm the changes match what was planned and reviewed\n' +
+	'- Spot-check critical paths manually if possible\n\n' +
+	'Write "result: passed" to qa-result-gate if everything is green, or ' +
+	'"result: failed" to qa-fail-gate with a summary of issues found. ' +
+	'If QA fails, the workflow cycles back to Coding — reviewers must re-vote.';
 
 const V2_DONE_PROMPT =
-	'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce ' +
-	'a concise final outcome summary without reopening work unless a blocking issue is discovered.';
+	'You are the Done node in a Full-Cycle Coding Workflow. You are activated after QA has passed, ' +
+	'meaning the implementation was planned, coded, reviewed by 3 reviewers, and verified by QA.\n\n' +
+	'Your responsibilities:\n' +
+	'- Confirm the workflow has reached a completed state\n' +
+	'- Produce a concise final outcome summary: what was done, what PR was opened, key decisions\n' +
+	'- Do NOT reopen work unless you discover a blocking issue that was missed\n' +
+	'- Call report_done() to signal workflow completion';
 
 const RESEARCH_STEP = 'tpl-research-research';
 const RESEARCH_REVIEW_STEP = 'tpl-research-review';
@@ -107,10 +161,8 @@ const REVIEW_REVIEW_STEP = 'tpl-review-review';
  * Coding Workflow
  *
  * Two-node iterative graph: Code ↔ Review (with cycle).
- * - Code → Review: gated by `code-ready-gate` — a bash script verifies that a PR
- *   exists for the current branch and the working tree is clean. The script
- *   outputs `{"pr_created": true, "worktree_clean": true}` on success; gate
- *   fields validate the output.
+ * - Code → Review: gated by `code-ready-gate` — a bash script verifies that an
+ *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
  * - Review → Code: ungated — Reviewer sends back for changes without any gate.
  *   When satisfied, Reviewer calls `report_done()` on the Review node (endNodeId)
  *   which signals workflow completion.
@@ -132,16 +184,35 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					systemPrompt: {
 						mode: 'expand',
 						value:
-							'You are working on a coding task in a Coder→Reviewer iterative workflow. Write code, run tests, ' +
-							'commit all changes, and open a PR. The gate will verify the PR is open and the worktree is clean ' +
-							'before passing to the Reviewer.',
+							'You are the Coder in a Coder→Reviewer iterative workflow. Your job is to implement the ' +
+							'task, write tests, commit all changes, and open a pull request.\n\n' +
+							'Workflow context:\n' +
+							'- You are in the Code node. After you open a PR, the code-ready-gate verifies it is ' +
+							'open and mergeable before the Reviewer sees it.\n' +
+							'- If the Reviewer requests changes, you will be re-activated with their feedback. ' +
+							'Address all feedback, push new commits, and the gate re-checks automatically.\n' +
+							'- This cycle can repeat up to 5 times before the workflow fails.',
+					},
+					instructions: {
+						mode: 'expand',
+						value:
+							'Expected inputs: Task description from the workflow trigger.\n' +
+							'Expected outputs: A clean, mergeable PR with passing tests.\n\n' +
+							'Steps:\n' +
+							'1. Read and understand the task requirements\n' +
+							'2. Implement the changes with atomic, well-described commits\n' +
+							'3. Write or update tests to cover new behavior\n' +
+							'4. Run the test suite and fix any failures\n' +
+							'5. Open a PR with `gh pr create` — include a clear title and description\n\n' +
+							'If re-activated after review feedback: read the feedback carefully, address each ' +
+							'point, push fixes, and verify tests still pass.',
 					},
 				},
 			],
 			instructions:
 				'Implement the task. When done, create a pull request with `gh pr create` ' +
-				'and ensure all changes are committed (clean working tree). The code-ready-gate ' +
-				'will verify both conditions automatically before advancing to Review.',
+				'and ensure the PR URL is available from `gh pr view`. The code-ready-gate ' +
+				'will verify this automatically before advancing to Review.',
 		},
 		{
 			id: CODING_REVIEW_STEP,
@@ -153,8 +224,25 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					systemPrompt: {
 						mode: 'expand',
 						value:
-							'You are the final reviewer in a Coder→Reviewer iterative workflow. Review the open PR. Call report_done() ' +
-							'when satisfied. If changes are needed, provide specific feedback — the Coder will be sent back automatically.',
+							'You are the Reviewer in a Coder→Reviewer iterative workflow. You review the open PR ' +
+							'and either approve it or send it back for changes.\n\n' +
+							'Workflow context:\n' +
+							'- The Coder has already implemented and opened a PR (verified by code-ready-gate).\n' +
+							'- If you request changes, the Coder is automatically re-activated with your feedback.\n' +
+							'- When you are satisfied, call report_done() to complete the entire workflow.\n' +
+							'- This node is the endNodeId — your report_done() signals workflow completion.',
+					},
+					instructions: {
+						mode: 'expand',
+						value:
+							'Expected inputs: An open, mergeable PR from the Coder.\n' +
+							'Expected outputs: Either approval (report_done) or specific change requests.\n\n' +
+							'Review checklist:\n' +
+							'1. Read the PR diff thoroughly\n' +
+							'2. Check for correctness, style, and test coverage\n' +
+							'3. Verify the PR description accurately describes the changes\n' +
+							'4. If changes needed: provide specific, actionable feedback (the Coder will be sent back)\n' +
+							'5. If satisfied: call report_done() with a brief summary of your review',
 					},
 				},
 			],
@@ -171,17 +259,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'code-ready-gate',
-			description: 'Coder has opened a PR and cleaned the worktree',
+			description: 'Coder has opened an active, mergeable pull request',
 			fields: [
 				{
-					name: 'pr_created',
-					type: 'boolean',
-					writers: ['*'],
-					check: { op: 'exists' },
-				},
-				{
-					name: 'worktree_clean',
-					type: 'boolean',
+					name: 'pr_url',
+					type: 'string',
 					writers: ['*'],
 					check: { op: 'exists' },
 				},
@@ -240,8 +322,27 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					systemPrompt: {
 						mode: 'expand',
 						value:
-							'You are conducting research in a Research→Reviewer iterative workflow. Investigate thoroughly, write findings ' +
-							'to markdown docs, commit, and open a PR. The gate will verify the PR is open and the worktree is clean.',
+							'You are the Research agent in a Research→Reviewer iterative workflow. Your job is to ' +
+							'investigate the topic thoroughly, document findings, and open a PR.\n\n' +
+							'Workflow context:\n' +
+							'- You are in the Research node. After you open a PR, the research-ready-gate verifies ' +
+							'it is open and mergeable before the Reviewer sees it.\n' +
+							'- If the Reviewer requests more research, you will be re-activated with their feedback.\n' +
+							'- This cycle can repeat up to 5 times.',
+					},
+					instructions: {
+						mode: 'expand',
+						value:
+							'Expected inputs: Research topic/question from the workflow trigger.\n' +
+							'Expected outputs: Well-structured markdown document(s) with findings, committed and PR opened.\n\n' +
+							'Steps:\n' +
+							'1. Understand the research question and scope\n' +
+							'2. Investigate using web search, code exploration, and available documentation\n' +
+							'3. Write findings to well-structured markdown file(s)\n' +
+							'4. Include sources, evidence, and clear conclusions\n' +
+							'5. Commit findings and open a PR with `gh pr create`\n\n' +
+							'If re-activated after review feedback: address each point, expand research where requested, ' +
+							'update the documents, and push new commits.',
 					},
 				},
 			],
@@ -259,9 +360,26 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					systemPrompt: {
 						mode: 'expand',
 						value:
-							'You are the reviewer in a Research→Reviewer iterative workflow. Review the research PR for ' +
-							'completeness and accuracy. Call report_done() when satisfied. If more research is needed, ' +
-							'provide specific feedback.',
+							'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
+							'research findings for completeness, accuracy, and quality.\n\n' +
+							'Workflow context:\n' +
+							'- The Research agent has investigated and opened a PR (verified by research-ready-gate).\n' +
+							'- If you request more research, the Research agent is automatically re-activated.\n' +
+							'- When satisfied, call report_done() to complete the entire workflow.\n' +
+							'- This node is the endNodeId — your report_done() signals workflow completion.',
+					},
+					instructions: {
+						mode: 'expand',
+						value:
+							'Expected inputs: A PR containing research findings from the Research agent.\n' +
+							'Expected outputs: Either approval (report_done) or specific feedback for more research.\n\n' +
+							'Review checklist:\n' +
+							'1. Read all research documents in the PR\n' +
+							'2. Check completeness: does the research answer the original question?\n' +
+							'3. Check accuracy: are claims supported by evidence or sources?\n' +
+							'4. Check clarity: are findings well-organized and easy to follow?\n' +
+							'5. If more research needed: provide specific areas to investigate further\n' +
+							'6. If satisfied: call report_done() with a brief summary',
 					},
 				},
 			],
@@ -278,17 +396,11 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'research-ready-gate',
-			description: 'Research agent has opened a PR and cleaned the worktree',
+			description: 'Research agent has opened an active, mergeable pull request',
 			fields: [
 				{
-					name: 'pr_created',
-					type: 'boolean',
-					writers: ['*'],
-					check: { op: 'exists' },
-				},
-				{
-					name: 'worktree_clean',
-					type: 'boolean',
+					name: 'pr_url',
+					type: 'string',
 					writers: ['*'],
 					check: { op: 'exists' },
 				},
@@ -345,11 +457,29 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 					systemPrompt: {
 						mode: 'expand',
 						value:
-							'You are the sole reviewer in a single-node review workflow. Review the open PR thoroughly. ' +
-							'Call report_done() when satisfied.',
+							'You are the sole Reviewer in a single-node Review-Only workflow. There is no planning ' +
+							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
+							'Workflow context:\n' +
+							'- This is both the start and end node — the workflow completes when you call report_done().\n' +
+							'- There are no other agents in this workflow; your review is the only step.',
+					},
+					instructions: {
+						mode: 'expand',
+						value:
+							'Expected inputs: A PR or code to review (specified in the task description).\n' +
+							'Expected outputs: A thorough review summary with actionable findings.\n\n' +
+							'Review checklist:\n' +
+							'1. Read the PR diff or specified code thoroughly\n' +
+							'2. Check for correctness, security, performance, and style issues\n' +
+							'3. Verify test coverage is adequate\n' +
+							'4. Summarize your findings clearly\n' +
+							'5. Call report_done() with your review summary to complete the workflow',
 					},
 				},
 			],
+			instructions:
+				'Review the code or PR specified in the task. Provide a thorough review ' +
+				'and call report_done() when complete.',
 		},
 	],
 	startNodeId: REVIEW_REVIEW_STEP,
@@ -396,6 +526,20 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					agentId: 'Planner',
 					name: 'planner',
 					systemPrompt: { mode: 'override', value: V2_PLANNING_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: Task description from the workflow trigger.\n' +
+							'Expected outputs: A committed plan file and plan_submitted gate signal.\n\n' +
+							'Steps:\n' +
+							'1. Analyze the task requirements and explore the relevant codebase\n' +
+							'2. Identify affected files, dependencies, and potential risks\n' +
+							'3. Write a structured plan (scope, steps, testing strategy, risks)\n' +
+							'4. Commit the plan file to the branch\n' +
+							'5. Write to plan-pr-gate (field: plan_submitted = true) to advance\n\n' +
+							'If re-activated after Plan Review feedback: revise the plan based on ' +
+							"the reviewer's comments, commit updates, and re-signal the gate.",
+					},
 				},
 			],
 			instructions:
@@ -410,6 +554,18 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					agentId: 'Reviewer',
 					name: 'reviewer',
 					systemPrompt: { mode: 'override', value: V2_PLAN_REVIEW_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: A committed plan from the Planning node (plan-pr-gate satisfied).\n' +
+							'Expected outputs: Approval signal or specific revision feedback.\n\n' +
+							'Steps:\n' +
+							'1. Read the plan file committed by the Planner\n' +
+							'2. Evaluate completeness, feasibility, testing strategy, and risks\n' +
+							'3. If approved: write to plan-approval-gate (field: approved = true)\n' +
+							'4. If revisions needed: send specific feedback to Planning via the feedback channel\n\n' +
+							'Do NOT approve plans that lack a testing strategy or have unbounded scope.',
+					},
 				},
 			],
 			instructions:
@@ -424,6 +580,21 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					agentId: 'Coder',
 					name: 'coder',
 					systemPrompt: { mode: 'override', value: V2_CODING_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: An approved plan from Plan Review (plan-approval-gate satisfied).\n' +
+							'Expected outputs: Implementation with PR opened and code-pr-gate signaled.\n\n' +
+							'Steps:\n' +
+							'1. Read the approved plan and follow it step-by-step\n' +
+							'2. Implement changes with atomic, well-described commits\n' +
+							"3. Write tests as specified in the plan's testing strategy\n" +
+							'4. Run the test suite and fix any failures\n' +
+							'5. Open a PR with `gh pr create` — clear title and description\n' +
+							'6. Write the PR URL to code-pr-gate (field: pr_url) to advance\n\n' +
+							'If re-activated after Code Review rejection or QA failure: read the feedback, ' +
+							'address each issue, push fixes, and the gate re-checks automatically.',
+					},
 				},
 			],
 			instructions:
@@ -486,6 +657,20 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					agentId: 'QA',
 					name: 'qa',
 					systemPrompt: { mode: 'override', value: V2_QA_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
+							'Expected outputs: QA result written to qa-result-gate or qa-fail-gate.\n\n' +
+							'Steps:\n' +
+							'1. Run the full test suite and record results\n' +
+							'2. Check CI pipeline status on the PR\n' +
+							'3. Verify the PR is mergeable (no conflicts)\n' +
+							'4. Confirm changes match the approved plan\n' +
+							'5. If all green: write "result: passed" to qa-result-gate\n' +
+							'6. If issues found: write "result: failed" to qa-fail-gate with details\n\n' +
+							'On failure, the workflow cycles back to Coding — all review votes are reset.',
+					},
 				},
 			],
 			instructions:
@@ -502,8 +687,22 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					agentId: 'General',
 					name: 'general',
 					systemPrompt: { mode: 'override', value: V2_DONE_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: QA passed (qa-result-gate satisfied).\n' +
+							'Expected outputs: Final summary and report_done() call.\n\n' +
+							'Steps:\n' +
+							'1. Confirm the workflow reached completion (QA passed)\n' +
+							'2. Summarize the outcome: what was built, PR URL, key decisions made\n' +
+							'3. Call report_done() to signal workflow completion\n\n' +
+							'Do NOT reopen or revisit work unless a critical blocking issue is discovered.',
+					},
 				},
 			],
+			instructions:
+				'Confirm the workflow has completed successfully. Produce a final outcome summary ' +
+				'and call report_done() to signal workflow completion.',
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
@@ -540,9 +739,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				'Code has been implemented and a pull request has been opened. ' +
 				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
 				'new commits to the existing branch rather than opening a new PR each time.',
-			fields: [
-				{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
-			],
+			fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		},
 		{
@@ -691,6 +888,15 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 	return [CODING_WORKFLOW, FULL_CYCLE_CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
+export interface SeedBuiltInWorkflowsResult {
+	/** Workflows that were successfully created */
+	seeded: string[];
+	/** Errors for workflows that failed to seed */
+	errors: Array<{ name: string; error: string }>;
+	/** True if seeding was skipped because workflows already exist */
+	skipped: boolean;
+}
+
 /**
  * Seeds all four built-in workflow templates into the given space.
  *
@@ -699,7 +905,11 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
  * If any name cannot be resolved, this function throws — persisting a
  * placeholder string as an `agentId` would create broken workflow data.
  *
- * Idempotent: if the space already has at least one workflow, this is a no-op.
+ * Idempotent: if the space already has at least one workflow, this is a no-op
+ * (returns `{ seeded: [], errors: [], skipped: true }`).
+ *
+ * Individual workflow creation errors are captured per-workflow and do not
+ * abort the remaining seeds.
  *
  * NOTE: This function must be called after preset SpaceAgent records have been
  * seeded (inside the `space.create` RPC handler).
@@ -716,11 +926,11 @@ export function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
 	resolveAgentId: (name: string) => string | undefined
-): void {
+): SeedBuiltInWorkflowsResult {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
 		// Already seeded — nothing to do.
-		return;
+		return { seeded: [], errors: [], skipped: true };
 	}
 
 	// Pre-validate: resolve every agent name needed across ALL templates before
@@ -747,36 +957,66 @@ export function seedBuiltInWorkflows(
 	}
 
 	// All names resolved — safe to persist.
+	const seeded: string[] = [];
+	const errors: Array<{ name: string; error: string }> = [];
+
 	for (const template of templates) {
-		// Assign real UUIDs to template node IDs
-		const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
-		for (const node of template.nodes) {
-			nodeIdMap.set(node.id, generateUUID());
+		try {
+			// Assign real UUIDs to template node IDs
+			const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
+			for (const node of template.nodes) {
+				nodeIdMap.set(node.id, generateUUID());
+			}
+
+			const nodes = template.nodes.map((s) => ({
+				id: nodeIdMap.get(s.id)!,
+				name: s.name,
+				agents: s.agents.map((a) => ({
+					...a,
+					agentId: resolvedIds.get(a.agentId)!,
+				})),
+				instructions: s.instructions,
+			}));
+
+			const startNodeId = nodeIdMap.get(template.startNodeId);
+			if (!startNodeId) {
+				throw new Error(
+					`seedBuiltInWorkflows: template '${template.name}' has invalid startNodeId '${template.startNodeId}'.`
+				);
+			}
+
+			if (!template.endNodeId) {
+				throw new Error(
+					`seedBuiltInWorkflows: template '${template.name}' is missing required endNodeId.`
+				);
+			}
+			const endNodeId = nodeIdMap.get(template.endNodeId);
+			if (!endNodeId) {
+				throw new Error(
+					`seedBuiltInWorkflows: template '${template.name}' has invalid endNodeId '${template.endNodeId}'.`
+				);
+			}
+
+			workflowManager.createWorkflow({
+				spaceId,
+				name: template.name,
+				description: template.description,
+				nodes,
+				startNodeId,
+				endNodeId,
+				tags: [...template.tags],
+				channels: template.channels ? [...template.channels] : undefined,
+				gates: template.gates ? [...template.gates] : undefined,
+			});
+
+			seeded.push(template.name);
+		} catch (err) {
+			errors.push({
+				name: template.name,
+				error: err instanceof Error ? err.message : String(err),
+			});
 		}
-
-		const nodes = template.nodes.map((s) => ({
-			id: nodeIdMap.get(s.id)!,
-			name: s.name,
-			agents: s.agents.map((a) => ({
-				...a,
-				agentId: resolvedIds.get(a.agentId)!,
-			})),
-			instructions: s.instructions,
-		}));
-
-		const startNodeId = nodeIdMap.get(template.startNodeId)!;
-		const endNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId)! : undefined;
-
-		workflowManager.createWorkflow({
-			spaceId,
-			name: template.name,
-			description: template.description,
-			nodes,
-			startNodeId,
-			endNodeId,
-			tags: [...template.tags],
-			channels: template.channels ? [...template.channels] : undefined,
-			gates: template.gates ? [...template.gates] : undefined,
-		});
 	}
+
+	return { seeded, errors, skipped: false };
 }

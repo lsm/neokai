@@ -74,6 +74,20 @@ export interface Space {
 }
 
 /**
+ * Result of `space.create` RPC.
+ *
+ * Extends `Space` with an optional `seedWarnings` array that is present when
+ * preset agents or built-in workflows failed to seed (partial or total).
+ * The space is still usable — warnings are informational only.
+ *
+ * TODO: The frontend should display these warnings (e.g. toast notification
+ * after space creation) so the user knows if seeding was incomplete.
+ */
+export interface SpaceCreateResult extends Space {
+	seedWarnings?: string[];
+}
+
+/**
  * Parameters for creating a new Space
  */
 export interface CreateSpaceParams {
@@ -945,7 +959,7 @@ export interface UpdateSpaceWorkflowParams {
 	 */
 	startNodeId?: string | null;
 	/**
-	 * Updates the workflow end node. Pass `null` to remove the end node constraint.
+	 * Updates the workflow end node. Pass `null` to reset to the last node.
 	 */
 	endNodeId?: string | null;
 	/**

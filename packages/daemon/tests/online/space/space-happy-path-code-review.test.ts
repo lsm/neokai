@@ -148,7 +148,7 @@ async function setupToCodePrGate(
 
 	// Coder writes code-pr-gate (triggers Reviewer 1/2/3 activation in parallel)
 	await writeGateData(daemon, runId, 'code-pr-gate', {
-		pr_created: true,
+		pr_url: 'https://github.com/org/repo/pull/42',
 	});
 
 	return { spaceId: space.id, runId };
@@ -255,7 +255,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 2: code-pr-gate data is readable and contains the pr_created field
+	// Test 2: code-pr-gate data is readable and contains the pr_url field
 	// -------------------------------------------------------------------------
 	test(
 		'code-pr-gate data is readable after coder writes it',
@@ -265,7 +265,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 			const gate = await readGateData(daemon, runId, 'code-pr-gate');
 			expect(gate).not.toBeNull();
 			expect(gate!.gateId).toBe('code-pr-gate');
-			expect(gate!.data.pr_created).toBe(true);
+			expect(gate!.data.pr_url).toBe('https://github.com/org/repo/pull/42');
 		},
 		TEST_TIMEOUT
 	);
@@ -523,7 +523,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 
 			// Write code-pr-gate again so reviewers re-activate for the second round
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_created: true,
+				pr_url: 'https://github.com/org/repo/pull/42',
 			});
 
 			// Complete the new reviewer tasks so they're not blocking activation

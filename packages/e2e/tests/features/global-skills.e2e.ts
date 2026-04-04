@@ -14,7 +14,7 @@
  */
 
 import { test, expect, type Page } from '../../fixtures';
-import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getModal } from '../helpers/wait-helpers';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -64,31 +64,31 @@ async function addMcpSkill(page: Page, displayName: string): Promise<void> {
 	await addSkillButton.click();
 
 	// Wait for the dialog to open
-	await page
-		.locator('[role="dialog"] h2')
+	await getModal(page)
+		.locator('h2')
 		.filter({ hasText: 'Add Skill' })
 		.first()
 		.waitFor({ state: 'visible', timeout: 5000 });
 
 	// Fill in Display Name
-	const displayNameInput = page.locator('[role="dialog"] input[placeholder="e.g., Web Search"]');
+	const displayNameInput = getModal(page).locator('input[placeholder="e.g., Web Search"]');
 	await displayNameInput.waitFor({ state: 'visible', timeout: 5000 });
 	await displayNameInput.fill(displayName);
 
 	// Select "MCP Server" source type radio
-	const mcpServerRadio = page.locator('[role="dialog"] input[type="radio"][value="mcp_server"]');
+	const mcpServerRadio = getModal(page).locator('input[type="radio"][value="mcp_server"]');
 	await mcpServerRadio.click();
 
 	// Wait for the MCP server select dropdown to appear
-	const mcpSelect = page.locator('[role="dialog"] select');
+	const mcpSelect = getModal(page).locator('select');
 	await mcpSelect.waitFor({ state: 'visible', timeout: 5000 });
 
 	// Select the fetch-mcp option
 	await mcpSelect.selectOption({ label: TEST_MCP_SERVER_NAME });
 
 	// Click the submit button inside the dialog
-	const submitButton = page
-		.locator('[role="dialog"] button[type="submit"]')
+	const submitButton = getModal(page)
+		.locator('button[type="submit"]')
 		.filter({ hasText: 'Add Skill' });
 	await submitButton.click();
 
@@ -97,8 +97,8 @@ async function addMcpSkill(page: Page, displayName: string): Promise<void> {
 
 	// Wait for the dialog to close after the RPC completes and handleClose() fires.
 	// The Add Skill dialog title h2 was used to open the dialog; wait for it to disappear.
-	await page
-		.locator('[role="dialog"] h2')
+	await getModal(page)
+		.locator('h2')
 		.filter({ hasText: 'Add Skill' })
 		.first()
 		.waitFor({ state: 'hidden', timeout: 10000 });
@@ -131,7 +131,7 @@ async function deleteSkillByName(page: Page, displayName: string): Promise<void>
 
 	// Wait for confirm modal and click the confirm "Delete" button
 	// Use the modal's button specifically to avoid matching the list's delete buttons
-	const confirmModal = page.locator('[role="dialog"]').filter({ hasText: 'Delete Skill' });
+	const confirmModal = getModal(page).filter({ hasText: 'Delete Skill' });
 	await confirmModal.waitFor({ state: 'visible', timeout: 5000 });
 	const confirmButton = confirmModal.locator('button').filter({ hasText: 'Delete' }).last();
 	await confirmButton.click();
@@ -183,7 +183,7 @@ test.describe('Global Skills Registry', () => {
 		await editButton.click();
 
 		// Wait for edit dialog
-		const editDialog = page.locator('[role="dialog"]').filter({ hasText: 'Edit Skill' }).first();
+		const editDialog = getModal(page).filter({ hasText: 'Edit Skill' }).first();
 		await editDialog.waitFor({ state: 'visible', timeout: 5000 });
 
 		// Update the description field

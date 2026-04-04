@@ -23,6 +23,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	// Edit state
 	const [name, setName] = useState(space.name);
 	const [description, setDescription] = useState(space.description ?? '');
+	const [instructions, setInstructions] = useState(space.instructions ?? '');
+	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -32,9 +34,15 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	useEffect(() => {
 		setName(space.name);
 		setDescription(space.description ?? '');
-	}, [space.id, space.name, space.description]);
+		setInstructions(space.instructions ?? '');
+		setBackgroundContext(space.backgroundContext ?? '');
+	}, [space.id, space.name, space.description, space.instructions, space.backgroundContext]);
 
-	const isDirty = name !== space.name || description !== (space.description ?? '');
+	const isDirty =
+		name !== space.name ||
+		description !== (space.description ?? '') ||
+		instructions !== (space.instructions ?? '') ||
+		backgroundContext !== (space.backgroundContext ?? '');
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -54,6 +62,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				id: space.id,
 				name: name.trim(),
 				description: description.trim() || undefined,
+				instructions: instructions.trim() || undefined,
+				backgroundContext: backgroundContext.trim() || undefined,
 			});
 			toast.success('Space updated');
 		} catch (err) {
@@ -169,6 +179,52 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 						/>
 					</div>
 
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">
+							Instructions
+							<span class="text-gray-600 ml-1">(optional)</span>
+						</label>
+						<p class="text-xs text-gray-500 mb-1">
+							Operator instructions for all agents in this space. Injected as{' '}
+							<code class="text-gray-400">## Space Instructions</code> in every agent's system
+							prompt.
+						</p>
+						<textarea
+							value={instructions}
+							onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+							placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
+							rows={5}
+							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
+						/>
+						<div class="text-xs text-gray-600 mt-0.5 text-right">
+							{instructions.length} characters
+						</div>
+					</div>
+
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">
+							Background Context
+							<span class="text-gray-600 ml-1">(optional)</span>
+						</label>
+						<p class="text-xs text-gray-500 mb-1">
+							Project or codebase context. Injected as{' '}
+							<code class="text-gray-400">## Space Background</code> or{' '}
+							<code class="text-gray-400">## Project Context</code> in agent prompts.
+						</p>
+						<textarea
+							value={backgroundContext}
+							onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
+							placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
+							rows={5}
+							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
+						/>
+						<div class="text-xs text-gray-600 mt-0.5 text-right">
+							{backgroundContext.length} characters
+						</div>
+					</div>
+
 					{isDirty && (
 						<div class="flex gap-2 justify-end">
 							<Button
@@ -178,6 +234,8 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 								onClick={() => {
 									setName(space.name);
 									setDescription(space.description ?? '');
+									setInstructions(space.instructions ?? '');
+									setBackgroundContext(space.backgroundContext ?? '');
 									setSaveError(null);
 								}}
 							>

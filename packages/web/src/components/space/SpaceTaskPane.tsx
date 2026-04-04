@@ -189,7 +189,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					<div class="min-w-0 flex-1">
 						<h2 class="text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
 						<div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-400">
-							<span>{activitySummary}</span>
+							<span data-testid="task-status-label">{activitySummary}</span>
 							{task.priority !== 'normal' && (
 								<span class="text-xs uppercase tracking-[0.12em] text-gray-500">
 									{PRIORITY_LABELS[task.priority]} Priority
@@ -213,6 +213,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					)}
 				</div>
 			</div>
+
+			{task.status === 'blocked' && task.result && (
+				<div
+					class="mx-4 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2"
+					data-testid="task-blocked-banner"
+				>
+					<p class="text-xs font-medium text-amber-300">Blocked</p>
+					<p class="mt-0.5 text-sm text-amber-200/90">{task.result}</p>
+				</div>
+			)}
 
 			<div class="flex-1 min-h-0 overflow-hidden px-4">
 				<div class="h-full flex flex-col">

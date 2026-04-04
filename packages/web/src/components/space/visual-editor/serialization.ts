@@ -172,7 +172,11 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 		endNodeId: endKey,
 		rules: [],
 		tags: workflow.tags ?? [],
-		channels: workflow.channels ?? [],
+		channels: (workflow.channels ?? []).map((channel) => ({
+			...channel,
+			id: channel.id ?? generateUUID(),
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+		})),
 		gates: workflow.gates ?? [],
 	};
 }

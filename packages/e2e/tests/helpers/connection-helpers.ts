@@ -74,8 +74,16 @@ export async function waitForOfflineStatus(page: Page, timeout: number = 5000): 
  * the indicator may not have appeared before the reconnect is initiated.
  * If it's still visible after reconnect, that indicates a problem and will
  * surface in the subsequent MessageHub state assertion.
+ *
+ * @param page - Playwright page
+ * @param timeout - Optional timeout in ms (default 60000 for CI, 10000 for local)
  */
-export async function waitForOnlineStatus(page: Page, timeout: number = 10000): Promise<void> {
+export async function waitForOnlineStatus(page: Page, timeout?: number): Promise<void> {
+	// Use longer timeout in CI (60s) vs local (10s) since CI environments
+	// can be slower to reconnect WebSocket connections
+	const isCI = process.env.CI === 'true';
+	const effectiveTimeout = timeout ?? (isCI ? 60000 : 10000);
+
 	// Check if the offline indicator is currently visible and wait for it to
 	// disappear with a short timeout — it may not have appeared at all if
 	// the disconnect was brief.
@@ -97,11 +105,32 @@ export async function waitForOnlineStatus(page: Page, timeout: number = 10000): 
 	// Verify WebSocket is actually connected via the MessageHub state.
 	// This is the authoritative check — it waits for the transport to
 	// be fully connected and the hub state to reflect 'connected'.
-	await page.waitForFunction(
-		() => {
+	try {
+		await page.waitForFunction(
+			() => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				return hub?.getState && hub.getState() === 'connected';
+			},
+			{ timeout: effectiveTimeout }
+		);
+	} catch (error) {
+		// Log diagnostic information to help debug connection failures
+		const diagnostic = await page.evaluate(() => {
 			const hub = window.__messageHub || window.appState?.messageHub;
-			return hub?.getState && hub.getState() === 'connected';
-		},
-		{ timeout }
-	);
+			return {
+				hasHub: !!hub,
+				hubType: hub?.constructor?.name,
+				state: hub?.getState?.(),
+				hasWindowMessageHub: !!window.__messageHub,
+				windowMessageHubReady: window.__messageHubReady,
+				hasConnectionManager: !!(window as any).connectionManager,
+				connectionManagerState: (window as any).connectionManager?.getConnectionState?.(),
+				hasAppState: !!window.appState,
+				connectionState: (window as any).connectionState?.value,
+				locationHref: window.location.href,
+			};
+		});
+		console.error('WebSocket reconnection failed. Diagnostic info:', diagnostic);
+		throw error;
+	}
 }

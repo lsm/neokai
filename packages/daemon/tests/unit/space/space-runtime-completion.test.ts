@@ -1144,9 +1144,13 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				startNodeId: 'no-en-1',
 				tags: [],
 			});
-			expect(workflow.endNodeId).toBeUndefined();
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// Simulate a legacy workflow row persisted before end_node_id existed.
+			db.prepare(`UPDATE space_workflows SET end_node_id = NULL WHERE id = ?`).run(workflow.id);
+			const legacyWorkflow = workflowManager.getWorkflow(workflow.id)!;
+			expect(legacyWorkflow.endNodeId).toBeUndefined();
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, legacyWorkflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			// Both node execs terminal

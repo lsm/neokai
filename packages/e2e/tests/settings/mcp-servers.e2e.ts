@@ -66,12 +66,18 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		// Verify modal is open with expected sections
 		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
-		// Verify section headers (use .first() to handle potential duplicate elements)
-		await expect(page.locator('h3:has-text("System Prompt")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("Setting Sources")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("MCP Servers")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("NeoKai Tools")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("SDK Built-in")').first()).toBeVisible();
+		// Verify collapsible group headers.
+		// "App MCP Servers" renders as a <button> (via GroupHeader) when app skills exist, but
+		// falls back to a plain <span> when no skills are configured. The button's full text is
+		// "App MCP Servers (N)" (includes the item count), so { exact: true } matches only the
+		// inner <span> (text is exactly "App MCP Servers") in both DOM states.
+		await expect(page.getByText('App MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
+		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
+		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
+
+		// Advanced section is collapsed by default — only the toggle button is visible, not its children
+		await expect(page.getByRole('button', { name: /Advanced/i })).toBeVisible();
 	});
 
 	test.skip('should close Tools modal with close button', async ({ page }) => {
@@ -98,8 +104,8 @@ test.describe('MCP Toggle - Tools Modal', () => {
 	test('should show MCP servers section with servers from settings', async ({ page }) => {
 		await openToolsModal(page);
 
-		// Find MCP Servers section
-		const mcpSection = page.locator('h3:has-text("MCP Servers")');
+		// Find Project MCP Servers section (GroupHeader renders a button, not an h3)
+		const mcpSection = page.locator('button:has-text("Project MCP Servers")');
 		await expect(mcpSection).toBeVisible();
 
 		// Get MCP servers displayed

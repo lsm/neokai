@@ -9,11 +9,7 @@
 import { expect } from '@playwright/test';
 import type { Page, Locator } from '@playwright/test';
 import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
-
-// ─── Selectors ────────────────────────────────────────────────────────────────
-
-/** The chat textarea that accepts user input */
-const CHAT_INPUT_SELECTOR = 'textarea[placeholder*="Ask"]';
+import { CHAT_INPUT_SELECTOR } from './selectors';
 
 /** Individual reference items inside the autocomplete */
 const AUTOCOMPLETE_ITEM_SELECTOR = '[role="option"]';

@@ -6,11 +6,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { Space, SpaceTask } from '@neokai/shared';
+import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+let mockActiveRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -18,13 +21,43 @@ vi.mock('../../../lib/space-store', () => ({
 			space: mockSpace,
 			loading: mockLoading,
 			tasks: mockTasks,
+			activeRuns: mockActiveRuns,
+			workflowRuns: mockWorkflowRuns,
+			workflows: mockWorkflows,
 		};
 	},
+}));
+
+// Mock WorkflowCanvas to avoid its heavy dependencies (connectionManager, gate data fetching).
+// The stub intentionally reuses data-testid="workflow-canvas-svg" — the same testid the real
+// component renders on its SVG element — so SpaceDashboard unit tests assert the canvas is
+// mounted without depending on the real component's internal rendering. If the real testid
+// changes, update this stub accordingly.
+vi.mock('../WorkflowCanvas', () => ({
+	WorkflowCanvas: ({
+		workflowId,
+		runId,
+		spaceId,
+	}: {
+		workflowId: string;
+		runId?: string | null;
+		spaceId: string;
+	}) => (
+		<div
+			data-testid="workflow-canvas-svg"
+			data-workflow-id={workflowId}
+			data-run-id={runId ?? ''}
+			data-space-id={spaceId}
+		/>
+	),
 }));
 
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
+mockActiveRuns = signal<SpaceWorkflowRun[]>([]);
+mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockWorkflows = signal([]);
 
 import { SpaceDashboard } from '../SpaceDashboard';
 
@@ -40,6 +73,26 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		status: 'active',
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+function makeRun(
+	id: string,
+	workflowId: string,
+	status: SpaceWorkflowRun['status'] = 'in_progress',
+	overrides: Partial<SpaceWorkflowRun> = {}
+): SpaceWorkflowRun {
+	return {
+		id,
+		spaceId: 'space-1',
+		workflowId,
+		title: `Run ${id}`,
+		status,
+		createdAt: Date.now(),
+		startedAt: Date.now(),
+		updatedAt: Date.now(),
+		completedAt: null,
 		...overrides,
 	};
 }
@@ -75,6 +128,9 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = null;
 		mockLoading.value = false;
 		mockTasks.value = [];
+		mockActiveRuns.value = [];
+		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [];
 	});
 
 	afterEach(() => {
@@ -173,5 +229,217 @@ describe('SpaceDashboard', () => {
 		fireEvent.click(getByText('Done').closest('button')!);
 		fireEvent.click(getByText('Task t1').closest('button')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
+	});
+
+	it('renders WorkflowCanvas when there is an active run', () => {
+		mockSpace.value = makeSpace();
+		mockActiveRuns.value = [makeRun('run-1', 'wf-1', 'in_progress')];
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		const canvas = container.querySelector('[data-testid="workflow-canvas-svg"]');
+		expect(canvas).toBeTruthy();
+		expect(canvas?.getAttribute('data-workflow-id')).toBe('wf-1');
+		expect(canvas?.getAttribute('data-run-id')).toBe('run-1');
+		expect(canvas?.getAttribute('data-space-id')).toBe('space-1');
+	});
+
+	it('falls back to first workflowRun when no active runs exist', () => {
+		mockSpace.value = makeSpace();
+		mockActiveRuns.value = [];
+		mockWorkflowRuns.value = [makeRun('run-2', 'wf-2', 'completed')];
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		const canvas = container.querySelector('[data-testid="workflow-canvas-svg"]');
+		expect(canvas).toBeTruthy();
+		expect(canvas?.getAttribute('data-workflow-id')).toBe('wf-2');
+		expect(canvas?.getAttribute('data-run-id')).toBe('run-2');
+	});
+
+	it('does not render WorkflowCanvas when no runs exist', () => {
+		mockSpace.value = makeSpace();
+		mockActiveRuns.value = [];
+		mockWorkflowRuns.value = [];
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(container.querySelector('[data-testid="workflow-canvas-svg"]')).toBeNull();
+	});
+
+	it('renders Create Task and Start Workflow Run action buttons', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByRole('button', { name: 'Create Task' })).toBeTruthy();
+		expect(getByRole('button', { name: 'Start Workflow Run' })).toBeTruthy();
+	});
+
+	it('clicking Create Task button opens the Create Task dialog', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByRole('button', { name: 'Create Task' }));
+		// Modal renders via Portal into document.body
+		const dialog = document.body.querySelector('[role="dialog"]');
+		expect(dialog).toBeTruthy();
+		expect(dialog?.querySelector('h2')?.textContent).toBe('Create Task');
+	});
+
+	it('clicking Start Workflow Run button opens the Start Workflow Run dialog', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByRole('button', { name: 'Start Workflow Run' }));
+		const dialog = document.body.querySelector('[role="dialog"]');
+		expect(dialog).toBeTruthy();
+		expect(dialog?.querySelector('h2')?.textContent).toBe('Start Workflow Run');
+	});
+
+	it('renders blocked reason text on a blocked task card', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'blocked', { result: 'Waiting for human approval' })];
+
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Review').closest('button')!);
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(getByText('Waiting for human approval')).toBeTruthy();
+	});
+
+	it('does not render blocked reason when result is null', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'blocked', { result: null })];
+
+		const { queryByTestId } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(queryByTestId('tab-review') ?? document.querySelector('button')!);
+		expect(document.querySelector('[data-testid="task-blocked-reason"]')).toBeNull();
+	});
+
+	it('does not render blocked reason for non-blocked tasks even if result is set', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'done', { result: 'All done' })];
+
+		const { getByText, queryByTestId } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Done').closest('button')!);
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(document.querySelector('[data-testid="task-blocked-reason"]')).toBeNull();
+	});
+
+	describe('task visibility — status-based grouping and count badges', () => {
+		it('shows correct count badges for each tab', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'open'),
+				makeTask('t2', 'in_progress'),
+				makeTask('t3', 'in_progress'),
+				makeTask('t4', 'blocked'),
+				makeTask('t5', 'blocked'),
+				makeTask('t6', 'blocked'),
+				makeTask('t7', 'done'),
+			];
+
+			const { container } = render(<SpaceDashboard spaceId="space-1" />);
+			// Tab buttons contain label + count badge
+			const tabs = container.querySelectorAll('button');
+			const tabTexts = Array.from(tabs).map((btn) => btn.textContent);
+			// Active tab: 3 tasks (1 open + 2 in_progress)
+			expect(tabTexts.some((t) => t?.includes('Active') && t?.includes('3'))).toBe(true);
+			// Review tab: 3 blocked tasks
+			expect(tabTexts.some((t) => t?.includes('Review') && t?.includes('3'))).toBe(true);
+			// Done tab: 1 done task
+			expect(tabTexts.some((t) => t?.includes('Done') && t?.includes('1'))).toBe(true);
+		});
+
+		it('groups active tasks into In Progress and Queued sections', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'open'),
+				makeTask('t2', 'open'),
+				makeTask('t3', 'in_progress'),
+			];
+
+			const { getByText, getAllByText } = render(<SpaceDashboard spaceId="space-1" />);
+			expect(getByText('In Progress')).toBeTruthy();
+			expect(getByText('Queued')).toBeTruthy();
+			expect(getByText('Task t3')).toBeTruthy();
+			expect(getByText('Task t1')).toBeTruthy();
+			expect(getByText('Task t2')).toBeTruthy();
+		});
+
+		it('groups done tab into Completed, Cancelled, and Archived sections', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'done'),
+				makeTask('t2', 'cancelled'),
+				makeTask('t3', 'archived'),
+			];
+
+			const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+			fireEvent.click(getByText('Done').closest('button')!);
+			expect(getByText('Completed')).toBeTruthy();
+			expect(getByText('Cancelled')).toBeTruthy();
+			expect(getByText('Archived')).toBeTruthy();
+			expect(getByText('Task t1')).toBeTruthy();
+			expect(getByText('Task t2')).toBeTruthy();
+			expect(getByText('Task t3')).toBeTruthy();
+		});
+
+		it('omits empty groups within the Active tab', () => {
+			mockSpace.value = makeSpace();
+			// Only open tasks, no in_progress — "In Progress" section should be omitted
+			mockTasks.value = [makeTask('t1', 'open')];
+
+			const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+			expect(getByText('Queued')).toBeTruthy();
+			expect(queryByText('In Progress')).toBeNull();
+		});
+
+		it('tasks appear without manual refresh when signal updates', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [];
+
+			const { getByText, queryByText, rerender } = render(<SpaceDashboard spaceId="space-1" />);
+			expect(getByText('This space has no tasks yet.')).toBeTruthy();
+
+			// Simulate a new task arriving via WebSocket event (signal update)
+			mockTasks.value = [makeTask('t-new', 'in_progress')];
+			rerender(<SpaceDashboard spaceId="space-1" />);
+
+			expect(queryByText('This space has no tasks yet.')).toBeNull();
+			expect(getByText('Task t-new')).toBeTruthy();
+			expect(getByText('In Progress')).toBeTruthy();
+		});
+
+		it('count badges update when tasks signal changes', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [makeTask('t1', 'open')];
+
+			const { container, rerender } = render(<SpaceDashboard spaceId="space-1" />);
+
+			// Initially 1 active, 0 review
+			let tabs = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+			expect(tabs.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
+			expect(tabs.some((t) => t?.includes('Review') && t?.includes('0'))).toBe(true);
+
+			// Add a blocked task
+			mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'blocked')];
+			rerender(<SpaceDashboard spaceId="space-1" />);
+
+			tabs = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+			expect(tabs.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
+			expect(tabs.some((t) => t?.includes('Review') && t?.includes('1'))).toBe(true);
+		});
+
+		it('task status transition moves task between tabs', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [makeTask('t1', 'in_progress')];
+
+			const { getByText, queryByText, rerender } = render(<SpaceDashboard spaceId="space-1" />);
+			// Active tab shows the task
+			expect(getByText('Task t1')).toBeTruthy();
+
+			// Task gets blocked — simulate status change
+			mockTasks.value = [makeTask('t1', 'blocked', { result: 'Needs human review' })];
+			rerender(<SpaceDashboard spaceId="space-1" />);
+
+			// Active tab should now be empty
+			expect(queryByText('Task t1')).toBeNull();
+
+			// Switch to Review tab — task should be there
+			fireEvent.click(getByText('Review').closest('button')!);
+			expect(getByText('Task t1')).toBeTruthy();
+			expect(getByText('Needs human review')).toBeTruthy();
+		});
 	});
 });
