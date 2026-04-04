@@ -307,18 +307,17 @@ describe('WorkflowNode multi-agent rendering', () => {
 		expect(queryByTestId('agent-badges')).toBeNull();
 	});
 
-	it('shows slot role in badge even when agent lookup fails (agent not found in list)', () => {
+	it('shows slot role in single-agent label when one slot is present and agent lookup fails', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
 			agents: [{ agentId: 'unknown-agent-id', name: 'coder' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
-		// Badge shows the slot role (always available), not the agent name (which requires lookup)
-		expect(getByTestId('agent-badges').textContent).toContain('coder');
+		expect(getByTestId('agent-name').textContent).toContain('coder');
 	});
 
-	it('shows override-indicator dot when slot has instructions override', () => {
+	it('shows override-indicator dot when a multi-agent slot has instructions override', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
@@ -328,13 +327,14 @@ describe('WorkflowNode multi-agent rendering', () => {
 					name: 'coder',
 					instructions: { mode: 'override' as const, value: 'Be precise.' },
 				},
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		expect(getByTestId('override-indicator')).toBeTruthy();
 	});
 
-	it('shows override-indicator dot when slot has systemPrompt override', () => {
+	it('shows override-indicator dot when a multi-agent slot has systemPrompt override', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
@@ -344,6 +344,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 					name: 'coder',
 					systemPrompt: { mode: 'override' as const, value: 'Be strict.' },
 				},
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);

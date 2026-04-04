@@ -47,7 +47,7 @@ export interface NodeDraft {
 
 /** Returns true when this node has multiple agents configured. */
 export function isMultiAgentNode(node: NodeDraft): boolean {
-	return Array.isArray(node.agents) && node.agents.length > 0;
+	return Array.isArray(node.agents) && node.agents.length > 1;
 }
 
 /**

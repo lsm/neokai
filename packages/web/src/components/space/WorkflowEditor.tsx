@@ -64,6 +64,8 @@ export interface WorkflowTemplateStep {
 	agentSlots?: WorkflowTemplateAgentSlot[];
 	/** Optional default node system prompt. */
 	systemPrompt?: string;
+	/** Optional model override for single-agent templates. */
+	model?: string;
 	/** Optional default node instructions. */
 	instructions?: string;
 }
@@ -75,6 +77,8 @@ export interface WorkflowTemplateAgentSlot {
 	role: string;
 	/** Explicit agent ID to use for this slot (skips role lookup when set). */
 	agentId?: string;
+	/** Optional model override for this slot. */
+	model?: string;
 	/** Optional default slot system prompt. */
 	systemPrompt?: string;
 	/** Optional default slot instructions. */
@@ -199,6 +203,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 					name: agent.name || agent.agentId,
 					role: agent.name || agent.agentId,
 					agentId: agent.agentId,
+					model: agent.model,
 					systemPrompt: extractInstructionText(agent.systemPrompt),
 					instructions: extractInstructionText(agent.instructions),
 				})),
@@ -211,6 +216,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 			name: node.name,
 			role: primary?.name ?? primary?.agentId ?? '',
 			agentId: primary?.agentId,
+			model: primary?.model,
 			systemPrompt: extractInstructionText(primary?.systemPrompt),
 			instructions: node.instructions,
 		};
@@ -268,6 +274,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				return {
 					agentId: assigned?.id ?? '',
 					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
+					model: slot.model?.trim() || undefined,
 					systemPrompt: slot.systemPrompt?.trim()
 						? { mode: 'override' as const, value: slot.systemPrompt.trim() }
 						: undefined,
@@ -303,6 +310,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
+			model: step.model?.trim() || undefined,
 			systemPrompt: step.systemPrompt?.trim()
 				? { mode: 'override' as const, value: step.systemPrompt.trim() }
 				: undefined,
