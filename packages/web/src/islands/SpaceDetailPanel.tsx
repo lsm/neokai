@@ -13,6 +13,7 @@ import {
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
 	spaceOverlaySessionIdSignal,
+	spaceOverlayAgentNameSignal,
 } from '../lib/signals';
 import { cn } from '../lib/utils';
 
@@ -156,6 +157,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	};
 
 	const handleSessionClick = (sessionId: string) => {
+		// Use the truncated session ID as a human-readable label (matches what's displayed in the list)
+		spaceOverlayAgentNameSignal.value = sessionId.slice(0, 8);
 		spaceOverlaySessionIdSignal.value = sessionId;
 		onNavigate?.();
 	};

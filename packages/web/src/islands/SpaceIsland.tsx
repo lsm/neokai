@@ -18,7 +18,7 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import type { SpaceViewMode } from '../lib/signals';
-import { spaceOverlaySessionIdSignal } from '../lib/signals';
+import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
 import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
@@ -61,8 +61,10 @@ export default function SpaceIsland({
 
 	// Overlay session — shown as a slide-over on top of the current view
 	const overlaySessionId = spaceOverlaySessionIdSignal.value;
+	const overlayAgentName = spaceOverlayAgentNameSignal.value;
 	const handleOverlayClose = () => {
 		spaceOverlaySessionIdSignal.value = null;
+		spaceOverlayAgentNameSignal.value = null;
 	};
 
 	const loading = spaceStore.loading.value;
@@ -133,7 +135,7 @@ export default function SpaceIsland({
 				{overlaySessionId && (
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
-						agentName={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}
@@ -150,7 +152,7 @@ export default function SpaceIsland({
 				{overlaySessionId && (
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
-						agentName={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
 						onClose={handleOverlayClose}
 					/>
 				)}
@@ -160,19 +162,37 @@ export default function SpaceIsland({
 
 	if (viewMode === 'configure' && space) {
 		return (
-			<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-configure-view">
-				<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-					<SpaceConfigurePage space={space} workflows={workflows} />
+			<>
+				<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-configure-view">
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<SpaceConfigurePage space={space} workflows={workflows} />
+					</div>
 				</div>
-			</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
 		);
 	}
 
 	if (viewMode === 'configure' && !space) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
-				<p class="text-sm text-gray-500">Space not found</p>
-			</div>
+			<>
+				<div class="flex-1 flex items-center justify-center bg-dark-900">
+					<p class="text-sm text-gray-500">Space not found</p>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
 		);
 	}
 

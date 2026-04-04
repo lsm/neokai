@@ -6,8 +6,9 @@
  * backdrop, the ✕ button, or presses Escape.
  */
 
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { Portal } from '../ui/Portal';
+import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
 import { cn } from '../../lib/utils';
 
@@ -21,6 +22,8 @@ interface AgentOverlayChatProps {
 }
 
 export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlayChatProps) {
+	const panelRef = useRef<HTMLDivElement>(null);
+
 	// Close on Escape key
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -31,6 +34,13 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 		document.addEventListener('keydown', handler);
 		return () => document.removeEventListener('keydown', handler);
 	}, [onClose]);
+
+	// Focus trap — keep keyboard focus inside the panel while it is open
+	useEffect(() => {
+		if (panelRef.current) {
+			return setupFocusTrap(panelRef.current);
+		}
+	}, []);
 
 	return (
 		<Portal into="body">
@@ -51,6 +61,7 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 
 				{/* Slide-over panel */}
 				<div
+					ref={panelRef}
 					class={cn(
 						'relative flex flex-col w-full max-w-2xl bg-dark-900 shadow-2xl',
 						'border-l border-dark-700',

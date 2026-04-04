@@ -4,12 +4,28 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceAgent, SpaceTask, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
 
-const { mockNavigateToSpaceSession } = vi.hoisted(() => ({ mockNavigateToSpaceSession: vi.fn() }));
 const { mockNavigateToSpaceAgent } = vi.hoisted(() => ({ mockNavigateToSpaceAgent: vi.fn() }));
 vi.mock('../../../lib/router', () => ({
-	navigateToSpaceSession: mockNavigateToSpaceSession,
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 }));
+
+// Plain signal-like holders for the overlay signals — hoisted so the mock factory can reference them
+const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal } = vi.hoisted(() => ({
+	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
+	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
+}));
+vi.mock('../../../lib/signals', async (importOriginal) => {
+	const actual = await importOriginal();
+	return {
+		...actual,
+		get spaceOverlaySessionIdSignal() {
+			return mockSpaceOverlaySessionIdSignal;
+		},
+		get spaceOverlayAgentNameSignal() {
+			return mockSpaceOverlayAgentNameSignal;
+		},
+	};
+});
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
@@ -79,8 +95,9 @@ describe('SpaceTaskPane', () => {
 			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
 		);
 		mockSendTaskMessage.mockClear();
-		mockNavigateToSpaceSession.mockClear();
 		mockNavigateToSpaceAgent.mockClear();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
 	});
 
 	afterEach(() => {
@@ -131,11 +148,12 @@ describe('SpaceTaskPane', () => {
 		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
 	});
 
-	it('shows View Agent Session button when task session exists', () => {
+	it('shows View Agent Session button when task session exists and opens overlay on click', () => {
+		mockSpaceOverlaySessionIdSignal.value = null;
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 		fireEvent.click(getByTestId('view-agent-session-btn'));
-		expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-abc');
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-abc');
 	});
 
 	it('calls onClose when back button is clicked', () => {
