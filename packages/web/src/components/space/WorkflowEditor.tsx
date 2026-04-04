@@ -285,7 +285,9 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				name,
 				agentId: '',
 				agents: agentSlots,
-				systemPrompt: step.systemPrompt?.trim() ?? undefined,
+				systemPrompt: step.systemPrompt?.trim()
+					? { mode: 'override' as const, value: step.systemPrompt.trim() }
+					: undefined,
 				instructions: step.instructions?.trim() ?? '',
 			};
 		}
@@ -304,7 +306,9 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
-			systemPrompt: step.systemPrompt?.trim() ?? undefined,
+			systemPrompt: step.systemPrompt?.trim()
+				? { mode: 'override' as const, value: step.systemPrompt.trim() }
+				: undefined,
 			instructions: step.instructions?.trim() ?? '',
 		};
 	});
@@ -347,7 +351,12 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 			id: startNode.id,
 			name: startNode.name,
 			agentId: startNode.agents?.[0]?.agentId ?? '',
-			systemPrompt: undefined,
+			systemPrompt:
+				startNode.agents?.[0]?.systemPrompt && typeof startNode.agents[0].systemPrompt !== 'string'
+					? startNode.agents[0].systemPrompt
+					: typeof startNode.agents?.[0]?.systemPrompt === 'string'
+						? { mode: 'override' as const, value: startNode.agents[0].systemPrompt }
+						: undefined,
 			instructions: startNode.instructions ?? '',
 			agents: startNode.agents && startNode.agents.length > 1 ? startNode.agents : undefined,
 		});
@@ -361,7 +370,12 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 				id: s.id,
 				name: s.name,
 				agentId: s.agents?.[0]?.agentId ?? '',
-				systemPrompt: undefined,
+				systemPrompt:
+					s.agents?.[0]?.systemPrompt && typeof s.agents[0].systemPrompt !== 'string'
+						? s.agents[0].systemPrompt
+						: typeof s.agents?.[0]?.systemPrompt === 'string'
+							? { mode: 'override' as const, value: s.agents[0].systemPrompt }
+							: undefined,
 				instructions: s.instructions ?? '',
 				agents: s.agents && s.agents.length > 1 ? s.agents : undefined,
 			});
@@ -595,17 +609,24 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 				? (localIdToPersistedId.get(endNodeId) ?? endNodeId)
 				: stepIds[stepIds.length - 1];
 
-			const builtNodes = steps.map((s, i) => ({
-				id: stepIds[i],
-				name: s.name || `Step ${i + 1}`,
-				agents:
+			const builtNodes = steps.map((s, i) => {
+				const nodeAgents: WorkflowNodeAgent[] =
 					s.agents && s.agents.length > 0
 						? s.agents
 						: s.agentId
 							? [{ agentId: s.agentId, name: s.name || `Step ${i + 1}` }]
-							: [],
-				instructions: s.instructions || undefined,
-			}));
+							: [];
+				// For single-agent nodes, apply node-level systemPrompt override to the agent
+				if (nodeAgents.length === 1 && s.systemPrompt && !s.agents?.length) {
+					nodeAgents[0] = { ...nodeAgents[0], systemPrompt: s.systemPrompt };
+				}
+				return {
+					id: stepIds[i],
+					name: s.name || `Step ${i + 1}`,
+					agents: nodeAgents,
+					instructions: s.instructions || undefined,
+				};
+			});
 
 			if (isEditing && workflow) {
 				await spaceStore.updateWorkflow(workflow.id, {

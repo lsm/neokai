@@ -16,10 +16,11 @@
  * - Delete Node button with confirmation (disabled for start node)
  */
 
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
-import { isMultiAgentNode } from '../WorkflowNodeCard';
+import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
+import { OverrideModeSelector } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
@@ -80,6 +81,38 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	const multi = isMultiAgentNode(step);
 	const nodeAgents = step.agents ?? [];
 
+	// Track override mode per field per slot: 'role:instructions' → mode
+	const [modes, setModes] = useState<Record<string, 'override' | 'expand'>>(() => {
+		const initial: Record<string, 'override' | 'expand'> = {};
+		for (const sa of nodeAgents) {
+			if (sa.instructions && typeof sa.instructions !== 'string') {
+				initial[`${sa.name}:instructions`] = sa.instructions.mode;
+			}
+			if (sa.systemPrompt && typeof sa.systemPrompt !== 'string') {
+				initial[`${sa.name}:systemPrompt`] = sa.systemPrompt.mode;
+			}
+		}
+		return initial;
+	});
+
+	// Track override mode for single-agent systemPrompt
+	const [singleSystemPromptMode, setSingleSystemPromptMode] = useState<'override' | 'expand'>(
+		() =>
+			(typeof step.systemPrompt !== 'string' ? step.systemPrompt?.mode : 'override') ?? 'override'
+	);
+
+	const handleSingleSystemPromptModeChange = useCallback(
+		(mode: 'override' | 'expand') => {
+			setSingleSystemPromptMode(mode);
+			// Propagate mode change to data model immediately
+			const current = step.systemPrompt;
+			if (current && typeof current !== 'string') {
+				onUpdate({ ...step, systemPrompt: { ...current, mode } });
+			}
+		},
+		[step.systemPrompt, step, onUpdate]
+	);
+
 	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
@@ -120,6 +153,32 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 	function updateAgentId(role: string, agentId: string) {
 		updateAgents(nodeAgents.map((a) => (a.name === role ? { ...a, agentId } : a)));
 	}
+
+	function updateSlotField(role: string, field: 'instructions' | 'systemPrompt', value: string) {
+		const modeKey = `${role}:${field}`;
+		const mode = modes[modeKey] ?? 'override';
+		updateAgents(
+			nodeAgents.map((a) => (a.name === role ? { ...a, [field]: buildOverride(value, mode) } : a))
+		);
+	}
+
+	const setMode = useCallback(
+		(key: string, mode: 'override' | 'expand') => {
+			setModes((prev) => ({ ...prev, [key]: mode }));
+			// Propagate mode change to data model immediately
+			const [role, field] = key.split(':') as [string, string];
+			const agent = nodeAgents.find((a) => a.name === role);
+			if (agent) {
+				const current = field === 'instructions' ? agent.instructions : agent.systemPrompt;
+				if (current && typeof current !== 'string') {
+					updateAgents(
+						nodeAgents.map((a) => (a.name === role ? { ...a, [field]: { ...current, mode } } : a))
+					);
+				}
+			}
+		},
+		[nodeAgents]
+	);
 
 	// All agents are available; same agent may be added multiple times with different roles.
 	const availableAgents = agents;
@@ -177,6 +236,31 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						testId="single-agent-model-input"
 						value={step.model}
 						onChange={(model) => onUpdate({ ...step, model })}
+					/>
+				</div>
+				<div class="space-y-1">
+					<div class="flex items-center justify-between">
+						<label class="text-xs font-medium text-gray-400">
+							System Prompt <span class="font-normal text-gray-600">(node override)</span>
+						</label>
+						<OverrideModeSelector
+							mode={singleSystemPromptMode}
+							onChange={handleSingleSystemPromptModeChange}
+						/>
+					</div>
+					<textarea
+						data-testid="single-agent-system-prompt"
+						value={extractOverrideValue(step.systemPrompt)}
+						onInput={(e) => {
+							const value = (e.currentTarget as HTMLTextAreaElement).value;
+							onUpdate({
+								...step,
+								systemPrompt: buildOverride(value, singleSystemPromptMode),
+							});
+						}}
+						placeholder="Leave blank to use agent defaults..."
+						rows={3}
+						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
 					/>
 				</div>
 			</div>
@@ -280,6 +364,60 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 									))}
 								</select>
 								<p class="text-[11px] text-gray-600">{agentInfo?.name ?? sa.agentId}</p>
+							</div>
+							<div class="space-y-0.5">
+								<div class="flex items-center justify-between">
+									<label class="text-[11px] text-gray-600">Instructions</label>
+									<OverrideModeSelector
+										mode={
+											modes[`${sa.name}:instructions`] ??
+											(typeof sa.instructions !== 'string' ? sa.instructions?.mode : 'override') ??
+											'override'
+										}
+										onChange={(m) => setMode(`${sa.name}:instructions`, m)}
+									/>
+								</div>
+								<textarea
+									value={extractOverrideValue(sa.instructions)}
+									onInput={(e) =>
+										updateSlotField(
+											sa.name,
+											'instructions',
+											(e.currentTarget as HTMLTextAreaElement).value
+										)
+									}
+									placeholder="Per-agent instructions (optional)…"
+									data-testid="agent-slot-instructions"
+									rows={2}
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+								/>
+							</div>
+							<div class="space-y-0.5">
+								<div class="flex items-center justify-between">
+									<label class="text-[11px] text-gray-600">System Prompt</label>
+									<OverrideModeSelector
+										mode={
+											modes[`${sa.name}:systemPrompt`] ??
+											(typeof sa.systemPrompt !== 'string' ? sa.systemPrompt?.mode : 'override') ??
+											'override'
+										}
+										onChange={(m) => setMode(`${sa.name}:systemPrompt`, m)}
+									/>
+								</div>
+								<textarea
+									value={extractOverrideValue(sa.systemPrompt)}
+									onInput={(e) =>
+										updateSlotField(
+											sa.name,
+											'systemPrompt',
+											(e.currentTarget as HTMLTextAreaElement).value
+										)
+									}
+									placeholder="Override system prompt (leave blank to use agent default)…"
+									data-testid="agent-slot-system-prompt"
+									rows={3}
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+								/>
 							</div>
 						</div>
 					);
@@ -558,28 +696,6 @@ export function NodeConfigPanel({
 				)}
 
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
-
-				{/* System Prompt (node-level override) */}
-				<div class="space-y-1.5">
-					<div class="flex items-center justify-between">
-						<label class="text-xs font-medium text-gray-400">
-							System Prompt <span class="font-normal text-gray-600">(node override)</span>
-						</label>
-					</div>
-					<textarea
-						data-testid="node-system-prompt-input"
-						value={step.systemPrompt ?? ''}
-						onInput={(e) =>
-							onUpdate({
-								...step,
-								systemPrompt: (e.currentTarget as HTMLTextAreaElement).value || undefined,
-							})
-						}
-						placeholder="Leave blank to use agent defaults..."
-						rows={4}
-						class="w-full text-xs font-mono bg-dark-800 border border-dark-600 rounded px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-					/>
-				</div>
 
 				{/* Instructions */}
 				<div class="space-y-1.5">
