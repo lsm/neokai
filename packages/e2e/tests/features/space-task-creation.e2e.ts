@@ -44,7 +44,6 @@ test.describe('Space Task Creation', () => {
 
 		// Wait for the space overview to be visible
 		await expect(page.getByTestId('space-overview-view')).toBeVisible({
-
 			timeout: 5000,
 		});
 	});
