@@ -63,7 +63,9 @@ test.describe('Space Settings CRUD', () => {
 		await expect(nameInput).toHaveValue(spaceName);
 
 		// Workspace path should be shown as read-only text (the unique subdirectory for this test)
-		await expect(page.locator(`text=${spaceWorkspacePath}`)).toBeVisible({ timeout: 3000 });
+		await expect(page.getByText(spaceWorkspacePath, { exact: true })).toBeVisible({
+			timeout: 3000,
+		});
 
 		// Danger Zone section
 		await expect(page.locator('text=Danger Zone')).toBeVisible();

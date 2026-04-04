@@ -119,8 +119,13 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 			timeout: 5000,
 		});
 
-		// Click on the created space in the list
-		await page.getByText(spaceName).click();
+		// Wait for the space to appear in the list (LiveQuery may need a moment to load)
+		await expect(page.getByText(spaceName)).toBeVisible({ timeout: 5000 });
+
+		// The space name button in the list only toggles expand/collapse.
+		// Navigation requires clicking the "Open space" button that appears on hover.
+		await page.getByText(spaceName).hover();
+		await page.getByTitle('Open space').click();
 
 		// Should now be inside the space — SpaceDetailPanel pinned items visible
 		await expect(page.getByTestId('space-detail-dashboard')).toBeVisible({ timeout: 10000 });

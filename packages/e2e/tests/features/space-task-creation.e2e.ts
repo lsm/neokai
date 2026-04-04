@@ -13,11 +13,12 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getWorkspaceRoot, getModal } from '../helpers/wait-helpers';
 import {
 	createSpaceViaRpc,
 	createUniqueSpaceDir,
 	deleteSpaceViaRpc,
+	deleteSpaceWorkflowsViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -37,6 +38,9 @@ test.describe('Space Task Creation', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-creation');
 		const spaceName = `E2E Task Creation Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 
 		// Navigate directly to the space (overview is the default view)
 		await page.goto(`/space/${spaceId}`);
@@ -63,7 +67,7 @@ test.describe('Space Task Creation', () => {
 		await createTaskBtn.click();
 
 		// The Create Task modal should open — scope assertions to the dialog itself
-		const dialog = page.getByRole('dialog');
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 3000 });
 		await expect(dialog.getByRole('heading', { name: 'Create Task' })).toBeVisible();
 	});
@@ -75,7 +79,7 @@ test.describe('Space Task Creation', () => {
 		await startWorkflowBtn.click();
 
 		// The Start Workflow Run modal should open — scope assertions to the dialog
-		const dialog = page.getByRole('dialog');
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 3000 });
 		await expect(dialog.getByRole('heading', { name: 'Start Workflow Run' })).toBeVisible();
 	});
@@ -92,14 +96,14 @@ test.describe('Space Task Creation', () => {
 		await titleInput.fill(taskTitle);
 
 		// Submit via the dialog's "Create Task" button — scope to dialog to disambiguate
-		const dialog = page.getByRole('dialog');
+		const dialog = getModal(page);
 		await dialog.getByRole('button', { name: 'Create Task' }).click();
 
 		// Toast notification confirming creation appears
 		await expect(page.getByText(`Task "${taskTitle}" created`)).toBeVisible({ timeout: 5000 });
 
 		// Dialog should close after successful submission
-		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+		await expect(getModal(page)).not.toBeVisible({ timeout: 3000 });
 
 		// The task title should appear in SpaceDashboard's Active task list.
 		// Newly created tasks have status 'open' and appear in the Active tab.
@@ -111,12 +115,12 @@ test.describe('Space Task Creation', () => {
 	test('Cancel dismisses the dialog without creating a task', async ({ page }) => {
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
-		const dialog = page.getByRole('dialog');
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 3000 });
 
 		// Click Cancel — dialog should close
 		await dialog.getByRole('button', { name: 'Cancel' }).click();
-		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+		await expect(getModal(page)).not.toBeVisible({ timeout: 3000 });
 
 		// The task pane wrapper (data-testid="space-task-pane") is only mounted in SpaceIsland
 		// when activeTaskId is truthy. Cancel never sets a taskId, so the wrapper is absent

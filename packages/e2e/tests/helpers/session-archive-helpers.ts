@@ -37,10 +37,7 @@ export async function openSessionOptionsMenu(page: Page): Promise<void> {
 	await page.waitForTimeout(300);
 
 	// Click the session options button (gear icon in chat header)
-	// Try multiple selectors for robustness
-	const optionsButton = page
-		.locator('button[aria-label="Session options"], button[title="Session options"]')
-		.first();
+	const optionsButton = page.getByTitle('Session options');
 	await optionsButton.waitFor({ state: 'visible', timeout: 10000 });
 	await optionsButton.click();
 

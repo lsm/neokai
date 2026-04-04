@@ -19,6 +19,7 @@ import {
 	createSpaceViaRpc,
 	createUniqueSpaceDir,
 	deleteSpaceViaRpc,
+	deleteSpaceWorkflowsViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -106,6 +107,9 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'sub-routes');
 		const spaceName = `E2E Sub-Routes Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 		taskId = await createTaskViaRpc(page, spaceId, `Test Task ${Date.now()}`);
 		sessionId = await createSessionViaRpc(page, workspaceRoot);
 	});

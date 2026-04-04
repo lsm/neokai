@@ -223,6 +223,118 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.click(getByText('Send to Task Agent'));
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
+
+	it('disables textarea and shows Sending... button during send', async () => {
+		let resolveSend: () => void;
+		const sendPromise = new Promise<void>((resolve) => {
+			resolveSend = resolve;
+		});
+		mockSendTaskMessage.mockReturnValueOnce(sendPromise);
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		const textarea = getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		);
+		fireEvent.input(textarea, { target: { value: 'Work in progress check' } });
+		fireEvent.click(getByText('Send to Task Agent'));
+
+		// While sending: button should say Sending... and textarea should be disabled
+		await waitFor(() => expect(getByText('Sending...')).toBeTruthy());
+		expect((textarea as HTMLTextAreaElement).disabled).toBe(true);
+
+		// Resolve and verify state normalizes
+		resolveSend!();
+		await waitFor(() => expect(getByText('Send to Task Agent')).toBeTruthy());
+		expect((textarea as HTMLTextAreaElement).disabled).toBe(false);
+	});
+
+	it('clears draft after successful send', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		const textarea = getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		) as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Approve the PR' } });
+		expect(textarea.value).toBe('Approve the PR');
+
+		fireEvent.submit(textarea.form!);
+
+		await waitFor(() =>
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Approve the PR')
+		);
+		await waitFor(() => expect(textarea.value).toBe(''));
+	});
+
+	it('submits message on Enter key (without Shift)', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		const textarea = getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		);
+		fireEvent.input(textarea, { target: { value: 'Quick approve' } });
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+		await waitFor(() =>
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Quick approve')
+		);
+	});
+
+	it('does not submit on Shift+Enter (newline insertion)', () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		const textarea = getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		);
+		fireEvent.input(textarea, { target: { value: 'line one' } });
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+		expect(mockSendTaskMessage).not.toHaveBeenCalled();
+	});
+
+	it('calls ensureTaskAgentSession when task has no session before send', async () => {
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
+		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+
+		// Wait for the auto-ensure effect to fire and finish
+		await waitFor(() => expect(mockEnsureTaskAgentSession).toHaveBeenCalled());
+
+		const textarea = getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		);
+		fireEvent.input(textarea, { target: { value: 'Can you check this?' } });
+		fireEvent.click(getByText('Send to Task Agent'));
+
+		await waitFor(() =>
+			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Can you check this?')
+		);
+	});
+
+	it('clears threadSendError when a new send succeeds', async () => {
+		mockSendTaskMessage.mockRejectedValueOnce(new Error('Temporary error'));
+		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+		const { getByPlaceholderText, getByText, queryByText } = render(
+			<SpaceTaskPane taskId="task-1" />
+		);
+
+		const textarea = getByPlaceholderText(
+			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		);
+
+		// First send fails
+		fireEvent.input(textarea, { target: { value: 'First try' } });
+		fireEvent.click(getByText('Send to Task Agent'));
+		await waitFor(() => expect(getByText('Temporary error')).toBeTruthy());
+
+		// Second send succeeds — error should be cleared
+		mockSendTaskMessage.mockResolvedValueOnce(undefined);
+		fireEvent.input(textarea, { target: { value: 'Second try' } });
+		fireEvent.click(getByText('Send to Task Agent'));
+		await waitFor(() => expect(queryByText('Temporary error')).toBeNull());
+	});
 });
 
 describe('SpaceTaskPane — blocked reason banner', () => {

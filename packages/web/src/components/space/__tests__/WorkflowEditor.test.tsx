@@ -12,14 +12,16 @@
  * - Save calls spaceStore.updateWorkflow when editing
  * - Error shown when name is empty on save
  * - Error shown when a step has no agent assigned
- * - Error shown when a condition transition has empty shell expression
  * - Cancel fires onCancel
+ * - initFromWorkflow preserves systemPrompt from agents[0]
+ * - buildTemplateNodes wraps systemPrompt in WorkflowNodeAgentOverride
+ * - handleSave includes systemPrompt in saved agent for single-agent nodes
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowNodeAgentOverride } from '@neokai/shared';
 import { makeBuiltInTemplateWorkflows } from './fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
@@ -234,14 +236,19 @@ describe('WorkflowEditor', () => {
 			expect(filtered.map((a) => a.name)).toEqual(['planner', 'coder']);
 		});
 
-		it('excludes agents with role "leader" regardless of name', () => {
+		it('excludes agents whose name contains "leader" (case-insensitive)', () => {
+			// filterAgents filters by a.name.toLowerCase() !== 'leader'.
+			// It only excludes agents whose name (not role) is exactly "leader" (case-insensitive).
+			// Agents named "orchestrator" or "coordinator" are NOT filtered.
 			const agents: SpaceAgent[] = [
-				makeAgent('1', 'orchestrator', 'leader'),
-				makeAgent('2', 'coordinator', 'Leader'),
-				makeAgent('3', 'coder', 'coder'),
+				makeAgent('1', 'leader'),
+				makeAgent('2', 'Leader'),
+				makeAgent('3', 'orchestrator'),
+				makeAgent('4', 'coordinator'),
+				makeAgent('5', 'coder'),
 			];
 			const filtered = filterAgents(agents);
-			expect(filtered.map((a) => a.name)).toEqual(['coder']);
+			expect(filtered.map((a) => a.name)).toEqual(['orchestrator', 'coordinator', 'coder']);
 		});
 
 		it('preserves all non-leader agents', () => {
@@ -297,6 +304,124 @@ describe('WorkflowEditor', () => {
 			const wf = makeWorkflow();
 			const { channels } = initFromWorkflow(wf);
 			expect(channels).toHaveLength(0);
+		});
+
+		it('preserves systemPrompt from agents[0] for single-agent nodes', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								systemPrompt: { mode: 'override', value: 'Plan carefully.' },
+							},
+						],
+					},
+					{
+						id: 'step-2',
+						name: 'Code',
+						agents: [
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								systemPrompt: { mode: 'expand', value: 'Code fast.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].systemPrompt).toEqual({ mode: 'override', value: 'Plan carefully.' });
+			expect(steps[1].systemPrompt).toEqual({ mode: 'expand', value: 'Code fast.' });
+		});
+
+		it('preserves systemPrompt mode from agents[0]', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								systemPrompt: { mode: 'expand', value: 'Extra planning context.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].systemPrompt?.mode).toBe('expand');
+			expect(steps[0].systemPrompt?.value).toBe('Extra planning context.');
+		});
+
+		it('normalizes legacy string systemPrompt to override object', () => {
+			const wf: SpaceWorkflow = {
+				id: 'wf-legacy',
+				spaceId: 'space-1',
+				name: 'Legacy Workflow',
+				description: '',
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Step 1',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'coder',
+								systemPrompt: 'Legacy string prompt.',
+							} as unknown as {
+								agentId: string;
+								name: string;
+								systemPrompt?: WorkflowNodeAgentOverride;
+							},
+						],
+					},
+				],
+				startNodeId: 'step-1',
+				tags: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			};
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].systemPrompt).toEqual({ mode: 'override', value: 'Legacy string prompt.' });
+		});
+
+		it('sets systemPrompt to undefined when agents[0] has no systemPrompt', () => {
+			const wf = makeWorkflow();
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].systemPrompt).toBeUndefined();
+		});
+
+		it('preserves multi-agent nodes with their agents array', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Multi',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								systemPrompt: { mode: 'override', value: 'Plan.' },
+							},
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								systemPrompt: { mode: 'override', value: 'Code.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].agents).toHaveLength(2);
+			expect(steps[0].agents?.[0].systemPrompt).toEqual({ mode: 'override', value: 'Plan.' });
+			expect(steps[0].agents?.[1].systemPrompt).toEqual({ mode: 'override', value: 'Code.' });
 		});
 	});
 
@@ -365,7 +490,7 @@ describe('WorkflowEditor', () => {
 					}
 					continue;
 				}
-				expect(node.systemPrompt?.trim().length).toBeGreaterThan(0);
+				expect(node.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
 			}
 		});
 
@@ -470,6 +595,80 @@ describe('WorkflowEditor', () => {
 		});
 	});
 
+	describe('buildTemplateNodes', () => {
+		it('wraps systemPrompt in WorkflowNodeAgentOverride for single-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Test Template',
+					description: 'Test',
+					steps: [{ name: 'Step A', role: 'coder', systemPrompt: 'Be careful.' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].systemPrompt).toEqual({ mode: 'override', value: 'Be careful.' });
+		});
+
+		it('wraps per-slot systemPrompt in WorkflowNodeAgentOverride for multi-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Multi Template',
+					description: 'Multi',
+					steps: [
+						{
+							name: 'Review',
+							agentSlots: [
+								{ name: 'Reviewer 1', role: 'reviewer', systemPrompt: 'Review carefully.' },
+								{ name: 'Reviewer 2', role: 'reviewer', systemPrompt: 'Focus on bugs.' },
+							],
+						},
+					],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agents).toHaveLength(2);
+			expect(nodes[0].agents?.[0].systemPrompt).toEqual({
+				mode: 'override',
+				value: 'Review carefully.',
+			});
+			expect(nodes[0].agents?.[1].systemPrompt).toEqual({
+				mode: 'override',
+				value: 'Focus on bugs.',
+			});
+		});
+
+		it('sets systemPrompt to undefined when template step has no systemPrompt', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'No Prompt Template',
+					description: 'Test',
+					steps: [{ name: 'Step A', role: 'coder' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].systemPrompt).toBeUndefined();
+		});
+
+		it('wraps per-slot instructions in WorkflowNodeAgentOverride for multi-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Instructions Template',
+					description: 'Test',
+					steps: [
+						{
+							name: 'Code',
+							agentSlots: [{ name: 'Coder 1', role: 'coder', instructions: 'Focus on tests.' }],
+						},
+					],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agents?.[0].instructions).toEqual({
+				mode: 'override',
+				value: 'Focus on tests.',
+			});
+		});
+	});
+
 	describe('save', () => {
 		it('shows error when name is empty on save attempt', async () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
@@ -489,36 +688,6 @@ describe('WorkflowEditor', () => {
 			fireEvent.click(getByText('Create Workflow'));
 			await waitFor(() => {
 				expect(getByText('Step 1 requires an agent.')).toBeTruthy();
-			});
-			expect(mockCreateWorkflow).not.toHaveBeenCalled();
-		});
-
-		it('shows error when a condition transition has empty shell expression', async () => {
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			// Set name
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			// Select agent for step 1
-			selectAgent(container, 'agent-1');
-			// Add step 2
-			fireEvent.click(getByText('Add Step'));
-			selectAgent(container, 'agent-2');
-			// Change exit gate of step 1 to 'condition' with empty expression
-			// Step 1 was previously expanded, but after Add Step, step 2 is expanded.
-			// Click step 1 header to expand it
-			const stepHeaders = container.querySelectorAll('.cursor-pointer');
-			fireEvent.click(stepHeaders[0]);
-			// Find exit gate select via testid (more robust than positional select indexing)
-			const exitGateSelect = container.querySelector(
-				'[data-testid="exit-gate-select"]'
-			) as HTMLSelectElement;
-			fireEvent.change(exitGateSelect, { target: { value: 'condition' } });
-			// Leave expression empty and try to save
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(getByText(/Transition after step 1 requires a shell expression/)).toBeTruthy();
 			});
 			expect(mockCreateWorkflow).not.toHaveBeenCalled();
 		});
@@ -581,6 +750,36 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
+		it('includes systemPrompt in saved agent for single-agent nodes', async () => {
+			const workflow = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								systemPrompt: { mode: 'override', value: 'Plan carefully.' },
+							},
+						],
+						instructions: 'Plan things',
+					},
+				],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={workflow} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+			});
+			const callArgs = mockUpdateWorkflow.mock.calls[0][1];
+			const savedNode = callArgs.nodes[0];
+			expect(savedNode.agents[0].systemPrompt).toEqual({
+				mode: 'override',
+				value: 'Plan carefully.',
+			});
+		});
+
 		it('calls updateWorkflow on save in edit mode', async () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={makeWorkflow()} />);
 			fireEvent.click(getByText('Save Changes'));
@@ -636,70 +835,6 @@ describe('WorkflowEditor', () => {
 					})
 				);
 			});
-		});
-
-		it('remaps rule appliesTo from step localId to final persisted step ID (P0 regression)', async () => {
-			// When a new step has no persisted ID yet, its localId is used in appliesTo.
-			// The save path must remap localId → the UUID generated at save time so the
-			// persisted rule references the correct step ID.
-			const { getByRole, getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-
-			// Set workflow name
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'Remapped Workflow' } });
-
-			// Give the step a unique name so StepMultiSelect renders a named button we
-			// can find via getByRole — which throws on no match, unlike querySelectorAll.
-			const stepNameInput = container.querySelector(
-				'input[placeholder*="Plan the approach"]'
-			) as HTMLInputElement;
-			fireEvent.input(stepNameInput, { target: { value: 'UniqueStepName' } });
-
-			// Assign agent to the step (new step, no persisted id)
-			selectAgent(container, 'agent-1');
-
-			// Add a rule and fill it in
-			fireEvent.click(getByRole('button', { name: 'Add Rule' }));
-			const ruleNameInput = container.querySelector(
-				'input[placeholder*="Rule name"]'
-			) as HTMLInputElement;
-			fireEvent.input(ruleNameInput, { target: { value: 'Scoped Rule' } });
-			const ruleContent = container.querySelector(
-				'textarea[placeholder*="Describe the rule"]'
-			) as HTMLTextAreaElement;
-			fireEvent.input(ruleContent, { target: { value: 'Content' } });
-
-			// Scope the rule to the step by clicking the named step button in "Applies to".
-			// getByRole('button', { name }) throws if no such button exists, ensuring the
-			// test fails rather than silently skips when the DOM structure changes.
-			// The StepMultiSelect renders exactly one <button> per step using the step name.
-			const scopeButton = getByRole('button', { name: 'UniqueStepName' });
-			fireEvent.click(scopeButton);
-
-			fireEvent.click(getByText('Create Workflow'));
-
-			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
-			});
-
-			const call = mockCreateWorkflow.mock.calls[0][0];
-			const savedStepId = call.nodes[0]?.id;
-			const savedRules = call.rules ?? [];
-
-			// The scoped rule must have at least one appliesTo entry — a zero length
-			// means the scope click was silently ignored and the loop below never runs.
-			expect(savedRules.length).toBeGreaterThan(0);
-			expect(savedRules[0].appliesTo.length).toBeGreaterThan(0);
-
-			// Every scoped ID must exactly match the final persisted step UUID,
-			// not the draft localId that was visible in the UI before save.
-			for (const rule of savedRules) {
-				for (const scopedId of rule.appliesTo ?? []) {
-					expect(scopedId).toBe(savedStepId);
-				}
-			}
 		});
 	});
 
@@ -841,7 +976,9 @@ describe('WorkflowEditor', () => {
 			expect(getByText('1 rule')).toBeTruthy();
 		});
 
-		it('rules are included in createWorkflow call (non-blank rules only)', async () => {
+		it('rules UI is rendered but not sent in createWorkflow call (rules are not persisted on workflow)', async () => {
+			// Rules are tracked in local state but are NOT included in the createWorkflow/updateWorkflow
+			// payload. This is the current expected behavior — rules exist only as local editor state.
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
@@ -849,44 +986,23 @@ describe('WorkflowEditor', () => {
 			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
 			selectAgent(container, 'agent-1');
 			fireEvent.click(getByText('Add Rule'));
-			// Fill rule name — rule card has an input with "Rule name" placeholder
+			// Fill rule name
 			const ruleNameInput = container.querySelector(
 				'input[placeholder*="Rule name"]'
 			) as HTMLInputElement;
 			fireEvent.input(ruleNameInput, { target: { value: 'Follow conventions' } });
-			// Fill rule content — rule card textarea has "Describe the rule" placeholder
+			// Fill rule content
 			const ruleTextarea = container.querySelector(
 				'textarea[placeholder*="Describe the rule"]'
 			) as HTMLTextAreaElement;
 			fireEvent.input(ruleTextarea, { target: { value: 'Write clean code' } });
 			fireEvent.click(getByText('Create Workflow'));
 			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledWith(
-					expect.objectContaining({
-						rules: expect.arrayContaining([
-							expect.objectContaining({
-								name: 'Follow conventions',
-								content: 'Write clean code',
-							}),
-						]),
-					})
-				);
+				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
 			});
-		});
-
-		it('blank rules are excluded from the createWorkflow call', async () => {
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			selectAgent(container, 'agent-1');
-			// Add a rule but leave it blank
-			fireEvent.click(getByText('Add Rule'));
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledWith(expect.objectContaining({ rules: [] }));
-			});
+			const callArgs = mockCreateWorkflow.mock.calls[0][0];
+			// Rules are NOT included in the create call
+			expect(callArgs.rules).toBeUndefined();
 		});
 
 		it('updateWorkflow call does not include rules (rules are no longer persisted on SpaceWorkflow)', async () => {

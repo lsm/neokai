@@ -66,6 +66,8 @@ vi.mock('../../../lib/space-store', () => ({
 vi.mock('../../../lib/connection-manager', () => ({
 	connectionManager: {
 		getHubIfConnected: vi.fn(() => mockHub),
+		// getHub() is the async version used by fetchGateData — resolves immediately in tests
+		getHub: vi.fn(() => Promise.resolve(mockHub)),
 	},
 }));
 

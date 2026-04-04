@@ -77,7 +77,7 @@ test.describe('Worktree Isolation', () => {
 		});
 
 		// Open session options menu to see session info
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 
 		// The dropdown should be visible
@@ -105,7 +105,7 @@ test.describe('Worktree Isolation', () => {
 		const deletedSessionId = sessionId;
 
 		// Open session options and delete
-		const optionsButton = page.locator('button[aria-label="Session options"]');
+		const optionsButton = page.getByTitle('Session options');
 		await optionsButton.click();
 
 		// Click Delete option

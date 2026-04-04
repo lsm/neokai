@@ -25,6 +25,6 @@ function fallbackColor(label: string): string {
 }
 
 export function getAgentColor(label: string): string {
-	const normalized = normalizeAgentLabel(label);
+	const normalized = normalizeAgentLabel(label ?? '');
 	return KNOWN_AGENT_COLORS[normalized] ?? fallbackColor(normalized || 'agent');
 }

@@ -727,7 +727,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					// 'human' makes this a human-approval gate (UI shows waiting_human state
+					// and the Reject/Approve buttons). 'reviewer' allows the Plan Review AI
+					// agent to also approve the plan in fully-automated runs.
+					writers: ['reviewer', 'human'],
 					check: { op: '==', value: true },
 				},
 			],
@@ -885,7 +888,15 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
  * to persist them with real SpaceAgent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-	return [CODING_WORKFLOW, FULL_CYCLE_CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
+	// FULL_CYCLE_CODING_WORKFLOW is first so it becomes the default workflow selected by
+	// spaceWorkflowRun.start (which picks workflows[0] ordered by created_at ASC).
+	// The full-cycle workflow is the primary/comprehensive default; the simpler CODING_WORKFLOW
+	// is an alternative for teams that want a two-node Code↔Review loop.
+	//
+	// Note: this ordering only affects *newly created* spaces. seedBuiltInWorkflows is
+	// insert-only (it skips if any workflows already exist), so existing spaces keep
+	// whatever ordering was seeded when they were first created.
+	return [FULL_CYCLE_CODING_WORKFLOW, CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -1005,7 +1016,11 @@ export function seedBuiltInWorkflows(
 				startNodeId,
 				endNodeId,
 				tags: [...template.tags],
-				channels: template.channels ? [...template.channels] : undefined,
+				// Assign UUIDs to channels that don't have IDs — WorkflowCanvas filters
+				// channels without an id (ch.id must be truthy) so they would be invisible.
+				channels: template.channels
+					? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
+					: undefined,
 				gates: template.gates ? [...template.gates] : undefined,
 			});
 
