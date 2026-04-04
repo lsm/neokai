@@ -78,6 +78,26 @@ export async function createSpaceTaskViaRpc(
 }
 
 /**
+ * Update a space task's status (and optionally result) via RPC. For use in beforeEach setup only.
+ */
+export async function updateSpaceTaskStatusViaRpc(
+	page: Page,
+	spaceId: string,
+	taskId: string,
+	status: string,
+	result?: string
+): Promise<void> {
+	await page.evaluate(
+		async ({ spaceId, taskId, status, result }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			await hub.request('spaceTask.update', { spaceId, taskId, status, result });
+		},
+		{ spaceId, taskId, status, result }
+	);
+}
+
+/**
  * Delete all seeded workflows for a space via RPC.
  *
  * When a space is created the daemon seeds built-in workflows. This causes

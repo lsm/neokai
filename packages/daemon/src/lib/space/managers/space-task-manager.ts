@@ -22,8 +22,8 @@ import type {
  * Maps current status -> allowed next statuses
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
-	open: ['in_progress', 'cancelled'],
-	in_progress: ['done', 'blocked', 'cancelled'],
+	open: ['in_progress', 'blocked', 'done', 'cancelled'],
+	in_progress: ['open', 'done', 'blocked', 'cancelled'],
 	done: ['in_progress', 'archived'], // Reactivate or archive
 	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
 	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
@@ -130,12 +130,13 @@ export class SpaceTaskManager {
 			if (options?.result) updates.result = options.result;
 		}
 
-		// Clear result when restarting from a terminal/failed state.
-		// Covers blocked, cancelled, and done → reactivation transitions.
+		// Clear result when restarting or deprioritizing.
+		// Covers blocked, cancelled, done → reactivation, and in_progress → open (pause).
 		if (
 			(task.status === 'blocked' && (newStatus === 'open' || newStatus === 'in_progress')) ||
 			(task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
-			(task.status === 'done' && newStatus === 'in_progress')
+			(task.status === 'done' && newStatus === 'in_progress') ||
+			(task.status === 'in_progress' && newStatus === 'open')
 		) {
 			updates.result = null;
 		}
