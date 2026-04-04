@@ -827,9 +827,11 @@ jobs:
             features/message-operations
             features/provider-model-switching
             features/reference-autocomplete
+            features/reviewer-feedback-loop
             features/rewind-features
             features/session-operations
             features/slash-cmd
+            features/space-happy-path-pipeline
             features/worktree-isolation
             responsive/mobile
             responsive/tablet
