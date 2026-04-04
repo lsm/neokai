@@ -184,8 +184,11 @@ test.describe('Task Action Buttons', () => {
 		// Click the cancel button directly
 		await page.locator('[data-testid="task-cancel-button"]').click();
 
-		// Cancel dialog should appear with the task name
-		const cancelDialog = page.locator('[role="dialog"]');
+		// Cancel dialog should appear with the task name — filter to avoid matching
+		// SlideOutPanel which also has role="dialog" in DOM (strict mode violation)
+		const cancelDialog = page
+			.locator('[role="dialog"]')
+			.filter({ has: page.locator('[data-testid="cancel-task-confirm"]') });
 		await expect(cancelDialog.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -206,8 +209,11 @@ test.describe('Task Action Buttons', () => {
 		await dropdownTrigger.click();
 		await page.locator('[data-testid="task-action-complete"]').click();
 
-		// Complete dialog should appear with the task name
-		const completeDialog = page.locator('[role="dialog"]');
+		// Complete dialog should appear with the task name — filter to avoid matching
+		// SlideOutPanel which also has role="dialog" in DOM (strict mode violation)
+		const completeDialog = page
+			.locator('[role="dialog"]')
+			.filter({ has: page.locator('[data-testid="complete-task-confirm"]') });
 		await expect(completeDialog.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
