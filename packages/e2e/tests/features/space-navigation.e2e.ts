@@ -30,11 +30,10 @@ import {
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
-// Locator helpers — the sidebar and tab bar share the same button names, so we
-// use data-testid for the sidebar pinned items to avoid ambiguity.
-// "Agents" only exists in the tab bar (not the sidebar), so it is the canonical
-// signal for "tab bar visible" / "tab bar hidden".
-const TAB_BAR_SIGNAL = 'Agents'; // exists only in SpaceIsland tab bar
+// The space overview view (data-testid="space-overview-view") is only rendered when
+// SpaceIsland is in its default mode — it is replaced by ChatContainer (agent/session)
+// or SpaceTaskPane (task) when those views are active.
+// Use it as the canonical signal for "overview active" / "overview hidden".
 
 test.describe('Comprehensive Space Navigation', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
@@ -104,10 +103,8 @@ test.describe('Comprehensive Space Navigation', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Tab bar visible by default
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+		// Space overview visible by default
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// Click "Space Agent" via the sidebar data-testid (avoids name ambiguity)
 		await page.locator('[data-testid="space-detail-agent"]').click();
@@ -119,8 +116,8 @@ test.describe('Comprehensive Space Navigation', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Tab bar hidden (Agents tab button only exists in tab bar)
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible();
+		// Space overview hidden (ChatContainer replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 
 		// Sidebar "Space Agent" item should report active state via data-active attribute
 		await expect(page.locator('[data-testid="space-detail-agent"]')).toHaveAttribute(
@@ -133,15 +130,13 @@ test.describe('Comprehensive Space Navigation', () => {
 	// Dashboard: click returns to tabbed view + all 4 tabs clickable
 	// ---------------------------------------------------------------------------
 
-	test('Dashboard: click → tabbed view returns → all 4 tabs clickable', async ({ page }) => {
+	test('Dashboard: click → overview view returns', async ({ page }) => {
 		// Start in agent view so clicking Dashboard exercises the navigation
 		await page.goto(`/space/${spaceId}/agent`);
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
-		// Confirm tab bar is gone
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible({
-			timeout: 5000,
-		});
+		// Confirm overview is gone (ChatContainer replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible({ timeout: 5000 });
 
 		// Click the Dashboard pinned item via data-testid
 		await page.locator('[data-testid="space-detail-dashboard"]').click();
@@ -149,30 +144,19 @@ test.describe('Comprehensive Space Navigation', () => {
 		// URL returns to base space route
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// All 4 tab buttons should now be visible and individually clickable.
-		// Scope to data-testid="space-tab-bar" to avoid matching the sidebar pinned
-		// "Dashboard" button, which shares the same accessible name.
-		const tabBar = page.locator('[data-testid="space-tab-bar"]');
-		await expect(tabBar).toBeVisible({ timeout: 5000 });
-		for (const tabName of ['Dashboard', 'Agents', 'Workflows', 'Settings']) {
-			const tab = tabBar.getByRole('button', { name: tabName, exact: true });
-			await expect(tab).toBeVisible({ timeout: 5000 });
-			await tab.click();
-			await expect(tab).toBeVisible({ timeout: 2000 });
-		}
+		// Space overview should now be visible
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 	});
 
 	// ---------------------------------------------------------------------------
 	// Task drill-down (integration chain)
 	// ---------------------------------------------------------------------------
 
-	test('Task: click task → full-width pane → back → tabs return', async ({ page }) => {
+	test('Task: click task → full-width pane → back → overview returns', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// Create a task via Quick Action
 		const taskTitle = `Nav Task ${Date.now()}`;
@@ -192,16 +176,14 @@ test.describe('Comprehensive Space Navigation', () => {
 		// Full-width task pane rendered
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
-		// Tab bar hidden (Agents only exists in tab bar)
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible();
+		// Space overview hidden (task pane replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 
-		// Back button in task pane returns to tab view
+		// Back button in task pane returns to overview
 		await page.locator('[data-testid="task-back-button"]').click();
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 5000 });
 
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).toBeVisible({
-			timeout: 3000,
-		});
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 3000 });
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 	});
 
@@ -253,7 +235,7 @@ test.describe('Comprehensive Space Navigation', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Tab bar hidden
-		await expect(page.getByRole('button', { name: TAB_BAR_SIGNAL, exact: true })).not.toBeVisible();
+		// Space overview hidden (ChatContainer replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 	});
 });

@@ -49,8 +49,8 @@ test.describe('Space Agent Chat', () => {
 	test('clicking Space Agent in SpaceDetailPanel renders ChatContainer with message input', async ({
 		page,
 	}) => {
-		// The space tab view should be visible by default
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		// The space overview should be visible by default
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -64,8 +64,8 @@ test.describe('Space Agent Chat', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// The tab bar should no longer be visible (ChatContainer replaces it)
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
+		// The space overview should no longer be visible (ChatContainer replaced it)
+		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
 	});
 
 	test('navigating back to space base route returns to tab view', async ({ page }) => {
@@ -77,12 +77,12 @@ test.describe('Space Agent Chat', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Click Dashboard to return to space tab view
+		// Navigate back to space overview
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Tab bar should be back
-		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
+		// Space overview should be back
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({
 			timeout: 5000,
 		});
 

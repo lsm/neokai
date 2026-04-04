@@ -42,8 +42,8 @@ test.describe('Space Task Creation', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Wait for the space overview to be rendered
-		await expect(page.locator('[data-testid="space-overview-view"]')).toBeVisible({
+		// Wait for the space overview to be visible
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({
 			timeout: 5000,
 		});
 	});

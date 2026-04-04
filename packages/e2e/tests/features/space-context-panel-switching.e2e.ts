@@ -71,8 +71,8 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		await page.goto(`/space/${createdSpaceId}`);
 		await waitForWebSocketConnected(page);
 
-		// SpaceDetailPanel should render pinned items: Dashboard and Space Agent
-		await expect(page.getByText('Dashboard')).toBeVisible({ timeout: 10000 });
+		// SpaceDetailPanel should render pinned items: Overview and Space Agent
+		await expect(page.getByTestId('space-detail-dashboard')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByText('Space Agent')).toBeVisible({ timeout: 5000 });
 
 		// Back button should be visible
@@ -123,7 +123,7 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		await page.getByText(spaceName).click();
 
 		// Should now be inside the space — SpaceDetailPanel pinned items visible
-		await expect(page.getByText('Dashboard')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId('space-detail-dashboard')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByTitle('Back to Spaces')).toBeVisible({ timeout: 5000 });
 	});
 });
