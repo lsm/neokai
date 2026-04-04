@@ -5,6 +5,7 @@ import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
+import { TaskStatusActions } from './TaskStatusActions';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -52,7 +53,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [threadDraft, setThreadDraft] = useState('');
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
-	const [reopeningTask, setReopeningTask] = useState(false);
+	const [statusTransitioning, setStatusTransitioning] = useState(false);
 	const [showArtifacts, setShowArtifacts] = useState(false);
 
 	useEffect(() => {
@@ -155,16 +156,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
-	const handleReopenTask = async () => {
-		if (task.status !== 'done') return;
+	const handleStatusTransition = async (newStatus: SpaceTaskStatus) => {
 		try {
-			setReopeningTask(true);
+			setStatusTransitioning(true);
 			setThreadSendError(null);
-			await spaceStore.updateTask(task.id, { status: 'in_progress' });
+			await spaceStore.updateTask(task.id, { status: newStatus });
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
 		} finally {
-			setReopeningTask(false);
+			setStatusTransitioning(false);
 		}
 	};
 
@@ -310,21 +310,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								</p>
 							)}
 
-							{isTerminalTask && (
-								<div class="flex flex-wrap items-center gap-3">
-									<p class="text-xs text-gray-500">This task is read-only in its current state.</p>
-									{task.status === 'done' && (
-										<button
-											type="button"
-											onClick={() => void handleReopenTask()}
-											disabled={reopeningTask}
-											class="px-2 py-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors disabled:opacity-50"
-										>
-											{reopeningTask ? 'Reopening...' : 'Reopen Task'}
-										</button>
-									)}
-								</div>
-							)}
+							<TaskStatusActions
+								status={task.status}
+								onTransition={handleStatusTransition}
+								disabled={statusTransitioning}
+							/>
 
 							{threadSendError && <p class="text-xs text-red-300">{threadSendError}</p>}
 						</div>
