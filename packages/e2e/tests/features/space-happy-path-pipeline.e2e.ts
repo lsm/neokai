@@ -70,27 +70,33 @@ async function getRunTaskId(
 	spaceId: string,
 	runId: string
 ): Promise<string> {
-	const start = Date.now();
-	let taskId = '';
+	await page.waitForFunction(
+		async ({ sid, rid }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return false;
+			const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
+				id: string;
+				workflowRunId?: string;
+			}>;
+			return tasks.some((t) => t.workflowRunId === rid);
+		},
+		{ sid: spaceId, rid: runId },
+		{ timeout: RUN_TASK_LOOKUP_TIMEOUT_MS, polling: RUN_TASK_LOOKUP_INTERVAL_MS }
+	);
 
-	while (!taskId && Date.now() - start < RUN_TASK_LOOKUP_TIMEOUT_MS) {
-		taskId = await page.evaluate(
-			async ({ sid, rid }) => {
-				const hub = window.__messageHub || window.appState?.messageHub;
-				if (!hub?.request) throw new Error('MessageHub not available');
-				const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
-					id: string;
-					workflowRunId?: string;
-				}>;
-				const match = tasks.find((t) => t.workflowRunId === rid);
-				return match?.id ?? '';
-			},
-			{ sid: spaceId, rid: runId }
-		);
-		if (!taskId) {
-			await page.waitForTimeout(RUN_TASK_LOOKUP_INTERVAL_MS);
-		}
-	}
+	const taskId = await page.evaluate(
+		async ({ sid, rid }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) throw new Error('MessageHub not available');
+			const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
+				id: string;
+				workflowRunId?: string;
+			}>;
+			const match = tasks.find((t) => t.workflowRunId === rid);
+			return match?.id ?? '';
+		},
+		{ sid: spaceId, rid: runId }
+	);
 
 	if (!taskId) throw new Error(`No task found for run ${runId}`);
 	return taskId;

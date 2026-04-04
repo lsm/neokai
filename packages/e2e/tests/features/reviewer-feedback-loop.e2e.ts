@@ -97,7 +97,6 @@ async function gotoSpaceAndWait(
 ): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await waitForWebSocketConnected(page);
-	await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
 }
 
 async function writeGateData(
