@@ -1327,6 +1327,73 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(reviewVotes.resetOnCycle).toBe(true);
 	});
 
+	// ─── Channel ID assignment ──────────────────────────────────────────────
+
+	test('all seeded channels have non-empty id fields', () => {
+		// WorkflowCanvas filters channels without an id (ch.id must be truthy).
+		// seedBuiltInWorkflows must assign UUIDs so all channels are visible.
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			for (const ch of wf.channels ?? []) {
+				expect(ch.id).toBeTruthy();
+				expect(ch.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			}
+		}
+	});
+
+	test('seeded channels retain all original fields plus a UUID id', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const codeToReview = wf.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+		expect(codeToReview).toBeDefined();
+		expect(codeToReview!.id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+		);
+		expect(codeToReview!.gateId).toBe('code-ready-gate');
+		expect(codeToReview!.direction).toBe('one-way');
+	});
+
+	// ─── plan-approval-gate human writers ────────────────────────────────────
+
+	test("FULL_CYCLE_CODING_WORKFLOW plan-approval-gate includes 'human' in writers", () => {
+		// 'human' makes this a human-approval gate so the UI shows waiting_human state
+		// and displays the Reject/Approve buttons. Required for human plan review flow.
+		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
+		expect(approvedField.writers).toContain('human');
+	});
+
+	test('seeded plan-approval-gate preserves human writer in approved field', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
+		expect(approvedField.writers).toContain('human');
+		// 'reviewer' is also present so the Plan Review AI agent can also approve in automated runs
+		expect(approvedField.writers).toContain('reviewer');
+	});
+
+	// ─── getBuiltInWorkflows ordering ────────────────────────────────────────
+
+	test('getBuiltInWorkflows returns FULL_CYCLE_CODING_WORKFLOW first', () => {
+		// FULL_CYCLE_CODING_WORKFLOW is first so spaceWorkflowRun.start (which picks
+		// workflows[0] ordered by created_at ASC) defaults to the comprehensive workflow.
+		const templates = getBuiltInWorkflows();
+		expect(templates[0].name).toBe(FULL_CYCLE_CODING_WORKFLOW.name);
+	});
+
+	test('getBuiltInWorkflows returns all four templates', () => {
+		const templates = getBuiltInWorkflows();
+		expect(templates).toHaveLength(4);
+		const names = templates.map((t) => t.name);
+		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(names).toContain(CODING_WORKFLOW.name);
+		expect(names).toContain(RESEARCH_WORKFLOW.name);
+		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
+	});
+
 	// ─── Timestamps ─────────────────────────────────────────────────────────
 
 	test('all seeded workflows have positive timestamps', () => {
