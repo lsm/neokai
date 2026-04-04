@@ -297,10 +297,10 @@ describe('ChannelEditor', () => {
 });
 
 // -------------------------------------------------------------------------
-// Gate ID config
+// Gate condition select
 // -------------------------------------------------------------------------
 
-describe('ChannelEditor — gate ID', () => {
+describe('ChannelEditor — gate condition', () => {
 	beforeEach(() => {
 		cleanup();
 	});
@@ -309,43 +309,134 @@ describe('ChannelEditor — gate ID', () => {
 		cleanup();
 	});
 
-	it('shows gate ID input when channel is expanded', () => {
+	it('shows gate condition select when channel is expanded', () => {
 		const onChange = vi.fn();
 		const channels = [makeChannel()];
 		const { getAllByTestId, getByTestId } = render(
 			<ChannelEditor channels={channels} onChange={onChange} />
 		);
 		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
-		expect(getByTestId('channel-gate-id-input-0')).toBeTruthy();
+		expect(getByTestId('channel-gate-select-0')).toBeTruthy();
 	});
 
-	it('updating gate ID calls onChange with updated gateId', () => {
+	it('gate select defaults to "always" for ungated channel', () => {
 		const onChange = vi.fn();
 		const channels = [makeChannel()];
 		const { getAllByTestId, getByTestId } = render(
 			<ChannelEditor channels={channels} onChange={onChange} />
 		);
 		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
-		fireEvent.input(getByTestId('channel-gate-id-input-0'), {
-			target: { value: 'my-gate' },
-		});
+		const select = getByTestId('channel-gate-select-0') as HTMLSelectElement;
+		expect(select.value).toBe('always');
+	});
+
+	it('selecting "human" sets gateId to "human-approval"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'human' } });
 		expect(onChange).toHaveBeenCalledOnce();
 		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
-		expect(result[0].gateId).toBe('my-gate');
+		expect(result[0].gateId).toBe('human-approval');
 	});
 
-	it('clearing gate ID calls onChange with gateId undefined', () => {
+	it('selecting "always" clears gateId to undefined', () => {
 		const onChange = vi.fn();
-		const channels = [makeChannel({ gateId: 'some-gate' })];
+		const channels = [makeChannel({ gateId: 'human-approval' })];
 		const { getAllByTestId, getByTestId } = render(
 			<ChannelEditor channels={channels} onChange={onChange} />
 		);
 		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
-		fireEvent.input(getByTestId('channel-gate-id-input-0'), {
-			target: { value: '' },
-		});
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'always' } });
 		expect(onChange).toHaveBeenCalledOnce();
 		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
 		expect(result[0].gateId).toBeUndefined();
+	});
+
+	it('gate badge shows "Human Approval" for human-approval gate', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'human-approval' })];
+		const { getByTestId } = render(<ChannelEditor channels={channels} onChange={onChange} />);
+		const badge = getByTestId('gate-badge');
+		expect(badge.textContent).toBe('Human Approval');
+	});
+
+	it('gate badge shows "Custom Condition" for unknown gate IDs', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'my-custom-gate' })];
+		const { getByTestId } = render(<ChannelEditor channels={channels} onChange={onChange} />);
+		const badge = getByTestId('gate-badge');
+		expect(badge.textContent).toBe('Custom Condition');
+	});
+
+	it('selecting "task_result" sets gateId to "task-result"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'task_result' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gateId).toBe('task-result');
+	});
+
+	it('gate badge shows "Task Result" for task-result gate', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'task-result' })];
+		const { getByTestId } = render(<ChannelEditor channels={channels} onChange={onChange} />);
+		const badge = getByTestId('gate-badge');
+		expect(badge.textContent).toBe('Task Result');
+	});
+
+	it('condition gate round-trips: gateId "custom-condition" → select shows "condition"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'custom-condition' })];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		const select = getByTestId('channel-gate-select-0') as HTMLSelectElement;
+		expect(select.value).toBe('condition');
+	});
+
+	it('selecting "condition" sets gateId to "custom-condition"', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel()];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+		fireEvent.change(getByTestId('channel-gate-select-0'), { target: { value: 'condition' } });
+		expect(onChange).toHaveBeenCalledOnce();
+		const result = onChange.mock.calls[0][0] as WorkflowChannel[];
+		expect(result[0].gateId).toBe('custom-condition');
+	});
+
+	it('arbitrary/legacy gate ID is preserved when round-tripping through another type', () => {
+		const onChange = vi.fn();
+		const channels = [makeChannel({ gateId: 'plan-approval-gate' })];
+		const { getAllByTestId, getByTestId } = render(
+			<ChannelEditor channels={channels} onChange={onChange} />
+		);
+		fireEvent.click(getAllByTestId('channel-toggle-button')[0]);
+
+		// Unknown gate ID → select shows 'condition', text input shows original ID
+		const select = getByTestId('channel-gate-select-0') as HTMLSelectElement;
+		expect(select.value).toBe('condition');
+		const input = getByTestId('channel-gate-id-input-0') as HTMLInputElement;
+		expect(input.value).toBe('plan-approval-gate');
+
+		// Switch to 'human'
+		fireEvent.change(select, { target: { value: 'human' } });
+		expect(onChange.mock.calls[0][0][0].gateId).toBe('human-approval');
+
+		// Switch back to 'condition' — original arbitrary ID should be restored
+		fireEvent.change(select, { target: { value: 'condition' } });
+		expect(onChange.mock.calls[1][0][0].gateId).toBe('plan-approval-gate');
 	});
 });

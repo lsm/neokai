@@ -27,6 +27,7 @@ import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
+import { ChannelEditor } from '../ChannelEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
@@ -46,7 +47,6 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
-import { ChannelEditor } from '../ChannelEditor';
 import { buildVisualNodePositions } from './nodeMetrics';
 import type { ResolvedWorkflowChannel } from './EdgeRenderer';
 import {

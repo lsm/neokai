@@ -135,12 +135,12 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Verify agent names are rendered in the list entries
 		const agentsList = panel.getByTestId('agents-list');
-		await expect(
-			agentsList.getByTestId('agent-entry').filter({ hasText: AGENT_A_NAME })
-		).toBeVisible({ timeout: 2000 });
-		await expect(
-			agentsList.getByTestId('agent-entry').filter({ hasText: AGENT_B_NAME })
-		).toBeVisible({ timeout: 2000 });
+		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_A })).toBeVisible({
+			timeout: 2000,
+		});
+		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_B })).toBeVisible({
+			timeout: 2000,
+		});
 
 		// Close panel and verify node shows agent badges for both agents
 		await panel.getByTestId('close-button').click();
@@ -264,16 +264,14 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Remove Reviewer Agent (the second entry in the list)
 		const agentsList = reopenedPanel.getByTestId('agents-list');
-		const secondAgentEntry = agentsList
-			.getByTestId('agent-entry')
-			.filter({ hasText: AGENT_B_NAME });
+		const secondAgentEntry = agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_B });
 		await secondAgentEntry.getByTestId('remove-agent-button').click();
 
 		// Only one agent entry should remain
 		await expect(agentsList.getByTestId('agent-entry')).toHaveCount(1, { timeout: 3000 });
-		await expect(
-			agentsList.getByTestId('agent-entry').filter({ hasText: AGENT_A_NAME })
-		).toBeVisible({ timeout: 2000 });
+		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_A })).toBeVisible({
+			timeout: 2000,
+		});
 
 		// "Switch to single" button (data-testid="switch-to-single-button") appears when
 		// exactly 1 agent remains in multi-agent mode
