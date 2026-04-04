@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
@@ -12,6 +12,7 @@ import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskStatusActions } from './TaskStatusActions';
+import MentionAutocomplete from './MentionAutocomplete';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -142,6 +143,65 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
 	const [showArtifacts, setShowArtifacts] = useState(false);
+	const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+	const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const lastCursorRef = useRef(0);
+
+	const allAgents = spaceStore.agents.value;
+	const mentionAgents =
+		mentionQuery !== null
+			? allAgents.filter((a) => a.name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
+			: [];
+
+	const handleThreadDraftInput = useCallback((e: Event) => {
+		const target = e.target as HTMLTextAreaElement;
+		const value = target.value;
+		const cursor = target.selectionStart ?? value.length;
+		lastCursorRef.current = cursor;
+		setThreadDraft(value);
+
+		// Detect @query at cursor position
+		const textBeforeCursor = value.slice(0, cursor);
+		const match = textBeforeCursor.match(/@(\w*)$/);
+		if (match) {
+			setMentionQuery(match[1]);
+			setMentionSelectedIndex(0);
+		} else {
+			setMentionQuery(null);
+		}
+	}, []);
+
+	const handleMentionSelect = useCallback(
+		(name: string) => {
+			if (!textareaRef.current) return;
+			const textarea = textareaRef.current;
+			const cursor = textarea.selectionStart ?? lastCursorRef.current;
+			const textBeforeCursor = threadDraft.slice(0, cursor);
+			const textAfterCursor = threadDraft.slice(cursor);
+			const match = textBeforeCursor.match(/@(\w*)$/);
+			if (!match) return;
+			const start = cursor - match[0].length;
+			const newValue = threadDraft.slice(0, start) + '@' + name + ' ' + textAfterCursor;
+			setThreadDraft(newValue);
+			setMentionQuery(null);
+			setMentionSelectedIndex(0);
+			// Re-focus textarea
+			setTimeout(() => {
+				if (textareaRef.current) {
+					const newCursor = start + name.length + 2; // '@' + name + ' '
+					textareaRef.current.focus();
+					textareaRef.current.setSelectionRange(newCursor, newCursor);
+				}
+			}, 0);
+		},
+		[threadDraft]
+	);
+
+	const handleMentionClose = useCallback(() => {
+		setMentionQuery(null);
+		setMentionSelectedIndex(0);
+	}, []);
 
 	useEffect(() => {
 		setThreadSendError(null);
@@ -379,20 +439,59 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<div class="py-3 space-y-3 border-t border-dark-800">
 							{showInlineComposer && (
 								<form onSubmit={handleThreadSend} class="space-y-3">
-									<textarea
-										value={threadDraft}
-										onInput={(e) => setThreadDraft((e.target as HTMLTextAreaElement).value)}
-										onKeyDown={(e) => {
-											if (e.key === 'Enter' && !e.shiftKey) {
-												e.preventDefault();
-												(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
-											}
-										}}
-										rows={3}
-										placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
-										disabled={sendingThread}
-										class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
-									/>
+									<div class="relative">
+										{mentionQuery !== null && mentionAgents.length > 0 && (
+											<MentionAutocomplete
+												agents={mentionAgents}
+												selectedIndex={mentionSelectedIndex}
+												onSelect={handleMentionSelect}
+												onClose={handleMentionClose}
+											/>
+										)}
+										<textarea
+											ref={textareaRef}
+											value={threadDraft}
+											onInput={handleThreadDraftInput}
+											onKeyDown={(e) => {
+												// Handle @mention autocomplete navigation
+												if (mentionQuery !== null && mentionAgents.length > 0) {
+													if (e.key === 'ArrowDown') {
+														e.preventDefault();
+														setMentionSelectedIndex((i) =>
+															Math.min(i + 1, mentionAgents.length - 1)
+														);
+														return;
+													}
+													if (e.key === 'ArrowUp') {
+														e.preventDefault();
+														setMentionSelectedIndex((i) => Math.max(i - 1, 0));
+														return;
+													}
+													if (e.key === 'Enter' && !e.shiftKey) {
+														e.preventDefault();
+														if (mentionAgents[mentionSelectedIndex]) {
+															handleMentionSelect(mentionAgents[mentionSelectedIndex].name);
+														}
+														return;
+													}
+													if (e.key === 'Escape') {
+														e.preventDefault();
+														setMentionQuery(null);
+														return;
+													}
+												}
+												// Existing Enter to submit
+												if (e.key === 'Enter' && !e.shiftKey) {
+													e.preventDefault();
+													(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+												}
+											}}
+											rows={3}
+											placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
+											disabled={sendingThread}
+											class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
+										/>
+									</div>
 									<div class="flex items-center justify-between gap-3">
 										<p class="text-xs text-gray-500">
 											Reply here to steer the task. Agent updates appear in the thread above.
