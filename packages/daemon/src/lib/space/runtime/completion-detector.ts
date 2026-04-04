@@ -63,8 +63,11 @@ export class CompletionDetector {
 		// End-node short-circuit: if the end node's execution is terminal,
 		// the run is complete regardless of other nodes' statuses.
 		if (endNodeId) {
-			const endNodeExecution = executions.find((e) => e.workflowNodeId === endNodeId);
-			if (endNodeExecution && TERMINAL_NODE_EXECUTION_STATUSES.has(endNodeExecution.status)) {
+			const endNodeExecutions = executions.filter((e) => e.workflowNodeId === endNodeId);
+			if (
+				endNodeExecutions.length > 0 &&
+				endNodeExecutions.every((e) => TERMINAL_NODE_EXECUTION_STATUSES.has(e.status))
+			) {
 				return true;
 			}
 		}

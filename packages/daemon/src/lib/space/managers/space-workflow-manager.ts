@@ -138,12 +138,23 @@ export class SpaceWorkflowManager {
 
 		const fallbackStartNodeId = effectiveNodes[0]?.id ?? '';
 		const fallbackEndNodeId = effectiveNodes[effectiveNodes.length - 1]?.id ?? '';
+		const nodeIds = new Set(effectiveNodes.map((n) => n.id));
 		const startNodeIdInput =
 			params.startNodeId === undefined ? existing.startNodeId : params.startNodeId;
 		const endNodeIdInput = params.endNodeId === undefined ? existing.endNodeId : params.endNodeId;
-		const resolvedStartNodeId =
+		const explicitStartNodeId = params.startNodeId !== undefined;
+		const explicitEndNodeId = params.endNodeId !== undefined;
+		const normalizedStartNodeId =
 			startNodeIdInput == null ? fallbackStartNodeId : startNodeIdInput.trim();
-		const resolvedEndNodeId = endNodeIdInput == null ? fallbackEndNodeId : endNodeIdInput.trim();
+		const normalizedEndNodeId = endNodeIdInput == null ? fallbackEndNodeId : endNodeIdInput.trim();
+		const resolvedStartNodeId =
+			!explicitStartNodeId && !nodeIds.has(normalizedStartNodeId)
+				? fallbackStartNodeId
+				: normalizedStartNodeId;
+		const resolvedEndNodeId =
+			!explicitEndNodeId && !nodeIds.has(normalizedEndNodeId)
+				? fallbackEndNodeId
+				: normalizedEndNodeId;
 
 		this.validateStartNodeId(resolvedStartNodeId, effectiveNodes);
 		this.validateEndNodeId(resolvedEndNodeId, effectiveNodes);
