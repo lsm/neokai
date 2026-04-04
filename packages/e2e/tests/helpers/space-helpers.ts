@@ -78,6 +78,36 @@ export async function createSpaceTaskViaRpc(
 }
 
 /**
+ * Delete all seeded workflows for a space via RPC.
+ *
+ * When a space is created the daemon seeds built-in workflows. This causes
+ * `showCanvas` (SpaceIsland) to become `true`, hiding SpaceDashboard behind the
+ * WorkflowCanvas on desktop viewports via the `md:hidden` CSS class. Tests that
+ * need the SpaceDashboard to be visible (Create Task button, Active/Review/Done
+ * tabs, etc.) must call this helper in beforeEach after space creation.
+ *
+ * Best-effort — silently ignores errors so it can be used safely in beforeEach
+ * without masking test failures.
+ */
+export async function deleteSpaceWorkflowsViaRpc(page: Page, spaceId: string): Promise<void> {
+	if (!spaceId) return;
+	try {
+		await page.evaluate(async (sid) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return;
+			const result = (await hub.request('spaceWorkflow.list', { spaceId: sid })) as {
+				workflows: Array<{ id: string }>;
+			};
+			for (const wf of result.workflows) {
+				await hub.request('spaceWorkflow.delete', { id: wf.id, spaceId: sid });
+			}
+		}, spaceId);
+	} catch {
+		// Best-effort cleanup
+	}
+}
+
+/**
  * Create a unique workspace subdirectory for a space test.
  *
  * Multiple E2E tests run in parallel and all share the same workspace root.

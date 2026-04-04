@@ -17,7 +17,11 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot, getModal } from '../helpers/wait-helpers';
-import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+	deleteSpaceWorkflowsViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -129,6 +133,12 @@ test.describe('Space Creation UX', () => {
 		const match = url.match(/\/space\/([a-f0-9-]+)/);
 		if (match) {
 			createdSpaceId = match[1];
+		}
+
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		if (createdSpaceId) {
+			await deleteSpaceWorkflowsViaRpc(page, createdSpaceId);
 		}
 
 		// Space overview should be visible after navigation
