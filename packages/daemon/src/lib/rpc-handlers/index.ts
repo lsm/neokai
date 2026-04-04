@@ -607,7 +607,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	deps.neoAgentManager.setActivityLogger(neoActivityLogger);
 
 	// Human ↔ Task Agent message routing handlers (require taskAgentManager)
-	setupSpaceTaskMessageHandlers(deps.messageHub, taskAgentManager, deps.db, deps.daemonHub);
+	setupSpaceTaskMessageHandlers(
+		deps.messageHub,
+		taskAgentManager,
+		deps.db,
+		deps.daemonHub,
+		nodeExecutionRepo
+	);
 
 	// Space export/import handlers
 	setupSpaceExportImportHandlers(
