@@ -88,10 +88,21 @@ export async function selectReferenceByIndex(page: Page, index: number): Promise
  *
  * @param page - Playwright page
  * @param searchText - Substring of the item's display text to match
+ * @param resultType - Optional result type to scope the selector (e.g. 'goal', 'task').
+ *   When provided, the locator is restricted to items with a matching
+ *   `data-result-type` attribute, preventing accidental clicks on items of the
+ *   wrong type that happen to share text with the intended item.
  */
-export async function selectReferenceByClick(page: Page, searchText: string): Promise<void> {
+export async function selectReferenceByClick(
+	page: Page,
+	searchText: string,
+	resultType?: 'task' | 'goal' | 'file' | 'folder'
+): Promise<void> {
+	const selector = resultType
+		? `${AUTOCOMPLETE_ITEM_SELECTOR}[data-result-type="${resultType}"]`
+		: AUTOCOMPLETE_ITEM_SELECTOR;
 	const item = getReferenceDropdown(page)
-		.locator(AUTOCOMPLETE_ITEM_SELECTOR)
+		.locator(selector)
 		.filter({ hasText: searchText })
 		.first();
 	await item.waitFor({ state: 'visible', timeout: 5000 });

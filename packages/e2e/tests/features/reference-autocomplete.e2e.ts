@@ -185,7 +185,7 @@ test.describe('Reference Selection — Input Insertion', () => {
 	test('clicking a goal result inserts @ref{goal:…} into the input', async ({ page }) => {
 		await typeInChatInput(page, '@');
 		await waitForReferenceAutocomplete(page);
-		await selectReferenceByClick(page, 'Insert Goal');
+		await selectReferenceByClick(page, 'Insert Goal', 'goal');
 
 		const value = await getChatInput(page).inputValue();
 		expect(value).toMatch(/@ref\{goal:[^}]+\}/);
@@ -279,7 +279,7 @@ test.describe('Reference Token Rendering in Sent Messages', () => {
 	test('goal reference renders as a pill token in the sent message', async ({ page }) => {
 		await typeInChatInput(page, '@');
 		await waitForReferenceAutocomplete(page);
-		await selectReferenceByClick(page, 'Render Goal');
+		await selectReferenceByClick(page, 'Render Goal', 'goal');
 
 		await sendCurrentInput(page);
 
@@ -326,7 +326,7 @@ test.describe('Reference Token Rendering in Sent Messages', () => {
 		// Wait for autocomplete with longer timeout
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
 		await dropdown.waitFor({ state: 'visible', timeout: 10000 });
-		await selectReferenceByClick(page, 'Render Goal');
+		await selectReferenceByClick(page, 'Render Goal', 'goal');
 
 		// Verify the goal @ref token is in the textarea
 		const input = getChatInput(page);
@@ -385,7 +385,7 @@ test.describe('Reference Token — Entity-Specific Title Rendering', () => {
 
 		await typeInChatInput(page, '@');
 		await waitForReferenceAutocomplete(page);
-		await selectReferenceByClick(page, 'Unique Goal XYZ-777');
+		await selectReferenceByClick(page, 'Unique Goal XYZ-777', 'goal');
 		await sendCurrentInput(page);
 
 		const token = page

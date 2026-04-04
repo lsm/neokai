@@ -159,6 +159,7 @@ export default function ReferenceAutocomplete({
 								type="button"
 								role="option"
 								aria-selected={globalIndex === selectedIndex}
+								data-result-type={result.type}
 								onClick={() => onSelect(result)}
 								class={cn(
 									'w-full px-3 text-left transition-colors flex items-start gap-2',

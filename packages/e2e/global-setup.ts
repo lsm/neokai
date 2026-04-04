@@ -5,7 +5,7 @@
 
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
-import { existsSync, rmSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, rmSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 // Shared test environment - Node.js caches this module, so the workspace path
@@ -67,6 +67,17 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
 		} catch (error) {
 			// Log but don't fail — some tests may not need git functionality
 			console.warn('⚠️  Failed to initialize git repo in workspace (continuing):', error);
+		}
+
+		// Create test files so the FileIndex has entries for reference autocomplete E2E tests.
+		// Tests that search for files via @pack / @p / @src need at least one indexed file.
+		try {
+			const pkgJson = JSON.stringify({ name: 'e2e-test-workspace', version: '0.0.1' }, null, 2);
+			writeFileSync(join(e2eWorkspaceDir, 'package.json'), pkgJson, 'utf-8');
+			writeFileSync(join(e2eWorkspaceDir, 'README.md'), '# E2E Test Workspace\n', 'utf-8');
+			console.log('✅ Created test files in workspace for FileIndex\n');
+		} catch (error) {
+			console.warn('⚠️  Failed to create test files in workspace (continuing):', error);
 		}
 	}
 
