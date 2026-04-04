@@ -892,6 +892,10 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 	// spaceWorkflowRun.start (which picks workflows[0] ordered by created_at ASC).
 	// The full-cycle workflow is the primary/comprehensive default; the simpler CODING_WORKFLOW
 	// is an alternative for teams that want a two-node Code↔Review loop.
+	//
+	// Note: this ordering only affects *newly created* spaces. seedBuiltInWorkflows is
+	// insert-only (it skips if any workflows already exist), so existing spaces keep
+	// whatever ordering was seeded when they were first created.
 	return [FULL_CYCLE_CODING_WORKFLOW, CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 

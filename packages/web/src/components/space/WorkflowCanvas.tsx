@@ -1026,10 +1026,12 @@ export function WorkflowCanvas({
 
 	useEffect(() => {
 		// Re-fetch when switching to runtime mode OR when the hub connects/reconnects.
-		// Adding isConnected as a dependency ensures fetchGateData is retried when the hub
-		// connects for the first time (e.g. after a page navigation where the hub wasn't
-		// ready when the canvas first mounted and the initial fetch bailed silently).
-		if (isRuntimeMode) {
+		// Guard on isConnected so the effect is a no-op on the initial mount when the hub
+		// is still handshaking (isConnected=false). Without this guard, two concurrent
+		// fetchGateData calls fire: one blocked inside the effect awaiting getHub(), and a
+		// second when isConnected transitions to true. Both complete with identical data,
+		// making the second a redundant RPC call on every initial page navigation.
+		if (isRuntimeMode && isConnected) {
 			void fetchGateData();
 		}
 	}, [isRuntimeMode, fetchGateData, isConnected]);
