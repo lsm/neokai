@@ -6,7 +6,12 @@
  * - agentId placeholders are valid builtin role names (no 'leader')
  * - getBuiltInWorkflows() returns all four templates
  * - seedBuiltInWorkflows(): seeds all four templates with real agent IDs
+ * - seedBuiltInWorkflows(): node IDs replaced with real UUIDs (not template placeholders)
+ * - seedBuiltInWorkflows(): agent ID resolution from role names to UUIDs (case-insensitive)
+ * - seedBuiltInWorkflows(): descriptions, tags, instructions, gates, timestamps preserved
+ * - seedBuiltInWorkflows(): 2-layer prompt override modes (expand vs override) correctly seeded
  * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
+ * - seedBuiltInWorkflows(): per-workflow error isolation
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
 
@@ -1183,6 +1188,338 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(result.skipped).toBe(false);
 		for (const err of result.errors) {
 			expect(err.error).toContain('DB is read-only');
+		}
+	});
+
+	// ─── Node ID replacement tests ─────────────────────────────────────────
+
+	test('seeded node IDs are real UUIDs, not template placeholders', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const templatePrefixes = ['tpl-coding-', 'tpl-v2-', 'tpl-research-', 'tpl-review-'];
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			for (const node of wf.nodes) {
+				for (const prefix of templatePrefixes) {
+					expect(node.id.startsWith(prefix)).toBe(false);
+				}
+				// UUID format: 8-4-4-4-12 hex characters
+				expect(node.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			}
+		}
+	});
+
+	test('seeded startNodeId is a real UUID pointing to first node', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.startNodeId).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+			);
+			const nodeIds = new Set(wf.nodes.map((n) => n.id));
+			expect(nodeIds.has(wf.startNodeId)).toBe(true);
+		}
+	});
+
+	// ─── Description & tags preservation ────────────────────────────────────
+
+	test('all seeded workflows preserve their descriptions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const templates = getBuiltInWorkflows();
+		for (const tpl of templates) {
+			const wf = workflows.find((w) => w.name === tpl.name);
+			expect(wf).toBeDefined();
+			expect(wf!.description).toBe(tpl.description);
+		}
+	});
+
+	test('CODING_WORKFLOW seeded with coding and default tags', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		expect(wf.tags).toContain('coding');
+		expect(wf.tags).toContain('default');
+	});
+
+	test('RESEARCH_WORKFLOW seeded with research tag', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		expect(wf.tags).toContain('research');
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with review tag', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.tags).toContain('review');
+	});
+
+	// ─── Node instructions preservation ─────────────────────────────────────
+
+	test('CODING_WORKFLOW seeded nodes preserve instructions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const codeNode = wf.nodes.find((n) => n.name === 'Code');
+		expect(codeNode!.instructions).toContain('gh pr create');
+		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
+		expect(reviewNode!.instructions).toContain('report_done()');
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve instructions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const planNode = wf.nodes.find((n) => n.name === 'Planning');
+		expect(planNode!.instructions).toContain('plan-pr-gate');
+		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
+		expect(codingNode!.instructions).toContain('code-pr-gate');
+		const qaNode = wf.nodes.find((n) => n.name === 'QA');
+		expect(qaNode!.instructions).toContain('qa-result-gate');
+	});
+
+	test('RESEARCH_WORKFLOW seeded nodes preserve instructions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		const researchNode = wf.nodes.find((n) => n.name === 'Research');
+		expect(researchNode!.instructions).toContain('research-ready-gate');
+		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
+		expect(reviewNode!.instructions).toContain('report_done()');
+	});
+
+	// ─── Gate preservation per workflow ──────────────────────────────────────
+
+	test('RESEARCH_WORKFLOW seeded with one gate (research-ready-gate)', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		expect(wf.gates).toHaveLength(1);
+		expect(wf.gates![0].id).toBe('research-ready-gate');
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with no gates', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.gates ?? []).toHaveLength(0);
+	});
+
+	test('CODING_WORKFLOW gate fields are preserved during seeding', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const gate = wf.gates!.find((g) => g.id === 'code-ready-gate')!;
+		expect(gate.fields).toHaveLength(1);
+		expect(gate.fields[0].name).toBe('pr_url');
+		expect(gate.fields[0].type).toBe('string');
+		expect(gate.fields[0].check).toEqual({ op: 'exists' });
+		expect(gate.script).toBeDefined();
+		expect(gate.script!.interpreter).toBe('bash');
+		expect(gate.script!.timeoutMs).toBe(30000);
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW gate resetOnCycle flags are preserved', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const planPr = wf.gates!.find((g) => g.id === 'plan-pr-gate')!;
+		expect(planPr.resetOnCycle).toBe(false);
+		const codePr = wf.gates!.find((g) => g.id === 'code-pr-gate')!;
+		expect(codePr.resetOnCycle).toBe(false);
+		const planApproval = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		expect(planApproval.resetOnCycle).toBe(true);
+		const reviewVotes = wf.gates!.find((g) => g.id === 'review-votes-gate')!;
+		expect(reviewVotes.resetOnCycle).toBe(true);
+	});
+
+	// ─── Timestamps ─────────────────────────────────────────────────────────
+
+	test('all seeded workflows have positive timestamps', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.createdAt).toBeGreaterThan(0);
+			expect(wf.updatedAt).toBeGreaterThan(0);
+		}
+	});
+
+	// ─── Agent ID resolution edge case ──────────────────────────────────────
+
+	test('agent ID resolution is case-insensitive via resolver', () => {
+		// The real call site does: agents.find(a => a.name.toLowerCase() === name.toLowerCase())
+		// Our test resolver mirrors this — verify it handles mixed-case template placeholders
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		// Templates use 'Planner', 'Coder', 'Reviewer', 'QA', 'General' (title-case)
+		// Resolver maps via toLowerCase — all should resolve
+		expect(wf.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
+		expect(wf.nodes[2].agents[0]?.agentId).toBe(CODER_ID);
+		expect(wf.nodes[4].agents[0]?.agentId).toBe(QA_ID);
+		expect(wf.nodes[5].agents[0]?.agentId).toBe(GENERAL_ID);
+	});
+
+	test('no seeded agent IDs contain template placeholder names', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'QA'];
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					expect(placeholders).not.toContain(agent.agentId);
+					// Agent ID should be a UUID, not a role name
+					expect(agent.agentId).toMatch(/^agent-[a-z]+-uuid$/);
+				}
+			}
+		}
+	});
+
+	// ─── Node name preservation ─────────────────────────────────────────────
+
+	test('all seeded workflow node names match their template definitions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const templates = getBuiltInWorkflows();
+		for (const tpl of templates) {
+			const wf = workflows.find((w) => w.name === tpl.name)!;
+			const seededNames = wf.nodes.map((n) => n.name);
+			const templateNames = tpl.nodes.map((n) => n.name);
+			expect(seededNames).toEqual(templateNames);
+		}
+	});
+
+	// ─── 2-layer system prompt override design ──────────────────────────────
+
+	test('CODING_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('expand');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('CODING_WORKFLOW seeded agent slots have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('expand');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeded agent slots have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with systemPrompt mode=expand on reviewer slot', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.nodes).toHaveLength(1);
+		const agent = wf.nodes[0].agents[0];
+		expect(agent.systemPrompt).toBeDefined();
+		expect(agent.systemPrompt!.mode).toBe('expand');
+		expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.nodes[0].agents[0].instructions).toBeUndefined();
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW seeded with systemPrompt mode=override on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('override');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW Code Review node reviewer slots have instructions mode=override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const codeReviewNode = wf.nodes.find((n) => n.name === 'Code Review')!;
+		expect(codeReviewNode.agents).toHaveLength(3);
+		for (const agent of codeReviewNode.agents) {
+			expect(agent.instructions).toBeDefined();
+			expect(agent.instructions!.mode).toBe('override');
+			expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
+			// Each reviewer's instructions should contain their specific slot name
+			expect(agent.instructions!.value).toContain(agent.name);
+		}
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const nonReviewNodes = wf.nodes.filter((n) => n.name !== 'Code Review');
+		expect(nonReviewNodes.length).toBe(5); // Planning, Plan Review, Coding, QA, Done
+		for (const node of nonReviewNodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('expand-mode workflows append to agent prompts while override-mode workflows replace them', () => {
+		// Structural design check: the two prompt layering strategies are correctly assigned
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+
+		// Iterative workflows (Coding, Research, Review-Only) use 'expand' — they augment
+		// the agent's base prompt with workflow-specific context
+		const expandWorkflows = [
+			CODING_WORKFLOW.name,
+			RESEARCH_WORKFLOW.name,
+			REVIEW_ONLY_WORKFLOW.name,
+		];
+		for (const name of expandWorkflows) {
+			const wf = workflows.find((w) => w.name === name)!;
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					if (agent.systemPrompt) {
+						expect(agent.systemPrompt.mode).toBe('expand');
+					}
+				}
+			}
+		}
+
+		// Full-Cycle workflow uses 'override' — nodes have specialized roles that
+		// completely replace the agent's generic prompt
+		const fullCycle = workflows.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		for (const node of fullCycle.nodes) {
+			for (const agent of node.agents) {
+				if (agent.systemPrompt) {
+					expect(agent.systemPrompt.mode).toBe('override');
+				}
+			}
 		}
 	});
 });
