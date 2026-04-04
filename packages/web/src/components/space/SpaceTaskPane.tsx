@@ -195,6 +195,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		[threadDraft]
 	);
 
+	const handleMentionClose = useCallback(() => {
+		setMentionQuery(null);
+	}, []);
+
 	useEffect(() => {
 		setThreadSendError(null);
 		setThreadDraft('');
@@ -437,7 +441,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 												agents={mentionAgents}
 												selectedIndex={mentionSelectedIndex}
 												onSelect={handleMentionSelect}
-												onClose={() => setMentionQuery(null)}
+												onClose={handleMentionClose}
 											/>
 										)}
 										<textarea
@@ -459,7 +463,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 														setMentionSelectedIndex((i) => Math.max(i - 1, 0));
 														return;
 													}
-													if (e.key === 'Enter') {
+													if (e.key === 'Enter' && !e.shiftKey) {
 														e.preventDefault();
 														if (mentionAgents[mentionSelectedIndex]) {
 															handleMentionSelect(mentionAgents[mentionSelectedIndex].name);

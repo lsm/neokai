@@ -60,7 +60,8 @@ export default function MentionAutocomplete({
 			data-testid="mention-autocomplete"
 			class={cn(
 				`absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
-				'overflow-hidden max-h-64 overflow-y-auto'
+				'overflow-hidden max-h-64 overflow-y-auto',
+				'animate-slideIn'
 			)}
 			style={{
 				bottom: '100%',

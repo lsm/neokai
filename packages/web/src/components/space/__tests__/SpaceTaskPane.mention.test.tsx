@@ -318,6 +318,26 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		});
 	});
 
+	it('does not select agent on Shift+Enter (allows newline insertion)', async () => {
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@Co');
+
+		await waitFor(() => {
+			expect(container.getByTestId('mention-autocomplete')).toBeTruthy();
+		});
+
+		// Shift+Enter should NOT select and should NOT close the dropdown
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+		// Dropdown should still be visible
+		expect(container.queryByTestId('mention-autocomplete')).toBeTruthy();
+		// Textarea value should not have been replaced with a mention
+		expect(textarea.value).toBe('@Co');
+	});
+
 	it('navigates up in the dropdown list with ArrowUp', async () => {
 		mockTasks.value = [makeTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
