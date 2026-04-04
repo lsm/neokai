@@ -2,12 +2,12 @@
  * Space Task Full-Width View E2E Tests
  *
  * Verifies:
- * - Clicking a task in SpaceDashboard opens the full-width task pane
- * - The SpaceDashboard tab bar (Active/Review/Done) is hidden when the full-width task view is active
+ * - Clicking a task in SpaceDetailPanel opens the full-width task pane
+ * - Tab bar is hidden when the full-width task view is active
  * - Back button in task view returns to the tabbed dashboard view
  * - Task pane is not attached to the DOM when no task is selected
  *
- * Setup: creates a space and a task via RPC (infrastructure) in beforeEach
+ * Setup: creates a space and a task via RPC (infrastructure), navigates to the space
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
  */
 
@@ -15,7 +15,7 @@ import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
 import {
 	createSpaceViaRpc,
-	createSpaceTaskViaRpc,
+	createUniqueSpaceDir,
 	deleteSpaceViaRpc,
 } from '../helpers/space-helpers';
 
@@ -25,31 +25,24 @@ test.describe('Space Task Full-Width View', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
-	let taskTitle = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
-		spaceId = await createSpaceViaRpc(
-			page,
-			workspaceRoot,
-			`E2E Full-Width Task Test ${Date.now()}`
-		);
-
-		// Create the task in beforeEach — each test gets its own isolated space so there
-		// is no collision risk with the title, and task creation is setup, not an action
-		// under test. No "Create Task" UI button exists in the space dashboard yet.
-		taskTitle = 'Full-Width Test Task';
-		await createSpaceTaskViaRpc(page, spaceId, taskTitle);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-fullwidth');
+		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Wait for the Active tab to be visible (SpaceDashboard is loaded)
-		await expect(page.getByRole('button', { name: 'Active', exact: true })).toBeVisible({
+		// Wait for the Dashboard tab to be visible
+		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -58,21 +51,29 @@ test.describe('Space Task Full-Width View', () => {
 		if (spaceId) {
 			await deleteSpaceViaRpc(page, spaceId);
 			spaceId = '';
-			taskTitle = '';
 		}
 	});
 
-	test('clicking a task opens full-width task pane and hides dashboard tab bar', async ({
-		page,
-	}) => {
-		// Wait for task to appear in SpaceDashboard's Active tab (status 'open' → Queued group)
+	test('clicking a task opens full-width task pane and hides tab bar', async ({ page }) => {
+		const taskTitle = `Full-Width Task ${Date.now()}`;
+
+		// Create a task via UI — click "Create Task" quick action
+		await page.getByRole('button', { name: 'Create Task' }).first().click();
+
+		const dialog = page.getByRole('dialog');
+		await expect(dialog).toBeVisible({ timeout: 3000 });
+
+		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
+		await dialog.getByRole('button', { name: 'Create Task' }).click();
+
+		// Wait for task to appear in SpaceDashboard's Recent Activity section
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
-		// SpaceDashboard tab bar should be visible before clicking a task
-		await expect(page.getByRole('button', { name: 'Active', exact: true })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
+		// Tab bar should be visible before clicking a task
+		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible();
 
-		// Click the task title to navigate to the full-width task view
+		// Click the task title link in SpaceDetailPanel (context panel) or SpaceDashboard
+		// The task title appears as a clickable element in the context panel's task list
 		await page.getByText(taskTitle, { exact: true }).first().click();
 
 		// Wait for navigation to the task route
@@ -81,14 +82,23 @@ test.describe('Space Task Full-Width View', () => {
 		// Full-width task pane should now be visible
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
-		// SpaceDashboard tab bar should be hidden (SpaceTaskPane replaced SpaceDashboard)
-		await expect(page.getByRole('button', { name: 'Active', exact: true })).not.toBeVisible();
-		await expect(page.getByRole('button', { name: 'Review', exact: true })).not.toBeVisible();
+		// Tab bar should be hidden (full-width task view replaced the tab layout)
+		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).not.toBeVisible();
+		await expect(page.getByRole('button', { name: 'Agents', exact: true })).not.toBeVisible();
 	});
 
 	test('back button in task view returns to the tabbed dashboard', async ({ page }) => {
-		// Wait for task to appear, then navigate to it
+		const taskTitle = `Back Button Task ${Date.now()}`;
+
+		// Create task via UI
+		await page.getByRole('button', { name: 'Create Task' }).first().click();
+
+		const dialog = page.getByRole('dialog');
+		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
+		await dialog.getByRole('button', { name: 'Create Task' }).click();
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
+
+		// Navigate to task
 		await page.getByText(taskTitle, { exact: true }).first().click();
 		await page.waitForURL(`/space/${spaceId}/task/**`, { timeout: 5000 });
 
@@ -101,12 +111,12 @@ test.describe('Space Task Full-Width View', () => {
 		// Should return to the space dashboard URL
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 5000 });
 
-		// SpaceDashboard tab bar should be visible again
-		await expect(page.getByRole('button', { name: 'Active', exact: true })).toBeVisible({
+		// Tab bar should be visible again
+		await expect(page.getByRole('button', { name: 'Dashboard', exact: true })).toBeVisible({
 			timeout: 3000,
 		});
 
-		// Task pane should no longer be in the DOM
+		// Task pane should no longer be shown
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 	});
 

@@ -3,7 +3,7 @@
  *
  * Verifies the Level 1 ↔ Level 2 switching in the ContextPanel:
  * - Level 1 (spaces list): SpaceContextPanel visible, "Spaces" header title
- * - Level 2 (space detail): SpaceDetailPanel visible with "Overview" and "Space Agent" buttons, space name in header, back button present
+ * - Level 2 (space detail): SpaceDetailPanel visible, space name in header, back button present
  * - Back button navigates from detail back to list
  *
  * Setup: creates a space via RPC in beforeEach (infrastructure)
@@ -12,62 +12,13 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-
-async function createSpaceByRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	workspacePath: string,
-	name: string
-): Promise<string> {
-	// Pre-creation cleanup: delete ALL existing spaces at this path (including archived).
-	// Normalize macOS /private symlink prefix to avoid path mismatch.
-	try {
-		await page.evaluate(async (path) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
-				id: string;
-				workspacePath: string;
-			}>;
-			for (const space of spaces) {
-				if (norm(space.workspacePath) === norm(path)) {
-					await hub.request('space.delete', { id: space.id });
-				}
-			}
-		}, workspacePath);
-	} catch {
-		// Best-effort cleanup
-	}
-
-	const spaceId = await page.evaluate(
-		async ({ path, spaceName }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('No message hub');
-			const res = await hub.request('space.create', { workspacePath: path, name: spaceName });
-			return res?.id ?? res?.space?.id ?? '';
-		},
-		{ path: workspacePath, spaceName: name }
-	);
-	return spaceId as string;
-}
-
-async function deleteSpaceByRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup
-	}
-}
 
 test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
@@ -83,13 +34,16 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		});
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'ctx-panel');
 		spaceName = `E2E SwitchTest ${Date.now()}`;
-		createdSpaceId = await createSpaceByRpc(page, workspaceRoot, spaceName);
+		createdSpaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 	});
 
 	test.afterEach(async ({ page }) => {
 		if (createdSpaceId) {
-			await deleteSpaceByRpc(page, createdSpaceId);
+			await deleteSpaceViaRpc(page, createdSpaceId);
 			createdSpaceId = '';
 		}
 	});
@@ -112,15 +66,13 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		await expect(page.getByTitle('Back to Spaces')).not.toBeVisible();
 	});
 
-	test('shows SpaceDetailPanel with Overview and Space Agent when a space is selected', async ({
-		page,
-	}) => {
+	test('shows SpaceDetailPanel with pinned items when a space is selected', async ({ page }) => {
 		// Navigate to the space directly via URL
 		await page.goto(`/space/${createdSpaceId}`);
 		await waitForWebSocketConnected(page);
 
-		// SpaceDetailPanel should render pinned items: Overview and Space Agent
-		await expect(page.getByText('Overview')).toBeVisible({ timeout: 10000 });
+		// SpaceDetailPanel should render pinned items: Dashboard and Space Agent
+		await expect(page.getByText('Dashboard')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByText('Space Agent')).toBeVisible({ timeout: 5000 });
 
 		// Back button should be visible
@@ -171,7 +123,7 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		await page.getByText(spaceName).click();
 
 		// Should now be inside the space — SpaceDetailPanel pinned items visible
-		await expect(page.getByText('Overview')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText('Dashboard')).toBeVisible({ timeout: 10000 });
 		await expect(page.getByTitle('Back to Spaces')).toBeVisible({ timeout: 5000 });
 	});
 });

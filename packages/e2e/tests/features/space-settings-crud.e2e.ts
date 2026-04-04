@@ -14,7 +14,11 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -23,14 +27,18 @@ test.describe('Space Settings CRUD', () => {
 
 	let spaceId = '';
 	let spaceName = '';
+	let spaceWorkspacePath = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'settings');
 		spaceName = `E2E Settings Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 
 		// Navigate directly to the configure view (which hosts the Settings tab)
 		await page.goto(`/space/${spaceId}/configure`);
@@ -54,9 +62,8 @@ test.describe('Space Settings CRUD', () => {
 		await expect(nameInput).toBeVisible();
 		await expect(nameInput).toHaveValue(spaceName);
 
-		// Workspace path should be shown as read-only text
-		const workspaceRoot = await getWorkspaceRoot(page);
-		await expect(page.locator(`text=${workspaceRoot}`)).toBeVisible({ timeout: 3000 });
+		// Workspace path should be shown as read-only text (the unique subdirectory for this test)
+		await expect(page.locator(`text=${spaceWorkspacePath}`)).toBeVisible({ timeout: 3000 });
 
 		// Danger Zone section
 		await expect(page.locator('text=Danger Zone')).toBeVisible();
