@@ -8,13 +8,12 @@
 import { useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
 import { spaceStore } from '../lib/space-store';
+import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask } from '../lib/router';
 import {
-	navigateToSpace,
-	navigateToSpaceAgent,
-	navigateToSpaceSession,
-	navigateToSpaceTask,
-} from '../lib/router';
-import { currentSpaceSessionIdSignal, currentSpaceTaskIdSignal } from '../lib/signals';
+	currentSpaceSessionIdSignal,
+	currentSpaceTaskIdSignal,
+	spaceOverlaySessionIdSignal,
+} from '../lib/signals';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'review';
@@ -157,7 +156,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	};
 
 	const handleSessionClick = (sessionId: string) => {
-		navigateToSpaceSession(spaceId, sessionId);
+		spaceOverlaySessionIdSignal.value = sessionId;
 		onNavigate?.();
 	};
 

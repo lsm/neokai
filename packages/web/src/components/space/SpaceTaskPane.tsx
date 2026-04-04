@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
+import { navigateToSpaceAgent } from '../../lib/router';
+import { spaceOverlaySessionIdSignal } from '../../lib/signals';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 
@@ -202,7 +203,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							type="button"
 							onClick={() =>
 								agentSessionId
-									? navigateToSpaceSession(runtimeSpaceId, agentSessionId)
+									? (spaceOverlaySessionIdSignal.value = agentSessionId)
 									: navigateToSpaceAgent(runtimeSpaceId)
 							}
 							class="flex-shrink-0 px-2 py-1 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"

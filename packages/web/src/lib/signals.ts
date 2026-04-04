@@ -42,6 +42,10 @@ export const currentSpaceTaskIdSignal = signal<string | null>(null);
 export type SpaceViewMode = 'overview' | 'configure';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
+// Overlay signal — session shown in slide-over panel on top of the current view
+// When set, opens AgentOverlayChat without replacing the task/overview view
+export const spaceOverlaySessionIdSignal = signal<string | null>(null);
+
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
