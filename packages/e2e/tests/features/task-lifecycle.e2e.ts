@@ -218,8 +218,9 @@ test.describe('Task Lifecycle — Archive', () => {
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
-		// Dialog should appear
-		const dialog = page.locator('[role="dialog"]');
+		// Dialog should appear — use specific testid to avoid strict mode violation
+		// (NeoPanel also has role="dialog" and stays in DOM while closed)
+		const dialog = page.locator('[data-testid="archive-task-dialog"]');
 		await expect(dialog).toBeVisible({ timeout: 5000 });
 
 		// Dialog must mention permanent nature and worktree cleanup
