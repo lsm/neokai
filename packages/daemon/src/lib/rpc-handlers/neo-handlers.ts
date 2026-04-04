@@ -5,6 +5,7 @@
  *   neo.send           — send a message to Neo
  *   neo.history        — retrieve paginated message history
  *   neo.clearSession   — reset the Neo session
+ *   neo.isProvisioned  — check if Neo credentials are configured (no LLM call)
  *   neo.getSettings    — read Neo settings (security mode, model)
  *   neo.updateSettings — write Neo settings
  *   neo.confirmAction  — execute a pending action by ID
@@ -174,6 +175,35 @@ export function setupNeoHandlers(
 				error: err instanceof Error ? err.message : String(err),
 			};
 		}
+	});
+
+	// ── neo.isProvisioned ─────────────────────────────────────────────────────
+	/**
+	 * Check whether the Neo session is provisioned AND the LLM is expected to respond.
+	 *
+	 * This is a lightweight, synchronous check — no LLM call is made.
+	 * Returns { provisioned: boolean }.
+	 *
+	 * Two conditions must hold:
+	 * 1. `neoAgentManager.getSession() !== null` — the session was provisioned
+	 *    (a DB record exists and the session is held in memory).
+	 * 2. `NEOKAI_NEO_LLM_AVAILABLE !== '0'` — the LLM backend is expected to be
+	 *    reachable. Set `NEOKAI_NEO_LLM_AVAILABLE=0` in environments where the
+	 *    session can be provisioned (e.g., a dummy API key satisfies isAvailable())
+	 *    but the LLM will never respond (e.g., no-LLM CI with a devproxy test key).
+	 *
+	 * Session existence alone is NOT a reliable proxy for credential validity:
+	 * `provision()` succeeds whenever any API key is present, even a dummy one.
+	 * The env var provides an explicit opt-out for no-LLM CI environments where
+	 * a dummy key is used to satisfy availability checks for non-Neo tests.
+	 *
+	 * Used by E2E tests in `beforeEach` to skip AI-dependent scenarios without
+	 * waiting 90 s for an LLM response that will never arrive.
+	 */
+	messageHub.onRequest('neo.isProvisioned', () => {
+		const sessionExists = neoAgentManager.getSession() !== null;
+		const llmAvailable = process.env.NEOKAI_NEO_LLM_AVAILABLE !== '0';
+		return { provisioned: sessionExists && llmAvailable };
 	});
 
 	// ── neo.getSettings ───────────────────────────────────────────────────────

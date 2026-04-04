@@ -2,7 +2,12 @@
  * Shared helpers for Neo panel E2E tests.
  *
  * These helpers encapsulate common Neo panel interactions used across multiple
- * test files. Keep only UI-driven actions here — no direct RPC calls.
+ * test files. The primary rule is that test actions and assertions must go
+ * through the UI. The one allowed exception is `isNeoAvailable()`, which is an
+ * infrastructure probe (analogous to a `beforeEach` guard) — it calls the
+ * `neo.isProvisioned` RPC via `page.evaluate()` to determine whether the
+ * daemon has real LLM credentials configured, so that AI-dependent scenarios
+ * can be skipped cleanly in no-LLM CI instead of timing out.
  */
 
 import type { Page } from '@playwright/test';
@@ -88,38 +93,28 @@ export async function waitForNeoAssistantResponse(
 // ─── Availability helpers ──────────────────────────────────────────────────────
 
 /**
- * Wait for the Neo chat panel content to reach a stable state after opening.
- * Resolves once the empty state or an error card is attached to the DOM,
- * preventing a race between `isNeoAvailable` and async store initialisation.
- */
-export async function waitForNeoChatReady(page: Page): Promise<void> {
-	await page
-		.locator(
-			'[data-testid="neo-empty-state"], [data-testid="neo-error-no-credentials"], [data-testid="neo-error-provider-unavailable"]'
-		)
-		.first()
-		.waitFor({ state: 'attached', timeout: 10000 })
-		.catch(() => {
-			// Tolerate timeout — isNeoAvailable will return false below, which is safe
-		});
-}
-
-/**
- * Check whether the Neo agent is provisioned (not showing an error card).
- * Must be called with the Neo panel already open so error cards are rendered.
- * Waits for the panel content to settle before checking, avoiding a race between
- * `openNeoPanel` and async Neo store subscription.
- * Returns true if Neo appears functional.
+ * Check whether the Neo agent is provisioned (credentials configured and session active).
+ *
+ * Uses the `neo.isProvisioned` RPC endpoint for a reliable, synchronous check.
+ * This avoids the previous approach of waiting for error cards that only appear
+ * after a failed send attempt — meaning `isNeoAvailable` always returned `true`
+ * in CI environments without LLM credentials, causing AI-dependent tests to
+ * proceed and time out (90s) waiting for an LLM response.
+ *
+ * The Neo panel does not need to be open for this call to work.
  */
 export async function isNeoAvailable(page: Page): Promise<boolean> {
-	await waitForNeoChatReady(page);
-	const hasNoCredentials = await page
-		.getByTestId('neo-error-no-credentials')
-		.isVisible()
-		.catch(() => false);
-	const hasProviderError = await page
-		.getByTestId('neo-error-provider-unavailable')
-		.isVisible()
-		.catch(() => false);
-	return !hasNoCredentials && !hasProviderError;
+	const result = await page
+		.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return { provisioned: false };
+			try {
+				const response = await hub.request('neo.isProvisioned', {});
+				return response as { provisioned: boolean };
+			} catch {
+				return { provisioned: false };
+			}
+		})
+		.catch(() => ({ provisioned: false }));
+	return result.provisioned;
 }
