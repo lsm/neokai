@@ -30,13 +30,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceWorkflow, SpaceWorkflowRun, SpaceTask, Gate } from '@neokai/shared';
+import type {
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	SpaceTask,
+	NodeExecution,
+	Gate,
+} from '@neokai/shared';
+import { computed, type ReadonlySignal } from '@preact/signals';
 
 // ---- Signals for mocking ----
 let mockWorkflows: Signal<SpaceWorkflow[]>;
 let mockWorkflowRuns: Signal<SpaceWorkflowRun[]>;
 let mockTasks: Signal<SpaceTask[]>;
 let mockTasksByRun: Signal<Map<string, SpaceTask[]>>;
+let mockNodeExecutions: Signal<NodeExecution[]>;
+let mockNodeExecutionsByNodeId: ReadonlySignal<Map<string, NodeExecution[]>>;
 
 const mockEventListeners = new Map<string, Array<(data: unknown) => void>>();
 const mockHub: { request: Mock; onEvent: Mock } = {
@@ -59,6 +68,8 @@ vi.mock('../../../lib/space-store', () => ({
 			workflowRuns: mockWorkflowRuns,
 			tasks: mockTasks,
 			tasksByRun: mockTasksByRun,
+			nodeExecutions: mockNodeExecutions,
+			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 		};
 	},
 }));
@@ -76,6 +87,19 @@ mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTasks = signal<SpaceTask[]>([]);
 mockTasksByRun = signal<Map<string, SpaceTask[]>>(new Map());
+mockNodeExecutions = signal<NodeExecution[]>([]);
+mockNodeExecutionsByNodeId = computed(() => {
+	const map = new Map<string, NodeExecution[]>();
+	for (const exec of mockNodeExecutions.value) {
+		let arr = map.get(exec.workflowNodeId);
+		if (!arr) {
+			arr = [];
+			map.set(exec.workflowNodeId, arr);
+		}
+		arr.push(exec);
+	}
+	return map;
+});
 
 vi.mock('../../../lib/state.ts', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../../lib/state.ts')>();
@@ -160,6 +184,24 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 	};
 }
 
+function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
+	return {
+		id: 'nexec-1',
+		workflowRunId: 'run-1',
+		workflowNodeId: 'n1',
+		agentName: 'Planner',
+		agentId: null,
+		agentSessionId: null,
+		status: 'pending',
+		result: null,
+		createdAt: 1000,
+		startedAt: null,
+		completedAt: null,
+		updatedAt: 2000,
+		...overrides,
+	};
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -170,6 +212,7 @@ describe('WorkflowCanvas', () => {
 		mockWorkflowRuns.value = [];
 		mockTasks.value = [];
 		mockTasksByRun.value = new Map();
+		mockNodeExecutions.value = [];
 		mockEventListeners.clear();
 		mockHub.request.mockReset();
 		mockHub.request.mockResolvedValue({ gateData: [] });
@@ -340,13 +383,11 @@ describe('WorkflowCanvas', () => {
 
 	// ---- Node status ----
 
-	it('renders active node with animate-pulse class when task is in_progress', () => {
+	it('renders active node with animate-pulse class when node execution is in_progress', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
 		mockWorkflowRuns.value = [makeRun()];
-		mockTasksByRun.value = new Map([
-			['run-1', [makeTask({ status: 'in_progress', workflowRunId: 'n1' })]],
-		]);
+		mockNodeExecutions.value = [makeNodeExecution({ workflowNodeId: 'n1', status: 'in_progress' })];
 		mockHub.request.mockResolvedValue({ gateData: [] });
 
 		const { getByTestId } = render(
@@ -360,7 +401,14 @@ describe('WorkflowCanvas', () => {
 		const wf = makeWorkflow();
 		mockWorkflows.value = [wf];
 		mockWorkflowRuns.value = [makeRun()];
-		mockTasksByRun.value = new Map([['run-1', [makeTask({ status: 'done' })]]]);
+		mockNodeExecutions.value = [
+			makeNodeExecution({
+				workflowNodeId: 'n2',
+				status: 'done',
+				startedAt: 1000,
+				completedAt: 2000,
+			}),
+		];
 		mockHub.request.mockResolvedValue({ gateData: [] });
 
 		const { getByTestId } = render(
