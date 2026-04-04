@@ -63,11 +63,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import { makeBuiltInTemplateWorkflows } from '../../__tests__/fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
 const mockWorkflowRuns = signal<unknown[]>([]);
 
@@ -107,6 +109,7 @@ vi.mock('../../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			workflowTemplates: mockWorkflowTemplates,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			workflowRuns: mockWorkflowRuns,
 			createWorkflow: mockCreateWorkflow,
@@ -121,7 +124,6 @@ vi.mock('../../../../lib/utils', () => ({
 
 import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
-import { TEMPLATES } from '../../WorkflowEditor';
 
 // ============================================================================
 // Fixtures
@@ -169,8 +171,13 @@ beforeEach(() => {
 	mockAgents.value = [
 		makeAgent('agent-1', 'Planner', 'planner'),
 		makeAgent('agent-2', 'Coder', 'coder'),
+		makeAgent('agent-3', 'General', 'general'),
+		makeAgent('agent-4', 'Reviewer', 'reviewer'),
+		makeAgent('agent-5', 'Research', 'research'),
+		makeAgent('agent-6', 'QA', 'qa'),
 	];
 	mockWorkflows.value = [];
+	mockWorkflowTemplates.value = makeBuiltInTemplateWorkflows();
 	mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
 	mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 	mockCreateWorkflow.mockClear();
@@ -543,7 +550,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 				)!
 			);
 
@@ -563,7 +570,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+					(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 				)!
 			);
 
@@ -589,7 +596,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 				)!
 			);
 
@@ -666,12 +673,10 @@ describe('VisualWorkflowEditor', () => {
 	// -------------------------------------------------------------------------
 
 	describe('Tags', () => {
-		it('adds a tag via suggestion button', () => {
-			const { getByText, queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(queryByText('coding')).toBeNull();
-
-			fireEvent.click(getByText('+coding'));
-			expect(getByText('coding')).toBeTruthy();
+		it('does not render tag suggestion buttons', () => {
+			const { queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
+			expect(queryByText('+coding')).toBeNull();
+			expect(queryByText('+review')).toBeNull();
 		});
 
 		it('removes a tag via × button', () => {
@@ -720,7 +725,7 @@ describe('VisualWorkflowEditor', () => {
 			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
-			expect(options.length).toBe(TEMPLATES.length);
+			expect(options.length).toBe(mockWorkflowTemplates.value.length);
 		});
 
 		it('hides dropdown when button clicked again', () => {
@@ -734,10 +739,10 @@ describe('VisualWorkflowEditor', () => {
 			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
 			fireEvent.click(getByTestId('template-picker-button'));
 
-			// Select the "Coding (Plan → Code)" template (2 steps: planner + coder)
+			// Select the "Coding Workflow" template (2 nodes: code + review)
 			const options = getAllByTestId('template-option');
 			const codingOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 			);
 			expect(codingOption).toBeTruthy();
 			fireEvent.click(codingOption!);
@@ -752,7 +757,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const codingOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 			);
 			fireEvent.click(codingOption!);
 
@@ -765,7 +770,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const codingOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 			);
 			fireEvent.click(codingOption!);
 
@@ -785,7 +790,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const codingOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 			);
 			fireEvent.click(codingOption!);
 
@@ -801,12 +806,12 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const codingOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 			);
 			fireEvent.click(codingOption!);
 
 			expect((getByTestId('workflow-name-input') as HTMLInputElement).value).toBe(
-				'Coding (Plan → Code)'
+				'Coding Workflow'
 			);
 		});
 
@@ -817,7 +822,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const codingOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+				(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 			);
 			fireEvent.click(codingOption!);
 
@@ -862,14 +867,14 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+					(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 				)!
 			);
 
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 				)!
 			);
 
@@ -884,7 +889,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+					(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 				)!
 			);
 
@@ -894,7 +899,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 				)!
 			);
 
@@ -909,7 +914,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+					(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 				)!
 			);
 
@@ -919,7 +924,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 				)!
 			);
 			fireEvent.click(getByTestId('confirm-template-apply-button'));
@@ -935,7 +940,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Coding (Plan → Code)'
+					(el) => el.getAttribute('data-template-label') === 'Coding Workflow'
 				)!
 			);
 
@@ -945,7 +950,7 @@ describe('VisualWorkflowEditor', () => {
 			fireEvent.click(getByTestId('template-picker-button'));
 			fireEvent.click(
 				getAllByTestId('template-option').find(
-					(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 				)!
 			);
 			fireEvent.click(getAllByText('Cancel').at(-1)!);
@@ -954,14 +959,14 @@ describe('VisualWorkflowEditor', () => {
 			expect(getAllByText('Planning Revised').length).toBeGreaterThan(0);
 		});
 
-		it('single-step template (Quick Fix) creates one node and no edges', () => {
+		it('single-step template (Review-Only) creates one node and no edges', () => {
 			const { getByTestId, getAllByTestId, container } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
 			fireEvent.click(getByTestId('template-picker-button'));
 			const options = getAllByTestId('template-option');
 			const quickFixOption = options.find(
-				(el) => el.getAttribute('data-template-label') === 'Quick Fix (Code only)'
+				(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
 			);
 			fireEvent.click(quickFixOption!);
 
@@ -999,7 +1004,7 @@ describe('VisualWorkflowEditor', () => {
 
 			expect(queryByTestId('channel-relation-config-panel')).toBeNull();
 			const firstChannelHitbox = container.querySelector(
-				'[data-channel-edge="true"] path[stroke="transparent"]'
+				'[data-channel-edge="true"][data-channel-gated="true"] path[stroke="transparent"]'
 			) as SVGPathElement | null;
 			expect(firstChannelHitbox).toBeTruthy();
 			fireEvent.click(firstChannelHitbox!);
@@ -1128,20 +1133,15 @@ describe('VisualWorkflowEditor', () => {
 			);
 
 			const firstChannelHitbox = container.querySelector(
-				'[data-channel-edge="true"] path[stroke="transparent"]'
+				'[data-channel-edge="true"][data-channel-gated="true"] path[stroke="transparent"]'
 			) as SVGPathElement | null;
 			expect(firstChannelHitbox).toBeTruthy();
 			fireEvent.click(firstChannelHitbox!);
 
-			const minInput = getByTestId('channel-edge-gate-select-0-count-min') as HTMLInputElement;
-			expect(minInput.value).toBe('3');
-			fireEvent.input(minInput, { target: { value: '2' } });
+			await waitFor(() => expect(getByTestId('channel-edge-edit-gate-0')).toBeTruthy());
+			fireEvent.click(getByTestId('channel-edge-edit-gate-0'));
 
-			await waitFor(() =>
-				expect(
-					(getByTestId('channel-edge-gate-select-0-count-min') as HTMLInputElement).value
-				).toBe('2')
-			);
+			await waitFor(() => expect(getByTestId('gate-editor-panel')).toBeTruthy());
 		});
 
 		it('node side panel lists channel links that open the nested relation view and back returns to node details', () => {

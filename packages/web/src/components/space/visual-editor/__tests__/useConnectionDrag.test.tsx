@@ -17,7 +17,7 @@
  * - ghost edge element renders during drag
  * - ghost edge disappears after mouseup
  * - isDropTarget applied to non-source nodes during drag
- * - output port mousedown starts drag
+ * - port mousedown starts drag (input or output)
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
@@ -386,6 +386,22 @@ describe('WorkflowCanvas — connection drag ghost edge', () => {
 		expect(getByTestId('ghost-edge')).toBeTruthy();
 	});
 
+	it('ghost edge appears when input port is pressed and mouse moves', () => {
+		const { getByTestId } = renderCanvas();
+		const inputPort = getByTestId('workflow-node-step-2').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+
+		fireEvent.mouseDown(inputPort, { button: 0, clientX: 50, clientY: 50 });
+		act(() => {
+			window.dispatchEvent(
+				new MouseEvent('mousemove', { bubbles: true, clientX: 150, clientY: 200 })
+			);
+		});
+
+		expect(getByTestId('ghost-edge')).toBeTruthy();
+	});
+
 	it('ghost edge disappears after mouseup (cancel)', () => {
 		const { getByTestId, queryByTestId } = renderCanvas();
 		const outputPort = getByTestId('workflow-node-step-1').querySelector(
@@ -509,6 +525,29 @@ describe('WorkflowCanvas — end-to-end connection creation', () => {
 		});
 
 		expect(onCreateTransition).toHaveBeenCalledWith('step-1', 'step-2');
+	});
+
+	it('calls onCreateTransition when drag starts from an input port', () => {
+		const { getByTestId, onCreateTransition } = renderCanvas();
+
+		// 1. Start drag from step-2 input port
+		const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+		fireEvent.mouseDown(inputPort2, { button: 0, clientX: 50, clientY: 50 });
+
+		// 2. Simulate hovering over step-3 input port
+		const inputPort3 = getByTestId('workflow-node-step-3').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+		fireEvent.mouseEnter(inputPort3);
+
+		// 3. Release mouse — should create transition from source step to hovered step
+		act(() => {
+			window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+		});
+
+		expect(onCreateTransition).toHaveBeenCalledWith('step-2', 'step-3');
 	});
 
 	it('does not call onCreateTransition when releasing over empty space', () => {

@@ -20,12 +20,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import { makeBuiltInTemplateWorkflows } from './fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
 // Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
 const mockWorkflowRuns = signal<unknown[]>([]);
 
@@ -37,6 +39,7 @@ vi.mock('../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			workflowTemplates: mockWorkflowTemplates,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			workflowRuns: mockWorkflowRuns,
 			createWorkflow: mockCreateWorkflow,
@@ -51,9 +54,9 @@ vi.mock('../../../lib/utils', () => ({
 
 import {
 	WorkflowEditor,
-	TEMPLATES,
 	buildTemplateNodes,
 	filterAgents,
+	getAvailableTemplates,
 	initFromWorkflow,
 } from '../WorkflowEditor';
 
@@ -116,9 +119,13 @@ describe('WorkflowEditor', () => {
 			makeAgent('agent-1', 'planner', 'planner'),
 			makeAgent('agent-2', 'coder', 'coder'),
 			makeAgent('agent-3', 'general', 'general'),
+			makeAgent('agent-4', 'reviewer', 'reviewer'),
+			makeAgent('agent-5', 'research', 'research'),
+			makeAgent('agent-6', 'qa', 'qa'),
 			makeAgent('agent-leader', 'leader', 'leader'),
 		];
 		mockWorkflows.value = [];
+		mockWorkflowTemplates.value = makeBuiltInTemplateWorkflows({ includeSystemPrompts: true });
 		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
 		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 		mockCreateWorkflow.mockClear();
@@ -309,30 +316,30 @@ describe('WorkflowEditor', () => {
 		it('shows template options when toggle clicked', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			expect(getByText('Coding (Plan → Code)')).toBeTruthy();
-			expect(getByText('Research (Plan → Research)')).toBeTruthy();
-			expect(getByText('Quick Fix (Code only)')).toBeTruthy();
+			expect(getByText('Coding Workflow')).toBeTruthy();
+			expect(getByText('Research Workflow')).toBeTruthy();
+			expect(getByText('Review-Only Workflow')).toBeTruthy();
 			expect(getByText('Full-Cycle Coding Workflow')).toBeTruthy();
 		});
 
 		it('applying Coding template creates 2 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Coding (Plan → Code)'));
+			fireEvent.click(getByText('Coding Workflow'));
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
-		it('applying Quick Fix template creates 1 step', () => {
+		it('applying Review-Only template creates 1 step', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			expect(getByText('1 step')).toBeTruthy();
 		});
 
 		it('applying Research template creates 2 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Research (Plan → Research)'));
+			fireEvent.click(getByText('Research Workflow'));
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
@@ -345,11 +352,19 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('Full-Cycle Coding Workflow template builds explicit system prompts for every node', () => {
-			const template = TEMPLATES.find((entry) => entry.label === 'Full-Cycle Coding Workflow');
+			const template = getAvailableTemplates(mockWorkflowTemplates.value).find(
+				(entry) => entry.label === 'Full-Cycle Coding Workflow'
+			);
 			expect(template).toBeTruthy();
 			const nodes = buildTemplateNodes(template!, mockAgents.value);
 			expect(nodes).toHaveLength(6);
 			for (const node of nodes) {
+				if (node.agents && node.agents.length > 0) {
+					for (const agent of node.agents) {
+						expect(agent.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
+					}
+					continue;
+				}
 				expect(node.systemPrompt?.trim().length).toBeGreaterThan(0);
 			}
 		});
@@ -357,11 +372,11 @@ describe('WorkflowEditor', () => {
 		it('template sets workflow name if name is empty', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
 			) as HTMLInputElement;
-			expect(nameInput.value).toBe('Quick Fix (Code only)');
+			expect(nameInput.value).toBe('Review-Only Workflow');
 		});
 
 		it('template does not override existing name', () => {
@@ -371,18 +386,87 @@ describe('WorkflowEditor', () => {
 			) as HTMLInputElement;
 			fireEvent.input(nameInput, { target: { value: 'My Custom Name' } });
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			expect(nameInput.value).toBe('My Custom Name');
 		});
 
 		it('template looks up agents by name matching role', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Coding (Plan → Code)'));
+			fireEvent.click(getByText('Coding Workflow'));
 			const agentSelects = container.querySelectorAll('select');
 			if (agentSelects.length > 0) {
-				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-1');
+				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-2');
 			}
+		});
+
+		it('template agent lookup supports fuzzy role-name matching', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Coding Workflow',
+					description: 'Two-step coding workflow',
+					steps: [
+						{ name: 'Code', role: 'coder' },
+						{ name: 'Review', role: 'reviewer' },
+					],
+				},
+				[
+					makeAgent('agent-a', 'Primary Planner Agent'),
+					makeAgent('agent-b', 'Senior Coder'),
+					makeAgent('agent-c', 'Principal Reviewer'),
+				]
+			);
+
+			expect(nodes[0].agentId).toBe('agent-b');
+			expect(nodes[1].agentId).toBe('agent-c');
+		});
+
+		it('template assigns fallback agents when no role-name match exists', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Fallback Template',
+					description: 'No matching roles',
+					steps: [
+						{ name: 'Step A', role: 'coder' },
+						{ name: 'Step B', role: 'reviewer' },
+					],
+				},
+				[makeAgent('agent-x', 'Alice'), makeAgent('agent-y', 'Bob')]
+			);
+
+			expect(nodes[0].agentId).toBe('agent-x');
+			expect(nodes[1].agentId).toBe('agent-y');
+		});
+
+		it('uses explicit agentId from template step when provided', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Explicit Agent ID',
+					description: 'Template with explicit IDs',
+					steps: [{ name: 'Code', role: 'coder', agentId: 'agent-2' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agentId).toBe('agent-2');
+		});
+
+		it('prefers built-in workflows from store as template source', () => {
+			const templates = getAvailableTemplates(
+				makeBuiltInTemplateWorkflows({ includeSystemPrompts: true })
+			);
+			expect(templates.map((template) => template.label)).toEqual([
+				'Coding Workflow',
+				'Research Workflow',
+				'Review-Only Workflow',
+				'Full-Cycle Coding Workflow',
+			]);
+		});
+
+		it('shows empty state when no built-in templates are available', () => {
+			mockWorkflowTemplates.value = [];
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText(/Start from template/));
+			expect(getByText('No built-in templates are available for this space yet.')).toBeTruthy();
 		});
 	});
 

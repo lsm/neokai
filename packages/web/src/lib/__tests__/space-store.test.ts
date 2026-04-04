@@ -162,6 +162,7 @@ function makeMockHub() {
 				};
 			}
 			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			// Daemon returns Space directly (not wrapped)
 			if (method === 'space.update') return makeSpace();
@@ -244,9 +245,12 @@ describe('SpaceStore — space selection', () => {
 		expect(spaceStore.space.value?.id).toBe('space-1');
 	});
 
-	it('fetches agents and workflows on selectSpace()', async () => {
+	it('fetches agents, agent templates, and workflows on selectSpace()', async () => {
 		await spaceStore.selectSpace('space-1');
 		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', { spaceId: 'space-1' });
+		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listBuiltInTemplates', {
+			spaceId: 'space-1',
+		});
 		expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.list', { spaceId: 'space-1' });
 	});
 
@@ -312,6 +316,7 @@ describe('SpaceStore — promise-chain lock', () => {
 			if (method === 'space.overview')
 				return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
 			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			return {};
 		});
@@ -1376,6 +1381,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 			if (method === 'space.overview')
 				return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
 			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			if (method === 'nodeExecution.list') return { executions: [] };
 			return {};

@@ -131,37 +131,29 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('has one gate with two fields', () => {
+	test('has one gate with one field', () => {
 		expect(CODING_WORKFLOW.gates).toHaveLength(1);
 		const gate = CODING_WORKFLOW.gates![0];
 		expect(gate.id).toBe('code-ready-gate');
-		expect(gate.fields).toHaveLength(2);
+		expect(gate.fields).toHaveLength(1);
 	});
 
-	test('code-ready-gate has pr_created exists field with wildcard writer', () => {
+	test('code-ready-gate has pr_url exists field with wildcard writer', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-		const prField = gate.fields.find((f) => f.name === 'pr_created')!;
-		expect(prField.type).toBe('boolean');
+		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
+		expect(prField.type).toBe('string');
 		expect(prField.writers).toEqual(['*']);
 		expect(prField.check.op).toBe('exists');
 	});
 
-	test('code-ready-gate has worktree_clean exists field with wildcard writer', () => {
-		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-		const cleanField = gate.fields.find((f) => f.name === 'worktree_clean')!;
-		expect(cleanField.type).toBe('boolean');
-		expect(cleanField.writers).toEqual(['*']);
-		expect(cleanField.check.op).toBe('exists');
-	});
-
-	test('code-ready-gate has a bash script that checks PR mergeability and clean worktree', () => {
+	test('code-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
-		expect(gate.script!.source).toContain('git status --porcelain');
-		expect(gate.script!.source).toContain('gh pr view --json state,mergeable,mergeStateStatus');
+		expect(gate.script!.source).toContain('gh pr view --json url,state,mergeable,mergeStateStatus');
 		expect(gate.script!.source).toContain('jq -r');
+		expect(gate.script!.source).toContain('.url');
 		expect(gate.script!.source).toContain('"OPEN"');
 		expect(gate.script!.source).toContain('.mergeable');
 		expect(gate.script!.source).toContain('"MERGEABLE"');
@@ -169,8 +161,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
 		expect(gate.script!.source).toContain('exit 1');
-		expect(gate.script!.source).toContain('pr_created');
-		expect(gate.script!.source).toContain('worktree_clean');
+		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
 	});
 
@@ -282,14 +273,14 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.spaceId).toBe('');
 	});
 
-	test('research-ready-gate has a bash script that checks PR mergeability and clean worktree', () => {
+	test('research-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
 		const gate = RESEARCH_WORKFLOW.gates!.find((g) => g.id === 'research-ready-gate')!;
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
-		expect(gate.script!.source).toContain('git status --porcelain');
-		expect(gate.script!.source).toContain('gh pr view --json state,mergeable,mergeStateStatus');
+		expect(gate.script!.source).toContain('gh pr view --json url,state,mergeable,mergeStateStatus');
 		expect(gate.script!.source).toContain('jq -r');
+		expect(gate.script!.source).toContain('.url');
 		expect(gate.script!.source).toContain('"OPEN"');
 		expect(gate.script!.source).toContain('.mergeable');
 		expect(gate.script!.source).toContain('"MERGEABLE"');
@@ -297,8 +288,7 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
 		expect(gate.script!.source).toContain('exit 1');
-		expect(gate.script!.source).toContain('pr_created');
-		expect(gate.script!.source).toContain('worktree_clean');
+		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
 	});
 
@@ -452,9 +442,10 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-pr-gate has boolean exists field with coder writer', () => {
+	test('code-pr-gate has string exists field with coder writer', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
-		expect(gate.fields[0].name).toBe('pr_created');
+		expect(gate.fields[0].name).toBe('pr_url');
+		expect(gate.fields[0].type).toBe('string');
 		expect(gate.fields[0].check.op).toBe('exists');
 		expect(gate.fields[0].writers).toContain('coder');
 		// Preserved across fix cycles -- coder updates the existing PR rather than opening a new one

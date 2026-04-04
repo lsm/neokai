@@ -70,7 +70,7 @@ export interface WorkflowCanvasProps {
 	onDeleteNode?: (stepId: string) => void;
 	/** Called when a node is dragged to a new position. */
 	onNodePositionChange?: (stepId: string, position: Point) => void;
-	/** Called when a new connection is created by dragging from an output to an input port. */
+	/** Called when a new connection is created by dragging between node ports. */
 	onCreateTransition?: (fromStepId: string, toStepId: string) => void;
 	/** Called when the selected edge changes. Null means nothing is selected. */
 	onEdgeSelect?: (transitionId: string | null) => void;
@@ -384,10 +384,8 @@ export function WorkflowCanvas({
 
 	// ---- Port event handlers ----
 	const handlePortMouseDown = useCallback(
-		(stepId: string, portType: PortType, e: MouseEvent, portEl: Element) => {
-			if (portType === 'output') {
-				startDrag(stepId, portEl, e);
-			}
+		(stepId: string, _portType: PortType, e: MouseEvent, portEl: Element) => {
+			startDrag(stepId, portEl, e);
 		},
 		[startDrag]
 	);

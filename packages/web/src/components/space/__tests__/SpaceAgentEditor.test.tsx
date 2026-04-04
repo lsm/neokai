@@ -18,8 +18,6 @@
  * - Edit mode: calls spaceStore.updateAgent with correct params
  * - Error from server is shown
  * - Cancel calls onCancel
- * - Role radio buttons: worker / reviewer / orchestrator rendered with labels
- * - Selecting a role updates the form state (reflected in submit params)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -31,12 +29,20 @@ import type { SpaceAgent } from '@neokai/shared';
 
 const mockCreateAgent = vi.fn();
 const mockUpdateAgent = vi.fn();
+let mockAgentTemplates: Array<{
+	name: string;
+	description: string;
+	tools: string[];
+	systemPrompt: string;
+	instructions: string;
+}>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
 		return {
 			createAgent: mockCreateAgent,
 			updateAgent: mockUpdateAgent,
+			agentTemplates: { value: mockAgentTemplates },
 		};
 	},
 }));
@@ -89,6 +95,32 @@ vi.mock('../../ui/Button', () => ({
 	),
 }));
 
+vi.mock('../visual-editor/WorkflowModelSelect', () => ({
+	WorkflowModelSelect: ({
+		value,
+		onChange,
+		testId,
+		className,
+	}: {
+		value?: string;
+		onChange: (value: string | undefined) => void;
+		testId: string;
+		className?: string;
+	}) => (
+		<select
+			data-testid={testId}
+			value={value ?? ''}
+			onChange={(e) => onChange((e.target as HTMLSelectElement).value || undefined)}
+			class={className}
+		>
+			<option value="">— No override —</option>
+			<option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+			<option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+			<option value="gpt-5.4">GPT-5.4</option>
+		</select>
+	),
+}));
+
 import { SpaceAgentEditor } from '../SpaceAgentEditor';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -105,10 +137,8 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'My Coder',
-		role: 'worker',
 		description: 'A test agent',
 		model: 'claude-sonnet-4-6',
-		provider: 'anthropic',
 		systemPrompt: 'Be helpful.',
 		tools: ['Read', 'Write', 'Edit', 'Bash'],
 		createdAt: Date.now(),
@@ -123,10 +153,10 @@ function fillName(getByPlaceholderText: (text: string) => HTMLElement, value: st
 	fireEvent.input(input, { target: { value } });
 }
 
-/** Fill the model input with a value */
-function fillModel(getByPlaceholderText: (text: string) => HTMLElement, value: string) {
-	const input = getByPlaceholderText('e.g., claude-sonnet-4-6') as HTMLInputElement;
-	fireEvent.input(input, { target: { value } });
+/** Select a model value from the dropdown */
+function fillModel(getByTestId: (id: string) => HTMLElement, value: string) {
+	const select = getByTestId('space-agent-model-select') as HTMLSelectElement;
+	fireEvent.change(select, { target: { value } });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -136,6 +166,7 @@ describe('SpaceAgentEditor', () => {
 		cleanup();
 		mockCreateAgent.mockReset();
 		mockUpdateAgent.mockReset();
+		mockAgentTemplates = [];
 		DEFAULT_PROPS.onSave.mockClear();
 		DEFAULT_PROPS.onCancel.mockClear();
 	});
@@ -166,9 +197,9 @@ describe('SpaceAgentEditor', () => {
 
 	it('pre-fills model field in edit mode', () => {
 		const agent = makeAgent({ model: 'claude-haiku-4-5' });
-		const { getByPlaceholderText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
-		const modelInput = getByPlaceholderText('e.g., claude-sonnet-4-6') as HTMLInputElement;
-		expect(modelInput.value).toBe('claude-haiku-4-5');
+		const { getByTestId } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
+		const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
+		expect(modelSelect.value).toBe('claude-haiku-4-5');
 	});
 
 	it('pre-fills description in edit mode', () => {
@@ -229,11 +260,11 @@ describe('SpaceAgentEditor', () => {
 	});
 
 	it('shows tools error when no tools are selected', async () => {
-		const { container, getByPlaceholderText, getByRole, findByText } = render(
+		const { container, getByPlaceholderText, getByTestId, getByRole, findByText } = render(
 			<SpaceAgentEditor {...DEFAULT_PROPS} />
 		);
 		fillName(getByPlaceholderText, 'My Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
+		fillModel(getByTestId, 'claude-sonnet-4-6');
 
 		// Uncheck all tools via the checkboxes
 		const checkboxes = container.querySelectorAll('input[type="checkbox"]');
@@ -268,6 +299,98 @@ describe('SpaceAgentEditor', () => {
 	});
 
 	// ── Tool presets ──────────────────────────────────────────────────────────
+
+	it('renders built-in template options from spaceStore', () => {
+		mockAgentTemplates = [
+			{
+				name: 'Coder',
+				description: 'Implementation worker',
+				tools: ['Read', 'Write', 'Edit', 'Bash'],
+				systemPrompt: 'You are a coder.',
+				instructions: 'Write code.',
+			},
+			{
+				name: 'Reviewer',
+				description: 'Review specialist',
+				tools: ['Read', 'Bash', 'Grep', 'Glob'],
+				systemPrompt: 'You are a reviewer.',
+				instructions: 'Review code.',
+			},
+		];
+
+		const { getByLabelText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+		const select = getByLabelText('From Template') as HTMLSelectElement;
+
+		expect(select).toBeTruthy();
+		const values = Array.from(select.options).map((option) => option.value);
+		expect(values).toContain('Coder');
+		expect(values).toContain('Reviewer');
+	});
+
+	it('applies selected template fields in create mode', () => {
+		mockAgentTemplates = [
+			{
+				name: 'Research',
+				description: 'Research specialist',
+				tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
+				systemPrompt: 'You are a research specialist.',
+				instructions: 'Research and summarize findings.',
+			},
+		];
+
+		const { getByLabelText, getByPlaceholderText, container } = render(
+			<SpaceAgentEditor {...DEFAULT_PROPS} />
+		);
+
+		const select = getByLabelText('From Template') as HTMLSelectElement;
+		fireEvent.change(select, { target: { value: 'Research' } });
+
+		const nameInput = getByPlaceholderText('e.g., Senior Coder') as HTMLInputElement;
+		const descInput = getByPlaceholderText(
+			"Briefly describe this agent's specialization..."
+		) as HTMLInputElement;
+		const promptTextarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+		expect(nameInput.value).toBe('Research');
+		expect(descInput.value).toBe('Research specialist');
+		expect(promptTextarea.value).toBe('You are a research specialist.');
+
+		const checkedTools = Array.from(container.querySelectorAll('input[type="checkbox"]'))
+			.filter((cb) => (cb as HTMLInputElement).checked)
+			.map((cb) => (cb as HTMLInputElement).closest('label')?.textContent?.trim() ?? '');
+		expect(checkedTools).toContain('Read');
+		expect(checkedTools).toContain('WebSearch');
+		expect(checkedTools).not.toContain('Write');
+	});
+
+	it('applies selected template in edit mode without replacing existing name', () => {
+		mockAgentTemplates = [
+			{
+				name: 'Reviewer',
+				description: 'Code review specialist',
+				tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
+				systemPrompt: 'You are an expert code reviewer.',
+				instructions: 'Review changes.',
+			},
+		];
+		const agent = makeAgent({ name: 'Custom Agent', description: 'Existing description' });
+		const { getByLabelText, getByPlaceholderText, container } = render(
+			<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+		);
+
+		const select = getByLabelText('From Template') as HTMLSelectElement;
+		fireEvent.change(select, { target: { value: 'Reviewer' } });
+
+		const nameInput = getByPlaceholderText('e.g., Senior Coder') as HTMLInputElement;
+		const descInput = getByPlaceholderText(
+			"Briefly describe this agent's specialization..."
+		) as HTMLInputElement;
+		const promptTextarea = container.querySelector('textarea') as HTMLTextAreaElement;
+
+		expect(nameInput.value).toBe('Custom Agent');
+		expect(descInput.value).toBe('Code review specialist');
+		expect(promptTextarea.value).toBe('You are an expert code reviewer.');
+	});
 
 	it('applies "Full Coding" preset and selects expected tools', () => {
 		const { getByText, container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
@@ -354,44 +477,17 @@ describe('SpaceAgentEditor', () => {
 		expect(queryByText('Research')).toBeNull();
 	});
 
-	// ── Role selection ─────────────────────────────────────────────────────────
-
-	it('renders all three role options', () => {
-		const { getAllByText, getByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-		expect(getByText('Worker')).toBeTruthy();
-		// "Reviewer" appears in both role section (as span) and template buttons (as button)
-		expect(getAllByText('Reviewer').length).toBeGreaterThanOrEqual(1);
-		expect(getByText('Orchestrator')).toBeTruthy();
-	});
-
-	it('defaults to "worker" role in create mode', () => {
-		const { container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-		const workerRadio = container.querySelector(
-			'input[name="role"][value="worker"]'
-		) as HTMLInputElement;
-		expect(workerRadio.checked).toBe(true);
-	});
-
-	it('pre-selects role from agent prop in edit mode', () => {
-		const agent = makeAgent({ role: 'reviewer' });
-		const { container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
-		const reviewerRadio = container.querySelector(
-			'input[name="role"][value="reviewer"]'
-		) as HTMLInputElement;
-		expect(reviewerRadio.checked).toBe(true);
-	});
-
 	// ── Create / Update submission ────────────────────────────────────────────
 
 	it('calls spaceStore.createAgent with correct params in create mode', async () => {
 		mockCreateAgent.mockResolvedValue({ id: 'new-agent', name: 'Fresh Agent' });
 
-		const { getByPlaceholderText, getByRole, getByText } = render(
+		const { getByPlaceholderText, getByTestId, getByRole } = render(
 			<SpaceAgentEditor {...DEFAULT_PROPS} />
 		);
 
 		fillName(getByPlaceholderText, 'Fresh Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
+		fillModel(getByTestId, 'claude-sonnet-4-6');
 		// Full Coding preset is active by default
 
 		const form = getByRole('dialog').querySelector('form');
@@ -402,7 +498,6 @@ describe('SpaceAgentEditor', () => {
 				expect.objectContaining({
 					name: 'Fresh Agent',
 					model: 'claude-sonnet-4-6',
-					role: 'worker',
 					tools: expect.any(Array),
 				})
 			);
@@ -436,12 +531,12 @@ describe('SpaceAgentEditor', () => {
 		const onSave = vi.fn();
 		mockCreateAgent.mockResolvedValue({});
 
-		const { getByPlaceholderText, getByRole } = render(
+		const { getByPlaceholderText, getByTestId, getByRole } = render(
 			<SpaceAgentEditor {...DEFAULT_PROPS} onSave={onSave} />
 		);
 
 		fillName(getByPlaceholderText, 'New Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
+		fillModel(getByTestId, 'claude-sonnet-4-6');
 
 		const form = getByRole('dialog').querySelector('form');
 		fireEvent.submit(form!);
@@ -454,12 +549,12 @@ describe('SpaceAgentEditor', () => {
 	it('shows error message when save fails', async () => {
 		mockCreateAgent.mockRejectedValue(new Error('Name already taken'));
 
-		const { getByPlaceholderText, getByRole, findByText } = render(
+		const { getByPlaceholderText, getByTestId, getByRole, findByText } = render(
 			<SpaceAgentEditor {...DEFAULT_PROPS} />
 		);
 
 		fillName(getByPlaceholderText, 'New Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
+		fillModel(getByTestId, 'claude-sonnet-4-6');
 
 		const form = getByRole('dialog').querySelector('form');
 		fireEvent.submit(form!);
@@ -471,12 +566,12 @@ describe('SpaceAgentEditor', () => {
 		const onSave = vi.fn();
 		mockCreateAgent.mockRejectedValue(new Error('Server error'));
 
-		const { getByPlaceholderText, getByRole } = render(
+		const { getByPlaceholderText, getByTestId, getByRole } = render(
 			<SpaceAgentEditor {...DEFAULT_PROPS} onSave={onSave} />
 		);
 
 		fillName(getByPlaceholderText, 'New Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
+		fillModel(getByTestId, 'claude-sonnet-4-6');
 
 		const form = getByRole('dialog').querySelector('form');
 		fireEvent.submit(form!);
@@ -495,45 +590,5 @@ describe('SpaceAgentEditor', () => {
 		const { getByText } = render(<SpaceAgentEditor {...DEFAULT_PROPS} onCancel={onCancel} />);
 		fireEvent.click(getByText('Cancel'));
 		expect(onCancel).toHaveBeenCalled();
-	});
-
-	// ── Provider field ────────────────────────────────────────────────────────
-
-	it('includes provider in create params when set', async () => {
-		mockCreateAgent.mockResolvedValue({});
-
-		const { getByPlaceholderText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-
-		fillName(getByPlaceholderText, 'My Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
-		const providerInput = getByPlaceholderText('e.g., anthropic') as HTMLInputElement;
-		fireEvent.input(providerInput, { target: { value: 'anthropic' } });
-
-		const form = getByRole('dialog').querySelector('form');
-		fireEvent.submit(form!);
-
-		await waitFor(() => {
-			expect(mockCreateAgent).toHaveBeenCalledWith(
-				expect.objectContaining({ provider: 'anthropic' })
-			);
-		});
-	});
-
-	it('omits provider from params when empty', async () => {
-		mockCreateAgent.mockResolvedValue({});
-
-		const { getByPlaceholderText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
-
-		fillName(getByPlaceholderText, 'My Agent');
-		fillModel(getByPlaceholderText, 'claude-sonnet-4-6');
-
-		const form = getByRole('dialog').querySelector('form');
-		fireEvent.submit(form!);
-
-		await waitFor(() => {
-			expect(mockCreateAgent).toHaveBeenCalledWith(
-				expect.not.objectContaining({ provider: expect.anything() })
-			);
-		});
 	});
 });
