@@ -847,7 +847,9 @@ describe('NodeConfigPanel', () => {
 				agentId: '',
 				agents: [{ agentId: 'agent-1', name: 'coder' }],
 			});
-			const { container, getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			const { container, getByTestId } = render(
+				<NodeConfigPanel {...makeProps({ step, onUpdate })} />
+			);
 
 			// Find all override mode selectors in the agents-list
 			const agentsList = getByTestId('agents-list');

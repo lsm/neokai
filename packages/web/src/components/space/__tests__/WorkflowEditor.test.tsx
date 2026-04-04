@@ -21,7 +21,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow, WorkflowNodeAgentOverride } from '@neokai/shared';
 import { makeBuiltInTemplateWorkflows } from './fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
@@ -374,7 +374,11 @@ describe('WorkflowEditor', () => {
 								agentId: 'agent-1',
 								name: 'coder',
 								systemPrompt: 'Legacy string prompt.',
-							} as unknown as { agentId: string; name: string; systemPrompt?: { mode: string; value: string } },
+							} as unknown as {
+								agentId: string;
+								name: string;
+								systemPrompt?: WorkflowNodeAgentOverride;
+							},
 						],
 					},
 				],
@@ -400,8 +404,16 @@ describe('WorkflowEditor', () => {
 						id: 'step-1',
 						name: 'Multi',
 						agents: [
-							{ agentId: 'agent-1', name: 'planner', systemPrompt: { mode: 'override', value: 'Plan.' } },
-							{ agentId: 'agent-2', name: 'coder', systemPrompt: { mode: 'override', value: 'Code.' } },
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								systemPrompt: { mode: 'override', value: 'Plan.' },
+							},
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								systemPrompt: { mode: 'override', value: 'Code.' },
+							},
 						],
 					},
 				],
@@ -644,9 +656,7 @@ describe('WorkflowEditor', () => {
 					steps: [
 						{
 							name: 'Code',
-							agentSlots: [
-								{ name: 'Coder 1', role: 'coder', instructions: 'Focus on tests.' },
-							],
+							agentSlots: [{ name: 'Coder 1', role: 'coder', instructions: 'Focus on tests.' }],
 						},
 					],
 				},

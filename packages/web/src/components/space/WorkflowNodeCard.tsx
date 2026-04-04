@@ -13,6 +13,7 @@ import type {
 	SpaceAgent,
 	WorkflowChannel,
 	WorkflowNodeAgent,
+	WorkflowNodeAgentOverride,
 } from '@neokai/shared';
 import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
@@ -32,7 +33,7 @@ export interface NodeDraft {
 	/** Single-agent model override. Ignored when agents[] is present. */
 	model?: string;
 	/** Single-agent system prompt override. Ignored when agents[] is present. */
-	systemPrompt?: string;
+	systemPrompt?: WorkflowNodeAgentOverride;
 	/** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
 	agents?: WorkflowNodeAgent[];
 	/** Directed messaging topology between agents. */
@@ -191,6 +192,63 @@ function ChevronUp() {
 }
 
 // ============================================================================
+// Override helpers
+// ============================================================================
+
+/** Extract the text value from an override (backward compat for legacy string shape). */
+export function extractOverrideValue(
+	override: WorkflowNodeAgentOverride | string | undefined
+): string {
+	if (!override) return '';
+	if (typeof override === 'string') return override;
+	return override.value ?? '';
+}
+
+/** Build an override object, clearing to undefined when value is empty. */
+export function buildOverride(
+	value: string,
+	mode: 'override' | 'expand'
+): WorkflowNodeAgentOverride | undefined {
+	return value.trim() ? { mode, value: value.trim() } : undefined;
+}
+
+// ============================================================================
+// OverrideModeSelector — compact toggle between override/expand modes
+// ============================================================================
+
+interface OverrideModeSelectorProps {
+	mode: 'override' | 'expand';
+	onChange: (mode: 'override' | 'expand') => void;
+}
+
+export function OverrideModeSelector({ mode, onChange }: OverrideModeSelectorProps) {
+	return (
+		<div class="flex gap-0.5" data-testid="override-mode-selector">
+			<button
+				type="button"
+				onClick={() => onChange('override')}
+				class={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+					mode === 'override' ? 'bg-blue-700 text-blue-200' : 'text-gray-600 hover:text-gray-400'
+				}`}
+				data-testid="mode-override"
+			>
+				Override
+			</button>
+			<button
+				type="button"
+				onClick={() => onChange('expand')}
+				class={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+					mode === 'expand' ? 'bg-teal-700 text-teal-200' : 'text-gray-600 hover:text-gray-400'
+				}`}
+				data-testid="mode-expand"
+			>
+				Expand
+			</button>
+		</div>
+	);
+}
+
+// ============================================================================
 // MultiAgentSection — manages the agents list in expanded view
 // ============================================================================
 
@@ -205,6 +263,19 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 
 	// Track which slots have their override fields expanded (keyed by name)
 	const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
+	// Track override mode per field per slot: 'role:instructions' → mode
+	const [modes, setModes] = useState<Record<string, 'override' | 'expand'>>(() => {
+		const initial: Record<string, 'override' | 'expand'> = {};
+		for (const sa of nodeAgents) {
+			if (sa.instructions && typeof sa.instructions !== 'string') {
+				initial[`${sa.name}:instructions`] = sa.instructions.mode;
+			}
+			if (sa.systemPrompt && typeof sa.systemPrompt !== 'string') {
+				initial[`${sa.name}:systemPrompt`] = sa.systemPrompt.mode;
+			}
+		}
+		return initial;
+	});
 
 	const toggleSlotExpanded = useCallback((role: string) => {
 		setExpandedSlots((prev) => {
@@ -214,6 +285,10 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 			return next;
 		});
 	}, []);
+
+	function setMode(key: string, mode: 'override' | 'expand') {
+		setModes((prev) => ({ ...prev, [key]: mode }));
+	}
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...node, agents: next });
@@ -251,17 +326,12 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 		}
 	}
 
-	function updateAgentInstructions(role: string, instructions: string) {
+	function updateAgentInstructions(role: string, value: string) {
+		const modeKey = `${role}:instructions`;
+		const mode = modes[modeKey] ?? 'override';
 		updateAgents(
 			nodeAgents.map((a) =>
-				a.name === role
-					? {
-							...a,
-							instructions: instructions
-								? { mode: 'override' as const, value: instructions }
-								: undefined,
-						}
-					: a
+				a.name === role ? { ...a, instructions: buildOverride(value, mode) } : a
 			)
 		);
 	}
@@ -270,17 +340,12 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 		// model is no longer a property of WorkflowNodeAgent; this function is a no-op
 	}
 
-	function updateAgentSystemPrompt(role: string, systemPrompt: string) {
+	function updateAgentSystemPrompt(role: string, value: string) {
+		const modeKey = `${role}:systemPrompt`;
+		const mode = modes[modeKey] ?? 'override';
 		updateAgents(
 			nodeAgents.map((a) =>
-				a.name === role
-					? {
-							...a,
-							systemPrompt: systemPrompt
-								? { mode: 'override' as const, value: systemPrompt }
-								: undefined,
-						}
-					: a
+				a.name === role ? { ...a, systemPrompt: buildOverride(value, mode) } : a
 			)
 		);
 	}
@@ -316,7 +381,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 			<div class="space-y-1.5">
 				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
-					const hasOverrides = !!sa.instructions;
+					const hasOverrides = !!(sa.instructions || sa.systemPrompt);
 					const isExpanded = expandedSlots.has(sa.name);
 					return (
 						<div
@@ -397,19 +462,29 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 							{/* Agent name (readonly) */}
 							<p class="text-xs text-gray-500">{agentInfo?.name ?? sa.agentId ?? ''}</p>
 							{/* Per-agent instructions */}
-							<input
-								type="text"
-								value={
-									typeof sa.instructions === 'string'
-										? sa.instructions
-										: (sa.instructions?.value ?? '')
-								}
-								onInput={(e) =>
-									updateAgentInstructions(sa.name, (e.currentTarget as HTMLInputElement).value)
-								}
-								placeholder="Per-agent instructions (optional)…"
-								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
-							/>
+							<div class="space-y-0.5">
+								<div class="flex items-center justify-between">
+									<label class="text-xs text-gray-600">Instructions</label>
+									<OverrideModeSelector
+										mode={
+											modes[`${sa.name}:instructions`] ??
+											(typeof sa.instructions !== 'string' ? sa.instructions?.mode : 'override') ??
+											'override'
+										}
+										onChange={(m) => setMode(`${sa.name}:instructions`, m)}
+									/>
+								</div>
+								<input
+									type="text"
+									value={extractOverrideValue(sa.instructions)}
+									onInput={(e) =>
+										updateAgentInstructions(sa.name, (e.currentTarget as HTMLInputElement).value)
+									}
+									placeholder="Per-agent instructions (optional)…"
+									data-testid="agent-instructions-input"
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+								/>
+							</div>
 							{/* Expandable overrides section */}
 							{isExpanded && (
 								<div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
@@ -428,13 +503,21 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 										/>
 									</div>
 									<div class="space-y-0.5">
-										<label class="text-xs text-gray-600">System Prompt</label>
+										<div class="flex items-center justify-between">
+											<label class="text-xs text-gray-600">System Prompt</label>
+											<OverrideModeSelector
+												mode={
+													modes[`${sa.name}:systemPrompt`] ??
+													(typeof sa.systemPrompt !== 'string'
+														? sa.systemPrompt?.mode
+														: 'override') ??
+													'override'
+												}
+												onChange={(m) => setMode(`${sa.name}:systemPrompt`, m)}
+											/>
+										</div>
 										<textarea
-											value={
-												typeof sa.systemPrompt === 'string'
-													? sa.systemPrompt
-													: (sa.systemPrompt?.value ?? '')
-											}
+											value={extractOverrideValue(sa.systemPrompt)}
 											onInput={(e) =>
 												updateAgentSystemPrompt(
 													sa.name,
@@ -748,7 +831,7 @@ export function WorkflowNodeCard({
 							<span class="flex items-center gap-1 flex-wrap">
 								{node.agents!.map((a) => {
 									const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId ?? '';
-									const hasOverrides = !!a.instructions;
+									const hasOverrides = !!(a.instructions || a.systemPrompt);
 									const taskState = taskStateByAgent.get(a.name);
 									return (
 										<span
@@ -889,6 +972,26 @@ export function WorkflowNodeCard({
 						</div>
 					)}
 
+					{/* System Prompt (single-agent) */}
+					<div class="space-y-1">
+						<label class="text-xs font-medium text-gray-400">
+							System Prompt <span class="font-normal text-gray-600">(node override)</span>
+						</label>
+						<textarea
+							value={extractOverrideValue(node.systemPrompt)}
+							onInput={(e) => {
+								const value = (e.currentTarget as HTMLTextAreaElement).value;
+								onUpdate({
+									...node,
+									systemPrompt: buildOverride(value, 'override'),
+								});
+							}}
+							placeholder="Leave blank to use agent defaults..."
+							data-testid="single-agent-system-prompt"
+							rows={3}
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+						/>
+					</div>
 					{/* Instructions */}
 					<div class="space-y-1">
 						<label class="text-xs font-medium text-gray-400">

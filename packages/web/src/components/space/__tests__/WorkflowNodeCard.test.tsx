@@ -256,9 +256,7 @@ describe('WorkflowNodeCard', () => {
 				'[data-testid="single-agent-system-prompt"]'
 			) as HTMLTextAreaElement;
 			fireEvent.input(systemPromptTextarea, { target: { value: '' } });
-			expect(onUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({ systemPrompt: undefined })
-			);
+			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: undefined }));
 		});
 	});
 });
@@ -450,7 +448,9 @@ describe('WorkflowNodeCard — multi-agent per-agent mode selectors', () => {
 			agentId: '',
 			agents: [{ agentId: 'agent-1', name: 'coder' }],
 		});
-		const { getAllByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: true })} />);
+		const { getAllByTestId } = render(
+			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
+		);
 		// One override-mode-selector for instructions in the always-visible per-agent section
 		const selectors = getAllByTestId('override-mode-selector');
 		expect(selectors.length).toBeGreaterThanOrEqual(1);
@@ -681,15 +681,13 @@ describe('extractOverrideValue', () => {
 	});
 
 	it('returns the value property for override object', () => {
-		expect(
-			extractOverrideValue({ mode: 'override', value: 'system prompt text' })
-		).toBe('system prompt text');
+		expect(extractOverrideValue({ mode: 'override', value: 'system prompt text' })).toBe(
+			'system prompt text'
+		);
 	});
 
 	it('returns the value property for expand object', () => {
-		expect(extractOverrideValue({ mode: 'expand', value: 'extra context' })).toBe(
-			'extra context'
-		);
+		expect(extractOverrideValue({ mode: 'expand', value: 'extra context' })).toBe('extra context');
 	});
 
 	it('returns empty string when override value is empty', () => {
@@ -697,7 +695,9 @@ describe('extractOverrideValue', () => {
 	});
 
 	it('returns empty string when override value is undefined', () => {
-		expect(extractOverrideValue({ mode: 'override', value: undefined as unknown as string })).toBe('');
+		expect(extractOverrideValue({ mode: 'override', value: undefined as unknown as string })).toBe(
+			''
+		);
 	});
 });
 
