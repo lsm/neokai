@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent, navigateToSpaceSession } from '../../lib/router';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
+import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 
@@ -204,7 +205,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<button
 							type="button"
 							onClick={() => setShowArtifacts((v) => !v)}
-							class="flex-shrink-0 px-2 py-1 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"
+							class={cn(
+								'flex-shrink-0 px-2 py-1 text-xs font-medium transition-colors',
+								showArtifacts
+									? 'text-blue-300 hover:text-blue-200'
+									: 'text-gray-400 hover:text-gray-200'
+							)}
 							data-testid="artifacts-toggle"
 							aria-pressed={showArtifacts}
 						>

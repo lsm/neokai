@@ -20,6 +20,8 @@ export { GateArtifactsView } from './GateArtifactsView';
 export type { GateArtifactsViewProps } from './GateArtifactsView';
 export { FileDiffView, parseDiff } from './FileDiffView';
 export type { FileDiffViewProps } from './FileDiffView';
+export { TaskArtifactsPanel } from './TaskArtifactsPanel';
+export type { TaskArtifactsPanelProps } from './TaskArtifactsPanel';
 export { WorkflowRulesEditor, makeEmptyRule, rulesToDrafts } from './WorkflowRulesEditor';
 export { WorkflowNodeCard } from './WorkflowNodeCard';
 export { ImportPreviewDialog } from './ImportPreviewDialog';

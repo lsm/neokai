@@ -155,7 +155,8 @@ export function TaskArtifactsPanel({ runId, onClose, class: className }: TaskArt
 											'w-full flex items-center gap-3 px-3 py-2 rounded text-left',
 											'hover:bg-dark-700 transition-colors group'
 										)}
-										data-testid={`artifacts-file-${file.path}`}
+										data-testid="artifacts-file-row"
+										data-file-path={file.path}
 									>
 										{/* File icon */}
 										<svg

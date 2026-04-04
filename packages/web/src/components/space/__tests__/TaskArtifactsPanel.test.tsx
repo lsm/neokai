@@ -67,16 +67,20 @@ describe('TaskArtifactsPanel', () => {
 
 	it('shows +/- line counts for each file', async () => {
 		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
-		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
+		const { container, getByTestId } = render(
+			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
+		);
 		await waitFor(() => expect(getByTestId('artifacts-file-list')).toBeTruthy());
 
-		const fooRow = getByTestId('artifacts-file-src/foo.ts');
-		expect(fooRow.textContent).toContain('+10');
-		expect(fooRow.textContent).toContain('-2');
+		const fooRow = container.querySelector('[data-file-path="src/foo.ts"]');
+		expect(fooRow).toBeTruthy();
+		expect(fooRow?.textContent).toContain('+10');
+		expect(fooRow?.textContent).toContain('-2');
 
-		const barRow = getByTestId('artifacts-file-src/bar.ts');
-		expect(barRow.textContent).toContain('+5');
-		expect(barRow.textContent).toContain('-0');
+		const barRow = container.querySelector('[data-file-path="src/bar.ts"]');
+		expect(barRow).toBeTruthy();
+		expect(barRow?.textContent).toContain('+5');
+		expect(barRow?.textContent).toContain('-0');
 	});
 
 	it('shows summary totals', async () => {
@@ -109,13 +113,15 @@ describe('TaskArtifactsPanel', () => {
 
 	it('clicking a file opens FileDiffView for that file', async () => {
 		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
-		const { getByTestId, queryByTestId } = render(
+		const { container, getByTestId, queryByTestId } = render(
 			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
 		);
 		await waitFor(() => expect(getByTestId('artifacts-file-list')).toBeTruthy());
 
 		expect(queryByTestId('file-diff-view')).toBeNull();
-		fireEvent.click(getByTestId('artifacts-file-src/foo.ts'));
+		const fooRow = container.querySelector('[data-file-path="src/foo.ts"]') as HTMLElement;
+		expect(fooRow).toBeTruthy();
+		fireEvent.click(fooRow);
 		const diffView = getByTestId('file-diff-view');
 		expect(diffView).toBeTruthy();
 		expect(diffView.getAttribute('data-file')).toBe('src/foo.ts');
@@ -123,12 +129,13 @@ describe('TaskArtifactsPanel', () => {
 
 	it('back button in FileDiffView returns to file list', async () => {
 		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
-		const { getByTestId, queryByTestId } = render(
+		const { container, getByTestId, queryByTestId } = render(
 			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
 		);
 		await waitFor(() => expect(getByTestId('artifacts-file-list')).toBeTruthy());
 
-		fireEvent.click(getByTestId('artifacts-file-src/foo.ts'));
+		const fooRow = container.querySelector('[data-file-path="src/foo.ts"]') as HTMLElement;
+		fireEvent.click(fooRow);
 		expect(getByTestId('file-diff-view')).toBeTruthy();
 
 		fireEvent.click(getByTestId('diff-back'));
