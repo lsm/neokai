@@ -18,7 +18,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createUniqueSpaceDir } from '../helpers/space-helpers';
+import { createUniqueSpaceDir, deleteSpaceWorkflowsViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 
@@ -79,6 +79,9 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		spaceId = await createTestSpace(page);
+		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
+		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 	});
 
 	test.afterEach(async ({ page }) => {
