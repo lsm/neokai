@@ -9,6 +9,7 @@
  * - seedBuiltInWorkflows(): node IDs replaced with real UUIDs (not template placeholders)
  * - seedBuiltInWorkflows(): agent ID resolution from role names to UUIDs (case-insensitive)
  * - seedBuiltInWorkflows(): descriptions, tags, instructions, gates, timestamps preserved
+ * - seedBuiltInWorkflows(): 2-layer prompt override modes (expand vs override) correctly seeded
  * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
  * - seedBuiltInWorkflows(): per-workflow error isolation
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
@@ -1378,6 +1379,147 @@ describe('seedBuiltInWorkflows()', () => {
 			const seededNames = wf.nodes.map((n) => n.name);
 			const templateNames = tpl.nodes.map((n) => n.name);
 			expect(seededNames).toEqual(templateNames);
+		}
+	});
+
+	// ─── 2-layer system prompt override design ──────────────────────────────
+
+	test('CODING_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('expand');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('CODING_WORKFLOW seeded agent slots have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('expand');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeded agent slots have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with systemPrompt mode=expand on reviewer slot', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.nodes).toHaveLength(1);
+		const agent = wf.nodes[0].agents[0];
+		expect(agent.systemPrompt).toBeDefined();
+		expect(agent.systemPrompt!.mode).toBe('expand');
+		expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.nodes[0].agents[0].instructions).toBeUndefined();
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW seeded with systemPrompt mode=override on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('override');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW Code Review node reviewer slots have instructions mode=override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const codeReviewNode = wf.nodes.find((n) => n.name === 'Code Review')!;
+		expect(codeReviewNode.agents).toHaveLength(3);
+		for (const agent of codeReviewNode.agents) {
+			expect(agent.instructions).toBeDefined();
+			expect(agent.instructions!.mode).toBe('override');
+			expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
+			// Each reviewer's instructions should contain their specific slot name
+			expect(agent.instructions!.value).toContain(agent.name);
+		}
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const nonReviewNodes = wf.nodes.filter((n) => n.name !== 'Code Review');
+		expect(nonReviewNodes.length).toBe(5); // Planning, Plan Review, Coding, QA, Done
+		for (const node of nonReviewNodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('expand-mode workflows append to agent prompts while override-mode workflows replace them', () => {
+		// Structural design check: the two prompt layering strategies are correctly assigned
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+
+		// Iterative workflows (Coding, Research, Review-Only) use 'expand' — they augment
+		// the agent's base prompt with workflow-specific context
+		const expandWorkflows = [
+			CODING_WORKFLOW.name,
+			RESEARCH_WORKFLOW.name,
+			REVIEW_ONLY_WORKFLOW.name,
+		];
+		for (const name of expandWorkflows) {
+			const wf = workflows.find((w) => w.name === name)!;
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					if (agent.systemPrompt) {
+						expect(agent.systemPrompt.mode).toBe('expand');
+					}
+				}
+			}
+		}
+
+		// Full-Cycle workflow uses 'override' — nodes have specialized roles that
+		// completely replace the agent's generic prompt
+		const fullCycle = workflows.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		for (const node of fullCycle.nodes) {
+			for (const agent of node.agents) {
+				if (agent.systemPrompt) {
+					expect(agent.systemPrompt.mode).toBe('override');
+				}
+			}
 		}
 	});
 });
