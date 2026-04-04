@@ -8,6 +8,8 @@
  * - Name auto-suggests from workspace path
  * - Creating a space navigates to it
  * - Space overview renders with tabbed layout (Active / Review / Done tabs)
+ * - Configure page shows all 6 preset agents after creation
+ * - Configure page shows all built-in workflows after creation
  *
  * Setup: creates a space via dialog (UI-only)
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
@@ -151,5 +153,58 @@ test.describe('Space Creation UX', () => {
 
 		// Dialog should close
 		await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3000 });
+	});
+
+	test('configure page shows all 6 preset agents and built-in workflows', async ({ page }) => {
+		const workspaceRoot = await getWorkspaceRoot(page);
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'configure');
+
+		// Create space via UI dialog
+		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
+		await spacesButton.click();
+		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+
+		const pathInput = page.locator('input[placeholder*="/Users/you/projects"]');
+		await pathInput.fill(spaceWorkspacePath);
+		const nameInput = page.locator('input[placeholder="e.g., My App"]');
+		await nameInput.fill(`E2E Configure ${Date.now()}`);
+
+		const submitButton = page.getByRole('dialog').getByRole('button', { name: 'Create Space' });
+		await submitButton.click();
+
+		// Wait for navigation to the new space
+		await page.waitForURL(/\/space\/[a-f0-9-]+/, { timeout: 10000 });
+		const url = page.url();
+		const match = url.match(/\/space\/([a-f0-9-]+)/);
+		if (match) {
+			createdSpaceId = match[1];
+		}
+
+		// Navigate to the configure page
+		await page.goto(`/space/${createdSpaceId}/configure`);
+		await expect(page.getByTestId('space-configure-tab-bar')).toBeVisible({ timeout: 10000 });
+
+		// Verify all 6 preset agents are visible on the Agents tab (default)
+		const PRESET_AGENTS = ['Coder', 'General', 'Planner', 'Research', 'Reviewer', 'QA'];
+		for (const agentName of PRESET_AGENTS) {
+			await expect(
+				page.locator('.text-sm.font-medium.text-gray-100', { hasText: agentName })
+			).toBeVisible({ timeout: 5000 });
+		}
+
+		// Navigate to the Workflows tab
+		await page.getByTestId('space-configure-tab-workflows').click();
+
+		// Verify all 4 built-in workflows are visible
+		const BUILT_IN_WORKFLOWS = [
+			'Coding Workflow',
+			'Research Workflow',
+			'Review-Only Workflow',
+			'Full-Cycle Coding Workflow',
+		];
+		for (const workflowName of BUILT_IN_WORKFLOWS) {
+			await expect(page.locator('text=' + workflowName).first()).toBeVisible({ timeout: 5000 });
+		}
 	});
 });
