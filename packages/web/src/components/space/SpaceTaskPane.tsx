@@ -2,7 +2,12 @@ import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
-import type { SpaceTaskPriority, SpaceTaskStatus } from '@neokai/shared';
+import type {
+	SpaceTaskActivityMember,
+	SpaceTaskActivityState,
+	SpaceTaskPriority,
+	SpaceTaskStatus,
+} from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
@@ -30,6 +35,84 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 	urgent: 'Urgent',
 };
 
+const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
+	active: 'Active',
+	queued: 'Queued',
+	idle: 'Idle',
+	waiting_for_input: 'Waiting',
+	completed: 'Done',
+	failed: 'Failed',
+	interrupted: 'Interrupted',
+};
+
+function activityStateDotClass(state: SpaceTaskActivityState): string {
+	switch (state) {
+		case 'active':
+			return 'bg-green-400 animate-pulse';
+		case 'queued':
+			return 'bg-amber-400';
+		case 'idle':
+			return 'bg-gray-500';
+		case 'waiting_for_input':
+			return 'bg-blue-400';
+		case 'completed':
+			return 'bg-gray-600';
+		case 'failed':
+			return 'bg-red-400';
+		case 'interrupted':
+			return 'bg-yellow-400';
+	}
+}
+
+function ActivityMemberList({
+	members,
+	taskId,
+}: {
+	members: SpaceTaskActivityMember[];
+	taskId: string;
+}) {
+	if (members.length === 0) return null;
+
+	const handleMemberClick = (member: SpaceTaskActivityMember) => {
+		spaceOverlayAgentNameSignal.value = member.label;
+		spaceOverlaySessionIdSignal.value = member.sessionId;
+	};
+
+	return (
+		<div
+			class="px-4 py-2 border-b border-dark-800"
+			data-testid="activity-members-list"
+			data-task-id={taskId}
+		>
+			<p class="text-xs text-gray-500 mb-1.5">Agents</p>
+			<div class="flex flex-wrap gap-1.5">
+				{members.map((member) => (
+					<button
+						key={member.id}
+						type="button"
+						onClick={() => handleMemberClick(member)}
+						class="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 transition-colors"
+						data-testid="activity-member-item"
+						data-member-id={member.id}
+						data-member-state={member.state}
+						title={`${member.label} — ${ACTIVITY_STATE_LABELS[member.state]}`}
+					>
+						<span
+							class={cn(
+								'inline-block w-1.5 h-1.5 rounded-full flex-shrink-0',
+								activityStateDotClass(member.state)
+							)}
+							data-testid="activity-member-state-dot"
+						/>
+						<span class="truncate max-w-[10rem]">{member.label}</span>
+						<span class="text-gray-500 text-[10px]">{ACTIVITY_STATE_LABELS[member.state]}</span>
+					</button>
+				))}
+			</div>
+		</div>
+	);
+}
+
 function formatTaskThreadError(err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
 	if (message.includes('No handler for method: space.task.ensureAgentSession')) {
@@ -48,6 +131,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const tasks = spaceStore.tasks.value;
 	const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
 	const runtimeSpaceIdCandidate = task?.spaceId ?? spaceId;
+	const activityMembers: SpaceTaskActivityMember[] = taskId
+		? (spaceStore.taskActivity.value.get(taskId) ?? [])
+		: [];
 
 	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
 	const [ensuringThread, setEnsuringThread] = useState(false);
@@ -61,6 +147,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setThreadSendError(null);
 		setThreadDraft('');
 		setShowArtifacts(false);
+	}, [taskId]);
+
+	useEffect(() => {
+		if (!taskId) return;
+		spaceStore.subscribeTaskActivity(taskId).catch(() => {
+			// Ignore subscription errors — activity list is best-effort
+		});
+		return () => {
+			spaceStore.unsubscribeTaskActivity(taskId);
+		};
 	}, [taskId]);
 
 	useEffect(() => {
@@ -237,6 +333,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					)}
 				</div>
 			</div>
+
+			{activityMembers.length > 0 && (
+				<ActivityMemberList members={activityMembers} taskId={task.id} />
+			)}
 
 			{task.status === 'blocked' && task.result && (
 				<div

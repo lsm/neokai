@@ -2,7 +2,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceAgent, SpaceTask, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
+import type {
+	SpaceAgent,
+	SpaceTask,
+	SpaceTaskActivityMember,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+} from '@neokai/shared';
 
 const { mockNavigateToSpaceAgent } = vi.hoisted(() => ({ mockNavigateToSpaceAgent: vi.fn() }));
 vi.mock('../../../lib/router', () => ({
@@ -31,10 +37,13 @@ let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
 const mockSendTaskMessage = vi.fn().mockResolvedValue(undefined);
+const mockSubscribeTaskActivity = vi.fn().mockResolvedValue(undefined);
+const mockUnsubscribeTaskActivity = vi.fn();
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -43,9 +52,12 @@ vi.mock('../../../lib/space-store', () => ({
 			agents: mockAgents,
 			workflows: mockWorkflows,
 			workflowRuns: mockWorkflowRuns,
+			taskActivity: mockTaskActivity,
 			updateTask: mockUpdateTask,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
 			sendTaskMessage: mockSendTaskMessage,
+			subscribeTaskActivity: mockSubscribeTaskActivity,
+			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
 		};
 	},
 }));
@@ -64,6 +76,7 @@ mockTasks = signal<SpaceTask[]>([]);
 mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
 
@@ -89,6 +102,7 @@ describe('SpaceTaskPane', () => {
 		mockAgents.value = [];
 		mockWorkflows.value = [];
 		mockWorkflowRuns.value = [];
+		mockTaskActivity.value = new Map();
 		mockUpdateTask.mockClear();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
@@ -96,6 +110,8 @@ describe('SpaceTaskPane', () => {
 		);
 		mockSendTaskMessage.mockClear();
 		mockNavigateToSpaceAgent.mockClear();
+		mockSubscribeTaskActivity.mockClear();
+		mockUnsubscribeTaskActivity.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
 	});
@@ -396,5 +412,196 @@ describe('SpaceTaskPane — blocked reason banner', () => {
 		];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 		expect(getByTestId('task-status-label').textContent).toBe('Blocked');
+	});
+});
+
+function makeActivityMember(
+	overrides: Partial<SpaceTaskActivityMember> = {}
+): SpaceTaskActivityMember {
+	return {
+		id: 'member-1',
+		sessionId: 'session-member-1',
+		kind: 'task_agent',
+		label: 'Task Agent',
+		role: 'task-agent',
+		state: 'active',
+		messageCount: 3,
+		...overrides,
+	};
+}
+
+describe('SpaceTaskPane — activity members list', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockTaskActivity.value = new Map();
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockSubscribeTaskActivity.mockClear();
+		mockUnsubscribeTaskActivity.mockClear();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('hides members list when no activity members exist', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('activity-members-list')).toBeNull();
+	});
+
+	it('renders all activity members', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({
+						id: 'm1',
+						sessionId: 'sess-1',
+						label: 'Task Agent',
+						state: 'active',
+					}),
+					makeActivityMember({
+						id: 'm2',
+						sessionId: 'sess-2',
+						label: 'Coder',
+						kind: 'node_agent',
+						state: 'queued',
+					}),
+					makeActivityMember({
+						id: 'm3',
+						sessionId: 'sess-3',
+						label: 'Reviewer',
+						kind: 'node_agent',
+						state: 'idle',
+					}),
+				],
+			],
+		]);
+		const { getByTestId, getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByTestId('activity-members-list')).toBeTruthy();
+		const items = getAllByTestId('activity-member-item');
+		expect(items.length).toBe(3);
+		expect(items[0].textContent).toContain('Task Agent');
+		expect(items[1].textContent).toContain('Coder');
+		expect(items[2].textContent).toContain('Reviewer');
+	});
+
+	it('shows correct state labels for each activity state', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({ id: 'm1', label: 'Agent 1', state: 'active' }),
+					makeActivityMember({ id: 'm2', label: 'Agent 2', state: 'queued' }),
+					makeActivityMember({ id: 'm3', label: 'Agent 3', state: 'idle' }),
+					makeActivityMember({ id: 'm4', label: 'Agent 4', state: 'waiting_for_input' }),
+					makeActivityMember({ id: 'm5', label: 'Agent 5', state: 'completed' }),
+					makeActivityMember({ id: 'm6', label: 'Agent 6', state: 'failed' }),
+					makeActivityMember({ id: 'm7', label: 'Agent 7', state: 'interrupted' }),
+				],
+			],
+		]);
+		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const items = getAllByTestId('activity-member-item');
+		expect(items[0].getAttribute('data-member-state')).toBe('active');
+		expect(items[0].textContent).toContain('Active');
+		expect(items[1].getAttribute('data-member-state')).toBe('queued');
+		expect(items[1].textContent).toContain('Queued');
+		expect(items[2].getAttribute('data-member-state')).toBe('idle');
+		expect(items[2].textContent).toContain('Idle');
+		expect(items[3].getAttribute('data-member-state')).toBe('waiting_for_input');
+		expect(items[3].textContent).toContain('Waiting');
+		expect(items[4].getAttribute('data-member-state')).toBe('completed');
+		expect(items[4].textContent).toContain('Done');
+		expect(items[5].getAttribute('data-member-state')).toBe('failed');
+		expect(items[5].textContent).toContain('Failed');
+		expect(items[6].getAttribute('data-member-state')).toBe('interrupted');
+		expect(items[6].textContent).toContain('Interrupted');
+	});
+
+	it('clicking a member opens overlay chat with the correct session ID and label', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({
+						id: 'm1',
+						sessionId: 'sess-coder',
+						label: 'Coder Agent',
+						state: 'active',
+					}),
+				],
+			],
+		]);
+		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const item = getAllByTestId('activity-member-item')[0];
+		fireEvent.click(item);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-coder');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Agent');
+	});
+
+	it('clicking different members opens overlay with their respective sessions', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					makeActivityMember({
+						id: 'm1',
+						sessionId: 'sess-planner',
+						label: 'Planner',
+						state: 'completed',
+					}),
+					makeActivityMember({
+						id: 'm2',
+						sessionId: 'sess-reviewer',
+						label: 'Reviewer',
+						state: 'active',
+					}),
+				],
+			],
+		]);
+		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const items = getAllByTestId('activity-member-item');
+
+		fireEvent.click(items[0]);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-planner');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Planner');
+
+		fireEvent.click(items[1]);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-reviewer');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Reviewer');
+	});
+
+	it('calls subscribeTaskActivity when a taskId is provided', async () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		render(<SpaceTaskPane taskId="task-1" />);
+		await waitFor(() => expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1'));
+	});
+
+	it('does not call subscribeTaskActivity when taskId is null', () => {
+		render(<SpaceTaskPane taskId={null} />);
+		expect(mockSubscribeTaskActivity).not.toHaveBeenCalled();
+	});
+
+	it('shows only members for the current task (not other tasks)', () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task 1 Agent', state: 'active' })]],
+			['task-2', [makeActivityMember({ id: 'm2', label: 'Task 2 Agent', state: 'idle' })]],
+		]);
+		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const items = getAllByTestId('activity-member-item');
+		expect(items.length).toBe(1);
+		expect(items[0].textContent).toContain('Task 1 Agent');
 	});
 });
