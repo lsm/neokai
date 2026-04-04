@@ -7,7 +7,7 @@ export function InputGroupsDemo() {
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-4">With leading icon</h3>
 				<div>
-					<label htmlFor="email" class="block text-sm/6 font-medium text-text-primary">
+					<label for="email" class="block text-sm/6 font-medium text-text-primary">
 						Email
 					</label>
 					<div class="mt-2 grid grid-cols-1">
@@ -30,7 +30,7 @@ export function InputGroupsDemo() {
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-4">With trailing icon</h3>
 				<div>
-					<label htmlFor="account-number" class="block text-sm/6 font-medium text-text-primary">
+					<label for="account-number" class="block text-sm/6 font-medium text-text-primary">
 						Account number
 					</label>
 					<div class="mt-2 grid grid-cols-1">
@@ -55,7 +55,7 @@ export function InputGroupsDemo() {
 					With inline leading and trailing add-ons
 				</h3>
 				<div>
-					<label htmlFor="price" class="block text-sm/6 font-medium text-text-primary">
+					<label for="price" class="block text-sm/6 font-medium text-text-primary">
 						Price
 					</label>
 					<div class="mt-2">
@@ -86,7 +86,7 @@ export function InputGroupsDemo() {
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-4">With leading dropdown</h3>
 				<div>
-					<label htmlFor="company-website" class="block text-sm/6 font-medium text-text-primary">
+					<label for="company-website" class="block text-sm/6 font-medium text-text-primary">
 						Company website
 					</label>
 					<div class="mt-2 flex">
@@ -110,7 +110,7 @@ export function InputGroupsDemo() {
 					With leading icon and trailing button
 				</h3>
 				<div>
-					<label htmlFor="query" class="block text-sm/6 font-medium text-text-primary">
+					<label for="query" class="block text-sm/6 font-medium text-text-primary">
 						Search candidates
 					</label>
 					<div class="mt-2 flex">
@@ -142,7 +142,7 @@ export function InputGroupsDemo() {
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-4">With search icon</h3>
 				<div>
-					<label htmlFor="search" class="block text-sm/6 font-medium text-text-primary">
+					<label for="search" class="block text-sm/6 font-medium text-text-primary">
 						Search
 					</label>
 					<div class="mt-2 grid grid-cols-1">
@@ -165,7 +165,7 @@ export function InputGroupsDemo() {
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-4">With inline add-on</h3>
 				<div>
-					<label htmlFor="website" class="block text-sm/6 font-medium text-text-primary">
+					<label for="website" class="block text-sm/6 font-medium text-text-primary">
 						Website
 					</label>
 					<div class="mt-2 flex">

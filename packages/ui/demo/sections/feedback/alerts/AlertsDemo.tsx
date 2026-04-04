@@ -3,9 +3,9 @@ import { CheckCircle, Info, X, XCircle, AlertTriangle } from 'lucide-preact';
 export function AlertsDemo() {
 	return (
 		<div class="space-y-12">
-			{/* Alert with description */}
+			{/* Alert with list */}
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-4">With description</h3>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With list</h3>
 				<div class="rounded-md bg-red-50 p-4 dark:bg-red-500/15 dark:outline dark:outline-red-500/25">
 					<div class="flex">
 						<div class="shrink-0">
@@ -26,9 +26,9 @@ export function AlertsDemo() {
 				</div>
 			</div>
 
-			{/* Alert with list */}
+			{/* Alert with dismiss button */}
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-4">With list</h3>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With dismiss button</h3>
 				<div class="rounded-md bg-green-50 p-4 dark:bg-green-500/10 dark:outline dark:outline-green-500/20">
 					<div class="flex">
 						<div class="shrink-0">
@@ -38,6 +38,17 @@ export function AlertsDemo() {
 							<p class="text-sm font-medium text-green-800 dark:text-green-300">
 								Successfully uploaded
 							</p>
+						</div>
+						<div class="ml-auto pl-3">
+							<div class="-mx-1.5 -my-1.5">
+								<button
+									type="button"
+									class="inline-flex rounded-md bg-green-50 p-1.5 text-green-500 hover:bg-green-100 focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2 focus-visible:ring-offset-green-50 focus-visible:outline-hidden dark:bg-transparent dark:text-green-400 dark:hover:bg-green-500/10 dark:focus-visible:ring-green-500 dark:focus-visible:ring-offset-1 dark:focus-visible:ring-offset-green-900"
+								>
+									<span class="sr-only">Dismiss</span>
+									<X class="size-5" />
+								</button>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -82,9 +93,9 @@ export function AlertsDemo() {
 				</div>
 			</div>
 
-			{/* Alert with link on right */}
+			{/* Alert with description */}
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-4">With link on right</h3>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With description</h3>
 				<div class="rounded-md bg-yellow-50 p-4 dark:bg-yellow-500/10 dark:outline dark:outline-yellow-500/15">
 					<div class="flex">
 						<div class="shrink-0">
@@ -128,9 +139,9 @@ export function AlertsDemo() {
 				</div>
 			</div>
 
-			{/* Alert with dismiss button */}
+			{/* Alert with link on right */}
 			<div>
-				<h3 class="text-sm font-medium text-text-tertiary mb-4">With dismiss button</h3>
+				<h3 class="text-sm font-medium text-text-tertiary mb-4">With link on right</h3>
 				<div class="rounded-md bg-blue-50 p-4 dark:bg-blue-500/10 dark:outline dark:outline-blue-500/20">
 					<div class="flex">
 						<div class="shrink-0">
