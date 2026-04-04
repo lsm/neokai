@@ -11,6 +11,13 @@
  * All test actions go through the UI (clicks, navigation, keyboard).
  * All assertions verify visible DOM state via data-testid selectors.
  *
+ * Info Panel (gear menu) note:
+ * The V1/V2 view toggle lives inside the TaskInfoPanel, which is opened by clicking
+ * the gear button (data-testid="task-info-panel-trigger"). Tests that interact with
+ * the toggle must first call openTaskInfoPanel() to make the toggle accessible.
+ * After each toggle click the current view component unmounts and remounts, resetting
+ * the info panel to closed — tests that toggle twice must re-open the panel between clicks.
+ *
  * Slide-out panel note:
  * SlideOutPanel is always mounted in the DOM and uses CSS transforms
  * (translate-x-full) to hide rather than display:none. Assertions use
@@ -22,6 +29,7 @@
  */
 
 import { test, expect } from '../../fixtures';
+import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 import { deleteRoom } from '../helpers/room-helpers';
 
@@ -56,6 +64,7 @@ async function createRoomAndTask(
 			roomId,
 			title: 'E2E TaskViewV2 Test Task',
 			description: 'Task for testing the V2 toggle and structural presence',
+			status: 'draft',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
@@ -92,6 +101,7 @@ async function createRoomTaskAndGroup(
 			roomId,
 			title: 'E2E TaskViewV2 Group Test Task',
 			description: 'Task with session group for structural tests',
+			status: 'draft',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
@@ -111,6 +121,21 @@ async function createRoomTaskAndGroup(
 
 		return { roomId, taskId };
 	});
+}
+
+// ─── UI Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Open the TaskInfoPanel (gear menu) so that the view toggle becomes accessible.
+ *
+ * The V1/V2 toggle lives inside TaskInfoPanel, which is closed by default.
+ * Clicking the gear button (task-info-panel-trigger) opens it. Any subsequent
+ * toggle click will unmount the current view component and remount the new one,
+ * resetting the panel to closed — call this helper again before the second toggle.
+ */
+async function openTaskInfoPanel(page: Page): Promise<void> {
+	await page.locator('[data-testid="task-info-panel-trigger"]').click();
+	await expect(page.locator('[data-testid="task-view-toggle"]')).toBeVisible({ timeout: 3000 });
 }
 
 // ─── Toggle and Persistence Tests ─────────────────────────────────────────────
@@ -144,6 +169,8 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 			timeout: 10000,
 		});
 
+		// Toggle lives inside the info panel (gear menu) — open it first
+		await openTaskInfoPanel(page);
 		await expect(page.locator('[data-testid="task-view-toggle"]')).toBeVisible({ timeout: 5000 });
 	});
 
@@ -153,10 +180,11 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 			timeout: 10000,
 		});
 
-		// V2 container should not exist in V1 mode
+		// V2 container should not exist in V1 mode (independent of panel state)
 		await expect(page.locator('[data-testid="task-view-v2"]')).not.toBeAttached();
 
-		// Click the toggle to switch to V2
+		// Open the info panel to access the toggle, then click it
+		await openTaskInfoPanel(page);
 		await page.locator('[data-testid="task-view-toggle"]').click();
 
 		// V2 container should now be visible
@@ -169,7 +197,8 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 			timeout: 10000,
 		});
 
-		// Switch to V2 via toggle
+		// Switch to V2 via toggle (open panel first)
+		await openTaskInfoPanel(page);
 		await page.locator('[data-testid="task-view-toggle"]').click();
 		await expect(page.locator('[data-testid="task-view-v2"]')).toBeVisible({ timeout: 5000 });
 
@@ -191,14 +220,15 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 			timeout: 10000,
 		});
 
-		const toggle = page.locator('[data-testid="task-view-toggle"]');
-
-		// Switch to V2
-		await toggle.click();
+		// Switch to V2: open panel → click toggle
+		await openTaskInfoPanel(page);
+		await page.locator('[data-testid="task-view-toggle"]').click();
 		await expect(page.locator('[data-testid="task-view-v2"]')).toBeVisible({ timeout: 5000 });
 
-		// Switch back to V1
-		await toggle.click();
+		// Switch back to V1: re-open panel (switching views resets the panel to closed),
+		// then click toggle again
+		await openTaskInfoPanel(page);
+		await page.locator('[data-testid="task-view-toggle"]').click();
 		await expect(page.locator('[data-testid="task-view-v2"]')).not.toBeAttached();
 	});
 
@@ -211,10 +241,11 @@ test.describe('TaskViewV2 — Toggle and Persistence', () => {
 			timeout: 10000,
 		});
 
-		// Should start in V2 (from localStorage)
+		// Should start in V2 (from localStorage) — visible without opening the panel
 		await expect(page.locator('[data-testid="task-view-v2"]')).toBeVisible({ timeout: 5000 });
 
-		// Toggle back to V1
+		// Toggle back to V1: open the info panel (V2 mode) then click toggle
+		await openTaskInfoPanel(page);
 		await page.locator('[data-testid="task-view-toggle"]').click();
 		await expect(page.locator('[data-testid="task-view-v2"]')).not.toBeAttached();
 
@@ -279,7 +310,7 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 	});
 
 	test('toggle button shows directional arrow indicating current view', async ({ page }) => {
-		// TaskViewToggle renders different arrow characters per state:
+		// TaskInfoPanel renders different arrow characters per state:
 		//   V2 active → button text contains "←" (offering to go back to V1)
 		//   V1 active → button text contains "→" (offering to go forward to V2)
 		// Both states always contain the strings "V1" and "V2", so the arrow character
@@ -291,15 +322,19 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 			timeout: 10000,
 		});
 
-		const toggle = page.locator('[data-testid="task-view-toggle"]');
+		// Open the info panel to access the toggle (starts closed by default)
+		await openTaskInfoPanel(page);
 
 		// In V2 mode: button shows "V1 ← V2" (← indicates V2 is active)
-		await expect(toggle).toBeVisible({ timeout: 5000 });
+		const toggle = page.locator('[data-testid="task-view-toggle"]');
 		await expect(toggle).toContainText('←');
 
-		// After switching to V1: button shows "V1 → V2" (→ indicates V1 is active)
+		// After switching to V1: the view component remounts (panel resets to closed),
+		// so re-open the panel and check the arrow direction again.
 		await toggle.click();
-		await expect(toggle).toContainText('→');
+		await expect(page.locator('[data-testid="task-view-v2"]')).not.toBeAttached();
+		await openTaskInfoPanel(page);
+		await expect(page.locator('[data-testid="task-view-toggle"]')).toContainText('→');
 	});
 
 	test('toggle aria-label reflects current view state', async ({ page }) => {
@@ -310,14 +345,22 @@ test.describe('TaskViewV2 — Structural Presence', () => {
 			timeout: 10000,
 		});
 
+		// Open the info panel to access the toggle
+		await openTaskInfoPanel(page);
 		const toggle = page.locator('[data-testid="task-view-toggle"]');
 
 		// Currently in V2 — aria-label offers to switch back to V1
 		await expect(toggle).toHaveAttribute('aria-label', /V1 timeline/);
 
-		// Switch to V1 — aria-label now offers to switch to V2
+		// Switch to V1 — the view component remounts (panel resets to closed),
+		// so re-open the panel and check the updated aria-label.
 		await toggle.click();
-		await expect(toggle).toHaveAttribute('aria-label', /V2 turn-based/);
+		await expect(page.locator('[data-testid="task-view-v2"]')).not.toBeAttached();
+		await openTaskInfoPanel(page);
+		await expect(page.locator('[data-testid="task-view-toggle"]')).toHaveAttribute(
+			'aria-label',
+			/V2 turn-based/
+		);
 	});
 });
 

@@ -233,7 +233,7 @@ export function ArchiveTaskDialog({ task, isOpen, onClose, onConfirm }: ArchiveT
 
 	return (
 		<Modal isOpen={isOpen} onClose={handleClose} title="Archive Task?" size="sm" showCloseButton>
-			<div class="space-y-4">
+			<div class="space-y-4" data-testid="archive-task-dialog">
 				<p class="text-sm text-gray-300">
 					You are about to archive <strong class="text-gray-100">{task.title}</strong>.
 				</p>

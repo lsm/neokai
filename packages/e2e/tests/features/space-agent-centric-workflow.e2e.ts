@@ -41,8 +41,9 @@ const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
 const AGENT_A_NAME = 'Coder Agent';
 const AGENT_B_NAME = 'Reviewer Agent';
-const AGENT_A_OPTION = `${AGENT_A_NAME} (${ROLE_A})`;
-const AGENT_B_OPTION = `${AGENT_B_NAME} (${ROLE_B})`;
+// Option text as rendered by agent-select and add-agent-select: just the agent name (no role suffix)
+const AGENT_A_OPTION = AGENT_A_NAME;
+const AGENT_B_OPTION = AGENT_B_NAME;
 
 // ─── RPC helpers (infrastructure only) ────────────────────────────────────────
 

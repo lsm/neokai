@@ -12,60 +12,13 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-
-async function createSpaceByRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	workspacePath: string,
-	name: string
-): Promise<string> {
-	// Pre-creation cleanup: delete any existing space at this path (including archived)
-	try {
-		await page.evaluate(async (path) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			const spaces = (await hub.request('space.list', { includeArchived: true })) as Array<{
-				id: string;
-				workspacePath: string;
-			}>;
-			for (const space of spaces) {
-				if (space.workspacePath === path) {
-					await hub.request('space.delete', { id: space.id });
-				}
-			}
-		}, workspacePath);
-	} catch {
-		// Best-effort cleanup
-	}
-
-	const spaceId = await page.evaluate(
-		async ({ path, spaceName }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('No message hub');
-			const res = await hub.request('space.create', { workspacePath: path, name: spaceName });
-			return res?.id ?? res?.space?.id ?? '';
-		},
-		{ path: workspacePath, spaceName: name }
-	);
-	return spaceId as string;
-}
-
-async function deleteSpaceByRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup
-	}
-}
 
 test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
@@ -81,13 +34,16 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		});
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'ctx-panel');
 		spaceName = `E2E SwitchTest ${Date.now()}`;
-		createdSpaceId = await createSpaceByRpc(page, workspaceRoot, spaceName);
+		createdSpaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 	});
 
 	test.afterEach(async ({ page }) => {
 		if (createdSpaceId) {
-			await deleteSpaceByRpc(page, createdSpaceId);
+			await deleteSpaceViaRpc(page, createdSpaceId);
 			createdSpaceId = '';
 		}
 	});

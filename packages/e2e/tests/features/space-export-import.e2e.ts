@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createUniqueSpaceDir } from '../helpers/space-helpers';
 
 // ─── RPC helpers (infrastructure only) ───────────────────────────────────────
 
@@ -29,24 +30,13 @@ async function createTestSpace(page: Page): Promise<{
 }> {
 	await waitForWebSocketConnected(page);
 	const wsRoot = await getWorkspaceRoot(page);
+	// Use a unique subdirectory to avoid conflicts with other parallel tests
+	// (workspace_path has a UNIQUE constraint in the DB).
+	const workspacePath = createUniqueSpaceDir(wsRoot, 'export-import');
 	return page.evaluate(
 		async ({ workspacePath, name }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-
-			// Delete any leftover space from a previous failed run (including archived).
-			try {
-				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const existing = list.find((s) => s.workspacePath === workspacePath);
-				if (existing) {
-					await hub.request('space.delete', { id: existing.id });
-				}
-			} catch {
-				// Ignore cleanup errors
-			}
 
 			// Create a space
 			const spaceRes = await hub.request('space.create', {
@@ -66,7 +56,7 @@ async function createTestSpace(page: Page): Promise<{
 
 			return { spaceId, agentId, agentName: 'Test Coder' };
 		},
-		{ workspacePath: wsRoot, name: SPACE_NAME }
+		{ workspacePath, name: SPACE_NAME }
 	);
 }
 

@@ -15,7 +15,11 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -97,8 +101,11 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory per test to avoid conflicts with other parallel tests
+		// that also create spaces (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'sub-routes');
 		const spaceName = `E2E Sub-Routes Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 		taskId = await createTaskViaRpc(page, spaceId, `Test Task ${Date.now()}`);
 		sessionId = await createSessionViaRpc(page, workspaceRoot);
 	});

@@ -46,6 +46,7 @@ import { NodeConfigPanel } from './NodeConfigPanel';
 import type { NodeChannelLink } from './NodeConfigPanel';
 import { EdgeConfigPanel } from './EdgeConfigPanel';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
+import { ChannelEditor } from '../ChannelEditor';
 import { buildVisualNodePositions } from './nodeMetrics';
 import type { ResolvedWorkflowChannel } from './EdgeRenderer';
 import {
@@ -246,6 +247,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showRules, setShowRules] = useState(false);
+	const [showChannels, setShowChannels] = useState(true);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
 	const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
@@ -364,6 +366,18 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		() => buildNodeAnchorUsage(routedSemanticEdges),
 		[routedSemanticEdges]
 	);
+
+	// Agent role names from all multi-agent nodes — used by ChannelEditor dropdowns.
+	const agentRolesFromNodes = useMemo<string[]>(() => {
+		const roles: string[] = [];
+		for (const node of nodes) {
+			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
+			for (const agent of node.step.agents ?? []) {
+				if (agent.name && !roles.includes(agent.name)) roles.push(agent.name);
+			}
+		}
+		return roles;
+	}, [nodes]);
 
 	const channelEdges = useMemo<ResolvedWorkflowChannel[]>(() => {
 		return routedSemanticEdges.map((edge) => ({
@@ -1468,6 +1482,44 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				>
 					<p class="text-xs text-gray-500">Current canvas changes will be discarded.</p>
 				</ConfirmModal>
+			</div>
+
+			{/* ---- Channels (collapsible) ---- */}
+			<div class="flex-shrink-0 border-t border-dark-700">
+				{/* Toggle button is outside the scroll container so it stays visible */}
+				<div class="px-4 py-2">
+					<button
+						onClick={() => setShowChannels((v) => !v)}
+						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+						data-testid="toggle-channels-button"
+					>
+						<svg
+							class={`w-3 h-3 transition-transform ${showChannels ? 'rotate-90' : ''}`}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9 5l7 7-7 7"
+							/>
+						</svg>
+						<span class="font-semibold uppercase tracking-wider">
+							Channels {channels.length > 0 ? `(${channels.length})` : ''}
+						</span>
+					</button>
+				</div>
+				{showChannels && (
+					<div class="px-4 pb-2 max-h-48 overflow-y-auto" data-testid="channels-section">
+						<ChannelEditor
+							channels={channels}
+							onChange={setChannels}
+							agentRoles={agentRolesFromNodes}
+						/>
+					</div>
+				)}
 			</div>
 
 			{/* ---- Tags and Rules (collapsible) ---- */}

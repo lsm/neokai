@@ -13,7 +13,11 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { createSpaceViaRpc, deleteSpaceViaRpc } from '../helpers/space-helpers';
+import {
+	createSpaceViaRpc,
+	createUniqueSpaceDir,
+	deleteSpaceViaRpc,
+} from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
@@ -27,8 +31,11 @@ test.describe('Space Task Full-Width View', () => {
 		await waitForWebSocketConnected(page);
 
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-fullwidth');
 		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
-		spaceId = await createSpaceViaRpc(page, workspaceRoot, spaceName);
+		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 
 		// Navigate to the space dashboard
 		await page.goto(`/space/${spaceId}`);

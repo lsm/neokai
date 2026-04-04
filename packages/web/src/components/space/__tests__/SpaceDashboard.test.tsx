@@ -6,11 +6,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { Space, SpaceTask } from '@neokai/shared';
+import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+let mockActiveRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
+let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -18,13 +21,43 @@ vi.mock('../../../lib/space-store', () => ({
 			space: mockSpace,
 			loading: mockLoading,
 			tasks: mockTasks,
+			activeRuns: mockActiveRuns,
+			workflowRuns: mockWorkflowRuns,
+			workflows: mockWorkflows,
 		};
 	},
+}));
+
+// Mock WorkflowCanvas to avoid its heavy dependencies (connectionManager, gate data fetching).
+// The stub intentionally reuses data-testid="workflow-canvas-svg" — the same testid the real
+// component renders on its SVG element — so SpaceDashboard unit tests assert the canvas is
+// mounted without depending on the real component's internal rendering. If the real testid
+// changes, update this stub accordingly.
+vi.mock('../WorkflowCanvas', () => ({
+	WorkflowCanvas: ({
+		workflowId,
+		runId,
+		spaceId,
+	}: {
+		workflowId: string;
+		runId?: string | null;
+		spaceId: string;
+	}) => (
+		<div
+			data-testid="workflow-canvas-svg"
+			data-workflow-id={workflowId}
+			data-run-id={runId ?? ''}
+			data-space-id={spaceId}
+		/>
+	),
 }));
 
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
+mockActiveRuns = signal<SpaceWorkflowRun[]>([]);
+mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
+mockWorkflows = signal([]);
 
 import { SpaceDashboard } from '../SpaceDashboard';
 
@@ -40,6 +73,26 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		status: 'active',
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
+function makeRun(
+	id: string,
+	workflowId: string,
+	status: SpaceWorkflowRun['status'] = 'in_progress',
+	overrides: Partial<SpaceWorkflowRun> = {}
+): SpaceWorkflowRun {
+	return {
+		id,
+		spaceId: 'space-1',
+		workflowId,
+		title: `Run ${id}`,
+		status,
+		createdAt: Date.now(),
+		startedAt: Date.now(),
+		updatedAt: Date.now(),
+		completedAt: null,
 		...overrides,
 	};
 }
@@ -75,6 +128,9 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = null;
 		mockLoading.value = false;
 		mockTasks.value = [];
+		mockActiveRuns.value = [];
+		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [];
 	});
 
 	afterEach(() => {
@@ -173,5 +229,61 @@ describe('SpaceDashboard', () => {
 		fireEvent.click(getByText('Done').closest('button')!);
 		fireEvent.click(getByText('Task t1').closest('button')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
+	});
+
+	it('renders WorkflowCanvas when there is an active run', () => {
+		mockSpace.value = makeSpace();
+		mockActiveRuns.value = [makeRun('run-1', 'wf-1', 'in_progress')];
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		const canvas = container.querySelector('[data-testid="workflow-canvas-svg"]');
+		expect(canvas).toBeTruthy();
+		expect(canvas?.getAttribute('data-workflow-id')).toBe('wf-1');
+		expect(canvas?.getAttribute('data-run-id')).toBe('run-1');
+		expect(canvas?.getAttribute('data-space-id')).toBe('space-1');
+	});
+
+	it('falls back to first workflowRun when no active runs exist', () => {
+		mockSpace.value = makeSpace();
+		mockActiveRuns.value = [];
+		mockWorkflowRuns.value = [makeRun('run-2', 'wf-2', 'completed')];
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		const canvas = container.querySelector('[data-testid="workflow-canvas-svg"]');
+		expect(canvas).toBeTruthy();
+		expect(canvas?.getAttribute('data-workflow-id')).toBe('wf-2');
+		expect(canvas?.getAttribute('data-run-id')).toBe('run-2');
+	});
+
+	it('does not render WorkflowCanvas when no runs exist', () => {
+		mockSpace.value = makeSpace();
+		mockActiveRuns.value = [];
+		mockWorkflowRuns.value = [];
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(container.querySelector('[data-testid="workflow-canvas-svg"]')).toBeNull();
+	});
+
+	it('renders Create Task and Start Workflow Run action buttons', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(getByRole('button', { name: 'Create Task' })).toBeTruthy();
+		expect(getByRole('button', { name: 'Start Workflow Run' })).toBeTruthy();
+	});
+
+	it('clicking Create Task button opens the Create Task dialog', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByRole('button', { name: 'Create Task' }));
+		// Modal renders via Portal into document.body
+		const dialog = document.body.querySelector('[role="dialog"]');
+		expect(dialog).toBeTruthy();
+		expect(dialog?.querySelector('h2')?.textContent).toBe('Create Task');
+	});
+
+	it('clicking Start Workflow Run button opens the Start Workflow Run dialog', () => {
+		mockSpace.value = makeSpace();
+		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByRole('button', { name: 'Start Workflow Run' }));
+		const dialog = document.body.querySelector('[role="dialog"]');
+		expect(dialog).toBeTruthy();
+		expect(dialog?.querySelector('h2')?.textContent).toBe('Start Workflow Run');
 	});
 });
