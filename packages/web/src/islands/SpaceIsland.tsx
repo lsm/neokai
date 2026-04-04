@@ -18,6 +18,7 @@
 
 import { useState, useEffect } from 'preact/hooks';
 import type { SpaceViewMode } from '../lib/signals';
+import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
 import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
@@ -26,6 +27,7 @@ import { WorkflowList } from '../components/space/WorkflowList';
 import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWorkflowEditor';
 import { WorkflowCanvas } from '../components/space/WorkflowCanvas';
 import { SpaceSettings } from '../components/space/SpaceSettings';
+import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
 import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask } from '../lib/router';
 import ChatContainer from './ChatContainer';
@@ -56,6 +58,14 @@ export default function SpaceIsland({
 	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
+
+	// Overlay session — shown as a slide-over on top of the current view
+	const overlaySessionId = spaceOverlaySessionIdSignal.value;
+	const overlayAgentName = spaceOverlayAgentNameSignal.value;
+	const handleOverlayClose = () => {
+		spaceOverlaySessionIdSignal.value = null;
+		spaceOverlayAgentNameSignal.value = null;
+	};
 
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
@@ -119,32 +129,70 @@ export default function SpaceIsland({
 	const space = spaceStore.space.value;
 
 	if (sessionViewId) {
-		return <ChatContainer key={sessionViewId} sessionId={sessionViewId} />;
+		return (
+			<>
+				<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
 	}
 
 	if (taskViewId) {
 		return (
-			<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
-				<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
-			</div>
+			<>
+				<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
+					<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
 		);
 	}
 
 	if (viewMode === 'configure' && space) {
 		return (
-			<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-configure-view">
-				<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-					<SpaceConfigurePage space={space} workflows={workflows} />
+			<>
+				<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-configure-view">
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<SpaceConfigurePage space={space} workflows={workflows} />
+					</div>
 				</div>
-			</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
 		);
 	}
 
 	if (viewMode === 'configure' && !space) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
-				<p class="text-sm text-gray-500">Space not found</p>
-			</div>
+			<>
+				<div class="flex-1 flex items-center justify-center bg-dark-900">
+					<p class="text-sm text-gray-500">Space not found</p>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
 		);
 	}
 
@@ -156,105 +204,117 @@ export default function SpaceIsland({
 	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
 
 	return (
-		<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-overview-view">
-			{/* Main content — tabbed view */}
-			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-				{/* Tab bar — hidden when workflow editor is open */}
-				{!showWorkflowEditor && (
-					<div class="flex border-b border-dark-700 px-4 flex-shrink-0" data-testid="space-tab-bar">
-						{TABS.map((tab) => (
-							<button
-								key={tab.id}
-								type="button"
-								onClick={() => setActiveTab(tab.id)}
-								class={cn(
-									'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
-									activeTab === tab.id
-										? 'text-gray-100 border-blue-400'
-										: 'text-gray-400 border-transparent hover:text-gray-200'
-								)}
-							>
-								{tab.label}
-							</button>
-						))}
-					</div>
-				)}
+		<>
+			{overlaySessionId && (
+				<AgentOverlayChat
+					sessionId={overlaySessionId}
+					agentName={overlayAgentName ?? undefined}
+					onClose={handleOverlayClose}
+				/>
+			)}
+			<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-overview-view">
+				{/* Main content — tabbed view */}
+				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
+					{/* Tab bar — hidden when workflow editor is open */}
+					{!showWorkflowEditor && (
+						<div
+							class="flex border-b border-dark-700 px-4 flex-shrink-0"
+							data-testid="space-tab-bar"
+						>
+							{TABS.map((tab) => (
+								<button
+									key={tab.id}
+									type="button"
+									onClick={() => setActiveTab(tab.id)}
+									class={cn(
+										'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
+										activeTab === tab.id
+											? 'text-gray-100 border-blue-400'
+											: 'text-gray-400 border-transparent hover:text-gray-200'
+									)}
+								>
+									{tab.label}
+								</button>
+							))}
+						</div>
+					)}
 
-				{/* Tab content */}
-				<div class="flex-1 overflow-hidden">
-					{showWorkflowEditor ? (
-						<VisualWorkflowEditor
-							key={workflowEditId}
-							workflow={editingWorkflow}
-							onSave={() => setWorkflowEditId(null)}
-							onCancel={() => setWorkflowEditId(null)}
-						/>
-					) : (
-						<>
-							{activeTab === 'dashboard' && (
-								<>
-									{/* Canvas panel — shown on md+ when a workflow or run exists */}
-									{showCanvas && (
+					{/* Tab content */}
+					<div class="flex-1 overflow-hidden">
+						{showWorkflowEditor ? (
+							<VisualWorkflowEditor
+								key={workflowEditId}
+								workflow={editingWorkflow}
+								onSave={() => setWorkflowEditId(null)}
+								onCancel={() => setWorkflowEditId(null)}
+							/>
+						) : (
+							<>
+								{activeTab === 'dashboard' && (
+									<>
+										{/* Canvas panel — shown on md+ when a workflow or run exists */}
+										{showCanvas && (
+											<div
+												class="hidden md:flex flex-col h-full overflow-hidden"
+												data-testid="canvas-panel"
+											>
+												{/* Active-run banner */}
+												{displayRun && (
+													<div class="flex items-center gap-2 px-4 py-2 border-b border-dark-700 bg-dark-900 flex-shrink-0">
+														<span
+															class={cn(
+																'w-2 h-2 rounded-full flex-shrink-0',
+																activeRun ? 'bg-blue-400 animate-pulse' : 'bg-amber-400'
+															)}
+														/>
+														<span class="text-xs text-blue-300 truncate">{displayRun.title}</span>
+														<span class="ml-auto text-xs text-gray-600 capitalize flex-shrink-0">
+															{displayRun.status.replace('_', ' ')}
+														</span>
+													</div>
+												)}
+												<WorkflowCanvas
+													key={`${defaultWorkflow.id}:${displayRun?.id ?? 'template'}`}
+													workflowId={defaultWorkflow.id}
+													runId={displayRun?.id ?? null}
+													spaceId={spaceId}
+													class="flex-1 min-h-0"
+												/>
+											</div>
+										)}
+										{/* Fallback: shown on mobile, or when no canvas data */}
 										<div
-											class="hidden md:flex flex-col h-full overflow-hidden"
-											data-testid="canvas-panel"
+											class={cn('flex flex-col h-full overflow-y-auto', showCanvas && 'md:hidden')}
+											data-testid="dashboard-fallback"
 										>
-											{/* Active-run banner */}
-											{displayRun && (
-												<div class="flex items-center gap-2 px-4 py-2 border-b border-dark-700 bg-dark-900 flex-shrink-0">
-													<span
-														class={cn(
-															'w-2 h-2 rounded-full flex-shrink-0',
-															activeRun ? 'bg-blue-400 animate-pulse' : 'bg-amber-400'
-														)}
-													/>
-													<span class="text-xs text-blue-300 truncate">{displayRun.title}</span>
-													<span class="ml-auto text-xs text-gray-600 capitalize flex-shrink-0">
-														{displayRun.status.replace('_', ' ')}
-													</span>
-												</div>
-											)}
-											<WorkflowCanvas
-												key={`${defaultWorkflow.id}:${displayRun?.id ?? 'template'}`}
-												workflowId={defaultWorkflow.id}
-												runId={displayRun?.id ?? null}
+											<SpaceDashboard
 												spaceId={spaceId}
-												class="flex-1 min-h-0"
+												onOpenSpaceAgent={() => navigateToSpaceAgent(spaceId)}
+												onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
 											/>
 										</div>
-									)}
-									{/* Fallback: shown on mobile, or when no canvas data */}
-									<div
-										class={cn('flex flex-col h-full overflow-y-auto', showCanvas && 'md:hidden')}
-										data-testid="dashboard-fallback"
-									>
-										<SpaceDashboard
-											spaceId={spaceId}
-											onOpenSpaceAgent={() => navigateToSpaceAgent(spaceId)}
-											onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-										/>
+									</>
+								)}
+								{activeTab === 'agents' && (
+									<div class="p-6 h-full overflow-y-auto">
+										<SpaceAgentList />
 									</div>
-								</>
-							)}
-							{activeTab === 'agents' && (
-								<div class="p-6 h-full overflow-y-auto">
-									<SpaceAgentList />
-								</div>
-							)}
-							{activeTab === 'workflows' && space && (
-								<WorkflowList
-									spaceId={spaceId}
-									spaceName={space.name}
-									workflows={workflows}
-									onCreateWorkflow={() => setWorkflowEditId('new')}
-									onEditWorkflow={(id) => setWorkflowEditId(id)}
-								/>
-							)}
-							{activeTab === 'settings' && space && <SpaceSettings space={space} />}
-						</>
-					)}
+								)}
+								{activeTab === 'workflows' && space && (
+									<WorkflowList
+										spaceId={spaceId}
+										spaceName={space.name}
+										workflows={workflows}
+										onCreateWorkflow={() => setWorkflowEditId('new')}
+										onEditWorkflow={(id) => setWorkflowEditId(id)}
+									/>
+								)}
+								{activeTab === 'settings' && space && <SpaceSettings space={space} />}
+							</>
+						)}
+					</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }
