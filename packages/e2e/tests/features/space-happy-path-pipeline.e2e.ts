@@ -16,6 +16,8 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const RUN_TASK_LOOKUP_TIMEOUT_MS = 20000;
+const RUN_TASK_LOOKUP_INTERVAL_MS = 250;
 
 async function createSpaceWithRun(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -68,6 +70,20 @@ async function getRunTaskId(
 	spaceId: string,
 	runId: string
 ): Promise<string> {
+	await page.waitForFunction(
+		async ({ sid, rid }) => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (!hub?.request) return false;
+			const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
+				id: string;
+				workflowRunId?: string;
+			}>;
+			return tasks.some((t) => t.workflowRunId === rid);
+		},
+		{ sid: spaceId, rid: runId },
+		{ timeout: RUN_TASK_LOOKUP_TIMEOUT_MS, polling: RUN_TASK_LOOKUP_INTERVAL_MS }
+	);
+
 	const taskId = await page.evaluate(
 		async ({ sid, rid }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
@@ -81,6 +97,7 @@ async function getRunTaskId(
 		},
 		{ sid: spaceId, rid: runId }
 	);
+
 	if (!taskId) throw new Error(`No task found for run ${runId}`);
 	return taskId;
 }

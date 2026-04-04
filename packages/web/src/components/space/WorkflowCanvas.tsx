@@ -604,9 +604,8 @@ interface NodeBoxProps {
 	layout: NodeLayout;
 	status: NodeStatus;
 	executions: NodeExecution[];
-	isRuntimeMode: boolean;
-	/** All tasks for the current workflow run, passed through to the onNodeClick callback. */
 	nodeTasks: SpaceTask[];
+	isRuntimeMode: boolean;
 	onNodeClick?: (nodeId: string, tasks: SpaceTask[]) => void;
 }
 
@@ -615,8 +614,8 @@ function NodeBox({
 	layout,
 	status,
 	executions,
-	isRuntimeMode: _isRuntimeMode,
 	nodeTasks,
+	isRuntimeMode: _isRuntimeMode,
 	onNodeClick,
 }: NodeBoxProps): JSX.Element {
 	const { x, y, width, height } = layout;
@@ -1327,8 +1326,8 @@ export function WorkflowCanvas({
 							layout={nodeLayout}
 							status={status}
 							executions={nodeExecs}
-							isRuntimeMode={isRuntimeMode}
 							nodeTasks={runTasks}
+							isRuntimeMode={isRuntimeMode}
 							onNodeClick={isRuntimeMode ? onNodeClick : undefined}
 						/>
 					);
