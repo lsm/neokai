@@ -49,6 +49,10 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
 	// be created. Without a .git directory, WorktreeManager.findGitRoot() returns null,
 	// causing "task requires isolation" errors and daemon log spam during tests.
 	// The workspace path is shared from test-env.ts (same module instance).
+	//
+	// NOTE: Seed files are created in test-env.ts at config evaluation time (before the
+	// webServer starts) because the daemon's FileIndex scans the workspace during server
+	// init, which happens before globalSetup runs.
 	if (e2eWorkspaceDir && existsSync(e2eWorkspaceDir)) {
 		console.log(`\n🔧 Initializing workspace as git repo: ${e2eWorkspaceDir}`);
 		try {
@@ -58,10 +62,11 @@ Or set PLAYWRIGHT_BASE_URL explicitly:
 				stdio: 'inherit',
 			});
 			execSync('git config user.name "NeoKai E2E"', { cwd: e2eWorkspaceDir, stdio: 'inherit' });
-			// Create initial commit so the repo is valid
-			execSync('git commit --allow-empty -m "Initial commit for E2E testing"', {
+			// Create initial commit so the repo is valid (seed files already exist from test-env.ts)
+			execSync('git add -A && git commit -m "Initial commit for E2E testing"', {
 				cwd: e2eWorkspaceDir,
 				stdio: 'inherit',
+				shell: '/bin/bash',
 			});
 			console.log('✅ Workspace initialized as git repo\n');
 		} catch (error) {
