@@ -133,10 +133,10 @@ describe('ROLE_TOOLS', () => {
 		expect(tools).toContain('Glob');
 	});
 
-	it('general (Done node) has read-only tools — no Write or Edit', () => {
+	it('general has full coding toolset', () => {
 		const tools = ROLE_TOOLS.general;
-		expect(tools).not.toContain('Write');
-		expect(tools).not.toContain('Edit');
+		expect(tools).toContain('Write');
+		expect(tools).toContain('Edit');
 		expect(tools).toContain('Read');
 		expect(tools).toContain('Bash');
 		expect(tools).toContain('Grep');
