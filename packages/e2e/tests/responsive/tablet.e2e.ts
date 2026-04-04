@@ -1,24 +1,26 @@
 /**
  * Tablet Responsiveness E2E Tests
  *
- * Tests for tablet-specific responsive behavior:
- * - Sidebar display on tablet
- * - Session creation and usage on tablet
+ * Tests for tablet-specific responsive behavior at iPad portrait width (768px).
+ *
+ * At 768px, the app hits the Tailwind `md:` breakpoint (min-width: 768px),
+ * rendering in desktop mode: the sidebar (ContextPanel) is always visible,
+ * the NavRail is shown, and mobile controls (hamburger menu, close panel)
+ * are hidden via `md:hidden`. These tests verify the desktop layout works
+ * correctly at this narrower tablet width.
  */
 
 import { test, expect } from '../../fixtures';
 import {
 	cleanupTestSession,
 	createSessionViaUI,
-	waitForAssistantResponse,
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
-import { closeMobilePanel, openMobilePanel } from '../helpers/mobile-helpers';
 
 test.describe('Tablet Responsiveness', () => {
 	let sessionId: string | null = null;
 
-	// Use iPad viewport for tablet tests
+	// Use iPad portrait viewport — this triggers desktop mode (md: breakpoint)
 	test.use({
 		viewport: { width: 768, height: 1024 },
 		hasTouch: true,
@@ -43,32 +45,28 @@ test.describe('Tablet Responsiveness', () => {
 		}
 	});
 
-	test('should display sidebar on tablet', async ({ page }) => {
-		// On tablet, check for sidebar controls
-		const closePanelButton = page.locator('button[title="Close panel"]');
-		const menuButton = page.locator('button[aria-label="Open navigation menu"]');
+	test('should display desktop sidebar on tablet', async ({ page }) => {
+		// At 768px (md: breakpoint), the app renders in desktop mode.
+		// The sidebar (ContextPanel) is always visible — no hamburger menu needed.
 		const newSessionButton = page.getByRole('button', {
 			name: 'New Session',
 			exact: true,
 		});
 
-		const hasClosePanel = await closePanelButton.isVisible().catch(() => false);
-		const hasMenuButton = await menuButton.isVisible().catch(() => false);
-		const hasNewSession = await newSessionButton.isVisible().catch(() => false);
+		// New Session button should be directly visible in the always-on sidebar
+		await expect(newSessionButton).toBeVisible({ timeout: 5000 });
 
-		// At least one navigation method should exist
-		expect(hasClosePanel || hasMenuButton || hasNewSession).toBe(true);
+		// Mobile controls should NOT be visible at this width
+		const menuButton = page.locator('button[aria-label="Open navigation menu"]');
+		const closePanelButton = page.locator('button[title="Close panel"]');
+		await expect(menuButton).not.toBeVisible();
+		await expect(closePanelButton).not.toBeVisible();
 	});
 
 	test('should create and use session on tablet', async ({ page }) => {
-		// Open the mobile panel to access the New Session button
-		await openMobilePanel(page);
-
-		// Create a session on tablet
+		// At 768px the sidebar is always visible — no need to open a mobile panel.
+		// Create a session directly.
 		sessionId = await createSessionViaUI(page);
-
-		// Close panel to see the chat area
-		await closeMobilePanel(page);
 
 		// Type a message to verify input works on tablet
 		// Use specific selector to avoid matching Neo panel textbox
