@@ -178,6 +178,41 @@ describe('SpaceTaskManager', () => {
 			const failed = await manager.failTask(task.id, 'Something went wrong');
 			expect(failed.status).toBe('blocked');
 		});
+
+		it('persists result when failing a task with an error message', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			const failed = await manager.failTask(task.id, 'Dependency unavailable');
+			expect(failed.status).toBe('blocked');
+			expect(failed.result).toBe('Dependency unavailable');
+		});
+
+		it('persists result when transitioning to blocked via setTaskStatus', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			const blocked = await manager.setTaskStatus(task.id, 'blocked', {
+				result: 'Waiting for approval',
+			});
+			expect(blocked.status).toBe('blocked');
+			expect(blocked.result).toBe('Waiting for approval');
+		});
+
+		it('clears result when unblocking a task back to in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.setTaskStatus(task.id, 'blocked', { result: 'Some reason' });
+			const restarted = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(restarted.status).toBe('in_progress');
+			expect(restarted.result).toBeNull();
+		});
+
+		it('failTask without error message does not set result', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			const failed = await manager.failTask(task.id);
+			expect(failed.status).toBe('blocked');
+			expect(failed.result).toBeNull();
+		});
 	});
 
 	describe('cancelTask', () => {

@@ -126,7 +126,7 @@ export class SpaceTaskManager {
 
 		const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
-		if (newStatus === 'done') {
+		if (newStatus === 'done' || newStatus === 'blocked') {
 			if (options?.result) updates.result = options.result;
 		}
 
@@ -167,8 +167,8 @@ export class SpaceTaskManager {
 	/**
 	 * Fail a task (mark as blocked)
 	 */
-	async failTask(taskId: string, _error?: string): Promise<SpaceTask> {
-		return this.setTaskStatus(taskId, 'blocked');
+	async failTask(taskId: string, error?: string): Promise<SpaceTask> {
+		return this.setTaskStatus(taskId, 'blocked', error ? { result: error } : undefined);
 	}
 
 	/**
