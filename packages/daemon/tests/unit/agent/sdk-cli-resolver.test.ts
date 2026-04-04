@@ -14,6 +14,18 @@ import {
 	_resetForTesting,
 } from '../../../src/lib/agent/sdk-cli-resolver';
 
+// Helper: build a predictable existsSync mock that blocks node_modules resolution
+// but delegates everything else to the real fs.existsSync.
+function makeBlockNodeModulesExistsMock(extras: Record<string, boolean> = {}) {
+	const originalExistsSync = fs.existsSync.bind(fs);
+	return (path: fs.PathLike): boolean => {
+		const p = String(path);
+		if (p.includes('node_modules')) return false;
+		if (Object.prototype.hasOwnProperty.call(extras, p)) return extras[p];
+		return originalExistsSync(p);
+	};
+}
+
 describe('sdk-cli-resolver', () => {
 	beforeEach(() => {
 		_resetForTesting();
@@ -57,6 +69,7 @@ describe('sdk-cli-resolver', () => {
 			let readFileSyncSpy: ReturnType<typeof spyOn>;
 			let writeFileSyncSpy: ReturnType<typeof spyOn>;
 			let mkdirSyncSpy: ReturnType<typeof spyOn>;
+			let symlinkSyncSpy: ReturnType<typeof spyOn>;
 			let testFile: string;
 			const testContent = 'console.log("test cli");\n';
 
@@ -66,6 +79,10 @@ describe('sdk-cli-resolver', () => {
 				// Create a real test file to act as embedded CLI
 				testFile = join(tmpdir(), `neokai-test-embedded-${Date.now()}.js`);
 				fs.writeFileSync(testFile, testContent);
+
+				// Always stub symlinkSync so tests don't create real symlinks and
+				// vendor-ripgrep linking doesn't interfere with cli.js write assertions.
+				symlinkSyncSpy = spyOn(fs, 'symlinkSync').mockImplementation(() => {});
 			});
 
 			afterEach(() => {
@@ -73,6 +90,7 @@ describe('sdk-cli-resolver', () => {
 				readFileSyncSpy?.mockRestore();
 				writeFileSyncSpy?.mockRestore();
 				mkdirSyncSpy?.mockRestore();
+				symlinkSyncSpy?.mockRestore();
 				try {
 					fs.unlinkSync(testFile);
 				} catch {
@@ -81,14 +99,15 @@ describe('sdk-cli-resolver', () => {
 			});
 
 			it('extracts embedded CLI when node_modules is unavailable', () => {
-				const originalExistsSync = fs.existsSync.bind(fs);
 				const originalReadFileSync = fs.readFileSync.bind(fs);
+				const originalExistsSync = fs.existsSync.bind(fs);
 				const writtenFiles: string[] = [];
 
 				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
 					const p = String(path);
-					// Block node_modules resolution
 					if (p.includes('node_modules')) return false;
+					// Prevent ripgrep linking so writeFileSync is only called for cli.js
+					if (p.includes('vendor') && p.includes('ripgrep')) return false;
 					return originalExistsSync(p);
 				});
 
@@ -117,14 +136,11 @@ describe('sdk-cli-resolver', () => {
 			});
 
 			it('returns cached extracted path on subsequent calls', () => {
-				const originalExistsSync = fs.existsSync.bind(fs);
 				const originalReadFileSync = fs.readFileSync.bind(fs);
 
-				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
-					const p = String(path);
-					if (p.includes('node_modules')) return false;
-					return originalExistsSync(p);
-				});
+				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation(
+					makeBlockNodeModulesExistsMock()
+				);
 
 				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
 					(path: fs.PathOrFileDescriptor, options?: unknown) => {
@@ -162,16 +178,16 @@ describe('sdk-cli-resolver', () => {
 				expect(result).toBeUndefined();
 			});
 
-			it('reuses already-extracted file without re-writing', () => {
-				const originalExistsSync = fs.existsSync.bind(fs);
+			it('reuses already-extracted file without re-writing cli.js', () => {
 				const originalReadFileSync = fs.readFileSync.bind(fs);
 
+				// cli.js is already extracted; all other paths (system rg, vendor dir) are missing
+				// so linkSystemRipgrepToVendor exits early without calling mkdirSync.
 				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
 					const p = String(path);
 					if (p.includes('node_modules')) return false;
-					// Pretend the extracted file already exists
 					if (p.includes('neokai-sdk') && p.endsWith('cli.js')) return true;
-					return originalExistsSync(p);
+					return false;
 				});
 
 				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
@@ -188,9 +204,149 @@ describe('sdk-cli-resolver', () => {
 
 				expect(result).toBeDefined();
 				expect(result!).toContain('neokai-sdk');
-				// Should NOT have called mkdirSync or writeFileSync since file already exists
-				expect(mkdirSyncSpy).not.toHaveBeenCalled();
+				// cli.js was already extracted — must NOT rewrite it.
 				expect(writeFileSyncSpy).not.toHaveBeenCalled();
+				// No system rg found → vendor dir must NOT be created.
+				expect(mkdirSyncSpy).not.toHaveBeenCalled();
+			});
+
+			it('links system ripgrep to vendor path when system rg is available', () => {
+				const originalReadFileSync = fs.readFileSync.bind(fs);
+				const fakeSystemRg = '/usr/bin/rg';
+
+				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+					const p = String(path);
+					if (p.includes('node_modules')) return false;
+					// cli.js not yet extracted
+					if (p.includes('neokai-sdk') && p.endsWith('cli.js')) return false;
+					// Vendor ripgrep symlink not yet created
+					if (p.includes('vendor') && p.includes('ripgrep')) return false;
+					// System ripgrep is available
+					if (p === fakeSystemRg) return true;
+					return false;
+				});
+
+				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
+					(path: fs.PathOrFileDescriptor, options?: unknown) => {
+						return originalReadFileSync(path, options as undefined);
+					}
+				);
+
+				mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
+					() => undefined as unknown as string
+				);
+				writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+				setEmbeddedCliPath(testFile);
+				resolveSDKCliPath();
+
+				// symlinkSync should have been called to link system rg into the vendor dir
+				expect(symlinkSyncSpy).toHaveBeenCalledTimes(1);
+				const [target, linkPath] = symlinkSyncSpy.mock.calls[0] as [string, string];
+				expect(target).toBe(fakeSystemRg);
+				expect(linkPath).toContain('vendor');
+				expect(linkPath).toContain('ripgrep');
+				expect(linkPath).toEndWith('rg');
+			});
+
+			it('skips vendor ripgrep linking when system rg is not available', () => {
+				const originalReadFileSync = fs.readFileSync.bind(fs);
+
+				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+					const p = String(path);
+					if (p.includes('node_modules')) return false;
+					// All paths return false — simulates environment without system ripgrep
+					return false;
+				});
+
+				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
+					(path: fs.PathOrFileDescriptor, options?: unknown) => {
+						return originalReadFileSync(path, options as undefined);
+					}
+				);
+
+				mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
+					() => undefined as unknown as string
+				);
+				writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+				setEmbeddedCliPath(testFile);
+				resolveSDKCliPath();
+
+				// symlinkSync must NOT be called when no system ripgrep is found
+				expect(symlinkSyncSpy).not.toHaveBeenCalled();
+			});
+
+			it('skips vendor ripgrep linking when vendor symlink already exists', () => {
+				const originalReadFileSync = fs.readFileSync.bind(fs);
+				const fakeSystemRg = '/usr/bin/rg';
+
+				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+					const p = String(path);
+					if (p.includes('node_modules')) return false;
+					// cli.js is already extracted
+					if (p.includes('neokai-sdk') && p.endsWith('cli.js')) return true;
+					// Vendor ripgrep symlink already exists
+					if (p.includes('vendor') && p.endsWith('/rg')) return true;
+					// System rg available (but should not be used since vendor link exists)
+					if (p === fakeSystemRg) return true;
+					return false;
+				});
+
+				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
+					(path: fs.PathOrFileDescriptor, options?: unknown) => {
+						return originalReadFileSync(path, options as undefined);
+					}
+				);
+
+				mkdirSyncSpy = spyOn(fs, 'mkdirSync');
+				writeFileSyncSpy = spyOn(fs, 'writeFileSync');
+
+				setEmbeddedCliPath(testFile);
+				resolveSDKCliPath();
+
+				// Symlink already exists — must NOT call symlinkSync again
+				expect(symlinkSyncSpy).not.toHaveBeenCalled();
+			});
+
+			it('skips vendor ripgrep linking on Windows (win32 platform)', () => {
+				const originalReadFileSync = fs.readFileSync.bind(fs);
+
+				// Simulate Windows by temporarily overriding process.platform
+				const originalPlatform = process.platform;
+				Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+				existsSyncSpy = spyOn(fs, 'existsSync').mockImplementation((path: fs.PathLike) => {
+					const p = String(path);
+					if (p.includes('node_modules')) return false;
+					// cli.js not yet extracted
+					if (p.includes('neokai-sdk') && p.endsWith('cli.js')) return false;
+					return false;
+				});
+
+				readFileSyncSpy = spyOn(fs, 'readFileSync').mockImplementation(
+					(path: fs.PathOrFileDescriptor, options?: unknown) => {
+						return originalReadFileSync(path, options as undefined);
+					}
+				);
+
+				mkdirSyncSpy = spyOn(fs, 'mkdirSync').mockImplementation(
+					() => undefined as unknown as string
+				);
+				writeFileSyncSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+				try {
+					setEmbeddedCliPath(testFile);
+					resolveSDKCliPath();
+
+					// On Windows, linkSystemRipgrepToVendor no-ops — symlinkSync must NOT be called
+					expect(symlinkSyncSpy).not.toHaveBeenCalled();
+				} finally {
+					Object.defineProperty(process, 'platform', {
+						value: originalPlatform,
+						configurable: true,
+					});
+				}
 			});
 		});
 	});
