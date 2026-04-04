@@ -492,7 +492,23 @@ export function setupSpaceWorkflowRunHandlers(
 	// Disabled in production to prevent unauthorized gate manipulation.
 	if (process.env.NODE_ENV !== 'production')
 		messageHub.onRequest('spaceWorkflowRun.writeGateData', async (data) => {
-			const params = data as { runId: string; gateId: string; data: Record<string, unknown> };
+			const params = data as {
+				runId: string;
+				gateId: string;
+				data: Record<string, unknown>;
+				/**
+				 * When true, skip channel routing after writing gate data.
+				 * Used by E2E browser tests that seed gate data for visual assertions
+				 * without wanting to activate downstream nodes. The channel router can
+				 * reset cyclic gates (resetOnCycle: true) as a side-effect of opening
+				 * them, which would immediately wipe the data the test just wrote and
+				 * cause the canvas to show a stale "blocked" state.
+				 * Defaults to false (i.e., fireGateChanged is called as usual) so that
+				 * daemon-level integration tests still get the downstream node activation
+				 * they depend on.
+				 */
+				skipChannelRouting?: boolean;
+			};
 
 			if (!params.runId) throw new Error('runId is required');
 			if (!params.gateId) throw new Error('gateId is required');
@@ -521,8 +537,14 @@ export function setupSpaceWorkflowRunHandlers(
 					log.warn('Failed to emit space.gateData.updated:', err);
 				});
 
-			// Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
-			fireGateChanged(params.runId, params.gateId);
+			// Only trigger channel routing if skipChannelRouting is not set.
+			// E2E tests pass skipChannelRouting: true to seed gate data for visual
+			// assertions without activating downstream nodes or triggering cyclic gate
+			// resets (resetOnCycle: true gates get wiped when the cyclic channel fires,
+			// causing the canvas to show stale "blocked" state instead of the written data).
+			if (!params.skipChannelRouting) {
+				fireGateChanged(params.runId, params.gateId);
+			}
 
 			return { gateData };
 		});

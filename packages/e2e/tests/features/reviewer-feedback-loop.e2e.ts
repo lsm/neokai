@@ -95,7 +95,17 @@ async function writeGateData(
 		async ({ rid, gid, d }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-			await hub.request('spaceWorkflowRun.writeGateData', { runId: rid, gateId: gid, data: d });
+			// skipChannelRouting: true prevents the channel router from being triggered,
+			// which for cyclic gates with resetOnCycle: true would immediately wipe the
+			// gate data we just wrote (the router activates the downstream node, which
+			// increments the cycle counter and resets cyclic gate data). E2E tests only
+			// need the gate data visible on the canvas — they don't need node activation.
+			await hub.request('spaceWorkflowRun.writeGateData', {
+				runId: rid,
+				gateId: gid,
+				data: d,
+				skipChannelRouting: true,
+			});
 		},
 		{ rid: runId, gid: gateId, d: data }
 	);
