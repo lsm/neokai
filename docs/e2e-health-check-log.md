@@ -704,22 +704,52 @@ TimeoutError: page.waitForFunction: Timeout 60000ms exceeded.
 
 ### CI Run Overview
 - **Run ID**: [23971370596](https://github.com/lsm/neokai/actions/runs/23971370596)
-- **Branch**: dev (commit `b2b15114b` — `fix(e2e): stabilize neo-panel tests (#1297)`)
+- **Branch**: dev (commit `f426c2902` — `fix(e2e): stabilize neo-panel tests for Escape, backdrop click, and Cmd+J (#1297)`)
 - **Event**: push
 - **Status**: **CANCELLED** — 3 LLM matrix jobs did not complete; their outcomes are unknown
 
 ### Cancelled Jobs (outcomes unknown)
 Three LLM matrix jobs were cancelled before completing. Their test results are not available and are **not included** in the failure count below:
-- `E2E LLM (features-archive)`
 - `E2E LLM (core-context-features)`
+- `E2E LLM (features-archive)`
 - `E2E LLM (features-slash-cmd)`
 
 ### Build/Discover Jobs
-All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the run was cancelled at the E2E stage.
+- `Discover Tests`: **PASSED**
+- `Build Binary (linux-x64)`: **PASSED**
+- All unit test jobs: **SKIPPED**
 
 ### E2E Test Failures at #23971370596
 
-**26 E2E job failures** (one additional `All Tests Pass` aggregator job also failed — that is a status gate, not a test job, and is excluded from this count). The 26 failures span 5 root cause categories.
+**26 E2E job failures** (one additional `All Tests Pass` aggregator job also failed — that is a status gate, not a test job, and is excluded from this count). The 26 failures span 5 root cause categories (A–E below).
+
+**Complete list of failing jobs**:
+1. `E2E LLM (core-message-flow)` — Root Cause B
+2. `E2E LLM (core-model-selection)` — Root Cause B
+3. `E2E LLM (features-file-operations)` — Root Cause B
+4. `E2E LLM (features-message-operations)` — Root Cause B
+5. `E2E LLM (features-reference-autocomplete)` — Root Cause B
+6. `E2E LLM (features-session-operations)` — Root Cause B
+7. `E2E LLM (responsive-tablet)` — Root Cause B (tentative; may be product regression)
+8. `E2E LLM (settings-auto-title)` — Root Cause B (tentative; may be product regression)
+9. `E2E No-LLM (core-connection-resilience)` — Root Cause B
+10. `E2E No-LLM (features-neo-conversation)` — Root Cause C
+11. `E2E No-LLM (features-provider-model-switching)` — Root Cause B
+12. `E2E No-LLM (features-reviewer-feedback-loop)` — Root Cause E5
+13. `E2E No-LLM (features-space-agent-centric-workflow)` — Root Cause E4
+14. `E2E No-LLM (features-space-agent-chat)` — Root Cause E3
+15. `E2E No-LLM (features-space-approval-gate-rejection)` — Root Cause E5
+16. `E2E No-LLM (features-space-context-panel-switching)` — Root Cause E4
+17. `E2E No-LLM (features-space-creation)` — Root Causes A + D
+18. `E2E No-LLM (features-space-happy-path-pipeline)` — Root Cause A
+19. `E2E No-LLM (features-space-multi-agent-editor)` — Root Cause E5
+20. `E2E No-LLM (features-space-navigation)` — Root Cause A
+21. `E2E No-LLM (features-space-settings-crud)` — Root Cause E1
+22. `E2E No-LLM (features-space-task-creation)` — Root Causes A + D
+23. `E2E No-LLM (features-space-task-fullwidth)` — Root Causes A + D
+24. `E2E No-LLM (features-visual-workflow-editor)` — Root Cause E5
+25. `E2E No-LLM (settings-mcp-servers)` — Root Cause E5
+26. `E2E No-LLM (settings-tools-modal)` — Root Cause E2
 
 ---
 
@@ -727,7 +757,7 @@ All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the 
 
 **Background**: On space creation, built-in workflows are seeded into `spaceWorkflow`. In `SpaceIsland.tsx`, `const showCanvas = defaultWorkflow !== null` — so any seeded workflow sets `showCanvas=true`. When `showCanvas=true`, the canvas div has `hidden md:flex` and the SpaceDashboard div has `md:hidden`, making the Dashboard invisible at the 1280×720 viewport used by E2E tests. Tests that expect to see tabs, the Overview button, or the space task list therefore time out.
 
-**Failing suites**:
+**Failing suites** (5):
 | Suite | Failing Tests |
 |---|---|
 | `E2E No-LLM (features-space-navigation)` | `navigates between spaces`, `shows space dashboard on overview click` |
@@ -735,6 +765,8 @@ All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the 
 | `E2E No-LLM (features-space-task-creation)` | `creates task from space dashboard`, `task appears in task list after creation` |
 | `E2E No-LLM (features-space-creation)` | `creates space and shows tabbed dashboard layout`, `space shows Quick Actions` |
 | `E2E No-LLM (features-space-happy-path-pipeline)` | `end-to-end space pipeline`, `creates and assigns task` |
+
+Note: `features-space-creation`, `features-space-task-fullwidth`, and `features-space-task-creation` also have Root Cause D failures (see below); both root causes affect those suites.
 
 **Fix**: Delete seeded built-in workflows in E2E `beforeEach` so `defaultWorkflow` stays `null` → `showCanvas=false` → dashboard is visible.
 **Fix PR**: [#1356](https://github.com/lsm/neokai/pull/1356) — `fix(e2e): delete seeded workflows so SpaceDashboard is visible on desktop`
@@ -744,24 +776,27 @@ All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the 
 
 ### Root Cause B — Ripgrep missing from CI sandbox dependencies
 
-**Background**: The Claude SDK sandbox mode (`CLAUDE_CODE_USE_BEDROCK`-style subprocess isolation) expects the `rg` binary at a vendor path (`/tmp/neokai-sdk/vendor/ripgrep/x64-linux/rg`). The CI workflow (`.github/workflows/main.yml`) installs `bubblewrap` and `socat` but **not** `ripgrep`. When the SDK subprocess starts in CI, it immediately fails with a missing `rg` error, causing all tests that require a live SDK session to time out.
+**Background**: The Claude SDK sandbox mode expects the `rg` binary at a vendor path (`/tmp/neokai-sdk/vendor/ripgrep/x64-linux/rg`). The CI workflow (`.github/workflows/main.yml`) installs `bubblewrap` and `socat` but **not** `ripgrep`. When the SDK subprocess starts in CI, it immediately fails with a missing `rg` error, causing all tests that require a live SDK session to time out.
 
-**Failing No-LLM suites** (verified missing-ripgrep error in logs):
+**Failing No-LLM suites** (2 — sandbox error confirmed in logs):
 | Suite | Failing Tests |
 |---|---|
 | `E2E No-LLM (core-connection-resilience)` | `messages generated during disconnection are displayed upon reconnection`, `preserves message order after multiple disconnect-reconnect cycles`, `handles rapid connect-disconnect cycles` |
 | `E2E No-LLM (features-provider-model-switching)` | `switches model in model selector`, `provider list is populated`, and 6 others |
 
-**Failing LLM suites** (5 confirmed failed; 3 were cancelled before completing — see above):
-| Suite | Notes |
+**Failing LLM suites** (8 confirmed failed; 3 were cancelled — see above):
+| Suite | Classification |
 |---|---|
-| `E2E LLM (core-model-selection)` | All tests fail — session never starts |
-| `E2E LLM (features-file-operations)` | All tests fail |
-| `E2E LLM (features-session-operations)` | All tests fail |
-| `E2E LLM (features-message-operations)` | All tests fail |
-| `E2E LLM (features-reference-autocomplete)` | All tests fail (also affected by no-git-repo issue) |
+| `E2E LLM (core-model-selection)` | Likely sandbox — session never starts |
+| `E2E LLM (features-file-operations)` | Likely sandbox |
+| `E2E LLM (features-session-operations)` | Likely sandbox |
+| `E2E LLM (features-message-operations)` | Likely sandbox |
+| `E2E LLM (features-reference-autocomplete)` | Likely sandbox (also affected by no-git-repo issue) |
+| `E2E LLM (core-message-flow)` | Tentative — may be product regression |
+| `E2E LLM (responsive-tablet)` | Tentative — may be product regression |
+| `E2E LLM (settings-auto-title)` | Tentative — may be product regression |
 
-**Caveat**: Some LLM suite failures may be product regressions unrelated to ripgrep — per-test logs would be needed to distinguish sandbox failures from application failures.
+**Caveat**: The 8 LLM failures are attributed to ripgrep as the most likely cause, but per-test logs would be needed to confirm. `core-message-flow`, `responsive-tablet`, and `settings-auto-title` in particular could be unrelated product regressions — they were not in the previous run's failing list and their failure mode is not confirmed as sandbox-related.
 
 **Fix**: Add `ripgrep` to the `sudo apt-get install -y bubblewrap socat` line in `.github/workflows/main.yml`.
 **Fix PR**: [#1351](https://github.com/lsm/neokai/pull/1351) — `ci: add ripgrep to CI sandbox dependencies`
@@ -771,9 +806,9 @@ All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the 
 
 ### Root Cause C — `features-neo-conversation` needs same fixes as `features-neo-panel`
 
-**Background**: PR #1297 fixed `neo-panel.e2e.ts` by adding proper close/Escape/backdrop/Cmd+J wait helpers. The companion suite `neo-conversation.e2e.ts` has the same timing assumptions and was NOT updated in PR #1297.
+**Background**: PR #1297 fixed `neo-panel.e2e.ts` by adding proper close/Escape/backdrop/Cmd+J wait helpers. The companion suite `neo-conversation.e2e.ts` has the same timing assumptions and was NOT updated in PR #1297. (This suite was cancelled in the previous run #23914538827 and its failure was not confirmed until this run.)
 
-**Failing suite**:
+**Failing suite** (1):
 | Suite | Failing Tests |
 |---|---|
 | `E2E No-LLM (features-neo-conversation)` | `closes panel on X button click`, `closes panel on Escape key`, `closes panel on backdrop click`, `tab switching preserves conversation state` |
@@ -785,12 +820,12 @@ All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the 
 
 ### Root Cause D — NeoPanel `role="dialog"` causes Playwright strict mode violations
 
-**Background**: `SpaceDetailPanel.tsx` renders with `role="dialog" aria-modal="true"`. Several E2E tests call `page.getByRole('dialog')`, which in strict mode fails when multiple `role="dialog"` elements are present (the NeoPanel counts as one). When navigating to space views, both the NeoPanel and the space detail panel may be in the DOM simultaneously.
+**Background**: `SpaceDetailPanel.tsx` renders with `role="dialog" aria-modal="true"`. Several E2E tests call `page.getByRole('dialog')`, which in strict mode fails when multiple `role="dialog"` elements are present. When navigating to space views, both the NeoPanel and the space detail panel may be in the DOM simultaneously.
 
-**Failing suites** (overlaps with Root Cause A above — these suites fail for BOTH reasons):
+**Failing suites** (3 — all overlap with Root Cause A; both root causes cause failures in the same suites):
 | Suite | Failing Tests |
 |---|---|
-| `E2E No-LLM (features-space-creation)` | `space detail shows after creation` (strict mode violation on getByRole('dialog')) |
+| `E2E No-LLM (features-space-creation)` | `space detail shows after creation` — strict mode violation on `getByRole('dialog')` |
 | `E2E No-LLM (features-space-task-fullwidth)` | `fullwidth mode dialog transition` |
 | `E2E No-LLM (features-space-task-creation)` | `task creation form dialog` |
 
@@ -799,9 +834,7 @@ All pre-E2E pipeline jobs passed (discover, build, lint, unit tests) before the 
 
 ---
 
-### Root Cause E — Individual test selector bugs
-
-Five distinct selector/locator bugs across 7 suites:
+### Root Cause E — Individual test selector bugs and UI divergence
 
 #### E1 — `features-space-settings-crud`: Invalid regex from path with slashes
 **Tests**: All 6 tests that check `spaceWorkspacePath` visibility fail.
@@ -812,7 +845,7 @@ Five distinct selector/locator bugs across 7 suites:
 
 #### E2 — `settings-tools-modal`: `aria-label` vs `title` attribute mismatch
 **Tests**: `shows session options modal on button click`, `closes modal on X button click` (2 tests).
-**Cause**: Test uses `button[aria-label="Session options"]` but the actual button has `title="Session options"`, not an `aria-label`. The locator matches nothing, causing a timeout.
+**Cause**: Test uses `button[aria-label="Session options"]` but the actual button has `title="Session options"`. The locator matches nothing, causing a timeout.
 **Fix**: Replace with `page.getByTitle('Session options')`.
 **Fix PR**: [#1353](https://github.com/lsm/neokai/pull/1353)
 
@@ -823,13 +856,13 @@ Five distinct selector/locator bugs across 7 suites:
 **Fix PR**: [#1355](https://github.com/lsm/neokai/pull/1355)
 
 #### E4 — `features-space-agent-centric-workflow`, `features-space-context-panel-switching`: Navigation timeouts
-**Tests**: `selectOption` timeout and space click navigation timeout (1–2 tests each).
-**Cause**: Timing issues in panel/tab navigation — likely exacerbated by the SpaceDashboard visibility issue (Root Cause A) causing the click target to be `md:hidden`. May partially self-resolve once #1356 merges.
-**Status**: Likely partially fixed by Root Cause A fix (#1356).
+**Tests**: `selectOption` timeout (1 test), space click navigation timeout (2 tests).
+**Cause**: Timing issues in panel/tab navigation — likely exacerbated by the SpaceDashboard visibility issue (Root Cause A). May partially self-resolve once #1356 merges.
+**Status**: Likely partially fixed by Root Cause A fix (#1356); no dedicated fix PR.
 
 #### E5 — `features-space-approval-gate-rejection`, `features-reviewer-feedback-loop`, `features-space-multi-agent-editor`, `features-visual-workflow-editor`, `settings-mcp-servers`: UI divergence
 **Tests**: Various (1–5 tests per suite).
-**Cause**: Gate UI or multi-agent editor UI changed in recent commits; test assertions reference old element structure or text that no longer exists.
+**Cause**: Gate UI, multi-agent editor UI, or MCP settings UI changed in recent commits; test assertions reference old element structure or text that no longer exists.
 **Status**: Requires individual investigation per suite — no fix PRs open yet.
 
 ---
@@ -840,15 +873,32 @@ Five distinct selector/locator bugs across 7 suites:
 |---|---|---|
 | A — SpaceDashboard hidden | [#1356](https://github.com/lsm/neokai/pull/1356) | Open, unmerged |
 | B — Ripgrep missing in CI | [#1351](https://github.com/lsm/neokai/pull/1351) | Open, unmerged |
-| C — neo-conversation fixes | [#1357](https://github.com/lsm/neokai/pull/1357) | Open, unmerged |
+| C — neo-conversation timing | [#1357](https://github.com/lsm/neokai/pull/1357) | Open, unmerged |
 | D — dialog strict mode | [#1354](https://github.com/lsm/neokai/pull/1354) | Open, unmerged |
 | E1/E2 — space-settings-crud + tools-modal | [#1353](https://github.com/lsm/neokai/pull/1353) | Open, unmerged |
 | E3 — space-agent-chat textarea | [#1355](https://github.com/lsm/neokai/pull/1355) | Open, unmerged |
-| E4/E5 — workflow/gate UI divergence | None yet | Needs investigation |
+| E4 — navigation timeouts | See #1356 (partial) | Partially covered |
+| E5 — UI divergence (5 suites) | None yet | Needs investigation |
+
+---
+
+### Previously Failing, Now Passing
+
+The following suites were failing in run #23914538827 (2026-04-02) and **now pass** in this run:
+
+| Suite | How Fixed |
+|---|---|
+| `E2E No-LLM (features-neo-panel)` | Fixed by PR #1297 (timing stabilization) |
+| `E2E No-LLM (features-neo-settings)` | Fixed — likely benefited from same PR #1297 timing fixes |
+| `E2E No-LLM (features-app-mcp-registry)` | Fixed — root cause resolved (unknown — no dedicated PR) |
+| `E2E No-LLM (features-task-lifecycle)` | Fixed — root cause resolved (unknown — no dedicated PR) |
+| `E2E No-LLM (features-neo-chat-rendering)` | Fixed — root cause resolved (unknown — no dedicated PR) |
 
 ### Regression Summary
 
-- **Previously tracked failures** (from run #23914538827): 23 failing + 1 cancelled
-- **New run (#23971370596)**: 26 failing + 3 cancelled (LLM jobs)
-- **Increase**: The `features-neo-panel` suite is fixed by #1297 (no longer in failing list), but additional LLM suites and `features-neo-conversation` are now confirmed failing
+- **Previous run** (run #23914538827, 2026-04-02): 23 failing + 1 cancelled (`features-neo-conversation`)
+- **This run** (run #23971370596, 2026-04-04): 26 failing + 3 cancelled (LLM jobs)
+- **Improvements**: 5 suites no longer failing (neo-panel, neo-settings, app-mcp-registry, task-lifecycle, neo-chat-rendering)
+- **Net new failures**: 8 new LLM failures (ripgrep issue, 3 of which may be product regressions) + `features-neo-conversation` now confirmed failing (was cancelled previously) = 9 new
+- **Net change**: −5 resolved + 9 new = +4 → 23 + 4 − 1 (neo-conversation was already counted as cancelled, not failing) = **26**
 - **Unique root cause categories**: 5 (A–E above)
