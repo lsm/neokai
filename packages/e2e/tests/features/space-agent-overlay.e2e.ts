@@ -8,6 +8,7 @@
  *   - The agent name label is shown in the overlay header
  *   - The close button (data-testid="agent-overlay-close") dismisses the overlay
  *   - Pressing Escape also dismisses the overlay
+ *   - Clicking the translucent backdrop also dismisses the overlay
  *
  * Setup:
  *   - A unique workspace directory is created in beforeEach.
@@ -15,6 +16,10 @@
  *   - A human session is created via RPC and linked to the task as
  *     taskAgentSessionId, so "view-agent-session-btn" renders without needing
  *     a live AI session from the daemon.
+ *   - The task is transitioned to "done" status so SpaceTaskPane's useEffect
+ *     skips the ensureTaskAgentSession call (which would clear the human
+ *     session ID since it is not a real task-agent session), eliminating the
+ *     race condition between the UI mount and the test click.
  *
  * Cleanup:
  *   - Space is deleted via RPC in afterEach.
@@ -58,6 +63,15 @@ interface OverlayTestContext {
  * A human (non-AI) session is created so that `taskAgentSessionId` is
  * populated on the task — this causes SpaceTaskPane to render
  * `data-testid="view-agent-session-btn"` without requiring a live agent.
+ *
+ * The task is then set to `done` so that SpaceTaskPane's useEffect skips the
+ * `ensureTaskAgentSession` call (the effect returns early for terminal tasks).
+ * Without this, the daemon would clear the human session ID (it's not a real
+ * task-agent session), causing a race condition against the test click.
+ *
+ * For a done task, `showHeaderSessionAction = !!runtimeSpaceId && !!agentSessionId`,
+ * so the "View Agent Session" button still renders as long as `taskAgentSessionId`
+ * is set.
  */
 async function createSpaceWithTaskAndSession(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -70,28 +84,44 @@ async function createSpaceWithTaskAndSession(
 	const spaceId = await createSpaceViaRpc(page, wsPath, spaceName);
 	const taskId = await createSpaceTaskViaRpc(page, spaceId, 'Overlay test task');
 
-	// Create a human session and link it to the task as taskAgentSessionId.
-	// This avoids needing a live AI agent while still satisfying the UI condition
-	// that shows "view-agent-session-btn".
+	// Mark the task as done FIRST, then link the session. Order matters:
+	// if the task were still in 'open' status when taskAgentSessionId is set,
+	// the space runtime's tick loop could pick it up, call ensureTaskAgentSession,
+	// fail to restore the human session (it's not a real task-agent session), and
+	// clear taskAgentSessionId — a race condition that silently drops the button.
+	// By transitioning to 'done' before setting the session ID, the runtime skips
+	// this task entirely (it only processes non-terminal tasks). SpaceTaskPane also
+	// skips the ensureTaskAgentSession useEffect for terminal tasks, so the session
+	// ID stays set. The "View Agent Session" button still renders because
+	// showHeaderSessionAction = !!runtimeSpaceId && !!agentSessionId (both truthy).
 	const sessionId = await page.evaluate(
 		async ({ wsPath, spaceId, taskId }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Create a lightweight session (no AI)
-			const session = (await hub.request('session.create', {
-				workspacePath: wsPath,
-				createdBy: 'human',
-			})) as { id: string };
-
-			// Link the session to the task
+			// 1. Mark as done first — prevents the space runtime from touching it.
 			await hub.request('spaceTask.update', {
 				spaceId,
 				taskId,
-				taskAgentSessionId: session.id,
+				status: 'done',
 			});
 
-			return session.id;
+			// 2. Create a lightweight session (no AI).
+			// session.create returns { sessionId, session } — not { id }.
+			const { sessionId: newSessionId } = (await hub.request('session.create', {
+				workspacePath: wsPath,
+				createdBy: 'human',
+			})) as { sessionId: string };
+
+			// 3. Link the session to the now-done task. The runtime won't clear this
+			//    because it only processes non-terminal tasks.
+			await hub.request('spaceTask.update', {
+				spaceId,
+				taskId,
+				taskAgentSessionId: newSessionId,
+			});
+
+			return newSessionId;
 		},
 		{ wsPath, spaceId, taskId }
 	);
@@ -121,9 +151,9 @@ async function deleteSessionViaRpc(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Agent Overlay Chat', () => {
-	// Serial mode: tests share describe-scoped state (spaceId/taskId/sessionId)
-	// and each beforeEach creates a new space. Running in parallel would race on
-	// the same module-level variables and produce unpredictable failures.
+	// Serial mode: tests share describe-scoped let variables and each beforeEach
+	// creates fresh state. Serial execution ensures those variables aren't
+	// overwritten mid-test by another test's beforeEach on the same worker.
 	test.describe.configure({ mode: 'serial' });
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
@@ -251,6 +281,29 @@ test.describe('Agent Overlay Chat', () => {
 
 		// Press Escape.
 		await page.keyboard.press('Escape');
+
+		// Overlay must be gone.
+		await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
+	});
+
+	// ─── Test 6: Backdrop click dismisses the overlay ───────────────────────
+
+	test('clicking the backdrop dismisses the overlay', async ({ page }) => {
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+
+		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
+		await page.getByTestId('view-agent-session-btn').click();
+
+		// Overlay is open.
+		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+
+		// Click the translucent backdrop (the aria-hidden div that fills the left
+		// side of the screen). The slide-over panel is right-aligned (max-w-2xl),
+		// so clicking at {x:100, y:100} relative to the full-screen backdrop lands
+		// safely in the left area, away from the panel.
+		const backdrop = page.getByTestId('agent-overlay-chat').locator('[aria-hidden="true"]').first();
+		await backdrop.click({ position: { x: 100, y: 100 } });
 
 		// Overlay must be gone.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
