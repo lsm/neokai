@@ -38,7 +38,7 @@ export const SUB_SESSION_FEATURES = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Tool defaults per role
+// Tool defaults per preset agent
 // ---------------------------------------------------------------------------
 
 /** Full coding toolset: read, write, shell, search, web */
@@ -64,7 +64,7 @@ const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSear
 /**
  * Tool profiles per preset agent name. Exported for testing and external consumption.
  */
-export const ROLE_TOOLS: Record<string, string[]> = {
+export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
 	coder: CODER_TOOLS,
 	general: GENERAL_TOOLS,
 	planner: PLANNER_TOOLS,

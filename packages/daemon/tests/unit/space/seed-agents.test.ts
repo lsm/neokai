@@ -12,7 +12,7 @@ import { SpaceAgentRepository } from '../../../src/storage/repositories/space-ag
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
 import {
 	seedPresetAgents,
-	ROLE_TOOLS,
+	PRESET_AGENT_TOOLS,
 	SUB_SESSION_FEATURES,
 	getPresetAgentTemplates,
 } from '../../../src/lib/space/agents/seed-agents';
@@ -462,10 +462,10 @@ describe('preset agent exact definitions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// ROLE_TOOLS export
+// PRESET_AGENT_TOOLS export
 // ---------------------------------------------------------------------------
 
-describe('ROLE_TOOLS export', () => {
+describe('PRESET_AGENT_TOOLS export', () => {
 	const EXPECTED_CODER_TOOLS = KNOWN_TOOLS.filter(
 		(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
 	) as unknown as string[];
@@ -473,7 +473,7 @@ describe('ROLE_TOOLS export', () => {
 	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
 
 	it('has entries for all 6 preset roles', () => {
-		expect(Object.keys(ROLE_TOOLS).sort()).toEqual([
+		expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
 			'coder',
 			'general',
 			'planner',
@@ -484,30 +484,30 @@ describe('ROLE_TOOLS export', () => {
 	});
 
 	it('coder role maps to CODER_TOOLS', () => {
-		expect(ROLE_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
+		expect(PRESET_AGENT_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('general role maps to GENERAL_TOOLS (same as CODER_TOOLS)', () => {
-		expect(ROLE_TOOLS.general).toEqual(EXPECTED_CODER_TOOLS);
+		expect(PRESET_AGENT_TOOLS.general).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('planner role maps to PLANNER_TOOLS (same as CODER_TOOLS)', () => {
-		expect(ROLE_TOOLS.planner).toEqual(EXPECTED_CODER_TOOLS);
+		expect(PRESET_AGENT_TOOLS.planner).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('research role maps to RESEARCH_TOOLS (same as CODER_TOOLS)', () => {
-		expect(ROLE_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
+		expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('reviewer role maps to REVIEWER_TOOLS', () => {
-		expect(ROLE_TOOLS.reviewer).toEqual(EXPECTED_READONLY_TOOLS);
+		expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_READONLY_TOOLS);
 	});
 
 	it('qa role maps to QA_TOOLS', () => {
-		expect(ROLE_TOOLS.qa).toEqual(EXPECTED_READONLY_TOOLS);
+		expect(PRESET_AGENT_TOOLS.qa).toEqual(EXPECTED_READONLY_TOOLS);
 	});
 
-	it('ROLE_TOOLS matches what seedPresetAgents actually seeds', async () => {
+	it('PRESET_AGENT_TOOLS matches what seedPresetAgents actually seeds', async () => {
 		const db = new Database(':memory:');
 		createSpaceAgentSchema(db);
 		insertSpace(db);
@@ -519,8 +519,8 @@ describe('ROLE_TOOLS export', () => {
 
 		for (const agent of seeded) {
 			const roleKey = agent.name.toLowerCase();
-			expect(ROLE_TOOLS[roleKey]).toBeDefined();
-			expect(agent.tools).toEqual(ROLE_TOOLS[roleKey]);
+			expect(PRESET_AGENT_TOOLS[roleKey]).toBeDefined();
+			expect(agent.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
 		}
 
 		db.close();
@@ -592,11 +592,11 @@ describe('getPresetAgentTemplates', () => {
 		expect(coderTools2).not.toContain('FakeTool');
 	});
 
-	it('template tools match ROLE_TOOLS', () => {
+	it('template tools match PRESET_AGENT_TOOLS', () => {
 		const templates = getPresetAgentTemplates();
 		for (const t of templates) {
 			const roleKey = t.name.toLowerCase();
-			expect(t.tools).toEqual(ROLE_TOOLS[roleKey]);
+			expect(t.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
 		}
 	});
 });
