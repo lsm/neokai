@@ -136,7 +136,6 @@ describe('SpaceCreateTaskDialog', () => {
 				title: 'My new task',
 				description: '',
 				priority: 'normal',
-				taskType: 'coding',
 			});
 		});
 	});

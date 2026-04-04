@@ -639,7 +639,7 @@ describe('WorkflowCanvas — channel edge rendering', () => {
 
 	it('renders channel edges when nodes have task-agent channels', () => {
 		// Create nodes with task-agent channels (now passed via workflowChannels prop)
-		const agents = [makeAgent('agent-1', 'Coder')];
+		const agents = [makeAgent('agent-1', 'coder')];
 		const nodesWithChannels: WorkflowNodeData[] = [
 			{
 				step: {
