@@ -1368,3 +1368,172 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(reviewToCode!.maxCycles).toBe(5);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Agent slot prompt completeness tests
+// ---------------------------------------------------------------------------
+
+describe('all built-in workflows have non-empty agent slot prompts', () => {
+	const workflows = getBuiltInWorkflows();
+
+	test('every workflow template node has at least one agent', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				expect(node.agents.length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('every agent slot has a non-empty systemPrompt override', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					expect(agent.systemPrompt).toBeDefined();
+					expect(agent.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
+					expect(['expand', 'override']).toContain(agent.systemPrompt?.mode);
+				}
+			}
+		}
+	});
+
+	test('every agent slot has a non-empty instructions override', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					expect(agent.instructions).toBeDefined();
+					expect(agent.instructions?.value?.trim().length).toBeGreaterThan(0);
+					expect(['expand', 'override']).toContain(agent.instructions?.mode);
+				}
+			}
+		}
+	});
+
+	test('systemPrompt values contain meaningful content (at least 50 chars)', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					const len = agent.systemPrompt?.value?.trim().length ?? 0;
+					expect(len).toBeGreaterThanOrEqual(50);
+				}
+			}
+		}
+	});
+
+	test('instructions values contain meaningful content (at least 50 chars)', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					const len = agent.instructions?.value?.trim().length ?? 0;
+					expect(len).toBeGreaterThanOrEqual(50);
+				}
+			}
+		}
+	});
+});
+
+describe('CODING_WORKFLOW agent slot instructions', () => {
+	test('Code node coder has expand-mode instructions', () => {
+		const codeNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Code')!;
+		const coder = codeNode.agents[0];
+		expect(coder.instructions?.mode).toBe('expand');
+		expect(coder.instructions?.value).toContain('Expected inputs');
+		expect(coder.instructions?.value).toContain('Expected outputs');
+	});
+
+	test('Review node reviewer has expand-mode instructions', () => {
+		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const reviewer = reviewNode.agents[0];
+		expect(reviewer.instructions?.mode).toBe('expand');
+		expect(reviewer.instructions?.value).toContain('Expected inputs');
+		expect(reviewer.instructions?.value).toContain('report_done');
+	});
+});
+
+describe('RESEARCH_WORKFLOW agent slot instructions', () => {
+	test('Research node has expand-mode instructions', () => {
+		const researchNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Research')!;
+		const agent = researchNode.agents[0];
+		expect(agent.instructions?.mode).toBe('expand');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('Expected outputs');
+	});
+
+	test('Review node has expand-mode instructions', () => {
+		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const agent = reviewNode.agents[0];
+		expect(agent.instructions?.mode).toBe('expand');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('report_done');
+	});
+});
+
+describe('REVIEW_ONLY_WORKFLOW agent slot instructions', () => {
+	test('Review node has expand-mode instructions', () => {
+		const reviewNode = REVIEW_ONLY_WORKFLOW.nodes[0];
+		const agent = reviewNode.agents[0];
+		expect(agent.instructions?.mode).toBe('expand');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('report_done');
+	});
+
+	test('Review node has node-level instructions', () => {
+		expect(REVIEW_ONLY_WORKFLOW.nodes[0].instructions).toBeTruthy();
+	});
+});
+
+describe('FULL_CYCLE_CODING_WORKFLOW agent slot instructions', () => {
+	test('Planning node planner has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('plan-pr-gate');
+	});
+
+	test('Plan Review node reviewer has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('plan-approval-gate');
+	});
+
+	test('Coding node coder has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('code-pr-gate');
+	});
+
+	test('Code Review node all 3 reviewers have override-mode instructions with vote guidance', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Code Review')!;
+		expect(node.agents).toHaveLength(3);
+		for (const agent of node.agents) {
+			expect(agent.instructions?.mode).toBe('override');
+			expect(agent.instructions?.value).toContain('vote');
+			expect(agent.instructions?.value).toContain(agent.name);
+		}
+	});
+
+	test('QA node has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('qa-result-gate');
+	});
+
+	test('Done node has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('report_done');
+	});
+
+	test('Done node has node-level instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		expect(node.instructions).toBeTruthy();
+	});
+});
