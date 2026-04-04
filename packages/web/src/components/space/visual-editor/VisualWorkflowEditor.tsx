@@ -80,6 +80,7 @@ function buildTemplateCanvasSignature(
 				node.step.agents?.map((agent) => ({
 					agentId: agent.agentId ?? null,
 					name: agent.name ?? '',
+					model: agent.model ?? null,
 					systemPrompt: agent.systemPrompt ?? null,
 					instructions: agent.instructions ?? null,
 				})) ?? [],

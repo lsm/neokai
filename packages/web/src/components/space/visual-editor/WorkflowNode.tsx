@@ -167,7 +167,13 @@ export function WorkflowNode({
 	const dimensions = getVisualNodeDimensions(step);
 
 	const multi = isMultiAgentNode(step);
-	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
+	const singleSlot =
+		!multi && Array.isArray(step.agents) && step.agents.length === 1 ? step.agents[0] : null;
+	const resolvedSingleAgentId = singleSlot?.agentId ?? step.agentId;
+	const agentName =
+		singleSlot?.name ??
+		agents.find((a) => a.id === resolvedSingleAgentId)?.name ??
+		resolvedSingleAgentId;
 
 	// Build a lookup: agentName → AgentTaskState
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(

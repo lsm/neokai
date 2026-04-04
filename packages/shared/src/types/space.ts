@@ -726,6 +726,11 @@ export interface WorkflowNodeAgent {
 	 */
 	name: string;
 	/**
+	 * Optional model override for this agent slot.
+	 * When absent, the assigned SpaceAgent model is used.
+	 */
+	model?: string;
+	/**
 	 * Optional system-prompt override for this agent slot.
 	 * `mode: 'override'` replaces the agent's `systemPrompt` entirely.
 	 * `mode: 'expand'` appends the value to the agent's `systemPrompt`.
@@ -1020,6 +1025,8 @@ export interface ExportedWorkflowNodeAgent {
 	 * Mirrors `WorkflowNodeAgent.name`.
 	 */
 	name: string;
+	/** Optional model override for this agent slot. */
+	model?: string;
 	/**
 	 * Optional system-prompt override for this agent slot.
 	 * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.

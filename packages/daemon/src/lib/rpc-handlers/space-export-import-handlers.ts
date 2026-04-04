@@ -185,12 +185,14 @@ export function buildWorkflowCreateParams(
 			const entry: {
 				agentId: string;
 				name: string;
+				model?: string;
 				systemPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
 				instructions?: import('@neokai/shared').WorkflowNodeAgentOverride;
 			} = {
 				agentId: agentId ?? '',
 				name: a.name,
 			};
+			if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
 			// Normalize overrides: plain strings (legacy) → { mode: 'override', value }
 			const normalizedSP = normalizeOverride(a.systemPrompt);
 			if (normalizedSP !== undefined) entry.systemPrompt = normalizedSP;

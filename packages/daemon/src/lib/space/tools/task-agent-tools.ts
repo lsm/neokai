@@ -336,9 +336,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Build effectiveTask with optional instruction override
 			const effectiveTask = instructions ? { ...stepTask, description: instructions } : stepTask;
 
-			// Extract slot-level overrides (systemPrompt) if present.
-			// model is no longer on WorkflowNodeAgent; systemPrompt is now WorkflowNodeAgentOverride.
+			// Extract slot-level overrides when present.
 			const slotOverrides: import('../agents/custom-agent').SlotOverrides = {
+				model: agentSlot?.model,
 				systemPrompt: agentSlot?.systemPrompt,
 				instructions: agentSlot?.instructions,
 			};

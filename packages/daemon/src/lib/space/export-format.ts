@@ -74,6 +74,7 @@ const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.strin
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
+	model: z.string().min(1).optional(),
 	systemPrompt: overrideOrStringSchema.optional(),
 	instructions: overrideOrStringSchema.optional(),
 });
@@ -233,6 +234,7 @@ export function exportWorkflow(
 				agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
 				name: a.name,
 			};
+			if (a.model !== undefined) entry.model = a.model;
 			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
 			if (a.instructions !== undefined) entry.instructions = a.instructions;
 			return entry;
