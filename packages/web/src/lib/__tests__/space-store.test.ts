@@ -162,6 +162,7 @@ function makeMockHub() {
 				};
 			}
 			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			// Daemon returns Space directly (not wrapped)
 			if (method === 'space.update') return makeSpace();
@@ -244,9 +245,12 @@ describe('SpaceStore — space selection', () => {
 		expect(spaceStore.space.value?.id).toBe('space-1');
 	});
 
-	it('fetches agents and workflows on selectSpace()', async () => {
+	it('fetches agents, agent templates, and workflows on selectSpace()', async () => {
 		await spaceStore.selectSpace('space-1');
 		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', { spaceId: 'space-1' });
+		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listBuiltInTemplates', {
+			spaceId: 'space-1',
+		});
 		expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.list', { spaceId: 'space-1' });
 	});
 
@@ -312,6 +316,7 @@ describe('SpaceStore — promise-chain lock', () => {
 			if (method === 'space.overview')
 				return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
 			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			return {};
 		});
@@ -778,6 +783,109 @@ describe('SpaceStore — computed signals', () => {
 
 		spaceStore.tasks.value = [makeTask('t1', 'in_progress')];
 		expect(spaceStore.activeTasks.value.length).toBe(1);
+	});
+});
+
+describe('SpaceStore — task visibility after real-time events', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('task.created event makes the task immediately visible in tasks signal', async () => {
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.tasks.value).toEqual([]);
+
+		const task = makeTask('t-new', 'open');
+		const handler = mockEventHandlers.get('space.task.created');
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-new', task });
+
+		expect(spaceStore.tasks.value).toHaveLength(1);
+		expect(spaceStore.tasks.value[0].id).toBe('t-new');
+	});
+
+	it('task.created event updates computed activeTasks when task is in_progress', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const task = makeTask('t-active', 'in_progress');
+		const handler = mockEventHandlers.get('space.task.created');
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-active', task });
+
+		expect(spaceStore.activeTasks.value).toHaveLength(1);
+		expect(spaceStore.activeTasks.value[0].id).toBe('t-active');
+	});
+
+	it('task.updated event updates computed activeTasks reactively', async () => {
+		await spaceStore.selectSpace('space-1');
+		spaceStore.tasks.value = [makeTask('t1', 'open')];
+		expect(spaceStore.activeTasks.value).toHaveLength(0);
+
+		const updated = makeTask('t1', 'in_progress');
+		const handler = mockEventHandlers.get('space.task.updated');
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
+
+		expect(spaceStore.activeTasks.value).toHaveLength(1);
+		expect(spaceStore.activeTasks.value[0].status).toBe('in_progress');
+	});
+
+	it('task.created with workflowRunId updates tasksByRun computed', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const task = makeTask('t-wf', 'open', 'run-1');
+		const handler = mockEventHandlers.get('space.task.created');
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-wf', task });
+
+		expect(spaceStore.tasksByRun.value.get('run-1')).toHaveLength(1);
+		expect(spaceStore.standaloneTasks.value).toHaveLength(0);
+	});
+
+	it('task.created without workflowRunId updates standaloneTasks computed', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const task = makeTask('t-solo', 'open');
+		const handler = mockEventHandlers.get('space.task.created');
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't-solo', task });
+
+		expect(spaceStore.standaloneTasks.value).toHaveLength(1);
+		expect(spaceStore.standaloneTasks.value[0].id).toBe('t-solo');
+	});
+
+	it('multiple rapid task.created events accumulate correctly', async () => {
+		await spaceStore.selectSpace('space-1');
+		const handler = mockEventHandlers.get('space.task.created');
+
+		handler!({
+			sessionId: 'global',
+			spaceId: 'space-1',
+			taskId: 't1',
+			task: makeTask('t1', 'open'),
+		});
+		handler!({
+			sessionId: 'global',
+			spaceId: 'space-1',
+			taskId: 't2',
+			task: makeTask('t2', 'in_progress'),
+		});
+		handler!({
+			sessionId: 'global',
+			spaceId: 'space-1',
+			taskId: 't3',
+			task: makeTask('t3', 'blocked'),
+		});
+
+		expect(spaceStore.tasks.value).toHaveLength(3);
+		expect(spaceStore.activeTasks.value).toHaveLength(1);
+	});
+
+	it('task status transition from in_progress to done removes from activeTasks', async () => {
+		await spaceStore.selectSpace('space-1');
+		spaceStore.tasks.value = [makeTask('t1', 'in_progress')];
+		expect(spaceStore.activeTasks.value).toHaveLength(1);
+
+		const updated = makeTask('t1', 'done');
+		const handler = mockEventHandlers.get('space.task.updated');
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
+
+		expect(spaceStore.activeTasks.value).toHaveLength(0);
+		expect(spaceStore.tasks.value[0].status).toBe('done');
 	});
 });
 
@@ -1376,6 +1484,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 			if (method === 'space.overview')
 				return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
 			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			if (method === 'nodeExecution.list') return { executions: [] };
 			return {};

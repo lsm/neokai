@@ -36,6 +36,7 @@
 import { test, expect } from '../../fixtures';
 import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createUniqueSpaceDir } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
@@ -46,24 +47,14 @@ async function createSpaceWithRun(
 ): Promise<{ spaceId: string; runId: string }> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
+	// Use a unique subdirectory to avoid conflicts with other parallel tests
+	// (workspace_path has a UNIQUE constraint in the DB).
+	const wsPath = createUniqueSpaceDir(workspaceRoot, 'gate-rejection');
 
 	return page.evaluate(
 		async ({ wsPath }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-
-			// Clean up any leftover space at this workspace path (including archived).
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			try {
-				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
-				if (existing) await hub.request('space.delete', { id: existing.id });
-			} catch {
-				// Ignore cleanup errors
-			}
 
 			// Create the space (preset agents + workflow are auto-seeded by the daemon).
 			const spaceRes = (await hub.request('space.create', {
@@ -82,7 +73,7 @@ async function createSpaceWithRun(
 
 			return { spaceId, runId };
 		},
-		{ wsPath: workspaceRoot }
+		{ wsPath }
 	);
 }
 
@@ -267,8 +258,8 @@ test.describe('Approval Gate Rejection', () => {
 		await page.locator('button:has-text("Workflows")').click();
 		await expect(page.locator('text=Full-Cycle Coding Workflow')).toBeVisible({ timeout: 5000 });
 
-		// Navigate back to Dashboard — canvas should still be visible with the blocked state.
-		await page.locator('button:has-text("Dashboard")').click();
+		// Navigate back to Overview — canvas should still be visible with the blocked state.
+		await page.locator('[data-testid="space-detail-dashboard"]').click();
 		await expect(page.getByTestId('workflow-canvas')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByTestId('gate-icon-blocked')).toBeVisible({ timeout: 5000 });
 

@@ -14,6 +14,7 @@
 import type { MessageHub } from '@neokai/shared';
 import type {
 	Space,
+	SpaceCreateResult,
 	SpaceAutonomyLevel,
 	CreateSpaceParams,
 	UpdateSpaceParams,
@@ -73,26 +74,45 @@ export function setupSpaceHandlers(
 		}
 
 		const space = await spaceManager.createSpace(params);
+		const seedWarnings: string[] = [];
 
-		// Seed preset agents (Coder, General, Planner, Reviewer) for the new space.
+		// Seed preset agents (Coder, General, Planner, Reviewer, etc.) for the new space.
 		// Errors are non-fatal — the space is still usable without preset agents.
 		try {
-			await seedPresetAgents(space.id, spaceAgentManager);
+			const agentSeedResult = await seedPresetAgents(space.id, spaceAgentManager);
+			if (agentSeedResult.errors.length > 0) {
+				const failedNames = agentSeedResult.errors.map((e) => e.name).join(', ');
+				log.warn(
+					`Partial agent seed failure for space ${space.id}: ${failedNames}`,
+					agentSeedResult.errors
+				);
+				seedWarnings.push(`Failed to seed agents: ${failedNames}`);
+			}
 		} catch (err) {
 			log.warn('Failed to seed preset agents for space', space.id, err);
+			seedWarnings.push('Failed to seed preset agents');
 		}
 
 		// Seed built-in workflow templates after preset agents are available.
 		// Resolves role names ('planner', 'coder', 'general') to SpaceAgent UUIDs.
 		try {
 			const agents = spaceAgentManager.listBySpaceId(space.id);
-			seedBuiltInWorkflows(
+			const workflowSeedResult = seedBuiltInWorkflows(
 				space.id,
 				spaceWorkflowManager,
 				(name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
 			);
+			if (workflowSeedResult.errors.length > 0) {
+				const failedNames = workflowSeedResult.errors.map((e) => e.name).join(', ');
+				log.warn(
+					`Partial workflow seed failure for space ${space.id}: ${failedNames}`,
+					workflowSeedResult.errors
+				);
+				seedWarnings.push(`Failed to seed workflows: ${failedNames}`);
+			}
 		} catch (err) {
 			log.warn('Failed to seed built-in workflows for space', space.id, err);
+			seedWarnings.push('Failed to seed built-in workflows');
 		}
 
 		// Create the space's user-facing chat session.
@@ -133,6 +153,9 @@ export function setupSpaceHandlers(
 				log.warn('Failed to emit space.created:', err);
 			});
 
+		if (seedWarnings.length > 0) {
+			return { ...space, seedWarnings } satisfies SpaceCreateResult;
+		}
 		return space;
 	});
 

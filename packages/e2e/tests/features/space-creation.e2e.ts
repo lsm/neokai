@@ -2,12 +2,12 @@
  * Space Creation E2E Tests
  *
  * Verifies:
- * - Navigating to the Spaces section (Home header + Create Space button visible)
+ * - Navigating to the Spaces section (NavRail Spaces button + Create Space button visible)
  * - "Create Space" dialog opens
  * - Workspace path field is required
  * - Name auto-suggests from workspace path
  * - Creating a space navigates to it
- * - Space tabbed dashboard layout renders (Dashboard tab active with quick actions)
+ * - Space overview renders with tabbed layout (Active / Review / Done tabs)
  *
  * Setup: creates a space via dialog (UI-only)
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
@@ -15,24 +15,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-
-async function deleteSpaceByRpc(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
-): Promise<void> {
-	if (!spaceId) return;
-	try {
-		await page.evaluate(async (id) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) return;
-			await hub.request('space.delete', { id });
-		}, spaceId);
-	} catch {
-		// Best-effort cleanup
-	}
-}
 
 test.describe('Space Creation UX', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
@@ -50,7 +35,7 @@ test.describe('Space Creation UX', () => {
 
 	test.afterEach(async ({ page }) => {
 		if (createdSpaceId) {
-			await deleteSpaceByRpc(page, createdSpaceId);
+			await deleteSpaceViaRpc(page, createdSpaceId);
 			createdSpaceId = '';
 		}
 	});
@@ -113,15 +98,18 @@ test.describe('Space Creation UX', () => {
 
 	test('creates space and shows tabbed dashboard layout', async ({ page }) => {
 		const workspaceRoot = await getWorkspaceRoot(page);
+		// Use a unique subdirectory to avoid conflicts with other parallel tests
+		// (workspace_path has a UNIQUE constraint in the DB).
+		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'creation');
 
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
 		await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
 
-		// Fill workspace path with the server's workspace root (guaranteed to exist)
+		// Fill workspace path with a unique subdirectory (guaranteed to exist)
 		const pathInput = page.locator('input[placeholder*="/Users/you/projects"]');
-		await pathInput.fill(workspaceRoot);
+		await pathInput.fill(spaceWorkspacePath);
 
 		// Set a unique name to avoid conflicts
 		const nameInput = page.locator('input[placeholder="e.g., My App"]');
@@ -141,12 +129,15 @@ test.describe('Space Creation UX', () => {
 			createdSpaceId = match[1];
 		}
 
-		// Tabbed dashboard should be visible with Dashboard tab active
-		await expect(page.locator('text=Dashboard')).toBeVisible({ timeout: 5000 });
+		// Space overview should be visible after navigation
+		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
-		// On desktop, the workflow canvas panel replaces the dashboard quick actions
-		// Workflows load async after space creation; wait for the canvas SVG to appear
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 15000 });
+		// The tabbed layout with Active / Review / Done tabs should render.
+		// Tab buttons include a count badge in the accessible name (e.g. "Active 0"),
+		// so use substring matching (no exact: true) to match regardless of task count.
+		await expect(page.getByRole('button', { name: 'Active' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('button', { name: 'Review' })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('button', { name: 'Done' })).toBeVisible({ timeout: 5000 });
 	});
 
 	test('dialog can be closed with Cancel button', async ({ page }) => {

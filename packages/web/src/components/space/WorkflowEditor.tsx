@@ -11,7 +11,7 @@
  * - Save / Cancel
  */
 
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import type {
 	SpaceWorkflow,
 	SpaceAgent,
@@ -40,6 +40,10 @@ const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment']
 export interface WorkflowTemplate {
 	label: string;
 	description: string;
+	/** Template start node name. */
+	startStepName?: string;
+	/** Template end node name. */
+	endStepName?: string;
 	/** Legacy shorthand for single-agent linear templates. */
 	stepRoles?: string[]; // agent role names to look up from agent list
 	/** Rich step definitions for multi-agent templates. */
@@ -57,6 +61,8 @@ export interface WorkflowTemplateStep {
 	name: string;
 	/** Single-agent role/name lookup key. Ignored when agentSlots is provided. */
 	role?: string;
+	/** Explicit agent ID to use (skips role lookup when set). */
+	agentId?: string;
 	/** Multi-agent slot definitions for parallel node execution. */
 	agentSlots?: WorkflowTemplateAgentSlot[];
 	/** Optional default node system prompt. */
@@ -70,234 +76,13 @@ export interface WorkflowTemplateAgentSlot {
 	name: string;
 	/** Agent role/name lookup key used to assign the slot. */
 	role: string;
+	/** Explicit agent ID to use for this slot (skips role lookup when set). */
+	agentId?: string;
+	/** Optional default slot system prompt. */
+	systemPrompt?: string;
 	/** Optional default slot instructions. */
 	instructions?: string;
 }
-
-const V2_TEMPLATE_PROMPTS = {
-	planning:
-		'You are the Planning node for this workflow. Turn the task into a concrete implementation plan that downstream nodes can execute without guessing. Surface assumptions, dependencies, sequencing, and open questions explicitly.',
-	planReview:
-		'You are the Plan Review node for this workflow. Critically review the proposed plan for scope, correctness, feasibility, testing strategy, and risk. Approve only when the plan is actionable and complete.',
-	coding:
-		'You are the Coding node for this workflow. Implement the approved plan in the workspace, keep the changes reviewable, and leave the branch in a state that reviewers and QA can validate directly.',
-	codeReview:
-		'You are part of the Code Review node for this workflow. Review the implementation independently for correctness, regressions, maintainability, and test coverage. Record a clear approve or reject vote with concise reasoning.',
-	qa: 'You are the QA node for this workflow. Validate the implementation from an execution and release-readiness perspective. Run the relevant checks, confirm the reported state, and fail the handoff when issues remain.',
-	done: 'You are the Done node for this workflow. Confirm the workflow has reached a completed state and produce a concise final outcome summary without reopening work unless a blocking issue is discovered.',
-} as const;
-
-export const TEMPLATES: WorkflowTemplate[] = [
-	{
-		label: 'Coding (Plan → Code)',
-		description: 'Planner agent designs the approach, then coder implements.',
-		stepRoles: ['planner', 'coder'],
-	},
-	{
-		label: 'Research (Plan → Research)',
-		description: 'Planner agent scopes the research, then general agent executes it.',
-		stepRoles: ['planner', 'general'],
-	},
-	{
-		label: 'Quick Fix (Code only)',
-		description: 'Single coder step for focused, scope-limited changes.',
-		stepRoles: ['coder'],
-	},
-	{
-		label: 'Full-Cycle Coding Workflow',
-		description: 'Plan, review, code, then parallel code review (3 reviewers) and QA before done.',
-		steps: [
-			{
-				name: 'Planning',
-				role: 'planner',
-				systemPrompt: V2_TEMPLATE_PROMPTS.planning,
-				instructions:
-					'Break down the task into an actionable implementation plan. When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
-			},
-			{
-				name: 'Plan Review',
-				role: 'reviewer',
-				systemPrompt: V2_TEMPLATE_PROMPTS.planReview,
-				instructions:
-					'Review the implementation plan for feasibility and completeness. Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
-			},
-			{
-				name: 'Coding',
-				role: 'coder',
-				systemPrompt: V2_TEMPLATE_PROMPTS.coding,
-				instructions:
-					'Implement the approved plan. Open a pull request when done. Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
-			},
-			{
-				name: 'Code Review',
-				systemPrompt: V2_TEMPLATE_PROMPTS.codeReview,
-				agentSlots: [
-					{ name: 'Reviewer 1', role: 'reviewer' },
-					{ name: 'Reviewer 2', role: 'reviewer' },
-					{ name: 'Reviewer 3', role: 'reviewer' },
-				],
-			},
-			{
-				name: 'QA',
-				role: 'qa',
-				systemPrompt: V2_TEMPLATE_PROMPTS.qa,
-				instructions:
-					'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. Write "result: passed" to qa-result-gate if everything is green, or "result: failed" with a summary to qa-fail-gate if issues are found. If QA fails, the coder will fix the issues and all reviewers must re-vote before QA runs again.',
-			},
-			{
-				name: 'Done',
-				role: 'general',
-				systemPrompt: V2_TEMPLATE_PROMPTS.done,
-			},
-		],
-		channels: [
-			{
-				from: 'Planning',
-				to: 'Plan Review',
-				direction: 'one-way',
-				label: 'Planning -> Plan Review',
-				gateId: 'plan-pr-gate',
-			},
-			{
-				from: 'Plan Review',
-				to: 'Coding',
-				direction: 'one-way',
-				label: 'Plan Review -> Coding',
-				gateId: 'plan-approval-gate',
-			},
-			{
-				from: 'Coding',
-				to: 'Code Review',
-				direction: 'one-way',
-				label: 'Coding -> Code Review',
-				gateId: 'code-pr-gate',
-			},
-			{
-				from: 'Code Review',
-				to: 'QA',
-				direction: 'one-way',
-				label: 'Code Review -> QA',
-				gateId: 'review-votes-gate',
-			},
-			{
-				from: 'QA',
-				to: 'Done',
-				direction: 'one-way',
-				label: 'QA -> Done',
-				gateId: 'qa-result-gate',
-			},
-			{
-				from: 'QA',
-				to: 'Coding',
-				direction: 'one-way',
-
-				label: 'QA -> Coding (on fail)',
-				gateId: 'qa-fail-gate',
-			},
-			{
-				from: 'Code Review',
-				to: 'Coding',
-				direction: 'one-way',
-
-				label: 'Code Review -> Coding (on reject)',
-				gateId: 'review-reject-gate',
-			},
-			{
-				from: 'Plan Review',
-				to: 'Planning',
-				direction: 'one-way',
-
-				label: 'Plan Review -> Planning (feedback)',
-			},
-			{
-				from: 'Coding',
-				to: 'Planning',
-				direction: 'one-way',
-
-				label: 'Coding -> Planning (feedback)',
-			},
-		],
-		gates: [
-			{
-				id: 'plan-pr-gate',
-				description: 'Planning node has submitted a plan for review.',
-				fields: [
-					{
-						name: 'plan_submitted',
-						type: 'boolean',
-						writers: ['planner'],
-						check: { op: 'exists' },
-					},
-				],
-				resetOnCycle: false,
-			},
-			{
-				id: 'plan-approval-gate',
-				description: 'Plan has been reviewed and approved.',
-				fields: [
-					{
-						name: 'approved',
-						type: 'boolean',
-						writers: ['human'],
-						check: { op: '==', value: true },
-					},
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'code-pr-gate',
-				description: 'Coding node has opened or updated a pull request.',
-				fields: [
-					{ name: 'pr_created', type: 'boolean', writers: ['coder'], check: { op: 'exists' } },
-				],
-				resetOnCycle: false,
-			},
-			{
-				id: 'review-votes-gate',
-				description: 'All three reviewers have approved the code review node.',
-				fields: [
-					{
-						name: 'votes',
-						type: 'map',
-						writers: ['reviewer'],
-						check: { op: 'count', match: 'approved', min: 3 },
-					},
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'review-reject-gate',
-				description: 'Any reviewer has rejected the current changes.',
-				fields: [
-					{
-						name: 'votes',
-						type: 'map',
-						writers: ['reviewer'],
-						check: { op: 'count', match: 'rejected', min: 1 },
-					},
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'qa-result-gate',
-				description: 'QA marked the current cycle as passed.',
-				fields: [
-					{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } },
-				],
-				resetOnCycle: true,
-			},
-			{
-				id: 'qa-fail-gate',
-				description: 'QA marked the current cycle as failed.',
-				fields: [
-					{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } },
-				],
-				resetOnCycle: true,
-			},
-		],
-		tags: ['coding', 'v2', 'parallel-review'],
-	},
-];
 
 // ============================================================================
 // Helpers
@@ -328,14 +113,44 @@ function capitalizeRole(role: string): string {
 	return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
+function normalizeAgentLookup(value: string): string {
+	return value
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9]+/g, ' ')
+		.replace(/\s+/g, ' ');
+}
+
+const TEMPLATE_ROLE_ALIASES: Record<string, string[]> = {
+	planner: ['planner', 'plan'],
+	coder: ['coder', 'code', 'developer', 'engineer'],
+	reviewer: ['reviewer', 'review'],
+	research: ['research', 'researcher'],
+	qa: ['qa', 'quality', 'tester', 'test'],
+	general: ['general', 'done', 'summary'],
+};
+
+const TEMPLATE_FALLBACK_USAGE_KEY = '__template-fallback__';
+
 function resolveTemplateAgent(
 	roleOrName: string,
 	agents: SpaceAgent[],
 	usageByRole: Map<string, number>
 ): SpaceAgent | undefined {
-	const key = roleOrName.trim().toLowerCase();
+	const key = normalizeAgentLookup(roleOrName);
 	if (!key) return undefined;
-	const matches = agents.filter((a) => a.name.toLowerCase() === key);
+
+	const aliases = TEMPLATE_ROLE_ALIASES[key] ?? [key];
+	const aliasSet = new Set(aliases);
+	const matches = agents.filter((a) => {
+		const normalizedName = normalizeAgentLookup(a.name);
+		if (!normalizedName) return false;
+		if (normalizedName === key) return true;
+		if (normalizedName.includes(key)) return true;
+		const tokens = normalizedName.split(' ');
+		return tokens.some((token) => aliasSet.has(token));
+	});
+
 	if (matches.length === 0) return undefined;
 
 	// Prefer distinct matches for repeated slots of the same role, then fall back
@@ -354,6 +169,83 @@ function getTemplateStepDefs(template: WorkflowTemplate): WorkflowTemplateStep[]
 	return stepRoles.map((role) => ({ name: capitalizeRole(role), role }));
 }
 
+function extractInstructionText(
+	value:
+		| string
+		| null
+		| undefined
+		| {
+				mode: string;
+				value?: string | null;
+		  }
+): string | undefined {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed ? trimmed : undefined;
+	}
+	if (!value || typeof value !== 'object') return undefined;
+	if (typeof value.value !== 'string') return undefined;
+	const trimmed = value.value.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+/** Convert a persisted workflow into a template picker entry. */
+export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
+	const startNodeName = workflow.nodes.find((node) => node.id === workflow.startNodeId)?.name;
+	const endNodeName = workflow.nodes.find((node) => node.id === workflow.endNodeId)?.name;
+
+	const steps: WorkflowTemplateStep[] = workflow.nodes.map((node) => {
+		if ((node.agents?.length ?? 0) > 1) {
+			return {
+				name: node.name,
+				agentSlots: (node.agents ?? []).map((agent) => ({
+					name: agent.name || agent.agentId,
+					role: agent.name || agent.agentId,
+					agentId: agent.agentId,
+					systemPrompt: extractInstructionText(agent.systemPrompt),
+					instructions: extractInstructionText(agent.instructions),
+				})),
+				instructions: node.instructions,
+			};
+		}
+
+		const primary = node.agents?.[0];
+		return {
+			name: node.name,
+			role: primary?.name ?? primary?.agentId ?? '',
+			agentId: primary?.agentId,
+			systemPrompt: extractInstructionText(primary?.systemPrompt),
+			instructions: node.instructions,
+		};
+	});
+
+	return {
+		label: workflow.name,
+		description: workflow.description ?? '',
+		startStepName: startNodeName,
+		endStepName: endNodeName,
+		steps,
+		channels: (workflow.channels ?? []).map((channel) => ({
+			...channel,
+			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
+		})),
+		gates: (workflow.gates ?? []).map((gate) => ({
+			...gate,
+			fields: [...(gate.fields ?? [])],
+		})),
+		tags: [...(workflow.tags ?? [])],
+	};
+}
+
+/**
+ * Convert daemon-provided built-in template workflows into editor template entries.
+ */
+export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTemplate[] {
+	return workflows
+		.map((workflow) => workflowToTemplate(workflow))
+		.filter((template) => Boolean(template.startStepName?.trim() && template.endStepName?.trim()));
+}
+
 /**
  * Build workflow node drafts from a template definition.
  * Supports both legacy single-agent stepRoles and multi-agent steps.
@@ -367,10 +259,21 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 
 		if (Array.isArray(step.agentSlots) && step.agentSlots.length > 0) {
 			const agentSlots: WorkflowNodeAgent[] = step.agentSlots.map((slot, slotIndex) => {
-				const assigned = resolveTemplateAgent(slot.role, agents, usageByRole);
+				const assigned =
+					(slot.agentId ? agents.find((agent) => agent.id === slot.agentId) : undefined) ??
+					resolveTemplateAgent(slot.role, agents, usageByRole) ??
+					(() => {
+						const fallbackUsed = usageByRole.get(TEMPLATE_FALLBACK_USAGE_KEY) ?? 0;
+						usageByRole.set(TEMPLATE_FALLBACK_USAGE_KEY, fallbackUsed + 1);
+						if (agents.length === 0) return undefined;
+						return agents[Math.min(fallbackUsed, agents.length - 1)];
+					})();
 				return {
 					agentId: assigned?.id ?? '',
 					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
+					systemPrompt: slot.systemPrompt?.trim()
+						? { mode: 'override' as const, value: slot.systemPrompt.trim() }
+						: undefined,
 					instructions: slot.instructions?.trim()
 						? { mode: 'override' as const, value: slot.instructions.trim() }
 						: undefined,
@@ -382,16 +285,26 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				name,
 				agentId: '',
 				agents: agentSlots,
+				systemPrompt: step.systemPrompt?.trim() ?? undefined,
 				instructions: step.instructions?.trim() ?? '',
 			};
 		}
 
 		const role = step.role?.trim() ?? '';
-		const assigned = role ? resolveTemplateAgent(role, agents, usageByRole) : undefined;
+		const assigned =
+			(step.agentId ? agents.find((agent) => agent.id === step.agentId) : undefined) ??
+			(role ? resolveTemplateAgent(role, agents, usageByRole) : undefined) ??
+			(() => {
+				const fallbackUsed = usageByRole.get(TEMPLATE_FALLBACK_USAGE_KEY) ?? 0;
+				usageByRole.set(TEMPLATE_FALLBACK_USAGE_KEY, fallbackUsed + 1);
+				if (agents.length === 0) return undefined;
+				return agents[Math.min(fallbackUsed, agents.length - 1)];
+			})();
 		return {
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
+			systemPrompt: step.systemPrompt?.trim() ?? undefined,
 			instructions: step.instructions?.trim() ?? '',
 		};
 	});
@@ -502,6 +415,10 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 	const [showTemplates, setShowTemplates] = useState(false);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const availableTemplates = useMemo(
+		() => getAvailableTemplates(spaceStore.workflowTemplates.value),
+		[spaceStore.workflowTemplates.value]
+	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
 	// Determine which workflow run to use for completion indicators.
@@ -593,8 +510,25 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		const newSteps: NodeDraft[] = buildTemplateNodes(template, agents);
 		if (newSteps.length === 0) return;
 
+		const templateStartName = template.startStepName?.trim();
+		const templateEndName = template.endStepName?.trim();
+		if (!templateStartName || !templateEndName) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
+
+		const resolvedStartLocalId =
+			newSteps.find((step) => step.name === templateStartName)?.localId ?? '';
+		const resolvedEndLocalId =
+			newSteps.find((step) => step.name === templateEndName)?.localId ?? '';
+
+		if (!resolvedStartLocalId || !resolvedEndLocalId) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
+
 		setSteps(newSteps);
-		setEndNodeId(undefined);
+		setEndNodeId(resolvedEndLocalId);
 		setTransitions(newSteps.slice(1).map(() => makeDefaultCondition()));
 		setChannels(
 			(template.channels ?? []).map((channel) => ({
@@ -654,6 +588,12 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 		try {
 			// Generate IDs for new steps
 			const stepIds = steps.map((s) => s.id ?? generateUUID());
+			const localIdToPersistedId = new Map(
+				steps.map((step, index) => [step.localId, stepIds[index]])
+			);
+			const resolvedEndNodeId = endNodeId
+				? (localIdToPersistedId.get(endNodeId) ?? endNodeId)
+				: stepIds[stepIds.length - 1];
 
 			const builtNodes = steps.map((s, i) => ({
 				id: stepIds[i],
@@ -673,7 +613,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || null,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
-					endNodeId: endNodeId ?? stepIds[stepIds.length - 1],
+					endNodeId: resolvedEndNodeId,
 					tags,
 					channels: channels.length > 0 ? channels : [],
 					gates: gates.length > 0 ? gates : [],
@@ -684,7 +624,7 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					description: description.trim() || undefined,
 					nodes: builtNodes,
 					startNodeId: stepIds[0],
-					endNodeId: endNodeId || stepIds[stepIds.length - 1],
+					endNodeId: resolvedEndNodeId,
 					tags,
 					channels: channels.length > 0 ? channels : undefined,
 					gates: gates.length > 0 ? gates : undefined,
@@ -782,7 +722,14 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						</button>
 						{showTemplates && (
 							<div class="mt-3 grid grid-cols-1 gap-2">
-								{TEMPLATES.map((tpl) => (
+								{availableTemplates.length === 0 && (
+									<div class="px-4 py-3 bg-dark-850 border border-dark-700 rounded-lg">
+										<p class="text-xs text-gray-500">
+											No built-in templates are available for this space yet.
+										</p>
+									</div>
+								)}
+								{availableTemplates.map((tpl) => (
 									<button
 										key={tpl.label}
 										onClick={() => applyTemplate(tpl)}

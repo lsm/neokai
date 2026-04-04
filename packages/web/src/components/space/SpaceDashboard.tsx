@@ -1,6 +1,9 @@
 import { useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
+import { WorkflowCanvas } from './WorkflowCanvas';
+import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
+import { WorkflowRunStartDialog } from './WorkflowRunStartDialog';
 
 interface SpaceDashboardProps {
 	spaceId: string;
@@ -64,6 +67,7 @@ function TaskRow({
 		title: string;
 		status: string;
 		priority: string;
+		result?: string | null;
 		workflowRunId?: string | null;
 		updatedAt: number;
 	};
@@ -108,6 +112,14 @@ function TaskRow({
 						<span>·</span>
 						<span>{task.workflowRunId ? 'Workflow task' : 'Standalone task'}</span>
 					</div>
+					{task.status === 'blocked' && task.result && (
+						<p
+							class="mt-1.5 text-xs text-amber-300/80 line-clamp-2"
+							data-testid="task-blocked-reason"
+						>
+							{task.result}
+						</p>
+					)}
 				</div>
 			</div>
 		</button>
@@ -254,15 +266,23 @@ function buildGroups(tab: OverviewTab, tasks: typeof spaceStore.tasks.value): Ta
 }
 
 export function SpaceDashboard({
-	spaceId: _spaceId,
+	spaceId,
 	onOpenSpaceAgent: _onOpenSpaceAgent,
 	onSelectTask,
 	compact = false,
 }: SpaceDashboardProps) {
 	const [activeTab, setActiveTab] = useState<OverviewTab>('active');
+	const [showCreateTask, setShowCreateTask] = useState(false);
+	const [showStartWorkflow, setShowStartWorkflow] = useState(false);
 	const loading = spaceStore.loading.value;
 	const space = spaceStore.space.value;
 	const tasks = [...spaceStore.tasks.value].sort((a, b) => b.updatedAt - a.updatedAt);
+
+	// Pick the most recent active run (pending or in_progress), falling back to the most
+	// recently updated run so we never accidentally show an older completed run's canvas.
+	const mostRecentRun =
+		[...spaceStore.workflowRuns.value].sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+	const activeRun = spaceStore.activeRuns.value[0] ?? mostRecentRun;
 
 	if (loading) {
 		return (
@@ -298,7 +318,37 @@ export function SpaceDashboard({
 
 	return (
 		<div class={cn('flex h-full min-h-0 flex-col overflow-y-auto', compact ? 'p-4' : 'p-6')}>
-			<div class="flex w-full flex-1 min-h-0 flex-col">
+			<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
+			<WorkflowRunStartDialog
+				isOpen={showStartWorkflow}
+				onClose={() => setShowStartWorkflow(false)}
+			/>
+			<div class="flex w-full flex-1 min-h-0 flex-col gap-6">
+				<div class="flex items-center justify-end gap-2">
+					<button
+						type="button"
+						onClick={() => setShowStartWorkflow(true)}
+						class="flex items-center gap-1.5 rounded-lg border border-dark-600 bg-dark-800 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:border-dark-500 hover:bg-dark-700 hover:text-gray-100"
+					>
+						Start Workflow Run
+					</button>
+					<button
+						type="button"
+						onClick={() => setShowCreateTask(true)}
+						class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+					>
+						Create Task
+					</button>
+				</div>
+				{activeRun && (
+					<section class="rounded-[28px] border border-dark-700 bg-dark-950/70 overflow-hidden">
+						<WorkflowCanvas
+							workflowId={activeRun.workflowId}
+							runId={activeRun.id}
+							spaceId={spaceId}
+						/>
+					</section>
+				)}
 				<section class="flex flex-1 min-h-[24rem] flex-col rounded-[28px] border border-dark-700 bg-dark-950/70">
 					<div class="flex items-center gap-6 border-b border-dark-700 px-6">
 						<OverviewTabButton

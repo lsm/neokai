@@ -1,5 +1,9 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
 
 /**
  * Session Export E2E Tests
@@ -16,7 +20,7 @@ test.describe('Session Export', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
+		await waitForWebSocketConnected(page);
 		sessionId = null;
 	});
 
@@ -49,11 +53,18 @@ test.describe('Session Export', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message to have content to export
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Hello, this is a test message for export.');
-		await page.keyboard.press('Meta+Enter');
+		const messageText = 'Hello, this is a test message for export.';
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await messageInput.fill(messageText);
+		await sendButton.click();
 
-		// Wait for response
+		// Verify user message was sent (fail fast if send didn't work)
+		await expect(page.locator(`text="${messageText}"`).first()).toBeVisible({
+			timeout: 5000,
+		});
+
+		// Wait for assistant response
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});
@@ -77,11 +88,17 @@ test.describe('Session Export', () => {
 
 		// Send a test message with unique content
 		const testMessage = 'Unique export test message ' + Date.now();
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill(testMessage);
-		await page.keyboard.press('Meta+Enter');
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await messageInput.fill(testMessage);
+		await sendButton.click();
 
-		// Wait for response
+		// Verify user message was sent (fail fast if send didn't work)
+		await expect(page.locator(`text="${testMessage}"`).first()).toBeVisible({
+			timeout: 5000,
+		});
+
+		// Wait for assistant response
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});
@@ -113,11 +130,18 @@ test.describe('Session Export', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Send a test message
-		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
-		await textarea.fill('Test message for toast');
-		await page.keyboard.press('Meta+Enter');
+		const messageText = 'Test message for toast';
+		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		const sendButton = page.locator('[data-testid="send-button"]').first();
+		await messageInput.fill(messageText);
+		await sendButton.click();
 
-		// Wait for response
+		// Verify user message was sent (fail fast if send didn't work)
+		await expect(page.locator(`text="${messageText}"`).first()).toBeVisible({
+			timeout: 5000,
+		});
+
+		// Wait for assistant response
 		await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
 			timeout: 60000,
 		});

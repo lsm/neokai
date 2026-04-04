@@ -47,6 +47,7 @@ const mockAgents: Signal<SpaceAgent[]> = signal([
 	},
 ]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 
 const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
 const mockWorkflowRuns = signal<unknown[]>([]);
@@ -56,6 +57,7 @@ vi.mock('../../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			workflowTemplates: mockWorkflowTemplates,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			workflowRuns: mockWorkflowRuns,
 			createWorkflow: vi.fn(),

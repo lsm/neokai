@@ -22,6 +22,7 @@ import type { CreateSpaceWorkflowParams, UpdateSpaceWorkflowParams } from '@neok
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
+import { getBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-handlers');
@@ -81,6 +82,35 @@ export function setupSpaceWorkflowHandlers(
 		}
 
 		const workflows = workflowManager.listWorkflows(params.spaceId);
+		return { workflows };
+	});
+
+	// ─── spaceWorkflow.listBuiltInTemplates ──────────────────────────────────
+	messageHub.onRequest('spaceWorkflow.listBuiltInTemplates', async (data) => {
+		const params = data as { spaceId: string };
+
+		if (!params.spaceId) {
+			throw new Error('spaceId is required');
+		}
+
+		// Keep validation aligned with other spaceWorkflow.* handlers.
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		// Return canonical built-ins from the same source used by seeding.
+		// Clone shallowly to avoid accidental mutation of shared constants.
+		const workflows = getBuiltInWorkflows().map((workflow) => ({
+			...workflow,
+			nodes: workflow.nodes.map((node) => ({
+				...node,
+				agents: node.agents.map((agent) => ({ ...agent })),
+			})),
+			channels: workflow.channels ? [...workflow.channels] : undefined,
+			gates: workflow.gates ? [...workflow.gates] : undefined,
+			tags: [...workflow.tags],
+		}));
 		return { workflows };
 	});
 

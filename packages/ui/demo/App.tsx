@@ -1,6 +1,6 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ChevronDown, ChevronRight, Sun, Moon } from 'lucide-preact';
+import { ChevronDown, ChevronRight, ChevronUp, Sun, Moon } from 'lucide-preact';
 import { ButtonDemo } from './sections/ButtonDemo.tsx';
 import { CheckboxDemo } from './sections/CheckboxDemo.tsx';
 import { ComboboxDemo } from './sections/ComboboxDemo.tsx';
@@ -126,10 +126,13 @@ const componentSections = [
 	{ id: 'empty-states', label: 'Empty States' },
 ];
 
-// Application UI subcategories (placeholder sections for future demos)
+// Application UI subcategories
 interface SidebarSection {
 	id: string;
 	label: string;
+	// href overrides the auto-generated `#${category.id}-${section.id}` anchor.
+	// Use when the DemoSection ID uses a plain (non-prefixed) ID shared with the Components section.
+	href?: string;
 }
 
 interface SidebarCategory {
@@ -144,6 +147,7 @@ const applicationUiCategories: SidebarCategory[] = [
 		label: 'Application Shells',
 		sections: [
 			{ id: 'multi-column', label: 'Multi-column' },
+			{ id: 'multi-column-shells', label: 'Multi-column (Headless+Icon)' },
 			{ id: 'sidebar', label: 'Sidebar' },
 			{ id: 'stacked', label: 'Stacked' },
 		],
@@ -153,8 +157,10 @@ const applicationUiCategories: SidebarCategory[] = [
 		label: 'Data Display',
 		sections: [
 			{ id: 'calendars', label: 'Calendars' },
+			{ id: 'calendars-headless', label: 'Calendars (Headless+Icon)' },
 			{ id: 'description-lists', label: 'Description Lists' },
-			{ id: 'stats', label: 'Stats' },
+			// DemoSection uses plain id="stats" (shared with Components section)
+			{ id: 'stats', label: 'Stats', href: 'stats' },
 		],
 	},
 	{
@@ -173,7 +179,8 @@ const applicationUiCategories: SidebarCategory[] = [
 		label: 'Feedback',
 		sections: [
 			{ id: 'alerts', label: 'Alerts' },
-			{ id: 'empty-states', label: 'Empty States' },
+			// DemoSection uses plain id="empty-states" (shared with Components section)
+			{ id: 'empty-states', label: 'Empty States', href: 'empty-states' },
 		],
 	},
 	{
@@ -187,6 +194,7 @@ const applicationUiCategories: SidebarCategory[] = [
 			{ id: 'input-groups', label: 'Input Groups' },
 			{ id: 'radio-groups', label: 'Radio Groups' },
 			{ id: 'select-menus', label: 'Select Menus' },
+			{ id: 'select-menus-headless', label: 'Select Menus (Headless+Icon)' },
 			{ id: 'sign-in-forms', label: 'Sign-in Forms' },
 			{ id: 'textareas', label: 'Textareas' },
 			{ id: 'toggles', label: 'Toggles' },
@@ -215,25 +223,27 @@ const applicationUiCategories: SidebarCategory[] = [
 	{
 		id: 'lists',
 		label: 'Lists',
+		// These DemoSections use plain IDs shared with the Components section
 		sections: [
-			{ id: 'feeds', label: 'Feeds' },
-			{ id: 'grid-lists', label: 'Grid Lists' },
-			{ id: 'stacked-lists', label: 'Stacked Lists' },
-			{ id: 'tables', label: 'Tables' },
+			{ id: 'feeds', label: 'Feeds', href: 'feeds' },
+			{ id: 'grid-lists', label: 'Grid Lists', href: 'grid-lists' },
+			{ id: 'stacked-lists', label: 'Stacked Lists', href: 'stacked-lists' },
+			{ id: 'tables', label: 'Tables', href: 'tables' },
 		],
 	},
 	{
 		id: 'navigation',
 		label: 'Navigation',
 		sections: [
-			{ id: 'breadcrumbs', label: 'Breadcrumbs' },
+			// These DemoSections use plain IDs shared with the Components section
+			{ id: 'breadcrumbs', label: 'Breadcrumbs', href: 'breadcrumbs' },
 			{ id: 'command-palettes', label: 'Command Palettes' },
 			{ id: 'navbars', label: 'Navbars' },
-			{ id: 'pagination', label: 'Pagination' },
-			{ id: 'progress-bars', label: 'Progress Bars' },
-			{ id: 'sidebar-navigation', label: 'Sidebar Navigation' },
-			{ id: 'tabs', label: 'Tabs' },
-			{ id: 'vertical-navigation', label: 'Vertical Navigation' },
+			{ id: 'pagination', label: 'Pagination', href: 'pagination' },
+			{ id: 'progress-bars', label: 'Progress Bars', href: 'progress-bars' },
+			{ id: 'sidebar-navigation', label: 'Sidebar Navigation', href: 'sidebar-navigation' },
+			{ id: 'tabs', label: 'Tabs', href: 'tabs' },
+			{ id: 'vertical-navigation', label: 'Vertical Navigation', href: 'vertical-navigation' },
 		],
 	},
 	{
@@ -258,38 +268,84 @@ const applicationUiCategories: SidebarCategory[] = [
 
 interface CategoryProps {
 	category: SidebarCategory;
-	defaultOpen?: boolean;
+	forceOpen?: boolean;
+	activeSection: string;
+	searchQuery: string;
 }
 
-function Category({ category, defaultOpen = false }: CategoryProps) {
-	const [isOpen, setIsOpen] = useState(defaultOpen);
+function Category({ category, forceOpen, activeSection, searchQuery }: CategoryProps) {
+	const [isOpen, setIsOpen] = useState(false);
+	// Tracks whether the user has explicitly collapsed this category to prevent auto-reopen
+	const [userCollapsed, setUserCollapsed] = useState(false);
+
+	// Resolve the actual anchor id for a section (uses href override when set)
+	function sectionAnchorId(section: SidebarSection): string {
+		return section.href ?? `${category.id}-${section.id}`;
+	}
+
+	// This category contains the currently visible section
+	const hasActiveSection = category.sections.some((s) => sectionAnchorId(s) === activeSection);
+
+	// When auto-open conditions go away, clear the user-collapsed flag so the next
+	// time the section becomes active it auto-expands again
+	const autoOpen = hasActiveSection || (forceOpen ?? false);
+	useEffect(() => {
+		if (!autoOpen) {
+			setUserCollapsed(false);
+		}
+	}, [autoOpen]);
+
+	// Open if: explicitly opened by user OR (auto-open AND user hasn't explicitly closed it)
+	const shouldBeOpen = isOpen || (autoOpen && !userCollapsed);
+
+	function toggle() {
+		if (shouldBeOpen) {
+			setIsOpen(false);
+			setUserCollapsed(true);
+		} else {
+			setIsOpen(true);
+			setUserCollapsed(false);
+		}
+	}
 
 	return (
 		<li>
 			<button
 				type="button"
-				onClick={() => setIsOpen(!isOpen)}
+				onClick={toggle}
 				class="flex items-center w-full px-3 py-2 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
 			>
-				{isOpen ? (
+				{shouldBeOpen ? (
 					<ChevronDown class="w-4 h-4 mr-2 flex-shrink-0" />
 				) : (
 					<ChevronRight class="w-4 h-4 mr-2 flex-shrink-0" />
 				)}
 				{category.label}
 			</button>
-			{isOpen && (
+			{shouldBeOpen && (
 				<ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
-					{category.sections.map((section) => (
-						<li key={section.id}>
-							<a
-								href={`#${category.id}-${section.id}`}
-								class="block px-3 py-1.5 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors"
-							>
-								{section.label}
-							</a>
-						</li>
-					))}
+					{category.sections.map((section) => {
+						const anchorId = sectionAnchorId(section);
+						const isActive = anchorId === activeSection;
+						// When searching, only show sections whose label matches (not the category name)
+						const matchesSearch =
+							searchQuery === '' || section.label.toLowerCase().includes(searchQuery.toLowerCase());
+						if (!matchesSearch) return null;
+						return (
+							<li key={section.id}>
+								<a
+									href={`#${anchorId}`}
+									class={`block px-3 py-1.5 text-xs rounded transition-colors ${
+										isActive
+											? 'text-text-primary bg-surface-2 font-medium'
+											: 'text-text-tertiary hover:text-text-primary hover:bg-surface-2'
+									}`}
+								>
+									{section.label}
+								</a>
+							</li>
+						);
+					})}
 				</ul>
 			)}
 		</li>
@@ -298,6 +354,8 @@ function Category({ category, defaultOpen = false }: CategoryProps) {
 
 export function App() {
 	const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+	const [activeSection, setActiveSection] = useState<string>('');
+	const [searchQuery, setSearchQuery] = useState<string>('');
 
 	function toggleTheme() {
 		const next = theme === 'dark' ? 'light' : 'dark';
@@ -309,27 +367,99 @@ export function App() {
 		}
 	}
 
+	useEffect(() => {
+		const visibleSections = new Map<string, number>();
+
+		// Use a local variable — no need for a ref since the cleanup closure captures it
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (entry.isIntersecting) {
+						visibleSections.set(entry.target.id, entry.intersectionRatio);
+					} else {
+						visibleSections.delete(entry.target.id);
+					}
+				}
+
+				// Pick the section with the highest intersection ratio
+				let bestId = '';
+				let bestRatio = 0;
+				for (const [id, ratio] of visibleSections) {
+					if (ratio > bestRatio) {
+						bestRatio = ratio;
+						bestId = id;
+					}
+				}
+				// Clear highlight when no section is in the reading zone
+				setActiveSection(bestId);
+			},
+			{ rootMargin: '-20% 0px -70% 0px', threshold: [0, 0.1, 0.5, 1.0] }
+		);
+
+		const sections = document.querySelectorAll('section[id]');
+		for (const section of sections) {
+			observer.observe(section);
+		}
+
+		return () => {
+			observer.disconnect();
+		};
+	}, []);
+
+	// Filter component sections by search query
+	const filteredComponentSections =
+		searchQuery === ''
+			? componentSections
+			: componentSections.filter((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()));
+
+	// Filter application UI categories by search query.
+	// Only match against section labels — category-name-only matches produce empty section lists.
+	const filteredCategories =
+		searchQuery === ''
+			? applicationUiCategories
+			: applicationUiCategories.filter((cat) =>
+					cat.sections.some((s) => s.label.toLowerCase().includes(searchQuery.toLowerCase()))
+				);
+
 	return (
 		<div class="min-h-screen bg-surface-0 text-text-primary">
 			{/* Sidebar */}
-			<nav class="fixed left-0 top-0 w-64 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10">
-				<div class="p-4">
+			<nav class="fixed left-0 top-0 w-64 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10 flex flex-col">
+				<div class="p-4 flex-1">
+					{/* Search input */}
+					<div class="mb-4">
+						<input
+							type="search"
+							placeholder="Filter..."
+							value={searchQuery}
+							onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
+							class="w-full px-3 py-1.5 text-sm bg-surface-2 border border-surface-border rounded text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-surface-border"
+						/>
+					</div>
+
 					{/* Components section */}
 					<div class="mb-6">
 						<p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
 							Components
 						</p>
 						<ul class="space-y-0.5">
-							{componentSections.map((s) => (
-								<li key={s.id}>
-									<a
-										href={`#${s.id}`}
-										class="block px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-2 rounded transition-colors"
-									>
-										{s.label}
-									</a>
-								</li>
-							))}
+							{filteredComponentSections.map((s) => {
+								const isActive = s.id === activeSection;
+								return (
+									<li key={s.id}>
+										<a
+											href={`#${s.id}`}
+											class={`block px-3 py-1.5 text-sm rounded transition-colors ${
+												isActive
+													? 'text-text-primary bg-surface-2 font-medium'
+													: 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
+											}`}
+										>
+											{s.label}
+										</a>
+									</li>
+								);
+							})}
 						</ul>
 					</div>
 
@@ -339,23 +469,29 @@ export function App() {
 							Application UI
 						</p>
 						<ul class="space-y-1">
-							{applicationUiCategories.map((category) => (
+							{filteredCategories.map((category) => (
 								<Category
 									key={category.id}
 									category={category}
-									defaultOpen={[
-										'application-shells',
-										'elements',
-										'feedback',
-										'forms',
-										'headings',
-										'layout',
-										'page-examples',
-									].includes(category.id)}
+									forceOpen={searchQuery !== ''}
+									activeSection={activeSection}
+									searchQuery={searchQuery}
 								/>
 							))}
 						</ul>
 					</div>
+				</div>
+
+				{/* Scroll to top button */}
+				<div class="p-2 border-t border-surface-border">
+					<button
+						type="button"
+						onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+						class="w-full flex items-center justify-center gap-1 px-3 py-2 text-xs text-text-tertiary hover:text-text-primary hover:bg-surface-2 rounded transition-colors cursor-pointer"
+					>
+						<ChevronUp class="w-3 h-3" />
+						Scroll to top
+					</button>
 				</div>
 			</nav>
 
@@ -364,17 +500,31 @@ export function App() {
 				{/* Header */}
 				<header class="px-8 pt-10 pb-4 border-b border-surface-border flex items-start justify-between">
 					<div>
-						<h1 class="text-3xl font-bold text-text-primary">@neokai/ui — Kitchen Sink</h1>
-						<p class="mt-2 text-text-tertiary">Visual demo of all headless UI components</p>
+						<h1 class="text-3xl font-bold text-text-primary">
+							@neokai/ui — Component Library & Application UI Reference
+						</h1>
+						<p class="mt-2 text-text-tertiary">
+							364+ Tailwind Application UI examples · headless primitives · design tokens
+						</p>
 					</div>
-					<button
-						type="button"
-						onClick={toggleTheme}
-						title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-						class="mt-2 p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors cursor-pointer"
-					>
-						{theme === 'dark' ? <Sun class="w-5 h-5" /> : <Moon class="w-5 h-5" />}
-					</button>
+					<div class="flex items-center gap-2 mt-2">
+						<a
+							href="https://github.com/lsm/neokai"
+							target="_blank"
+							rel="noopener noreferrer"
+							class="py-2 px-3 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors text-sm"
+						>
+							GitHub
+						</a>
+						<button
+							type="button"
+							onClick={toggleTheme}
+							title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+							class="p-2 rounded-lg border border-surface-border text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors cursor-pointer"
+						>
+							{theme === 'dark' ? <Sun class="w-5 h-5" /> : <Moon class="w-5 h-5" />}
+						</button>
+					</div>
 				</header>
 
 				{/* Main */}

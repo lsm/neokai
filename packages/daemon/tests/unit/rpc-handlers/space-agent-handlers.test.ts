@@ -19,6 +19,7 @@ import { setupSpaceAgentHandlers } from '../../../src/lib/rpc-handlers/space-age
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
 import { setModelsCache } from '../../../src/lib/model-service';
 import {
 	createSpaceAgentSchema,
@@ -67,6 +68,21 @@ function createMockDaemonHub(): { daemonHub: DaemonHub; emitMock: ReturnType<typ
 	return { daemonHub, emitMock };
 }
 
+function createMockSpaceManager(): {
+	spaceManager: SpaceManager;
+	getSpaceMock: ReturnType<typeof mock>;
+} {
+	type GetSpaceResult = Awaited<ReturnType<SpaceManager['getSpace']>>;
+	const existingSpace = { id: 'space-1' } as unknown as Exclude<GetSpaceResult, null>;
+	const getSpaceMock = mock(async (spaceId: string): Promise<GetSpaceResult> => {
+		return spaceId === 'space-1' ? existingSpace : null;
+	});
+	const spaceManager = {
+		getSpace: getSpaceMock,
+	} as unknown as SpaceManager;
+	return { spaceManager, getSpaceMock };
+}
+
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 /** Call a registered handler and cast the result */
@@ -87,6 +103,7 @@ describe('Space Agent RPC Handlers', () => {
 	let manager: SpaceAgentManager;
 	let hubData: ReturnType<typeof createMockMessageHub>;
 	let daemonData: ReturnType<typeof createMockDaemonHub>;
+	let spaceManagerData: ReturnType<typeof createMockSpaceManager>;
 
 	beforeEach(() => {
 		db = new Database(':memory:');
@@ -97,11 +114,17 @@ describe('Space Agent RPC Handlers', () => {
 		manager = new SpaceAgentManager(repo);
 		hubData = createMockMessageHub();
 		daemonData = createMockDaemonHub();
+		spaceManagerData = createMockSpaceManager();
 
 		// Disable model validation (no models in cache)
 		setModelsCache(new Map());
 
-		setupSpaceAgentHandlers(hubData.hub, daemonData.daemonHub, manager);
+		setupSpaceAgentHandlers(
+			hubData.hub,
+			daemonData.daemonHub,
+			manager,
+			spaceManagerData.spaceManager
+		);
 	});
 
 	afterEach(() => {
@@ -111,6 +134,47 @@ describe('Space Agent RPC Handlers', () => {
 	});
 
 	// ── spaceAgent.create ────────────────────────────────────────────────────
+
+	describe('spaceAgent.listBuiltInTemplates', () => {
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.listBuiltInTemplates')).toBe(true);
+		});
+
+		it('returns built-in agent templates from seeding source', async () => {
+			const result = await call<{
+				templates: Array<{ name: string; tools: string[]; systemPrompt: string }>;
+			}>(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {
+				spaceId: 'space-1',
+			});
+
+			expect(Array.isArray(result.templates)).toBe(true);
+			expect(result.templates).toHaveLength(6);
+			expect(result.templates.map((template) => template.name).sort()).toEqual([
+				'Coder',
+				'General',
+				'Planner',
+				'QA',
+				'Research',
+				'Reviewer',
+			]);
+			for (const template of result.templates) {
+				expect(template.tools.length).toBeGreaterThan(0);
+				expect(template.systemPrompt.length).toBeGreaterThan(0);
+			}
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {})).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when space does not exist', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', { spaceId: 'missing-space' })
+			).rejects.toThrow('Space not found: missing-space');
+		});
+	});
 
 	describe('spaceAgent.create', () => {
 		it('registers the handler', () => {

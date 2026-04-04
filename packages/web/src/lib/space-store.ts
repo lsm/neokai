@@ -13,7 +13,9 @@
  * - tasks: SpaceTask list for the space
  * - workflowRuns: SpaceWorkflowRun list for the space
  * - agents: SpaceAgent list for the space
+ * - agentTemplates: Built-in agent templates from daemon seeding source
  * - workflows: SpaceWorkflow list for the space
+ * - workflowTemplates: Built-in workflow templates from daemon seeding source
  * - runtimeState: Runtime state (running/paused/stopped)
  * - nodeExecutions: NodeExecution list for all workflow runs in the space
  * - nodeExecutionsByNodeId: NodeExecutions grouped by workflow node ID
@@ -53,6 +55,14 @@ export interface SpaceWithTasks extends Space {
 	tasks: SpaceTask[];
 }
 
+export interface SpaceAgentTemplate {
+	name: string;
+	description: string;
+	tools: string[];
+	systemPrompt: string;
+	instructions: string;
+}
+
 class SpaceStore {
 	// ========================================
 	// Core Signals
@@ -85,8 +95,14 @@ class SpaceStore {
 	/** Agents configured for this space */
 	readonly agents = signal<SpaceAgent[]>([]);
 
+	/** Built-in agent templates sourced from daemon seeding definitions */
+	readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
+
 	/** Workflow definitions for this space */
 	readonly workflows = signal<SpaceWorkflow[]>([]);
+
+	/** Built-in workflow templates sourced from daemon seeding definitions */
+	readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
 
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
@@ -398,7 +414,9 @@ class SpaceStore {
 		this.tasks.value = [];
 		this.workflowRuns.value = [];
 		this.agents.value = [];
+		this.agentTemplates.value = [];
 		this.workflows.value = [];
+		this.workflowTemplates.value = [];
 		this.nodeExecutions.value = [];
 		this.runtimeState.value = null;
 		this.taskActivity.value = new Map();
@@ -688,7 +706,9 @@ class SpaceStore {
 		// Fetch agents, workflows, and node executions in parallel
 		await Promise.all([
 			this.fetchAgents(hub, resolvedId),
+			this.fetchAgentTemplates(hub, resolvedId),
 			this.fetchWorkflows(hub, resolvedId),
+			this.fetchWorkflowTemplates(hub, resolvedId),
 			this.fetchNodeExecutions(hub, resolvedId),
 		]);
 
@@ -716,6 +736,27 @@ class SpaceStore {
 	}
 
 	/**
+	 * Fetch built-in agent templates from daemon seeding source.
+	 */
+	private async fetchAgentTemplates(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+				'spaceAgent.listBuiltInTemplates',
+				{
+					spaceId,
+				}
+			);
+			this.agentTemplates.value = result?.templates ?? [];
+		} catch (err) {
+			logger.error('Failed to fetch agent templates:', err);
+			this.agentTemplates.value = [];
+		}
+	}
+
+	/**
 	 * Fetch workflow definitions for the space
 	 */
 	private async fetchWorkflows(
@@ -729,6 +770,27 @@ class SpaceStore {
 			this.workflows.value = result?.workflows ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch workflows:', err);
+		}
+	}
+
+	/**
+	 * Fetch built-in workflow templates from daemon seeding source.
+	 */
+	private async fetchWorkflowTemplates(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const result = await hub.request<{ workflows: SpaceWorkflow[] }>(
+				'spaceWorkflow.listBuiltInTemplates',
+				{
+					spaceId,
+				}
+			);
+			this.workflowTemplates.value = result?.workflows ?? [];
+		} catch (err) {
+			logger.error('Failed to fetch workflow templates:', err);
+			this.workflowTemplates.value = [];
 		}
 	}
 

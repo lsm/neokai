@@ -18,7 +18,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getModal } from '../helpers/wait-helpers';
 import { deleteRoom } from '../helpers/room-helpers';
 
 // ─── RPC Setup Helper ─────────────────────────────────────────────────────────
@@ -218,8 +218,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
-		// Dialog should appear
-		const dialog = page.locator('[role="dialog"]');
+		// Dialog should appear — use getModal() to exclude the NeoPanel which is
+		// always in the DOM with role="dialog" (just off-screen via CSS transform)
+		// and would cause a strict-mode violation with a bare [role="dialog"] selector.
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 5000 });
 
 		// Dialog must mention permanent nature and worktree cleanup

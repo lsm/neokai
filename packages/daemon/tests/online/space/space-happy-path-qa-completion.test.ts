@@ -145,7 +145,7 @@ async function setupToQaActivated(
 
 	// Step 3: code-pr-gate → Reviewers activate in parallel
 	await writeGateData(daemon, runId, 'code-pr-gate', {
-		pr_created: true,
+		pr_url: 'https://github.com/org/repo/pull/42',
 	});
 
 	const [r1, r2, r3] = await Promise.all([
@@ -435,7 +435,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 			// Complete new Coding task and re-write code-pr-gate to trigger reviewers
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'Fixed failing tests');
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_created: true,
+				pr_url: 'https://github.com/org/repo/pull/42',
 			});
 
 			const [newR1, newR2, newR3] = await Promise.all([
@@ -521,7 +521,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'Fixed failing tests');
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_created: true,
+				pr_url: 'https://github.com/org/repo/pull/42',
 			});
 
 			// Wait for all 3 reviewers to re-activate with fresh tasks
@@ -646,7 +646,7 @@ describe('Space Happy Path — QA Completion Flow', () => {
 
 			await mockAgentDone(daemon, spaceId, newCodingTask.id, 'Fixed again');
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_created: true,
+				pr_url: 'https://github.com/org/repo/pull/42',
 			});
 
 			const [newR1, newR2, newR3] = await Promise.all([

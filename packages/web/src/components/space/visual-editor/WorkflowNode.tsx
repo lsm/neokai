@@ -286,6 +286,7 @@ export function WorkflowNode({
 	// ---- Port handlers ----
 	const handleInputPortMouseDown = useCallback(
 		(e: MouseEvent) => {
+			e.preventDefault(); // prevent browser text selection while dragging from the port
 			e.stopPropagation(); // prevent card drag from starting
 			onPortMouseDown?.(stepId, 'input', e, e.currentTarget as Element);
 		},
@@ -294,6 +295,7 @@ export function WorkflowNode({
 
 	const handleOutputPortMouseDown = useCallback(
 		(e: MouseEvent) => {
+			e.preventDefault(); // keep behavior consistent across both ports
 			e.stopPropagation(); // prevent card drag from starting
 			onPortMouseDown?.(stepId, 'output', e, e.currentTarget as Element);
 		},

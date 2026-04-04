@@ -9,34 +9,25 @@
 import type { Page, Locator } from '@playwright/test';
 import { expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from './wait-helpers';
+import { createUniqueSpaceDir } from './space-helpers';
 
 // ─── Space lifecycle (RPC — infrastructure only) ───────────────────────────────
 
 export async function createSpace(page: Page, name: string): Promise<string> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
+	// Use a unique subdirectory to avoid conflicts with other parallel tests
+	// (workspace_path has a UNIQUE constraint in the DB).
+	const wsPath = createUniqueSpaceDir(workspaceRoot, 'workflow-editor');
 	return page.evaluate(
 		async ({ wsPath, spaceName }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// Clean up any leftover space at this workspace path (including archived).
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			try {
-				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
-				if (existing) await hub.request('space.delete', { id: existing.id });
-			} catch {
-				// Ignore cleanup errors
-			}
-
 			const res = await hub.request('space.create', { name: spaceName, workspacePath: wsPath });
 			return (res as { id: string }).id;
 		},
-		{ wsPath: workspaceRoot, spaceName: name }
+		{ wsPath, spaceName: name }
 	);
 }
 
@@ -72,7 +63,10 @@ export async function getDefaultAgentId(page: Page, spaceId: string): Promise<st
 export async function navigateToSpace(page: Page, spaceId: string): Promise<void> {
 	await page.goto(`/space/${spaceId}`);
 	await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
-	await expect(page.locator('text=Dashboard').first()).toBeVisible({ timeout: 15000 });
+	// Wait for the space tab bar to appear — this confirms the space data has loaded
+	// and the overview view is rendered. Using the testid avoids brittleness from
+	// tab label text changes (e.g. "Dashboard" → "Overview").
+	await expect(page.getByTestId('space-tab-bar')).toBeVisible({ timeout: 15000 });
 }
 
 // ─── Editor mode helpers ───────────────────────────────────────────────────────
@@ -88,9 +82,24 @@ export async function resetEditorModeStorage(page: Page): Promise<void> {
 	});
 }
 
-/** Navigate to Workflows tab and open the workflow editor for a new workflow. */
+/**
+ * Navigate to Workflows tab and open the workflow editor for a new workflow.
+ *
+ * The Workflows tab lives inside the Configure page (/space/:id/configure).
+ * If the current page is not the configure view, this helper first clicks the
+ * "Configure space" gear button in the context panel to get there.
+ */
 export async function openNewWorkflowEditor(page: Page): Promise<void> {
-	await page.locator('text=Workflows').first().click();
+	// Navigate to configure view if not already there.
+	const configureView = page.getByTestId('space-configure-view');
+	if (!(await configureView.isVisible().catch(() => false))) {
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(configureView).toBeVisible({ timeout: 5000 });
+	}
+
+	// Switch to Workflows tab within the configure page.
+	await page.getByTestId('space-configure-tab-workflows').click();
+
 	const createBtn = page.getByRole('button', { name: 'Create Workflow' });
 	await expect(createBtn).toBeVisible({ timeout: 5000 });
 	await createBtn.click();
@@ -123,9 +132,21 @@ export async function switchToVisualMode(page: Page): Promise<void> {
 /**
  * Open the workflow edit UI for an existing workflow in the list.
  * The edit button is CSS group-hover only, so opacity is forced via JS before clicking.
+ *
+ * The Workflows tab lives inside the Configure page (/space/:id/configure).
+ * If the current page is not the configure view, this helper first clicks the
+ * "Configure space" gear button in the context panel to get there.
  */
 export async function openWorkflowForEdit(page: Page, workflowName: string): Promise<void> {
-	await page.locator('text=Workflows').first().click();
+	// Navigate to configure view if not already there.
+	const configureView = page.getByTestId('space-configure-view');
+	if (!(await configureView.isVisible().catch(() => false))) {
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await expect(configureView).toBeVisible({ timeout: 5000 });
+	}
+
+	// Switch to Workflows tab within the configure page.
+	await page.getByTestId('space-configure-tab-workflows').click();
 	await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
 
 	const workflowCard = page
@@ -157,8 +178,8 @@ export async function openWorkflowForEdit(page: Page, workflowName: string): Pro
  * Postcondition: agents-list has 2 agent-entry items.
  *
  * @param panel - Locator scoped to the `node-config-panel` element
- * @param agentAOption - Exact option label for the first agent (e.g. "Coder Agent (coder)")
- * @param agentBOption - Exact option label for the second agent (e.g. "Reviewer Agent (reviewer)")
+ * @param agentAOption - Exact option label for the first agent (e.g. "coder" when agent name === role)
+ * @param agentBOption - Exact option label for the second agent (e.g. "reviewer" when agent name === role)
  */
 export async function setupMultiAgentStep(
 	panel: Locator,

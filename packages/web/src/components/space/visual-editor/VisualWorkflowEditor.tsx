@@ -24,9 +24,10 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks'
 import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
-import { filterAgents, TEMPLATES, buildTemplateNodes } from '../WorkflowEditor';
+import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
 import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
+import { ChannelEditor } from '../ChannelEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
@@ -57,8 +58,6 @@ import {
 // ============================================================================
 // Constants
 // ============================================================================
-
-const TAG_SUGGESTIONS = ['coding', 'review', 'research', 'design', 'deployment'];
 
 function buildTemplateCanvasSignature(
 	nodes: VisualNode[],
@@ -248,6 +247,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showRules, setShowRules] = useState(false);
+	const [showChannels, setShowChannels] = useState(true);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
 	const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
@@ -255,6 +255,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const canvasContainerRef = useRef<HTMLDivElement>(null);
 
 	const agents = filterAgents(spaceStore.agents.value);
+	const availableTemplates = useMemo(
+		() => getAvailableTemplates(spaceStore.workflowTemplates.value),
+		[spaceStore.workflowTemplates.value]
+	);
 	const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 	const regularNodes = useMemo(
 		() =>
@@ -362,6 +366,18 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		() => buildNodeAnchorUsage(routedSemanticEdges),
 		[routedSemanticEdges]
 	);
+
+	// Agent role names from all multi-agent nodes — used by ChannelEditor dropdowns.
+	const agentRolesFromNodes = useMemo<string[]>(() => {
+		const roles: string[] = [];
+		for (const node of nodes) {
+			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
+			for (const agent of node.step.agents ?? []) {
+				if (agent.name && !roles.includes(agent.name)) roles.push(agent.name);
+			}
+		}
+		return roles;
+	}, [nodes]);
 
 	const channelEdges = useMemo<ResolvedWorkflowChannel[]>(() => {
 		return routedSemanticEdges.map((edge) => ({
@@ -960,7 +976,21 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	function applyTemplate(template: WorkflowTemplate) {
 		const templateSteps = buildTemplateNodes(template, agents);
 		if (templateSteps.length === 0) return;
-		const firstLocalId = templateSteps[0].localId;
+		const templateStartName = template.startStepName?.trim();
+		const templateEndName = template.endStepName?.trim();
+		if (!templateStartName || !templateEndName) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
+		const resolvedStartLocalId =
+			templateSteps.find((step) => step.name === templateStartName)?.localId ?? '';
+		const resolvedEndLocalId =
+			templateSteps.find((step) => step.name === templateEndName)?.localId ?? '';
+
+		if (!resolvedStartLocalId || !resolvedEndLocalId) {
+			setError(`Template "${template.label}" is missing required start/end node metadata.`);
+			return;
+		}
 
 		const newNodes: VisualNode[] = templateSteps.map((step) => ({
 			step: {
@@ -1000,7 +1030,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		const positions = autoLayout(
 			layoutSteps,
 			layoutTransitions,
-			firstLocalId,
+			resolvedStartLocalId,
 			template.channels ?? []
 		);
 
@@ -1036,8 +1066,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		if (template.tags) {
 			setTags([...template.tags]);
 		}
-		setStartStepId(firstLocalId);
-		setEndNodeId(undefined);
+		setStartStepId(resolvedStartLocalId);
+		setEndNodeId(resolvedEndLocalId);
 		setSelectedNodeId(null);
 		setSelectedEdgeId(null);
 		setShowTemplates(false);
@@ -1047,9 +1077,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				nextNodes,
 				newEdges,
 				nextChannels,
-				firstLocalId,
+				resolvedStartLocalId,
 				nextGates,
-				undefined
+				resolvedEndLocalId
 			)
 		);
 		if (!name) setName(template.label);
@@ -1288,7 +1318,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 							{showTemplates && (
 								<div class="absolute top-full left-0 mt-1 w-64 bg-dark-800 border border-dark-600 rounded shadow-lg z-20 overflow-hidden">
-									{TEMPLATES.map((t) => (
+									{availableTemplates.length === 0 && (
+										<div class="px-3 py-2.5 text-xs text-gray-500 border-b border-dark-700">
+											No built-in templates available for this space.
+										</div>
+									)}
+									{availableTemplates.map((t) => (
 										<button
 											key={t.label}
 											onClick={() => handleTemplateSelection(t)}
@@ -1449,6 +1484,44 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				</ConfirmModal>
 			</div>
 
+			{/* ---- Channels (collapsible) ---- */}
+			<div class="flex-shrink-0 border-t border-dark-700">
+				{/* Toggle button is outside the scroll container so it stays visible */}
+				<div class="px-4 py-2">
+					<button
+						onClick={() => setShowChannels((v) => !v)}
+						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+						data-testid="toggle-channels-button"
+					>
+						<svg
+							class={`w-3 h-3 transition-transform ${showChannels ? 'rotate-90' : ''}`}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9 5l7 7-7 7"
+							/>
+						</svg>
+						<span class="font-semibold uppercase tracking-wider">
+							Channels {channels.length > 0 ? `(${channels.length})` : ''}
+						</span>
+					</button>
+				</div>
+				{showChannels && (
+					<div class="px-4 pb-2 max-h-48 overflow-y-auto" data-testid="channels-section">
+						<ChannelEditor
+							channels={channels}
+							onChange={setChannels}
+							agentRoles={agentRolesFromNodes}
+						/>
+					</div>
+				)}
+			</div>
+
 			{/* ---- Tags and Rules (collapsible) ---- */}
 			<div class="flex-shrink-0 border-t border-dark-700 max-h-64 overflow-y-auto">
 				{/* Tags row */}
@@ -1486,19 +1559,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 								}}
 								class="text-xs bg-transparent text-gray-300 outline-none placeholder-gray-700 min-w-[6rem]"
 							/>
-						</div>
-						{/* Tag suggestions */}
-						<div class="flex gap-1 ml-auto">
-							{TAG_SUGGESTIONS.filter((s) => !tags.includes(s)).map((s) => (
-								<button
-									key={s}
-									type="button"
-									onClick={() => addTag(s)}
-									class="text-xs text-gray-600 hover:text-gray-300 border border-dark-700 hover:border-dark-500 rounded px-1.5 py-0.5 transition-colors"
-								>
-									+{s}
-								</button>
-							))}
 						</div>
 					</div>
 				</div>

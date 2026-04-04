@@ -203,3 +203,65 @@ describe('SpaceTaskPane — composer', () => {
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
 });
+
+describe('SpaceTaskPane — blocked reason banner', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'blocked', taskAgentSessionId: 'session-ensured' })
+		);
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows blocked reason banner when task is blocked with result', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'blocked',
+				result: 'Waiting for API key configuration',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		const banner = getByTestId('task-blocked-banner');
+		expect(banner).toBeTruthy();
+		expect(banner.textContent).toContain('Blocked');
+		expect(banner.textContent).toContain('Waiting for API key configuration');
+	});
+
+	it('does not show blocked reason banner when task is blocked without result', () => {
+		mockTasks.value = [
+			makeTask({ status: 'blocked', result: null, taskAgentSessionId: 'session-abc' }),
+		];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('task-blocked-banner')).toBeNull();
+	});
+
+	it('does not show blocked banner for non-blocked tasks', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'in_progress',
+				result: 'Some result',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(queryByTestId('task-blocked-banner')).toBeNull();
+	});
+
+	it('shows status label as Blocked in the header', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'blocked',
+				result: 'Need human input',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByTestId('task-status-label').textContent).toBe('Blocked');
+	});
+});

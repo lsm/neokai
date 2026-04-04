@@ -996,6 +996,10 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ""
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
+          # Signal that the LLM will not respond in this environment.
+          # neo.isProvisioned checks this flag so AI-dependent tests are skipped
+          # rather than timing out waiting for a response from a dummy API key.
+          NEOKAI_NEO_LLM_AVAILABLE: "0"
           CI: true
 
       - name: Upload test results

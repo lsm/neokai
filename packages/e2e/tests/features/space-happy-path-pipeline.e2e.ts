@@ -13,6 +13,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
+import { createUniqueSpaceDir } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
@@ -21,23 +22,14 @@ async function createSpaceWithRun(
 ): Promise<{ spaceId: string; runId: string }> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
+	// Use a unique subdirectory to avoid conflicts with other parallel tests
+	// (workspace_path has a UNIQUE constraint in the DB).
+	const wsPath = createUniqueSpaceDir(workspaceRoot, 'happy-path');
 
 	return page.evaluate(
 		async ({ wsPath }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
-
-			const norm = (p: string) => p.replace(/^\/private/, '');
-			try {
-				const list = (await hub.request('space.list', { includeArchived: true })) as Array<{
-					id: string;
-					workspacePath: string;
-				}>;
-				const existing = list.find((s) => norm(s.workspacePath) === norm(wsPath));
-				if (existing) await hub.request('space.delete', { id: existing.id });
-			} catch {
-				// best-effort cleanup
-			}
 
 			const spaceRes = (await hub.request('space.create', {
 				name: `E2E Task-First ${Date.now()}`,
@@ -52,7 +44,7 @@ async function createSpaceWithRun(
 
 			return { spaceId: spaceRes.id, runId: runRes.run.id };
 		},
-		{ wsPath: workspaceRoot }
+		{ wsPath }
 	);
 }
 

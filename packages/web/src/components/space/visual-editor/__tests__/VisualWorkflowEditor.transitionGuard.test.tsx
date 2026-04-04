@@ -37,6 +37,7 @@ vi.mock('../WorkflowCanvas', async (importOriginal) => {
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
 const mockWorkflowRuns = signal<unknown[]>([]);
 const mockCreateWorkflow = vi.fn();
@@ -47,6 +48,7 @@ vi.mock('../../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			workflowTemplates: mockWorkflowTemplates,
 			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			workflowRuns: mockWorkflowRuns,
 			createWorkflow: mockCreateWorkflow,
@@ -93,6 +95,7 @@ beforeEach(() => {
 	capturedOnCreateTransition = null;
 	mockAgents.value = [makeAgent('agent-1', 'Planner'), makeAgent('agent-2', 'Coder')];
 	mockWorkflows.value = [];
+	mockWorkflowTemplates.value = [];
 	mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], transitions: [], tags: [] });
 	mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], transitions: [], tags: [] });
 	mockCreateWorkflow.mockClear();

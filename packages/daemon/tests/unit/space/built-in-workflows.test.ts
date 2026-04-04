@@ -6,7 +6,12 @@
  * - agentId placeholders are valid builtin role names (no 'leader')
  * - getBuiltInWorkflows() returns all four templates
  * - seedBuiltInWorkflows(): seeds all four templates with real agent IDs
+ * - seedBuiltInWorkflows(): node IDs replaced with real UUIDs (not template placeholders)
+ * - seedBuiltInWorkflows(): agent ID resolution from role names to UUIDs (case-insensitive)
+ * - seedBuiltInWorkflows(): descriptions, tags, instructions, gates, timestamps preserved
+ * - seedBuiltInWorkflows(): 2-layer prompt override modes (expand vs override) correctly seeded
  * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
+ * - seedBuiltInWorkflows(): per-workflow error isolation
  * - Export/import round-trip: isCyclic and task_result conditions are preserved
  */
 
@@ -131,37 +136,29 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('has one gate with two fields', () => {
+	test('has one gate with one field', () => {
 		expect(CODING_WORKFLOW.gates).toHaveLength(1);
 		const gate = CODING_WORKFLOW.gates![0];
 		expect(gate.id).toBe('code-ready-gate');
-		expect(gate.fields).toHaveLength(2);
+		expect(gate.fields).toHaveLength(1);
 	});
 
-	test('code-ready-gate has pr_created exists field with wildcard writer', () => {
+	test('code-ready-gate has pr_url exists field with wildcard writer', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-		const prField = gate.fields.find((f) => f.name === 'pr_created')!;
-		expect(prField.type).toBe('boolean');
+		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
+		expect(prField.type).toBe('string');
 		expect(prField.writers).toEqual(['*']);
 		expect(prField.check.op).toBe('exists');
 	});
 
-	test('code-ready-gate has worktree_clean exists field with wildcard writer', () => {
-		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
-		const cleanField = gate.fields.find((f) => f.name === 'worktree_clean')!;
-		expect(cleanField.type).toBe('boolean');
-		expect(cleanField.writers).toEqual(['*']);
-		expect(cleanField.check.op).toBe('exists');
-	});
-
-	test('code-ready-gate has a bash script that checks PR mergeability and clean worktree', () => {
+	test('code-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
-		expect(gate.script!.source).toContain('git status --porcelain');
-		expect(gate.script!.source).toContain('gh pr view --json state,mergeable,mergeStateStatus');
+		expect(gate.script!.source).toContain('gh pr view --json url,state,mergeable,mergeStateStatus');
 		expect(gate.script!.source).toContain('jq -r');
+		expect(gate.script!.source).toContain('.url');
 		expect(gate.script!.source).toContain('"OPEN"');
 		expect(gate.script!.source).toContain('.mergeable');
 		expect(gate.script!.source).toContain('"MERGEABLE"');
@@ -169,8 +166,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
 		expect(gate.script!.source).toContain('exit 1');
-		expect(gate.script!.source).toContain('pr_created');
-		expect(gate.script!.source).toContain('worktree_clean');
+		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
 	});
 
@@ -282,14 +278,14 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.spaceId).toBe('');
 	});
 
-	test('research-ready-gate has a bash script that checks PR mergeability and clean worktree', () => {
+	test('research-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
 		const gate = RESEARCH_WORKFLOW.gates!.find((g) => g.id === 'research-ready-gate')!;
 		expect(gate.script).toBeDefined();
 		expect(gate.script!.interpreter).toBe('bash');
 		expect(gate.script!.timeoutMs).toBe(30000);
-		expect(gate.script!.source).toContain('git status --porcelain');
-		expect(gate.script!.source).toContain('gh pr view --json state,mergeable,mergeStateStatus');
+		expect(gate.script!.source).toContain('gh pr view --json url,state,mergeable,mergeStateStatus');
 		expect(gate.script!.source).toContain('jq -r');
+		expect(gate.script!.source).toContain('.url');
 		expect(gate.script!.source).toContain('"OPEN"');
 		expect(gate.script!.source).toContain('.mergeable');
 		expect(gate.script!.source).toContain('"MERGEABLE"');
@@ -297,8 +293,7 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(gate.script!.source).toContain('"CLEAN"');
 		expect(gate.script!.source).toContain('"HAS_HOOKS"');
 		expect(gate.script!.source).toContain('exit 1');
-		expect(gate.script!.source).toContain('pr_created');
-		expect(gate.script!.source).toContain('worktree_clean');
+		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('not authenticated');
 	});
 
@@ -452,9 +447,10 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-pr-gate has boolean exists field with coder writer', () => {
+	test('code-pr-gate has string exists field with coder writer', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
-		expect(gate.fields[0].name).toBe('pr_created');
+		expect(gate.fields[0].name).toBe('pr_url');
+		expect(gate.fields[0].type).toBe('string');
 		expect(gate.fields[0].check.op).toBe('exists');
 		expect(gate.fields[0].writers).toContain('coder');
 		// Preserved across fix cycles -- coder updates the existing PR rather than opening a new one
@@ -1097,7 +1093,7 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
-		// 'general' is used by FULL_CYCLE_CODING_WORKFLOW (Done node).
+		// 'general' is used by FULL_CYCLE_CODING_WORKFLOW.
 		// Pre-validation catches missing roles before any workflow is persisted.
 		const brokenResolver = (role: string): string | undefined =>
 			role === 'general' ? undefined : roleMap[role];
@@ -1109,6 +1105,422 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 		// Pre-validation catches the missing role before any workflow is persisted
 		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
+	});
+
+	// ─── Return type tests ──────────────────────────────────────────────────
+
+	test('returns seeded workflow names on success', () => {
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.skipped).toBe(false);
+		expect(result.errors).toHaveLength(0);
+		expect(result.seeded).toHaveLength(4);
+		expect(result.seeded).toContain('Coding Workflow');
+		expect(result.seeded).toContain('Full-Cycle Coding Workflow');
+		expect(result.seeded).toContain('Research Workflow');
+		expect(result.seeded).toContain('Review-Only Workflow');
+	});
+
+	test('returns skipped=true when workflows already exist', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.skipped).toBe(true);
+		expect(result.seeded).toHaveLength(0);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test('per-workflow error isolation — remaining workflows seed when one createWorkflow throws', () => {
+		// Spy on createWorkflow to make one specific workflow fail
+		const originalCreate = manager.createWorkflow.bind(manager);
+		let callCount = 0;
+		manager.createWorkflow = (params) => {
+			callCount++;
+			if (callCount === 2) {
+				throw new Error('Simulated DB constraint error');
+			}
+			return originalCreate(params);
+		};
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		// 3 of 4 succeed, 1 fails
+		expect(result.seeded).toHaveLength(3);
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].error).toContain('Simulated DB constraint error');
+		expect(result.skipped).toBe(false);
+
+		// Verify 3 workflows were actually persisted
+		const workflows = manager.listWorkflows(SPACE_ID);
+		expect(workflows).toHaveLength(3);
+	});
+
+	test('per-workflow error isolation — captures error name correctly', () => {
+		const originalCreate = manager.createWorkflow.bind(manager);
+		let callCount = 0;
+		const templates = getBuiltInWorkflows();
+		manager.createWorkflow = (params) => {
+			callCount++;
+			// Fail the third workflow
+			if (callCount === 3) {
+				throw new Error('Unique constraint violation');
+			}
+			return originalCreate(params);
+		};
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.errors).toHaveLength(1);
+		// The third template name is recorded in the error
+		expect(result.errors[0].name).toBe(templates[2].name);
+		expect(result.errors[0].error).toContain('Unique constraint violation');
+	});
+
+	test('all workflows fail gracefully — returns all errors', () => {
+		manager.createWorkflow = () => {
+			throw new Error('DB is read-only');
+		};
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.seeded).toHaveLength(0);
+		expect(result.errors).toHaveLength(4);
+		expect(result.skipped).toBe(false);
+		for (const err of result.errors) {
+			expect(err.error).toContain('DB is read-only');
+		}
+	});
+
+	// ─── Node ID replacement tests ─────────────────────────────────────────
+
+	test('seeded node IDs are real UUIDs, not template placeholders', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const templatePrefixes = ['tpl-coding-', 'tpl-v2-', 'tpl-research-', 'tpl-review-'];
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			for (const node of wf.nodes) {
+				for (const prefix of templatePrefixes) {
+					expect(node.id.startsWith(prefix)).toBe(false);
+				}
+				// UUID format: 8-4-4-4-12 hex characters
+				expect(node.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			}
+		}
+	});
+
+	test('seeded startNodeId is a real UUID pointing to first node', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.startNodeId).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+			);
+			const nodeIds = new Set(wf.nodes.map((n) => n.id));
+			expect(nodeIds.has(wf.startNodeId)).toBe(true);
+		}
+	});
+
+	// ─── Description & tags preservation ────────────────────────────────────
+
+	test('all seeded workflows preserve their descriptions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const templates = getBuiltInWorkflows();
+		for (const tpl of templates) {
+			const wf = workflows.find((w) => w.name === tpl.name);
+			expect(wf).toBeDefined();
+			expect(wf!.description).toBe(tpl.description);
+		}
+	});
+
+	test('CODING_WORKFLOW seeded with coding and default tags', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		expect(wf.tags).toContain('coding');
+		expect(wf.tags).toContain('default');
+	});
+
+	test('RESEARCH_WORKFLOW seeded with research tag', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		expect(wf.tags).toContain('research');
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with review tag', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.tags).toContain('review');
+	});
+
+	// ─── Node instructions preservation ─────────────────────────────────────
+
+	test('CODING_WORKFLOW seeded nodes preserve instructions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const codeNode = wf.nodes.find((n) => n.name === 'Code');
+		expect(codeNode!.instructions).toContain('gh pr create');
+		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
+		expect(reviewNode!.instructions).toContain('report_done()');
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve instructions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const planNode = wf.nodes.find((n) => n.name === 'Planning');
+		expect(planNode!.instructions).toContain('plan-pr-gate');
+		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
+		expect(codingNode!.instructions).toContain('code-pr-gate');
+		const qaNode = wf.nodes.find((n) => n.name === 'QA');
+		expect(qaNode!.instructions).toContain('qa-result-gate');
+	});
+
+	test('RESEARCH_WORKFLOW seeded nodes preserve instructions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		const researchNode = wf.nodes.find((n) => n.name === 'Research');
+		expect(researchNode!.instructions).toContain('research-ready-gate');
+		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
+		expect(reviewNode!.instructions).toContain('report_done()');
+	});
+
+	// ─── Gate preservation per workflow ──────────────────────────────────────
+
+	test('RESEARCH_WORKFLOW seeded with one gate (research-ready-gate)', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		expect(wf.gates).toHaveLength(1);
+		expect(wf.gates![0].id).toBe('research-ready-gate');
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with no gates', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.gates ?? []).toHaveLength(0);
+	});
+
+	test('CODING_WORKFLOW gate fields are preserved during seeding', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const gate = wf.gates!.find((g) => g.id === 'code-ready-gate')!;
+		expect(gate.fields).toHaveLength(1);
+		expect(gate.fields[0].name).toBe('pr_url');
+		expect(gate.fields[0].type).toBe('string');
+		expect(gate.fields[0].check).toEqual({ op: 'exists' });
+		expect(gate.script).toBeDefined();
+		expect(gate.script!.interpreter).toBe('bash');
+		expect(gate.script!.timeoutMs).toBe(30000);
+		expect(gate.resetOnCycle).toBe(true);
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW gate resetOnCycle flags are preserved', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const planPr = wf.gates!.find((g) => g.id === 'plan-pr-gate')!;
+		expect(planPr.resetOnCycle).toBe(false);
+		const codePr = wf.gates!.find((g) => g.id === 'code-pr-gate')!;
+		expect(codePr.resetOnCycle).toBe(false);
+		const planApproval = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		expect(planApproval.resetOnCycle).toBe(true);
+		const reviewVotes = wf.gates!.find((g) => g.id === 'review-votes-gate')!;
+		expect(reviewVotes.resetOnCycle).toBe(true);
+	});
+
+	// ─── Timestamps ─────────────────────────────────────────────────────────
+
+	test('all seeded workflows have positive timestamps', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.createdAt).toBeGreaterThan(0);
+			expect(wf.updatedAt).toBeGreaterThan(0);
+		}
+	});
+
+	// ─── Agent ID resolution edge case ──────────────────────────────────────
+
+	test('agent ID resolution is case-insensitive via resolver', () => {
+		// The real call site does: agents.find(a => a.name.toLowerCase() === name.toLowerCase())
+		// Our test resolver mirrors this — verify it handles mixed-case template placeholders
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		// Templates use 'Planner', 'Coder', 'Reviewer', 'QA', 'General' (title-case)
+		// Resolver maps via toLowerCase — all should resolve
+		expect(wf.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
+		expect(wf.nodes[2].agents[0]?.agentId).toBe(CODER_ID);
+		expect(wf.nodes[4].agents[0]?.agentId).toBe(QA_ID);
+		expect(wf.nodes[5].agents[0]?.agentId).toBe(GENERAL_ID);
+	});
+
+	test('no seeded agent IDs contain template placeholder names', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'QA'];
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					expect(placeholders).not.toContain(agent.agentId);
+					// Agent ID should be a UUID, not a role name
+					expect(agent.agentId).toMatch(/^agent-[a-z]+-uuid$/);
+				}
+			}
+		}
+	});
+
+	// ─── Node name preservation ─────────────────────────────────────────────
+
+	test('all seeded workflow node names match their template definitions', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+		const templates = getBuiltInWorkflows();
+		for (const tpl of templates) {
+			const wf = workflows.find((w) => w.name === tpl.name)!;
+			const seededNames = wf.nodes.map((n) => n.name);
+			const templateNames = tpl.nodes.map((n) => n.name);
+			expect(seededNames).toEqual(templateNames);
+		}
+	});
+
+	// ─── 2-layer system prompt override design ──────────────────────────────
+
+	test('CODING_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('expand');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('CODING_WORKFLOW seeded agent slots have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('expand');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('RESEARCH_WORKFLOW seeded agent slots have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded with systemPrompt mode=expand on reviewer slot', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.nodes).toHaveLength(1);
+		const agent = wf.nodes[0].agents[0];
+		expect(agent.systemPrompt).toBeDefined();
+		expect(agent.systemPrompt!.mode).toBe('expand');
+		expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+	});
+
+	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
+		expect(wf.nodes[0].agents[0].instructions).toBeUndefined();
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW seeded with systemPrompt mode=override on all agent slots', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		for (const node of wf.nodes) {
+			for (const agent of node.agents) {
+				expect(agent.systemPrompt).toBeDefined();
+				expect(agent.systemPrompt!.mode).toBe('override');
+				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW Code Review node reviewer slots have instructions mode=override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const codeReviewNode = wf.nodes.find((n) => n.name === 'Code Review')!;
+		expect(codeReviewNode.agents).toHaveLength(3);
+		for (const agent of codeReviewNode.agents) {
+			expect(agent.instructions).toBeDefined();
+			expect(agent.instructions!.mode).toBe('override');
+			expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
+			// Each reviewer's instructions should contain their specific slot name
+			expect(agent.instructions!.value).toContain(agent.name);
+		}
+	});
+
+	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have no instructions override', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		const nonReviewNodes = wf.nodes.filter((n) => n.name !== 'Code Review');
+		expect(nonReviewNodes.length).toBe(5); // Planning, Plan Review, Coding, QA, Done
+		for (const node of nonReviewNodes) {
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeUndefined();
+			}
+		}
+	});
+
+	test('expand-mode workflows append to agent prompts while override-mode workflows replace them', () => {
+		// Structural design check: the two prompt layering strategies are correctly assigned
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const workflows = manager.listWorkflows(SPACE_ID);
+
+		// Iterative workflows (Coding, Research, Review-Only) use 'expand' — they augment
+		// the agent's base prompt with workflow-specific context
+		const expandWorkflows = [
+			CODING_WORKFLOW.name,
+			RESEARCH_WORKFLOW.name,
+			REVIEW_ONLY_WORKFLOW.name,
+		];
+		for (const name of expandWorkflows) {
+			const wf = workflows.find((w) => w.name === name)!;
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					if (agent.systemPrompt) {
+						expect(agent.systemPrompt.mode).toBe('expand');
+					}
+				}
+			}
+		}
+
+		// Full-Cycle workflow uses 'override' — nodes have specialized roles that
+		// completely replace the agent's generic prompt
+		const fullCycle = workflows.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		for (const node of fullCycle.nodes) {
+			for (const agent of node.agents) {
+				if (agent.systemPrompt) {
+					expect(agent.systemPrompt.mode).toBe('override');
+				}
+			}
+		}
 	});
 });
 
@@ -1291,5 +1703,174 @@ describe('Coding Workflow export/import round-trip', () => {
 		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Agent slot prompt completeness tests
+// ---------------------------------------------------------------------------
+
+describe('all built-in workflows have non-empty agent slot prompts', () => {
+	const workflows = getBuiltInWorkflows();
+
+	test('every workflow template node has at least one agent', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				expect(node.agents.length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	test('every agent slot has a non-empty systemPrompt override', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					expect(agent.systemPrompt).toBeDefined();
+					expect(agent.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
+					expect(['expand', 'override']).toContain(agent.systemPrompt?.mode);
+				}
+			}
+		}
+	});
+
+	test('every agent slot has a non-empty instructions override', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					expect(agent.instructions).toBeDefined();
+					expect(agent.instructions?.value?.trim().length).toBeGreaterThan(0);
+					expect(['expand', 'override']).toContain(agent.instructions?.mode);
+				}
+			}
+		}
+	});
+
+	test('systemPrompt values contain meaningful content (at least 50 chars)', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					const len = agent.systemPrompt?.value?.trim().length ?? 0;
+					expect(len).toBeGreaterThanOrEqual(50);
+				}
+			}
+		}
+	});
+
+	test('instructions values contain meaningful content (at least 50 chars)', () => {
+		for (const wf of workflows) {
+			for (const node of wf.nodes) {
+				for (const agent of node.agents) {
+					const len = agent.instructions?.value?.trim().length ?? 0;
+					expect(len).toBeGreaterThanOrEqual(50);
+				}
+			}
+		}
+	});
+});
+
+describe('CODING_WORKFLOW agent slot instructions', () => {
+	test('Code node coder has expand-mode instructions', () => {
+		const codeNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Code')!;
+		const coder = codeNode.agents[0];
+		expect(coder.instructions?.mode).toBe('expand');
+		expect(coder.instructions?.value).toContain('Expected inputs');
+		expect(coder.instructions?.value).toContain('Expected outputs');
+	});
+
+	test('Review node reviewer has expand-mode instructions', () => {
+		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const reviewer = reviewNode.agents[0];
+		expect(reviewer.instructions?.mode).toBe('expand');
+		expect(reviewer.instructions?.value).toContain('Expected inputs');
+		expect(reviewer.instructions?.value).toContain('report_done');
+	});
+});
+
+describe('RESEARCH_WORKFLOW agent slot instructions', () => {
+	test('Research node has expand-mode instructions', () => {
+		const researchNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Research')!;
+		const agent = researchNode.agents[0];
+		expect(agent.instructions?.mode).toBe('expand');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('Expected outputs');
+	});
+
+	test('Review node has expand-mode instructions', () => {
+		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const agent = reviewNode.agents[0];
+		expect(agent.instructions?.mode).toBe('expand');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('report_done');
+	});
+});
+
+describe('REVIEW_ONLY_WORKFLOW agent slot instructions', () => {
+	test('Review node has expand-mode instructions', () => {
+		const reviewNode = REVIEW_ONLY_WORKFLOW.nodes[0];
+		const agent = reviewNode.agents[0];
+		expect(agent.instructions?.mode).toBe('expand');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('report_done');
+	});
+
+	test('Review node has node-level instructions', () => {
+		expect(REVIEW_ONLY_WORKFLOW.nodes[0].instructions).toBeTruthy();
+	});
+});
+
+describe('FULL_CYCLE_CODING_WORKFLOW agent slot instructions', () => {
+	test('Planning node planner has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('plan-pr-gate');
+	});
+
+	test('Plan Review node reviewer has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('plan-approval-gate');
+	});
+
+	test('Coding node coder has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('code-pr-gate');
+	});
+
+	test('Code Review node all 3 reviewers have override-mode instructions with vote guidance', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Code Review')!;
+		expect(node.agents).toHaveLength(3);
+		for (const agent of node.agents) {
+			expect(agent.instructions?.mode).toBe('override');
+			expect(agent.instructions?.value).toContain('vote');
+			expect(agent.instructions?.value).toContain(agent.name);
+		}
+	});
+
+	test('QA node has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('qa-result-gate');
+	});
+
+	test('Done node has override-mode instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		const agent = node.agents[0];
+		expect(agent.instructions?.mode).toBe('override');
+		expect(agent.instructions?.value).toContain('Expected inputs');
+		expect(agent.instructions?.value).toContain('report_done');
+	});
+
+	test('Done node has node-level instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		expect(node.instructions).toBeTruthy();
 	});
 });

@@ -4,9 +4,10 @@
  *
  * Tests:
  * - Renders space name, description, workspace path
+ * - Renders instructions and backgroundContext editors
  * - Save Changes button only shown when form is dirty
- * - Calls space.update RPC with trimmed values on save
- * - Discard button resets form to original values
+ * - Calls space.update RPC with trimmed values on save (including instructions/backgroundContext)
+ * - Discard button resets form to original values (including instructions/backgroundContext)
  * - Shows error when not connected
  * - Archive button calls space.archive and navigates away
  * - Delete button calls space.delete and navigates away
@@ -147,6 +148,8 @@ describe('SpaceSettings', () => {
 				id: 'space-1',
 				name: 'Updated Name',
 				description: 'Original description',
+				instructions: undefined,
+				backgroundContext: undefined,
 			});
 		});
 	});
@@ -292,6 +295,108 @@ describe('SpaceSettings', () => {
 		});
 
 		resolveDelete!();
+	});
+
+	it('renders instructions and backgroundContext textareas', () => {
+		const space = makeSpace({
+			instructions: 'Use TypeScript strict mode',
+			backgroundContext: 'Bun + Hono backend',
+		});
+		const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
+		expect(getByDisplayValue('Use TypeScript strict mode')).toBeTruthy();
+		expect(getByDisplayValue('Bun + Hono backend')).toBeTruthy();
+		// Check labels are rendered
+		expect(getByText('Instructions')).toBeTruthy();
+		expect(getByText('Background Context')).toBeTruthy();
+	});
+
+	it('shows Save Changes when instructions is changed', () => {
+		const space = makeSpace();
+		const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
+		fireEvent.input(
+			getByPlaceholderText(
+				'e.g. Always use TypeScript strict mode. Prefer functional components...'
+			),
+			{ target: { value: 'New instructions' } }
+		);
+		expect(getByText('Save Changes')).toBeTruthy();
+	});
+
+	it('shows Save Changes when backgroundContext is changed', () => {
+		const space = makeSpace();
+		const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
+		fireEvent.input(
+			getByPlaceholderText(
+				'e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS...'
+			),
+			{ target: { value: 'New context' } }
+		);
+		expect(getByText('Save Changes')).toBeTruthy();
+	});
+
+	it('includes instructions and backgroundContext in space.update payload', async () => {
+		mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+		mockRequest.mockResolvedValue({});
+
+		const space = makeSpace();
+		const { getByDisplayValue, getByPlaceholderText, getByText } = render(
+			<SpaceSettings space={space} />
+		);
+
+		fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'Updated' } });
+		fireEvent.input(
+			getByPlaceholderText(
+				'e.g. Always use TypeScript strict mode. Prefer functional components...'
+			),
+			{ target: { value: '  Use strict mode  ' } }
+		);
+		fireEvent.input(
+			getByPlaceholderText(
+				'e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS...'
+			),
+			{ target: { value: '  Bun + Hono  ' } }
+		);
+		fireEvent.click(getByText('Save Changes'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('space.update', {
+				id: 'space-1',
+				name: 'Updated',
+				description: 'Original description',
+				instructions: 'Use strict mode',
+				backgroundContext: 'Bun + Hono',
+			});
+		});
+	});
+
+	it('Discard resets instructions and backgroundContext to original values', () => {
+		const space = makeSpace({
+			instructions: 'Original instructions',
+			backgroundContext: 'Original context',
+		});
+		const { getByDisplayValue, getByText, queryByText } = render(<SpaceSettings space={space} />);
+
+		// Change instructions
+		fireEvent.input(getByDisplayValue('Original instructions'), {
+			target: { value: 'Changed instructions' },
+		});
+		expect(getByText('Save Changes')).toBeTruthy();
+
+		// Discard
+		fireEvent.click(getByText('Discard'));
+		expect(queryByText('Save Changes')).toBeNull();
+		expect(getByDisplayValue('Original instructions')).toBeTruthy();
+		expect(getByDisplayValue('Original context')).toBeTruthy();
+	});
+
+	it('shows character count for instructions and backgroundContext', () => {
+		const space = makeSpace({
+			instructions: 'hello',
+			backgroundContext: 'world!',
+		});
+		const { getByText } = render(<SpaceSettings space={space} />);
+		expect(getByText('5 characters')).toBeTruthy();
+		expect(getByText('6 characters')).toBeTruthy();
 	});
 
 	it('calls spaceExport.bundle when Export Bundle is clicked', async () => {

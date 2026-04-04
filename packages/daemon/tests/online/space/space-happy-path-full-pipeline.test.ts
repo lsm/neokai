@@ -155,7 +155,7 @@ async function driveToCodePrGateOpen(
 	const reviewerIdsBefore = new Set(reviewerTasksBefore.map((t) => t.id));
 
 	await writeGateData(daemon, runId, 'code-pr-gate', {
-		pr_created: true,
+		pr_url: 'https://github.com/org/repo/pull/42',
 	});
 
 	const [r1, r2, r3] = await Promise.all([
@@ -293,7 +293,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			// Verify gate data is still accessible after completion
 			const prGate = await readGateData(daemon, runId, 'code-pr-gate');
 			expect(prGate).not.toBeNull();
-			expect(prGate?.data.pr_created).toBe(true);
+			expect(prGate?.data.pr_url).toBe('https://github.com/org/repo/pull/42');
 
 			const qaResultGate = await readGateData(daemon, runId, 'qa-result-gate');
 			expect(qaResultGate).not.toBeNull();
@@ -366,7 +366,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const reviewerIdsBefore2 = new Set(reviewerTasksBefore2.map((t) => t.id));
 
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_created: true,
+				pr_url: 'https://github.com/org/repo/pull/42',
 			});
 
 			const [r2a, r2b, r2c] = await Promise.all([
@@ -446,7 +446,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const reviewerIdsBefore3 = new Set(reviewerTasksBefore3.map((t) => t.id));
 
 			await writeGateData(daemon, runId, 'code-pr-gate', {
-				pr_created: true,
+				pr_url: 'https://github.com/org/repo/pull/42',
 			});
 
 			const [r3a, r3b, r3c] = await Promise.all([
