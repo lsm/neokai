@@ -1286,7 +1286,9 @@ export function WorkflowCanvas({
 								fill="none"
 								style={{ pointerEvents: 'stroke' }}
 							/>
-							{/* Visible path */}
+							{/* Visible path — pointer-events disabled so backward-cycle paths that
+							    pass through gate icon positions don't intercept clicks. The wide
+							    transparent hitbox above handles any channel-level interactions. */}
 							<path
 								d={d}
 								stroke={strokeColor}
@@ -1295,6 +1297,7 @@ export function WorkflowCanvas({
 								strokeOpacity={0.85}
 								fill="none"
 								markerEnd={`url(#${hasGate ? arrowMarkerGatedId : arrowMarkerId})`}
+								style={{ pointerEvents: 'none' }}
 							/>
 
 							{/* Gate icon ON the channel line (at midpoint) */}
