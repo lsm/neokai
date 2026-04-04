@@ -814,14 +814,11 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Rehydration restores worktree path
+	// Rehydration restores worktree path from SpaceWorktreeRepository
 	// -------------------------------------------------------------------------
 
-	describe('rehydration restores worktree path from run config', () => {
-		test('rehydrate() does not restore worktreePath (in-memory only, lost on restart)', async () => {
-			// Since run.config was removed in M71, worktree paths are in-memory only.
-			// After a daemon restart, rehydration cannot restore worktree paths and falls back
-			// to space.workspacePath.
+	describe('rehydration restores worktree path from repository', () => {
+		test('rehydrate() recovers worktree path from SpaceWorktreeRepository when dir exists on disk', async () => {
 			const sessionId = `session-rehydrate-${Date.now()}`;
 
 			const task = await makeTask(ctx.taskManager);
@@ -838,10 +835,15 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				workflowRunId: workflowRun.id,
 			});
 
-			// Seed the session in the mock DB so rehydrate() identifies it as a task-agent session.
 			ctx.addDbSession(sessionId, 'space_task_agent');
 
-			// Spy on AgentSession.restore so no real DB/SDK calls are made.
+			// Create a real directory so existsSync returns true
+			const realWorktreeDir = join(ctx.dir, 'worktree-rehydrate');
+			mkdirSync(realWorktreeDir, { recursive: true });
+
+			// Configure mock worktreeManager to return the real path
+			ctx.worktreeMock.worktreePath = realWorktreeDir;
+
 			const mockSession = makeMockSession(sessionId);
 			const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(
 				mockSession as unknown as AgentSession
@@ -853,13 +855,11 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				restoreSpy.mockRestore();
 			}
 
-			// Since worktree path is not persisted (removed in M71), rehydration cannot restore it.
-			expect(ctx.manager.getTaskWorktreePath(task.id)).toBeUndefined();
+			// Worktree path should be recovered from the repository
+			expect(ctx.manager.getTaskWorktreePath(task.id)).toBe(realWorktreeDir);
 		});
 
-		test('rehydrate() falls back to space.workspacePath when no stored path exists', async () => {
-			// With run.config removed in M71, there is no stored worktreePath to restore.
-			// Rehydration always falls back to space.workspacePath for the session's workspace.
+		test('rehydrate() falls back to space.workspacePath when worktree dir no longer exists', async () => {
 			const sessionId = `session-rehydrate-gone-${Date.now()}`;
 
 			const task = await makeTask(ctx.taskManager);
@@ -877,6 +877,9 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 
 			ctx.addDbSession(sessionId, 'space_task_agent');
 
+			// worktreeMock returns a path that doesn't exist on disk
+			ctx.worktreeMock.worktreePath = '/tmp/worktrees/deleted-dir';
+
 			const mockSession = makeMockSession(sessionId);
 			const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(
 				mockSession as unknown as AgentSession
@@ -888,8 +891,174 @@ describe('TaskAgentManager × SpaceWorktreeManager (M4.3)', () => {
 				restoreSpy.mockRestore();
 			}
 
-			// No stored path → not stored in the map (falls back to space.workspacePath).
+			// No valid directory → not stored in the map (falls back to space.workspacePath).
 			expect(ctx.manager.getTaskWorktreePath(task.id)).toBeUndefined();
+		});
+
+		test('rehydrate() falls back to space.workspacePath when worktreeManager returns null', async () => {
+			const sessionId = `session-rehydrate-null-${Date.now()}`;
+
+			const task = await makeTask(ctx.taskManager);
+			const workflowRun = ctx.workflowRunRepo.createRun({
+				spaceId: ctx.spaceId,
+				workflowId: 'workflow-rehydrate-null',
+				title: 'Rehydrate null run',
+			});
+
+			ctx.taskRepo.updateTask(task.id, {
+				status: 'in_progress',
+				taskAgentSessionId: sessionId,
+				workflowRunId: workflowRun.id,
+			});
+
+			ctx.addDbSession(sessionId, 'space_task_agent');
+
+			// Override getTaskWorktreePath to return null (no record in repository)
+			const origGetPath = ctx.worktreeMock.getTaskWorktreePath;
+			ctx.worktreeMock.getTaskWorktreePath = async () => null;
+
+			const mockSession = makeMockSession(sessionId);
+			const restoreSpy = spyOn(AgentSession, 'restore').mockReturnValue(
+				mockSession as unknown as AgentSession
+			);
+
+			try {
+				await ctx.manager.rehydrate();
+			} finally {
+				restoreSpy.mockRestore();
+				ctx.worktreeMock.getTaskWorktreePath = origGetPath;
+			}
+
+			expect(ctx.manager.getTaskWorktreePath(task.id)).toBeUndefined();
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Worktree creation ordering (before streaming starts)
+	// -------------------------------------------------------------------------
+
+	describe('worktree creation ordering', () => {
+		test('worktree is created BEFORE startStreamingQuery is called', async () => {
+			// Track call ordering to verify worktree creation happens before streaming
+			const callOrder: string[] = [];
+
+			// Wrap the mock worktree manager to record call order
+			const origCreate = ctx.worktreeMock.createTaskWorktree.bind(ctx.worktreeMock);
+			ctx.worktreeMock.createTaskWorktree = async (...args: Parameters<typeof origCreate>) => {
+				callOrder.push('createTaskWorktree');
+				return origCreate(...args);
+			};
+
+			// Wrap fromInit spy to also record when streaming starts
+			const origFromInit = ctx.fromInitSpy.getMockImplementation()!;
+			ctx.fromInitSpy.mockImplementation((...args: Parameters<typeof origFromInit>) => {
+				const session = origFromInit(...args);
+				// Wrap startStreamingQuery
+				const origStart = (session as unknown as MockAgentSession).startStreamingQuery;
+				(session as unknown as MockAgentSession).startStreamingQuery = async () => {
+					callOrder.push('startStreamingQuery');
+					return origStart.call(session);
+				};
+				callOrder.push('fromInit');
+				return session;
+			});
+
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			expect(callOrder).toEqual(['createTaskWorktree', 'fromInit', 'startStreamingQuery']);
+		});
+
+		test('worktree path is used in AgentSession.fromInit call', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			// The session should have been created with the worktree path
+			const calls = ctx.fromInitSpy.mock.calls;
+			expect(calls.length).toBeGreaterThan(0);
+			const initArg = calls[calls.length - 1][0] as { workspacePath?: string };
+			expect(initArg.workspacePath).toBe('/tmp/worktrees/test-task');
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Fallback when worktreeManager is absent
+	// -------------------------------------------------------------------------
+
+	describe('fallback when worktreeManager absent', () => {
+		test('task agent uses space.workspacePath when no worktreeManager configured', async () => {
+			// Create manager without worktreeManager
+			const { db: bunDb, dir } = makeDb();
+			const spaceId2 = 'space-no-wt-2';
+			seedSpaceRow(bunDb, spaceId2, '/tmp/space-workspace');
+			const taskManager2 = new SpaceTaskManager(bunDb, spaceId2);
+
+			const dbSessions2 = new Map<string, unknown>();
+			const mockDb2 = {
+				getSession: (id: string) => dbSessions2.get(id) ?? null,
+				createSession: (s: unknown) => dbSessions2.set((s as { id: string }).id, s),
+				deleteSession: (id: string) => dbSessions2.delete(id),
+				saveUserMessage: () => 'msg-id',
+				updateSession: () => {},
+				getDatabase: () => bunDb,
+			};
+
+			const agentRepo2 = new SpaceAgentRepository(bunDb);
+			const agentManager2 = new SpaceAgentManager(agentRepo2);
+			const workflowRepo2 = new SpaceWorkflowRepository(bunDb);
+			const workflowManager2 = new SpaceWorkflowManager(workflowRepo2);
+			const workflowRunRepo2 = new SpaceWorkflowRunRepository(bunDb);
+			const taskRepo2 = new SpaceTaskRepository(bunDb);
+			const spaceManager2 = new SpaceManager(bunDb);
+			const runtime2 = new SpaceRuntime({
+				db: bunDb,
+				spaceManager: spaceManager2,
+				spaceAgentManager: agentManager2,
+				spaceWorkflowManager: workflowManager2,
+				workflowRunRepo: workflowRunRepo2,
+				taskRepo: taskRepo2,
+			});
+			const daemonHub2 = new TestDaemonHub();
+
+			const manager2 = new TaskAgentManager({
+				db: mockDb2 as unknown as import('../../../src/storage/database.ts').Database,
+				sessionManager: {
+					deleteSession: async () => {},
+					registerSession: () => {},
+				} as unknown as import('../../../src/lib/session/session-manager.ts').SessionManager,
+				spaceManager: spaceManager2,
+				spaceAgentManager: agentManager2,
+				spaceWorkflowManager: workflowManager2,
+				spaceRuntimeService: {
+					createOrGetRuntime: async () => runtime2,
+				} as unknown as import('../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
+				taskRepo: taskRepo2,
+				workflowRunRepo: workflowRunRepo2,
+				daemonHub: daemonHub2 as unknown as import('../../../src/lib/daemon-hub.ts').DaemonHub,
+				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
+				getApiKey: async () => 'key',
+				defaultModel: 'claude-sonnet-4-5-20250929',
+				// No worktreeManager — intentional
+			});
+
+			const space2 = makeSpace(spaceId2, '/tmp/space-workspace');
+			const task2 = await taskManager2.createTask({
+				title: 'Fallback task',
+				description: '',
+				taskType: 'coding',
+				status: 'open',
+			});
+
+			const sessionId = await manager2.spawnTaskAgent(task2, space2, null, null);
+
+			// Session should use space.workspacePath as fallback
+			const session = ctx.createdSessions.get(sessionId)!;
+			expect(session._workspacePath).toBe('/tmp/space-workspace');
+
+			// No worktree path should be stored in the map
+			expect(manager2.getTaskWorktreePath(task2.id)).toBeUndefined();
+
+			rmSync(dir, { recursive: true, force: true });
 		});
 	});
 });

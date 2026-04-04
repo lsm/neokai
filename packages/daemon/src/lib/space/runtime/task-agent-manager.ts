@@ -1494,14 +1494,16 @@ export class TaskAgentManager {
 			return;
 		}
 
-		// --- Restore worktree path from workflow run config (persisted at spawn time).
+		// --- Restore worktree path from SpaceWorktreeRepository (persisted at spawn time).
 		// Only restores the path when the worktree directory still exists on disk —
 		// if the directory was deleted between restarts (manual cleanup, disk failure),
 		// fall back to space.workspacePath to avoid directing sub-sessions at a
 		// non-existent location.
-		const rehydrateWorkspacePath = (() => {
-			// workflowRun.config no longer exists; worktree paths are in-memory only.
-			const storedPath: string | null = null;
+		const rehydrateWorkspacePath = await (async () => {
+			if (!this.config.worktreeManager) {
+				return space.workspacePath;
+			}
+			const storedPath = await this.config.worktreeManager.getTaskWorktreePath(spaceId, taskId);
 			if (storedPath && existsSync(storedPath)) {
 				this.taskWorktreePaths.set(taskId, storedPath);
 				return storedPath;
