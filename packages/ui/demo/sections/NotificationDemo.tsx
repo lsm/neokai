@@ -339,7 +339,7 @@ function InlineToastExamples() {
 }
 
 function NotificationWithAvatar() {
-	const [show, setShow] = useState(true);
+	const [show, setShow] = useState(false);
 
 	return (
 		<div class="space-y-4">
@@ -397,7 +397,7 @@ function NotificationWithAvatar() {
 }
 
 function NotificationWithSplitButtons() {
-	const [show, setShow] = useState(true);
+	const [show, setShow] = useState(false);
 
 	return (
 		<div class="space-y-4">
@@ -461,7 +461,7 @@ function NotificationWithSplitButtons() {
 }
 
 function SimpleIconNotification() {
-	const [show, setShow] = useState(true);
+	const [show, setShow] = useState(false);
 
 	return (
 		<div class="space-y-4">
@@ -518,7 +518,7 @@ function SimpleIconNotification() {
 }
 
 function CondensedNotification() {
-	const [show, setShow] = useState(true);
+	const [show, setShow] = useState(false);
 
 	return (
 		<div class="space-y-4">
@@ -577,7 +577,7 @@ function CondensedNotification() {
 }
 
 function NotificationWithActionsBelow() {
-	const [show, setShow] = useState(true);
+	const [show, setShow] = useState(false);
 
 	return (
 		<div class="space-y-4">
@@ -648,7 +648,7 @@ function NotificationWithActionsBelow() {
 }
 
 function NotificationWithButtonsBelow() {
-	const [show, setShow] = useState(true);
+	const [show, setShow] = useState(false);
 
 	return (
 		<div class="space-y-4">

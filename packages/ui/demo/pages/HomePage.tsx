@@ -1,4 +1,5 @@
 import { useEffect } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { ComponentType } from 'preact';
 
 import { ButtonDemo } from '../sections/ButtonDemo.tsx';
@@ -63,7 +64,7 @@ interface HomePageProps {
 	setActiveSection: (id: string) => void;
 }
 
-export function HomePage({ setActiveSection }: HomePageProps) {
+function HomePageInner({ setActiveSection }: HomePageProps) {
 	// Scroll to top on mount, then check if there's an anchor to scroll to
 	useEffect(() => {
 		const hash = window.location.hash;
@@ -109,7 +110,8 @@ export function HomePage({ setActiveSection }: HomePageProps) {
 		for (const el of sectionEls) observer.observe(el);
 
 		return () => observer.disconnect();
-	}, [setActiveSection]);
+		// setActiveSection is a stable useState setter — intentionally omitted from deps
+	}, []);
 
 	return (
 		<main class="px-8 max-w-6xl">
@@ -122,3 +124,5 @@ export function HomePage({ setActiveSection }: HomePageProps) {
 		</main>
 	);
 }
+
+export const HomePage = memo(HomePageInner);

@@ -1,4 +1,5 @@
 import { useEffect } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { ComponentType } from 'preact';
 
 // ─── Application Shells ───────────────────────────────────────────────────────
@@ -193,7 +194,7 @@ interface AppUiPageProps {
 	setActiveSection: (id: string) => void;
 }
 
-export function AppUiPage({ categoryId, setActiveSection }: AppUiPageProps) {
+function AppUiPageInner({ categoryId, setActiveSection }: AppUiPageProps) {
 	const sections = categoryMap[categoryId];
 
 	// Scroll to top on mount
@@ -234,7 +235,8 @@ export function AppUiPage({ categoryId, setActiveSection }: AppUiPageProps) {
 		for (const el of sectionEls) observer.observe(el);
 
 		return () => observer.disconnect();
-	}, [categoryId, sections, setActiveSection]);
+		// setActiveSection is a stable useState setter — intentionally omitted from deps
+	}, [categoryId, sections]);
 
 	if (!sections) {
 		return (
@@ -255,3 +257,5 @@ export function AppUiPage({ categoryId, setActiveSection }: AppUiPageProps) {
 		</main>
 	);
 }
+
+export const AppUiPage = memo(AppUiPageInner);
