@@ -68,19 +68,30 @@ async function getRunTaskId(
 	spaceId: string,
 	runId: string
 ): Promise<string> {
-	const taskId = await page.evaluate(
-		async ({ sid, rid }) => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-			const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
-				id: string;
-				workflowRunId?: string;
-			}>;
-			const match = tasks.find((t) => t.workflowRunId === rid);
-			return match?.id ?? '';
-		},
-		{ sid: spaceId, rid: runId }
-	);
+	const timeoutMs = 20000;
+	const intervalMs = 250;
+	const start = Date.now();
+	let taskId = '';
+
+	while (!taskId && Date.now() - start < timeoutMs) {
+		taskId = await page.evaluate(
+			async ({ sid, rid }) => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				if (!hub?.request) throw new Error('MessageHub not available');
+				const tasks = (await hub.request('spaceTask.list', { spaceId: sid })) as Array<{
+					id: string;
+					workflowRunId?: string;
+				}>;
+				const match = tasks.find((t) => t.workflowRunId === rid);
+				return match?.id ?? '';
+			},
+			{ sid: spaceId, rid: runId }
+		);
+		if (!taskId) {
+			await page.waitForTimeout(intervalMs);
+		}
+	}
+
 	if (!taskId) throw new Error(`No task found for run ${runId}`);
 	return taskId;
 }

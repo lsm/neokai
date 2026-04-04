@@ -85,6 +85,15 @@ async function createSpaceWithRun(
 	);
 }
 
+async function gotoSpaceAndWait(
+	page: Parameters<typeof waitForWebSocketConnected>[0],
+	spaceId: string
+): Promise<void> {
+	await page.goto(`/space/${spaceId}`);
+	await waitForWebSocketConnected(page);
+	await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+}
+
 async function writeGateData(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
 	runId: string,
@@ -255,8 +264,7 @@ test.describe
 			});
 
 			test('review-reject-gate shows open (green) when one reviewer rejects', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -272,8 +280,7 @@ test.describe
 			test('review-reject-gate vote count badge shows 1/1 when one reviewer rejects', async ({
 				page,
 			}) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -312,8 +319,7 @@ test.describe
 			});
 
 			test('Coding node shows active (blue pulsing) after re-activation', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -357,8 +363,7 @@ test.describe
 			});
 
 			test('review-votes-gate remains blocked (2/3 not enough to open)', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -371,8 +376,7 @@ test.describe
 			});
 
 			test('review-votes-gate vote count badge shows 2/3', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -417,8 +421,7 @@ test.describe
 			test('review-votes-gate shows open (green) when all 3 reviewers approve', async ({
 				page,
 			}) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -429,8 +432,7 @@ test.describe
 			});
 
 			test('review-votes-gate vote count badge shows 3/3', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -475,8 +477,7 @@ test.describe
 			test('QA-to-Done channel gate opens after QA passes (qa-result-gate open)', async ({
 				page,
 			}) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -490,8 +491,7 @@ test.describe
 			test('canvas shows all three Reviewer nodes and QA + Done (pipeline tail)', async ({
 				page,
 			}) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -533,8 +533,7 @@ test.describe
 			});
 
 			test('review-votes-gate shows 0/3 after votes are reset (empty)', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
@@ -569,8 +568,7 @@ test.describe
 			});
 
 			test('canvas updates from rejection to full approval in sequence', async ({ page }) => {
-				await page.goto(`/space/${spaceId}`);
-				await page.waitForURL(`/space/${spaceId}**`, { timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId);
 				await expect(
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
