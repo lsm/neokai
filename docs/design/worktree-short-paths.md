@@ -120,25 +120,26 @@ Move all worktrees to a shared top-level dir, eliminate per-project nesting.
 | Minimal nesting depth | Breaks `~/.neokai/projects/{key}/` convention |
 | | Harder to find worktrees per project |
 
-### Option E: Hybrid — Short Base + Slug Leaf (Recommended)
+### Option E: Slug + Hash Leaf ✅ SELECTED
 
-Combine `wt/` (instead of `worktrees/`) with capped human-readable slug leaf (max 30 chars). Also unify DB path to use short key.
+Replace the session-ID leaf with a capped human-readable slug (from the task title) + 4-char hash suffix, keeping the existing `worktrees/` directory name. Also unify DB path to use short key.
 
 ```
-Worktree: /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2
+Worktree: /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2
 DB:       /Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/db/daemon.db
 ```
 
-**Worktree path: 72 chars (typical), 86 chars (worst-case with 30-char slug) → 60-74 chars saved**
+**Worktree path: 79 chars (typical), 93 chars (worst-case with 30-char slug) → 53-67 chars saved**
 **DB path: 60 chars → 14 chars saved vs current 74**
 
 | Pros | Cons |
 |------|------|
-| Best balance of readability and compactness | Not absolute minimum (72-86 chars) |
+| Best balance of readability and compactness | Not absolute minimum (79-93 chars) |
 | Consistent with Space worktree naming | Need to pass branch/task title into path generation |
 | DB path also shortened | Migration needed for existing DB locations |
 | Reuses existing `worktreeSlug()` infrastructure | |
 | Branch name already available at call site | |
+| Keeps familiar `worktrees/` directory name | |
 
 ## Concrete Example: Task "Fix login button" in dev-neokai
 
@@ -162,8 +163,8 @@ Option C — Slug + Hash (72 chars):
 Option D — Flat Base (35 chars):
 /Users/lsm/.neokai/wt/nkai-a3b2c1d4
 
-Option E — Hybrid / Recommended (72 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2
+Option E — Slug + Hash ✅ SELECTED (79 chars):
+/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2
 ```
 
 ### Deepest source file (current deepest: 235 chars)
@@ -186,8 +187,8 @@ Option C — Slug + Hash (161 chars):
 Option D — Flat Base (124 chars):
 /Users/lsm/.neokai/wt/nkai-a3b2c1d4/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 
-Option E — Hybrid / Recommended (161 chars):
-/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/wt/fix-login-button-a3b2/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
+Option E — Slug + Hash ✅ SELECTED (168 chars):
+/Users/lsm/.neokai/projects/dev-neokai-ec0a1deb/worktrees/fix-login-button-a3b2/packages/daemon/tests/online/cross-provider/conversation-continuity-after-switch.test.ts
 ```
 
 ### What `ls` looks like in the worktrees directory
@@ -200,7 +201,7 @@ coder-04062505-780f-4881-a3be-9cb9062790fb-006b257f-26c7-4861-bcae-85d2182ff317-
 coder-04062505-780f-4881-a3be-9cb9062790fb-00cf17b9-b3e6-45d1-8e1a-8e7b18afba0f-38e261f8
 
 # Option E — immediately readable:
-$ ls ~/.neokai/projects/dev-neokai-ec0a1deb/wt/
+$ ls ~/.neokai/projects/dev-neokai-ec0a1deb/worktrees/
 fix-login-button-a3b2
 add-retry-logic-to-ws-7f1e
 refactor-session-cleanup-c9d0
@@ -218,13 +219,13 @@ All path lengths are absolute (from `/`) using `/Users/lsm` as the home director
 | B: Sequential | 53 | -93 | ~55 | Medium | Medium |
 | C: Slug+Hash | 72 | -74 | 116 (needs cap) | High | Medium |
 | D: Flat Base | 35 | -111 | 35 | Low | High |
-| **E: Hybrid** | **72** | **-74** | **86 (30-char cap)** | **High** | **Medium** |
+| **E: Slug+Hash ✅** | **79** | **-67** | **93 (30-char cap)** | **High** | **Medium** |
 
 ## Key Files to Modify
 
 | File | What Changes |
 |------|-------------|
-| `packages/daemon/src/lib/worktree-manager.ts` | `createWorktree()` — use slug instead of session ID for dir name; rename `worktrees/` to `wt/`; store path in DB rather than re-deriving from session ID |
+| `packages/daemon/src/lib/worktree-manager.ts` | `createWorktree()` — use slug instead of session ID for dir name; keep `worktrees/` directory; store path in DB rather than re-deriving from session ID |
 | `packages/daemon/src/lib/room/runtime/task-group-manager.ts` | Pass branch name / task title to `createWorktree()` |
 | `packages/daemon/src/config.ts` | Switch `encodeRepoPath()` to `getProjectShortKey()` for DB path |
 | `packages/daemon/src/lib/space/worktree-slug.ts` | Possibly reuse/share slug logic with room worktrees (with a shorter max-length constant) |
