@@ -593,6 +593,14 @@ describe('SpaceTaskPane — activity members list', () => {
 		expect(mockSubscribeTaskActivity).not.toHaveBeenCalled();
 	});
 
+	it('calls unsubscribeTaskActivity on unmount', async () => {
+		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+		const { unmount } = render(<SpaceTaskPane taskId="task-1" />);
+		await waitFor(() => expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1'));
+		unmount();
+		expect(mockUnsubscribeTaskActivity).toHaveBeenCalledWith('task-1');
+	});
+
 	it('shows only members for the current task (not other tasks)', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		mockTaskActivity.value = new Map([
