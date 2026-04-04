@@ -257,4 +257,108 @@ describe('SpaceDetailPanel', () => {
 		expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'manual-session-abc123');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
+
+	describe('task visibility in context panel', () => {
+		it('shows all tasks matching the active tab filter', () => {
+			mockTasksSignal.value = [
+				makeTask('t1', 'Open Task', 'open'),
+				makeTask('t2', 'In Progress Task', 'in_progress'),
+				makeTask('t3', 'Blocked Task', 'blocked'),
+				makeTask('t4', 'Done Task', 'done'),
+			];
+			render(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Default tab is "review" — shows blocked tasks
+			expect(screen.getByText('Blocked Task')).toBeTruthy();
+			expect(screen.queryByText('Open Task')).toBeNull();
+			expect(screen.queryByText('In Progress Task')).toBeNull();
+			expect(screen.queryByText('Done Task')).toBeNull();
+
+			// Switch to Active — shows open + in_progress
+			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			expect(screen.getByText('Open Task')).toBeTruthy();
+			expect(screen.getByText('In Progress Task')).toBeTruthy();
+			expect(screen.queryByText('Blocked Task')).toBeNull();
+		});
+
+		it('tasks appear without manual refresh when signal updates', () => {
+			mockTasksSignal.value = [];
+			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Switch to Active tab and verify empty
+			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+			expect(screen.getByText('No tasks')).toBeTruthy();
+
+			// Simulate new task arriving via event (signal update)
+			mockTasksSignal.value = [makeTask('t-new', 'New Task', 'open')];
+			rerender(<SpaceDetailPanel spaceId="space-1" />);
+
+			expect(screen.getByText('New Task')).toBeTruthy();
+			expect(screen.queryByText('No tasks')).toBeNull();
+		});
+
+		it('count badges update when new tasks arrive', () => {
+			mockTasksSignal.value = [makeTask('t1', 'Task A', 'open')];
+			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Active: 1, Review: 0
+			expect(screen.getByText('1')).toBeTruthy();
+			expect(screen.getByText('0')).toBeTruthy();
+
+			// Add a blocked task
+			mockTasksSignal.value = [
+				makeTask('t1', 'Task A', 'open'),
+				makeTask('t2', 'Task B', 'blocked'),
+			];
+			rerender(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Active: 1, Review: 1
+			const badges = screen.getAllByText('1');
+			expect(badges.length).toBe(2);
+		});
+
+		it('task status change updates tab counts and visibility', () => {
+			mockTasksSignal.value = [
+				makeTask('t1', 'Task One', 'in_progress'),
+				makeTask('t2', 'Task Two', 'blocked'),
+			];
+			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Review tab (default): shows blocked task
+			expect(screen.getByText('Task Two')).toBeTruthy();
+
+			// Simulate task status change: t1 becomes blocked, t2 becomes done
+			mockTasksSignal.value = [
+				makeTask('t1', 'Task One', 'blocked'),
+				makeTask('t2', 'Task Two', 'done'),
+			];
+			rerender(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Review tab should now show Task One (blocked) but not Task Two (done)
+			expect(screen.getByText('Task One')).toBeTruthy();
+			expect(screen.queryByText('Task Two')).toBeNull();
+		});
+
+		it('multiple tasks created via different paths all appear in panel', () => {
+			// Simulate tasks created via different paths: UI dialog, agent tool, workflow run
+			mockTasksSignal.value = [
+				makeTask('t-ui', 'UI Dialog Task', 'open'),
+				makeTask('t-agent', 'Agent Created Task', 'in_progress', {
+					workflowRunId: 'run-1',
+				}),
+				makeTask('t-workflow', 'Workflow Task', 'in_progress', {
+					workflowRunId: 'run-1',
+				}),
+			];
+			render(<SpaceDetailPanel spaceId="space-1" />);
+
+			// Switch to Active tab
+			fireEvent.click(screen.getByRole('button', { name: /Active/i }));
+
+			// All three tasks should appear regardless of creation path
+			expect(screen.getByText('UI Dialog Task')).toBeTruthy();
+			expect(screen.getByText('Agent Created Task')).toBeTruthy();
+			expect(screen.getByText('Workflow Task')).toBeTruthy();
+		});
+	});
 });
