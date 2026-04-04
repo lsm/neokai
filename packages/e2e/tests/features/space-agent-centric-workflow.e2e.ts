@@ -39,10 +39,12 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
-// Agent names match role names so the channel dropdown select options (which use agent name as value) match the role
-const AGENT_A_NAME = 'coder';
-const AGENT_B_NAME = 'reviewer';
-// Option text as rendered by agent-select and add-agent-select: agent name equals role name
+// Agent names use a distinct suffix to avoid conflicts with space pre-seeded agents
+// (e.g. the seeded agent named 'coder'). These names become slot names in multi-agent
+// steps, and the channel dropdown select options use slot names as their values.
+const AGENT_A_NAME = 'Coder Agent';
+const AGENT_B_NAME = 'Reviewer Agent';
+// Option text as rendered by agent-select and add-agent-select: just the agent name
 const AGENT_A_OPTION = AGENT_A_NAME;
 const AGENT_B_OPTION = AGENT_B_NAME;
 
@@ -142,26 +144,27 @@ test.describe('Agent-Centric Workflow', () => {
 		const channelsSection = editor.getByTestId('channels-section');
 		await expect(channelsSection).toBeVisible({ timeout: 3000 });
 
-		// Add a one-way channel: coder → reviewer
-		await addWorkflowChannel(editor, ROLE_A, ROLE_B, 'one-way');
+		// Add a one-way channel: Coder Agent → Reviewer Agent
+		// The channel dropdown uses slot names (= agent names) as option values.
+		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME, 'one-way');
 
 		// Verify channel entry appears with correct from/to/direction
 		const channelsList = channelsSection.getByTestId('channels-list');
 		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
 		const entry = channelsList.getByTestId('channel-entry').first();
-		await expect(entry).toContainText(ROLE_A);
+		await expect(entry).toContainText(AGENT_A_NAME);
 		await expect(entry).toContainText('→');
-		await expect(entry).toContainText(ROLE_B);
+		await expect(entry).toContainText(AGENT_B_NAME);
 
-		// Add a bidirectional channel: reviewer ↔ coder
-		await addWorkflowChannel(editor, ROLE_B, ROLE_A, 'bidirectional');
+		// Add a bidirectional channel: Reviewer Agent ↔ Coder Agent
+		await addWorkflowChannel(editor, AGENT_B_NAME, AGENT_A_NAME, 'bidirectional');
 
 		// Two entries should now be in the channels list
 		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
 		const secondEntry = channelsList.getByTestId('channel-entry').nth(1);
-		await expect(secondEntry).toContainText(ROLE_B);
+		await expect(secondEntry).toContainText(AGENT_B_NAME);
 		await expect(secondEntry).toContainText('↔');
-		await expect(secondEntry).toContainText(ROLE_A);
+		await expect(secondEntry).toContainText(AGENT_A_NAME);
 	});
 
 	// ─── Test 2: Add gate condition to a workflow channel ─────────────────────
@@ -190,9 +193,10 @@ test.describe('Agent-Centric Workflow', () => {
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
 		// Ensure channels section is open and add a channel
+		// Channel select uses slot names (= agent names) as option values.
 		await ensureChannelsSectionOpen(editor);
 		const channelsSection = editor.getByTestId('channels-section');
-		await addWorkflowChannel(editor, ROLE_A, ROLE_B);
+		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME);
 
 		const channelsList = channelsSection.getByTestId('channels-list');
 		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
@@ -238,12 +242,12 @@ test.describe('Agent-Centric Workflow', () => {
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// The canvas node should show agent-badges with both agent names.
+		// The canvas node should show agent-badges with both agent names (slot names).
 		const node = nodes.first();
 		const agentBadges = node.getByTestId('agent-badges');
 		await expect(agentBadges).toBeVisible({ timeout: 3000 });
-		await expect(agentBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
-		await expect(agentBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
 
 		// Without an active workflow run, no completion state icons should be visible
 		// (no agent-status-spinner, agent-status-check, or agent-status-fail)
@@ -268,11 +272,11 @@ test.describe('Agent-Centric Workflow', () => {
 		await expect(reopenedNodes).toHaveCount(1, { timeout: 5000 });
 		const reopenedNode = reopenedNodes.first();
 
-		// Agent badges should be visible after reload
+		// Agent badges should be visible after reload (shows slot names = agent names)
 		const reopenedBadges = reopenedNode.getByTestId('agent-badges');
 		await expect(reopenedBadges).toBeVisible({ timeout: 3000 });
-		await expect(reopenedBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
-		await expect(reopenedBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
+		await expect(reopenedBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(reopenedBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
 
 		// Still no completion state icons (no active run)
 		await expect(reopenedNode.getByTestId('agent-status-spinner')).toHaveCount(0);
@@ -305,8 +309,9 @@ test.describe('Agent-Centric Workflow', () => {
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
 		// Add a workflow-level channel with a human-approval gate
+		// Channel select uses slot names (= agent names) as option values.
 		await ensureChannelsSectionOpen(editor);
-		await addWorkflowChannel(editor, ROLE_A, ROLE_B);
+		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME);
 		const channelsSection = editor.getByTestId('channels-section');
 		const channelsList = channelsSection.getByTestId('channels-list');
 		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
@@ -337,11 +342,11 @@ test.describe('Agent-Centric Workflow', () => {
 			timeout: 5000,
 		});
 
-		// Persisted channel should show coder → reviewer
+		// Persisted channel should show Coder Agent → Reviewer Agent (slot names = agent names)
 		const persistedEntry = reopenedChannelsList.getByTestId('channel-entry').first();
-		await expect(persistedEntry).toContainText(ROLE_A);
+		await expect(persistedEntry).toContainText(AGENT_A_NAME);
 		await expect(persistedEntry).toContainText('→');
-		await expect(persistedEntry).toContainText(ROLE_B);
+		await expect(persistedEntry).toContainText(AGENT_B_NAME);
 
 		// Gate badge should be visible (human approval gate was persisted)
 		await expect(persistedEntry.getByTestId('gate-badge')).toBeVisible({ timeout: 3000 });
