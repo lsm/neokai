@@ -902,3 +902,286 @@ The following suites were failing in run #23914538827 (2026-04-02) and **now pas
 - **Net new failures**: 8 new LLM failures (ripgrep issue, 3 of which may be product regressions) + `features-neo-conversation` now confirmed failing (was cancelled previously) = 9 new
 - **Net change**: −5 resolved + 9 new = +4 → 23 + 4 − 1 (neo-conversation was already counted as cancelled, not failing) = **26**
 - **Unique root cause categories**: 5 (A–E above)
+
+---
+
+## 2026-04-04 — Check Run #23980009471
+
+### CI Run Overview
+- **Run ID**: [23980009471](https://github.com/lsm/neokai/actions/runs/23980009471)
+- **Branch**: dev (commit `a71f8cd22` — `test(space-runtime): add crash recovery and rehydration unit tests (#1340)`)
+- **Event**: push (post-merge of fix PRs #1351, #1353, #1354, #1355, #1356, #1357)
+- **Status**: Completed with **11 failures** (down from 26 in previous run)
+
+### Build/Discover Jobs
+- `Discover Tests`: **PASSED**
+- `Build Binary (linux-x64)`: **PASSED**
+- All unit test jobs: **SKIPPED** (gated by build prerequisites)
+
+### E2E Test Failures at #23980009471
+
+**11 E2E job failures** — 9 No-LLM + 2 LLM. Significant reduction from 26 thanks to merged fix PRs.
+
+**Complete list of failing jobs**:
+1. `E2E No-LLM (features-neo-chat-rendering)` — Root Cause A (testid/init issue)
+2. `E2E No-LLM (features-neo-conversation)` — Root Cause B (strict mode toast + activity view)
+3. `E2E No-LLM (features-space-creation)` — Root Cause C (strict mode 'Active' button)
+4. `E2E No-LLM (features-space-happy-path-pipeline)` — Root Cause D (invalid status value)
+5. `E2E No-LLM (features-reviewer-feedback-loop)` — Root Cause E (animate-pulse location)
+6. `E2E No-LLM (features-space-navigation)` — Root Cause F (SpaceDetailPanel not opening)
+7. `E2E No-LLM (features-space-approval-gate-rejection)` — Root Cause G (view-artifacts-btn timeout)
+8. `E2E No-LLM (features-space-task-fullwidth)` — Root Cause H (fullwidth not hiding sidebar)
+9. `E2E No-LLM (settings-tools-modal)` — Root Cause I (missing return in openToolsModal)
+10. `E2E LLM (responsive-tablet)` — Root Cause J (closePanelButton not in viewport)
+11. `E2E LLM (features-reference-autocomplete)` — Root Cause K (pre-existing no-git-repo)
+
+---
+
+### Root Cause A — `features-neo-chat-rendering`: `neo-empty-state` testid not found; stale message count
+
+**Tests**:
+- `shows empty state with Neo introduction before any messages` — line 69: `getByTestId('neo-empty-state').toBeVisible()` fails (element not found); line 78: `getByTestId(NEO_USER_MESSAGE_TESTID).toHaveCount(0)` fails (count = 1)
+- `empty state disappears once a message is sent` — line 118: `getByTestId('neo-empty-state').not.toBeVisible()` fails (element not found)
+
+**Errors**:
+```
+Error: expect(locator).toBeVisible() failed — element(s) not found
+> 69 | await expect(emptyState).toBeVisible();   // neo-empty-state
+> 78 | await expect(page.getByTestId(NEO_USER_MESSAGE_TESTID)).toHaveCount(0);  // actual: 1
+> 118| await expect(page.getByTestId('neo-empty-state')).toBeVisible();
+```
+
+**Background log**: `Error: Claude Code returned an error result: Invalid API key · Fix external API key` — suggests Neo panel initialization triggered a real SDK session attempt in CI (no API key configured for No-LLM runs). This may cause a system error message to appear as `NEO_USER_MESSAGE_TESTID` element, explaining why count is 1 not 0.
+
+**Likely cause**: Either (a) the `neo-empty-state` testid was renamed/removed from the UI in a recent commit, or (b) Neo panel initialization fires an automatic greeting message that creates a user-message element even before any explicit message is sent. Needs UI source inspection (`NeoPanel`, `NeoChatView` or equivalent component).
+
+**Fix needed**: Inspect `packages/web/src/` for `neo-empty-state` testid; if removed, update test to use the current empty-state testid or selector. If a system init message is being created, ensure test isolation prevents it.
+
+---
+
+### Root Cause B — `features-neo-conversation`: Two distinct failures
+
+**Tests**:
+1. `navigates to Conservative and back to Balanced` — line 406: strict mode violation on `locator('text=Security mode updated')`
+2. `can switch to activity view and back to chat` — line 555: `getByTestId(NEO_ACTIVITY_VIEW_TESTID).toBeVisible()` fails
+
+**Errors**:
+```
+Error: locator.waitFor: Error: strict mode violation: locator('text=Security mode updated') resolved to 2 elements:
+> 407 | await expect(modeSelect).toHaveValue('balanced');
+    at neo-conversation.e2e.ts:406:52
+
+Error: expect(locator).toBeVisible() failed — element(s) not found
+> 555 | await expect(page.getByTestId(NEO_ACTIVITY_VIEW_TESTID)).toBeVisible();
+```
+
+**Likely cause for (1)**: `changeSecurityMode` helper uses `page.locator('text=Security mode updated')` which matches multiple DOM elements (likely the toast text plus an ARIA live region mirror). Strict mode fires.
+
+**Likely cause for (2)**: `NEO_ACTIVITY_VIEW_TESTID` does not exist in the current UI, or the activity view tab is not accessible without AI (the test may need to be guarded with `isNeoAvailable`).
+
+**Fix needed**: (1) Change `page.locator('text=Security mode updated')` to `page.getByText('Security mode updated').first()` or `page.locator('[role="status"]:has-text("Security mode updated")')`. (2) Inspect the `NEO_ACTIVITY_VIEW_TESTID` constant and verify it matches the current DOM testid; add `isNeoAvailable` guard if the view requires an active AI session.
+
+---
+
+### Root Cause C — `features-space-creation`: Strict mode on `getByRole('button', { name: 'Active' })`
+
+**Tests**: `creates space and shows tabbed dashboard layout` — line 150
+
+**Error**:
+```
+Error: strict mode violation: getByRole('button', { name: 'Active' }) resolved to 2 elements:
+> 150 | await expect(page.getByRole('button', { name: 'Active' })).toBeVisible({ timeout: 5000 });
+    at space-creation.e2e.ts:150:62
+```
+
+**Likely cause**: Two buttons with accessible name containing "Active" exist simultaneously — the space task tab bar button ("Active 0") and another UI element (e.g., SpaceDetailPanel sidebar, status badge, or a space-list item). PR #1356 now makes the SpaceDashboard visible, which surfaces the tab bar; but another "Active" button appears in the same viewport.
+
+**Fix needed**: Scope the locator to the space overview container: `page.getByTestId('space-overview-view').getByRole('button', { name: 'Active' })`.
+
+---
+
+### Root Cause D — `features-space-happy-path-pipeline`: Invalid status transition `in_progress → completed`
+
+**Tests**: `task completion is reflected in task pane` — line 198
+
+**Error**:
+```
+Error: page.evaluate: Error: Invalid status transition from 'in_progress' to 'completed'.
+Allowed: done, blocked, cancelled
+    at space-happy-path-pipeline.e2e.ts:198:14
+```
+
+**Likely cause**: The test calls `hub.request('spaceTask.update', { ..., status: 'completed' })` at line 213, but the valid terminal status value is `'done'`, not `'completed'`. The status value name in the API changed (or was never `completed`).
+
+**Fix needed**: Change `status: 'completed'` to `status: 'done'` at `space-happy-path-pipeline.e2e.ts:213`.
+
+---
+
+### Root Cause E — `features-reviewer-feedback-loop`: `animate-pulse` class not on SVG `<g>` element
+
+**Tests**: `coding node is pulsing after re-activation` — line 334
+
+**Error**:
+```
+Error: expect(locator).toHaveClass(/animate-pulse/) failed
+Expected pattern: /animate-pulse/
+Timeout: 5000ms
+> 334 | await expect(codingNodeEl).toHaveClass(/animate-pulse/, { timeout: 5000 });
+    at reviewer-feedback-loop.e2e.ts:334:32
+```
+
+**Context**: `codingNodeEl = page.getByTestId('node-{id}')` which resolves to `<g data-testid="node-...">`. The `animate-pulse` class is expected on the `<g>` element but is absent.
+
+**Likely cause**: The `animate-pulse` Tailwind class was moved to a child element of the SVG node `<g>`, or the animation mechanism was changed to use CSS animations/keyframes rather than Tailwind's `animate-pulse` class directly on the `<g>`.
+
+**Fix needed**: Inspect the workflow canvas node rendering component (`packages/web/src/`) to find where `animate-pulse` is currently applied when a node has an in-progress task. Update the test to assert on the correct element (e.g., `codingNodeEl.locator('.animate-pulse')` or a child element).
+
+---
+
+### Root Cause F — `features-space-navigation`: `space-detail-dashboard` button not visible after clicking space
+
+**Tests**: `Level 1→2: NavRail Spaces → SpaceContextPanel → click space → SpaceDetailPanel` — line 102
+
+**Error**:
+```
+Error: expect(locator).toBeVisible() failed — element(s) not found
+Timeout: 10000ms
+> 102 | await expect(page.locator('[data-testid="space-detail-dashboard"]')).toBeVisible({ timeout: 10000 });
+    at space-navigation.e2e.ts:102:72
+```
+
+**Likely cause**: After clicking `page.getByText(spaceName, { exact: true })` in the SpaceContextPanel, the SpaceDetailPanel does not open (or opens but its "Overview" button is obscured). The testid `space-detail-dashboard` exists in `SpaceDetailPanel.tsx:168`, so the component exists. The issue may be that clicking the space name navigates to the space route (`/space/:id`) instead of opening the SpaceDetailPanel overlay, or the panel is mounted but `md:hidden` due to some layout condition.
+
+**Fix needed**: Debug whether clicking the space name opens SpaceDetailPanel or navigates away; may need to use a different click target (e.g., click the space list item's explicit "Open panel" trigger rather than the text).
+
+---
+
+### Root Cause G — `features-space-approval-gate-rejection`: `view-artifacts-btn` not visible / gate click timeout
+
+**Tests**: `rejecting via GateArtifactsView closes overlay and transitions run to needs_attention` — line 182/199
+
+**Error**:
+```
+TimeoutError: locator.click: Timeout 60000ms exceeded.
+- locator resolved to <g data-gate-id="plan-approval-gate" data-testid="gate-icon-waiting_human">…</g>
+> 200 | await expect(page.getByTestId('view-artifacts-btn')).toBeVisible({ timeout: 5000 });
+    at space-approval-gate-rejection.e2e.ts:199:21
+```
+
+**Likely cause**: `view-artifacts-btn` is not visible on the canvas within 5000ms after the run starts in `waiting_human` state. The test sequence: start run → wait for `gate-icon-waiting_human` → click it → expect `view-artifacts-btn`. If the gate popup that contains `view-artifacts-btn` does not appear after clicking the gate icon `<g>`, the 5s timeout fires. SVG `<g>` elements may have pointer-event issues — the click might not reach the element's event handler.
+
+**Fix needed**: Investigate whether clicking `gate-icon-waiting_human` (an SVG `<g>`) reliably opens the gate popup; may need `page.getByTestId('gate-icon-waiting_human').click({ force: true })` or a different click target within the SVG.
+
+---
+
+### Root Cause H — `features-space-task-fullwidth`: Tab bar ('Overview') still visible in fullwidth mode
+
+**Tests**: `opens task in fullwidth pane and hides tab bar` — line 90
+
+**Error**:
+```
+Error: expect(locator).not.toBeVisible() failed — Expected: not visible
+63 × locator resolved to <button data-active="false" data-testid="space-detail-dashboard" class="...">
+> 90 | await expect(page.getByRole('button', { name: 'Overview', exact: true })).not.toBeVisible();
+    at space-task-fullwidth.e2e.ts:90:81
+```
+
+**Likely cause**: In fullwidth task mode, the SpaceDetailPanel's "Overview" button (`data-testid="space-detail-dashboard"`) is expected to be hidden, but it remains visible. Either (a) the fullwidth layout no longer hides the SpaceDetailPanel sidebar, (b) the test is checking the wrong element (the Overview button in the task view vs. the sidebar), or (c) the fullwidth route has a different implementation that keeps the sidebar visible.
+
+**Fix needed**: Verify what the expected fullwidth behavior is — should the SpaceDetailPanel sidebar be hidden when a task is open in fullwidth mode? If so, find and fix the CSS/layout logic that should hide it. If the expected behavior changed (sidebar stays visible), update the test.
+
+---
+
+### Root Cause I — `settings-tools-modal`: `openToolsModal` returns `undefined` (missing return statement)
+
+**Tests**: All 7 tests in the suite fail with `TypeError: Cannot read properties of undefined`
+
+**Error**:
+```
+TypeError: Cannot read properties of undefined (reading 'getByText')
+> 67 | await expect(dialog.getByText('App MCP Servers', { exact: true })).toBeVisible();
+    at tools-modal.e2e.ts:67:23
+```
+
+**Root cause**: `openToolsModal(page)` at `tools-modal.e2e.ts:36–55` has no `return` statement. Every test does `const dialog = await openToolsModal(page)` and gets `undefined`. All subsequent `dialog.getByText(...)` calls throw TypeError.
+
+PR #1353 fixed `button[aria-label="Session options"]` → `getByTitle('Session options')` and added `waitForWebSocketConnected`, but did **not** add `return getModal(page)` at the end of the function.
+
+**Fix**: Add `return getModal(page);` as the last line of `openToolsModal` in `packages/e2e/tests/settings/tools-modal.e2e.ts`.
+
+---
+
+### Root Cause J — `responsive-tablet` (LLM): `closePanelButton` not in viewport
+
+**Tests**: `should display sidebar on tablet and use session` — line 45 (nested `closePanelButton`)
+
+**Error**:
+```
+TimeoutError: locator.click: Timeout 60000ms exceeded.
+2 × waiting for element to be visible, enabled and stable
+112 × waiting for element to be visible, enabled and stable
+> 45 | await expect(closePanelButton(page)).toBeInViewport({ timeout: 5000 });
+    at tablet.e2e.ts:45
+```
+
+**Likely cause**: The tablet test tries to verify that at tablet viewport (768px), a close-panel or hamburger button is visible. The `closePanelButton` selector (`button[title="Close panel"]`) targets a button that only exists when the Neo panel is already open. If the Neo panel isn't opened first, no close button exists. This may be an ordering issue — `openMobilePanel` is called in a later test, not in this one.
+
+**Fix needed**: Investigate whether `openMobilePanel` needs to be called before asserting `closePanelButton` visibility, or whether the test assertion should check a different element that's always visible at tablet width.
+
+---
+
+### Root Cause K — `features-reference-autocomplete` (LLM): Pre-existing no-git-repo issue
+
+**Tests**: All tests — `Worktree creation failed — task requires isolation`
+
+**Error**: Same pre-existing issue documented in all prior health check entries. E2E workspace path (`/tmp/tmp.*`) is not a git repository; `WorktreeManager.findGitRoot()` returns null.
+
+**Status**: Unresolved — no fix PR open yet. Needs one of: (1) `git init` in E2E workspace setup, (2) backend fallback for non-git workspaces, or (3) test re-categorization.
+
+---
+
+### Previously Failing, Now Passing (improvements from run #23971370596)
+
+| Suite | Root Cause Fixed | Fix PR |
+|---|---|---|
+| `E2E No-LLM (core-connection-resilience)` | Ripgrep added to CI | #1351 |
+| `E2E No-LLM (features-provider-model-switching)` | Ripgrep added to CI | #1351 |
+| `E2E No-LLM (features-space-agent-chat)` | Textarea selector scoped | #1355 |
+| `E2E No-LLM (features-space-agent-centric-workflow)` | Workflow fix + CI update | #1356 |
+| `E2E No-LLM (features-space-context-panel-switching)` | Workflow fix | #1356 |
+| `E2E No-LLM (features-space-settings-crud)` | Regex locator fixed | #1353 |
+| `E2E No-LLM (features-space-navigation)` *partial* | Workflow fix | #1356 |
+| `E2E No-LLM (features-space-task-creation)` | Workflow fix + dialog fix | #1354/#1356 |
+| `E2E No-LLM (features-space-multi-agent-editor)` | Workflow fix | #1356 |
+| `E2E No-LLM (features-visual-workflow-editor)` | Workflow fix | #1356 |
+| `E2E No-LLM (settings-mcp-servers)` | Merged fix | — |
+| `E2E LLM (core-model-selection)` | Ripgrep added | #1351 |
+| `E2E LLM (features-file-operations)` | Ripgrep added | #1351 |
+| `E2E LLM (features-session-operations)` | Ripgrep added | #1351 |
+| `E2E LLM (features-message-operations)` | Ripgrep added | #1351 |
+| All other previously failing LLM suites | Ripgrep added | #1351 |
+
+### Fix Tasks Needed
+
+| # | Suite | Root Cause | Specific Fix |
+|---|---|---|---|
+| 1 | `settings-tools-modal` | I — missing return | Add `return getModal(page);` to `openToolsModal` (line ~54, `tools-modal.e2e.ts`) |
+| 2 | `features-neo-conversation` | B1 — strict mode toast | Change `locator('text=Security mode updated')` → `.getByText(...).first()` in `changeSecurityMode` helper |
+| 3 | `features-neo-conversation` | B2 — activity view | Investigate `NEO_ACTIVITY_VIEW_TESTID` existence; add `isNeoAvailable` guard if AI-dependent |
+| 4 | `features-neo-chat-rendering` | A — testid/init | Inspect `neo-empty-state` testid in current UI; update test if testid changed |
+| 5 | `features-space-creation` | C — strict mode Active | Scope: `page.getByTestId('space-overview-view').getByRole('button', { name: 'Active' })` |
+| 6 | `features-space-happy-path-pipeline` | D — wrong status | Change `status: 'completed'` → `status: 'done'` at line 213 |
+| 7 | `features-reviewer-feedback-loop` | E — animate-pulse | Inspect canvas node component; update assertion to target correct element |
+| 8 | `features-space-navigation` | F — panel not opening | Debug space click → SpaceDetailPanel flow; fix click target or navigation |
+| 9 | `features-space-approval-gate-rejection` | G — view-artifacts-btn | Investigate SVG gate click reliability; may need `{ force: true }` |
+| 10 | `features-space-task-fullwidth` | H — sidebar visible | Verify fullwidth behavior expectation; fix layout or update test |
+| 11 | `responsive-tablet` | J — close button | Investigate openMobilePanel ordering; fix assertion for tablet sidebar |
+| 12 | `features-reference-autocomplete` | K — no git repo | Init git repo in E2E workspace setup (long-standing, backend or test fix) |
+
+### Regression Summary
+
+- **Previous run** (run #23971370596, 2026-04-04): 26 failing + 3 cancelled
+- **This run** (run #23980009471, 2026-04-04): **11 failing**, 0 cancelled
+- **Improvements**: 15 suites now passing (all former ripgrep/dialog/selector/workflow failures resolved by fix PRs)
+- **Remaining**: 11 failures across 9 new/previously-unmasked root causes + 2 pre-existing (reference-autocomplete worktree; responsive-tablet)
+- **Unique root cause categories**: 11 (A–K above)
