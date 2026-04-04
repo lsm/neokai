@@ -101,10 +101,7 @@ export async function selectReferenceByClick(
 	const selector = resultType
 		? `${AUTOCOMPLETE_ITEM_SELECTOR}[data-result-type="${resultType}"]`
 		: AUTOCOMPLETE_ITEM_SELECTOR;
-	const item = getReferenceDropdown(page)
-		.locator(selector)
-		.filter({ hasText: searchText })
-		.first();
+	const item = getReferenceDropdown(page).locator(selector).filter({ hasText: searchText }).first();
 	await item.waitFor({ state: 'visible', timeout: 5000 });
 	await item.click();
 }
