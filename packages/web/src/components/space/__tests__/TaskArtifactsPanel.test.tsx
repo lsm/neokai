@@ -224,12 +224,15 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
+					taskActivity: signal(new Map()),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({
 						id: 'task-1',
 						taskAgentSessionId: 'session-abc',
 					}),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
+					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
+					unsubscribeTaskActivity: vi.fn(),
 				};
 			},
 		}));
@@ -280,9 +283,12 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
+					taskActivity: signal(new Map()),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({ id: 'task-2' }),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
+					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
+					unsubscribeTaskActivity: vi.fn(),
 				};
 			},
 		}));
@@ -331,12 +337,15 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
+					taskActivity: signal(new Map()),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({
 						id: 'task-3',
 						taskAgentSessionId: 'session-toggle',
 					}),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
+					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
+					unsubscribeTaskActivity: vi.fn(),
 				};
 			},
 		}));
