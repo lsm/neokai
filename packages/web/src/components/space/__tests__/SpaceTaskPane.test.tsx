@@ -62,10 +62,57 @@ vi.mock('../../../lib/space-store', () => ({
 	},
 }));
 
+function makeWorkflowRun(overrides: Partial<SpaceWorkflowRun> = {}): SpaceWorkflowRun {
+	return {
+		id: 'run-1',
+		spaceId: 'space-1',
+		workflowId: 'workflow-1',
+		title: 'Test Run',
+		status: 'in_progress',
+		startedAt: Date.now(),
+		completedAt: null,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		...overrides,
+	};
+}
+
 vi.mock('../SpaceTaskUnifiedThread', () => ({
 	SpaceTaskUnifiedThread: ({ taskId }: { taskId: string }) => (
 		<div data-testid="space-task-unified-thread" data-task-id={taskId} />
 	),
+}));
+
+const { mockWorkflowCanvasOnNodeClick } = vi.hoisted(() => ({
+	mockWorkflowCanvasOnNodeClick: vi.fn(),
+}));
+
+vi.mock('../WorkflowCanvas', () => ({
+	WorkflowCanvas: ({
+		workflowId,
+		runId,
+		spaceId,
+		onNodeClick,
+		class: className,
+	}: {
+		workflowId: string;
+		runId?: string | null;
+		spaceId: string;
+		onNodeClick?: (nodeId: string, tasks: unknown[]) => void;
+		class?: string;
+	}) => {
+		// Expose the onNodeClick for testing
+		mockWorkflowCanvasOnNodeClick.mockImplementation(onNodeClick);
+		return (
+			<div
+				data-testid="workflow-canvas"
+				data-workflow-id={workflowId}
+				data-run-id={runId}
+				data-space-id={spaceId}
+				class={className}
+			/>
+		);
+	},
 }));
 
 vi.mock('../../../lib/utils', () => ({
@@ -114,6 +161,7 @@ describe('SpaceTaskPane', () => {
 		mockUnsubscribeTaskActivity.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockWorkflowCanvasOnNodeClick.mockClear();
 	});
 
 	afterEach(() => {
@@ -350,6 +398,189 @@ describe('SpaceTaskPane — composer', () => {
 		fireEvent.input(textarea, { target: { value: 'Second try' } });
 		fireEvent.click(getByText('Send to Task Agent'));
 		await waitFor(() => expect(queryByText('Temporary error')).toBeNull());
+	});
+});
+
+describe('SpaceTaskPane — canvas toggle', () => {
+	beforeEach(() => {
+		cleanup();
+		mockTasks.value = [];
+		mockWorkflowRuns.value = [];
+		mockEnsureTaskAgentSession.mockReset();
+		mockEnsureTaskAgentSession.mockImplementation(async () =>
+			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
+		);
+		mockWorkflowCanvasOnNodeClick.mockClear();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('does not show canvas toggle for tasks without workflowRunId', () => {
+		mockTasks.value = [makeTask({ workflowRunId: null })];
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		expect(queryByTestId('canvas-toggle')).toBeNull();
+	});
+
+	it('does not show canvas toggle for workflow tasks without a matching run in the store', () => {
+		// task has workflowRunId but no run in the store → canvasWorkflowId is null
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = []; // no matching run
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		expect(queryByTestId('canvas-toggle')).toBeNull();
+	});
+
+	it('shows canvas toggle for tasks with workflowRunId and a matching run', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		expect(getByTestId('canvas-toggle')).toBeTruthy();
+	});
+
+	it('clicking canvas toggle switches to canvas view', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+		// Thread view is shown initially
+		expect(queryByTestId('canvas-view')).toBeNull();
+		expect(queryByTestId('task-thread-panel')).toBeTruthy();
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+
+		// Canvas view is now shown
+		expect(getByTestId('canvas-view')).toBeTruthy();
+		expect(getByTestId('workflow-canvas')).toBeTruthy();
+		expect(queryByTestId('task-thread-panel')).toBeNull();
+	});
+
+	it('clicking canvas toggle again switches back to thread view', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('canvas-view')).toBeTruthy();
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(queryByTestId('canvas-view')).toBeNull();
+		expect(getByTestId('task-thread-panel')).toBeTruthy();
+	});
+
+	it('canvas view renders WorkflowCanvas with correct run and workflow IDs', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1', spaceId: 'space-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'wf-abc' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+
+		const canvas = getByTestId('workflow-canvas');
+		expect(canvas.getAttribute('data-workflow-id')).toBe('wf-abc');
+		expect(canvas.getAttribute('data-run-id')).toBe('run-1');
+		expect(canvas.getAttribute('data-space-id')).toBe('space-1');
+	});
+
+	it('switching to artifacts view closes canvas view', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+
+		// Open canvas first
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('canvas-view')).toBeTruthy();
+
+		// Open artifacts — should close canvas
+		fireEvent.click(getByTestId('artifacts-toggle'));
+		expect(queryByTestId('canvas-view')).toBeNull();
+	});
+
+	it('canvas toggle aria-pressed reflects current state', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		const btn = getByTestId('canvas-toggle');
+		expect(btn.getAttribute('aria-pressed')).toBe('false');
+
+		fireEvent.click(btn);
+		expect(btn.getAttribute('aria-pressed')).toBe('true');
+	});
+
+	it('canvas node click opens overlay with the task agent session (fallback when no node-level session)', () => {
+		mockTasks.value = [
+			makeTask({
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				activeSession: null,
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('workflow-canvas')).toBeTruthy();
+
+		// Simulate a node click with no node-specific task sessions — falls back to task session
+		mockWorkflowCanvasOnNodeClick('node-1', []);
+
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-task');
+	});
+
+	it('canvas node click opens overlay with the node-specific agent session (primary path)', () => {
+		const nodeTask = makeTask({
+			id: 'node-task-1',
+			title: 'Coder Node',
+			workflowRunId: 'run-1',
+			taskAgentSessionId: 'session-node-agent',
+			activeSession: null,
+		});
+		mockTasks.value = [
+			makeTask({
+				id: 'task-1',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				activeSession: null,
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('workflow-canvas')).toBeTruthy();
+
+		// Simulate a node click with a node-level task that has its own agent session
+		mockWorkflowCanvasOnNodeClick('node-1', [nodeTask]);
+
+		// Should use the node task's session, NOT the parent task's session
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-node-agent');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Node');
+	});
+
+	it('switching to canvas view closes the artifacts panel', () => {
+		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		const { getByTestId, queryByTestId } = render(
+			<SpaceTaskPane taskId="task-1" spaceId="space-1" />
+		);
+
+		// Open artifacts first
+		fireEvent.click(getByTestId('artifacts-toggle'));
+		// Artifacts panel replaces the thread — canvas-view is not shown
+		expect(queryByTestId('canvas-view')).toBeNull();
+
+		// Open canvas — should close artifacts and show canvas
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('canvas-view')).toBeTruthy();
+		// thread panel is not shown when canvas is active
+		expect(queryByTestId('task-thread-panel')).toBeNull();
 	});
 });
 

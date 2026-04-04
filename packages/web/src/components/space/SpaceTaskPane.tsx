@@ -3,6 +3,7 @@ import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
 import type {
+	SpaceTask,
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
 	SpaceTaskPriority,
@@ -13,6 +14,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskStatusActions } from './TaskStatusActions';
 import MentionAutocomplete from './MentionAutocomplete';
+import { WorkflowCanvas } from './WorkflowCanvas';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -143,6 +145,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
 	const [showArtifacts, setShowArtifacts] = useState(false);
+	const [showCanvas, setShowCanvas] = useState(false);
 	const [mentionQuery, setMentionQuery] = useState<string | null>(null);
 	const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -207,6 +210,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setThreadSendError(null);
 		setThreadDraft('');
 		setShowArtifacts(false);
+		setShowCanvas(false);
 	}, [taskId]);
 
 	useEffect(() => {
@@ -273,6 +277,13 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const runtimeSpaceId = spaceId ?? task.spaceId;
 	const agentSessionId = task.taskAgentSessionId ?? threadSessionId;
+
+	// Resolve workflowId from the active run for canvas mode
+	const workflowRun = task.workflowRunId
+		? (spaceStore.workflowRuns.value.find((r) => r.id === task.workflowRunId) ?? null)
+		: null;
+	const canvasWorkflowId = workflowRun?.workflowId ?? null;
+
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
 	const showInlineComposer = !!agentSessionId && !isTerminalTask;
@@ -288,6 +299,19 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				: agentSessionId
 					? 'View Agent Session'
 					: 'Open Space Agent';
+
+	const handleNodeClick = (nodeId: string, nodeTasks: SpaceTask[]) => {
+		// Find the first task for this node that has an agent session open
+		const nodeTask = nodeTasks.find((t) => t.taskAgentSessionId);
+		if (nodeTask?.taskAgentSessionId) {
+			spaceOverlayAgentNameSignal.value = nodeTask.title ?? `Node ${nodeId}`;
+			spaceOverlaySessionIdSignal.value = nodeTask.taskAgentSessionId;
+		} else if (agentSessionId) {
+			// Fall back to the task agent session
+			spaceOverlayAgentNameSignal.value = agentActionLabel;
+			spaceOverlaySessionIdSignal.value = agentSessionId;
+		}
+	};
 
 	const handleThreadSend = async (e: Event) => {
 		e.preventDefault();
@@ -358,10 +382,32 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 					</div>
+					{task.workflowRunId && canvasWorkflowId && (
+						<button
+							type="button"
+							onClick={() => {
+								setShowCanvas((v) => !v);
+								setShowArtifacts(false);
+							}}
+							class={cn(
+								'flex-shrink-0 px-2 py-1 text-xs font-medium transition-colors',
+								showCanvas
+									? 'text-blue-300 hover:text-blue-200'
+									: 'text-gray-400 hover:text-gray-200'
+							)}
+							data-testid="canvas-toggle"
+							aria-pressed={showCanvas}
+						>
+							Canvas
+						</button>
+					)}
 					{task.workflowRunId && (
 						<button
 							type="button"
-							onClick={() => setShowArtifacts((v) => !v)}
+							onClick={() => {
+								setShowArtifacts((v) => !v);
+								setShowCanvas(false);
+							}}
 							class={cn(
 								'flex-shrink-0 px-2 py-1 text-xs font-medium transition-colors',
 								showArtifacts
@@ -409,7 +455,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			)}
 
 			<div class="flex-1 min-h-0 overflow-hidden px-4">
-				{showArtifacts && task.workflowRunId ? (
+				{showCanvas && task.workflowRunId && canvasWorkflowId ? (
+					<div class="h-full" data-testid="canvas-view">
+						<WorkflowCanvas
+							workflowId={canvasWorkflowId}
+							runId={task.workflowRunId}
+							spaceId={runtimeSpaceId ?? task.spaceId}
+							onNodeClick={agentSessionId ? handleNodeClick : undefined}
+							class="h-full"
+						/>
+					</div>
+				) : showArtifacts && task.workflowRunId ? (
 					<TaskArtifactsPanel
 						runId={task.workflowRunId}
 						onClose={() => setShowArtifacts(false)}
