@@ -32,6 +32,7 @@ import type {
 } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
+import { connectionState } from '../../lib/state.ts';
 import { cn } from '../../lib/utils';
 import { GateArtifactsView } from './GateArtifactsView';
 
@@ -941,6 +942,11 @@ export function WorkflowCanvas({
 }: WorkflowCanvasProps): JSX.Element {
 	const isRuntimeMode = !!runId;
 
+	// Track hub connection state so effects can retry when the hub connects.
+	// Preact signals are tracked in the render function; reading .value here means
+	// the component re-renders (and effects re-run) when connection state changes.
+	const isConnected = connectionState.value === 'connected';
+
 	// ---- Data from store ----
 	const workflow = useMemo(
 		() => spaceStore.workflows.value.find((w) => w.id === workflowId) ?? null,
@@ -983,15 +989,25 @@ export function WorkflowCanvas({
 		setLocalGateAssignments(map);
 	}, [workflow]);
 
+	// Clear gate data when switching to a different run so stale data from the previous
+	// run doesn't appear on the new run's channels. Clearing here (on runId change) rather
+	// than inside fetchGateData prevents the gate icons from flickering mid-fetch on every
+	// refetch triggered by status changes or reconnects — which was causing Playwright's
+	// click() actionability "stable" check to never settle.
+	useEffect(() => {
+		setGateDataMap(new Map());
+	}, [runId]);
+
 	// ---- Fetch gate data for runtime mode ----
 	const fetchGateData = useCallback(async () => {
 		if (!runId) return;
-		// Clear stale data immediately so old run's gate states don't flash on the new run's channels.
-		setGateDataMap(new Map());
 		setGateDataLoading(true);
 		try {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+			// Use getHub() instead of getHubIfConnected() so we wait for the hub to be
+			// ready rather than bailing silently when the hub is still connecting at mount
+			// time (e.g. after a page navigation). getHub() resolves as soon as the
+			// WebSocket handshake completes so the delay is negligible in practice.
+			const hub = await connectionManager.getHub();
 			const result = await hub.request<{ gateData: GateDataRecord[] }>(
 				'spaceWorkflowRun.listGateData',
 				{ runId }
@@ -1009,15 +1025,23 @@ export function WorkflowCanvas({
 	}, [runId]);
 
 	useEffect(() => {
-		if (isRuntimeMode) {
+		// Re-fetch when switching to runtime mode OR when the hub connects/reconnects.
+		// Guard on isConnected so the effect is a no-op on the initial mount when the hub
+		// is still handshaking (isConnected=false). Without this guard, two concurrent
+		// fetchGateData calls fire: one blocked inside the effect awaiting getHub(), and a
+		// second when isConnected transitions to true. Both complete with identical data,
+		// making the second a redundant RPC call on every initial page navigation.
+		if (isRuntimeMode && isConnected) {
 			void fetchGateData();
 		}
-	}, [isRuntimeMode, fetchGateData]);
+	}, [isRuntimeMode, fetchGateData, isConnected]);
 
 	// ---- Subscribe to gate data events ----
 	useEffect(() => {
 		if (!runId) return;
 
+		// Re-subscribe when the hub connects/reconnects — isConnected is in the dep array
+		// so this effect re-runs (and re-subscribes) after a reconnection.
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) return;
 
@@ -1037,7 +1061,8 @@ export function WorkflowCanvas({
 		});
 
 		return unsub;
-	}, [runId, spaceId]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [runId, spaceId, isConnected]);
 
 	// Re-fetch gate data when run status changes (catches approveGate responses)
 	const prevRunStatus = useRef<string | null>(null);
@@ -1263,7 +1288,9 @@ export function WorkflowCanvas({
 								fill="none"
 								style={{ pointerEvents: 'stroke' }}
 							/>
-							{/* Visible path */}
+							{/* Visible path — pointer-events disabled so backward-cycle paths that
+							    pass through gate icon positions don't intercept clicks. The wide
+							    transparent hitbox above handles any channel-level interactions. */}
 							<path
 								d={d}
 								stroke={strokeColor}
@@ -1272,6 +1299,7 @@ export function WorkflowCanvas({
 								strokeOpacity={0.85}
 								fill="none"
 								markerEnd={`url(#${hasGate ? arrowMarkerGatedId : arrowMarkerId})`}
+								style={{ pointerEvents: 'none' }}
 							/>
 
 							{/* Gate icon ON the channel line (at midpoint) */}

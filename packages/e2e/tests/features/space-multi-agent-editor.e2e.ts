@@ -39,9 +39,12 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
+// Agent names use a distinct suffix to avoid conflicts with space pre-seeded agents
+// (e.g. the seeded agent named 'coder'). These names become slot names in multi-agent
+// steps, and the channel dropdown select options use slot names as their values.
 const AGENT_A_NAME = 'Coder Agent';
 const AGENT_B_NAME = 'Reviewer Agent';
-// Option text as rendered by agent-select and add-agent-select: just the agent name (no role suffix)
+// Option text as rendered by agent-select and add-agent-select: just the agent name
 const AGENT_A_OPTION = AGENT_A_NAME;
 const AGENT_B_OPTION = AGENT_B_NAME;
 
@@ -133,14 +136,15 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Switch to multi-agent mode and add both agents
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
 
-		// Verify agent names are rendered in the list entries
+		// Verify agent slot names are rendered in the list entries.
+		// Using agent-role-input values instead of hasText filter because both entries
+		// contain all agent names in their dropdown options (causing false filter matches).
 		const agentsList = panel.getByTestId('agents-list');
-		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_A })).toBeVisible({
-			timeout: 2000,
-		});
-		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_B })).toBeVisible({
-			timeout: 2000,
-		});
+		await expect(agentsList.getByTestId('agent-entry')).toHaveCount(2, { timeout: 2000 });
+		const roleInputs = agentsList.locator('[data-testid="agent-role-input"]');
+		// Slot names are derived from agent names — AGENT_A_NAME is added first, AGENT_B_NAME second
+		await expect(roleInputs.first()).toHaveValue(AGENT_A_NAME, { timeout: 2000 });
+		await expect(roleInputs.nth(1)).toHaveValue(AGENT_B_NAME, { timeout: 2000 });
 
 		// Close panel and verify node shows agent badges for both agents
 		await panel.getByTestId('close-button').click();
@@ -153,9 +157,9 @@ test.describe('Multi-Agent Step Editor', () => {
 		const regularNode = freshNodes.nth(0);
 		const agentBadges = regularNode.getByTestId('agent-badges');
 		await expect(agentBadges).toBeVisible({ timeout: 3000 });
-		// Both agent names should appear as badge spans within the agent-badges container
-		await expect(agentBadges.locator(`text=${ROLE_A}`)).toBeVisible({ timeout: 2000 });
-		await expect(agentBadges.locator(`text=${ROLE_B}`)).toBeVisible({ timeout: 2000 });
+		// Badges show the slot name (= agent name) for each agent in the step
+		await expect(agentBadges.locator(`text=${AGENT_A_NAME}`)).toBeVisible({ timeout: 2000 });
+		await expect(agentBadges.locator(`text=${AGENT_B_NAME}`)).toBeVisible({ timeout: 2000 });
 	});
 
 	// ─── Test 2: Configure channels — one-way and bidirectional ──────────────
@@ -195,27 +199,28 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		const channelsList = channelsSection.getByTestId('channels-list');
 
-		// ── Add one-way channel: coder → reviewer ────────────────────────────
+		// ── Add one-way channel: Coder Agent → Reviewer Agent ───────────────
+		// Channel dropdown uses slot names (= agent names) as option values.
 
-		await addWorkflowChannel(editor, ROLE_A, ROLE_B, 'one-way');
+		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME, 'one-way');
 
 		// One channel entry should appear
 		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
 		const firstEntry = channelsList.getByTestId('channel-entry').first();
-		await expect(firstEntry).toContainText(ROLE_A);
+		await expect(firstEntry).toContainText(AGENT_A_NAME);
 		await expect(firstEntry).toContainText('→');
-		await expect(firstEntry).toContainText(ROLE_B);
+		await expect(firstEntry).toContainText(AGENT_B_NAME);
 
-		// ── Add bidirectional channel: reviewer ↔ coder ──────────────────────
+		// ── Add bidirectional channel: Reviewer Agent ↔ Coder Agent ─────────
 
-		await addWorkflowChannel(editor, ROLE_B, ROLE_A, 'bidirectional');
+		await addWorkflowChannel(editor, AGENT_B_NAME, AGENT_A_NAME, 'bidirectional');
 
 		// Two channel entries should now be present
 		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
 		const secondEntry = channelsList.getByTestId('channel-entry').nth(1);
-		await expect(secondEntry).toContainText(ROLE_B);
+		await expect(secondEntry).toContainText(AGENT_B_NAME);
 		await expect(secondEntry).toContainText('↔');
-		await expect(secondEntry).toContainText(ROLE_A);
+		await expect(secondEntry).toContainText(AGENT_A_NAME);
 	});
 
 	// ─── Test 3: Remove one agent — verify workflow channels persist ──────────
@@ -247,9 +252,10 @@ test.describe('Multi-Agent Step Editor', () => {
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// Add a workflow-level channel: coder → reviewer
+		// Add a workflow-level channel: Coder Agent → Reviewer Agent
+		// Channel dropdown uses slot names (= agent names) as option values.
 		await ensureChannelsSectionOpen(editor);
-		await addWorkflowChannel(editor, ROLE_A, ROLE_B);
+		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME);
 		await expect(
 			editor
 				.getByTestId('channels-section')
@@ -262,16 +268,17 @@ test.describe('Multi-Agent Step Editor', () => {
 		const reopenedPanel = editor.getByTestId('node-config-panel');
 		await expect(reopenedPanel).toBeVisible({ timeout: 3000 });
 
-		// Remove Reviewer Agent (the second entry in the list)
+		// Remove Reviewer Agent (the second entry in the list).
+		// Cannot use filter({ hasText }) because both entries contain all agent names in their
+		// dropdown options — use nth(1) to target the second entry directly.
 		const agentsList = reopenedPanel.getByTestId('agents-list');
-		const secondAgentEntry = agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_B });
+		const secondAgentEntry = agentsList.getByTestId('agent-entry').nth(1);
 		await secondAgentEntry.getByTestId('remove-agent-button').click();
 
-		// Only one agent entry should remain
+		// Only one agent entry should remain; verify by role-input value (not hasText filter)
 		await expect(agentsList.getByTestId('agent-entry')).toHaveCount(1, { timeout: 3000 });
-		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_A })).toBeVisible({
-			timeout: 2000,
-		});
+		const remainingRoleInput = agentsList.locator('[data-testid="agent-role-input"]').first();
+		await expect(remainingRoleInput).toHaveValue(AGENT_A_NAME, { timeout: 2000 });
 
 		// "Switch to single" button (data-testid="switch-to-single-button") appears when
 		// exactly 1 agent remains in multi-agent mode

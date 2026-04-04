@@ -434,6 +434,12 @@ test.describe('MCP Toggle - Edge Cases', () => {
 
 		await openToolsModal(page);
 
+		// Expand the Advanced section to access Claude Code Preset checkbox
+		await page
+			.locator('button')
+			.filter({ hasText: /^Advanced$/ })
+			.click();
+
 		// Get Claude Code Preset checkbox state
 		const claudeCodeCheckbox = page
 			.locator('label:has-text("Claude Code Preset")')
@@ -441,7 +447,7 @@ test.describe('MCP Toggle - Edge Cases', () => {
 			.first();
 		const claudeCodeEnabled = await claudeCodeCheckbox.isChecked();
 
-		// Get Memory checkbox state
+		// Get Memory checkbox state (in NeoKai Tools section, always visible)
 		const memoryCheckbox = page
 			.locator('label:has-text("Memory")')
 			.locator('input[type="checkbox"]')
@@ -454,6 +460,11 @@ test.describe('MCP Toggle - Edge Cases', () => {
 			await toggleMcpServer(page, serverNames[0]);
 			await saveToolsModal(page);
 			await openToolsModal(page);
+			// Re-expand Advanced section after modal reopen
+			await page
+				.locator('button')
+				.filter({ hasText: /^Advanced$/ })
+				.click();
 		}
 
 		// Verify other settings weren't affected
