@@ -362,7 +362,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Setup Dev Proxy
         if: runner.os == 'Linux' && matrix.mock_sdk == true
@@ -462,7 +462,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -527,7 +527,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -591,7 +591,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -758,7 +758,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -913,7 +913,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -1052,7 +1052,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Setup Dev Proxy
         if: runner.os == 'Linux'
