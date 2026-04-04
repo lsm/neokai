@@ -12,7 +12,7 @@
  * Setup strategy (per test):
  *   - Space + run created via RPC in beforeEach (infrastructure)
  *   - Gate data injected via `spaceWorkflowRun.writeGateData` RPC (infrastructure)
- *   - For "Coding active" test: task created + set to in_progress via RPC (infrastructure)
+ *   - For "Coding active" test: node execution created as in_progress via RPC (infrastructure)
  *   - All assertions verify visible DOM state only
  *
  * Cleanup:
@@ -169,36 +169,29 @@ async function getCodingNodeId(
 	);
 }
 
-// ─── Create + start a task for a specific workflow node ───────────────────────
+// ─── Create an in_progress node execution for a specific workflow node ───────
 
-async function createActiveTaskForNode(
+async function createActiveNodeExecution(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string,
 	runId: string,
-	nodeId: string
+	nodeId: string,
+	agentName: string
 ): Promise<string> {
 	return page.evaluate(
-		async ({ sid, rid, nid }) => {
+		async ({ rid, nid, aname }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			const task = (await hub.request('spaceTask.create', {
-				spaceId: sid,
-				title: 'E2E: Coding task (re-activated)',
-				description: 'Test task simulating coder re-activation after rejection.',
+			const result = (await hub.request('nodeExecution.create', {
 				workflowRunId: rid,
 				workflowNodeId: nid,
-			})) as { id: string };
-
-			await hub.request('spaceTask.update', {
-				spaceId: sid,
-				taskId: task.id,
+				agentName: aname,
 				status: 'in_progress',
-			});
+			})) as { execution: { id: string } };
 
-			return task.id;
+			return result.execution.id;
 		},
-		{ sid: spaceId, rid: runId, nid: nodeId }
+		{ rid: runId, nid: nodeId, aname: agentName }
 	);
 }
 
@@ -303,11 +296,11 @@ test.describe
 				spaceId = ids.spaceId;
 				runId = ids.runId;
 
-				// Get the Coding node UUID so we can create a task for it
+				// Get the Coding node UUID so we can create a node execution for it
 				codingNodeId = await getCodingNodeId(page, spaceId, runId);
 
-				// Create a task for the Coding node and set it to in_progress
-				await createActiveTaskForNode(page, spaceId, runId, codingNodeId);
+				// Create an in_progress node execution for the Coding node
+				await createActiveNodeExecution(page, runId, codingNodeId, 'Coding');
 			});
 
 			test.afterEach(async ({ page }) => {
@@ -326,12 +319,12 @@ test.describe
 					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
-				// The Coding node with in_progress task renders the g element with animate-pulse class
+				// The Coding node with in_progress execution renders the g element with animate-pulse class
 				const codingNodeEl = page.getByTestId('canvas-panel').getByTestId(`node-${codingNodeId}`);
 				await expect(codingNodeEl).toBeVisible({ timeout: 30000 });
 
 				// Active nodes have animate-pulse CSS class.
-				// Allow extra time for the live query to propagate task status to the canvas.
+				// Allow extra time for the initial fetchNodeExecutions() call during space load.
 				await expect(codingNodeEl).toHaveClass(/animate-pulse/, { timeout: 15000 });
 			});
 		});

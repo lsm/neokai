@@ -25,7 +25,7 @@ import type { JSX } from 'preact';
 import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
-	SpaceTask,
+	NodeExecution,
 	Gate,
 	GateField,
 	WorkflowNode,
@@ -602,7 +602,7 @@ interface NodeBoxProps {
 	node: WorkflowNode;
 	layout: NodeLayout;
 	status: NodeStatus;
-	tasks: SpaceTask[];
+	executions: NodeExecution[];
 	isRuntimeMode: boolean;
 }
 
@@ -610,7 +610,7 @@ function NodeBox({
 	node,
 	layout,
 	status,
-	tasks,
+	executions,
 	isRuntimeMode: _isRuntimeMode,
 }: NodeBoxProps): JSX.Element {
 	const { x, y, width, height } = layout;
@@ -642,15 +642,12 @@ function NodeBox({
 			borderColor = '#16a34a';
 			bgColor = '#052e16';
 			labelColor = '#86efac';
-			// Find most recent completed task for elapsed time
-			const completedTasks = tasks.filter((t) => t.status === 'done' && t.updatedAt);
-			const elapsed =
-				completedTasks.length > 0
-					? formatElapsed(
-							completedTasks[completedTasks.length - 1].updatedAt,
-							completedTasks[completedTasks.length - 1].createdAt
-						)
-					: null;
+			// Find most recent completed execution for elapsed time
+			const completedExecs = executions.filter(
+				(e) => e.status === 'done' && e.completedAt && e.startedAt
+			);
+			const lastExec = completedExecs.length > 0 ? completedExecs[completedExecs.length - 1] : null;
+			const elapsed = lastExec ? formatElapsed(lastExec.completedAt!, lastExec.startedAt!) : null;
 			statusIndicator = (
 				<>
 					<path
@@ -796,33 +793,23 @@ function formatElapsed(endMs: number, startMs: number): string {
 }
 
 // ============================================================================
-// Determine node status from tasks
+// Determine node status from node executions
 // ============================================================================
 
-function getNodeStatus(
-	nodeId: string,
-	tasks: SpaceTask[],
-	run: SpaceWorkflowRun | null
-): NodeStatus {
-	const nodeTasks = tasks.filter((t) => t.workflowRunId === nodeId);
-
-	if (nodeTasks.length === 0) {
+function getNodeStatus(executions: NodeExecution[], run: SpaceWorkflowRun | null): NodeStatus {
+	if (executions.length === 0) {
 		return 'pending';
 	}
 
-	if (nodeTasks.some((t) => t.status === 'in_progress')) return 'active';
+	if (executions.some((e) => e.status === 'in_progress')) return 'active';
 
-	if (
-		nodeTasks.every(
-			(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
-		)
-	) {
+	if (executions.every((e) => e.status === 'done' || e.status === 'cancelled')) {
 		// All terminal — check if they succeeded
-		if (nodeTasks.some((t) => t.status === 'done')) return 'done';
+		if (executions.some((e) => e.status === 'done')) return 'done';
 	}
 
 	if (run?.status === 'blocked' || run?.status === 'cancelled') {
-		if (nodeTasks.some((t) => t.status === 'blocked' || t.status === 'cancelled')) {
+		if (executions.some((e) => e.status === 'blocked' || e.status === 'cancelled')) {
 			return 'failed';
 		}
 	}
@@ -960,12 +947,8 @@ export function WorkflowCanvas({
 		[runId, spaceStore.workflowRuns.value]
 	);
 
-	// All tasks for this run (via workflowRunId)
-	const runTasks = useMemo(
-		() => (runId ? (spaceStore.tasksByRun.value.get(runId) ?? []) : []),
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[runId, spaceStore.tasksByRun.value]
-	);
+	// Node executions grouped by node ID — used for node status and elapsed time
+	const nodeExecsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
 
 	// ---- Gate data state ----
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>>>(new Map());
@@ -1307,8 +1290,10 @@ export function WorkflowCanvas({
 					const nodeLayout = layout.get(node.id);
 					if (!nodeLayout) return null;
 
-					const nodeTasks = runTasks.filter((t) => t.workflowRunId === node.id);
-					const status = isRuntimeMode ? getNodeStatus(node.id, runTasks, run) : 'pending';
+					const nodeExecs = (nodeExecsByNodeId.get(node.id) ?? []).filter(
+						(e) => e.workflowRunId === runId
+					);
+					const status = isRuntimeMode ? getNodeStatus(nodeExecs, run) : 'pending';
 
 					return (
 						<NodeBox
@@ -1316,7 +1301,7 @@ export function WorkflowCanvas({
 							node={node}
 							layout={nodeLayout}
 							status={status}
-							tasks={nodeTasks}
+							executions={nodeExecs}
 							isRuntimeMode={isRuntimeMode}
 						/>
 					);
