@@ -10,8 +10,8 @@
  */
 
 import { tmpdir } from 'os';
-import { join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { mkdirSync, existsSync, writeFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 
 // Compute workspace path once (Node.js caches this module)
@@ -27,4 +27,26 @@ if (!existsSync(e2eWorkspaceDir)) {
 }
 if (!existsSync(e2eDatabaseDir)) {
 	mkdirSync(e2eDatabaseDir, { recursive: true });
+}
+
+// Seed the workspace with sample files so the daemon's FileIndex has entries
+// for reference autocomplete file/folder search tests. These must be created
+// at config evaluation time (before the webServer starts) because the FileIndex
+// scans the workspace during server init — before globalSetup runs.
+const seedFiles: Record<string, string> = {
+	'package.json': '{ "name": "e2e-test-workspace", "version": "1.0.0" }',
+	'README.md': '# E2E Test Workspace',
+	'src/index.ts': 'export const hello = "world";',
+	'src/utils/helpers.ts': 'export function add(a: number, b: number) { return a + b; }',
+	'docs/guide.md': '# User Guide',
+};
+for (const [relPath, content] of Object.entries(seedFiles)) {
+	const absPath = join(e2eWorkspaceDir, relPath);
+	const dir = dirname(absPath);
+	if (!existsSync(dir)) {
+		mkdirSync(dir, { recursive: true });
+	}
+	if (!existsSync(absPath)) {
+		writeFileSync(absPath, content, 'utf-8');
+	}
 }
