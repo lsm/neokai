@@ -14,7 +14,7 @@
 
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
-import type { Space, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
+import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@neokai/shared';
 import { setupSpaceHandlers } from '../../../src/lib/rpc-handlers/space-handlers';
 import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
 import type { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
@@ -133,10 +133,33 @@ function createMockRunRepo(runs: SpaceWorkflowRun[] = [mockRun]): SpaceWorkflowR
 	} as unknown as SpaceWorkflowRunRepository;
 }
 
-function createMockSpaceAgentManager(): SpaceAgentManager {
+const mockAgents = [
+	{ id: 'agent-coder', name: 'Coder', spaceId: 'space-1' },
+	{ id: 'agent-general', name: 'General', spaceId: 'space-1' },
+	{ id: 'agent-planner', name: 'Planner', spaceId: 'space-1' },
+	{ id: 'agent-research', name: 'Research', spaceId: 'space-1' },
+	{ id: 'agent-reviewer', name: 'Reviewer', spaceId: 'space-1' },
+	{ id: 'agent-qa', name: 'QA', spaceId: 'space-1' },
+];
+
+function createMockSpaceAgentManager(opts?: {
+	createFail?: (name: string) => boolean;
+}): SpaceAgentManager {
+	let callCount = 0;
 	return {
-		create: mock(async () => ({})),
-		listBySpaceId: mock(() => []),
+		create: mock(async (params: { name?: string }) => {
+			const idx = callCount++;
+			if (opts?.createFail?.(params.name ?? '')) {
+				return { ok: false, error: `Agent ${params.name} already exists` };
+			}
+			const agent = mockAgents[idx] ?? {
+				id: `agent-${idx}`,
+				name: params.name,
+				spaceId: 'space-1',
+			};
+			return { ok: true, value: agent };
+		}),
+		listBySpaceId: mock(() => mockAgents),
 	} as unknown as SpaceAgentManager;
 }
 
@@ -174,7 +197,9 @@ describe('space-handlers', () => {
 	function setup(
 		space: Space | null = mockSpace,
 		sessionManager?: SessionManager,
-		spaceRuntimeService?: SpaceRuntimeService
+		spaceRuntimeService?: SpaceRuntimeService,
+		agentManager?: SpaceAgentManager,
+		workflowManager?: SpaceWorkflowManager
 	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
@@ -189,8 +214,8 @@ describe('space-handlers', () => {
 			taskRepo,
 			runRepo,
 			daemonHub,
-			createMockSpaceAgentManager(),
-			createMockSpaceWorkflowManager(),
+			agentManager ?? createMockSpaceAgentManager(),
+			workflowManager ?? createMockSpaceWorkflowManager(),
 			sessionManager,
 			spaceRuntimeService
 		);
@@ -345,6 +370,97 @@ describe('space-handlers', () => {
 			await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
 
 			expect(runtimeService.setupSpaceAgentSession).toHaveBeenCalledWith(mockSpace);
+		});
+
+		it('returns seedWarnings when some agents fail to seed', async () => {
+			const agentMgr = createMockSpaceAgentManager({
+				createFail: (name) => name === 'Coder' || name === 'QA',
+			});
+			setup(mockSpace, undefined, undefined, agentMgr);
+
+			const result = (await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+			})) as SpaceCreateResult;
+
+			// Space is still created successfully
+			expect(result.id).toBe(mockSpace.id);
+			// seedWarnings present with the failed agent names
+			expect(result.seedWarnings).toBeDefined();
+			expect(result.seedWarnings!.length).toBeGreaterThan(0);
+			expect(result.seedWarnings!.some((w) => w.includes('Coder'))).toBe(true);
+			expect(result.seedWarnings!.some((w) => w.includes('QA'))).toBe(true);
+		});
+
+		it('does not include seedWarnings when all agents seed successfully', async () => {
+			setup(mockSpace);
+
+			const result = await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+			});
+
+			// No seedWarnings property when everything succeeds
+			expect((result as Record<string, unknown>).seedWarnings).toBeUndefined();
+		});
+
+		it('returns seedWarnings when seedPresetAgents throws unexpectedly', async () => {
+			const agentMgr = createMockSpaceAgentManager();
+			(agentMgr.create as ReturnType<typeof mock>).mockImplementation(async () => {
+				throw new Error('Database locked');
+			});
+			setup(mockSpace, undefined, undefined, agentMgr);
+
+			const result = (await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+			})) as SpaceCreateResult;
+
+			// Space is still created
+			expect(result.id).toBe(mockSpace.id);
+			// seedWarnings present
+			expect(result.seedWarnings).toBeDefined();
+			expect(result.seedWarnings!.some((w) => w.includes('preset agents'))).toBe(true);
+		});
+
+		it('returns seedWarnings when workflow seeding fails', async () => {
+			const agentMgr = createMockSpaceAgentManager();
+			// Return empty agent list so workflow seeding cannot resolve agent names
+			(agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]);
+			setup(mockSpace, undefined, undefined, agentMgr);
+
+			const result = (await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+			})) as SpaceCreateResult;
+
+			expect(result.id).toBe(mockSpace.id);
+			expect(result.seedWarnings).toBeDefined();
+			expect(result.seedWarnings!.some((w) => w.includes('workflows'))).toBe(true);
+		});
+
+		it('space creation succeeds even when both agents and workflows fail', async () => {
+			const agentMgr = createMockSpaceAgentManager({
+				createFail: () => true, // all agents fail
+			});
+			(agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]); // no agents for workflows
+			setup(mockSpace, undefined, undefined, agentMgr);
+
+			const result = (await call('space.create', {
+				workspacePath: '/tmp/x',
+				name: 'X',
+			})) as SpaceCreateResult;
+
+			// Space is still created and returned
+			expect(result.id).toBe(mockSpace.id);
+			// Both agent and workflow warnings present
+			expect(result.seedWarnings).toBeDefined();
+			expect(result.seedWarnings!.length).toBe(2);
+			// Event still emitted
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'space.created',
+				expect.objectContaining({ spaceId: mockSpace.id })
+			);
 		});
 
 		it('still creates space and emits event even if session creation fails', async () => {

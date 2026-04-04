@@ -1101,6 +1101,90 @@ describe('seedBuiltInWorkflows()', () => {
 		// Pre-validation catches the missing role before any workflow is persisted
 		expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
 	});
+
+	// ─── Return type tests ──────────────────────────────────────────────────
+
+	test('returns seeded workflow names on success', () => {
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.skipped).toBe(false);
+		expect(result.errors).toHaveLength(0);
+		expect(result.seeded).toHaveLength(4);
+		expect(result.seeded).toContain('Coding Workflow');
+		expect(result.seeded).toContain('Full-Cycle Coding Workflow');
+		expect(result.seeded).toContain('Research Workflow');
+		expect(result.seeded).toContain('Review-Only Workflow');
+	});
+
+	test('returns skipped=true when workflows already exist', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.skipped).toBe(true);
+		expect(result.seeded).toHaveLength(0);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test('per-workflow error isolation — remaining workflows seed when one createWorkflow throws', () => {
+		// Spy on createWorkflow to make one specific workflow fail
+		const originalCreate = manager.createWorkflow.bind(manager);
+		let callCount = 0;
+		manager.createWorkflow = (params) => {
+			callCount++;
+			if (callCount === 2) {
+				throw new Error('Simulated DB constraint error');
+			}
+			return originalCreate(params);
+		};
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		// 3 of 4 succeed, 1 fails
+		expect(result.seeded).toHaveLength(3);
+		expect(result.errors).toHaveLength(1);
+		expect(result.errors[0].error).toContain('Simulated DB constraint error');
+		expect(result.skipped).toBe(false);
+
+		// Verify 3 workflows were actually persisted
+		const workflows = manager.listWorkflows(SPACE_ID);
+		expect(workflows).toHaveLength(3);
+	});
+
+	test('per-workflow error isolation — captures error name correctly', () => {
+		const originalCreate = manager.createWorkflow.bind(manager);
+		let callCount = 0;
+		const templates = getBuiltInWorkflows();
+		manager.createWorkflow = (params) => {
+			callCount++;
+			// Fail the third workflow
+			if (callCount === 3) {
+				throw new Error('Unique constraint violation');
+			}
+			return originalCreate(params);
+		};
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.errors).toHaveLength(1);
+		// The third template name is recorded in the error
+		expect(result.errors[0].name).toBe(templates[2].name);
+		expect(result.errors[0].error).toContain('Unique constraint violation');
+	});
+
+	test('all workflows fail gracefully — returns all errors', () => {
+		manager.createWorkflow = () => {
+			throw new Error('DB is read-only');
+		};
+
+		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+		expect(result.seeded).toHaveLength(0);
+		expect(result.errors).toHaveLength(4);
+		expect(result.skipped).toBe(false);
+		for (const err of result.errors) {
+			expect(err.error).toContain('DB is read-only');
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
