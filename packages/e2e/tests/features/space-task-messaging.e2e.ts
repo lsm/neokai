@@ -239,15 +239,15 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 		// After submit the draft should clear (success path) or show an error
 		// (graceful failure path — e.g. no live task agent session).
 		// We accept both outcomes: both mean the submit path was executed.
+		// If neither condition is met within the timeout, Promise.race rejects
+		// and the test fails — this is intentional to catch regressions where
+		// the submit handler silently does nothing.
 		await Promise.race([
 			// Success: textarea emptied
 			expect(composerTextarea).toHaveValue('', { timeout: 10000 }),
 			// Graceful failure: error message shown
 			expect(page.locator('p.text-red-300')).toBeVisible({ timeout: 10000 }),
-		]).catch(() => {
-			// Neither condition met — the session may be unavailable in this
-			// environment.  The test still verified the composer is interactive.
-		});
+		]);
 	});
 
 	// ─── Scenario 3: Shift+Enter inserts a newline (does NOT submit) ─────────
