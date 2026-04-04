@@ -10,7 +10,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager';
-import { seedPresetAgents } from '../../../src/lib/space/agents/seed-agents';
+import {
+	seedPresetAgents,
+	ROLE_TOOLS,
+	SUB_SESSION_FEATURES,
+} from '../../../src/lib/space/agents/seed-agents';
+import { KNOWN_TOOLS } from '@neokai/shared';
 import { setModelsCache } from '../../../src/lib/model-service';
 import { createSpaceAgentSchema, insertSpace } from '../helpers/space-agent-schema';
 
@@ -244,5 +249,302 @@ describe('seedPresetAgents', () => {
 
 		expect(general?.systemPrompt).toContain('summarization');
 		expect(general?.instructions).toContain('summary');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Exact tool sets, system prompts, instructions, and exports
+// ---------------------------------------------------------------------------
+
+describe('preset agent exact definitions', () => {
+	let db: Database;
+	let manager: SpaceAgentManager;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSpaceAgentSchema(db);
+		insertSpace(db);
+		const repo = new SpaceAgentRepository(db as any);
+		manager = new SpaceAgentManager(repo);
+		setModelsCache(new Map());
+	});
+
+	afterEach(() => {
+		db.close();
+		setModelsCache(new Map());
+	});
+
+	// --- Exact tool sets ---
+
+	const EXPECTED_CODER_TOOLS = KNOWN_TOOLS.filter(
+		(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
+	) as unknown as string[];
+
+	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+
+	it('Coder has exact CODER_TOOLS (KNOWN_TOOLS minus Task/TaskOutput/TaskStop)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coder = seeded.find((a) => a.name === 'Coder')!;
+		expect(coder.tools).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
+	it('Coder tools exclude Task, TaskOutput, TaskStop', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coder = seeded.find((a) => a.name === 'Coder')!;
+		expect(coder.tools).not.toContain('Task');
+		expect(coder.tools).not.toContain('TaskOutput');
+		expect(coder.tools).not.toContain('TaskStop');
+	});
+
+	it('General has exact DONE_TOOLS', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.name === 'General')!;
+		expect(general.tools).toEqual(EXPECTED_READONLY_TOOLS);
+	});
+
+	it('Planner has exact PLANNER_TOOLS (same as CODER_TOOLS)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const planner = seeded.find((a) => a.name === 'Planner')!;
+		expect(planner.tools).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
+	it('Research has exact RESEARCH_TOOLS (same as CODER_TOOLS)', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research')!;
+		expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
+	it('Reviewer has exact REVIEWER_TOOLS', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
+		expect(reviewer.tools).toEqual(EXPECTED_READONLY_TOOLS);
+	});
+
+	it('QA has exact QA_TOOLS', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const qa = seeded.find((a) => a.name === 'QA')!;
+		expect(qa.tools).toEqual(EXPECTED_READONLY_TOOLS);
+	});
+
+	// --- Exact system prompts ---
+
+	it('Coder has exact system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coder = seeded.find((a) => a.name === 'Coder')!;
+		expect(coder.systemPrompt).toBe(
+			'You are an expert software engineer. You write clean, well-tested code following the ' +
+				"project's existing conventions. You always commit your work, keep the working tree clean, " +
+				'and open pull requests for review.'
+		);
+	});
+
+	it('General has exact system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.name === 'General')!;
+		expect(general.systemPrompt).toBe(
+			'You are a summarization agent. You read completed workflow outputs and gate data, then produce ' +
+				'a clear, human-readable summary of what was accomplished.'
+		);
+	});
+
+	it('Planner has exact system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const planner = seeded.find((a) => a.name === 'Planner')!;
+		expect(planner.systemPrompt).toBe(
+			'You are a technical project manager. You analyze goals, break them down into clear actionable ' +
+				'tasks, identify dependencies, and produce structured implementation plans.'
+		);
+	});
+
+	it('Research has exact system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research')!;
+		expect(research.systemPrompt).toBe(
+			'You are a research specialist. You investigate topics thoroughly using web search and code ' +
+				'exploration, synthesize findings clearly, and document results in well-structured markdown files.'
+		);
+	});
+
+	it('Reviewer has exact system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
+		expect(reviewer.systemPrompt).toBe(
+			'You are an expert code reviewer. You review pull requests for correctness, security, performance, ' +
+				'style, and test coverage. You give specific, actionable feedback.'
+		);
+	});
+
+	it('QA has exact system prompt', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const qa = seeded.find((a) => a.name === 'QA')!;
+		expect(qa.systemPrompt).toBe(
+			'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
+				'and ensure the codebase meets quality standards before release.'
+		);
+	});
+
+	// --- Exact instructions ---
+
+	it('Coder has exact instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const coder = seeded.find((a) => a.name === 'Coder')!;
+		expect(coder.instructions).toBe(
+			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
+		);
+	});
+
+	it('General has exact instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const general = seeded.find((a) => a.name === 'General')!;
+		expect(general.instructions).toBe(
+			'Read all available gate data and workflow outputs. Write a comprehensive summary of the completed work.'
+		);
+	});
+
+	it('Planner has exact instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const planner = seeded.find((a) => a.name === 'Planner')!;
+		expect(planner.instructions).toBe(
+			'Produce a concrete plan with clear steps. Write the plan to a file and commit it.'
+		);
+	});
+
+	it('Research has exact instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const research = seeded.find((a) => a.name === 'Research')!;
+		expect(research.instructions).toBe(
+			'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.'
+		);
+	});
+
+	it('Reviewer has exact instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
+		expect(reviewer.instructions).toBe(
+			'Review the open PR thoroughly. If satisfied, call report_done(). If changes are needed, provide ' +
+				'specific feedback and send back for revision.'
+		);
+	});
+
+	it('QA has exact instructions', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+		const qa = seeded.find((a) => a.name === 'QA')!;
+		expect(qa.instructions).toBe(
+			"Run the full test suite. Write result='passed' or result='failed' to the gate with specific details on any failures."
+		);
+	});
+
+	// --- Exact descriptions ---
+
+	it('each agent has the exact description from PRESET_AGENTS', async () => {
+		const { seeded } = await seedPresetAgents('space-1', manager);
+
+		const expected: Record<string, string> = {
+			Coder:
+				'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
+			General:
+				'Done node agent. Reads gate data from completed workflow stages and produces a ' +
+				'comprehensive human-readable summary of what was accomplished.',
+			Planner:
+				'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
+			Research:
+				'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
+			Reviewer:
+				'Code review specialist. Reviews pull requests for correctness, style, and test coverage.',
+			QA: 'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
+		};
+
+		for (const agent of seeded) {
+			expect(agent.description).toBe(expected[agent.name]);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// ROLE_TOOLS export
+// ---------------------------------------------------------------------------
+
+describe('ROLE_TOOLS export', () => {
+	const EXPECTED_CODER_TOOLS = KNOWN_TOOLS.filter(
+		(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
+	) as unknown as string[];
+
+	const EXPECTED_READONLY_TOOLS = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+
+	it('has entries for all 6 preset roles', () => {
+		expect(Object.keys(ROLE_TOOLS).sort()).toEqual([
+			'coder',
+			'general',
+			'planner',
+			'qa',
+			'research',
+			'reviewer',
+		]);
+	});
+
+	it('coder role maps to CODER_TOOLS', () => {
+		expect(ROLE_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
+	it('general role maps to DONE_TOOLS', () => {
+		expect(ROLE_TOOLS.general).toEqual(EXPECTED_READONLY_TOOLS);
+	});
+
+	it('planner role maps to PLANNER_TOOLS (same as CODER_TOOLS)', () => {
+		expect(ROLE_TOOLS.planner).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
+	it('research role maps to RESEARCH_TOOLS (same as CODER_TOOLS)', () => {
+		expect(ROLE_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
+	});
+
+	it('reviewer role maps to REVIEWER_TOOLS', () => {
+		expect(ROLE_TOOLS.reviewer).toEqual(EXPECTED_READONLY_TOOLS);
+	});
+
+	it('qa role maps to QA_TOOLS', () => {
+		expect(ROLE_TOOLS.qa).toEqual(EXPECTED_READONLY_TOOLS);
+	});
+
+	it('ROLE_TOOLS matches what seedPresetAgents actually seeds', async () => {
+		const db = new Database(':memory:');
+		createSpaceAgentSchema(db);
+		insertSpace(db);
+		const repo = new SpaceAgentRepository(db as any);
+		const mgr = new SpaceAgentManager(repo);
+		setModelsCache(new Map());
+
+		const { seeded } = await seedPresetAgents('space-1', mgr);
+
+		for (const agent of seeded) {
+			const roleKey = agent.name.toLowerCase();
+			expect(ROLE_TOOLS[roleKey]).toBeDefined();
+			expect(agent.tools).toEqual(ROLE_TOOLS[roleKey]);
+		}
+
+		db.close();
+		setModelsCache(new Map());
+	});
+});
+
+// ---------------------------------------------------------------------------
+// SUB_SESSION_FEATURES export
+// ---------------------------------------------------------------------------
+
+describe('SUB_SESSION_FEATURES export', () => {
+	it('has exactly the expected feature flags', () => {
+		expect(SUB_SESSION_FEATURES).toEqual({
+			rewind: false,
+			worktree: false,
+			coordinator: false,
+			archive: false,
+			sessionInfo: false,
+		});
+	});
+
+	it('all feature values are false', () => {
+		for (const [, value] of Object.entries(SUB_SESSION_FEATURES)) {
+			expect(value).toBe(false);
+		}
 	});
 });
