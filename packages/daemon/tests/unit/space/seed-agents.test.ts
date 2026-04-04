@@ -14,6 +14,7 @@ import {
 	seedPresetAgents,
 	ROLE_TOOLS,
 	SUB_SESSION_FEATURES,
+	getPresetAgentTemplates,
 } from '../../../src/lib/space/agents/seed-agents';
 import { KNOWN_TOOLS } from '@neokai/shared';
 import { setModelsCache } from '../../../src/lib/model-service';
@@ -342,7 +343,7 @@ describe('preset agent exact definitions', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General')!;
 		expect(general.systemPrompt).toBe(
-			'You are a summarization agent. You read completed workflow outputs and gate data, then produce ' +
+			'You are a summarization agent. You read completed task outputs and gate data, then produce ' +
 				'a clear, human-readable summary of what was accomplished.'
 		);
 	});
@@ -545,6 +546,57 @@ describe('SUB_SESSION_FEATURES export', () => {
 	it('all feature values are false', () => {
 		for (const [, value] of Object.entries(SUB_SESSION_FEATURES)) {
 			expect(value).toBe(false);
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getPresetAgentTemplates export
+// ---------------------------------------------------------------------------
+
+describe('getPresetAgentTemplates', () => {
+	it('returns exactly 6 templates', () => {
+		const templates = getPresetAgentTemplates();
+		expect(templates).toHaveLength(6);
+	});
+
+	it('returns all expected agent names', () => {
+		const templates = getPresetAgentTemplates();
+		const names = templates.map((t) => t.name).sort();
+		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+	});
+
+	it('each template has name, description, tools, systemPrompt, and instructions', () => {
+		const templates = getPresetAgentTemplates();
+		for (const t of templates) {
+			expect(typeof t.name).toBe('string');
+			expect(t.name.length).toBeGreaterThan(0);
+			expect(typeof t.description).toBe('string');
+			expect(t.description.length).toBeGreaterThan(0);
+			expect(Array.isArray(t.tools)).toBe(true);
+			expect(t.tools.length).toBeGreaterThan(0);
+			expect(typeof t.systemPrompt).toBe('string');
+			expect(t.systemPrompt.length).toBeGreaterThan(0);
+			expect(typeof t.instructions).toBe('string');
+			expect(t.instructions.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('returns cloned arrays — mutating tools does not affect globals', () => {
+		const first = getPresetAgentTemplates();
+		const coderTools = first.find((t) => t.name === 'Coder')!.tools;
+		coderTools.push('FakeTool');
+
+		const second = getPresetAgentTemplates();
+		const coderTools2 = second.find((t) => t.name === 'Coder')!.tools;
+		expect(coderTools2).not.toContain('FakeTool');
+	});
+
+	it('template tools match ROLE_TOOLS', () => {
+		const templates = getPresetAgentTemplates();
+		for (const t of templates) {
+			const roleKey = t.name.toLowerCase();
+			expect(t.tools).toEqual(ROLE_TOOLS[roleKey]);
 		}
 	});
 });
