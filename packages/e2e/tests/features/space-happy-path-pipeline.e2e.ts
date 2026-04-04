@@ -16,6 +16,8 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import { createUniqueSpaceDir, deleteSpaceViaRpc } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const RUN_TASK_LOOKUP_TIMEOUT_MS = 20000;
+const RUN_TASK_LOOKUP_INTERVAL_MS = 250;
 
 async function createSpaceWithRun(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -68,12 +70,10 @@ async function getRunTaskId(
 	spaceId: string,
 	runId: string
 ): Promise<string> {
-	const timeoutMs = 20000;
-	const intervalMs = 250;
 	const start = Date.now();
 	let taskId = '';
 
-	while (!taskId && Date.now() - start < timeoutMs) {
+	while (!taskId && Date.now() - start < RUN_TASK_LOOKUP_TIMEOUT_MS) {
 		taskId = await page.evaluate(
 			async ({ sid, rid }) => {
 				const hub = window.__messageHub || window.appState?.messageHub;
@@ -88,7 +88,7 @@ async function getRunTaskId(
 			{ sid: spaceId, rid: runId }
 		);
 		if (!taskId) {
-			await page.waitForTimeout(intervalMs);
+			await page.waitForTimeout(RUN_TASK_LOOKUP_INTERVAL_MS);
 		}
 	}
 

@@ -85,6 +85,12 @@ async function createSpaceWithRun(
 	);
 }
 
+/**
+ * Navigate to a space route and wait for WebSocket reconnection before assertions.
+ *
+ * page.goto() causes a full reload, which can briefly disconnect MessageHub transport.
+ * Waiting for reconnection prevents flaky follow-up assertions that depend on live data.
+ */
 async function gotoSpaceAndWait(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
 	spaceId: string
