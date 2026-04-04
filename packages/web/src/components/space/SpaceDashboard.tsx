@@ -67,6 +67,7 @@ function TaskRow({
 		title: string;
 		status: string;
 		priority: string;
+		result?: string | null;
 		workflowRunId?: string | null;
 		updatedAt: number;
 	};
@@ -111,6 +112,14 @@ function TaskRow({
 						<span>·</span>
 						<span>{task.workflowRunId ? 'Workflow task' : 'Standalone task'}</span>
 					</div>
+					{task.status === 'blocked' && task.result && (
+						<p
+							class="mt-1.5 text-xs text-amber-300/80 line-clamp-2"
+							data-testid="task-blocked-reason"
+						>
+							{task.result}
+						</p>
+					)}
 				</div>
 			</div>
 		</button>

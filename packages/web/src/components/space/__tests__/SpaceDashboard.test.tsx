@@ -286,4 +286,33 @@ describe('SpaceDashboard', () => {
 		expect(dialog).toBeTruthy();
 		expect(dialog?.querySelector('h2')?.textContent).toBe('Start Workflow Run');
 	});
+
+	it('renders blocked reason text on a blocked task card', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'blocked', { result: 'Waiting for human approval' })];
+
+		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Review').closest('button')!);
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(getByText('Waiting for human approval')).toBeTruthy();
+	});
+
+	it('does not render blocked reason when result is null', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'blocked', { result: null })];
+
+		const { queryByTestId } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(queryByTestId('tab-review') ?? document.querySelector('button')!);
+		expect(document.querySelector('[data-testid="task-blocked-reason"]')).toBeNull();
+	});
+
+	it('does not render blocked reason for non-blocked tasks even if result is set', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'done', { result: 'All done' })];
+
+		const { getByText, queryByTestId } = render(<SpaceDashboard spaceId="space-1" />);
+		fireEvent.click(getByText('Done').closest('button')!);
+		expect(getByText('Task t1')).toBeTruthy();
+		expect(document.querySelector('[data-testid="task-blocked-reason"]')).toBeNull();
+	});
 });
