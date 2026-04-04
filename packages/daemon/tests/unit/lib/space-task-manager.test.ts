@@ -46,9 +46,14 @@ describe('SpaceTaskManager', () => {
 			expect(isValidSpaceTaskTransition('done', 'in_progress')).toBe(true);
 		});
 
+		it('allows new manual transitions', () => {
+			expect(isValidSpaceTaskTransition('open', 'blocked')).toBe(true);
+			expect(isValidSpaceTaskTransition('open', 'done')).toBe(true);
+			expect(isValidSpaceTaskTransition('in_progress', 'open')).toBe(true);
+		});
+
 		it('rejects invalid transitions', () => {
 			expect(isValidSpaceTaskTransition('done', 'open')).toBe(false);
-			expect(isValidSpaceTaskTransition('open', 'done')).toBe(false);
 		});
 	});
 
@@ -113,9 +118,33 @@ describe('SpaceTaskManager', () => {
 			expect(done.result).toBe('Done!');
 		});
 
+		it('transitions open -> done (already completed)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			const done = await manager.setTaskStatus(task.id, 'done', { result: 'Already done' });
+			expect(done.status).toBe('done');
+			expect(done.result).toBe('Already done');
+		});
+
+		it('transitions open -> blocked (blocker found before start)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			const blocked = await manager.setTaskStatus(task.id, 'blocked', {
+				result: 'Missing dependency',
+			});
+			expect(blocked.status).toBe('blocked');
+			expect(blocked.result).toBe('Missing dependency');
+		});
+
+		it('transitions in_progress -> open (pause/deprioritize)', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			const paused = await manager.setTaskStatus(task.id, 'open');
+			expect(paused.status).toBe('open');
+			expect(paused.result).toBeNull();
+		});
+
 		it('throws for invalid transition', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });
-			await expect(manager.setTaskStatus(task.id, 'done')).rejects.toThrow(
+			await expect(manager.setTaskStatus(task.id, 'archived')).rejects.toThrow(
 				'Invalid status transition'
 			);
 		});
@@ -526,8 +555,22 @@ describe('SpaceTaskManager', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.archived).toEqual([]);
 		});
 
-		it('open allows in_progress and cancelled', () => {
-			expect(VALID_SPACE_TASK_TRANSITIONS.open).toEqual(['in_progress', 'cancelled']);
+		it('open allows in_progress, blocked, done, and cancelled', () => {
+			expect(VALID_SPACE_TASK_TRANSITIONS.open).toEqual([
+				'in_progress',
+				'blocked',
+				'done',
+				'cancelled',
+			]);
+		});
+
+		it('in_progress allows open, done, blocked, and cancelled', () => {
+			expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
+				'open',
+				'done',
+				'blocked',
+				'cancelled',
+			]);
 		});
 	});
 
