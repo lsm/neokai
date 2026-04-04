@@ -146,7 +146,6 @@ export async function openWorkflowForEdit(page: Page, workflowName: string): Pro
 
 	// Switch to Workflows tab within the configure page.
 	await page.getByTestId('space-configure-tab-workflows').click();
-
 	await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
 
 	const workflowCard = page
