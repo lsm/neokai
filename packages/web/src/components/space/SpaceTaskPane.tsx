@@ -146,6 +146,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [mentionQuery, setMentionQuery] = useState<string | null>(null);
 	const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const lastCursorRef = useRef(0);
 
 	const allAgents = spaceStore.agents.value;
 	const mentionAgents =
@@ -157,6 +158,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		const target = e.target as HTMLTextAreaElement;
 		const value = target.value;
 		const cursor = target.selectionStart ?? value.length;
+		lastCursorRef.current = cursor;
 		setThreadDraft(value);
 
 		// Detect @query at cursor position
@@ -174,7 +176,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		(name: string) => {
 			if (!textareaRef.current) return;
 			const textarea = textareaRef.current;
-			const cursor = textarea.selectionStart ?? threadDraft.length;
+			const cursor = textarea.selectionStart ?? lastCursorRef.current;
 			const textBeforeCursor = threadDraft.slice(0, cursor);
 			const textAfterCursor = threadDraft.slice(cursor);
 			const match = textBeforeCursor.match(/@(\w*)$/);
@@ -183,6 +185,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			const newValue = threadDraft.slice(0, start) + '@' + name + ' ' + textAfterCursor;
 			setThreadDraft(newValue);
 			setMentionQuery(null);
+			setMentionSelectedIndex(0);
 			// Re-focus textarea
 			setTimeout(() => {
 				if (textareaRef.current) {
@@ -197,6 +200,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const handleMentionClose = useCallback(() => {
 		setMentionQuery(null);
+		setMentionSelectedIndex(0);
 	}, []);
 
 	useEffect(() => {

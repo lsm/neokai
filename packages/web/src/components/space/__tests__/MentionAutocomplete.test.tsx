@@ -70,7 +70,7 @@ describe('MentionAutocomplete', () => {
 		expect(onSelect).toHaveBeenCalledWith('Reviewer');
 	});
 
-	it('calls onSelect with the first agent when the first item is clicked', () => {
+	it('calls onSelect exactly once when an item is clicked', () => {
 		const onSelect = vi.fn();
 		const { getAllByTestId } = render(
 			<MentionAutocomplete
@@ -82,6 +82,7 @@ describe('MentionAutocomplete', () => {
 		);
 		const items = getAllByTestId('mention-item');
 		fireEvent.click(items[0]);
+		expect(onSelect).toHaveBeenCalledTimes(1);
 		expect(onSelect).toHaveBeenCalledWith('Coder');
 	});
 
