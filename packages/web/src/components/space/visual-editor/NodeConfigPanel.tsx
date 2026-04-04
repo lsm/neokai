@@ -101,6 +101,18 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 			(typeof step.systemPrompt !== 'string' ? step.systemPrompt?.mode : 'override') ?? 'override'
 	);
 
+	const handleSingleSystemPromptModeChange = useCallback(
+		(mode: 'override' | 'expand') => {
+			setSingleSystemPromptMode(mode);
+			// Propagate mode change to data model immediately
+			const current = step.systemPrompt;
+			if (current && typeof current !== 'string') {
+				onUpdate({ ...step, systemPrompt: { ...current, mode } });
+			}
+		},
+		[step.systemPrompt, step, onUpdate]
+	);
+
 	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
@@ -150,9 +162,23 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		);
 	}
 
-	const setMode = useCallback((key: string, mode: 'override' | 'expand') => {
-		setModes((prev) => ({ ...prev, [key]: mode }));
-	}, []);
+	const setMode = useCallback(
+		(key: string, mode: 'override' | 'expand') => {
+			setModes((prev) => ({ ...prev, [key]: mode }));
+			// Propagate mode change to data model immediately
+			const [role, field] = key.split(':') as [string, string];
+			const agent = nodeAgents.find((a) => a.name === role);
+			if (agent) {
+				const current = field === 'instructions' ? agent.instructions : agent.systemPrompt;
+				if (current && typeof current !== 'string') {
+					updateAgents(
+						nodeAgents.map((a) => (a.name === role ? { ...a, [field]: { ...current, mode } } : a))
+					);
+				}
+			}
+		},
+		[nodeAgents]
+	);
 
 	// All agents are available; same agent may be added multiple times with different roles.
 	const availableAgents = agents;
@@ -219,7 +245,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						</label>
 						<OverrideModeSelector
 							mode={singleSystemPromptMode}
-							onChange={setSingleSystemPromptMode}
+							onChange={handleSingleSystemPromptModeChange}
 						/>
 					</div>
 					<textarea
@@ -670,31 +696,6 @@ export function NodeConfigPanel({
 				)}
 
 				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
-
-				{/* System Prompt (node-level override) */}
-				<div class="space-y-1.5">
-					<div class="flex items-center justify-between">
-						<label class="text-xs font-medium text-gray-400">
-							System Prompt <span class="font-normal text-gray-600">(node override)</span>
-						</label>
-					</div>
-					<textarea
-						data-testid="node-system-prompt-input"
-						value={extractOverrideValue(step.systemPrompt)}
-						onInput={(e) =>
-							onUpdate({
-								...step,
-								systemPrompt: buildOverride(
-									(e.currentTarget as HTMLTextAreaElement).value,
-									'override'
-								),
-							})
-						}
-						placeholder="Leave blank to use agent defaults..."
-						rows={4}
-						class="w-full text-xs font-mono bg-dark-800 border border-dark-600 rounded px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-					/>
-				</div>
 
 				{/* Instructions */}
 				<div class="space-y-1.5">

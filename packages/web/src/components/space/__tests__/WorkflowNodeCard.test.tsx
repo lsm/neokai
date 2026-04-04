@@ -456,19 +456,15 @@ describe('WorkflowNodeCard — multi-agent per-agent mode selectors', () => {
 		expect(selectors.length).toBeGreaterThanOrEqual(1);
 	});
 
-	it('per-agent system prompt includes OverrideModeSelector after expanding slot overrides', () => {
+	it('per-agent system prompt includes OverrideModeSelector (always visible with instructions)', () => {
 		const node = makeStep({
 			agentId: '',
 			agents: [{ agentId: 'agent-1', name: 'coder' }],
 		});
-		const { getAllByTestId, getByTestId } = render(
+		const { getAllByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
 		);
-		// Before expanding, there is 1 selector (for instructions)
-		expect(getAllByTestId('override-mode-selector')).toHaveLength(1);
-		// Expand slot overrides to see system prompt mode selector
-		fireEvent.click(getByTestId('toggle-overrides-button'));
-		// Now there should be 2 selectors: instructions + system prompt
+		// Both instructions and system prompt mode selectors are always visible
 		expect(getAllByTestId('override-mode-selector')).toHaveLength(2);
 	});
 

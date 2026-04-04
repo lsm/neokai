@@ -15,7 +15,7 @@ import type {
 	WorkflowNodeAgent,
 	WorkflowNodeAgentOverride,
 } from '@neokai/shared';
-import { useCallback, useState } from 'preact/hooks';
+import { useCallback, useMemo, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
 
 // ============================================================================
@@ -288,6 +288,17 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 
 	function setMode(key: string, mode: 'override' | 'expand') {
 		setModes((prev) => ({ ...prev, [key]: mode }));
+		// Propagate mode change to data model immediately
+		const [role, field] = key.split(':') as [string, string];
+		const agent = nodeAgents.find((a) => a.name === role);
+		if (agent) {
+			const current = field === 'instructions' ? agent.instructions : agent.systemPrompt;
+			if (current && typeof current !== 'string') {
+				updateAgents(
+					nodeAgents.map((a) => (a.name === role ? { ...a, [field]: { ...current, mode } } : a))
+				);
+			}
+		}
 	}
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
@@ -788,6 +799,23 @@ export function WorkflowNodeCard({
 	const multi = isMultiAgentNode(node);
 	const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
 
+	// Track single-agent system prompt override mode
+	const singleSystemPromptMode = useMemo<'override' | 'expand'>(
+		() =>
+			(typeof node.systemPrompt !== 'string' ? node.systemPrompt?.mode : 'override') ?? 'override',
+		[node.systemPrompt]
+	);
+
+	function handleSingleSystemPromptModeChange(newMode: 'override' | 'expand') {
+		// Propagate mode change to data model immediately
+		if (node.systemPrompt) {
+			onUpdate({
+				...node,
+				systemPrompt: { mode: newMode, value: node.systemPrompt.value },
+			});
+		}
+	}
+
 	// Build a lookup: agentName → AgentTaskState (for multi-agent) or the first entry (for single-agent)
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(
 		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
@@ -974,16 +1002,22 @@ export function WorkflowNodeCard({
 
 					{/* System Prompt (single-agent) */}
 					<div class="space-y-1">
-						<label class="text-xs font-medium text-gray-400">
-							System Prompt <span class="font-normal text-gray-600">(node override)</span>
-						</label>
+						<div class="flex items-center justify-between">
+							<label class="text-xs font-medium text-gray-400">
+								System Prompt <span class="font-normal text-gray-600">(node override)</span>
+							</label>
+							<OverrideModeSelector
+								mode={singleSystemPromptMode}
+								onChange={handleSingleSystemPromptModeChange}
+							/>
+						</div>
 						<textarea
 							value={extractOverrideValue(node.systemPrompt)}
 							onInput={(e) => {
 								const value = (e.currentTarget as HTMLTextAreaElement).value;
 								onUpdate({
 									...node,
-									systemPrompt: buildOverride(value, 'override'),
+									systemPrompt: buildOverride(value, singleSystemPromptMode),
 								});
 							}}
 							placeholder="Leave blank to use agent defaults..."
