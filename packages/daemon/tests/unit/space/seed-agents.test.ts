@@ -158,14 +158,14 @@ describe('seedPresetAgents', () => {
 		expect(result.errors[0].name).toBe('Coder');
 	});
 
-	it('General agent has restricted tools (no Write or Edit) — read-only Done node', async () => {
+	it('General agent has full coding toolset', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General');
 
 		expect(general).toBeDefined();
-		expect(general?.tools).not.toContain('Write');
-		expect(general?.tools).not.toContain('Edit');
 		expect(general?.tools).toContain('Read');
+		expect(general?.tools).toContain('Write');
+		expect(general?.tools).toContain('Edit');
 		expect(general?.tools).toContain('Bash');
 		expect(general?.tools).toContain('Grep');
 		expect(general?.tools).toContain('Glob');
@@ -244,12 +244,12 @@ describe('seedPresetAgents', () => {
 		expect(qa?.instructions).toContain('test suite');
 	});
 
-	it('General system prompt mentions summarization', async () => {
+	it('General system prompt mentions versatile development', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General');
 
-		expect(general?.systemPrompt).toContain('summarization');
-		expect(general?.instructions).toContain('summary');
+		expect(general?.systemPrompt).toContain('versatile');
+		expect(general?.instructions).toContain('implement');
 	});
 });
 
@@ -297,10 +297,10 @@ describe('preset agent exact definitions', () => {
 		expect(coder.tools).not.toContain('TaskStop');
 	});
 
-	it('General has exact DONE_TOOLS', async () => {
+	it('General has exact GENERAL_TOOLS (same as CODER_TOOLS)', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General')!;
-		expect(general.tools).toEqual(EXPECTED_READONLY_TOOLS);
+		expect(general.tools).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('Planner has exact PLANNER_TOOLS (same as CODER_TOOLS)', async () => {
@@ -343,8 +343,8 @@ describe('preset agent exact definitions', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General')!;
 		expect(general.systemPrompt).toBe(
-			'You are a summarization agent. You read completed task outputs and gate data, then produce ' +
-				'a clear, human-readable summary of what was accomplished.'
+			'You are a versatile software development assistant. You can write code, fix bugs, write documentation, ' +
+				'analyze problems, and handle any general development task. You adapt to what is needed.'
 		);
 	});
 
@@ -398,7 +398,7 @@ describe('preset agent exact definitions', () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General')!;
 		expect(general.instructions).toBe(
-			'Read all available gate data and workflow outputs. Write a comprehensive summary of the completed work.'
+			'Understand the task, implement the solution, verify it works, and commit your changes.'
 		);
 	});
 
@@ -444,8 +444,8 @@ describe('preset agent exact definitions', () => {
 			Coder:
 				'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
 			General:
-				'Done node agent. Reads gate data from completed workflow stages and produces a ' +
-				'comprehensive human-readable summary of what was accomplished.',
+				'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
+				'debugging, and analysis.',
 			Planner:
 				'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
 			Research:
@@ -487,8 +487,8 @@ describe('ROLE_TOOLS export', () => {
 		expect(ROLE_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
-	it('general role maps to DONE_TOOLS', () => {
-		expect(ROLE_TOOLS.general).toEqual(EXPECTED_READONLY_TOOLS);
+	it('general role maps to GENERAL_TOOLS (same as CODER_TOOLS)', () => {
+		expect(ROLE_TOOLS.general).toEqual(EXPECTED_CODER_TOOLS);
 	});
 
 	it('planner role maps to PLANNER_TOOLS (same as CODER_TOOLS)', () => {

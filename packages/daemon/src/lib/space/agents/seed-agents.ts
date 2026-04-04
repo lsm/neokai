@@ -9,7 +9,7 @@
  *
  * Preset agents seeded per Space:
  *   - Coder    — implementation worker
- *   - General  — general-purpose worker (Done node agent)
+ *   - General  — general-purpose worker
  *   - Planner  — planning/orchestration worker
  *   - Research — research specialist (investigates topics, writes findings, opens PRs)
  *   - Reviewer — code review specialist
@@ -46,8 +46,8 @@ const CODER_TOOLS = KNOWN_TOOLS.filter(
 	(t) => !['Task', 'TaskOutput', 'TaskStop'].includes(t)
 ) as string[];
 
-/** Done node agent: read-only summarization — no Write or Edit */
-const DONE_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+/** General-purpose worker: full coding toolset */
+const GENERAL_TOOLS = CODER_TOOLS;
 
 /** Planner uses the same toolset as coder (orchestration patterns reserved for future) */
 const PLANNER_TOOLS = CODER_TOOLS;
@@ -66,7 +66,7 @@ const QA_TOOLS: string[] = ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSear
  */
 export const ROLE_TOOLS: Record<string, string[]> = {
 	coder: CODER_TOOLS,
-	general: DONE_TOOLS,
+	general: GENERAL_TOOLS,
 	planner: PLANNER_TOOLS,
 	research: RESEARCH_TOOLS,
 	reviewer: REVIEWER_TOOLS,
@@ -101,14 +101,14 @@ const PRESET_AGENTS: PresetDefinition[] = [
 	{
 		name: 'General',
 		description:
-			'Done node agent. Reads gate data from completed workflow stages and produces a ' +
-			'comprehensive human-readable summary of what was accomplished.',
-		tools: DONE_TOOLS,
+			'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
+			'debugging, and analysis.',
+		tools: GENERAL_TOOLS,
 		systemPrompt:
-			'You are a summarization agent. You read completed task outputs and gate data, then produce ' +
-			'a clear, human-readable summary of what was accomplished.',
+			'You are a versatile software development assistant. You can write code, fix bugs, write documentation, ' +
+			'analyze problems, and handle any general development task. You adapt to what is needed.',
 		instructions:
-			'Read all available gate data and workflow outputs. Write a comprehensive summary of the completed work.',
+			'Understand the task, implement the solution, verify it works, and commit your changes.',
 	},
 	{
 		name: 'Planner',
