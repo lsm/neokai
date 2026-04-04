@@ -996,8 +996,11 @@ export function WorkflowCanvas({
 		setGateDataMap(new Map());
 		setGateDataLoading(true);
 		try {
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+			// Use getHub() instead of getHubIfConnected() so we wait for the hub to be
+			// ready rather than bailing silently when the hub is still connecting at mount
+			// time (e.g. after a page navigation). getHub() resolves as soon as the
+			// WebSocket handshake completes so the delay is negligible in practice.
+			const hub = await connectionManager.getHub();
 			const result = await hub.request<{ gateData: GateDataRecord[] }>(
 				'spaceWorkflowRun.listGateData',
 				{ runId }
