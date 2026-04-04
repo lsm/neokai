@@ -150,10 +150,13 @@ describe('SpaceTaskPane', () => {
 
 	it('shows View Agent Session button when task session exists and opens overlay on click', () => {
 		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 		fireEvent.click(getByTestId('view-agent-session-btn'));
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-abc');
+		// agentActionLabel for a task with no activeSession is "View Agent Session"
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('View Agent Session');
 	});
 
 	it('calls onClose when back button is clicked', () => {

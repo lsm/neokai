@@ -208,7 +208,7 @@ export default function SpaceIsland({
 			{overlaySessionId && (
 				<AgentOverlayChat
 					sessionId={overlaySessionId}
-					agentName={overlaySessionId}
+					agentName={overlayAgentName ?? undefined}
 					onClose={handleOverlayClose}
 				/>
 			)}
