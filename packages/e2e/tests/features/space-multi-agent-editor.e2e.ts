@@ -39,9 +39,10 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
-const AGENT_A_NAME = 'Coder Agent';
-const AGENT_B_NAME = 'Reviewer Agent';
-// Option text as rendered by agent-select and add-agent-select: just the agent name (no role suffix)
+// Agent names match role names so the channel dropdown select options (which use agent name as value) match the role
+const AGENT_A_NAME = 'coder';
+const AGENT_B_NAME = 'reviewer';
+// Option text as rendered by agent-select and add-agent-select: agent name equals role name
 const AGENT_A_OPTION = AGENT_A_NAME;
 const AGENT_B_OPTION = AGENT_B_NAME;
 
@@ -135,12 +136,11 @@ test.describe('Multi-Agent Step Editor', () => {
 
 		// Verify agent names are rendered in the list entries
 		const agentsList = panel.getByTestId('agents-list');
-		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_A })).toBeVisible({
-			timeout: 2000,
-		});
-		await expect(agentsList.getByTestId('agent-entry').filter({ hasText: ROLE_B })).toBeVisible({
-			timeout: 2000,
-		});
+		await expect(agentsList.getByTestId('agent-entry')).toHaveCount(2, { timeout: 2000 });
+		// Verify slot names via role input values (agent-role-input shows the slot name for each entry)
+		const roleInputs = agentsList.locator('[data-testid="agent-role-input"]');
+		await expect(roleInputs.first()).toHaveValue(ROLE_A, { timeout: 2000 });
+		await expect(roleInputs.nth(1)).toHaveValue(ROLE_B, { timeout: 2000 });
 
 		// Close panel and verify node shows agent badges for both agents
 		await panel.getByTestId('close-button').click();

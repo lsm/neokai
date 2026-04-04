@@ -39,9 +39,10 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 const ROLE_A = 'coder';
 const ROLE_B = 'reviewer';
-const AGENT_A_NAME = 'Coder Agent';
-const AGENT_B_NAME = 'Reviewer Agent';
-// Option text as rendered by agent-select and add-agent-select: just the agent name (no role suffix)
+// Agent names match role names so the channel dropdown select options (which use agent name as value) match the role
+const AGENT_A_NAME = 'coder';
+const AGENT_B_NAME = 'reviewer';
+// Option text as rendered by agent-select and add-agent-select: agent name equals role name
 const AGENT_A_OPTION = AGENT_A_NAME;
 const AGENT_B_OPTION = AGENT_B_NAME;
 
