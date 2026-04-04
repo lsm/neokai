@@ -1445,10 +1445,10 @@ describe('seedBuiltInWorkflows()', () => {
 	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has instructions with mode=expand', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
-		const instructions = wf.nodes[0].agents[0].instructions;
-		expect(instructions).toBeDefined();
-		expect(instructions!.mode).toBe('expand');
-		expect(instructions!.value.trim().length).toBeGreaterThan(0);
+		const agent = wf.nodes[0].agents[0];
+		expect(agent.instructions).toBeDefined();
+		expect(agent.instructions!.mode).toBe('expand');
+		expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded with systemPrompt mode=override on all agent slots', () => {
