@@ -997,7 +997,6 @@ jobs:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           DEFAULT_MODEL: sonnet
           CI: true
-          NEOKAI_TEST_DISABLE_SANDBOX: "1"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -1129,7 +1128,6 @@ jobs:
             bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
         env:
           NEOKAI_USE_DEV_PROXY: "1"
-          NEOKAI_TEST_DISABLE_SANDBOX: "1"
           ANTHROPIC_BASE_URL: "http://127.0.0.1:8000"
           ANTHROPIC_API_KEY: "sk-devproxy-test-key"
           ANTHROPIC_AUTH_TOKEN: ""
