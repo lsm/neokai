@@ -10,7 +10,7 @@
  * can be skipped cleanly in no-LLM CI instead of timing out.
  */
 
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 // ─── Test IDs ─────────────────────────────────────────────────────────────────
 
@@ -26,22 +26,36 @@ export const ACTIVITY_ENTRY_TESTID = 'activity-entry';
 
 /**
  * Open the Neo panel by clicking the Neo NavRail button.
+ *
+ * The panel uses CSS transform (`-translate-x-full` when closed, `translate-x-0` when open).
+ * It is always present in the DOM, so we check class-based state rather than
+ * Playwright's `state: 'visible'` which would be true even when the panel is off-screen.
  */
 export async function openNeoPanel(page: Page): Promise<void> {
 	const neoButton = page.getByRole('button', { name: 'Neo (⌘J)', exact: true });
 	await neoButton.waitFor({ state: 'visible', timeout: 5000 });
 	await neoButton.click();
-	await page.getByTestId(NEO_PANEL_TESTID).waitFor({ state: 'visible', timeout: 5000 });
+	// Wait for the panel to slide into view: -translate-x-full class is removed when open
+	await expect(page.getByTestId(NEO_PANEL_TESTID)).not.toHaveClass(/-translate-x-full/, {
+		timeout: 5000,
+	});
 }
 
 /**
  * Close the Neo panel via its close button.
+ *
+ * The panel slides off-screen via `-translate-x-full` (not display:none), so we
+ * use a class-based assertion instead of Playwright's `state: 'hidden'` which
+ * would never resolve for a CSS-transformed element.
  */
 export async function closeNeoPanel(page: Page): Promise<void> {
 	const closeButton = page.getByTestId('neo-panel-close');
 	await closeButton.waitFor({ state: 'visible', timeout: 5000 });
 	await closeButton.click();
-	await page.getByTestId(NEO_PANEL_TESTID).waitFor({ state: 'hidden', timeout: 5000 });
+	// Wait for the panel to slide out of view: -translate-x-full class is applied when closed
+	await expect(page.getByTestId(NEO_PANEL_TESTID)).toHaveClass(/-translate-x-full/, {
+		timeout: 5000,
+	});
 }
 
 // ─── Messaging helpers ────────────────────────────────────────────────────────
