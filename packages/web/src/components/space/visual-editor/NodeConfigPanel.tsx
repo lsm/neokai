@@ -76,28 +76,22 @@ interface AgentsSectionProps {
 	agents: SpaceAgent[];
 	onUpdate: (step: NodeDraft) => void;
 	onEditSlotPrompts?: (role: string) => void;
+	onEditSinglePrompts?: () => void;
 }
 
-function AgentsSection({ step, agents, onUpdate, onEditSlotPrompts }: AgentsSectionProps) {
+function AgentsSection({
+	step,
+	agents,
+	onUpdate,
+	onEditSlotPrompts,
+	onEditSinglePrompts,
+}: AgentsSectionProps) {
 	const multi = isMultiAgentNode(step);
 	const nodeAgents = step.agents ?? [];
 	const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
 	const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
 	const selectedSingleModel = singleSlot?.model ?? step.model;
-	const singleSystemPrompt = singleSlot?.systemPrompt ?? step.systemPrompt;
-
-	// Track override mode for single-agent systemPrompt
-	const [singleSystemPromptMode, setSingleSystemPromptMode] = useState<'override' | 'expand'>(
-		() =>
-			(typeof singleSystemPrompt !== 'string' ? singleSystemPrompt?.mode : 'override') ?? 'override'
-	);
-
-	useEffect(() => {
-		const mode =
-			(typeof singleSystemPrompt !== 'string' ? singleSystemPrompt?.mode : 'override') ??
-			'override';
-		setSingleSystemPromptMode(mode);
-	}, [singleSystemPrompt]);
+	const selectedSingleSystemPrompt = singleSlot?.systemPrompt ?? step.systemPrompt;
 
 	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
@@ -126,12 +120,15 @@ function AgentsSection({ step, agents, onUpdate, onEditSlotPrompts }: AgentsSect
 			// Switch back to single-agent mode when <=1 slots remain.
 			// Preserve model/systemPrompt from the surviving slot when present.
 			const survivor = next[0] ?? removed;
+			const survivorInstructions =
+				step.instructions || extractOverrideValue(survivor?.instructions);
 			onUpdate({
 				...step,
 				agents: undefined,
 				agentId: survivor?.agentId ?? '',
 				model: survivor?.model,
 				systemPrompt: survivor?.systemPrompt,
+				instructions: survivorInstructions,
 				channels: undefined,
 			});
 		} else {
@@ -171,45 +168,6 @@ function AgentsSection({ step, agents, onUpdate, onEditSlotPrompts }: AgentsSect
 		[singleSlot, step, onUpdate]
 	);
 
-	const updateSingleSystemPrompt = useCallback(
-		(value: string) => {
-			if (singleSlot) {
-				updateAgents(
-					nodeAgents.map((a) =>
-						a.name === singleSlot.name
-							? { ...a, systemPrompt: buildOverride(value, singleSystemPromptMode) }
-							: a
-					)
-				);
-				return;
-			}
-			onUpdate({ ...step, systemPrompt: buildOverride(value, singleSystemPromptMode) });
-		},
-		[singleSlot, nodeAgents, singleSystemPromptMode, step, onUpdate]
-	);
-
-	const handleSingleSystemPromptModeChange = useCallback(
-		(mode: 'override' | 'expand') => {
-			setSingleSystemPromptMode(mode);
-			const currentValue = extractOverrideValue(singleSystemPrompt);
-			if (singleSlot) {
-				updateAgents(
-					nodeAgents.map((a) =>
-						a.name === singleSlot.name
-							? { ...a, systemPrompt: buildOverride(currentValue, mode) }
-							: a
-					)
-				);
-				return;
-			}
-			onUpdate({
-				...step,
-				systemPrompt: buildOverride(currentValue, mode),
-			});
-		},
-		[singleSystemPrompt, singleSlot, nodeAgents, step, onUpdate]
-	);
-
 	// All agents are available; same agent may be added multiple times with different roles.
 	const availableAgents = agents;
 
@@ -245,7 +203,9 @@ function AgentsSection({ step, agents, onUpdate, onEditSlotPrompts }: AgentsSect
 								name: buildUniqueRole(primaryBaseRole),
 								model: selectedSingleModel,
 								systemPrompt:
-									typeof singleSystemPrompt !== 'string' ? singleSystemPrompt : undefined,
+									typeof selectedSingleSystemPrompt !== 'string'
+										? selectedSingleSystemPrompt
+										: undefined,
 							};
 
 							const secondaryAgent = agents.find((a) => a.id !== primaryAgentId) ?? agents[0];
@@ -291,27 +251,14 @@ function AgentsSection({ step, agents, onUpdate, onEditSlotPrompts }: AgentsSect
 						onChange={updateSingleModel}
 					/>
 				</div>
-				<div class="space-y-1">
-					<div class="flex items-center justify-between">
-						<label class="text-xs font-medium text-gray-400">
-							System Prompt <span class="font-normal text-gray-600">(node override)</span>
-						</label>
-						<OverrideModeSelector
-							mode={singleSystemPromptMode}
-							onChange={handleSingleSystemPromptModeChange}
-						/>
-					</div>
-					<textarea
-						data-testid="single-agent-system-prompt"
-						value={extractOverrideValue(singleSystemPrompt)}
-						onInput={(e) =>
-							updateSingleSystemPrompt((e.currentTarget as HTMLTextAreaElement).value)
-						}
-						placeholder="Leave blank to use agent defaults..."
-						rows={3}
-						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-					/>
-				</div>
+				<button
+					type="button"
+					data-testid="edit-single-prompts-button"
+					onClick={() => onEditSinglePrompts?.()}
+					class="w-full text-xs border border-dark-700 rounded px-2 py-1.5 text-gray-300 hover:border-dark-500 hover:bg-dark-700/40 transition-colors"
+				>
+					Edit Prompts
+				</button>
 			</div>
 		);
 	}
@@ -440,6 +387,7 @@ type PanelView =
 	| { kind: 'main' }
 	| { kind: 'channel-links' }
 	| { kind: 'gate-editor'; gateId: string }
+	| { kind: 'single-prompts' }
 	| { kind: 'slot-prompts'; role: string };
 
 export function NodeConfigPanel({
@@ -464,6 +412,7 @@ export function NodeConfigPanel({
 }: NodeConfigPanelProps) {
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
 	const [panelView, setPanelView] = useState<PanelView>({ kind: 'main' });
+	const [singlePromptMode, setSinglePromptMode] = useState<'override' | 'expand'>('override');
 
 	// Reset confirmation dialog when the selected step changes so a previously
 	// open confirmation on one node doesn't bleed through to the next node.
@@ -471,6 +420,16 @@ export function NodeConfigPanel({
 		setConfirmingDelete(false);
 		setPanelView({ kind: 'main' });
 	}, [step.localId]);
+
+	useEffect(() => {
+		if (panelView.kind !== 'single-prompts') return;
+		const singleSlot = (step.agents ?? []).length === 1 ? step.agents?.[0] : undefined;
+		const singleSystemPrompt = singleSlot?.systemPrompt ?? step.systemPrompt;
+		const mode =
+			(typeof singleSystemPrompt !== 'string' ? singleSystemPrompt?.mode : 'override') ??
+			'override';
+		setSinglePromptMode(mode);
+	}, [panelView.kind, step.localId]);
 
 	useEffect(() => {
 		if (selectedChannelRelation) {
@@ -549,9 +508,11 @@ export function NodeConfigPanel({
 				? 'Channel Links'
 				: panelView.kind === 'gate-editor'
 					? 'Gate Editor'
-					: panelView.kind === 'slot-prompts'
-						? 'Slot Prompts'
-						: step.name || 'Unnamed Node';
+					: panelView.kind === 'single-prompts'
+						? 'Prompts'
+						: panelView.kind === 'slot-prompts'
+							? 'Slot Prompts'
+							: step.name || 'Unnamed Node';
 
 		return (
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
@@ -565,6 +526,10 @@ export function NodeConfigPanel({
 								return;
 							}
 							if (panelView.kind === 'slot-prompts') {
+								setPanelView({ kind: 'main' });
+								return;
+							}
+							if (panelView.kind === 'single-prompts') {
 								setPanelView({ kind: 'main' });
 								return;
 							}
@@ -621,6 +586,102 @@ export function NodeConfigPanel({
 					onBack={() => setPanelView({ kind: 'channel-links' })}
 					embedded
 				/>
+			);
+		}
+
+		if (panelView.kind === 'single-prompts') {
+			const nodeAgents = step.agents ?? [];
+			const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
+			const singleAgentId = singleSlot?.agentId ?? step.agentId;
+			const singleAgent = agents.find((agent) => agent.id === singleAgentId);
+			const singleSystemPrompt = singleSlot?.systemPrompt ?? step.systemPrompt;
+			const singleInstructions =
+				step.instructions || extractOverrideValue(singleSlot?.instructions);
+
+			const updateSingleInstructions = (value: string) => {
+				if (singleSlot) {
+					onUpdate({
+						...step,
+						instructions: value,
+						agents: nodeAgents.map((agent) =>
+							agent.name === singleSlot.name ? { ...agent, instructions: undefined } : agent
+						),
+						agentId: '',
+					});
+					return;
+				}
+				onUpdate({
+					...step,
+					instructions: value,
+				});
+			};
+
+			const updateSingleSystemPrompt = (value: string, mode: 'override' | 'expand') => {
+				if (singleSlot) {
+					onUpdate({
+						...step,
+						agents: nodeAgents.map((agent) =>
+							agent.name === singleSlot.name
+								? { ...agent, systemPrompt: buildOverride(value, mode) }
+								: agent
+						),
+						agentId: '',
+					});
+					return;
+				}
+				onUpdate({
+					...step,
+					systemPrompt: buildOverride(value, mode),
+				});
+			};
+
+			return (
+				<div class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+					<div class="rounded border border-dark-700 bg-dark-850 px-3 py-2 text-xs text-gray-400 space-y-1">
+						<p>
+							<span class="text-gray-500">Agent:</span>{' '}
+							{(singleAgent?.name ?? singleAgentId) || '—'}
+						</p>
+					</div>
+					<div class="space-y-1">
+						<label class="text-xs font-medium text-gray-400">Instructions</label>
+						<textarea
+							data-testid="single-prompts-instructions"
+							value={singleInstructions}
+							onInput={(e) =>
+								updateSingleInstructions((e.currentTarget as HTMLTextAreaElement).value)
+							}
+							rows={4}
+							placeholder="Node instructions passed to the single agent…"
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+						/>
+					</div>
+					<div class="space-y-1">
+						<div class="flex items-center justify-between">
+							<label class="text-xs font-medium text-gray-400">System Prompt</label>
+							<OverrideModeSelector
+								mode={singlePromptMode}
+								onChange={(mode) => {
+									setSinglePromptMode(mode);
+									updateSingleSystemPrompt(extractOverrideValue(singleSystemPrompt), mode);
+								}}
+							/>
+						</div>
+						<textarea
+							data-testid="single-prompts-system-prompt"
+							value={extractOverrideValue(singleSystemPrompt)}
+							onInput={(e) =>
+								updateSingleSystemPrompt(
+									(e.currentTarget as HTMLTextAreaElement).value,
+									singlePromptMode
+								)
+							}
+							rows={6}
+							placeholder="Override system prompt (leave blank to use agent default)…"
+							class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+						/>
+					</div>
+				</div>
 			);
 		}
 
@@ -797,6 +858,7 @@ export function NodeConfigPanel({
 					step={step}
 					agents={agents}
 					onUpdate={onUpdate}
+					onEditSinglePrompts={() => setPanelView({ kind: 'single-prompts' })}
 					onEditSlotPrompts={(role) => setPanelView({ kind: 'slot-prompts', role })}
 				/>
 
