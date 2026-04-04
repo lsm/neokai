@@ -43,7 +43,7 @@ export function parseMentions(text: string): string[] {
 export interface NodeExecutionLookup {
 	listByWorkflowRun(
 		workflowRunId: string
-	): Array<{ agentName: string; agentSessionId: string | null }>;
+	): Array<{ agentName: string; agentSessionId: string | null; status: string }>;
 }
 
 /**
@@ -159,7 +159,11 @@ export function setupSpaceTaskMessageHandlers(
 			taskAgentManager.injectSubSessionMessage
 		) {
 			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-			const activeAgents = executions.filter((e) => e.agentSessionId !== null);
+			// Only route to agents that are actively running — exclude done/cancelled/blocked
+			// to avoid injecting into sessions that will never process the message.
+			const activeAgents = executions.filter(
+				(e) => e.agentSessionId !== null && (e.status === 'in_progress' || e.status === 'pending')
+			);
 
 			const routedTo: string[] = [];
 			const notFound: string[] = [];
@@ -171,10 +175,13 @@ export function setupSpaceTaskMessageHandlers(
 				if (matches.length === 0) {
 					notFound.push(mention);
 				} else {
-					for (const exec of matches) {
-						await taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, params.message);
-						if (!routedTo.includes(mention)) routedTo.push(mention);
-					}
+					// Inject into all matching sessions in parallel (independent operations)
+					await Promise.all(
+						matches.map((exec) =>
+							taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, params.message)
+						)
+					);
+					routedTo.push(mention);
 				}
 			}
 

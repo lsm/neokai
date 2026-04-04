@@ -609,12 +609,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
 	// ─── @mention routing ─────────────────────────────────────────────────────────
 
 	describe('@mention routing in space.task.sendMessage', () => {
-		// Mock NodeExecutionLookup
+		// Mock NodeExecutionLookup — includes status field (required by NodeExecutionLookup interface)
 		function makeNodeExecutionRepo(
-			agents: Array<{ agentName: string; agentSessionId: string | null }>
+			agents: Array<{ agentName: string; agentSessionId: string | null; status?: string }>
 		): NodeExecutionLookup {
 			return {
-				listByWorkflowRun: mock(() => agents),
+				listByWorkflowRun: mock(() =>
+					agents.map((a) => ({ ...a, status: a.status ?? 'in_progress' }))
+				),
 			};
 		}
 
@@ -625,7 +627,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
 		};
 
 		function setupWithMention(
-			nodeExecAgents: Array<{ agentName: string; agentSessionId: string | null }>,
+			nodeExecAgents: Array<{ agentName: string; agentSessionId: string | null; status?: string }>,
 			task: SpaceTask = mockTaskWithWorkflowRun
 		) {
 			const mh = createMockMessageHub();
@@ -795,5 +797,124 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(injectSubSession).not.toHaveBeenCalled();
 			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalled();
 		});
+
+		it('does not route to done/cancelled/blocked agents — excludes completed sessions', async () => {
+			const { injectSubSession } = setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-done', status: 'done' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-cancelled', status: 'cancelled' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-blocked', status: 'blocked' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-active', status: 'in_progress' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Coder please check',
+			});
+
+			// Only the in_progress session should receive the message
+			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+			expect(injectSubSession).toHaveBeenCalledTimes(1);
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-active', '@Coder please check');
+			expect(injectSubSession).not.toHaveBeenCalledWith('session-coder-done', expect.anything());
+		});
+
+		it('@mention throws when all matching agents are in terminal status', async () => {
+			setupWithMention([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-done', status: 'done' },
+			]);
+
+			// Coder exists but is done — should be treated as unavailable
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Coder please help',
+				})
+			).rejects.toThrow('@mention not found: Coder');
+		});
+
+		it('propagates error when injectSubSessionMessage throws', async () => {
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			const injectSubSession = mock(async (_sid: string, _msg: string) => {
+				throw new Error('Sub-session not found: session-coder-1');
+			});
+			taskAgentManager = {
+				...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+				injectSubSessionMessage: injectSubSession,
+			};
+			db = createMockDatabase(mockTaskWithWorkflowRun);
+			daemonHub = { emit: mock(async () => {}) } as unknown as DaemonHub;
+			const nodeExecutionRepo = makeNodeExecutionRepo([
+				{ agentName: 'Coder', agentSessionId: 'session-coder-1', status: 'in_progress' },
+			]);
+			setupSpaceTaskMessageHandlers(hub, taskAgentManager, db, daemonHub, nodeExecutionRepo);
+
+			await expect(
+				call('space.task.sendMessage', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					message: '@Coder please help',
+				})
+			).rejects.toThrow('Sub-session not found: session-coder-1');
+		});
+	});
+});
+
+// ─── parseMentions unit tests ────────────────────────────────────────────────
+
+describe('parseMentions', () => {
+	it('extracts a single @mention', () => {
+		expect(parseMentions('@Coder please fix')).toEqual(['Coder']);
+	});
+
+	it('extracts multiple distinct @mentions', () => {
+		expect(parseMentions('@Coder and @Reviewer please coordinate')).toEqual(['Coder', 'Reviewer']);
+	});
+
+	it('deduplicates repeated @mentions', () => {
+		expect(parseMentions('@Coder can you help @Coder')).toEqual(['Coder']);
+	});
+
+	it('preserves original casing', () => {
+		expect(parseMentions('@CodeReviewer hello')).toEqual(['CodeReviewer']);
+	});
+
+	it('returns empty array when no @mentions', () => {
+		expect(parseMentions('please fix the bug')).toEqual([]);
+	});
+
+	it('returns empty array for empty string', () => {
+		expect(parseMentions('')).toEqual([]);
+	});
+
+	it('returns empty array for bare @ with no name', () => {
+		expect(parseMentions('@ hello')).toEqual([]);
+	});
+
+	it('does not extract names starting with a digit after @', () => {
+		// @123bot: starts with digit — should not match
+		expect(parseMentions('@123bot hello')).toEqual([]);
+	});
+
+	it('handles @mention with hyphens and underscores', () => {
+		expect(parseMentions('@code-reviewer and @qa_agent')).toEqual(['code-reviewer', 'qa_agent']);
+	});
+
+	it('email false-positive: extracts @domain from emails (known limitation, degrades gracefully)', () => {
+		// @mention regex cannot distinguish emails; user@example.com extracts 'example'
+		// This is acceptable since unmatched mentions end up in notFound, not silently injected
+		const result = parseMentions('contact user@example.com for help');
+		expect(result).toEqual(['example']);
+	});
+
+	it('@mention at start of string', () => {
+		expect(parseMentions('@Planner start the task')).toEqual(['Planner']);
+	});
+
+	it('ignores @mention followed by a digit-only suffix when the name still starts with a letter', () => {
+		expect(parseMentions('@Coder1 hello')).toEqual(['Coder1']);
 	});
 });
