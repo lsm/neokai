@@ -285,15 +285,30 @@ describe('NodeConfigPanel', () => {
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'agent-2' }));
 		});
 
-		it('calls onUpdate with new system prompt as WorkflowNodeAgentOverride when textarea changes', () => {
+		it('calls onUpdate with new system prompt as WorkflowNodeAgentOverride from single prompts view', () => {
 			const onUpdate = vi.fn();
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-			fireEvent.input(getByTestId('single-agent-system-prompt'), {
+			fireEvent.click(getByTestId('edit-single-prompts-button'));
+			fireEvent.input(getByTestId('single-prompts-system-prompt'), {
 				target: { value: 'Custom system prompt.' },
 			});
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({
 					systemPrompt: { mode: 'override', value: 'Custom system prompt.' },
+				})
+			);
+		});
+
+		it('calls onUpdate with new single-agent instructions from prompts view', () => {
+			const onUpdate = vi.fn();
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+			fireEvent.click(getByTestId('edit-single-prompts-button'));
+			fireEvent.input(getByTestId('single-prompts-instructions'), {
+				target: { value: 'Focus on acceptance criteria.' },
+			});
+			expect(onUpdate).toHaveBeenCalledWith(
+				expect.objectContaining({
+					instructions: 'Focus on acceptance criteria.',
 				})
 			);
 		});
@@ -328,9 +343,10 @@ describe('NodeConfigPanel', () => {
 			expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ model: undefined }));
 		});
 
-		it('renders the inline system prompt input in AgentsSection', () => {
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(getByTestId('single-agent-system-prompt')).toBeTruthy();
+		it('shows edit prompts entry point for single-agent mode', () => {
+			const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+			expect(getByTestId('edit-single-prompts-button')).toBeTruthy();
+			expect(queryByTestId('single-agent-system-prompt')).toBeNull();
 		});
 
 		it('does not render the legacy inline instructions textarea', () => {
@@ -787,37 +803,47 @@ describe('NodeConfigPanel', () => {
 	});
 
 	// ============================================================================
-	// Single-agent mode: system prompt with OverrideModeSelector
+	// Single-agent prompts slide
 	// ============================================================================
 
-	describe('single-agent system prompt with mode selector', () => {
-		it('shows single-agent system prompt field with mode selector', () => {
+	describe('single-agent prompts slide', () => {
+		it('opens single prompts view from the main panel', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-			expect(getByTestId('single-agent-system-prompt')).toBeTruthy();
-			// The AgentsSection (single-agent mode) has an OverrideModeSelector
-			// There may be multiple selectors on the page (agents section + node-level section),
-			// so just check at least one exists
-			expect(getByTestId('override-mode-selector')).toBeTruthy();
+			fireEvent.click(getByTestId('edit-single-prompts-button'));
+			expect(getByTestId('single-prompts-instructions')).toBeTruthy();
+			expect(getByTestId('single-prompts-system-prompt')).toBeTruthy();
 		});
 
 		it('system prompt mode selector toggles between override and expand', async () => {
 			const onUpdate = vi.fn();
-			const step = makeStep();
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+			const initialStep = makeStep();
 
-			// The AgentsSection in single-agent mode has an OverrideModeSelector for systemPrompt
+			function Wrapper() {
+				const [step, setStep] = useState(initialStep);
+				return (
+					<NodeConfigPanel
+						{...makeProps({
+							step,
+							onUpdate: (next) => {
+								onUpdate(next);
+								setStep(next);
+							},
+						})}
+					/>
+				);
+			}
+
+			const { getByTestId } = render(<Wrapper />);
+			fireEvent.click(getByTestId('edit-single-prompts-button'));
+
 			const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-			expect(modeSelectors.length).toBeGreaterThanOrEqual(1);
-
-			// Switch to expand mode
 			const expandButton = modeSelectors[0].querySelector(
 				'[data-testid="mode-expand"]'
 			) as HTMLElement;
 			fireEvent.click(expandButton);
 
-			// Now type a system prompt
 			await act(async () => {
-				fireEvent.input(getByTestId('single-agent-system-prompt'), {
+				fireEvent.input(getByTestId('single-prompts-system-prompt'), {
 					target: { value: 'Extra context.' },
 				});
 			});
@@ -973,7 +999,8 @@ describe('NodeConfigPanel', () => {
 				const step = makeStep({
 					systemPrompt: { mode: 'override', value: 'Existing prompt.' },
 				});
-				render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+				const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+				fireEvent.click(getByTestId('edit-single-prompts-button'));
 
 				const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
 				const expandButton = modeSelectors[0].querySelector(
