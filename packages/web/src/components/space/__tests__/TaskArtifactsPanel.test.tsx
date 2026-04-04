@@ -221,6 +221,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 			get spaceStore() {
 				return {
 					tasks: mockTasks,
+					taskActivity: signal(new Map()),
+					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
+					unsubscribeTaskActivity: vi.fn(),
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
@@ -280,6 +283,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 			get spaceStore() {
 				return {
 					tasks: mockTasks,
+					taskActivity: signal(new Map()),
+					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
+					unsubscribeTaskActivity: vi.fn(),
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
@@ -334,6 +340,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 			get spaceStore() {
 				return {
 					tasks: mockTasks,
+					taskActivity: signal(new Map()),
+					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
+					unsubscribeTaskActivity: vi.fn(),
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
