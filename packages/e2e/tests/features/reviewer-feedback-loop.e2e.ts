@@ -12,7 +12,7 @@
  * Setup strategy (per test):
  *   - Space + run created via RPC in beforeEach (infrastructure)
  *   - Gate data injected via `spaceWorkflowRun.writeGateData` RPC (infrastructure)
- *   - For "Coding active" test: task created + set to in_progress via RPC (infrastructure)
+ *   - For "Coding active" test: node execution created as in_progress via RPC (infrastructure)
  *   - All assertions verify visible DOM state only
  *
  * Cleanup:
@@ -324,7 +324,7 @@ test.describe
 				await expect(codingNodeEl).toBeVisible({ timeout: 30000 });
 
 				// Active nodes have animate-pulse CSS class.
-				// Allow extra time for the live query to propagate node execution status to the canvas.
+				// Allow extra time for the initial fetchNodeExecutions() call during space load.
 				await expect(codingNodeEl).toHaveClass(/animate-pulse/, { timeout: 15000 });
 			});
 		});

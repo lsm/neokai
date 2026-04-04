@@ -793,7 +793,7 @@ function formatElapsed(endMs: number, startMs: number): string {
 }
 
 // ============================================================================
-// Determine node status from tasks
+// Determine node status from node executions
 // ============================================================================
 
 function getNodeStatus(executions: NodeExecution[], run: SpaceWorkflowRun | null): NodeStatus {
