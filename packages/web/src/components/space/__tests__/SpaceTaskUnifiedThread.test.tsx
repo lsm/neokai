@@ -362,8 +362,11 @@ describe('SpaceTaskUnifiedThread', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		expect(screen.queryByText('Completed')).toBeNull();
 		expect(screen.queryByText('System')).toBeNull();
+		// Rejected rate-limit IS shown (it's an error)
 		expect(screen.getByText('Rate Limit')).toBeTruthy();
 		expect(screen.getByText('five hour · rejected')).toBeTruthy();
+		// Allowed rate-limit is filtered out (non-error noise)
+		expect(screen.queryByText('five hour · allowed')).toBeNull();
 	});
 
 	it('renders messages from multiple agents (task_agent + node_agent) in compact mode', () => {

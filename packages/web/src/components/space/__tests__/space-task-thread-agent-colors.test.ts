@@ -81,13 +81,14 @@ describe('getAgentColor', () => {
 		expect(uniqueColors.size).toBe(6);
 	});
 
-	it('two different unknown labels get different HSL hashes (very likely)', () => {
+	it('two different unknown labels produce different HSL colors', () => {
 		const color1 = getAgentColor('Alpha Bot 9999');
 		const color2 = getAgentColor('Beta Bot 8888');
-		// They could theoretically collide but are extremely unlikely to
-		// as the hues would have to be identical. Check they are both valid HSL.
+		// Both must be valid HSL fallback strings
 		expect(color1).toMatch(/^hsl\(\d+ 70% 62%\)$/);
 		expect(color2).toMatch(/^hsl\(\d+ 70% 62%\)$/);
+		// And they must be different (different inputs hash to different hues)
+		expect(color1).not.toBe(color2);
 	});
 
 	it('returns an HSL fallback (not crash) for empty string', () => {
