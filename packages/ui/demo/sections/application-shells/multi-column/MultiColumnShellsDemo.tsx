@@ -838,10 +838,18 @@ function Demo4() {
 export function MultiColumnShellsDemo() {
 	return (
 		<div class="space-y-12">
-			<Demo1 />
-			<Demo2 />
-			<Demo3 />
-			<Demo4 />
+			<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<Demo1 />
+			</div>
+			<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<Demo2 />
+			</div>
+			<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<Demo3 />
+			</div>
+			<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<Demo4 />
+			</div>
 		</div>
 	);
 }

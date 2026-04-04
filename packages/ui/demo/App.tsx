@@ -528,7 +528,7 @@ export function App() {
 				</header>
 
 				{/* Main */}
-				<main class="px-8 max-w-4xl">
+				<main class="px-8 max-w-6xl">
 					<DemoSection id="button" title="Button">
 						<ButtonDemo />
 					</DemoSection>

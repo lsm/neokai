@@ -76,8 +76,20 @@
 .page-preview {
 	height: 600px;
 	overflow: auto;
+	/* Creates a new containing block so position:fixed children are scoped to this element */
+	transform: translateZ(0);
 }
 
 .dark .page-preview {
 	background-color: #111118;
+}
+
+/*
+ * Shell preview frame — use on any container that wraps a full-page layout demo.
+ * The transform creates a containing block for position:fixed children so they
+ * stay inside the preview box instead of escaping to the viewport.
+ */
+.shell-frame {
+	overflow: hidden;
+	transform: translateZ(0);
 }

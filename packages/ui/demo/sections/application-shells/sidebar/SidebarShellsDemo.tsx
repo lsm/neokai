@@ -965,7 +965,7 @@ export function SidebarShellsDemo() {
 		<div class="flex flex-col gap-12">
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Simple sidebar (indigo)</h3>
-				<div class="h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<SimpleSidebar />
 				</div>
 			</div>
@@ -974,14 +974,14 @@ export function SidebarShellsDemo() {
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">
 					Dark sidebar with header, search, and user menu
 				</h3>
-				<div class="h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<DarkSidebarWithHeader />
 				</div>
 			</div>
 
 			<div>
 				<h3 class="text-sm font-medium text-text-tertiary mb-3">Light brand sidebar</h3>
-				<div class="h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
 					<LightBrandSidebar />
 				</div>
 			</div>

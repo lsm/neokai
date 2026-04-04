@@ -330,18 +330,22 @@ function FullWidthSecondaryColumnOnRight() {
 export function MultiColumnDemo() {
 	return (
 		<div class="space-y-12">
-			<section>
+			<div>
 				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">
 					Full Width Three Column
 				</h3>
-				<FullWidthThreeColumn />
-			</section>
-			<section>
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+					<FullWidthThreeColumn />
+				</div>
+			</div>
+			<div>
 				<h3 class="text-base font-semibold text-text-primary dark:text-white mb-4">
 					Full Width Secondary Column on Right
 				</h3>
-				<FullWidthSecondaryColumnOnRight />
-			</section>
+				<div class="shell-frame h-[32rem] rounded-lg border border-surface-border overflow-hidden">
+					<FullWidthSecondaryColumnOnRight />
+				</div>
+			</div>
 		</div>
 	);
 }
