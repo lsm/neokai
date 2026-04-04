@@ -39,19 +39,19 @@ function Example3() {
 					class="size-3.5 text-indigo-600 transition-opacity duration-200 ease-in-out opacity-0 group-has-checked:opacity-100"
 					fill="none"
 					viewBox="0 0 24 24"
-					strokeWidth="3"
+					stroke-width="3"
 					stroke="currentColor"
 				>
-					<path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+					<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
 				</svg>
 				<svg
 					class="absolute size-3.5 text-gray-400 transition-opacity duration-200 ease-in-out opacity-100 group-has-checked:opacity-0"
 					fill="none"
 					viewBox="0 0 24 24"
-					strokeWidth="3"
+					stroke-width="3"
 					stroke="currentColor"
 				>
-					<path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
 				</svg>
 			</span>
 		</label>

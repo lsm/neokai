@@ -716,7 +716,7 @@ function SettingsScreensStacked() {
 
 									<div class="sm:col-span-3">
 										<label
-											htmlFor="first-name"
+											for="first-name"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											First name
@@ -726,7 +726,7 @@ function SettingsScreensStacked() {
 												id="first-name"
 												name="first-name"
 												type="text"
-												autoComplete="given-name"
+												autocomplete="given-name"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>
@@ -734,7 +734,7 @@ function SettingsScreensStacked() {
 
 									<div class="sm:col-span-3">
 										<label
-											htmlFor="last-name"
+											for="last-name"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Last name
@@ -744,7 +744,7 @@ function SettingsScreensStacked() {
 												id="last-name"
 												name="last-name"
 												type="text"
-												autoComplete="family-name"
+												autocomplete="family-name"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>
@@ -752,7 +752,7 @@ function SettingsScreensStacked() {
 
 									<div class="col-span-full">
 										<label
-											htmlFor="email"
+											for="email"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Email address
@@ -762,7 +762,7 @@ function SettingsScreensStacked() {
 												id="email"
 												name="email"
 												type="email"
-												autoComplete="email"
+												autocomplete="email"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>
@@ -770,7 +770,7 @@ function SettingsScreensStacked() {
 
 									<div class="col-span-full">
 										<label
-											htmlFor="username"
+											for="username"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Username
@@ -793,7 +793,7 @@ function SettingsScreensStacked() {
 
 									<div class="col-span-full">
 										<label
-											htmlFor="timezone"
+											for="timezone"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Timezone
@@ -841,7 +841,7 @@ function SettingsScreensStacked() {
 								<div class="grid grid-cols-1 gap-x-6 gap-y-8 sm:max-w-xl sm:grid-cols-6">
 									<div class="col-span-full">
 										<label
-											htmlFor="current-password"
+											for="current-password"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Current password
@@ -851,7 +851,7 @@ function SettingsScreensStacked() {
 												id="current-password"
 												name="current_password"
 												type="password"
-												autoComplete="current-password"
+												autocomplete="current-password"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>
@@ -859,7 +859,7 @@ function SettingsScreensStacked() {
 
 									<div class="col-span-full">
 										<label
-											htmlFor="new-password"
+											for="new-password"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											New password
@@ -869,7 +869,7 @@ function SettingsScreensStacked() {
 												id="new-password"
 												name="new_password"
 												type="password"
-												autoComplete="new-password"
+												autocomplete="new-password"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>
@@ -877,7 +877,7 @@ function SettingsScreensStacked() {
 
 									<div class="col-span-full">
 										<label
-											htmlFor="confirm-password"
+											for="confirm-password"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Confirm password
@@ -887,7 +887,7 @@ function SettingsScreensStacked() {
 												id="confirm-password"
 												name="confirm_password"
 												type="password"
-												autoComplete="new-password"
+												autocomplete="new-password"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>
@@ -920,7 +920,7 @@ function SettingsScreensStacked() {
 								<div class="grid grid-cols-1 gap-x-6 gap-y-8 sm:max-w-xl sm:grid-cols-6">
 									<div class="col-span-full">
 										<label
-											htmlFor="logout-password"
+											for="logout-password"
 											class="block text-sm/6 font-medium text-gray-900 dark:text-white"
 										>
 											Your password
@@ -930,7 +930,7 @@ function SettingsScreensStacked() {
 												id="logout-password"
 												name="password"
 												type="password"
-												autoComplete="current-password"
+												autocomplete="current-password"
 												class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
 											/>
 										</div>

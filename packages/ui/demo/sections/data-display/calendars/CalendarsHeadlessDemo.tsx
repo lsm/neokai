@@ -4,7 +4,7 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	EllipsisVertical,
-	CalendarIcon,
+	Calendar,
 	MapPin,
 	ChevronDown,
 	Clock,
@@ -181,7 +181,7 @@ function SmallWithMeetings() {
 									<div class="flex items-start gap-x-3">
 										<dt class="mt-0.5">
 											<span class="sr-only">Date</span>
-											<CalendarIcon
+											<Calendar
 												aria-hidden="true"
 												class="size-5 text-text-tertiary dark:text-text-tertiary"
 											/>
