@@ -36,9 +36,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   # ============================================
   # MERGE POLICY ENFORCEMENT
@@ -67,7 +64,7 @@ jobs:
     if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -75,12 +72,12 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -349,7 +346,7 @@ jobs:
             default_provider: glm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -357,7 +354,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -372,7 +369,7 @@ jobs:
         uses: ./.github/actions/setup-devproxy
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -449,7 +446,7 @@ jobs:
     if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -457,7 +454,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -468,7 +465,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -514,7 +511,7 @@ jobs:
     if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -522,7 +519,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -533,7 +530,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -578,7 +575,7 @@ jobs:
     if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -586,7 +583,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -597,7 +594,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -745,7 +742,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -753,7 +750,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -764,7 +761,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -791,7 +788,7 @@ jobs:
           GLM_API_KEY: smoke-test
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kai-linux-x64-e2e
           path: dist/bin/kai-linux-x64
@@ -813,7 +810,7 @@ jobs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Categorize E2E test files
         id: categorize
@@ -901,7 +898,7 @@ jobs:
         test: ${{ fromJson(needs.discover.outputs.tests_no_llm) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -909,7 +906,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -920,7 +917,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -939,7 +936,7 @@ jobs:
           echo "Finished bun install at $(date)"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
@@ -950,7 +947,7 @@ jobs:
         run: cd packages/e2e && bunx playwright install chromium
 
       - name: Download binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kai-linux-x64-e2e
           path: dist/bin/
@@ -1007,7 +1004,7 @@ jobs:
           CI: true
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-no-llm-results-${{ matrix.test.name }}
@@ -1040,7 +1037,7 @@ jobs:
         test: ${{ fromJson(needs.discover.outputs.tests_llm) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -1048,7 +1045,7 @@ jobs:
           bun-version: 1.3.11
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -1063,7 +1060,7 @@ jobs:
         uses: ./.github/actions/setup-devproxy
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules
@@ -1082,7 +1079,7 @@ jobs:
           echo "Finished bun install at $(date)"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('packages/e2e/package.json') }}
@@ -1093,7 +1090,7 @@ jobs:
         run: cd packages/e2e && bunx playwright install chromium
 
       - name: Download binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kai-linux-x64-e2e
           path: dist/bin/
@@ -1151,7 +1148,7 @@ jobs:
           fi
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-results-llm-${{ matrix.test.name }}
