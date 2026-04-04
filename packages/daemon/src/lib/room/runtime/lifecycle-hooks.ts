@@ -170,7 +170,7 @@ export async function checkNotOnBaseBranch(
 				'1. `git checkout -b feat/<short-task-description>`\n' +
 				'2. `git add -A && git commit -m "<description>"`\n' +
 				'3. Then finish your response.\n\n' +
-				'Do NOT commit directly to the main/dev/master branch.',
+				'Do NOT commit directly to the main/dev branch.',
 		};
 	}
 
