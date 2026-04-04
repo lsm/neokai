@@ -96,4 +96,18 @@ describe('getAgentColor', () => {
 		// Empty string normalizes to '' and falls through to fallbackColor('agent')
 		expect(color).toMatch(/^hsl\(\d+ 70% 62%\)$/);
 	});
+
+	it('does not throw and returns a string for null input coerced as string', () => {
+		// Callers in practice always pass a string label, but defensive coverage
+		// for coerced null (null.toString() would throw; passing null via `as any` tests runtime safety)
+		const color = getAgentColor(null as unknown as string);
+		expect(typeof color).toBe('string');
+		expect(color.length).toBeGreaterThan(0);
+	});
+
+	it('does not throw and returns a string for undefined input coerced as string', () => {
+		const color = getAgentColor(undefined as unknown as string);
+		expect(typeof color).toBe('string');
+		expect(color.length).toBeGreaterThan(0);
+	});
 });

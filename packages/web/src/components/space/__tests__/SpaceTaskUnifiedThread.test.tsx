@@ -397,8 +397,9 @@ describe('SpaceTaskUnifiedThread', () => {
 			if (color) borderColors.add(color);
 		});
 
-		// At minimum 2 distinct colors (task agent + coder/reviewer agents)
-		expect(borderColors.size).toBeGreaterThanOrEqual(2);
+		// makeMultiAgentRows has 3 distinct agent labels (Task Agent, Coder Agent, Reviewer Agent)
+		// so at least 3 distinct border colors must be present
+		expect(borderColors.size).toBeGreaterThanOrEqual(3);
 	});
 
 	it('renders task agent messages visually distinct from node agent messages via agent labels', () => {
