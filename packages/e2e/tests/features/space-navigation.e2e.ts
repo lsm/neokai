@@ -3,20 +3,23 @@
  *
  * Exercises navigation paths that are NOT fully covered by the narrower test files:
  * - Space Agent: click "Space Agent" in SpaceDetailPanel → ChatContainer renders + active state
- * - Dashboard tab cycling: all 4 tabs (Dashboard/Agents/Workflows/Settings) are clickable
+ * - Overview tab cycling: SpaceDashboard Active/Review/Done tabs are clickable
  * - Deep link: direct /space/:id/agent loads space with agent chat
  *
  * Also provides integration-level coverage for the two-layer nav flow as a single chain:
  * - Level 1→2: NavRail → SpaceContextPanel → click space → SpaceDetailPanel
- * - Task drill-down: create task → click → full-width pane → back → tabs return
+ * - Task drill-down: task in SpaceDashboard → click → full-width pane → back → dashboard returns
  * - Level 2→1: back button → SpaceContextPanel + SpacesPage content
  *
  * Note: Space Agent and Dashboard use `data-testid="space-detail-agent"` /
  * `data-testid="space-detail-dashboard"` selectors to disambiguate the sidebar
- * pinned buttons from the SpaceIsland tab-bar buttons, which have identical
- * accessible names ("Dashboard", "Agents", etc.) but live in different DOM regions.
+ * pinned buttons from the SpaceDashboard tab-bar buttons, which have identical
+ * accessible names ("Active", "Review", etc.) but live in different DOM regions.
  *
- * Setup: creates a space via RPC in beforeEach (infrastructure)
+ * Overview signal: `[data-testid="space-overview-view"]` is mounted in SpaceIsland
+ * when the space dashboard is active; it is absent in agent/task/session views.
+ *
+ * Setup: creates a space + task via RPC in beforeEach (infrastructure)
  * Cleanup: deletes the space via RPC in afterEach (infrastructure)
  */
 
@@ -25,21 +28,23 @@ import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-hel
 import {
 	createSpaceViaRpc,
 	createUniqueSpaceDir,
+	createSpaceTaskViaRpc,
 	deleteSpaceViaRpc,
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
-// The space overview view (data-testid="space-overview-view") is only rendered when
-// SpaceIsland is in its default mode — it is replaced by ChatContainer (agent/session)
-// or SpaceTaskPane (task) when those views are active.
-// Use it as the canonical signal for "overview active" / "overview hidden".
+// Overview signal: visible exactly when SpaceDashboard is the active view.
+// Absent when ChatContainer (agent/session) or SpaceTaskPane is shown instead.
+const OVERVIEW_VIEW = '[data-testid="space-overview-view"]';
 
 test.describe('Comprehensive Space Navigation', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
 
 	let spaceId = '';
 	let spaceName = '';
+	let taskId = '';
+	let taskTitle = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -51,13 +56,18 @@ test.describe('Comprehensive Space Navigation', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'nav');
 		spaceName = `E2E SpaceNav ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
+		taskTitle = `Nav Task ${Date.now()}`;
+		taskId = await createSpaceTaskViaRpc(page, spaceId, taskTitle);
 	});
 
 	test.afterEach(async ({ page }) => {
 		if (spaceId) {
 			await deleteSpaceViaRpc(page, spaceId);
 			spaceId = '';
+			taskId = '';
 		}
+		spaceName = '';
+		taskTitle = '';
 	});
 
 	// ---------------------------------------------------------------------------
@@ -103,8 +113,8 @@ test.describe('Comprehensive Space Navigation', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Space overview visible by default
-		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
+		// SpaceDashboard overview visible by default
+		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
 
 		// Click "Space Agent" via the sidebar data-testid (avoids name ambiguity)
 		await page.locator('[data-testid="space-detail-agent"]').click();
@@ -116,8 +126,8 @@ test.describe('Comprehensive Space Navigation', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Space overview hidden (ChatContainer replaced it)
-		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
+		// Overview (SpaceDashboard) no longer visible — element is unmounted, not just hidden
+		await expect(page.locator(OVERVIEW_VIEW)).not.toBeAttached();
 
 		// Sidebar "Space Agent" item should report active state via data-active attribute
 		await expect(page.locator('[data-testid="space-detail-agent"]')).toHaveAttribute(
@@ -127,63 +137,73 @@ test.describe('Comprehensive Space Navigation', () => {
 	});
 
 	// ---------------------------------------------------------------------------
-	// Dashboard: click returns to tabbed view + all 4 tabs clickable
+	// Overview: click returns to dashboard + Active/Review/Done tabs clickable
 	// ---------------------------------------------------------------------------
 
-	test('Dashboard: click → overview view returns', async ({ page }) => {
-		// Start in agent view so clicking Dashboard exercises the navigation
+	test('Overview: click → SpaceDashboard returns → Active/Review/Done tabs clickable', async ({
+		page,
+	}) => {
+		// Start in agent view so clicking Overview exercises the navigation
 		await page.goto(`/space/${spaceId}/agent`);
 		await page.waitForURL(`/space/${spaceId}/agent`, { timeout: 10000 });
 
-		// Confirm overview is gone (ChatContainer replaced it)
-		await expect(page.getByTestId('space-overview-view')).not.toBeVisible({ timeout: 5000 });
+		// Confirm overview is gone (ChatContainer is shown instead)
+		await expect(page.locator(OVERVIEW_VIEW)).not.toBeAttached({ timeout: 5000 });
 
-		// Click the Dashboard pinned item via data-testid
+		// Click the Overview pinned item via data-testid ("space-detail-dashboard")
 		await page.locator('[data-testid="space-detail-dashboard"]').click();
 
 		// URL returns to base space route
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Space overview should now be visible
-		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
+		// SpaceDashboard overview is visible again
+		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
+
+		// All 3 SpaceDashboard tab buttons should be visible and clickable.
+		// These tabs live inside the space-overview-view and are unique to SpaceDashboard.
+		// OverviewTabButton renders <button><span>{label}</span><span>{count}</span></button>;
+		// Playwright computes accessible name as "Active 1" (label + count). Use a regex
+		// prefix match to handle any count value rather than requiring exact: true.
+		const overviewView = page.locator(OVERVIEW_VIEW);
+		for (const tabName of ['Active', 'Review', 'Done']) {
+			const tab = overviewView.getByRole('button', { name: new RegExp(`^${tabName}`) });
+			await expect(tab).toBeVisible({ timeout: 5000 });
+			await tab.click();
+			await expect(tab).toBeVisible({ timeout: 2000 });
+		}
 	});
 
 	// ---------------------------------------------------------------------------
 	// Task drill-down (integration chain)
 	// ---------------------------------------------------------------------------
 
-	test('Task: click task → full-width pane → back → overview returns', async ({ page }) => {
+	test('Task: click task → full-width pane → back → dashboard returns', async ({ page }) => {
+		// Navigate to space dashboard — task was created via RPC in beforeEach (status: open)
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
+		// SpaceDashboard overview visible with "Active" tab selected by default
+		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
 
-		// Create a task via Quick Action
-		const taskTitle = `Nav Task ${Date.now()}`;
-		await page.getByRole('button', { name: 'Create Task' }).first().click();
-
-		const dialog = page.getByRole('dialog');
-		await expect(dialog).toBeVisible({ timeout: 3000 });
-		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
-		await dialog.getByRole('button', { name: 'Create Task' }).click();
-
+		// Task should appear in the "Active" group (open tasks)
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// Click task to open full-width pane
 		await page.getByText(taskTitle, { exact: true }).first().click();
-		await page.waitForURL(`/space/${spaceId}/task/**`, { timeout: 5000 });
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 5000 });
 
 		// Full-width task pane rendered
 		await expect(page.locator('[data-testid="space-task-pane"]')).toBeVisible({ timeout: 3000 });
 
-		// Space overview hidden (task pane replaced it)
-		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
+		// Overview (SpaceDashboard) no longer visible — element is unmounted, not just hidden
+		await expect(page.locator(OVERVIEW_VIEW)).not.toBeAttached();
 
-		// Back button in task pane returns to overview
+		// Back button in task pane returns to dashboard view
 		await page.locator('[data-testid="task-back-button"]').click();
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 5000 });
 
-		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 3000 });
+		// SpaceDashboard overview visible again
+		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 3000 });
 		await expect(page.locator('[data-testid="space-task-pane"]')).not.toBeAttached();
 	});
 
@@ -235,7 +255,7 @@ test.describe('Comprehensive Space Navigation', () => {
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 10000 });
 
-		// Space overview hidden (ChatContainer replaced it)
-		await expect(page.getByTestId('space-overview-view')).not.toBeVisible();
+		// Overview (SpaceDashboard) not visible — element is unmounted, not just hidden
+		await expect(page.locator(OVERVIEW_VIEW)).not.toBeAttached();
 	});
 });
