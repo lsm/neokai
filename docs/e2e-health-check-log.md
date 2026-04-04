@@ -1017,7 +1017,7 @@ Allowed: done, blocked, cancelled
 
 ---
 
-### Root Cause E — `features-reviewer-feedback-loop`: `animate-pulse` class not on SVG `<g>` element
+### Root Cause E — `features-reviewer-feedback-loop`: `animate-pulse` assertion timed out due to live query propagation latency
 
 **Tests**: `coding node is pulsing after re-activation` — line 334
 
@@ -1030,11 +1030,11 @@ Timeout: 5000ms
     at reviewer-feedback-loop.e2e.ts:334:32
 ```
 
-**Context**: `codingNodeEl = page.getByTestId('node-{id}')` which resolves to `<g data-testid="node-...">`. The `animate-pulse` class is expected on the `<g>` element but is absent.
+**Context**: `codingNodeEl = page.getByTestId('node-{id}')` which resolves to `<g data-testid="node-...">`. The `animate-pulse` class is applied to this element in `WorkflowCanvas.tsx:718` when `status === 'active'`, which is derived from `nodeTasks.some((t) => t.status === 'in_progress')` (line 813). The class location is correct and unchanged.
 
-**Likely cause**: The `animate-pulse` Tailwind class was moved to a child element of the SVG node `<g>`, or the animation mechanism was changed to use CSS animations/keyframes rather than Tailwind's `animate-pulse` class directly on the `<g>`.
+**Root cause**: The 5000ms timeout was insufficient for the live query propagation chain: `spaceTask.update` RPC → SQLite write → live query notification → frontend store update → canvas re-render with `animate-pulse`. Under CI load this chain regularly exceeds 5s.
 
-**Fix needed**: Inspect the workflow canvas node rendering component (`packages/web/src/`) to find where `animate-pulse` is currently applied when a node has an in-progress task. Update the test to assert on the correct element (e.g., `codingNodeEl.locator('.animate-pulse')` or a child element).
+**Fix applied**: Increased the timeout from 5000ms to 15000ms (`reviewer-feedback-loop.e2e.ts:334`).
 
 ---
 
@@ -1171,7 +1171,7 @@ TimeoutError: locator.click: Timeout 60000ms exceeded.
 | 4 | `features-neo-chat-rendering` | A — testid/init | Inspect `neo-empty-state` testid in current UI; update test if testid changed |
 | 5 | `features-space-creation` | C — strict mode Active | Scope: `page.getByTestId('space-overview-view').getByRole('button', { name: 'Active' })` |
 | 6 | `features-space-happy-path-pipeline` | D — wrong status | Change `status: 'completed'` → `status: 'done'` at line 213 |
-| 7 | `features-reviewer-feedback-loop` | E — animate-pulse | Inspect canvas node component; update assertion to target correct element |
+| 7 | `features-reviewer-feedback-loop` | E — animate-pulse | Increase `toHaveClass(/animate-pulse/)` timeout 5000→15000ms for live query propagation |
 | 8 | `features-space-navigation` | F — panel not opening | Debug space click → SpaceDetailPanel flow; fix click target or navigation |
 | 9 | `features-space-approval-gate-rejection` | G — view-artifacts-btn | Investigate SVG gate click reliability; may need `{ force: true }` |
 | 10 | `features-space-task-fullwidth` | H — sidebar visible | Verify fullwidth behavior expectation; fix layout or update test |

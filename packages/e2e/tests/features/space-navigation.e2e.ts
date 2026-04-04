@@ -98,9 +98,11 @@ test.describe('Comprehensive Space Navigation', () => {
 		// Click the created space to drill into Level 2.
 		// The space name button only expands the row (calls onSelect); navigation to
 		// SpaceDetailPanel requires the "Open space" arrow button (calls onSpaceNavigate).
-		// The arrow is opacity-0 until hover, so hover first then click.
-		await page.getByText(spaceName, { exact: true }).hover();
-		await page.getByTitle('Open space').first().click();
+		// The arrow is opacity-0 until hover, so hover the space name first to reveal it,
+		// then scope to the parent row div to avoid clicking a different space's arrow.
+		const spaceNameBtn = page.getByText(spaceName, { exact: true });
+		await spaceNameBtn.hover();
+		await spaceNameBtn.locator('..').getByTitle('Open space').click();
 
 		// SpaceDetailPanel: pinned sidebar items visible
 		await expect(page.locator('[data-testid="space-detail-dashboard"]')).toBeVisible({
