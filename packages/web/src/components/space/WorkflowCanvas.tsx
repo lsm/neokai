@@ -25,6 +25,7 @@ import type { JSX } from 'preact';
 import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
+	SpaceTask,
 	NodeExecution,
 	Gate,
 	GateField,
@@ -604,6 +605,8 @@ interface NodeBoxProps {
 	status: NodeStatus;
 	executions: NodeExecution[];
 	isRuntimeMode: boolean;
+	/** All tasks for the current workflow run, passed through to the onNodeClick callback. */
+	nodeTasks: SpaceTask[];
 	onNodeClick?: (nodeId: string, tasks: SpaceTask[]) => void;
 }
 
@@ -613,6 +616,7 @@ function NodeBox({
 	status,
 	executions,
 	isRuntimeMode: _isRuntimeMode,
+	nodeTasks,
 	onNodeClick,
 }: NodeBoxProps): JSX.Element {
 	const { x, y, width, height } = layout;
@@ -718,7 +722,7 @@ function NodeBox({
 			data-testid={`node-${node.id}`}
 			class={status === 'active' ? pulseClass : undefined}
 			style={onNodeClick ? { cursor: 'pointer' } : undefined}
-			onClick={onNodeClick ? () => onNodeClick(node.id, tasks) : undefined}
+			onClick={onNodeClick ? () => onNodeClick(node.id, nodeTasks) : undefined}
 		>
 			{/* Shadow */}
 			<rect x={x + 2} y={y + 2} width={width} height={height} rx={6} fill="rgba(0,0,0,0.4)" />
@@ -963,6 +967,13 @@ export function WorkflowCanvas({
 
 	// Node executions grouped by node ID — used for node status and elapsed time
 	const nodeExecsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
+
+	// Tasks for the current run — passed to NodeBox for onNodeClick callbacks
+	const runTasks = useMemo(
+		() => (runId ? (spaceStore.tasksByRun.value.get(runId) ?? []) : []),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[runId, spaceStore.tasksByRun.value]
+	);
 
 	// ---- Gate data state ----
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>>>(new Map());
@@ -1317,6 +1328,7 @@ export function WorkflowCanvas({
 							status={status}
 							executions={nodeExecs}
 							isRuntimeMode={isRuntimeMode}
+							nodeTasks={runTasks}
 							onNodeClick={isRuntimeMode ? onNodeClick : undefined}
 						/>
 					);
