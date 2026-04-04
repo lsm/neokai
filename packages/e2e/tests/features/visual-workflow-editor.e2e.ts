@@ -5,7 +5,7 @@
  * - Create workflow with visual editor (add nodes, configure properties, set start node, save)
  * - Node positions are restored after save and reopen (layout persistence)
  * - Load template in visual editor (auto-layout with nodes and edges)
- * - Toggle between List and Visual modes (mode switching with confirmation)
+ * - Create workflow opens visual editor directly (list/visual toggle removed)
  * - Validation errors when saving incomplete workflows
  *
  * Setup: creates a Space via RPC in beforeEach (infrastructure).
@@ -335,46 +335,36 @@ test.describe('Visual Workflow Editor', () => {
 		await expect(page.getByTestId('editor-mode-toggle')).not.toBeVisible({ timeout: 5000 });
 	});
 
-	// ─── Test 4: Toggle between List and Visual modes ────────────────────────
+	// ─── Test 4: Create workflow opens visual editor directly ───────────────
+	//
+	// The list/visual mode toggle was removed in favour of always using the
+	// visual editor as the sole editing mode. This test verifies the current
+	// UX: clicking "Create Workflow" opens the visual editor immediately with
+	// no intermediate mode-selection step.
 
-	test('Toggle between List and Visual modes', async ({ page }) => {
+	test('Create workflow opens visual editor directly', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
-		await openNewWorkflowEditor(page);
 
-		// Verify List mode is active by default (localStorage was cleared in beforeEach)
-		await expect(page.getByTestId('editor-mode-list')).toHaveAttribute('aria-pressed', 'true');
-		await expect(page.getByTestId('editor-mode-visual')).toHaveAttribute('aria-pressed', 'false');
+		// Navigate to the Workflows tab
+		await page.getByTestId('space-tab-bar').getByRole('button', { name: 'Workflows' }).click();
 
-		// List mode shows WorkflowEditor UI (has template/step controls)
-		await expect(page.getByRole('button', { name: /Start from template/ })).toBeVisible({
-			timeout: 3000,
-		});
+		// The "Create Workflow" button must be visible
+		const createBtn = page.getByRole('button', { name: 'Create Workflow' });
+		await expect(createBtn).toBeVisible({ timeout: 5000 });
 
-		// Add steps in List mode using a template
-		await page.getByRole('button', { name: /Start from template/ }).click();
-		await page.locator('text=Coding (Plan → Code)').click();
+		// Click to open the editor
+		await createBtn.click();
 
-		// Verify steps appear in List mode
-		await expect(page.locator('text=2 steps')).toBeVisible({ timeout: 3000 });
+		// The visual editor must open immediately — no mode-toggle required
+		const editor = page.getByTestId('visual-workflow-editor');
+		await expect(editor).toBeVisible({ timeout: 5000 });
 
-		// Switch to Visual mode — confirm dialog will appear (editor is open)
-		await switchToVisualMode(page);
+		// Sanity: the old mode-toggle buttons must NOT be in the DOM (feature removed)
+		await expect(page.getByTestId('editor-mode-toggle')).not.toBeAttached();
 
-		// Visual mode should be active
-		await expect(page.getByTestId('editor-mode-visual')).toHaveAttribute('aria-pressed', 'true');
-		await expect(page.getByTestId('visual-workflow-editor')).toBeVisible({ timeout: 5000 });
-
-		// Switch back to List mode (confirm dialog will appear again)
-		page.once('dialog', (d) => d.accept());
-		await page.getByTestId('editor-mode-list').click();
-
-		// List mode should be active
-		await expect(page.getByTestId('editor-mode-list')).toHaveAttribute('aria-pressed', 'true', {
-			timeout: 3000,
-		});
-
-		// Visual editor should not be visible
-		await expect(page.getByTestId('visual-workflow-editor')).not.toBeVisible({ timeout: 3000 });
+		// The editor must expose the core controls on an empty canvas
+		await expect(editor.getByTestId('workflow-name-input')).toBeVisible({ timeout: 3000 });
+		await expect(editor.getByTestId('add-step-button')).toBeVisible({ timeout: 3000 });
 	});
 
 	// ─── Test 5: Visual editor validation — missing name ────────────────────
