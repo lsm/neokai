@@ -1396,12 +1396,14 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('CODING_WORKFLOW seeded agent slots have no instructions override', () => {
+	test('CODING_WORKFLOW seeded agent slots have instructions with mode=expand', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		for (const node of wf.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.instructions).toBeUndefined();
+				expect(agent.instructions).toBeDefined();
+				expect(agent.instructions!.mode).toBe('expand');
+				expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});
@@ -1418,12 +1420,14 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('RESEARCH_WORKFLOW seeded agent slots have no instructions override', () => {
+	test('RESEARCH_WORKFLOW seeded agent slots have instructions with mode=expand', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
 		for (const node of wf.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.instructions).toBeUndefined();
+				expect(agent.instructions).toBeDefined();
+				expect(agent.instructions!.mode).toBe('expand');
+				expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});
@@ -1438,10 +1442,13 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
 	});
 
-	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has no instructions override', () => {
+	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has instructions with mode=expand', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
-		expect(wf.nodes[0].agents[0].instructions).toBeUndefined();
+		const agent = wf.nodes[0].agents[0];
+		expect(agent.instructions).toBeDefined();
+		expect(agent.instructions!.mode).toBe('expand');
+		expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded with systemPrompt mode=override on all agent slots', () => {
@@ -1474,7 +1481,7 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have no instructions override', () => {
+	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have instructions with mode=override', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
@@ -1483,7 +1490,9 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(nonReviewNodes.length).toBe(5); // Planning, Plan Review, Coding, QA, Done
 		for (const node of nonReviewNodes) {
 			for (const agent of node.agents) {
-				expect(agent.instructions).toBeUndefined();
+				expect(agent.instructions).toBeDefined();
+				expect(agent.instructions!.mode).toBe('override');
+				expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});

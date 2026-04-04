@@ -299,7 +299,7 @@ export function buildCoderSystemPrompt(customHelperNames?: string[]): string {
 	sections.push(`6. Finish your response`);
 	sections.push(``);
 	sections.push(
-		`**IMPORTANT**: Do NOT commit directly to the main/dev/master branch. ` +
+		`**IMPORTANT**: Do NOT commit directly to the main/dev branch. ` +
 			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
 	);
 

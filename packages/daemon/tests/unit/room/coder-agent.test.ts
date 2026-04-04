@@ -74,7 +74,7 @@ describe('Coder Agent', () => {
 			expect(prompt).toContain('Git Workflow (MANDATORY)');
 			expect(prompt).toContain('feature branch');
 			expect(prompt).toContain('gh pr create');
-			expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
+			expect(prompt).toContain('Do NOT commit directly to the main/dev branch');
 		});
 
 		it('includes git fetch and rebase as the first step', () => {
