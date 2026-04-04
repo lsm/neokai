@@ -95,8 +95,12 @@ test.describe('Comprehensive Space Navigation', () => {
 		// Back button should NOT be visible at Level 1
 		await expect(page.getByTitle('Back to Spaces')).not.toBeVisible();
 
-		// Click the created space to drill into Level 2
-		await page.getByText(spaceName, { exact: true }).click();
+		// Click the created space to drill into Level 2.
+		// The space name button only expands the row (calls onSelect); navigation to
+		// SpaceDetailPanel requires the "Open space" arrow button (calls onSpaceNavigate).
+		// The arrow is opacity-0 until hover, so hover first then click.
+		await page.getByText(spaceName, { exact: true }).hover();
+		await page.getByTitle('Open space').first().click();
 
 		// SpaceDetailPanel: pinned sidebar items visible
 		await expect(page.locator('[data-testid="space-detail-dashboard"]')).toBeVisible({

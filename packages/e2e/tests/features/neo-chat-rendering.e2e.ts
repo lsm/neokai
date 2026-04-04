@@ -54,6 +54,15 @@ test.describe('Neo Chat Rendering', () => {
 		});
 		await page.reload();
 		await waitForWebSocketConnected(page);
+		// Clear session a second time after reload to eliminate any auto-initialized
+		// messages (e.g. "Invalid API key" error messages from parallel test interference
+		// or session auto-init). The session may be re-created on WS reconnect.
+		await page.evaluate(async () => {
+			const hub = window.__messageHub || window.appState?.messageHub;
+			if (hub?.request) {
+				await hub.request('neo.clearSession', {}).catch(() => {});
+			}
+		});
 	});
 
 	// ── 1. Empty state ─────────────────────────────────────────────────────────

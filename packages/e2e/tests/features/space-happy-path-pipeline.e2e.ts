@@ -210,7 +210,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 						status: 'in_progress',
 					});
 				}
-				await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'completed' });
+				await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
 			},
 			{ sid: spaceId, tid: taskId }
 		);
