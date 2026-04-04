@@ -29,7 +29,8 @@
  * transitions to `needs_attention` with failureReason `humanRejected`.
  *
  * Timeout conventions:
- *   - 10000ms: state transitions requiring a server round-trip (gate data load, run status)
+ *   - 30000ms: canvas/SVG and gate-icon visibility (workflow data from live query may be slow under load)
+ *   - 10000ms: server round-trips that don't need canvas-level wait (gate data load, run status)
  *   - 5000ms: UI-only changes (popup visibility, overlay open/close, tab content)
  */
 
