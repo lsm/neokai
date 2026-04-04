@@ -121,6 +121,10 @@ describe('SkillsStore', () => {
 
 	afterEach(() => {
 		skillsStore.unsubscribe();
+		// The idempotent-subscribe test calls subscribe() twice, pushing refCount to 2.
+		// A single unsubscribe() only decrements to 1, leaving subscribed=true and
+		// leaking state into subsequent tests. Drain fully to ensure clean isolation.
+		skillsStore.unsubscribe();
 	});
 
 	// ---------------------------------------------------------------------------
