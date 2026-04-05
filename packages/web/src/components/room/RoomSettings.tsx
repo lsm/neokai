@@ -271,13 +271,25 @@ export function RoomSettings({
 
 	return (
 		<div class="flex flex-col h-full">
-			{/* Header */}
-			<div class="flex items-center justify-between pb-4 border-b border-dark-700">
-				<h2 class="text-lg font-semibold text-gray-100">Room Settings</h2>
-			</div>
+			{/* Sticky save bar — appears when changes exist */}
+			{hasChanges() && (
+				<div class="flex items-center justify-between px-5 py-2.5 bg-blue-950/40 border-b border-blue-800/30 flex-shrink-0">
+					<span class="text-xs text-blue-300">Unsaved changes</span>
+					<button
+						type="button"
+						onClick={handleSave}
+						disabled={disabled}
+						class="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+					>
+						{isSaving.value && <Spinner size="sm" />}
+						{isSaving.value ? 'Saving...' : 'Save'}
+					</button>
+				</div>
+			)}
 
 			{/* Content */}
-			<div class="flex-1 overflow-y-auto py-4 space-y-6">
+			<div class="flex-1 overflow-y-auto">
+				<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
 				{/* Context & Instructions — collapsible section */}
 				<details class="group surface-elevated overflow-hidden">
 					<summary class="flex items-center justify-between px-4 py-3 hover:bg-dark-800/50 transition-colors select-none">
@@ -711,19 +723,7 @@ export function RoomSettings({
 						</div>
 					</div>
 				)}
-			</div>
-
-			{/* Footer */}
-			<div class="flex items-center justify-end gap-3 pt-4 border-t border-dark-700">
-				{isSaving.value && (
-					<span class="text-sm text-gray-400 flex items-center gap-2">
-						<Spinner size="sm" />
-						Saving...
-					</span>
-				)}
-				<Button onClick={handleSave} disabled={!hasChanges() || disabled} loading={isSaving.value}>
-					Save Changes
-				</Button>
+				</div>
 			</div>
 
 			{/* Danger zone modals */}

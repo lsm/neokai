@@ -255,7 +255,7 @@ export function RoomDashboard() {
 	};
 
 	return (
-		<div class="p-5 space-y-6 max-w-3xl mx-auto">
+		<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
 			{/* Runtime state + controls */}
 			{runtimeState && (
 				<RuntimeControlBar

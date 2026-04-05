@@ -265,7 +265,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								</div>
 							)}
 							{activeTab === 'tasks' && (
-								<div class="h-full overflow-y-auto p-4">
+								<div class="h-full overflow-y-auto">
 									<RoomTasks
 										tasks={roomStore.tasks.value}
 										goalByTaskId={roomStore.goalByTaskId.value}
@@ -282,12 +282,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								</div>
 							)}
 							{activeTab === 'agents' && (
-								<div class="h-full overflow-y-auto p-4">
+								<div class="h-full overflow-y-auto">
 									<RoomAgents room={room} />
 								</div>
 							)}
 							{activeTab === 'goals' && (
-								<div class="h-full overflow-y-auto p-4">
+								<div class="h-full overflow-y-auto">
 									<GoalsEditor
 										roomId={roomId}
 										goals={roomStore.goals.value}
@@ -311,7 +311,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								</div>
 							)}
 							{activeTab === 'settings' && (
-								<div class="h-full overflow-y-auto p-4">
+								<div class="h-full overflow-y-auto">
 									<RoomSettings
 										room={room}
 										onSave={(params) => roomStore.updateSettings(params)}

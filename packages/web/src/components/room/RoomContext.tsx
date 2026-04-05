@@ -10,7 +10,6 @@ import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import type { Room } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
-import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { toast } from '../../lib/toast';
 
@@ -53,14 +52,7 @@ export function RoomContext({ room }: RoomContextProps) {
 	const disabled = isSaving.value;
 
 	return (
-		<div class="flex flex-col h-full">
-			{/* Header */}
-			<div class="flex items-center justify-between pb-4 border-b border-dark-700">
-				<h2 class="text-lg font-semibold text-gray-100">Room Context</h2>
-			</div>
-
-			{/* Content */}
-			<div class="flex-1 overflow-y-auto py-4 space-y-6">
+		<div class="space-y-6">
 				{/* Background */}
 				<div class="flex flex-col">
 					<label for="room-background" class="block text-sm font-medium text-gray-300 mb-1.5">
@@ -102,20 +94,21 @@ export function RoomContext({ room }: RoomContextProps) {
 						disabled={disabled}
 					/>
 				</div>
-			</div>
 
-			{/* Footer */}
-			<div class="flex items-center justify-end gap-3 pt-4 border-t border-dark-700">
-				{isSaving.value && (
-					<span class="text-sm text-gray-400 flex items-center gap-2">
-						<Spinner size="sm" />
-						Saving...
-					</span>
-				)}
-				<Button onClick={handleSave} disabled={!hasChanges() || disabled} loading={isSaving.value}>
-					Save Changes
-				</Button>
-			</div>
+			{/* Save */}
+			{hasChanges() && (
+				<div class="flex items-center justify-end">
+					<button
+						type="button"
+						onClick={handleSave}
+						disabled={disabled}
+						class="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+					>
+						{isSaving.value && <Spinner size="sm" />}
+						{isSaving.value ? 'Saving...' : 'Save Context'}
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }

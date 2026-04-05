@@ -331,11 +331,12 @@ describe('BottomTabBar', () => {
 			currentRoomTaskIdSignal.value = null;
 		});
 
-		it('should show room-specific tabs (Overview, Agent, Missions, /) when in room context', () => {
+		it('should show room-specific tabs (Overview, Tasks, Agents, Missions, /) when in room context', () => {
 			render(<BottomTabBar />);
 
 			expect(screen.getByRole('tab', { name: 'Overview' })).toBeTruthy();
-			expect(screen.getByRole('tab', { name: 'Agent' })).toBeTruthy();
+			expect(screen.getByRole('tab', { name: 'Tasks' })).toBeTruthy();
+			expect(screen.getByRole('tab', { name: 'Agents' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Missions' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: '/' })).toBeTruthy();
 		});
@@ -353,39 +354,28 @@ describe('BottomTabBar', () => {
 			const overviewTab = screen.getByRole('tab', { name: 'Overview' });
 			expect(overviewTab.getAttribute('aria-selected')).toBe('true');
 
-			const agentTab = screen.getByRole('tab', { name: 'Agent' });
-			expect(agentTab.getAttribute('aria-selected')).toBe('false');
+			const agentsTab = screen.getByRole('tab', { name: 'Agents' });
+			expect(agentsTab.getAttribute('aria-selected')).toBe('false');
 		});
 
-		it('should mark Agent tab as active when viewing room agent', () => {
-			currentRoomSessionIdSignal.value = `room:chat:${ROOM_ID}`;
-			render(<BottomTabBar />);
-
-			const agentTab = screen.getByRole('tab', { name: 'Agent' });
-			expect(agentTab.getAttribute('aria-selected')).toBe('true');
-
-			const overviewTab = screen.getByRole('tab', { name: 'Overview' });
-			expect(overviewTab.getAttribute('aria-selected')).toBe('false');
-		});
-
-		it('should not highlight Overview or Agent when viewing a room task', () => {
+		it('should not highlight Overview or Agents when viewing a room task', () => {
 			currentRoomTaskIdSignal.value = 'some-task-id';
 			render(<BottomTabBar />);
 
 			const overviewTab = screen.getByRole('tab', { name: 'Overview' });
-			const agentTab = screen.getByRole('tab', { name: 'Agent' });
+			const agentsTab = screen.getByRole('tab', { name: 'Agents' });
 			expect(overviewTab.getAttribute('aria-selected')).toBe('false');
-			expect(agentTab.getAttribute('aria-selected')).toBe('false');
+			expect(agentsTab.getAttribute('aria-selected')).toBe('false');
 		});
 
-		it('should not highlight Overview or Agent when viewing a room session', () => {
+		it('should not highlight Overview or Agents when viewing a room session', () => {
 			currentRoomSessionIdSignal.value = 'some-session-id';
 			render(<BottomTabBar />);
 
 			const overviewTab = screen.getByRole('tab', { name: 'Overview' });
-			const agentTab = screen.getByRole('tab', { name: 'Agent' });
+			const agentsTab = screen.getByRole('tab', { name: 'Agents' });
 			expect(overviewTab.getAttribute('aria-selected')).toBe('false');
-			expect(agentTab.getAttribute('aria-selected')).toBe('false');
+			expect(agentsTab.getAttribute('aria-selected')).toBe('false');
 		});
 
 		it('should call navigateToRoom when Overview tab is clicked', () => {
@@ -397,13 +387,24 @@ describe('BottomTabBar', () => {
 			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
 		});
 
-		it('should call navigateToRoomAgent when Agent tab is clicked', () => {
+		it('should call navigateToRoom and set currentRoomTabSignal to agents when Agents tab is clicked', () => {
 			render(<BottomTabBar />);
 
-			const agentTab = screen.getByRole('tab', { name: 'Agent' });
-			fireEvent.click(agentTab);
+			const agentsTab = screen.getByRole('tab', { name: 'Agents' });
+			fireEvent.click(agentsTab);
 
-			expect(navigateToRoomAgent).toHaveBeenCalledWith(ROOM_ID);
+			expect(currentRoomTabSignal.value).toBe('agents');
+			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
+		});
+
+		it('should call navigateToRoom and set currentRoomTabSignal to tasks when Tasks tab is clicked', () => {
+			render(<BottomTabBar />);
+
+			const tasksTab = screen.getByRole('tab', { name: 'Tasks' });
+			fireEvent.click(tasksTab);
+
+			expect(currentRoomTabSignal.value).toBe('tasks');
+			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
 		});
 
 		it('should call navigateToRoom with roomId and set currentRoomTabSignal to goals when Missions tab is clicked', () => {
@@ -444,7 +445,7 @@ describe('BottomTabBar', () => {
 			expect(screen.getByRole('tab', { name: 'Rooms' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Chats' })).toBeTruthy();
 			expect(screen.queryByRole('tab', { name: 'Overview' })).toBeNull();
-			expect(screen.queryByRole('tab', { name: 'Agent' })).toBeNull();
+			expect(screen.queryByRole('tab', { name: 'Agents' })).toBeNull();
 		});
 	});
 });

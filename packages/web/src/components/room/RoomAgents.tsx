@@ -1,8 +1,8 @@
 /**
- * RoomAgents - Configure built-in agents and per-agent sub-agents for the room
+ * RoomAgents — Team Builder
  *
- * Shows a default model selector, 4 built-in agent roles with per-agent model
- * selection, expandable sub-agent pools per agent, and max review rounds.
+ * Apple-inspired agent roster for configuring room agents.
+ * Each agent is a card with role color, model selector, and sub-agent management.
  *
  * Config shape in room.config:
  *   agentModels: { planner?: string, coder?: string, general?: string, leader?: string }
@@ -16,9 +16,11 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { type Room, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { roomStore } from '../../lib/room-store';
-import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { toast } from '../../lib/toast';
+import { cn } from '../../lib/utils';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ModelInfo {
 	id: string;
@@ -37,38 +39,6 @@ interface CliAgentInfo {
 	version?: string;
 	models?: string[];
 }
-
-const MODEL_FAMILY_ICONS: Record<string, string> = {
-	opus: '🧠',
-	sonnet: '💎',
-	haiku: '⚡',
-	glm: '🌐',
-	minimax: '🔥',
-	__default__: '💎',
-};
-
-const ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS = new Set(['anthropic', 'glm', 'minimax']);
-
-function detectFamily(id: string, provider?: string): string {
-	if (id.includes('opus')) return 'opus';
-	if (id.includes('haiku')) return 'haiku';
-	if (provider === 'glm' || id.toLowerCase().startsWith('glm-')) return 'glm';
-	if (provider === 'minimax' || id.toLowerCase().startsWith('minimax-')) return 'minimax';
-	return 'sonnet';
-}
-
-interface AgentRole {
-	key: string;
-	label: string;
-	description: string;
-}
-
-const BUILTIN_AGENTS: AgentRole[] = [
-	{ key: 'planner', label: 'Planner', description: 'Breaks missions into tasks' },
-	{ key: 'coder', label: 'Coder', description: 'Implements code changes' },
-	{ key: 'general', label: 'General', description: 'Non-coding tasks' },
-	{ key: 'leader', label: 'Leader', description: 'Reviews and routes' },
-];
 
 interface SubagentConfig {
 	model: string;
@@ -91,19 +61,122 @@ interface AgentSubagents {
 	leader?: SubagentConfig[];
 }
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const MODEL_FAMILY_ICONS: Record<string, string> = {
+	opus: '🧠',
+	sonnet: '💎',
+	haiku: '⚡',
+	glm: '🌐',
+	minimax: '🔥',
+	__default__: '💎',
+};
+
+const ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS = new Set(['anthropic', 'glm', 'minimax']);
+
+function detectFamily(id: string, provider?: string): string {
+	if (id.includes('opus')) return 'opus';
+	if (id.includes('haiku')) return 'haiku';
+	if (provider === 'glm' || id.toLowerCase().startsWith('glm-')) return 'glm';
+	if (provider === 'minimax' || id.toLowerCase().startsWith('minimax-')) return 'minimax';
+	return 'sonnet';
+}
+
+function getModelIcon(id: string, family?: string): string {
+	return MODEL_FAMILY_ICONS[family ?? detectFamily(id)] ?? MODEL_FAMILY_ICONS.__default__;
+}
+
+interface AgentRole {
+	key: string;
+	label: string;
+	description: string;
+	icon: string;
+	color: {
+		accent: string; // text color for accents
+		bg: string; // background tint
+		border: string; // left border stripe
+		badge: string; // model badge bg
+	};
+}
+
+const BUILTIN_AGENTS: AgentRole[] = [
+	{
+		key: 'planner',
+		label: 'Planner',
+		description: 'Breaks missions into tasks',
+		icon: '🎯',
+		color: {
+			accent: 'text-indigo-400',
+			bg: 'bg-indigo-950/20',
+			border: 'border-l-indigo-500',
+			badge: 'bg-indigo-900/30 text-indigo-300',
+		},
+	},
+	{
+		key: 'coder',
+		label: 'Coder',
+		description: 'Implements code changes',
+		icon: '💻',
+		color: {
+			accent: 'text-emerald-400',
+			bg: 'bg-emerald-950/20',
+			border: 'border-l-emerald-500',
+			badge: 'bg-emerald-900/30 text-emerald-300',
+		},
+	},
+	{
+		key: 'general',
+		label: 'General',
+		description: 'Non-coding tasks',
+		icon: '🔧',
+		color: {
+			accent: 'text-sky-400',
+			bg: 'bg-sky-950/20',
+			border: 'border-l-sky-500',
+			badge: 'bg-sky-900/30 text-sky-300',
+		},
+	},
+	{
+		key: 'leader',
+		label: 'Leader',
+		description: 'Reviews and routes',
+		icon: '👑',
+		color: {
+			accent: 'text-amber-400',
+			bg: 'bg-amber-950/20',
+			border: 'border-l-amber-500',
+			badge: 'bg-amber-900/30 text-amber-300',
+		},
+	},
+];
+
 export interface RoomAgentsProps {
 	room: Room;
 }
 
-/** Compact model picker button + dropdown */
-function ModelPicker({
+// ─── Dropdown (shared) ───────────────────────────────────────────────────────
+
+function useClickOutside(ref: { current: HTMLElement | null }, onClose: () => void, active: boolean) {
+	useEffect(() => {
+		if (!active) return;
+		const handler = (e: MouseEvent) => {
+			if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+		};
+		document.addEventListener('mousedown', handler);
+		return () => document.removeEventListener('mousedown', handler);
+	}, [active]);
+}
+
+// ─── Model Selector (full-width, large) ──────────────────────────────────────
+
+function AgentModelSelector({
 	value,
 	models,
 	loading,
 	disabled,
 	onChange,
 	placeholder = 'Default',
-	excludeModels,
+	roleColor,
 }: {
 	value: string;
 	models: ModelInfo[];
@@ -111,192 +184,80 @@ function ModelPicker({
 	disabled: boolean;
 	onChange: (modelId: string) => void;
 	placeholder?: string;
-	excludeModels?: string[];
+	roleColor?: string;
 }) {
 	const isOpen = useSignal(false);
 	const ref = useRef<HTMLDivElement>(null);
+	useClickOutside(ref, () => (isOpen.value = false), isOpen.value);
 
 	const selectedModel = models.find((m) => m.id === value);
-	const icon = selectedModel
-		? MODEL_FAMILY_ICONS[selectedModel.family] || MODEL_FAMILY_ICONS.__default__
-		: null;
-
-	const handleToggle = useCallback(() => {
-		if (!disabled && !loading) isOpen.value = !isOpen.value;
-	}, [disabled, loading]);
-
-	const handleSelect = useCallback(
-		(modelId: string) => {
-			onChange(modelId);
-			isOpen.value = false;
-		},
-		[onChange]
-	);
-
-	useEffect(() => {
-		if (!isOpen.value) return;
-		const handler = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) isOpen.value = false;
-		};
-		document.addEventListener('mousedown', handler);
-		return () => document.removeEventListener('mousedown', handler);
-	}, [isOpen.value]);
+	const icon = selectedModel ? getModelIcon(selectedModel.id, selectedModel.family) : null;
 
 	return (
 		<div class="relative" ref={ref}>
 			<button
 				type="button"
-				class={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors ${
-					value
-						? 'bg-dark-700 text-gray-200 hover:bg-dark-600'
-						: 'bg-dark-700/50 text-gray-500 hover:bg-dark-600 hover:text-gray-300'
-				} border border-dark-600`}
-				onClick={handleToggle}
+				onClick={() => !disabled && !loading && (isOpen.value = !isOpen.value)}
 				disabled={disabled || loading}
+				class={cn(
+					'w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left',
+					'bg-dark-800/60 hover:bg-dark-800 border-dark-600 hover:border-dark-500',
+					isOpen.value && 'border-blue-600/60 ring-1 ring-blue-600/20'
+				)}
 			>
 				{loading ? (
 					<Spinner size="sm" />
 				) : (
 					<>
-						{icon && <span class="text-sm">{icon}</span>}
-						<span class="truncate max-w-[140px]">{selectedModel?.name ?? placeholder}</span>
+						<span class="text-lg">{icon ?? '🤖'}</span>
+						<div class="flex-1 min-w-0">
+							<span class="text-sm font-medium text-gray-100 block truncate">
+								{selectedModel?.name ?? placeholder}
+							</span>
+							{!value && (
+								<span class="text-xs text-gray-500">Uses team default</span>
+							)}
+						</div>
 						<svg
-							class="w-3 h-3 text-gray-500 flex-shrink-0"
+							class={cn(
+								'w-4 h-4 text-gray-500 transition-transform flex-shrink-0',
+								isOpen.value && 'rotate-180'
+							)}
 							fill="none"
 							viewBox="0 0 24 24"
 							stroke="currentColor"
 						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M19 9l-7 7-7-7"
-							/>
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
 						</svg>
 					</>
 				)}
 			</button>
 
 			{isOpen.value && (
-				<div class="absolute top-full mt-1 right-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
+				<div class="absolute top-full mt-1.5 left-0 right-0 bg-dark-800 border border-dark-600 rounded-xl shadow-2xl py-1 z-50 max-h-64 overflow-y-auto">
 					<button
-						class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-							!value ? 'text-blue-400' : 'text-gray-200'
-						}`}
-						onClick={() => handleSelect('')}
+						class={cn(
+							'w-full text-left px-4 py-2.5 hover:bg-dark-700 text-sm flex items-center gap-3 transition-colors',
+							!value ? 'text-blue-400' : 'text-gray-300'
+						)}
+						onClick={() => { onChange(''); isOpen.value = false; }}
 					>
-						{placeholder}
-						{!value && ' (current)'}
+						<span class="text-lg">🤖</span>
+						<span>{placeholder}</span>
+						{!value && <span class="ml-auto text-xs text-blue-400/60">current</span>}
 					</button>
-					{models
-						.filter((model) => model.id === value || !excludeModels?.includes(model.id))
-						.map((model) => (
-							<button
-								key={model.id}
-								class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-									model.id === value ? 'text-blue-400' : 'text-gray-200'
-								}`}
-								onClick={() => handleSelect(model.id)}
-							>
-								<span class="text-sm">
-									{MODEL_FAMILY_ICONS[model.family] || MODEL_FAMILY_ICONS.__default__}
-								</span>
-								{model.name}
-								{model.id === value && ' (current)'}
-							</button>
-						))}
-				</div>
-			)}
-		</div>
-	);
-}
-
-/** Tags-style input for selecting sub-agent models */
-function ModelTagsInput({
-	models,
-	selected,
-	loading,
-	disabled,
-	onAdd,
-	onRemove,
-}: {
-	models: ModelInfo[];
-	selected: string[];
-	loading: boolean;
-	disabled: boolean;
-	onAdd: (modelId: string) => void;
-	onRemove: (modelId: string) => void;
-}) {
-	const isOpen = useSignal(false);
-	const ref = useRef<HTMLDivElement>(null);
-
-	const availableToAdd = models.filter((m) => !selected.includes(m.id));
-
-	useEffect(() => {
-		if (!isOpen.value) return;
-		const handler = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) isOpen.value = false;
-		};
-		document.addEventListener('mousedown', handler);
-		return () => document.removeEventListener('mousedown', handler);
-	}, [isOpen.value]);
-
-	return (
-		<div class="relative" ref={ref}>
-			<div
-				class="flex flex-wrap items-center gap-1.5 min-h-[32px] px-2 py-1.5 bg-dark-800 border border-dark-600 rounded-md cursor-text"
-				onClick={() => {
-					if (!disabled && !loading && availableToAdd.length > 0) isOpen.value = !isOpen.value;
-				}}
-			>
-				{selected.map((modelId) => {
-					const info = models.find((m) => m.id === modelId);
-					const icon = info
-						? MODEL_FAMILY_ICONS[info.family] || MODEL_FAMILY_ICONS.__default__
-						: MODEL_FAMILY_ICONS.__default__;
-					return (
-						<span
-							key={modelId}
-							class="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-200"
-						>
-							<span class="text-sm leading-none">{icon}</span>
-							{info?.name ?? modelId}
-							{!disabled && (
-								<button
-									class="ml-0.5 text-red-400 hover:text-red-300 leading-none"
-									onClick={(e) => {
-										e.stopPropagation();
-										onRemove(modelId);
-									}}
-								>
-									&times;
-								</button>
-							)}
-						</span>
-					);
-				})}
-				{availableToAdd.length > 0 && (
-					<span class="inline-flex items-center justify-center w-6 h-6 rounded bg-dark-600 hover:bg-dark-500 text-gray-400 hover:text-gray-200 text-sm font-medium transition-colors cursor-pointer">
-						+
-					</span>
-				)}
-			</div>
-
-			{isOpen.value && (
-				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
-					{availableToAdd.map((model) => (
+					{models.map((model) => (
 						<button
 							key={model.id}
-							class="w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 text-gray-200"
-							onClick={() => {
-								onAdd(model.id);
-								if (availableToAdd.length <= 1) isOpen.value = false;
-							}}
+							class={cn(
+								'w-full text-left px-4 py-2.5 hover:bg-dark-700 text-sm flex items-center gap-3 transition-colors',
+								model.id === value ? (roleColor ?? 'text-blue-400') : 'text-gray-300'
+							)}
+							onClick={() => { onChange(model.id); isOpen.value = false; }}
 						>
-							<span class="text-sm">
-								{MODEL_FAMILY_ICONS[model.family] || MODEL_FAMILY_ICONS.__default__}
-							</span>
-							{model.name}
+							<span class="text-lg">{getModelIcon(model.id, model.family)}</span>
+							<span class="truncate">{model.name}</span>
+							{model.id === value && <span class="ml-auto text-xs opacity-60">current</span>}
 						</button>
 					))}
 				</div>
@@ -305,152 +266,91 @@ function ModelTagsInput({
 	);
 }
 
-/** Tags-style input for selecting CLI sub-agents with per-agent model picker */
-function CliTagsInput({
-	agents,
-	selectedConfigs,
+// ─── Assistant Pill ──────────────────────────────────────────────────────────
+
+function AssistantPill({
+	label,
+	icon,
+	meta,
+	onRemove,
 	disabled,
-	onToggle,
-	onChangeModel,
+	children,
 }: {
-	agents: CliAgentInfo[];
-	selectedConfigs: SubagentConfig[];
-	disabled: boolean;
-	onToggle: (agent: CliAgentInfo) => void;
-	onChangeModel: (agentId: string, cliModel: string) => void;
+	label: string;
+	icon?: string;
+	meta?: string;
+	onRemove?: () => void;
+	disabled?: boolean;
+	children?: preact.ComponentChildren;
+}) {
+	return (
+		<span class="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 bg-dark-700/80 hover:bg-dark-700 border border-dark-600 rounded-lg text-xs text-gray-200 transition-colors group">
+			{icon && <span class="text-sm leading-none">{icon}</span>}
+			<span class="truncate max-w-[120px]">{label}</span>
+			{meta && <span class="text-gray-500 text-[10px]">{meta}</span>}
+			{children}
+			{onRemove && !disabled && (
+				<button
+					onClick={(e) => { e.stopPropagation(); onRemove(); }}
+					class="ml-0.5 w-4 h-4 flex items-center justify-center rounded-full text-gray-500 hover:text-red-400 hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100"
+				>
+					<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			)}
+		</span>
+	);
+}
+
+// ─── Add Pill Button ─────────────────────────────────────────────────────────
+
+function AddPillButton({
+	items,
+	onSelect,
+	renderItem,
+	disabled,
+	emptyLabel = 'None available',
+}: {
+	items: Array<{ id: string }>;
+	onSelect: (id: string) => void;
+	renderItem: (item: { id: string }) => preact.ComponentChildren;
+	disabled?: boolean;
+	emptyLabel?: string;
 }) {
 	const isOpen = useSignal(false);
-	const modelOpenFor = useSignal<string | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
+	useClickOutside(ref, () => (isOpen.value = false), isOpen.value);
 
-	const selectedIds = selectedConfigs.map((s) => s.model);
-	const installableAgents = agents.filter((a) => a.installed);
-	const availableToAdd = installableAgents.filter((a) => !selectedIds.includes(a.id));
-
-	useEffect(() => {
-		if (!isOpen.value && !modelOpenFor.value) return;
-		const handler = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) {
-				isOpen.value = false;
-				modelOpenFor.value = null;
-			}
-		};
-		document.addEventListener('mousedown', handler);
-		return () => document.removeEventListener('mousedown', handler);
-	}, [isOpen.value, modelOpenFor.value]);
+	if (items.length === 0 && !isOpen.value) {
+		return <span class="text-xs text-gray-600 italic">{emptyLabel}</span>;
+	}
 
 	return (
-		<div class="relative" ref={ref}>
-			<div
-				class="flex flex-wrap items-center gap-1.5 min-h-[32px] px-2 py-1.5 bg-dark-800 border border-dark-600 rounded-md cursor-text"
-				onClick={() => {
-					if (!disabled && availableToAdd.length > 0) isOpen.value = !isOpen.value;
-				}}
+		<div class="relative inline-block" ref={ref}>
+			<button
+				type="button"
+				disabled={disabled || items.length === 0}
+				onClick={() => (isOpen.value = !isOpen.value)}
+				class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-dark-700/60 hover:bg-dark-700 border border-dark-600 text-gray-400 hover:text-gray-200 transition-all disabled:opacity-30"
 			>
-				{selectedConfigs.map((config) => {
-					const info = agents.find((a) => a.id === config.model);
-					if (!info) return null;
-					const hasModels = info.models && info.models.length > 0;
-					return (
-						<span
-							key={config.model}
-							class="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-200 relative"
-						>
-							{info.name}
-							{hasModels && (
-								<button
-									class="text-[10px] text-blue-400 hover:text-blue-300 px-1 rounded hover:bg-dark-500"
-									onClick={(e) => {
-										e.stopPropagation();
-										modelOpenFor.value = modelOpenFor.value === config.model ? null : config.model;
-									}}
-									title="Select model"
-								>
-									{config.cliModel ?? 'default'}
-								</button>
-							)}
-							{!hasModels && <span class="text-[10px] text-gray-500">{info.provider}</span>}
-							{!disabled && (
-								<button
-									class="ml-0.5 text-red-400 hover:text-red-300 leading-none"
-									onClick={(e) => {
-										e.stopPropagation();
-										onToggle(info);
-									}}
-								>
-									&times;
-								</button>
-							)}
-							{modelOpenFor.value === config.model && hasModels && (
-								<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-44 py-1 z-50 animate-slideIn">
-									<button
-										class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs ${
-											!config.cliModel ? 'text-blue-400' : 'text-gray-200'
-										}`}
-										onClick={(e) => {
-											e.stopPropagation();
-											onChangeModel(config.model, '');
-											modelOpenFor.value = null;
-										}}
-									>
-										default
-									</button>
-									{info.models!.map((m) => (
-										<button
-											key={m}
-											class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs ${
-												config.cliModel === m ? 'text-blue-400' : 'text-gray-200'
-											}`}
-											onClick={(e) => {
-												e.stopPropagation();
-												onChangeModel(config.model, m);
-												modelOpenFor.value = null;
-											}}
-										>
-											{m}
-										</button>
-									))}
-								</div>
-							)}
-						</span>
-					);
-				})}
-				{availableToAdd.length > 0 && (
-					<span class="inline-flex items-center justify-center w-6 h-6 rounded bg-dark-600 hover:bg-dark-500 text-gray-400 hover:text-gray-200 text-sm font-medium transition-colors cursor-pointer">
-						+
-					</span>
-				)}
-				{selectedIds.length === 0 && availableToAdd.length === 0 && (
-					<span class="text-xs text-gray-600">No CLI agents installed</span>
-				)}
-			</div>
+				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M12 4v16m8-8H4" />
+				</svg>
+			</button>
 
-			{isOpen.value && (
-				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-56 py-1 z-50 animate-slideIn">
-					{availableToAdd.map((agent) => (
+			{isOpen.value && items.length > 0 && (
+				<div class="absolute top-full mt-1.5 left-0 bg-dark-800 border border-dark-600 rounded-xl shadow-2xl w-56 py-1 z-50 max-h-48 overflow-y-auto">
+					{items.map((item) => (
 						<button
-							key={agent.id}
-							class="w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center justify-between gap-2 text-gray-200"
+							key={item.id}
+							class="w-full text-left px-3.5 py-2 hover:bg-dark-700 text-sm text-gray-300 transition-colors"
 							onClick={() => {
-								onToggle(agent);
-								if (availableToAdd.length <= 1) isOpen.value = false;
+								onSelect(item.id);
+								if (items.length <= 1) isOpen.value = false;
 							}}
 						>
-							<span class="flex items-center gap-2">
-								{agent.name}
-								<span class="text-[10px] text-gray-500">{agent.provider}</span>
-							</span>
-							{agent.authenticated ? (
-								<span class="text-[10px] text-green-400 flex items-center gap-1">
-									<span class="w-1 h-1 rounded-full bg-green-400" />
-									Ready
-								</span>
-							) : (
-								<span class="text-[10px] text-yellow-400 flex items-center gap-1">
-									<span class="w-1 h-1 rounded-full bg-yellow-400" />
-									No auth
-								</span>
-							)}
+							{renderItem(item)}
 						</button>
 					))}
 				</div>
@@ -459,19 +359,268 @@ function CliTagsInput({
 	);
 }
 
+// ─── Stepper ─────────────────────────────────────────────────────────────────
+
+function Stepper({
+	value,
+	min,
+	max,
+	onChange,
+	disabled,
+}: {
+	value: number;
+	min: number;
+	max: number;
+	onChange: (v: number) => void;
+	disabled?: boolean;
+}) {
+	return (
+		<div class="inline-flex items-center rounded-xl border border-dark-600 bg-dark-800/60 overflow-hidden">
+			<button
+				type="button"
+				disabled={disabled || value <= min}
+				onClick={() => onChange(Math.max(min, value - 1))}
+				class="px-3 py-2 text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+			>
+				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M20 12H4" />
+				</svg>
+			</button>
+			<span class="px-4 py-2 text-sm font-semibold text-gray-100 tabular-nums min-w-[3rem] text-center border-x border-dark-600">
+				{value}
+			</span>
+			<button
+				type="button"
+				disabled={disabled || value >= max}
+				onClick={() => onChange(Math.min(max, value + 1))}
+				class="px-3 py-2 text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+			>
+				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M12 4v16m8-8H4" />
+				</svg>
+			</button>
+		</div>
+	);
+}
+
+// ─── Agent Card ──────────────────────────────────────────────────────────────
+
+function AgentCard({
+	agent,
+	modelValue,
+	models,
+	modelsLoading,
+	subagentCount,
+	isExpanded,
+	onToggle,
+	onModelChange,
+	disabled,
+	children,
+}: {
+	agent: AgentRole;
+	modelValue: string;
+	models: ModelInfo[];
+	modelsLoading: boolean;
+	subagentCount: number;
+	isExpanded: boolean;
+	onToggle: () => void;
+	onModelChange: (model: string) => void;
+	disabled: boolean;
+	children: preact.ComponentChildren;
+}) {
+	const selectedModel = models.find((m) => m.id === modelValue);
+	const modelLabel = selectedModel?.name ?? 'Default';
+
+	return (
+		<div
+			class={cn(
+				'rounded-xl border-l-2 border border-dark-700 overflow-hidden transition-all',
+				agent.color.border,
+				isExpanded ? 'bg-dark-850/80 shadow-lg shadow-black/10' : 'bg-dark-850/40 hover:bg-dark-850/60'
+			)}
+		>
+			{/* Card header */}
+			<button
+				type="button"
+				onClick={onToggle}
+				class="w-full flex items-center gap-4 px-5 py-4 text-left transition-colors"
+			>
+				{/* Avatar */}
+				<div
+					class={cn(
+						'w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0',
+						agent.color.bg
+					)}
+				>
+					{agent.icon}
+				</div>
+
+				{/* Info */}
+				<div class="flex-1 min-w-0">
+					<div class="flex items-center gap-2">
+						<span class="text-sm font-semibold text-gray-100">{agent.label}</span>
+						{subagentCount > 0 && (
+							<span class={cn('text-[10px] px-1.5 py-0.5 rounded-full', agent.color.badge)}>
+								{subagentCount} assistant{subagentCount !== 1 ? 's' : ''}
+							</span>
+						)}
+					</div>
+					<span class="text-xs text-gray-500">{agent.description}</span>
+				</div>
+
+				{/* Model badge */}
+				<span
+					class={cn(
+						'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium flex-shrink-0',
+						modelValue ? agent.color.badge : 'bg-dark-700/60 text-gray-400'
+					)}
+					onClick={(e) => e.stopPropagation()}
+				>
+					{selectedModel && (
+						<span class="text-sm leading-none">
+							{getModelIcon(selectedModel.id, selectedModel.family)}
+						</span>
+					)}
+					{modelLabel}
+				</span>
+
+				{/* Chevron */}
+				<svg
+					class={cn(
+						'w-4 h-4 text-gray-600 transition-transform flex-shrink-0',
+						isExpanded && 'rotate-180'
+					)}
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+				>
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
+				</svg>
+			</button>
+
+			{/* Expanded detail */}
+			{isExpanded && (
+				<div class="px-5 pb-5 pt-1 border-t border-dark-700/40 space-y-5">
+					{/* Model selector */}
+					<div>
+						<label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">
+							Model
+						</label>
+						<AgentModelSelector
+							value={modelValue}
+							models={models}
+							loading={modelsLoading}
+							disabled={disabled}
+							onChange={onModelChange}
+							roleColor={agent.color.accent}
+						/>
+					</div>
+
+					{/* Sub-agents (injected via children) */}
+					{children}
+				</div>
+			)}
+		</div>
+	);
+}
+
+// ─── CLI Agent Pill with model picker ────────────────────────────────────────
+
+function CliAgentPill({
+	config,
+	agent,
+	disabled,
+	onRemove,
+	onChangeModel,
+}: {
+	config: SubagentConfig;
+	agent: CliAgentInfo | undefined;
+	disabled: boolean;
+	onRemove: () => void;
+	onChangeModel: (model: string) => void;
+}) {
+	const modelOpen = useSignal(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useClickOutside(ref, () => (modelOpen.value = false), modelOpen.value);
+
+	if (!agent) return null;
+	const hasModels = agent.models && agent.models.length > 0;
+
+	return (
+		<div class="relative inline-block" ref={ref}>
+			<AssistantPill
+				label={agent.name}
+				meta={hasModels ? undefined : agent.provider}
+				onRemove={onRemove}
+				disabled={disabled}
+			>
+				{hasModels && (
+					<button
+						class="text-[10px] text-blue-400 hover:text-blue-300 px-1 rounded hover:bg-dark-600 transition-colors"
+						onClick={(e) => {
+							e.stopPropagation();
+							modelOpen.value = !modelOpen.value;
+						}}
+					>
+						{config.cliModel ?? 'default'}
+					</button>
+				)}
+			</AssistantPill>
+
+			{modelOpen.value && hasModels && (
+				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-xl shadow-2xl w-44 py-1 z-50">
+					<button
+						class={cn(
+							'w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs transition-colors',
+							!config.cliModel ? 'text-blue-400' : 'text-gray-300'
+						)}
+						onClick={(e) => {
+							e.stopPropagation();
+							onChangeModel('');
+							modelOpen.value = false;
+						}}
+					>
+						default
+					</button>
+					{agent.models!.map((m) => (
+						<button
+							key={m}
+							class={cn(
+								'w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs transition-colors',
+								config.cliModel === m ? 'text-blue-400' : 'text-gray-300'
+							)}
+							onClick={(e) => {
+								e.stopPropagation();
+								onChangeModel(m);
+								modelOpen.value = false;
+							}}
+						>
+							{m}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
+// @public - Library export
 export function RoomAgents({ room }: RoomAgentsProps) {
 	const agentModels = useSignal<AgentModels>({});
 	const agentSubagents = useSignal<AgentSubagents>({});
 	const maxReviewRounds = useSignal<number>(3);
 	const maxConcurrentGroups = useSignal<number>(1);
 	const selectedDefaultModel = useSignal(room.defaultModel || '');
-	const expandedAgents = useSignal<Set<string>>(new Set());
+	const expandedAgent = useSignal<string | null>(null);
 	const isSaving = useSignal(false);
 	const availableModels = useSignal<ModelInfo[]>([]);
 	const cliAgents = useSignal<CliAgentInfo[]>([]);
 	const isLoadingModels = useSignal(false);
 
-	// Fetch available models + CLI agents
+	// ── Data fetching ──
+
 	useEffect(() => {
 		const fetchData = async () => {
 			isLoadingModels.value = true;
@@ -506,7 +655,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		fetchData();
 	}, []);
 
-	// Load from room config (with backward-compat migration from flat reviewers)
+	// ── Load from room config (with backward-compat migration) ──
+
 	useEffect(() => {
 		const config = room.config ?? {};
 		agentModels.value = (config.agentModels as AgentModels) ?? {};
@@ -516,7 +666,6 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		if (savedSubagents) {
 			agentSubagents.value = { ...savedSubagents };
 		} else {
-			// Migrate: old flat reviewers -> leader sub-agents
 			const legacyReviewers = config.reviewers as SubagentConfig[] | undefined;
 			agentSubagents.value = legacyReviewers?.length ? { leader: [...legacyReviewers] } : {};
 		}
@@ -525,7 +674,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		maxConcurrentGroups.value = (config.maxConcurrentGroups as number) ?? 1;
 	}, [room]);
 
-	// Change detection
+	// ── Change detection ──
+
 	const originalJson = useComputed(() => {
 		const config = room.config ?? {};
 		const savedSubagents = config.agentSubagents as AgentSubagents | undefined;
@@ -543,30 +693,23 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		});
 	});
 
-	const currentJson = useComputed(() => {
-		return JSON.stringify({
+	const currentJson = useComputed(() =>
+		JSON.stringify({
 			defaultModel: selectedDefaultModel.value,
 			agentModels: agentModels.value,
 			agentSubagents: agentSubagents.value,
 			maxReviewRounds: maxReviewRounds.value,
 			maxConcurrentGroups: maxConcurrentGroups.value,
-		});
-	});
+		})
+	);
 
 	const hasChanges = useComputed(() => originalJson.value !== currentJson.value);
 
-	// Resolve default model name for display
-	const defaultModelLabel = useComputed(() => {
-		if (!selectedDefaultModel.value) return 'Default';
-		const m = availableModels.value.find((m) => m.id === selectedDefaultModel.value);
-		return m ? `Default (${m.name})` : `Default (${selectedDefaultModel.value})`;
-	});
-
-	// SDK subagents run through Claude Agent SDK, so keep this list limited
-	// to Anthropic-compatible providers.
 	const sdkSubagentModels = useComputed(() =>
 		availableModels.value.filter((m) => ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS.has(m.provider))
 	);
+
+	// ── Agent model helpers ──
 
 	const updateAgentModel = useCallback(
 		(key: string, model: string) => {
@@ -581,18 +724,15 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		[agentModels]
 	);
 
-	// Per-agent sub-agent helpers
-	const getSubagentsForRole = (role: string): SubagentConfig[] => {
-		return agentSubagents.value[role as keyof AgentSubagents] ?? [];
-	};
+	// ── Sub-agent helpers ──
 
-	const isCliAgentEnabledFor = (role: string, agentId: string): boolean => {
-		return getSubagentsForRole(role).some((r) => r.type === 'cli' && r.model === agentId);
-	};
+	const getSubagentsForRole = (role: string): SubagentConfig[] =>
+		agentSubagents.value[role as keyof AgentSubagents] ?? [];
 
 	const toggleCliAgentFor = (role: string, agent: CliAgentInfo) => {
 		const current = getSubagentsForRole(role);
-		const updated = isCliAgentEnabledFor(role, agent.id)
+		const exists = current.some((r) => r.type === 'cli' && r.model === agent.id);
+		const updated = exists
 			? current.filter((r) => !(r.type === 'cli' && r.model === agent.id))
 			: [...current, { model: agent.id, type: 'cli' as const }];
 		agentSubagents.value = { ...agentSubagents.value, [role]: updated };
@@ -600,29 +740,25 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 
 	const changeCliModelFor = (role: string, agentId: string, cliModel: string) => {
 		const current = getSubagentsForRole(role);
-		const updated = current.map((r) => {
-			if (r.type === 'cli' && r.model === agentId) {
-				const next = { ...r };
-				if (cliModel) {
-					next.cliModel = cliModel;
-				} else {
-					delete next.cliModel;
+		agentSubagents.value = {
+			...agentSubagents.value,
+			[role]: current.map((r) => {
+				if (r.type === 'cli' && r.model === agentId) {
+					const next = { ...r };
+					if (cliModel) { next.cliModel = cliModel; } else { delete next.cliModel; }
+					return next;
 				}
-				return next;
-			}
-			return r;
-		});
-		agentSubagents.value = { ...agentSubagents.value, [role]: updated };
+				return r;
+			}),
+		};
 	};
 
-	const getSdkSubagentsFor = (role: string): SubagentConfig[] => {
-		return getSubagentsForRole(role).filter((r) => r.type !== 'cli');
-	};
+	const getSdkSubagentsFor = (role: string): SubagentConfig[] =>
+		getSubagentsForRole(role).filter((r) => r.type !== 'cli');
 
 	const addSdkSubagentFor = (role: string, model: string) => {
 		if (!model) return;
 		const current = getSubagentsForRole(role);
-		// Avoid duplicates
 		if (current.some((r) => r.type !== 'cli' && r.model === model)) return;
 		const modelInfo = availableModels.value.find((m) => m.id === model);
 		agentSubagents.value = {
@@ -646,20 +782,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		};
 	};
 
-	const toggleExpanded = (key: string) => {
-		const next = new Set(expandedAgents.value);
-		if (next.has(key)) {
-			next.delete(key);
-		} else {
-			next.add(key);
-		}
-		expandedAgents.value = next;
-	};
+	// ── Save ──
 
 	const handleSave = async () => {
 		if (!hasChanges.value) return;
 
-		// Clean up: remove entries with blank model and empty role arrays
 		const cleanedSubagents: AgentSubagents = {};
 		for (const [key, subs] of Object.entries(agentSubagents.value)) {
 			const valid = (subs as SubagentConfig[]).filter((s) => s.model.trim());
@@ -670,13 +797,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 
 		isSaving.value = true;
 		try {
-			// Save defaultModel if changed
 			if (selectedDefaultModel.value !== (room.defaultModel || '')) {
 				await roomStore.updateSettings({
 					defaultModel: selectedDefaultModel.value || undefined,
 				});
 			}
-			// Save config (clears legacy reviewers key)
 			await roomStore.updateConfig({
 				...room.config,
 				agentModels: agentModels.value,
@@ -695,197 +820,227 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 
 	const disabled = isSaving.value;
 
+	// ── Render ──
+
 	return (
 		<div class="flex flex-col h-full">
-			{/* Header */}
-			<div class="pb-4 border-b border-dark-700">
-				<h2 class="text-lg font-semibold text-gray-100">Agents</h2>
-				<p class="text-xs text-gray-500 mt-0.5">
-					Configure models for built-in agents and their sub-agents.
-				</p>
-			</div>
+			{/* Sticky save bar — appears when changes exist */}
+			{hasChanges.value && (
+				<div class="flex items-center justify-between px-5 py-2.5 bg-blue-950/40 border-b border-blue-800/30 flex-shrink-0">
+					<span class="text-xs text-blue-300">Unsaved changes</span>
+					<button
+						type="button"
+						onClick={handleSave}
+						disabled={disabled}
+						class="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+					>
+						{isSaving.value && <Spinner size="sm" />}
+						{isSaving.value ? 'Saving...' : 'Save'}
+					</button>
+				</div>
+			)}
 
-			<div class="flex-1 overflow-y-auto py-4 space-y-6">
-				{/* Default Model selector */}
-				<div>
-					<div class="flex items-center justify-between gap-3 mb-1">
-						<div>
-							<h3 class="text-sm font-semibold text-gray-300">Default Model</h3>
-							<p class="text-xs text-gray-500">
-								What "Default" resolves to for agent model selectors below.
-							</p>
+			{/* Scrollable content */}
+			<div class="flex-1 overflow-y-auto">
+				<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
+					{/* ── Agent Cards ── */}
+					<section>
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+								Your Team
+							</h3>
+							<span class="text-xs text-gray-600">
+								{BUILTIN_AGENTS.length} agent{BUILTIN_AGENTS.length !== 1 ? 's' : ''}
+							</span>
 						</div>
-						<ModelPicker
-							value={selectedDefaultModel.value}
-							models={availableModels.value}
-							loading={isLoadingModels.value}
-							disabled={disabled}
-							onChange={(model) => {
-								selectedDefaultModel.value = model;
-							}}
-							placeholder="System default"
-						/>
-					</div>
-				</div>
 
-				{/* Divider */}
-				<div class="border-t border-dark-700" />
+						<div class="space-y-3">
+							{BUILTIN_AGENTS.map((agent) => {
+								const isExpanded = expandedAgent.value === agent.key;
+								const allSubs = getSubagentsForRole(agent.key);
+								const cliSubs = allSubs.filter((s) => s.type === 'cli');
+								const sdkSubs = getSdkSubagentsFor(agent.key);
+								const installedCli = cliAgents.value.filter((a) => a.installed);
+								const availableCli = installedCli.filter(
+									(a) => !cliSubs.some((s) => s.model === a.id)
+								);
+								const availableSdk = sdkSubagentModels.value.filter(
+									(m) => !sdkSubs.some((s) => s.model === m.id)
+								);
 
-				{/* Built-in agents with expandable sub-agents */}
-				<div class="space-y-2">
-					{BUILTIN_AGENTS.map((agent) => {
-						const isExpanded = expandedAgents.value.has(agent.key);
-						const subagentCount = getSubagentsForRole(agent.key).length;
-
-						return (
-							<div key={agent.key} class="rounded-lg bg-dark-800 border border-dark-700">
-								{/* Agent header row */}
-								<div class="flex items-center justify-between gap-3 px-3 py-2">
-									<button
-										type="button"
-										class="flex items-center gap-2 min-w-0 cursor-pointer group"
-										onClick={() => toggleExpanded(agent.key)}
-									>
-										<svg
-											class={`w-3.5 h-3.5 text-gray-500 group-hover:text-gray-300 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`}
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M9 5l7 7-7 7"
-											/>
-										</svg>
-										<span class="text-sm font-medium text-gray-100">{agent.label}</span>
-										<span class="text-xs text-gray-500">{agent.description}</span>
-										{subagentCount > 0 && (
-											<span class="text-[10px] text-blue-400/70 bg-blue-900/20 px-1.5 py-0.5 rounded">
-												{subagentCount} sub-agent
-												{subagentCount !== 1 ? 's' : ''}
-											</span>
-										)}
-									</button>
-									<ModelPicker
-										value={agentModels.value[agent.key as keyof AgentModels] ?? ''}
+								return (
+									<AgentCard
+										key={agent.key}
+										agent={agent}
+										modelValue={agentModels.value[agent.key as keyof AgentModels] ?? ''}
 										models={availableModels.value}
-										loading={isLoadingModels.value}
+										modelsLoading={isLoadingModels.value}
+										subagentCount={allSubs.length}
+										isExpanded={isExpanded}
+										onToggle={() => {
+											expandedAgent.value = isExpanded ? null : agent.key;
+										}}
+										onModelChange={(model) => updateAgentModel(agent.key, model)}
 										disabled={disabled}
-										onChange={(model) => updateAgentModel(agent.key, model)}
-										placeholder={defaultModelLabel.value}
-									/>
-								</div>
+									>
+										{/* Assistants section */}
+										<div>
+											<label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">
+												Assistants
+											</label>
 
-								{/* Expandable sub-agents section */}
-								{isExpanded && (
-									<div class="px-3 pb-3 pt-1 border-t border-dark-700/50 ml-6">
-										{/* Sub Agent CLIs */}
-										<div class="mb-3">
-											<div class="text-xs text-gray-500 mb-2">Sub Agent CLIs</div>
-											<CliTagsInput
-												agents={cliAgents.value}
-												selectedConfigs={getSubagentsForRole(agent.key).filter(
-													(s) => s.type === 'cli'
-												)}
-												disabled={disabled}
-												onToggle={(cliAgent) => toggleCliAgentFor(agent.key, cliAgent)}
-												onChangeModel={(agentId, cliModel) =>
-													changeCliModelFor(agent.key, agentId, cliModel)
-												}
-											/>
-										</div>
+											{/* SDK Model pills */}
+											<div class="mb-3">
+												<div class="text-[11px] text-gray-500 mb-1.5">SDK Models</div>
+												<div class="flex flex-wrap items-center gap-1.5">
+													{sdkSubs.map((sub) => {
+														const info = availableModels.value.find((m) => m.id === sub.model);
+														return (
+															<AssistantPill
+																key={sub.model}
+																label={info?.name ?? sub.model}
+																icon={getModelIcon(sub.model, info?.family)}
+																onRemove={() => removeSdkSubagentFor(agent.key, sub.model)}
+																disabled={disabled}
+															/>
+														);
+													})}
+													<AddPillButton
+														items={availableSdk}
+														onSelect={(id) => addSdkSubagentFor(agent.key, id)}
+														disabled={disabled}
+														emptyLabel={sdkSubs.length === 0 ? 'No models added' : ''}
+														renderItem={(item) => {
+															const m = availableSdk.find((x) => x.id === item.id);
+															return (
+																<span class="flex items-center gap-2">
+																	<span class="text-lg">{getModelIcon(item.id, m?.family)}</span>
+																	{m?.name ?? item.id}
+																</span>
+															);
+														}}
+													/>
+												</div>
+											</div>
 
-										{/* Sub Agent Models */}
-										<div class="text-xs text-gray-500 mb-2">
-											Sub Agent Models (Anthropic-compatible)
+											{/* CLI Agent pills */}
+											<div>
+												<div class="text-[11px] text-gray-500 mb-1.5">CLI Agents</div>
+												<div class="flex flex-wrap items-center gap-1.5">
+													{cliSubs.map((config) => {
+														const info = cliAgents.value.find((a) => a.id === config.model);
+														return (
+															<CliAgentPill
+																key={config.model}
+																config={config}
+																agent={info}
+																disabled={disabled}
+																onRemove={() => {
+																	if (info) toggleCliAgentFor(agent.key, info);
+																}}
+																onChangeModel={(m) =>
+																	changeCliModelFor(agent.key, config.model, m)
+																}
+															/>
+														);
+													})}
+													<AddPillButton
+														items={availableCli}
+														onSelect={(id) => {
+															const a = cliAgents.value.find((x) => x.id === id);
+															if (a) toggleCliAgentFor(agent.key, a);
+														}}
+														disabled={disabled}
+														emptyLabel={cliSubs.length === 0 ? 'No CLI agents' : ''}
+														renderItem={(item) => {
+															const a = cliAgents.value.find((x) => x.id === item.id);
+															return (
+																<span class="flex items-center justify-between w-full">
+																	<span>
+																		{a?.name ?? item.id}
+																		<span class="text-xs text-gray-500 ml-1.5">
+																			{a?.provider}
+																		</span>
+																	</span>
+																	{a?.authenticated ? (
+																		<span class="flex items-center gap-1 text-[10px] text-green-400">
+																			<span class="w-1 h-1 rounded-full bg-green-400" />
+																			Ready
+																		</span>
+																	) : (
+																		<span class="flex items-center gap-1 text-[10px] text-yellow-400">
+																			<span class="w-1 h-1 rounded-full bg-yellow-400" />
+																			No auth
+																		</span>
+																	)}
+																</span>
+															);
+														}}
+													/>
+												</div>
+											</div>
 										</div>
-										<ModelTagsInput
-											models={sdkSubagentModels.value}
-											selected={getSdkSubagentsFor(agent.key)
-												.map((s) => s.model)
-												.filter(Boolean)}
-											loading={isLoadingModels.value}
-											disabled={disabled}
-											onAdd={(model) => addSdkSubagentFor(agent.key, model)}
-											onRemove={(model) => removeSdkSubagentFor(agent.key, model)}
-										/>
-									</div>
-								)}
+									</AgentCard>
+								);
+							})}
+						</div>
+					</section>
+
+					{/* ── Team Settings ── */}
+					<section class="rounded-xl border border-dark-700 bg-dark-850/40 px-5 py-5 space-y-5">
+						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+							Team Settings
+						</h3>
+
+						{/* Default Model */}
+						<div>
+							<label class="block text-sm font-medium text-gray-300 mb-1">Default Model</label>
+							<p class="text-xs text-gray-500 mb-2">
+								Fallback model for agents without an explicit override.
+							</p>
+							<AgentModelSelector
+								value={selectedDefaultModel.value}
+								models={availableModels.value}
+								loading={isLoadingModels.value}
+								disabled={disabled}
+								onChange={(model) => (selectedDefaultModel.value = model)}
+								placeholder="System default"
+							/>
+						</div>
+
+						{/* Concurrent Tasks */}
+						<div class="flex items-center justify-between">
+							<div>
+								<label class="block text-sm font-medium text-gray-300">Concurrent Tasks</label>
+								<p class="text-xs text-gray-500 mt-0.5">Max tasks running in parallel</p>
 							</div>
-						);
-					})}
-				</div>
+							<Stepper
+								value={maxConcurrentGroups.value}
+								min={1}
+								max={MAX_CONCURRENT_GROUPS_LIMIT}
+								onChange={(v) => (maxConcurrentGroups.value = v)}
+								disabled={disabled}
+							/>
+						</div>
 
-				{/* Max review rounds */}
-				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1">Max Review Rounds</label>
-					<p class="text-xs text-gray-500 mb-2">
-						Maximum number of automated review iterations before escalating to human review. No
-						limit applies when the task is already in human review.
-					</p>
-					<input
-						type="number"
-						min={1}
-						max={MAX_REVIEW_ROUNDS_LIMIT}
-						value={maxReviewRounds.value}
-						onInput={(e) => {
-							const input = e.target as HTMLInputElement;
-							const val = parseInt(input.value, 10);
-							if (!isNaN(val) && val >= 1 && val <= MAX_REVIEW_ROUNDS_LIMIT) {
-								maxReviewRounds.value = val;
-							} else {
-								input.value = String(maxReviewRounds.value);
-							}
-						}}
-						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-						disabled={disabled}
-					/>
+						{/* Review Rounds */}
+						<div class="flex items-center justify-between">
+							<div>
+								<label class="block text-sm font-medium text-gray-300">Review Rounds</label>
+								<p class="text-xs text-gray-500 mt-0.5">
+									Auto-review iterations before human escalation
+								</p>
+							</div>
+							<Stepper
+								value={maxReviewRounds.value}
+								min={1}
+								max={MAX_REVIEW_ROUNDS_LIMIT}
+								onChange={(v) => (maxReviewRounds.value = v)}
+								disabled={disabled}
+							/>
+						</div>
+					</section>
 				</div>
-
-				{/* Max concurrent tasks */}
-				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1">Max Concurrent Tasks</label>
-					<p class="text-xs text-gray-500 mb-2">
-						Maximum number of tasks running in parallel. Increasing this takes effect on the next
-						tick without restarting.
-					</p>
-					<input
-						type="number"
-						min={1}
-						max={MAX_CONCURRENT_GROUPS_LIMIT}
-						value={maxConcurrentGroups.value}
-						onInput={(e) => {
-							const input = e.target as HTMLInputElement;
-							const val = parseInt(input.value, 10);
-							if (!isNaN(val) && val >= 1 && val <= MAX_CONCURRENT_GROUPS_LIMIT) {
-								maxConcurrentGroups.value = val;
-							} else {
-								input.value = String(maxConcurrentGroups.value);
-							}
-						}}
-						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-						disabled={disabled}
-					/>
-				</div>
-			</div>
-
-			{/* Footer */}
-			<div class="flex items-center justify-end gap-3 pt-4 border-t border-dark-700">
-				{isSaving.value && (
-					<span class="text-sm text-gray-400 flex items-center gap-2">
-						<Spinner size="sm" />
-						Saving...
-					</span>
-				)}
-				<Button
-					onClick={handleSave}
-					disabled={!hasChanges.value || disabled}
-					loading={isSaving.value}
-				>
-					Save Changes
-				</Button>
 			</div>
 		</div>
 	);
