@@ -103,7 +103,8 @@ export function SpaceConfigurePage({ space, workflows }: SpaceConfigurePageProps
 						<VisualWorkflowEditor
 							key={workflowEditId}
 							workflow={editingWorkflow}
-							onSave={() => setWorkflowEditId(null)}
+							// Keep editor open after save; exit is explicit via Back/Cancel.
+							onSave={() => undefined}
 							onCancel={() => setWorkflowEditId(null)}
 						/>
 					</div>
