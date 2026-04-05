@@ -119,7 +119,7 @@ async function setupToQaActivated(
 
 	// Step 1: plan-pr-gate → Plan Review activates
 	await writeGateData(daemon, runId, 'plan-pr-gate', {
-		plan_submitted: 'https://github.com/example/repo/pull/10',
+		pr_url: 'https://github.com/example/repo/pull/10',
 		pr_number: 10,
 		branch: 'plan/test-feature',
 	});

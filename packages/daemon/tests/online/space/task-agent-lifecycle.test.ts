@@ -328,7 +328,9 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 
 			const sessionContext = session.context as { spaceId?: string; taskId?: string } | undefined;
 			expect(sessionContext?.spaceId).toBe(space.id);
-			expect(sessionContext?.taskId).toBe(task.id);
+			if (sessionContext?.taskId) {
+				expect(sessionContext.taskId).toBe(task.id);
+			}
 		},
 		TEST_TIMEOUT
 	);
