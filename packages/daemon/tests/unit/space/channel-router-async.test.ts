@@ -216,6 +216,14 @@ describe('ChannelRouter async gate evaluation', () => {
 			title: 'Async Test Run',
 		});
 		workflowRunRepo.transitionStatus(run.id, 'in_progress');
+		// One-task-per-run: seed canonical workflow task for compatibility envelopes.
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Async Test Run Task',
+			description: '',
+			status: 'open',
+			workflowRunId: run.id,
+		});
 		return run;
 	}
 
