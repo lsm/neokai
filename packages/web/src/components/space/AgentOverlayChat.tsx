@@ -54,7 +54,7 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 			>
 				{/* Translucent backdrop — click to dismiss */}
 				<div
-					class="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+					class="absolute inset-0 bg-black/40 backdrop-blur-[1px] cursor-pointer"
 					onClick={onClose}
 					aria-hidden="true"
 				/>
