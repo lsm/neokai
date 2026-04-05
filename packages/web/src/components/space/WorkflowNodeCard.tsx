@@ -213,7 +213,7 @@ export function buildOverride(
 }
 
 // ============================================================================
-// OverrideModeSelector — compact toggle between override/expand modes
+// OverrideModeSelector — compact toggle between override/append modes
 // ============================================================================
 
 interface OverrideModeSelectorProps {
@@ -242,7 +242,7 @@ export function OverrideModeSelector({ mode, onChange }: OverrideModeSelectorPro
 				}`}
 				data-testid="mode-expand"
 			>
-				Expand
+				Append
 			</button>
 		</div>
 	);
