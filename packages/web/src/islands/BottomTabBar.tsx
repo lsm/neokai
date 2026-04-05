@@ -225,12 +225,6 @@ export function BottomTabBar() {
 					navigateToRoom(roomId);
 				}
 				break;
-			case 'room-tasks':
-				if (roomId) {
-					currentRoomTabSignal.value = 'tasks';
-					navigateToRoom(roomId);
-				}
-				break;
 			case 'room-agent':
 				if (roomId) navigateToRoomAgent(roomId);
 				break;
