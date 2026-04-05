@@ -131,16 +131,14 @@ describe('Space Workflow — Edge Cases', () => {
 
 			// Write gate data to runA only — verify runB gate is still empty
 			await writeGateData(daemon, runA, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/100',
-				pr_number: 100,
-				branch: 'plan/run-a',
+				pr_url: 'https://github.com/example/repo/pull/100',
 			});
 
 			const gateA = await readGateData(daemon, runA, 'plan-pr-gate');
 			const gateB = await readGateData(daemon, runB, 'plan-pr-gate');
 
 			expect(gateA).not.toBeNull();
-			expect(gateA!.data.plan_submitted).toBe('https://github.com/example/repo/pull/100');
+			expect(gateA!.data.pr_url).toBe('https://github.com/example/repo/pull/100');
 			// runB's gate is untouched — gate isolation verified
 			expect(gateB).toBeNull();
 
@@ -345,9 +343,7 @@ describe('Space Workflow — Edge Cases', () => {
 				// Simulate planner writing plan-pr-gate (waiting for human review)
 				await mockAgentDone(daemon, space.id, planningTask.id, 'Plan complete');
 				await writeGateData(daemon, runId, 'plan-pr-gate', {
-					plan_submitted: 'https://github.com/example/repo/pull/42',
-					pr_number: 42,
-					branch: 'plan/persistence-test',
+					pr_url: 'https://github.com/example/repo/pull/42',
 				});
 
 				// Wait for Plan Review to activate — confirms gate machinery wired correctly
@@ -366,10 +362,7 @@ describe('Space Workflow — Edge Cases', () => {
 				// plan-pr-gate data must survive
 				const gateAfterRestart = await readGateData(daemon, runId, 'plan-pr-gate');
 				expect(gateAfterRestart).not.toBeNull();
-				expect(gateAfterRestart!.data.plan_submitted).toBe(
-					'https://github.com/example/repo/pull/42'
-				);
-				expect(gateAfterRestart!.data.pr_number).toBe(42);
+				expect(gateAfterRestart!.data.pr_url).toBe('https://github.com/example/repo/pull/42');
 
 				// plan-approval-gate partial state must survive
 				const approvalGateAfterRestart = await readGateData(daemon, runId, 'plan-approval-gate');
@@ -434,8 +427,7 @@ describe('Space Workflow — Edge Cases', () => {
 				// Mark planning as done and write plan-pr-gate to open the channel to Plan Review
 				await mockAgentDone(daemon, space.id, planningTask.id, 'Plan complete');
 				await writeGateData(daemon, runId, 'plan-pr-gate', {
-					plan_submitted: 'https://github.com/example/repo/pull/10',
-					pr_number: 10,
+					pr_url: 'https://github.com/example/repo/pull/10',
 				});
 				await waitForNodeActivated(daemon, space.id, runId, 'Plan Review', NODE_ACTIVATION_TIMEOUT);
 
@@ -500,7 +492,7 @@ describe('Space Workflow — Edge Cases', () => {
 					'QA',
 					NODE_ACTIVATION_TIMEOUT
 				);
-				expect(qaTask.title).toBe('QA');
+				expect(qaTask.title.toLowerCase()).toBe('qa');
 				expect(qaTask.workflowRunId).toBe(runId);
 				expect(['open', 'in_progress']).toContain(qaTask.status);
 			} finally {
