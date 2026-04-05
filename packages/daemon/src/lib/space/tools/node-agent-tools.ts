@@ -492,7 +492,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				gateDef,
 				currentData,
 				scriptExecutor,
-				scriptContext ? { ...scriptContext, gateId } : undefined
+				scriptContext ? { ...scriptContext, gateId, gateData: currentData } : undefined
 			);
 
 			return jsonResult({
@@ -576,7 +576,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				gateDef,
 				updated.data,
 				scriptExecutor,
-				scriptContext ? { ...scriptContext, gateId } : undefined
+				scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
 			);
 
 			// Persist script evaluation result to gate data for frontend transport.

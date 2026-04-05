@@ -43,19 +43,29 @@ const FULLSTACK_REVIEW_STEP = 'tpl-fullstack-review';
 const FULLSTACK_QA_STEP = 'tpl-fullstack-qa';
 
 const PR_READY_BASH_SCRIPT = [
-	'# Single atomic call to avoid state changing between checks',
-	'if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
-	'  exit 1',
+	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
+	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -n "$PR_TARGET" ]; then',
+	'  PR_VIEW_SCOPE="$PR_TARGET"',
+	'  if ! PR_JSON=$(gh pr view "$PR_TARGET" --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'    echo "Failed to retrieve PR info for target ${PR_TARGET} (not authenticated, invalid PR URL, or network error)" >&2',
+	'    exit 1',
+	'  fi',
+	'else',
+	'  PR_VIEW_SCOPE="current branch"',
+	'  if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'    echo "Failed to retrieve PR info for current branch (not authenticated, no PR, or network error)" >&2',
+	'    exit 1',
+	'  fi',
 	'fi',
 	'PR_URL=$(jq -r \'.url\' <<< "$PR_JSON")',
 	'if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then',
-	'  echo "No PR URL found for current branch" >&2',
+	'  echo "No PR URL found for ${PR_VIEW_SCOPE}" >&2',
 	'  exit 1',
 	'fi',
 	'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
 	'if [ "$PR_STATE" != "OPEN" ]; then',
-	'  echo "No open PR found for current branch (state: ${PR_STATE:-none})" >&2',
+	'  echo "No open PR found for ${PR_VIEW_SCOPE} (state: ${PR_STATE:-none})" >&2',
 	'  exit 1',
 	'fi',
 	'PR_MERGEABLE=$(jq -r \'.mergeable\' <<< "$PR_JSON")',
@@ -148,7 +158,8 @@ const FULLSTACK_CODING_PROMPT =
 	'- Coding → Review is guarded by code-pr-gate (scripted PR readiness check).\n' +
 	'- Review may send you back for fixes.\n' +
 	'- QA may also send you back after deep verification (including browser tests).\n\n' +
-	'When implementation is ready, ensure the PR is open and mergeable so the code-pr-gate can pass.';
+	'When implementation is ready, ensure the PR is open and mergeable, write code-pr-gate with ' +
+	'field pr_url, then call report_done() to mark Coding complete.';
 
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
@@ -854,12 +865,15 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'1. Implement backend and frontend changes with focused commits\n' +
 							'2. Add/update unit, integration, and UI tests as needed\n' +
 							'3. Open or update the PR and ensure it remains mergeable\n' +
-							'4. Share any blockers clearly with Reviewer/QA when needed',
+							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
+							'5. Call report_done() with a concise coding handoff summary\n' +
+							'6. Share blockers clearly with Reviewer/QA when needed',
 					},
 				},
 			],
 			instructions:
-				'Implement backend and frontend changes, update tests, and keep one clean PR updated for review.',
+				'Implement backend and frontend changes, update tests, write code-pr-gate (pr_url), ' +
+				'and call report_done() when Coding is handoff-ready.',
 		},
 		{
 			id: FULLSTACK_REVIEW_STEP,

@@ -684,6 +684,7 @@ export class ChannelRouter {
 			workspacePath: this.config.workspacePath ?? process.cwd(),
 			gateId,
 			runId,
+			gateData: runtimeData,
 		};
 
 		return this.withScriptSemaphore(async () => {
