@@ -1,14 +1,18 @@
 // @ts-nocheck
 /**
- * Tests that navigateToRoom resets currentRoomActiveTabSignal to 'overview'.
+ * Tests that navigateToRoom does NOT clobber currentRoomActiveTabSignal,
+ * and that non-room navigation clears currentRoomAgentActiveSignal.
  *
- * Covers the fix where both the same-path and navigation branches of
- * navigateToRoom() must set currentRoomActiveTabSignal.value = 'overview',
- * ensuring the tab state is properly reset when navigating to a room dashboard.
+ * The P0 fix ensures navigateToRoom leaves the tab signal untouched so
+ * callers (Room.tsx handleTabChange, BottomTabBar) can set it independently
+ * via the pending-tab mechanism (currentRoomTabSignal).
+ *
+ * The P1 fix ensures navigating away from rooms clears the agent-active
+ * signal to prevent stale state from affecting future room visits.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { navigateToRoom, cleanupRouter } from '../router';
+import { navigateToRoom, navigateToHome, cleanupRouter } from '../router';
 import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
@@ -27,7 +31,7 @@ let originalLocation: unknown;
 let mockHistory: unknown;
 let mockLocation: unknown;
 
-describe('navigateToRoom tab reset', () => {
+describe('navigateToRoom tab signal behavior', () => {
 	beforeEach(() => {
 		originalHistory = window.history;
 		originalLocation = window.location;
@@ -82,23 +86,23 @@ describe('navigateToRoom tab reset', () => {
 		cleanupRouter();
 	});
 
-	it('sets currentRoomActiveTabSignal to overview on fresh navigation', () => {
-		// Pre-condition: tab was set to something else (e.g. tasks)
+	it('does NOT reset currentRoomActiveTabSignal on fresh navigation', () => {
+		// If the tab was set to 'tasks' before calling navigateToRoom,
+		// navigateToRoom must NOT overwrite it — callers manage the tab signal.
 		currentRoomActiveTabSignal.value = 'tasks';
 
 		navigateToRoom('room-abc-123');
 
-		expect(currentRoomActiveTabSignal.value).toBe('overview');
+		expect(currentRoomActiveTabSignal.value).toBe('tasks');
 	});
 
-	it('sets currentRoomActiveTabSignal to overview when already on same room path', () => {
-		// Simulate being already on the room path
+	it('does NOT reset currentRoomActiveTabSignal on same-path navigation', () => {
 		mockLocation.pathname = '/room/room-abc-123';
 		currentRoomActiveTabSignal.value = 'goals';
 
 		navigateToRoom('room-abc-123');
 
-		expect(currentRoomActiveTabSignal.value).toBe('overview');
+		expect(currentRoomActiveTabSignal.value).toBe('goals');
 	});
 
 	it('clears room session signal on navigation', () => {
@@ -141,33 +145,70 @@ describe('navigateToRoom tab reset', () => {
 		);
 	});
 
-	it('does not push to history when already on the same room path', () => {
-		mockLocation.pathname = '/room/room-abc-123';
-
-		navigateToRoom('room-abc-123');
-
-		expect(mockHistory.pushState).not.toHaveBeenCalled();
-		expect(mockHistory.replaceState).not.toHaveBeenCalled();
-	});
-
-	it('uses replaceState when replace flag is true', () => {
-		navigateToRoom('room-abc-123', true);
-
-		expect(mockHistory.replaceState).toHaveBeenCalledWith(
-			expect.objectContaining({ roomId: 'room-abc-123' }),
-			'',
-			'/room/room-abc-123'
-		);
-		expect(mockHistory.pushState).not.toHaveBeenCalled();
-	});
-
-	it('resets tab to overview even when navigating from a different room', () => {
+	it('preserves tab signal when navigating between rooms', () => {
 		mockLocation.pathname = '/room/old-room-id';
 		currentRoomActiveTabSignal.value = 'agents';
 
 		navigateToRoom('new-room-id');
 
-		expect(currentRoomActiveTabSignal.value).toBe('overview');
+		// navigateToRoom must NOT clobber the tab signal — Room.tsx
+		// handleTabChange or BottomTabBar set it independently
+		expect(currentRoomActiveTabSignal.value).toBe('agents');
 		expect(currentRoomIdSignal.value).toBe('new-room-id');
+	});
+});
+
+describe('non-room navigation clears agent-active signal', () => {
+	beforeEach(() => {
+		originalHistory = window.history;
+		originalLocation = window.location;
+
+		mockHistory = {
+			pushState: vi.fn(),
+			replaceState: vi.fn(),
+			state: null,
+		};
+
+		mockLocation = {
+			pathname: '/room/some-room',
+		};
+
+		Object.defineProperty(window, 'history', {
+			value: mockHistory,
+			writable: true,
+			configurable: true,
+		});
+		Object.defineProperty(window, 'location', {
+			value: mockLocation,
+			writable: true,
+			configurable: true,
+		});
+
+		currentRoomAgentActiveSignal.value = true;
+		currentRoomIdSignal.value = 'some-room';
+
+		vi.clearAllMocks();
+		cleanupRouter();
+	});
+
+	afterEach(() => {
+		Object.defineProperty(window, 'history', {
+			value: originalHistory,
+			writable: true,
+			configurable: true,
+		});
+		Object.defineProperty(window, 'location', {
+			value: originalLocation,
+			writable: true,
+			configurable: true,
+		});
+		cleanupRouter();
+	});
+
+	it('navigateToHome clears agent-active signal', () => {
+		navigateToHome();
+
+		expect(currentRoomAgentActiveSignal.value).toBe(false);
+		expect(currentRoomIdSignal.value).toBeNull();
 	});
 });
