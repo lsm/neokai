@@ -14,10 +14,10 @@
  * - approveGate            — human-approve a gate (writes approved:true + triggers activation)
  * - rejectGate             — human-reject a gate (writes approved:false, run → blocked)
  * - markRunFailed          — mark run as blocked with a specific failureReason
- * - waitForNodeStatus      — poll until at least one task for a node reaches a target status
+ * - waitForNodeStatus      — poll until a node execution reaches a target status
  * - waitForRunStatus       — poll until the workflow run reaches a target status
  * - getGateArtifacts       — fetch gate artifacts (changed files + diff) for a run
- * - mockAgentDone          — mark a task as done directly via spaceTask.update
+ * - mockAgentDone          — mark a canonical task or node execution as done
  * - restartDaemon          — kill the daemon and restart it with the same workspace/database
  *
  * ## Usage
@@ -27,6 +27,8 @@
 
 import { createDaemonServer, type DaemonServerContext } from '../../../helpers/daemon-server';
 import type {
+	NodeExecution,
+	NodeExecutionStatus,
 	Space,
 	SpaceAgent,
 	SpaceWorkflow,
@@ -59,6 +61,152 @@ export interface GateArtifacts {
 	totalAdditions: number;
 	totalDeletions: number;
 	prUrl?: string;
+}
+
+type NodeExecutionTask = SpaceTask & {
+	workflowNodeId: string;
+};
+
+type NodeExecutionIndexEntry = {
+	spaceId: string;
+	workflowRunId: string;
+	workflowNodeId: string;
+	agentName: string;
+};
+
+/**
+ * In-memory index for projected node-execution “task-like” records.
+ *
+ * Tests often pass only a task ID into helpers like mockAgentDone().
+ * Under the one-task-per-run architecture, node state lives in node_executions,
+ * so we keep a lightweight index to resolve execution IDs back to
+ * (runId, nodeId, agentName) triples.
+ */
+const nodeExecutionIndex = new Map<string, NodeExecutionIndexEntry>();
+
+function mapNodeExecutionStatusToTaskStatus(status: NodeExecutionStatus): SpaceTask['status'] {
+	switch (status) {
+		case 'pending':
+			return 'open';
+		case 'in_progress':
+			return 'in_progress';
+		case 'done':
+			return 'done';
+		case 'blocked':
+			return 'blocked';
+		case 'cancelled':
+			return 'cancelled';
+		default:
+			return 'open';
+	}
+}
+
+function projectNodeExecutionAsTask(spaceId: string, execution: NodeExecution): NodeExecutionTask {
+	nodeExecutionIndex.set(execution.id, {
+		spaceId,
+		workflowRunId: execution.workflowRunId,
+		workflowNodeId: execution.workflowNodeId,
+		agentName: execution.agentName,
+	});
+
+	return {
+		id: execution.id,
+		spaceId,
+		taskNumber: 0,
+		title: execution.agentName,
+		description: '',
+		status: mapNodeExecutionStatusToTaskStatus(execution.status),
+		priority: 'normal',
+		labels: [],
+		dependsOn: [],
+		result: execution.result,
+		workflowRunId: execution.workflowRunId,
+		createdByTaskId: null,
+		activeSession: null,
+		prUrl: null,
+		prNumber: null,
+		prCreatedAt: null,
+		taskAgentSessionId: execution.agentSessionId,
+		createdAt: execution.createdAt,
+		startedAt: execution.startedAt,
+		completedAt: execution.completedAt,
+		archivedAt: null,
+		updatedAt: execution.updatedAt,
+		workflowNodeId: execution.workflowNodeId,
+	};
+}
+
+async function listNodeExecutionsForRun(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string
+): Promise<NodeExecution[]> {
+	const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
+		workflowRunId: runId,
+		spaceId,
+	})) as { executions: NodeExecution[] };
+	return executions;
+}
+
+async function listNodeTasksForRun(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string
+): Promise<NodeExecutionTask[]> {
+	const executions = await listNodeExecutionsForRun(daemon, spaceId, runId);
+	return executions.map((execution) => projectNodeExecutionAsTask(spaceId, execution));
+}
+
+async function resolveNodeIdByNameOrId(
+	daemon: DaemonServerContext,
+	runId: string,
+	nodeNameOrId: string
+): Promise<string | null> {
+	const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+		id: runId,
+	})) as { run: SpaceWorkflowRun };
+	const { workflow } = (await daemon.messageHub.request('spaceWorkflow.get', {
+		id: run.workflowId,
+	})) as { workflow: SpaceWorkflow };
+	return (
+		workflow.nodes.find((node) => node.id === nodeNameOrId)?.id ??
+		workflow.nodes.find((node) => node.name === nodeNameOrId)?.id ??
+		null
+	);
+}
+
+function matchesNodeTarget(
+	task: NodeExecutionTask,
+	nodeNameOrId: string,
+	resolvedNodeId: string | null
+): boolean {
+	if (resolvedNodeId && task.workflowNodeId === resolvedNodeId) return true;
+	return task.workflowNodeId === nodeNameOrId || task.title === nodeNameOrId;
+}
+
+async function findNodeExecutionById(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	executionId: string
+): Promise<NodeExecution | null> {
+	const indexed = nodeExecutionIndex.get(executionId);
+	if (indexed && indexed.spaceId === spaceId) {
+		const executions = await listNodeExecutionsForRun(daemon, spaceId, indexed.workflowRunId);
+		const match = executions.find((execution) => execution.id === executionId);
+		if (match) return match;
+	}
+
+	const { runs } = (await daemon.messageHub.request('spaceWorkflowRun.list', {
+		spaceId,
+	})) as { runs: SpaceWorkflowRun[] };
+
+	for (const run of runs) {
+		const executions = await listNodeExecutionsForRun(daemon, spaceId, run.id);
+		const match = executions.find((execution) => execution.id === executionId);
+		if (match) return match;
+	}
+
+	return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,11 +270,15 @@ export async function startWorkflowRun(
 		title,
 	})) as { run: SpaceWorkflowRun };
 
-	const tasks = (await daemon.messageHub.request('spaceTask.list', {
-		spaceId,
-	})) as SpaceTask[];
+	// Runtime now tracks per-node progress via node_executions (one-task-per-run model).
+	// Give the start-node activation a brief window to materialize in very fast CI runs.
+	let runTasks = await listNodeTasksForRun(daemon, spaceId, run.id);
+	const deadline = Date.now() + 3_000;
+	while (runTasks.length === 0 && Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		runTasks = await listNodeTasksForRun(daemon, spaceId, run.id);
+	}
 
-	const runTasks = tasks.filter((t) => t.workflowRunId === run.id);
 	return { runId: run.id, tasks: runTasks };
 }
 
@@ -211,32 +363,36 @@ export async function rejectGate(
 // ---------------------------------------------------------------------------
 
 /**
- * Poll spaceTask.list until at least one task for the given node name has
- * one of the expected statuses. Returns the first matching task.
+ * Poll nodeExecution.list until at least one execution for the given node/slot
+ * reaches one of the expected task-like statuses.
  *
- * Matches tasks by task.title, which equals the agent slot name set in
- * activateNode() (e.g. 'Planning', 'Plan Review', 'Coding', 'Reviewer 1').
- * For single-agent nodes the slot name equals the node name; for multi-agent
- * nodes each task has the individual slot name.
+ * The helper returns projected "task-like" objects for backward-compatible test
+ * ergonomics, but the source of truth is node_executions.
  */
 export async function waitForNodeStatus(
 	daemon: DaemonServerContext,
 	spaceId: string,
 	runId: string,
-	/** Node name (e.g. 'Planning', 'Plan Review', 'Coding') or node UUID */
+	/** Node name (e.g. 'Planning', 'Plan Review', 'Coding'), agent slot name, or node UUID */
 	nodeNameOrId: string,
 	expectedStatuses: string[],
 	timeout: number
 ): Promise<SpaceTask> {
+	let resolvedNodeId: string | null = null;
+	try {
+		resolvedNodeId = await resolveNodeIdByNameOrId(daemon, runId, nodeNameOrId);
+	} catch {
+		// If workflow/run lookup fails (e.g. caller passed an agent slot name),
+		// fall back to raw name/id matching below.
+	}
+
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
-		const tasks = (await daemon.messageHub.request('spaceTask.list', {
-			spaceId,
-		})) as SpaceTask[];
-
-		const runTasks = tasks.filter((t) => t.workflowRunId === runId);
-		const match = runTasks.find(
-			(t) => t.title === nodeNameOrId && expectedStatuses.includes(t.status)
+		const tasks = await listNodeTasksForRun(daemon, spaceId, runId);
+		const match = tasks.find(
+			(task) =>
+				matchesNodeTarget(task, nodeNameOrId, resolvedNodeId) &&
+				expectedStatuses.includes(task.status)
 		);
 		if (match) return match;
 
@@ -248,7 +404,7 @@ export async function waitForNodeStatus(
 }
 
 /**
- * Poll spaceTask.list until any task for the given node name exists in the run
+ * Poll projected node executions until any task-like record exists for the node
  * (i.e. the node has been activated). Useful before calling waitForNodeStatus
  * when you just want to confirm activation happened.
  */
@@ -315,11 +471,11 @@ export async function getGateArtifacts(
 // ---------------------------------------------------------------------------
 
 /**
- * Mark a task as 'done' directly via spaceTask.update.
+ * Mark an execution as done for integration tests.
  *
- * Simulates an agent calling report_result without actually running a session.
- * Handles intermediate transitions: if the task is still 'open', it is first
- * moved to 'in_progress' before completing.
+ * Supports both:
+ * - canonical run tasks (spaceTask.update path)
+ * - node execution IDs (nodeExecution.update path)
  */
 export async function mockAgentDone(
 	daemon: DaemonServerContext,
@@ -327,33 +483,56 @@ export async function mockAgentDone(
 	taskId: string,
 	result?: string
 ): Promise<SpaceTask> {
-	// Fetch current status to determine whether we need an intermediate transition
-	const current = (await daemon.messageHub.request('spaceTask.get', {
-		spaceId,
-		taskId,
-	})) as SpaceTask;
-
-	// open → in_progress → done; in_progress → done
-	if (current.status === 'open') {
-		await daemon.messageHub.request('spaceTask.update', {
+	// 1) Canonical task path (one-task-per-run envelope)
+	try {
+		const current = (await daemon.messageHub.request('spaceTask.get', {
 			spaceId,
 			taskId,
-			status: 'in_progress',
-		});
+		})) as SpaceTask;
+
+		if (current?.id === taskId) {
+			if (current.status === 'open') {
+				await daemon.messageHub.request('spaceTask.update', {
+					spaceId,
+					taskId,
+					status: 'in_progress',
+				});
+			}
+
+			return (await daemon.messageHub.request('spaceTask.update', {
+				spaceId,
+				taskId,
+				status: 'done',
+				result: result ?? 'Mock agent done',
+			})) as SpaceTask;
+		}
+	} catch {
+		// Not a canonical task ID — fall through to node execution path.
 	}
 
-	return (await daemon.messageHub.request('spaceTask.update', {
+	// 2) Node execution path (workflow-internal state)
+	const execution = await findNodeExecutionById(daemon, spaceId, taskId);
+	if (!execution) {
+		throw new Error(`mockAgentDone: task/execution not found: ${taskId}`);
+	}
+
+	const { execution: updatedExecution } = (await daemon.messageHub.request('nodeExecution.update', {
+		id: execution.id,
 		spaceId,
-		taskId,
 		status: 'done',
-		result: result ?? 'Mock agent done',
-	})) as SpaceTask;
+		result: result ?? execution.result,
+	})) as { execution: NodeExecution };
+
+	return projectNodeExecutionAsTask(spaceId, updatedExecution);
 }
 
 /**
- * Find tasks for a given node/slot name in a run.
- * Matches by task.title, which equals the agent slot name set in activateNode().
- * Returns empty array when the node has not been activated yet.
+ * Find projected task-like node executions for a node/slot in a run.
+ *
+ * Matching order:
+ * 1) Exact node UUID (workflowNodeId)
+ * 2) Workflow node name
+ * 3) Agent slot name (execution.agentName)
  */
 export async function getTasksForNode(
 	daemon: DaemonServerContext,
@@ -361,23 +540,19 @@ export async function getTasksForNode(
 	runId: string,
 	nodeNameOrId: string
 ): Promise<SpaceTask[]> {
-	const tasks = (await daemon.messageHub.request('spaceTask.list', {
-		spaceId,
-	})) as SpaceTask[];
+	let resolvedNodeId: string | null = null;
+	try {
+		resolvedNodeId = await resolveNodeIdByNameOrId(daemon, runId, nodeNameOrId);
+	} catch {
+		// Fallback to raw slot-name/id matching below.
+	}
 
-	return tasks.filter((t) => t.workflowRunId === runId && t.title === nodeNameOrId);
+	const tasks = await listNodeTasksForRun(daemon, spaceId, runId);
+	return tasks.filter((task) => matchesNodeTarget(task, nodeNameOrId, resolvedNodeId));
 }
 
 /**
- * Poll spaceTask.list until a NEW task appears for the given node name.
- * A "new" task is one whose ID is NOT in `excludeTaskIds` AND has an active
- * (non-terminal) status: pending or in_progress.
- *
- * Use this instead of `waitForNodeActivated` when the node was previously
- * activated (and those tasks are now done). `waitForNodeActivated` accepts
- * terminal statuses as a match, so it can return the old done task instead
- * of the freshly created one. This helper avoids that by explicitly excluding
- * known task IDs.
+ * Poll nodeExecution state until a NEW active execution appears for a node.
  */
 export async function waitForNewNodeTask(
 	daemon: DaemonServerContext,
@@ -389,16 +564,10 @@ export async function waitForNewNodeTask(
 ): Promise<SpaceTask> {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
-		const tasks = (await daemon.messageHub.request('spaceTask.list', {
-			spaceId,
-		})) as SpaceTask[];
-
+		const tasks = await getTasksForNode(daemon, spaceId, runId, nodeNameOrId);
 		const match = tasks.find(
-			(t) =>
-				t.workflowRunId === runId &&
-				t.title === nodeNameOrId &&
-				!excludeTaskIds.has(t.id) &&
-				(t.status === 'open' || t.status === 'in_progress')
+			(task) =>
+				!excludeTaskIds.has(task.id) && (task.status === 'open' || task.status === 'in_progress')
 		);
 		if (match) return match;
 		await new Promise((resolve) => setTimeout(resolve, 300));
@@ -410,8 +579,7 @@ export async function waitForNewNodeTask(
 }
 
 /**
- * Find tasks for a given workflow node UUID in a run.
- * Unlike getTasksForNode, this does an exact UUID match on workflowNodeId.
+ * Find projected task-like node executions for an exact workflow node UUID.
  */
 export async function getTasksForNodeId(
 	daemon: DaemonServerContext,
@@ -419,11 +587,8 @@ export async function getTasksForNodeId(
 	runId: string,
 	nodeId: string
 ): Promise<SpaceTask[]> {
-	const tasks = (await daemon.messageHub.request('spaceTask.list', {
-		spaceId,
-	})) as SpaceTask[];
-
-	return tasks.filter((t) => t.workflowRunId === runId && t.workflowNodeId === nodeId);
+	const tasks = await listNodeTasksForRun(daemon, spaceId, runId);
+	return tasks.filter((task) => task.workflowNodeId === nodeId);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +646,9 @@ export async function restartDaemon(daemon: DaemonServerContext): Promise<Daemon
 				'in-process mode (do not set DAEMON_TEST_SPAWN=true for restart tests)'
 		);
 	}
+
+	// Clear helper-side node execution cache to avoid leaking stale IDs across restarts.
+	nodeExecutionIndex.clear();
 
 	// Gracefully shut down the current daemon
 	daemon.kill('SIGTERM');
