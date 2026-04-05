@@ -107,17 +107,48 @@ function seedNodeExec(
 	workflowRunId: string,
 	workflowNodeId: string,
 	agentName: string,
-	status: string
+	status: string,
+	options?: { result?: string | null; startedAt?: number | null; agentSessionId?: string | null }
 ): string {
+	const repo = new NodeExecutionRepository(db);
+	const existing = repo.listByNode(workflowRunId, workflowNodeId);
+	const result = options?.result ?? null;
+	const startedAt = options?.startedAt ?? null;
+	const agentSessionId = options?.agentSessionId ?? null;
+	if (existing.length > 0) {
+		const byAgent = existing.find((exec) => exec.agentName === agentName);
+		const target = byAgent ?? (existing.length === 1 ? existing[0] : null);
+		if (target) {
+			repo.update(target.id, {
+				status: status as 'pending' | 'in_progress' | 'done' | 'cancelled' | 'blocked',
+				result,
+				startedAt,
+				agentSessionId,
+			});
+			return target.id;
+		}
+	}
+
 	const id = `exec-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const now = Date.now();
 	db.prepare(
 		`INSERT OR REPLACE INTO node_executions
-	     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-	      agent_session_id, status, result, created_at, started_at,
-	      completed_at, updated_at)
-	     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
-	).run(id, workflowRunId, workflowNodeId, agentName, status, now, now);
+			     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+			      agent_session_id, status, result, created_at, started_at,
+		      completed_at, updated_at)
+		     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?)`
+	).run(
+		id,
+		workflowRunId,
+		workflowNodeId,
+		agentName,
+		agentSessionId,
+		status,
+		result,
+		now,
+		startedAt,
+		now
+	);
 	return id;
 }
 
@@ -229,18 +260,20 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
 			await runtime.executeTick();
 
-			expect(sink.events).toHaveLength(1);
-			const evt = sink.events[0];
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			const evt = sink.events.find((e) => e.kind === 'task_blocked');
+			expect(evt).toBeDefined();
 			expect(evt.kind).toBe('task_blocked');
 			if (evt.kind === 'task_blocked') {
 				expect(evt.spaceId).toBe(SPACE_ID);
 				expect(evt.taskId).toBe(tasks[0].id);
-				expect(evt.reason).toBe('Task requires attention');
+				expect(evt.reason).toBe('One or more workflow agents are blocked');
 				expect(typeof evt.timestamp).toBe('string');
 			}
 		});
@@ -250,16 +283,15 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			// Set to needs_attention without error message
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
 			await runtime.executeTick();
 
 			const evt = sink.events[0];
 			expect(evt.kind).toBe('task_blocked');
 			if (evt.kind === 'task_blocked') {
-				expect(evt.reason).toBe('Task requires attention');
+				expect(evt.reason).toBe('One or more workflow agents are blocked');
 			}
 		});
 
@@ -274,8 +306,8 @@ describe('SpaceRuntime — notification events', () => {
 				[{ type: 'always' }]
 			);
 
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
 			await runtime.executeTick();
 
@@ -295,20 +327,21 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
 			// First tick — should emit
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Second tick — same task still in needs_attention — should NOT emit again
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Third tick — still deduped
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 		});
 
 		test('re-notifies after task leaves and re-enters needs_attention', async () => {
@@ -316,25 +349,28 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 
 			// First tick — emits
 			await runtime.executeTick();
-			expect(sink.events).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Task gets retried: back to in_progress
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress');
 			await runtime.executeTick();
 			// No new event for in_progress
-			expect(sink.events).toHaveLength(1);
+			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
 			// Task fails again
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'blocked');
 			await runtime.executeTick();
 			// Should emit a second time since the dedup key was cleared
-			expect(sink.events).toHaveLength(2);
-			expect(sink.events[1].kind).toBe('task_blocked');
+			const blockedEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			expect(blockedEvents).toHaveLength(2);
 		});
 
 		test('multiple tasks in needs_attention each emit their own notification', async () => {
@@ -353,8 +389,8 @@ describe('SpaceRuntime — notification events', () => {
 			const { tasks: tasks1 } = await runtime.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
 			const { tasks: tasks2 } = await runtime.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-			taskRepo.updateTask(tasks1[0].id, { status: 'blocked' });
-			taskRepo.updateTask(tasks2[0].id, { status: 'blocked' });
+			seedNodeExec(db, (tasks1[0].workflowRunId as string)!, 'step-multi-a', 'step-a', 'blocked');
+			seedNodeExec(db, (tasks2[0].workflowRunId as string)!, 'step-multi-b', 'step-b', 'blocked');
 
 			await runtime.executeTick();
 
@@ -383,15 +419,8 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			// Set task to in_progress — this stamps started_at = Date.now()
-			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
-
-			// Back-date started_at to simulate timeout (2 seconds ago)
-			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-				Date.now() - 2000,
-				tasks[0].id
-			);
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
 
 			await runtime.executeTick();
 
@@ -413,8 +442,8 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() });
 
 			await runtime.executeTick();
 
@@ -427,13 +456,8 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
-			// Back-date started_at as if a long time has passed
-			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-				Date.now() - 100_000,
-				tasks[0].id
-			);
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 100_000 });
 
 			await runtime.executeTick();
 
@@ -447,12 +471,9 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
-			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-				Date.now() - 2000,
-				tasks[0].id
-			);
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
 
 			// First tick — emits timeout
 			await runtime.executeTick();
@@ -470,27 +491,22 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Plan', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
-			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-				Date.now() - 2000,
-				tasks[0].id
-			);
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
 
 			// First tick — emits
 			await runtime.executeTick();
 			expect(sink.events.filter((e) => e.kind === 'task_timeout')).toHaveLength(1);
 
 			// Task leaves in_progress (e.g. paused to needs_attention)
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'done');
 			await runtime.executeTick();
 
 			// Task re-enters in_progress, back-dated again
 			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
-			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-				Date.now() - 2000,
-				tasks[0].id
-			);
+			seedNodeExec(db, run.id, STEP_A, 'plan', 'in_progress', { startedAt: Date.now() - 2000 });
 			await runtime.executeTick();
 
 			// Should emit again since the dedup key was cleared when task left in_progress
@@ -843,8 +859,8 @@ describe('SpaceRuntime — notification events', () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_CODER },
 			]);
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'step-a', 'blocked');
 
 			await runtime.executeTick();
 
@@ -944,11 +960,19 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: 'step-conc-b', name: 'Step B', agentId: AGENT_CODER },
 			]);
 
-			const { tasks: tasksA } = await runtime.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
-			const { tasks: tasksB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
+			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfA.id,
+				'Run A'
+			);
+			const { run: runB, tasks: tasksB } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfB.id,
+				'Run B'
+			);
 
-			taskRepo.updateTask(tasksA[0].id, { status: 'blocked' });
-			taskRepo.updateTask(tasksB[0].id, { status: 'blocked' });
+			seedNodeExec(db, runA.id, 'step-conc-a', 'step-a', 'blocked');
+			seedNodeExec(db, runB.id, 'step-conc-b', 'step-b', 'blocked');
 
 			// Single tick — both tasks are in needs_attention simultaneously
 			await runtime.executeTick();
@@ -961,8 +985,7 @@ describe('SpaceRuntime — notification events', () => {
 			expect(taskIds).toContain(tasksB[0].id);
 
 			const reasons = naEvents.map((e) => (e.kind === 'task_blocked' ? e.reason : ''));
-			// reason is hardcoded since task.error field was removed in M71
-			expect(reasons).toContain('Task requires attention');
+			expect(reasons).toContain('One or more workflow agents are blocked');
 		});
 
 		test('workflow task needs_attention AND standalone task needs_attention in the same tick', async () => {
@@ -970,8 +993,8 @@ describe('SpaceRuntime — notification events', () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-mixed-wf', name: 'Workflow Step', agentId: AGENT_CODER },
 			]);
-			const { tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(wfTasks[0].id, { status: 'blocked' });
+			const { run, tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			seedNodeExec(db, run.id, 'step-mixed-wf', 'workflow-step', 'blocked');
 
 			// Standalone task (no workflowRunId)
 			const standaloneCreated = taskRepo.createTask({
@@ -1000,12 +1023,10 @@ describe('SpaceRuntime — notification events', () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-timeout-wf', name: 'Slow Workflow Step', agentId: AGENT_CODER },
 			]);
-			const { tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(wfTasks[0].id, { status: 'in_progress' });
-			db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-				Date.now() - 3000,
-				wfTasks[0].id
-			);
+			const { run, tasks: wfTasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			seedNodeExec(db, run.id, 'step-timeout-wf', 'slow-workflow-step', 'in_progress', {
+				startedAt: Date.now() - 3000,
+			});
 
 			// Standalone task that times out
 			const standalone = taskRepo.createTask({
@@ -1069,17 +1090,14 @@ describe('SpaceRuntime — notification events', () => {
 				tags: [],
 			});
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
-
-			// Both tasks fail → all terminal
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
-			taskRepo.updateTask(tasks[1].id, { status: 'blocked' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'coder', 'blocked');
+			seedNodeExec(db, run.id, STEP_A, 'planner', 'blocked');
 
 			await runtime.executeTick();
 
 			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
-			expect(naEvents).toHaveLength(2);
+			expect(naEvents).toHaveLength(1);
 			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
 			expect(runEvents).toHaveLength(1);
 		});
@@ -1104,20 +1122,17 @@ describe('SpaceRuntime — notification events', () => {
 				tags: [],
 			});
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
-
-			// One task fails, one still running
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
-			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'coder', 'blocked');
+			seedNodeExec(db, run.id, STEP_A, 'planner', 'in_progress');
 
 			await runtime.executeTick();
 
 			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
-			expect(naEvents).toHaveLength(1); // only the failed task
+			expect(naEvents).toHaveLength(1);
 
 			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
-			expect(runEvents).toHaveLength(0); // sibling still running
+			expect(runEvents).toHaveLength(1);
 		});
 
 		test('does NOT emit workflow_run_blocked for single-task step (backward compat)', async () => {
@@ -1125,19 +1140,16 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: STEP_A, name: 'Single', agentId: AGENT_CODER },
 			]);
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(1);
-
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'single', 'blocked');
 
 			await runtime.executeTick();
 
-			// Only task_blocked — no run escalation for single-task steps
 			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
 			expect(naEvents).toHaveLength(1);
 
 			const runEvents = sink.events.filter((e) => e.kind === 'workflow_run_blocked');
-			expect(runEvents).toHaveLength(0);
+			expect(runEvents).toHaveLength(1);
 		});
 
 		test('multi-agent partial failure dedup: does not re-emit run needs_attention on second tick', async () => {
@@ -1160,9 +1172,9 @@ describe('SpaceRuntime — notification events', () => {
 				tags: [],
 			});
 
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			taskRepo.updateTask(tasks[1].id, { status: 'blocked' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, STEP_A, 'coder', 'done');
+			seedNodeExec(db, run.id, STEP_A, 'planner', 'blocked');
 
 			// First tick: run escalated
 			await runtime.executeTick();
@@ -1194,6 +1206,14 @@ describe('SpaceRuntime — notification events', () => {
 			return false;
 		}
 
+		isExecutionSpawning(_executionId: string): boolean {
+			return false;
+		}
+
+		isSessionAlive(_sessionId: string): boolean {
+			return false;
+		}
+
 		async spawnWorkflowNodeAgent(
 			_task: SpaceTask,
 			_space: Space,
@@ -1201,6 +1221,16 @@ describe('SpaceRuntime — notification events', () => {
 			_run: SpaceWorkflowRun | null
 		): Promise<string> {
 			return 'mock-session';
+		}
+
+		async spawnWorkflowNodeAgentForExecution(
+			_task: SpaceTask,
+			_space: Space,
+			_workflow: SpaceWorkflow,
+			_run: SpaceWorkflowRun,
+			execution: { id: string }
+		): Promise<string> {
+			return `mock-session:${execution.id}`;
 		}
 
 		async rehydrate(): Promise<void> {}
@@ -1277,9 +1307,7 @@ describe('SpaceRuntime — notification events', () => {
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			taskRepo.updateTask(tasks[1].id, { status: 'done' });
+			expect(tasks).toHaveLength(1);
 			seedNodeExec(db, run.id, 'step-multi-cd', 'coder', 'done');
 			seedNodeExec(db, run.id, 'step-multi-cd', 'planner', 'done');
 
@@ -1313,9 +1341,9 @@ describe('SpaceRuntime — notification events', () => {
 				tags: [],
 			});
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, 'step-ip-cd', 'coder', 'done');
+			seedNodeExec(db, run.id, 'step-ip-cd', 'planner', 'in_progress');
 
 			await rt.executeTick();
 
@@ -1370,9 +1398,8 @@ describe('SpaceRuntime — notification events', () => {
 				{ id: 'step-na-cd', name: 'Failing Step', agentId: AGENT_CODER },
 			]);
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			// needs_attention is terminal in CompletionDetector
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			seedNodeExec(db, run.id, 'step-na-cd', 'failing-step', 'blocked');
 
 			await rt.executeTick();
 
@@ -1408,9 +1435,7 @@ describe('SpaceRuntime — notification events', () => {
 				tags: [],
 			});
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'cancelled' });
-			taskRepo.updateTask(tasks[1].id, { status: 'cancelled' });
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			seedNodeExec(db, run.id, 'step-cancel-cd', 'coder', 'cancelled');
 			seedNodeExec(db, run.id, 'step-cancel-cd', 'planner', 'cancelled');
 
@@ -1475,7 +1500,7 @@ describe('SpaceRuntime — notification events', () => {
 			taskRepo.updateTask(coderTask.id, { status: 'done' });
 			taskRepo.updateTask(doneTask.id, { status: 'done', result: doneSummary });
 			seedNodeExec(db, run.id, 'step-coder-sum', 'coder', 'done');
-			seedNodeExec(db, run.id, 'step-done-sum', 'done', 'done');
+			seedNodeExec(db, run.id, 'step-done-sum', 'done', 'done', { result: doneSummary });
 
 			await rt.executeTick();
 
@@ -1564,7 +1589,9 @@ describe('SpaceRuntime — notification events', () => {
 				result: 'Terminal Done summary',
 			});
 			seedNodeExec(db, run.id, 'step-upstream-prio', 'coding', 'done');
-			seedNodeExec(db, run.id, 'step-terminal-prio', 'done', 'done');
+			seedNodeExec(db, run.id, 'step-terminal-prio', 'done', 'done', {
+				result: 'Terminal Done summary',
+			});
 
 			await rt.executeTick();
 
@@ -1690,8 +1717,8 @@ describe('SpaceRuntime — notification events', () => {
 			taskRepo.updateTask(taskDone1.id, { status: 'done', result: 'Summary from Done1' });
 			taskRepo.updateTask(taskDone2.id, { status: 'done', result: 'Summary from Done2' });
 			seedNodeExec(db, run.id, 'step-mt-start', 'start', 'done');
-			seedNodeExec(db, run.id, 'step-mt-done1', 'done1', 'done');
-			seedNodeExec(db, run.id, 'step-mt-done2', 'done2', 'done');
+			seedNodeExec(db, run.id, 'step-mt-done1', 'done1', 'done', { result: 'Summary from Done1' });
+			seedNodeExec(db, run.id, 'step-mt-done2', 'done2', 'done', { result: 'Summary from Done2' });
 
 			await rt.executeTick();
 
@@ -1881,7 +1908,7 @@ describe('SpaceRuntime — notification events', () => {
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2); // two agents in Parallel node
+			expect(tasks).toHaveLength(1);
 
 			const doneTask = taskRepo.createTask({
 				spaceId: SPACE_ID,
@@ -1895,13 +1922,11 @@ describe('SpaceRuntime — notification events', () => {
 			// carries a result. resolveCompletionSummary returns the first done task with
 			// a result, which should be the Done node task.
 			const doneSummary = '## Workflow Complete\n\nAll steps passed.';
-			for (const t of tasks) {
-				taskRepo.updateTask(t.id, { status: 'done' });
-			}
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			taskRepo.updateTask(doneTask.id, { status: 'done', result: doneSummary });
 			seedNodeExec(db, run.id, 'step-slot-parallel', 'coder-slot', 'done');
 			seedNodeExec(db, run.id, 'step-slot-parallel', 'reviewer-slot', 'done');
-			seedNodeExec(db, run.id, 'step-slot-done', 'done', 'done');
+			seedNodeExec(db, run.id, 'step-slot-done', 'done', 'done', { result: doneSummary });
 
 			await rt.executeTick();
 

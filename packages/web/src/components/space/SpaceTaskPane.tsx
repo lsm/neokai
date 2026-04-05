@@ -257,6 +257,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
+	const hasUnifiedWorkflowThread =
+		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !!agentSessionId && !isTerminalTask;
 	const canSendThreadMessage =
 		!!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
@@ -448,7 +450,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				) : (
 					<div class="h-full flex flex-col">
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
-							{agentSessionId ? (
+							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread taskId={task.id} />
 							) : (
 								<div class="h-full px-4 py-10 text-center">

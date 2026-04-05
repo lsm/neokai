@@ -164,17 +164,6 @@ export function setupSpaceWorkflowRunHandlers(
 			params.description
 		);
 
-		daemonHub
-			.emit('space.workflowRun.created', {
-				sessionId: 'global',
-				spaceId: params.spaceId,
-				runId: run.id,
-				run,
-			})
-			.catch((err) => {
-				log.warn('Failed to emit space.workflowRun.created:', err);
-			});
-
 		return { run };
 	});
 

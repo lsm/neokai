@@ -70,6 +70,12 @@ export class CompletionDetector {
 			) {
 				return true;
 			}
+
+			// When an explicit end node exists, we do NOT fall back to
+			// "all current executions terminal". Otherwise a run can complete
+			// prematurely after only early nodes execute (e.g. gated flows where
+			// later nodes have not been activated yet).
+			return false;
 		}
 
 		// All-agents-done fallback: every execution must be terminal

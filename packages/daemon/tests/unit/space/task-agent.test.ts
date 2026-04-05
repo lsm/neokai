@@ -456,7 +456,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('no steps defined');
 	});
 
-	test('handles workflow with no steps — start instruction directs to report_result failure', () => {
+	test('handles workflow with no steps — remains in runtime helper mode', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
 				name: 'Empty Workflow',
@@ -465,7 +465,8 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 			}),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('report_result');
+		expect(msg).toContain('Space Runtime has already started workflow execution');
+		expect(msg).toContain('list_group_members');
 		expect(msg).toContain('Empty Workflow');
 		expect(msg).toContain('no steps');
 	});
@@ -584,16 +585,18 @@ describe('buildTaskAgentInitialMessage — previous task results', () => {
 });
 
 describe('buildTaskAgentInitialMessage — start instruction', () => {
-	test('instructs to begin with spawn_node_agent for workflow tasks', () => {
+	test('instructs helper-mode monitoring for workflow tasks', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('spawn_node_agent');
-		expect(msg).toContain('step-plan');
+		expect(msg).toContain('Space Runtime has already started workflow execution');
+		expect(msg).toContain('list_group_members');
+		expect(msg).toContain('send_message');
 	});
 
-	test('instructs to spawn agent for tasks without workflow', () => {
+	test('instructs helper-mode monitoring for tasks without workflow', () => {
 		const ctx = makeContext({ workflow: undefined, workflowRun: undefined });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('spawn_node_agent');
+		expect(msg).toContain('Space Runtime has already started workflow execution');
+		expect(msg).toContain('request_human_input');
 	});
 });
 
@@ -612,10 +615,10 @@ describe('buildTaskAgentSystemPrompt — collaboration manager role', () => {
 		expect(prompt).not.toContain('workflow orchestrator');
 	});
 
-	test('mentions monitoring completion via list_group_members querying space_tasks', () => {
+	test('mentions monitoring completion via list_group_members querying node execution state', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('list_group_members');
-		expect(prompt).toContain('space_tasks');
+		expect(prompt).toContain('node execution state');
 	});
 });
 

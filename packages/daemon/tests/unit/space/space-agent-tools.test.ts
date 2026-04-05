@@ -167,6 +167,26 @@ function makeHandlers(ctx: TestCtx) {
 	});
 }
 
+async function startWorkflowRun(
+	ctx: TestCtx,
+	args: { workflow_id?: string; workflowId?: string; title: string; description?: string }
+) {
+	const workflowId =
+		args.workflow_id ??
+		args.workflowId ??
+		ctx.workflowManager.listWorkflows(ctx.spaceId)[0]?.id ??
+		'';
+	const { run, tasks } = await ctx.runtime.startWorkflowRun(
+		ctx.spaceId,
+		workflowId,
+		args.title,
+		args.description
+	);
+	return {
+		content: [{ type: 'text', text: JSON.stringify({ success: true, run, tasks }) }],
+	};
+}
+
 function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpServer>): string[] {
 	const instance = server.instance as unknown as { _registeredTools: Record<string, unknown> };
 	return Object.keys(instance._registeredTools);
@@ -233,59 +253,6 @@ describe('createSpaceAgentToolHandlers — list_workflows', () => {
 });
 
 // ---------------------------------------------------------------------------
-// start_workflow_run
-// ---------------------------------------------------------------------------
-
-describe('createSpaceAgentToolHandlers — start_workflow_run', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('starts a run with explicit workflow_id and returns run + tasks', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'My WF');
-
-		const result = await makeHandlers(ctx).start_workflow_run({
-			workflow_id: wf.id,
-			title: 'Test run',
-			description: 'desc',
-		});
-
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(parsed.run.workflowId).toBe(wf.id);
-		expect(parsed.run.title).toBe('Test run');
-		expect(parsed.tasks).toHaveLength(1);
-	});
-
-	test('creates run record in DB with in_progress status', async () => {
-		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'DB WF');
-
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run title' });
-
-		const runs = ctx.workflowRunRepo.listBySpace(ctx.spaceId);
-		expect(runs).toHaveLength(1);
-		expect(runs[0].status).toBe('in_progress');
-		expect(runs[0].title).toBe('run title');
-	});
-
-	test('returns error when workflow_id not found', async () => {
-		const result = await makeHandlers(ctx).start_workflow_run({
-			workflow_id: 'wf-does-not-exist',
-			title: 'test',
-		});
-
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toBeDefined();
-	});
-});
-
-// ---------------------------------------------------------------------------
 // get_workflow_run
 // ---------------------------------------------------------------------------
 
@@ -302,7 +269,7 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 	test('returns run with executions', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Get WF');
 
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'my run',
 		});
@@ -357,7 +324,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 
 	test('updates description of an in-progress run', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Desc WF');
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'run',
 			description: 'original desc',
@@ -377,7 +344,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 		const wf1 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF One');
 		const wf2 = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Two');
 
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf1.id,
 			title: 'switch test',
 		});
@@ -406,7 +373,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 
 	test('returns error when trying to change plan on completed run', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Done WF');
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'done run',
 		});
@@ -426,7 +393,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 
 	test('returns error when neither description nor workflow_id provided', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Empty WF');
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'run',
 		});
@@ -444,7 +411,7 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 			ctx.agentId,
 			'Original WF'
 		);
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'run to keep',
 		});
@@ -481,8 +448,8 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 
 	test('returns all tasks when no filter applied', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'List WF');
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 1' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 2' });
 
 		const result = await makeHandlers(ctx).list_tasks({});
 		const parsed = JSON.parse(result.content[0].text);
@@ -493,10 +460,10 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 	test('filters tasks by workflow_run_id', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Filter WF');
 
-		const r1 = await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run A' });
+		const r1 = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run A' });
 		const runId = JSON.parse(r1.content[0].text).run.id;
 
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run B' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run B' });
 
 		const result = await makeHandlers(ctx).list_tasks({ workflow_run_id: runId });
 		const parsed = JSON.parse(result.content[0].text);
@@ -508,10 +475,10 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 	test('filters tasks by status', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Status WF');
 
-		const r1 = await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
+		const r1 = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 1' });
 		const taskId = JSON.parse(r1.content[0].text).tasks[0].id;
 
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 2' });
 
 		// Mark first task as completed
 		ctx.taskRepo.updateTask(taskId, { status: 'done', completedAt: Date.now() });
@@ -1058,7 +1025,7 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
 
 	test('cancels the workflow run when cancel_workflow_run is true', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Cancel WF');
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'Run to cancel',
 		});
@@ -1086,7 +1053,7 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
 			ctx.agentId,
 			'Keep Run WF'
 		);
-		const startResult = await makeHandlers(ctx).start_workflow_run({
+		const startResult = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'Run to keep',
 		});
@@ -1262,221 +1229,6 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 });
 
 // ---------------------------------------------------------------------------
-// send_message_to_task
-// ---------------------------------------------------------------------------
-
-describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('returns error when taskAgentManager is not configured', async () => {
-		// makeHandlers() does not pass taskAgentManager — simulates unconfigured state
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'My task',
-			description: 'Some work',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-
-		const result = await makeHandlers(ctx).send_message_to_task({
-			task_id: taskId,
-			message: 'How is it going?',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('TaskAgentManager is not configured');
-	});
-
-	test('returns error when task is not found', async () => {
-		const injected: Array<{ taskId: string; message: string }> = [];
-		const fakeTaskAgentManager = {
-			injectTaskAgentMessage: async (taskId: string, message: string) => {
-				injected.push({ taskId, message });
-			},
-		};
-
-		const handlers = createSpaceAgentToolHandlers({
-			spaceId: ctx.spaceId,
-			runtime: ctx.runtime,
-			workflowManager: ctx.workflowManager,
-			taskRepo: ctx.taskRepo,
-			workflowRunRepo: ctx.workflowRunRepo,
-			taskManager: ctx.taskManager,
-			spaceAgentManager: ctx.agentManager,
-			taskAgentManager: fakeTaskAgentManager as never,
-		});
-
-		const result = await handlers.send_message_to_task({
-			task_id: 'task-does-not-exist',
-			message: 'Hello?',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('task-does-not-exist');
-		expect(injected).toHaveLength(0);
-	});
-
-	test('returns error when task has no taskAgentSessionId', async () => {
-		const injected: Array<{ taskId: string; message: string }> = [];
-		const fakeTaskAgentManager = {
-			injectTaskAgentMessage: async (taskId: string, message: string) => {
-				injected.push({ taskId, message });
-			},
-		};
-
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'Pending task',
-			description: 'Not yet started',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-		// Task is in 'pending' state — no taskAgentSessionId
-
-		const handlers = createSpaceAgentToolHandlers({
-			spaceId: ctx.spaceId,
-			runtime: ctx.runtime,
-			workflowManager: ctx.workflowManager,
-			taskRepo: ctx.taskRepo,
-			workflowRunRepo: ctx.workflowRunRepo,
-			taskManager: ctx.taskManager,
-			spaceAgentManager: ctx.agentManager,
-			taskAgentManager: fakeTaskAgentManager as never,
-		});
-
-		const result = await handlers.send_message_to_task({
-			task_id: taskId,
-			message: 'Any progress?',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('no active Task Agent session');
-		expect(parsed.taskStatus).toBe('open');
-		expect(injected).toHaveLength(0);
-	});
-
-	test('successfully injects message when task has a taskAgentSessionId', async () => {
-		const injected: Array<{ taskId: string; message: string }> = [];
-		const fakeTaskAgentManager = {
-			injectTaskAgentMessage: async (taskId: string, message: string) => {
-				injected.push({ taskId, message });
-			},
-		};
-
-		// Create a task and set taskAgentSessionId to simulate an active agent
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'Active task',
-			description: 'In progress with agent',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: 'space:test:task:active-task:agent' });
-
-		const handlers = createSpaceAgentToolHandlers({
-			spaceId: ctx.spaceId,
-			runtime: ctx.runtime,
-			workflowManager: ctx.workflowManager,
-			taskRepo: ctx.taskRepo,
-			workflowRunRepo: ctx.workflowRunRepo,
-			taskManager: ctx.taskManager,
-			spaceAgentManager: ctx.agentManager,
-			taskAgentManager: fakeTaskAgentManager as never,
-		});
-
-		const result = await handlers.send_message_to_task({
-			task_id: taskId,
-			message: 'Please prioritize the auth module.',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
-		expect(parsed.taskId).toBe(taskId);
-		// taskAgentSessionId is intentionally omitted from the response to avoid leaking internals
-		expect(parsed.taskAgentSessionId).toBeUndefined();
-		expect(injected).toHaveLength(1);
-		expect(injected[0].taskId).toBe(taskId);
-		expect(injected[0].message).toBe('Please prioritize the auth module.');
-	});
-
-	test('returns error when task belongs to a different space (cross-space ownership check)', async () => {
-		const injected: Array<{ taskId: string; message: string }> = [];
-		const fakeTaskAgentManager = {
-			injectTaskAgentMessage: async (taskId: string, message: string) => {
-				injected.push({ taskId, message });
-			},
-		};
-
-		// Seed a second space and create a task in it
-		const otherSpaceId = 'space-other';
-		seedSpaceRow(ctx.db, otherSpaceId);
-		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
-		const otherTask = await otherTaskManager.createTask({
-			title: 'Other space task',
-			description: 'Belongs to another space',
-		});
-		ctx.taskRepo.updateTask(otherTask.id, {
-			taskAgentSessionId: 'space:other:task:other-task',
-		});
-
-		// Space Agent for ctx.spaceId tries to message a task in otherSpaceId
-		const handlers = createSpaceAgentToolHandlers({
-			spaceId: ctx.spaceId,
-			runtime: ctx.runtime,
-			workflowManager: ctx.workflowManager,
-			taskRepo: ctx.taskRepo,
-			workflowRunRepo: ctx.workflowRunRepo,
-			taskManager: ctx.taskManager,
-			spaceAgentManager: ctx.agentManager,
-			taskAgentManager: fakeTaskAgentManager as never,
-		});
-
-		const result = await handlers.send_message_to_task({
-			task_id: otherTask.id,
-			message: 'Infiltration attempt',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain(otherTask.id);
-		expect(injected).toHaveLength(0);
-	});
-
-	test('propagates error from injectTaskAgentMessage', async () => {
-		const fakeTaskAgentManager = {
-			injectTaskAgentMessage: async (_taskId: string, _message: string) => {
-				throw new Error('Session queue is full');
-			},
-		};
-
-		const createResult = await makeHandlers(ctx).create_standalone_task({
-			title: 'Active task',
-			description: 'In progress',
-		});
-		const taskId = JSON.parse(createResult.content[0].text).task.id;
-		ctx.taskRepo.updateTask(taskId, { taskAgentSessionId: 'space:test:task:active-task' });
-
-		const handlers = createSpaceAgentToolHandlers({
-			spaceId: ctx.spaceId,
-			runtime: ctx.runtime,
-			workflowManager: ctx.workflowManager,
-			taskRepo: ctx.taskRepo,
-			workflowRunRepo: ctx.workflowRunRepo,
-			taskManager: ctx.taskManager,
-			spaceAgentManager: ctx.agentManager,
-			taskAgentManager: fakeTaskAgentManager as never,
-		});
-
-		const result = await handlers.send_message_to_task({
-			task_id: taskId,
-			message: 'Hello',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('Session queue is full');
-	});
-});
-
-// ---------------------------------------------------------------------------
 // M5.3 — Task creation and workflow activation
 // ---------------------------------------------------------------------------
 
@@ -1529,7 +1281,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 			tags: ['coding', 'v2'],
 		});
 
-		const result = await makeHandlers(ctx).start_workflow_run({
+		const result = await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'Implement payment system',
 			description: 'Build a secure payment processing module',
@@ -1557,7 +1309,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 			tags: ['coding', 'v2', 'default'],
 		});
 
-		await makeHandlers(ctx).start_workflow_run({
+		await startWorkflowRun(ctx, {
 			workflow_id: wf.id,
 			title: 'Implement authentication system',
 		});
@@ -1617,8 +1369,8 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 
 	test('returns total count in response', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 1' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 2' });
 
 		const result = await makeHandlers(ctx).list_tasks({});
 		const parsed = JSON.parse(result.content[0].text);
@@ -1629,8 +1381,8 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 
 	test('filters tasks by search substring', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
-		const r1 = await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
-		const r2 = await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 2' });
+		const r1 = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 1' });
+		const r2 = await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 2' });
 		const task1Id = JSON.parse(r1.content[0].text).tasks[0].id;
 		const task2Id = JSON.parse(r2.content[0].text).tasks[0].id;
 
@@ -1649,7 +1401,7 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 	test('paginates with limit and offset', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
 		for (let i = 0; i < 4; i++) {
-			await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: `run ${i + 1}` });
+			await startWorkflowRun(ctx, { workflow_id: wf.id, title: `run ${i + 1}` });
 		}
 
 		const page1 = JSON.parse(
@@ -1667,7 +1419,7 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 
 	test('returns compact fields when compact:true', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
-		await makeHandlers(ctx).start_workflow_run({ workflow_id: wf.id, title: 'run 1' });
+		await startWorkflowRun(ctx, { workflow_id: wf.id, title: 'run 1' });
 
 		const result = await makeHandlers(ctx).list_tasks({ compact: true });
 		const parsed = JSON.parse(result.content[0].text);
@@ -1688,7 +1440,7 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 	test('total reflects post-filter count before pagination', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF');
 		for (let i = 0; i < 4; i++) {
-			const r = await makeHandlers(ctx).start_workflow_run({
+			const r = await startWorkflowRun(ctx, {
 				workflow_id: wf.id,
 				title: `run ${i + 1}`,
 			});

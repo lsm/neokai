@@ -43,6 +43,49 @@ export interface SpaceOverviewResult {
 	sessions: string[];
 }
 
+function pickCanonicalTaskForRun(tasks: SpaceTask[], runTitle?: string): SpaceTask {
+	const normalizedRunTitle = runTitle?.trim().toLowerCase();
+	if (normalizedRunTitle) {
+		const exactTitleMatch = tasks.find(
+			(task) => task.title.trim().toLowerCase() === normalizedRunTitle
+		);
+		if (exactTitleMatch) return exactTitleMatch;
+	}
+
+	return [...tasks].sort((a, b) => {
+		if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+		return a.taskNumber - b.taskNumber;
+	})[0];
+}
+
+function collapseToCanonicalTasks(
+	tasks: SpaceTask[],
+	workflowRuns: SpaceWorkflowRun[]
+): SpaceTask[] {
+	if (tasks.length === 0) return [];
+
+	const runsById = new Map(workflowRuns.map((run) => [run.id, run]));
+	const groupedByRun = new Map<string, SpaceTask[]>();
+	const canonical: SpaceTask[] = [];
+
+	for (const task of tasks) {
+		if (!task.workflowRunId) {
+			canonical.push(task);
+			continue;
+		}
+		const existing = groupedByRun.get(task.workflowRunId) ?? [];
+		existing.push(task);
+		groupedByRun.set(task.workflowRunId, existing);
+	}
+
+	for (const [runId, runTasks] of groupedByRun) {
+		const runTitle = runsById.get(runId)?.title;
+		canonical.push(pickCanonicalTaskForRun(runTasks, runTitle));
+	}
+
+	return canonical.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 export function setupSpaceHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
@@ -286,9 +329,10 @@ export function setupSpaceHandlers(
 
 		return spaces.map((space) => ({
 			...space,
-			tasks: taskRepo
-				.listBySpace(space.id)
-				.filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
+			tasks: collapseToCanonicalTasks(
+				taskRepo.listBySpace(space.id),
+				workflowRunRepo.listBySpace(space.id)
+			).filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
 		}));
 	});
 
@@ -312,8 +356,8 @@ export function setupSpaceHandlers(
 			throw new Error(`Space not found: ${params.id ?? params.slug}`);
 		}
 
-		const tasks = taskRepo.listBySpace(space.id);
 		const workflowRuns = workflowRunRepo.listBySpace(space.id);
+		const tasks = collapseToCanonicalTasks(taskRepo.listBySpace(space.id), workflowRuns);
 
 		const result: SpaceOverviewResult = {
 			space,
