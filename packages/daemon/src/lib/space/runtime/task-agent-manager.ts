@@ -93,6 +93,12 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 
 const log = new Logger('task-agent-manager');
 
+/**
+ * Number of runtime reminders sent to a node agent that became idle without
+ * calling report_done() before the execution is escalated to blocked.
+ */
+const MAX_MISSING_REPORT_DONE_REMINDERS = 3;
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -239,6 +245,15 @@ export class TaskAgentManager {
 	 * Closed when the task agent session is cleaned up.
 	 */
 	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
+
+	/**
+	 * Tracks how many runtime reminders were sent for each node execution that
+	 * became idle without calling report_done().
+	 *
+	 * Key: node_execution.id
+	 * Value: reminder attempt count (1..MAX_MISSING_REPORT_DONE_REMINDERS)
+	 */
+	private missingReportDoneReminders = new Map<string, number>();
 
 	constructor(private readonly config: TaskAgentManagerConfig) {}
 
@@ -774,7 +789,11 @@ export class TaskAgentManager {
 					workspacePath,
 					slotOverrides,
 				});
-				await this.injectMessageIntoSession(spawned, initialMessage);
+				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution);
+				const kickoffMessage = runtimeContract
+					? `${initialMessage}\n\n${runtimeContract}`
+					: initialMessage;
+				await this.injectMessageIntoSession(spawned, kickoffMessage);
 			}
 
 			return actualSessionId;
@@ -1082,6 +1101,7 @@ export class TaskAgentManager {
 	async cleanupAll(): Promise<void> {
 		const taskIds = Array.from(this.taskAgentSessions.keys());
 		await Promise.allSettled(taskIds.map((taskId) => this.cleanup(taskId)));
+		this.missingReportDoneReminders.clear();
 		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks cleaned up)`);
 	}
 
@@ -1171,6 +1191,14 @@ export class TaskAgentManager {
 				log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
 			}
 			this.taskDbQueryServers.delete(taskId);
+		}
+
+		const taskWorkflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId;
+		if (taskWorkflowRunId) {
+			const executions = this.config.nodeExecutionRepo.listByWorkflowRun(taskWorkflowRunId);
+			for (const execution of executions) {
+				this.missingReportDoneReminders.delete(execution.id);
+			}
 		}
 
 		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId} (reason: ${reason})`);
@@ -1359,11 +1387,28 @@ export class TaskAgentManager {
 		);
 
 		const workflowRunId = this.getWorkflowRunId(taskId);
-		const execution = workflowRunId
+		let execution = workflowRunId
 			? this.config.nodeExecutionRepo
 					.listByWorkflowRun(workflowRunId)
 					.find((candidate) => candidate.agentSessionId === subSessionId)
 			: null;
+
+		if (execution && execution.status === 'in_progress') {
+			const handled = await this.handleIdleExecutionWithoutReportDone(
+				taskId,
+				subSessionId,
+				execution
+			);
+			if (handled) {
+				return;
+			}
+			execution = this.config.nodeExecutionRepo.getById(execution.id);
+		}
+
+		if (execution && execution.status !== 'in_progress') {
+			this.missingReportDoneReminders.delete(execution.id);
+		}
+
 		const resolvedStepId = execution?.workflowNodeId ?? stepId;
 		const resultSummary = execution?.result ? `\nAgent result summary: ${execution.result}` : '';
 
@@ -1383,6 +1428,72 @@ export class TaskAgentManager {
 				);
 			}
 		}
+	}
+
+	/**
+	 * Recover from node agents that went idle without calling report_done().
+	 *
+	 * Sends deterministic runtime reminders (with gate/channel requirements) for a
+	 * bounded number of attempts, then escalates the execution to blocked.
+	 *
+	 * @returns true when the completion event was fully handled here (reminder sent
+	 *          or execution escalated), false when normal completion flow should continue.
+	 */
+	private async handleIdleExecutionWithoutReportDone(
+		taskId: string,
+		subSessionId: string,
+		execution: NodeExecution
+	): Promise<boolean> {
+		const refreshed = this.config.nodeExecutionRepo.getById(execution.id);
+		if (!refreshed || refreshed.status !== 'in_progress') {
+			this.missingReportDoneReminders.delete(execution.id);
+			return false;
+		}
+
+		const attempt = (this.missingReportDoneReminders.get(execution.id) ?? 0) + 1;
+		this.missingReportDoneReminders.set(execution.id, attempt);
+
+		const run = this.config.workflowRunRepo.getRun(refreshed.workflowRunId);
+		const workflow = run
+			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
+			: null;
+
+		if (attempt <= MAX_MISSING_REPORT_DONE_REMINDERS) {
+			const reminder = this.buildMissingReportDoneReminder(
+				workflow,
+				refreshed,
+				attempt,
+				MAX_MISSING_REPORT_DONE_REMINDERS
+			);
+			const subSession = this.getSubSession(subSessionId);
+			if (!subSession) {
+				log.warn(
+					`TaskAgentManager: sub-session ${subSessionId} not found while sending missing-report_done reminder for execution ${execution.id}`
+				);
+				return false;
+			}
+
+			// Re-arm completion detection for the next idle transition after this reminder.
+			this.registerCompletionCallback(subSessionId, async () => {
+				await this.handleSubSessionComplete(taskId, refreshed.workflowNodeId, subSessionId);
+			});
+
+			await this.injectMessageIntoSession(subSession, reminder, 'defer');
+			log.warn(
+				`TaskAgentManager: reminded execution ${execution.id} (${attempt}/${MAX_MISSING_REPORT_DONE_REMINDERS}) to call report_done()`
+			);
+			return true;
+		}
+
+		const reason =
+			`Node agent session became idle without calling report_done after ` +
+			`${MAX_MISSING_REPORT_DONE_REMINDERS} reminder attempts.`;
+		this.missingReportDoneReminders.delete(execution.id);
+		await this.handleSubSessionError(subSessionId, reason);
+		log.warn(
+			`TaskAgentManager: escalated execution ${execution.id} to blocked after missing report_done reminders`
+		);
+		return true;
 	}
 
 	/**
@@ -1408,6 +1519,10 @@ export class TaskAgentManager {
 			});
 		}
 
+		if (failedExecution) {
+			this.missingReportDoneReminders.delete(failedExecution.id);
+		}
+
 		const taskAgentSession = this.taskAgentSessions.get(parentTaskId);
 		if (!taskAgentSession) return;
 
@@ -1417,6 +1532,118 @@ export class TaskAgentManager {
 			`[STEP_FAILED] Step "${stepId}" sub-session (${subSessionId}) reported an error: ${error}\nWorkflow progression is runtime-driven; use this as context for human coordination only.`,
 			'defer'
 		);
+	}
+
+	private buildMissingReportDoneReminder(
+		workflow: SpaceWorkflow | null,
+		execution: NodeExecution,
+		attempt: number,
+		maxAttempts: number
+	): string {
+		const contract = this.buildNodeExecutionRuntimeContract(workflow, execution);
+		return [
+			`[RUNTIME_REMINDER ${attempt}/${maxAttempts}] Node session became idle, but execution "${execution.id}" is still in_progress.`,
+			'Workflow progression is blocked until this execution is completed.',
+			contract,
+			'Take action now: satisfy required gate checks/writes (if any), then call report_done({ summary: "..." }).',
+		].join('\n\n');
+	}
+
+	/**
+	 * Build a runtime contract for a specific node execution from the current
+	 * workflow graph, including gate requirements derived from outbound channels.
+	 */
+	private buildNodeExecutionRuntimeContract(
+		workflow: SpaceWorkflow | null,
+		execution: NodeExecution
+	): string {
+		const fallback = [
+			'## Runtime Execution Contract',
+			`Role: "${execution.agentName}"`,
+			'When your work is complete, call report_done({ summary: "..." }).',
+			'If blocked, send a clear blocker message instead of stopping silently.',
+		].join('\n');
+
+		if (!workflow) {
+			return fallback;
+		}
+
+		const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+		if (!node) {
+			return fallback;
+		}
+
+		const fromRefs = new Set<string>([
+			execution.agentName,
+			node.name,
+			node.id,
+			`${node.id}/${execution.agentName}`,
+		]);
+
+		const outboundGatedChannels = (workflow.channels ?? []).filter(
+			(channel) => !!channel.gateId && (channel.from === '*' || fromRefs.has(channel.from))
+		);
+
+		const lines: string[] = [
+			'## Runtime Execution Contract',
+			`Node: "${node.name}" (${node.id})`,
+			`Role: "${execution.agentName}"`,
+		];
+
+		if (outboundGatedChannels.length === 0) {
+			lines.push('No outbound gated channels are currently mapped from this role/node.');
+		} else {
+			const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
+			lines.push('Before completion, satisfy outbound gate requirements:');
+
+			for (const channel of outboundGatedChannels) {
+				const gateId = channel.gateId!;
+				const target = Array.isArray(channel.to) ? channel.to.join(', ') : channel.to;
+				lines.push(`- Gate "${gateId}" for channel "${channel.from}" -> "${target}"`);
+
+				const gate = gateById.get(gateId);
+				if (!gate) {
+					lines.push('  - Gate definition not found in workflow (treat as blocked until fixed).');
+					continue;
+				}
+
+				const writableFields = (gate.fields ?? []).filter(
+					(field) => field.writers.includes('*') || field.writers.includes(execution.agentName)
+				);
+				if (writableFields.length === 0) {
+					lines.push(
+						`  - No gate fields are writable by role "${execution.agentName}"; ensure required artifacts/checks are ready.`
+					);
+					continue;
+				}
+
+				lines.push(`  - Write via write_gate("${gateId}", { ... }) with:`);
+				for (const field of writableFields) {
+					lines.push(
+						`    • ${field.name} (${field.type}) — check: ${this.describeGateCheck(field.check)}`
+					);
+				}
+			}
+		}
+
+		lines.push('After requirements are met, call report_done({ summary: "..." }).');
+		lines.push('If blocked, send a clear blocker message instead of stopping silently.');
+		return lines.join('\n');
+	}
+
+	private describeGateCheck(check: {
+		op: string;
+		value?: unknown;
+		match?: unknown;
+		min?: number;
+	}): string {
+		if (check.op === 'exists') return 'exists';
+		if (check.op === 'count') {
+			return `count(${JSON.stringify(check.match)}) >= ${check.min ?? 0}`;
+		}
+		if (check.op === '==') return `== ${JSON.stringify(check.value)}`;
+		if (check.op === '!=') return `!= ${JSON.stringify(check.value)}`;
+		return check.op;
 	}
 
 	// -------------------------------------------------------------------------
