@@ -214,12 +214,13 @@ describe('SpaceIsland — configure workflow editor', () => {
 		expect(result.queryByTestId('space-configure-tab-bar')).toBeNull();
 	});
 
-	it('restores configure sub-tabs after save', () => {
+	it('keeps workflow editor open after save', () => {
 		const result = renderConfigure();
 		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
 		fireEvent.click(result.getByTestId('visual-editor-save'));
-		expect(result.getByTestId('space-configure-tab-bar')).toBeTruthy();
+		expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+		expect(result.queryByTestId('space-configure-tab-bar')).toBeNull();
 	});
 });
 
