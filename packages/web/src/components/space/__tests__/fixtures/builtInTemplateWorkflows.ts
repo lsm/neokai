@@ -122,14 +122,9 @@ export function makeBuiltInTemplateWorkflows(
 					name: 'QA',
 					agents: [agent('agent-6', 'qa', 'QA.', includeSystemPrompts)],
 				},
-				{
-					id: 'f6',
-					name: 'Done',
-					agents: [agent('agent-3', 'general', 'Done.', includeSystemPrompts)],
-				},
 			],
 			startNodeId: 'f1',
-			endNodeId: 'f6',
+			endNodeId: 'f5',
 			tags: [],
 			createdAt: 0,
 			updatedAt: 0,
@@ -164,26 +159,17 @@ export function makeBuiltInTemplateWorkflows(
 				},
 				{
 					from: 'QA',
-					to: 'Done',
-					direction: 'one-way',
-					gateId: 'qa-result-gate',
-					label: 'QA → Done',
-				},
-				{
-					from: 'QA',
 					to: 'Coding',
 					direction: 'one-way',
-					gateId: 'qa-fail-gate',
 					maxCycles: 5,
-					label: 'QA → Coding (on fail)',
+					label: 'QA → Coding (issues found)',
 				},
 				{
 					from: 'Code Review',
 					to: 'Coding',
 					direction: 'one-way',
-					gateId: 'review-reject-gate',
 					maxCycles: 5,
-					label: 'Code Review → Coding (on reject)',
+					label: 'Code Review → Coding (feedback)',
 				},
 				{
 					from: 'Plan Review',
@@ -203,15 +189,16 @@ export function makeBuiltInTemplateWorkflows(
 			gates: [
 				{
 					id: 'plan-pr-gate',
-					description: 'Planning submitted',
+					description: 'Planning PR is open and mergeable so plan review can start.',
 					fields: [
 						{
-							name: 'plan_submitted',
-							type: 'boolean',
-							writers: ['planner'],
+							name: 'pr_url',
+							type: 'string',
+							writers: ['*'],
 							check: { op: 'exists' },
 						},
 					],
+					script: { interpreter: 'bash', source: 'echo', timeoutMs: 30000 },
 					resetOnCycle: false,
 				},
 				{
@@ -246,41 +233,81 @@ export function makeBuiltInTemplateWorkflows(
 					],
 					resetOnCycle: true,
 				},
+			],
+		},
+		{
+			id: 'tpl-fullstack-qa-loop',
+			spaceId: 'space-1',
+			name: 'Fullstack QA Loop Workflow',
+			nodes: [
 				{
-					id: 'review-reject-gate',
-					description: 'A reviewer rejected',
+					id: 'fs1',
+					name: 'Coding',
+					agents: [agent('agent-2', 'coder', 'Code.', includeSystemPrompts)],
+				},
+				{
+					id: 'fs2',
+					name: 'Review',
+					agents: [agent('agent-4', 'reviewer', 'Review.', includeSystemPrompts)],
+				},
+				{
+					id: 'fs3',
+					name: 'QA',
+					agents: [agent('agent-6', 'qa', 'QA.', includeSystemPrompts)],
+				},
+			],
+			startNodeId: 'fs1',
+			endNodeId: 'fs3',
+			tags: [],
+			createdAt: 0,
+			updatedAt: 0,
+			channels: [
+				{
+					from: 'Coding',
+					to: 'Review',
+					direction: 'one-way',
+					gateId: 'code-pr-gate',
+					label: 'Coding → Review',
+				},
+				{
+					from: 'Review',
+					to: 'QA',
+					direction: 'one-way',
+					gateId: 'review-approval-gate',
+					label: 'Review → QA',
+				},
+				{
+					from: 'Review',
+					to: 'Coding',
+					direction: 'one-way',
+					maxCycles: 6,
+					label: 'Review → Coding (feedback)',
+				},
+				{
+					from: 'QA',
+					to: 'Coding',
+					direction: 'one-way',
+					maxCycles: 6,
+					label: 'QA → Coding (issues found)',
+				},
+			],
+			gates: [
+				{
+					id: 'code-pr-gate',
+					description: 'PR URL captured',
+					fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+					script: { interpreter: 'bash', source: 'echo', timeoutMs: 30000 },
+					resetOnCycle: true,
+				},
+				{
+					id: 'review-approval-gate',
+					description: 'Reviewer approved',
 					fields: [
 						{
-							name: 'votes',
-							type: 'map',
+							name: 'approved',
+							type: 'boolean',
 							writers: ['reviewer'],
-							check: { op: 'count', match: 'rejected', min: 1 },
-						},
-					],
-					resetOnCycle: true,
-				},
-				{
-					id: 'qa-result-gate',
-					description: 'QA passed',
-					fields: [
-						{
-							name: 'result',
-							type: 'string',
-							writers: ['qa'],
-							check: { op: '==', value: 'passed' },
-						},
-					],
-					resetOnCycle: true,
-				},
-				{
-					id: 'qa-fail-gate',
-					description: 'QA failed',
-					fields: [
-						{
-							name: 'result',
-							type: 'string',
-							writers: ['qa'],
-							check: { op: '==', value: 'failed' },
+							check: { op: '==', value: true },
 						},
 					],
 					resetOnCycle: true,

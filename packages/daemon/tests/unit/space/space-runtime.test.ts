@@ -943,9 +943,9 @@ describe('SpaceRuntime', () => {
 				)
 			).not.toThrow();
 
-			// Four built-in workflows should exist
+			// Five built-in workflows should exist
 			const workflows = workflowManager.listWorkflows(newSpaceId);
-			expect(workflows).toHaveLength(4);
+			expect(workflows).toHaveLength(5);
 		});
 
 		test('seedBuiltInWorkflows is idempotent (calling twice is a no-op)', async () => {
@@ -967,7 +967,7 @@ describe('SpaceRuntime', () => {
 			seedBuiltInWorkflows(newSpaceId, workflowManager, resolver); // second call is no-op
 
 			const workflows = workflowManager.listWorkflows(newSpaceId);
-			expect(workflows).toHaveLength(4); // still 4, not 8
+			expect(workflows).toHaveLength(5); // still 5, not 10
 		});
 	});
 

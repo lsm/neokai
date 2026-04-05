@@ -970,7 +970,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 		});
 
-		it('shows Full-Cycle Coding Workflow template and creates 6 workflow nodes', () => {
+		it('shows Full-Cycle Coding Workflow template and creates 5 workflow nodes', () => {
 			const { getByTestId, getAllByTestId, container } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
@@ -982,8 +982,8 @@ describe('VisualWorkflowEditor', () => {
 			expect(v2Option).toBeTruthy();
 			fireEvent.click(v2Option!);
 
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(6);
-			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(7);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(5);
+			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(6);
 			expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
 		});
 

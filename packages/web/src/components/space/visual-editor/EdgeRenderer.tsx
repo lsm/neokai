@@ -961,7 +961,7 @@ export function EdgeRenderer({
 										fill={isSelected ? 'white' : gateColor}
 										opacity={0.7}
 									>
-										⚡
+										S
 									</text>
 								)}
 							</g>

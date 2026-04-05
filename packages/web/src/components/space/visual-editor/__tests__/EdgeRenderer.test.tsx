@@ -973,7 +973,7 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		expect(arrow?.getAttribute('fill')).toBe('white');
 	});
 
-	it('renders script icon (⚡) when hasScript is true', () => {
+	it('renders script indicator (S) when hasScript is true', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				fromStepId: 'step-1',
@@ -990,7 +990,7 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		// Should have two text elements: label + script icon
 		expect(badgeTexts).toHaveLength(2);
 		const scriptIconText = badgeTexts[1];
-		expect(scriptIconText.textContent).toBe('⚡');
+		expect(scriptIconText.textContent).toBe('S');
 		expect(scriptIconText.getAttribute('opacity')).toBe('0.7');
 	});
 
@@ -1137,7 +1137,7 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		);
 		// Should have label + script icon
 		expect(badgeTexts).toHaveLength(2);
-		expect(badgeTexts[1].textContent).toBe('⚡');
+		expect(badgeTexts[1].textContent).toBe('S');
 	});
 
 	it('uses reverseGateLabel when only reverse gate is set on bidirectional', () => {

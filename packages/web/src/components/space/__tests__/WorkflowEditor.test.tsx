@@ -442,6 +442,7 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
 			expect(getByText('Coding Workflow')).toBeTruthy();
+			expect(getByText('Fullstack QA Loop Workflow')).toBeTruthy();
 			expect(getByText('Research Workflow')).toBeTruthy();
 			expect(getByText('Review-Only Workflow')).toBeTruthy();
 			expect(getByText('Full-Cycle Coding Workflow')).toBeTruthy();
@@ -468,11 +469,11 @@ describe('WorkflowEditor', () => {
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
-		it('applying Full-Cycle Coding Workflow template creates 6 steps', () => {
+		it('applying Full-Cycle Coding Workflow template creates 5 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
 			fireEvent.click(getByText('Full-Cycle Coding Workflow'));
-			expect(getByText('6 steps')).toBeTruthy();
+			expect(getByText('5 steps')).toBeTruthy();
 		});
 
 		it('Full-Cycle Coding Workflow template builds explicit system prompts for every node', () => {
@@ -481,7 +482,7 @@ describe('WorkflowEditor', () => {
 			);
 			expect(template).toBeTruthy();
 			const nodes = buildTemplateNodes(template!, mockAgents.value);
-			expect(nodes).toHaveLength(6);
+			expect(nodes).toHaveLength(5);
 			for (const node of nodes) {
 				if (node.agents && node.agents.length > 0) {
 					for (const agent of node.agents) {
@@ -583,6 +584,7 @@ describe('WorkflowEditor', () => {
 				'Research Workflow',
 				'Review-Only Workflow',
 				'Full-Cycle Coding Workflow',
+				'Fullstack QA Loop Workflow',
 			]);
 		});
 
