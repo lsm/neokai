@@ -7,7 +7,7 @@
  *
  * ## Key helpers
  *
- * - createTestSpace        — create a Space with FULL_CYCLE_CODING_WORKFLOW pre-seeded
+ * - createTestSpace        — create a Space with a deterministic full-cycle test workflow
  * - startWorkflowRun       — start a run and return its ID + initial tasks
  * - writeGateData          — write arbitrary data to a gate (simulates agent write_gate call)
  * - readGateData           — read current gate data for a (runId, gateId) pair
@@ -45,7 +45,7 @@ export interface TestSpaceFixture {
 	space: Space;
 	/** All agents seeded into the space */
 	agents: SpaceAgent[];
-	/** The FULL_CYCLE_CODING_WORKFLOW workflow (preferred) or the first available */
+	/** Deterministic full-cycle workflow fixture used by online space tests */
 	workflow: SpaceWorkflow;
 }
 
@@ -65,6 +65,12 @@ export interface GateArtifacts {
 
 type NodeExecutionTask = SpaceTask & {
 	workflowNodeId: string;
+	agentName: string;
+};
+
+type WorkflowNodeInfo = {
+	name: string;
+	agentCount: number;
 };
 
 type NodeExecutionIndexEntry = {
@@ -101,7 +107,17 @@ function mapNodeExecutionStatusToTaskStatus(status: NodeExecutionStatus): SpaceT
 	}
 }
 
-function projectNodeExecutionAsTask(spaceId: string, execution: NodeExecution): NodeExecutionTask {
+function isTerminalTaskStatus(status: SpaceTask['status']): boolean {
+	return (
+		status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
+	);
+}
+
+function projectNodeExecutionAsTask(
+	spaceId: string,
+	execution: NodeExecution,
+	nodeInfo?: WorkflowNodeInfo
+): NodeExecutionTask {
 	nodeExecutionIndex.set(execution.id, {
 		spaceId,
 		workflowRunId: execution.workflowRunId,
@@ -109,11 +125,13 @@ function projectNodeExecutionAsTask(spaceId: string, execution: NodeExecution): 
 		agentName: execution.agentName,
 	});
 
+	const derivedTitle = nodeInfo && nodeInfo.agentCount <= 1 ? nodeInfo.name : execution.agentName;
+
 	return {
 		id: execution.id,
 		spaceId,
 		taskNumber: 0,
-		title: execution.agentName,
+		title: derivedTitle,
 		description: '',
 		status: mapNodeExecutionStatusToTaskStatus(execution.status),
 		priority: 'normal',
@@ -133,6 +151,7 @@ function projectNodeExecutionAsTask(spaceId: string, execution: NodeExecution): 
 		archivedAt: null,
 		updatedAt: execution.updatedAt,
 		workflowNodeId: execution.workflowNodeId,
+		agentName: execution.agentName,
 	};
 }
 
@@ -148,13 +167,42 @@ async function listNodeExecutionsForRun(
 	return executions;
 }
 
+async function getWorkflowNodeInfoById(
+	daemon: DaemonServerContext,
+	runId: string
+): Promise<Map<string, WorkflowNodeInfo>> {
+	const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+		id: runId,
+	})) as { run: SpaceWorkflowRun };
+	const { workflow } = (await daemon.messageHub.request('spaceWorkflow.get', {
+		id: run.workflowId,
+	})) as { workflow: SpaceWorkflow };
+
+	const nodeInfoById = new Map<string, WorkflowNodeInfo>();
+	for (const node of workflow.nodes) {
+		nodeInfoById.set(node.id, {
+			name: node.name,
+			agentCount: Array.isArray(node.agents) ? node.agents.length : 0,
+		});
+	}
+	return nodeInfoById;
+}
+
 async function listNodeTasksForRun(
 	daemon: DaemonServerContext,
 	spaceId: string,
 	runId: string
 ): Promise<NodeExecutionTask[]> {
 	const executions = await listNodeExecutionsForRun(daemon, spaceId, runId);
-	return executions.map((execution) => projectNodeExecutionAsTask(spaceId, execution));
+	let nodeInfoById = new Map<string, WorkflowNodeInfo>();
+	try {
+		nodeInfoById = await getWorkflowNodeInfoById(daemon, runId);
+	} catch {
+		// If workflow lookup fails, fall back to agent-name titles.
+	}
+	return executions.map((execution) =>
+		projectNodeExecutionAsTask(spaceId, execution, nodeInfoById.get(execution.workflowNodeId))
+	);
 }
 
 async function resolveNodeIdByNameOrId(
@@ -181,7 +229,11 @@ function matchesNodeTarget(
 	resolvedNodeId: string | null
 ): boolean {
 	if (resolvedNodeId && task.workflowNodeId === resolvedNodeId) return true;
-	return task.workflowNodeId === nodeNameOrId || task.title === nodeNameOrId;
+	return (
+		task.workflowNodeId === nodeNameOrId ||
+		task.title === nodeNameOrId ||
+		task.agentName === nodeNameOrId
+	);
 }
 
 async function findNodeExecutionById(
@@ -215,11 +267,8 @@ async function findNodeExecutionById(
 
 /**
  * Create a Space whose name embeds a unique suffix so tests never collide.
- * space.create auto-seeds preset agents and built-in workflows (including V2).
- *
- * Returns the Space, all its agents, and the FULL_CYCLE_CODING_WORKFLOW workflow.
- * Falls back to the first workflow if V2 is not found (should not happen with
- * normal seeding, but keeps tests robust).
+ * space.create auto-seeds preset agents, then this helper creates a deterministic
+ * full-cycle workflow fixture tailored for online gate/channel tests.
  */
 export async function createTestSpace(daemon: DaemonServerContext): Promise<TestSpaceFixture> {
 	const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -235,16 +284,194 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 		spaceId: space.id,
 	})) as { agents: SpaceAgent[] };
 
-	const { workflows } = (await daemon.messageHub.request('spaceWorkflow.list', {
+	const agentByName = new Map(agents.map((agent) => [agent.name, agent.id]));
+	const requireAgentId = (name: string): string => {
+		const id = agentByName.get(name);
+		if (!id) throw new Error(`Pre-seeded agent not found: ${name}`);
+		return id;
+	};
+
+	const plannerAgentId = requireAgentId('Planner');
+	const reviewerAgentId = requireAgentId('Reviewer');
+	const coderAgentId = requireAgentId('Coder');
+	const qaAgentId = requireAgentId('QA');
+
+	const { workflow } = (await daemon.messageHub.request('spaceWorkflow.create', {
 		spaceId: space.id,
-	})) as { workflows: SpaceWorkflow[] };
-
-	// Prefer the V2 workflow (tags include 'v2')
-	const workflow =
-		workflows.find((w) => Array.isArray(w.tags) && w.tags.includes('v2')) ?? workflows[0];
-
-	if (!workflow)
-		throw new Error('No workflows found after space creation — seeding may have failed');
+		name: 'TEST_FULL_CYCLE_WORKFLOW',
+		description: 'Deterministic online-test workflow for gate/channel integration coverage',
+		nodes: [
+			{
+				id: 'planning-node',
+				name: 'Planning',
+				agents: [{ agentId: plannerAgentId, name: 'planner' }],
+			},
+			{
+				id: 'plan-review-node',
+				name: 'Plan Review',
+				agents: [{ agentId: reviewerAgentId, name: 'reviewer' }],
+			},
+			{
+				id: 'coding-node',
+				name: 'Coding',
+				agents: [{ agentId: coderAgentId, name: 'coder' }],
+			},
+			{
+				id: 'code-review-node',
+				name: 'Code Review',
+				agents: [
+					{ agentId: reviewerAgentId, name: 'Reviewer 1' },
+					{ agentId: reviewerAgentId, name: 'Reviewer 2' },
+					{ agentId: reviewerAgentId, name: 'Reviewer 3' },
+				],
+			},
+			{
+				id: 'qa-node',
+				name: 'QA',
+				agents: [{ agentId: qaAgentId, name: 'qa' }],
+			},
+			{
+				id: 'done-node',
+				name: 'Done',
+				agents: [{ agentId: qaAgentId, name: 'done' }],
+			},
+		],
+		startNodeId: 'planning-node',
+		endNodeId: 'done-node',
+		gates: [
+			{
+				id: 'plan-pr-gate',
+				description: 'Planning PR URL is available',
+				fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			},
+			{
+				id: 'plan-approval-gate',
+				description: 'Plan is approved',
+				fields: [
+					{
+						name: 'approved',
+						type: 'boolean',
+						writers: ['reviewer', 'human'],
+						check: { op: '==', value: true },
+					},
+				],
+				resetOnCycle: true,
+			},
+			{
+				id: 'code-pr-gate',
+				description: 'Coding PR URL is available for review',
+				fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			},
+			{
+				id: 'review-votes-gate',
+				description: 'All reviewers approved',
+				fields: [
+					{
+						name: 'votes',
+						type: 'map',
+						writers: ['reviewer'],
+						check: { op: 'count', match: 'approved', min: 3 },
+					},
+				],
+				resetOnCycle: true,
+			},
+			{
+				id: 'review-reject-gate',
+				description: 'Any reviewer rejected',
+				fields: [
+					{
+						name: 'votes',
+						type: 'map',
+						writers: ['reviewer'],
+						check: { op: 'count', match: 'rejected', min: 1 },
+					},
+				],
+				resetOnCycle: true,
+			},
+			{
+				id: 'qa-result-gate',
+				description: 'QA passed',
+				fields: [
+					{
+						name: 'result',
+						type: 'string',
+						writers: ['qa'],
+						check: { op: '==', value: 'passed' },
+					},
+				],
+				resetOnCycle: true,
+			},
+			{
+				id: 'qa-fail-gate',
+				description: 'QA failed and needs fixes',
+				fields: [
+					{
+						name: 'result',
+						type: 'string',
+						writers: ['qa'],
+						check: { op: '==', value: 'failed' },
+					},
+				],
+				resetOnCycle: true,
+			},
+		],
+		channels: [
+			{
+				from: 'Planning',
+				to: 'Plan Review',
+				direction: 'one-way',
+				gateId: 'plan-pr-gate',
+				label: 'Planning → Plan Review',
+			},
+			{
+				from: 'Plan Review',
+				to: 'Coding',
+				direction: 'one-way',
+				gateId: 'plan-approval-gate',
+				label: 'Plan Review → Coding',
+			},
+			{
+				from: 'Coding',
+				to: ['Reviewer 1', 'Reviewer 2', 'Reviewer 3'],
+				direction: 'one-way',
+				gateId: 'code-pr-gate',
+				label: 'Coding → Code Review',
+			},
+			{
+				from: 'Code Review',
+				to: 'QA',
+				direction: 'one-way',
+				gateId: 'review-votes-gate',
+				label: 'Code Review → QA',
+			},
+			{
+				from: 'Code Review',
+				to: 'Coding',
+				direction: 'one-way',
+				maxCycles: 5,
+				gateId: 'review-reject-gate',
+				label: 'Code Review → Coding (rejection loop)',
+			},
+			{
+				from: 'QA',
+				to: 'Done',
+				direction: 'one-way',
+				gateId: 'qa-result-gate',
+				label: 'QA → Done',
+			},
+			{
+				from: 'QA',
+				to: 'Coding',
+				direction: 'one-way',
+				maxCycles: 5,
+				gateId: 'qa-fail-gate',
+				label: 'QA → Coding (fix loop)',
+			},
+		],
+		tags: ['v2', 'test'],
+	})) as { workflow: SpaceWorkflow };
 
 	return { space, agents, workflow };
 }
@@ -254,9 +481,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 // ---------------------------------------------------------------------------
 
 /**
- * Start a workflow run and return its ID plus the initial pending tasks.
- *
- * spaceTask.list returns an array directly (not wrapped in { tasks }).
+ * Start a workflow run and return its ID plus projected node-execution tasks.
  */
 export async function startWorkflowRun(
 	daemon: DaemonServerContext,
@@ -553,6 +778,12 @@ export async function getTasksForNode(
 
 /**
  * Poll nodeExecution state until a NEW active execution appears for a node.
+ *
+ * In the one-task-per-run architecture, cyclic re-activation may reuse the same
+ * node_execution row (same ID) and flip its status back to active. This helper
+ * treats both cases as "new":
+ * - a brand-new execution ID not in excludeTaskIds
+ * - a previously terminal excluded execution reactivated to open/in_progress
  */
 export async function waitForNewNodeTask(
 	daemon: DaemonServerContext,
@@ -562,13 +793,32 @@ export async function waitForNewNodeTask(
 	excludeTaskIds: Set<string>,
 	timeout: number
 ): Promise<SpaceTask> {
+	const baselineTasks = await getTasksForNode(daemon, spaceId, runId, nodeNameOrId);
+	const baselineById = new Map(
+		baselineTasks
+			.filter((task) => excludeTaskIds.has(task.id))
+			.map((task) => [task.id, { status: task.status, updatedAt: task.updatedAt }])
+	);
+
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
 		const tasks = await getTasksForNode(daemon, spaceId, runId, nodeNameOrId);
-		const match = tasks.find(
-			(task) =>
-				!excludeTaskIds.has(task.id) && (task.status === 'open' || task.status === 'in_progress')
-		);
+		const match = tasks.find((task) => {
+			const isActive = task.status === 'open' || task.status === 'in_progress';
+			if (!isActive) return false;
+			if (!excludeTaskIds.has(task.id)) return true;
+
+			const baseline = baselineById.get(task.id);
+			if (!baseline) return false;
+
+			if (isTerminalTaskStatus(baseline.status) && task.updatedAt > baseline.updatedAt) {
+				return true;
+			}
+
+			// Activation may have happened between the caller's trigger and our first poll.
+			// In that case the reused execution is already active in the baseline snapshot.
+			return baseline.status === 'open' || baseline.status === 'in_progress';
+		});
 		if (match) return match;
 		await new Promise((resolve) => setTimeout(resolve, 300));
 	}

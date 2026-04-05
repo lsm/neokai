@@ -117,7 +117,7 @@ async function driveToCodePrGateOpen(
 
 	await mockAgentDone(daemon, space.id, planningTask.id, 'Plan PR opened');
 	await writeGateData(daemon, runId, 'plan-pr-gate', {
-		plan_submitted: 'https://github.com/example/repo/pull/10',
+		pr_url: 'https://github.com/example/repo/pull/10',
 		pr_number: 10,
 		branch: 'plan/test-feature',
 	});

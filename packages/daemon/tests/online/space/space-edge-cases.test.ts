@@ -120,7 +120,7 @@ describe('Space Workflow — Edge Cases', () => {
 
 			// Write gate data to runA only — verify runB gate is still empty
 			await writeGateData(daemon, runA, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/100',
+				pr_url: 'https://github.com/example/repo/pull/100',
 				pr_number: 100,
 				branch: 'plan/run-a',
 			});
@@ -129,7 +129,7 @@ describe('Space Workflow — Edge Cases', () => {
 			const gateB = await readGateData(daemon, runB, 'plan-pr-gate');
 
 			expect(gateA).not.toBeNull();
-			expect(gateA!.data.plan_submitted).toBe('https://github.com/example/repo/pull/100');
+			expect(gateA!.data.pr_url).toBe('https://github.com/example/repo/pull/100');
 			// runB's gate is untouched — gate isolation verified
 			expect(gateB).toBeNull();
 
@@ -315,7 +315,7 @@ describe('Space Workflow — Edge Cases', () => {
 
 				// Simulate planner writing plan-pr-gate (waiting for human review)
 				await writeGateData(daemon, runId, 'plan-pr-gate', {
-					plan_submitted: 'https://github.com/example/repo/pull/42',
+					pr_url: 'https://github.com/example/repo/pull/42',
 					pr_number: 42,
 					branch: 'plan/persistence-test',
 				});
@@ -336,9 +336,7 @@ describe('Space Workflow — Edge Cases', () => {
 				// plan-pr-gate data must survive
 				const gateAfterRestart = await readGateData(daemon, runId, 'plan-pr-gate');
 				expect(gateAfterRestart).not.toBeNull();
-				expect(gateAfterRestart!.data.plan_submitted).toBe(
-					'https://github.com/example/repo/pull/42'
-				);
+				expect(gateAfterRestart!.data.pr_url).toBe('https://github.com/example/repo/pull/42');
 				expect(gateAfterRestart!.data.pr_number).toBe(42);
 
 				// plan-approval-gate partial state must survive
@@ -388,7 +386,7 @@ describe('Space Workflow — Edge Cases', () => {
 
 				// ── Step 1: advance through Planning → Plan Review → Coding ────
 				await writeGateData(daemon, runId, 'plan-pr-gate', {
-					plan_submitted: 'https://github.com/example/repo/pull/10',
+					pr_url: 'https://github.com/example/repo/pull/10',
 					pr_number: 10,
 				});
 				await waitForNodeActivated(daemon, space.id, runId, 'Plan Review', NODE_ACTIVATION_TIMEOUT);
