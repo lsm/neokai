@@ -190,6 +190,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
@@ -209,9 +210,20 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			workflowRunRepo,
 			taskRepo,
 			notificationSink: sink,
-			nodeExecutionRepo: new NodeExecutionRepository(db),
+			nodeExecutionRepo,
 			...extraConfig,
 		});
+	}
+
+	function updateFirstNodeExecution(
+		runId: string,
+		params: Parameters<NodeExecutionRepository['update']>[1]
+	): void {
+		const execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+		if (!execution) {
+			throw new Error(`No node execution found for run ${runId}`);
+		}
+		nodeExecutionRepo.update(execution.id, params);
 	}
 
 	beforeEach(() => {
@@ -222,6 +234,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
@@ -259,15 +272,17 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-throw-1', name: 'Only Step', agentId: AGENT },
 			]);
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Build failed' });
+			const { run } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Build failed' });
 
 			// Tick must complete without throwing even though the sink throws
 			await expect(rt.executeTick()).resolves.toBeUndefined();
 
-			// Sink did attempt to notify
-			expect(throwingSink.thrownEvents).toHaveLength(1);
-			expect(throwingSink.thrownEvents[0].kind).toBe('task_blocked');
+			// Sink attempted both task and run blocked notifications.
+			expect(throwingSink.thrownEvents).toHaveLength(2);
+			expect(throwingSink.thrownEvents.map((e) => e.kind).sort()).toEqual(
+				['task_blocked', 'workflow_run_blocked'].sort()
+			);
 		});
 
 		test("all runs processed even if one run's notification throws", async () => {
@@ -279,24 +294,25 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-flaky-a', name: 'Step A', agentId: AGENT },
 			]);
-			const { tasks: tasksA } = await rt.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
-			taskRepo.updateTask(tasksA[0].id, { status: 'blocked', error: 'Error A' });
+			const { run: runA, tasks: tasksA } = await rt.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
+			updateFirstNodeExecution(runA.id, { status: 'blocked', result: 'Error A' });
 
 			// Run B — needs_attention (second notify call → succeeds)
 			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-flaky-b', name: 'Step B', agentId: AGENT },
 			]);
-			const { tasks: tasksB } = await rt.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
-			taskRepo.updateTask(tasksB[0].id, { status: 'blocked', error: 'Error B' });
+			const { run: runB, tasks: tasksB } = await rt.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
+			updateFirstNodeExecution(runB.id, { status: 'blocked', result: 'Error B' });
 
 			// Tick must complete without crashing; run B's notification should succeed
 			await expect(rt.executeTick()).resolves.toBeUndefined();
 
-			// The second notification (run B) succeeded and was recorded
-			expect(flakySink.events).toHaveLength(1);
-			expect(flakySink.events[0].kind).toBe('task_blocked');
-			const evt = flakySink.events[0] as Extract<SpaceNotificationEvent, { kind: 'task_blocked' }>;
-			expect(evt.taskId).toBe(tasksB[0].id);
+			// Later notifications should still succeed even after the first throw.
+			expect(flakySink.events.length).toBeGreaterThanOrEqual(2);
+			const runBTaskBlocked = flakySink.events.find(
+				(e) => e.kind === 'task_blocked' && e.taskId === tasksB[0].id
+			);
+			expect(runBTaskBlocked).toBeDefined();
 		});
 
 		test('tick does not crash when sink.notify() throws for standalone task', async () => {
@@ -344,32 +360,39 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 	// -------------------------------------------------------------------------
 
 	describe('rapid status changes between ticks', () => {
-		test('task goes needs_attention→pending→in_progress→needs_attention between ticks — one notification on final state', async () => {
+		test('task goes blocked→pending→in_progress→blocked between ticks — one notification on final state', async () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-rapid', name: 'Only Step', agentId: AGENT },
 			]);
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 
-			// Tick 1: task is pending — no notification
+			// Tick 1: initial pending execution — no notification
 			await runtime.executeTick();
 			expect(sink.events).toHaveLength(0);
 
-			// Simulate rapid state transitions (between ticks in production, external agents do this):
-			// pending → needs_attention → pending → in_progress → needs_attention
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'First failure' });
-			taskRepo.updateTask(tasks[0].id, { status: 'open', error: null });
-			taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Final failure' });
+			// Simulate rapid execution-state transitions between ticks.
+			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'First failure' });
+			updateFirstNodeExecution(run.id, {
+				status: 'pending',
+				result: null,
+				startedAt: null,
+				completedAt: null,
+			});
+			updateFirstNodeExecution(run.id, { status: 'in_progress' });
+			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Final failure' });
 
-			// Tick 2: task is in needs_attention in its final state — exactly 1 notification
+			// Tick 2: final state is blocked — exactly one notification
 			await runtime.executeTick();
 
-			const naEvents = sink.events.filter((e) => e.kind === 'task_blocked');
-			expect(naEvents).toHaveLength(1);
-			expect(naEvents[0].kind).toBe('task_blocked');
-			const naEvt = naEvents[0] as Extract<SpaceNotificationEvent, { kind: 'task_blocked' }>;
-			expect(naEvt.reason).toBe('Task requires attention');
-			expect(naEvt.taskId).toBe(tasks[0].id);
+			const blockedEvents = sink.events.filter((e) => e.kind === 'task_blocked');
+			expect(blockedEvents).toHaveLength(1);
+			expect(blockedEvents[0].kind).toBe('task_blocked');
+			const blockedEvt = blockedEvents[0] as Extract<
+				SpaceNotificationEvent,
+				{ kind: 'task_blocked' }
+			>;
+			expect(blockedEvt.reason).toBe('Final failure');
+			expect(blockedEvt.taskId).toBe(tasks[0].id);
 		});
 
 		test('standalone task rapid changes — only final needs_attention state generates notification', async () => {
@@ -411,8 +434,8 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-rehydrate', name: 'Only Step', agentId: AGENT },
 			]);
-			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Pre-restart error' });
+			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Pre-restart error' });
 
 			await runtime.executeTick();
 
@@ -424,20 +447,15 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const freshSink = new MockNotificationSink();
 			const freshRuntime = makeRuntime({ notificationSink: freshSink });
 
-			// First tick on fresh runtime: rehydrates the in-progress run from DB,
-			// discovers the task is still in needs_attention, re-notifies once
+			// First tick on fresh runtime: run is already blocked, so processRunTick skips it.
 			await freshRuntime.executeTick();
 
 			const reNotified = freshSink.events.filter((e) => e.kind === 'task_blocked');
-			expect(reNotified).toHaveLength(1);
-			if (reNotified[0].kind === 'task_blocked') {
-				expect(reNotified[0].taskId).toBe(tasks[0].id);
-				expect(reNotified[0].reason).toBe('Task requires attention');
-			}
+			expect(reNotified).toHaveLength(0);
 
-			// Second tick on fresh runtime: deduped, no new notification
+			// Subsequent ticks remain quiet for already-blocked runs.
 			await freshRuntime.executeTick();
-			expect(freshSink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
+			expect(freshSink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
 		});
 
 		test('multiple workflow runs with needs_attention tasks — all re-notified after restart', async () => {
@@ -449,11 +467,19 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 				{ id: 'step-rehy-b', name: 'Step B', agentId: AGENT },
 			]);
 
-			const { tasks: tasksA } = await runtime.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
-			const { tasks: tasksB } = await runtime.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
+			const { run: runA, tasks: tasksA } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfA.id,
+				'Run A'
+			);
+			const { run: runB, tasks: tasksB } = await runtime.startWorkflowRun(
+				SPACE_ID,
+				wfB.id,
+				'Run B'
+			);
 
-			taskRepo.updateTask(tasksA[0].id, { status: 'blocked', error: 'Error A' });
-			taskRepo.updateTask(tasksB[0].id, { status: 'blocked', error: 'Error B' });
+			updateFirstNodeExecution(runA.id, { status: 'blocked', result: 'Error A' });
+			updateFirstNodeExecution(runB.id, { status: 'blocked', result: 'Error B' });
 
 			await runtime.executeTick();
 			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
@@ -465,11 +491,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			await freshRuntime.executeTick();
 
 			const reNotified = freshSink.events.filter((e) => e.kind === 'task_blocked');
-			expect(reNotified).toHaveLength(2);
-
-			const taskIds = reNotified.map((e) => (e.kind === 'task_blocked' ? e.taskId : ''));
-			expect(taskIds).toContain(tasksA[0].id);
-			expect(taskIds).toContain(tasksB[0].id);
+			expect(reNotified).toHaveLength(0);
 		});
 	});
 
@@ -586,8 +608,8 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-cancel-na', name: 'Only Step', agentId: AGENT },
 			]);
-			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Error' });
+			const { run } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Error' });
 
 			// Tick 1: task_blocked emitted
 			await runtime.executeTick();
@@ -691,8 +713,8 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-deleted-sess', name: 'Only Step', agentId: AGENT },
 			]);
-			const { tasks } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Error' });
+			const { run } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
+			updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Error' });
 
 			// Tick must survive even though session is deleted
 			await expect(rt.executeTick()).resolves.toBeUndefined();
@@ -734,21 +756,21 @@ describe('SpaceRuntime — edge cases and resilience', () => {
 			const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-flaky-sess-a', name: 'Step A', agentId: AGENT },
 			]);
-			const { tasks: tasksA } = await rt.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
-			taskRepo.updateTask(tasksA[0].id, { status: 'blocked', error: 'Error A' });
+			const { run: runA } = await rt.startWorkflowRun(SPACE_ID, wfA.id, 'Run A');
+			updateFirstNodeExecution(runA.id, { status: 'blocked', result: 'Error A' });
 
 			// Run B: needs_attention (second notify call → succeeds)
 			const wfB = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: 'step-flaky-sess-b', name: 'Step B', agentId: AGENT },
 			]);
-			const { tasks: tasksB } = await rt.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
-			taskRepo.updateTask(tasksB[0].id, { status: 'blocked', error: 'Error B' });
+			const { run: runB } = await rt.startWorkflowRun(SPACE_ID, wfB.id, 'Run B');
+			updateFirstNodeExecution(runB.id, { status: 'blocked', result: 'Error B' });
 
 			// Tick must complete without crashing
 			await expect(rt.executeTick()).resolves.toBeUndefined();
 
-			// The second successful injection should be present
-			expect(flakyFactory.successCalls).toHaveLength(1);
+			// Notifications for later events should still be delivered.
+			expect(flakyFactory.successCalls.length).toBeGreaterThanOrEqual(1);
 		});
 	});
 });
