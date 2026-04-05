@@ -58,13 +58,13 @@ export function useClickOutside(
 
 		// Delay to avoid triggering from the same click that opened the element
 		const timeoutId = setTimeout(() => {
-			document.addEventListener('click', handleClickOutside);
+			document.addEventListener('mousedown', handleClickOutside);
 			document.addEventListener('keydown', handleEscape);
 		}, 0);
 
 		return () => {
 			clearTimeout(timeoutId);
-			document.removeEventListener('click', handleClickOutside);
+			document.removeEventListener('mousedown', handleClickOutside);
 			document.removeEventListener('keydown', handleEscape);
 		};
 	}, [ref, handler, enabled, excludeRefs]);

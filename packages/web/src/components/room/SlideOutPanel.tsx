@@ -91,7 +91,7 @@ export function SlideOutPanel({
 			<div
 				data-testid="slide-out-backdrop"
 				class={[
-					'fixed inset-0 bg-black/40 z-40 transition-opacity duration-300',
+					'fixed inset-0 bg-black/40 z-40 transition-opacity duration-300 cursor-pointer',
 					isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
 				].join(' ')}
 				onClick={onClose}

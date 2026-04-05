@@ -132,15 +132,28 @@ export function RoomTasks({
 
 	if (tasks.length === 0) {
 		return (
-			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
-				<p class="text-gray-400">No tasks yet</p>
-				<p class="text-sm text-gray-500 mt-1">Create a task to get started</p>
+			<div class="max-w-3xl mx-auto px-5 flex flex-col items-center justify-center py-16 text-center">
+				<svg
+					class="w-10 h-10 text-gray-700 mb-3"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={1.5}
+						d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+					/>
+				</svg>
+				<p class="text-sm text-gray-400 font-medium">No tasks yet</p>
+				<p class="text-xs text-gray-600 mt-1">Create a mission to get started</p>
 			</div>
 		);
 	}
 
 	return (
-		<div class="space-y-4">
+		<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
 			{/* Tab Bar */}
 			<div class="flex border-b border-dark-700">
 				<TabButton
@@ -262,9 +275,9 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 	const { title, description } = messages[tab];
 
 	return (
-		<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
-			<p class="text-gray-400">{title}</p>
-			<p class="text-sm text-gray-500 mt-1">{description}</p>
+		<div class="flex flex-col items-center justify-center py-12 text-center">
+			<p class="text-sm text-gray-400 font-medium">{title}</p>
+			<p class="text-xs text-gray-500 mt-1">{description}</p>
 		</div>
 	);
 }
@@ -478,7 +491,7 @@ function TaskGroup({
 	};
 
 	return (
-		<div class={`bg-dark-850 border rounded-lg overflow-hidden ${borderStyles[variant]}`}>
+		<div class={`bg-dark-850 border rounded-xl overflow-hidden ${borderStyles[variant]}`}>
 			<div
 				class={`px-4 py-3 border-b ${borderStyles[variant]} ${headerStyles[variant]} flex items-center gap-1`}
 			>

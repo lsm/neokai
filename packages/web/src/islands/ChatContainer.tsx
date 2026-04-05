@@ -79,9 +79,15 @@ import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 interface ChatContainerProps {
 	sessionId: string;
 	readonly?: boolean;
+	/** When true, suppress the room breadcrumb in ChatHeader (used when embedded in Room tab) */
+	hideRoomBreadcrumb?: boolean;
 }
 
-export default function ChatContainer({ sessionId, readonly = false }: ChatContainerProps) {
+export default function ChatContainer({
+	sessionId,
+	readonly = false,
+	hideRoomBreadcrumb = false,
+}: ChatContainerProps) {
 	// ========================================
 	// Refs
 	// ========================================
@@ -317,13 +323,15 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	}, [session?.config?.features, sessionId]);
 
 	// Compute room context breadcrumb for sessions inside a room
+	// Suppressed when embedded in Room Chat tab (hideRoomBreadcrumb=true)
 	const roomContext: RoomContext | undefined = useMemo(() => {
+		if (hideRoomBreadcrumb) return undefined;
 		const roomId = session?.context?.roomId;
 		if (!roomId) return undefined;
 		const room = lobbyStore.rooms.value.find((r) => r.id === roomId);
 		if (!room) return undefined;
 		return { roomName: room.name, roomId: room.id };
-	}, [session?.context?.roomId]);
+	}, [session?.context?.roomId, hideRoomBreadcrumb]);
 
 	// Sync context from sessionStore
 	useSignalEffect(() => {
@@ -942,7 +950,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
-					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
+					class="absolute inset-0 overflow-y-auto overscroll-contain touch-pan-y"
 					style={{
 						WebkitOverflowScrolling: 'touch',
 						paddingBottom: `${messagesBottomPadding}px`,

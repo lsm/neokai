@@ -69,3 +69,4 @@ export {
 	type UseReferenceAutocompleteResult,
 } from './useReferenceAutocomplete';
 export { useViewportSafety } from './useViewportSafety';
+export { useClickOutside } from './useClickOutside';

@@ -62,6 +62,10 @@ export const currentRoomTabSignal = signal<string | null>(null);
 // This persists across renders unlike currentRoomTabSignal which is transient
 export const currentRoomActiveTabSignal = signal<string | null>(null);
 
+// Whether the room agent chat tab is active (driven by /room/:roomId/agent URL)
+// When true, Room.tsx renders the Chat tab instead of session takeover
+export const currentRoomAgentActiveSignal = signal<boolean>(false);
+
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'

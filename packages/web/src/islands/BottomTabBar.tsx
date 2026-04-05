@@ -7,6 +7,7 @@ import {
 	currentRoomTaskIdSignal,
 	currentRoomTabSignal,
 	currentRoomActiveTabSignal,
+	currentRoomAgentActiveSignal,
 	type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -16,13 +17,12 @@ import {
 	navigateToInbox,
 	navigateToRoom,
 	navigateToRoomAgent,
-	navigateToHome,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id: NavSection | 'room-agent' | 'room-overview' | 'room-missions' | 'room-home';
+	id: NavSection | 'room-agent' | 'room-overview' | 'room-tasks' | 'room-agents' | 'room-missions';
 	label: string;
 	icon: () => JSX.Element;
 }
@@ -77,17 +77,6 @@ const SettingsIcon = () => (
 	</svg>
 );
 
-const HomeIcon = () => (
-	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-		<path
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			stroke-width={2}
-			d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
-		/>
-	</svg>
-);
-
 const MissionIcon = () => (
 	<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 		<path
@@ -95,6 +84,39 @@ const MissionIcon = () => (
 			stroke-linejoin="round"
 			stroke-width={2}
 			d="M13 10V3L4 14h7v7l9-11h-7z"
+		/>
+	</svg>
+);
+
+const TasksIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+		/>
+	</svg>
+);
+
+const AgentsIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+		/>
+	</svg>
+);
+
+const RoomChatIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
 		/>
 	</svg>
 );
@@ -118,10 +140,11 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 ];
 
 const ROOM_BOTTOM_TABS: TabItem[] = [
+	{ id: 'room-agent', label: 'Coord.', icon: RoomChatIcon },
 	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
-	{ id: 'room-agent', label: 'Agent', icon: ChatsIcon },
+	{ id: 'room-tasks', label: 'Tasks', icon: TasksIcon },
+	{ id: 'room-agents', label: 'Agents', icon: AgentsIcon },
 	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
-	{ id: 'room-home', label: '/', icon: HomeIcon },
 ];
 
 export function BottomTabBar() {
@@ -164,14 +187,15 @@ export function BottomTabBar() {
 
 	const navSection = navSectionSignal.value;
 	const roomId = currentRoomIdSignal.value;
-	const roomSessionId = currentRoomSessionIdSignal.value;
 	const inboxBadgeCount = inboxStore.reviewCount.value;
 
+	const roomSessionId = currentRoomSessionIdSignal.value;
 	const roomTaskId = currentRoomTaskIdSignal.value;
 	const isInRoomContext = navSection === 'rooms' && roomId !== null;
-	const isViewingRoomAgent = roomSessionId === `room:chat:${roomId}`;
-	// Overview is only active when on the room dashboard (no task and no session open)
-	const isViewingRoomDashboard = roomSessionId === null && roomTaskId === null;
+	const isViewingRoomAgent = currentRoomAgentActiveSignal.value;
+	// Overview is only active when on the room dashboard (no task, no session, no agent chat)
+	const isViewingRoomDashboard =
+		!isViewingRoomAgent && roomTaskId === null && roomSessionId === null;
 
 	const tabs = isInRoomContext ? ROOM_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
 
@@ -192,8 +216,20 @@ export function BottomTabBar() {
 			case 'room-overview':
 				if (roomId) navigateToRoom(roomId);
 				break;
+			case 'room-tasks':
+				if (roomId) {
+					currentRoomTabSignal.value = 'tasks';
+					navigateToRoom(roomId);
+				}
+				break;
 			case 'room-agent':
 				if (roomId) navigateToRoomAgent(roomId);
+				break;
+			case 'room-agents':
+				if (roomId) {
+					currentRoomTabSignal.value = 'agents';
+					navigateToRoom(roomId);
+				}
 				break;
 			case 'room-missions':
 				if (roomId) {
@@ -201,22 +237,20 @@ export function BottomTabBar() {
 					navigateToRoom(roomId);
 				}
 				break;
-			case 'room-home':
-				navigateToHome();
-				break;
 		}
 	};
 
 	const isTabActive = (id: TabItem['id']): boolean => {
 		if (isInRoomContext) {
-			if (id === 'room-agent') return isViewingRoomAgent;
+			if (id === 'room-agent') return currentRoomActiveTabSignal.value === 'chat';
+			if (id === 'room-tasks') return currentRoomActiveTabSignal.value === 'tasks';
+			if (id === 'room-agents') return currentRoomActiveTabSignal.value === 'agents';
 			if (id === 'room-missions') return currentRoomActiveTabSignal.value === 'goals';
-			// Overview is only active when on dashboard and no specific room tab is selected
 			if (id === 'room-overview')
 				return (
 					isViewingRoomDashboard &&
 					navSection === 'rooms' &&
-					currentRoomActiveTabSignal.value !== 'goals'
+					!['goals', 'tasks', 'agents', 'chat'].includes(currentRoomActiveTabSignal.value ?? '')
 				);
 		}
 		return navSection === id;
@@ -228,33 +262,38 @@ export function BottomTabBar() {
 			data-testid="bottom-tab-bar"
 			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md border-t border-dark-700 pb-safe"
 			role="tablist"
-			aria-label="Main navigation"
+			aria-label={isInRoomContext ? 'Room navigation' : 'Main navigation'}
 		>
-			{tabs.map((tab) => {
-				const isActive = isTabActive(tab.id);
-				const isInbox = tab.id === 'inbox';
-				const badge = isInbox ? inboxBadgeCount : 0;
+			<div
+				class="flex w-full transition-opacity duration-200 ease-out"
+				key={isInRoomContext ? 'room' : 'global'}
+			>
+				{tabs.map((tab) => {
+					const isActive = isTabActive(tab.id);
+					const isInbox = tab.id === 'inbox';
+					const badge = isInbox ? inboxBadgeCount : 0;
 
-				return (
-					<button
-						key={tab.id}
-						type="button"
-						role="tab"
-						aria-selected={isActive}
-						aria-label={tab.label}
-						onClick={() => handleTabClick(tab.id)}
-						class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
-							isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
-						}`}
-					>
-						<div class="relative">
-							<tab.icon />
-							<InboxBadge count={badge} class="absolute -top-0.5 -right-0.5" />
-						</div>
-						<span class="text-[10px] font-medium leading-none">{tab.label}</span>
-					</button>
-				);
-			})}
+					return (
+						<button
+							key={tab.id}
+							type="button"
+							role="tab"
+							aria-selected={isActive}
+							aria-label={tab.label}
+							onClick={() => handleTabClick(tab.id)}
+							class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
+								isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
+							}`}
+						>
+							<div class="relative">
+								<tab.icon />
+								<InboxBadge count={badge} class="absolute -top-0.5 -right-0.5" />
+							</div>
+							<span class="text-[10px] font-medium leading-none">{tab.label}</span>
+						</button>
+					);
+				})}
+			</div>
 		</div>
 	);
 }

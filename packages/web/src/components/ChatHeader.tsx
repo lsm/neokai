@@ -186,9 +186,9 @@ export function ChatHeader({
 
 	return (
 		<div
-			class={`flex-shrink-0 bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4 relative z-10`}
+			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 py-3 relative z-10`}
 		>
-			<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
+			<div class="flex items-center gap-3">
 				<MobileMenuButton />
 
 				{/* Session title and stats */}
@@ -216,50 +216,57 @@ export function ChatHeader({
 							</svg>
 						</div>
 					)}
-					<h2 data-testid="chat-header-title" class="text-lg font-semibold text-gray-100 truncate">
-						{session?.title || 'New Session'}
-					</h2>
-					<div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
-						<span class="flex items-center gap-1" title="Total tokens">
-							<svg class="w-3 h-3" fill="currentColor" viewBox="-1 -1 18 18">
-								<path d="M8 2a.5.5 0 0 1 .5.5V4a.5.5 0 0 1-1 0V2.5A.5.5 0 0 1 8 2M3.732 3.732a.5.5 0 0 1 .707 0l.915.914a.5.5 0 1 1-.708.708l-.914-.915a.5.5 0 0 1 0-.707M2 8a.5.5 0 0 1 .5-.5h1.586a.5.5 0 0 1 0 1H2.5A.5.5 0 0 1 2 8m9.5 0a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5m.754-4.246a.39.39 0 0 0-.527-.02L7.547 7.31A.91.91 0 1 0 8.85 8.569l3.434-4.297a.39.39 0 0 0-.029-.518z" />
-								<path
-									fill-rule="evenodd"
-									d="M6.664 15.889A8 8 0 1 1 9.336.11a8 8 0 0 1-2.672 15.78zm-4.665-4.283A11.95 11.95 0 0 1 8 10c2.186 0 4.236.585 6.001 1.606a7 7 0 1 0-12.002 0"
-								/>
-							</svg>
-							{formatTokens(displayStats.totalTokens)}
-						</span>
-						<span class="text-gray-500">•</span>
-						<span class="font-mono text-green-400">${displayStats.totalCost.toFixed(4)}</span>
-						{session?.config?.model && (
-							<>
-								<span class="text-gray-500">•</span>
-								<span class="text-blue-400 font-medium" title={session.config.model}>
-									{getModelLabel(session.config.model)}
-								</span>
-							</>
-						)}
-					</div>
-					{/* Git branch info */}
-					{(session?.worktree?.branch || session?.gitBranch) && (
-						<div class="flex items-center gap-1.5 mt-1 text-xs text-gray-500">
-							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
-								/>
-							</svg>
-							<span class="font-mono">{session?.worktree?.branch || session?.gitBranch}</span>
-							{session?.worktree && (
-								<Tooltip content="Using isolated git worktree" position="bottom">
-									<GitBranchIcon className="w-3.5 h-3.5 text-purple-400" />
-								</Tooltip>
+					<div class="flex items-center gap-3">
+						<h2
+							data-testid="chat-header-title"
+							class="text-sm font-semibold text-gray-100 truncate"
+						>
+							{session?.title || 'New Session'}
+						</h2>
+						<div class="flex items-center gap-2 text-xs text-gray-400">
+							<span class="flex items-center gap-1" title="Total tokens">
+								<svg class="w-3 h-3" fill="currentColor" viewBox="-1 -1 18 18">
+									<path d="M8 2a.5.5 0 0 1 .5.5V4a.5.5 0 0 1-1 0V2.5A.5.5 0 0 1 8 2M3.732 3.732a.5.5 0 0 1 .707 0l.915.914a.5.5 0 1 1-.708.708l-.914-.915a.5.5 0 0 1 0-.707M2 8a.5.5 0 0 1 .5-.5h1.586a.5.5 0 0 1 0 1H2.5A.5.5 0 0 1 2 8m9.5 0a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1H12a.5.5 0 0 1-.5-.5m.754-4.246a.39.39 0 0 0-.527-.02L7.547 7.31A.91.91 0 1 0 8.85 8.569l3.434-4.297a.39.39 0 0 0-.029-.518z" />
+									<path
+										fill-rule="evenodd"
+										d="M6.664 15.889A8 8 0 1 1 9.336.11a8 8 0 0 1-2.672 15.78zm-4.665-4.283A11.95 11.95 0 0 1 8 10c2.186 0 4.236.585 6.001 1.606a7 7 0 1 0-12.002 0"
+									/>
+								</svg>
+								{formatTokens(displayStats.totalTokens)}
+							</span>
+							<span class="text-gray-600">·</span>
+							<span class="font-mono text-green-400">${displayStats.totalCost.toFixed(4)}</span>
+							{session?.config?.model && (
+								<>
+									<span class="text-gray-600">·</span>
+									<span class="text-blue-400 font-medium" title={session.config.model}>
+										{getModelLabel(session.config.model)}
+									</span>
+								</>
+							)}
+							{(session?.worktree?.branch || session?.gitBranch) && (
+								<>
+									<span class="text-gray-600">·</span>
+									<span class="flex items-center gap-1 font-mono text-gray-500">
+										<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
+											/>
+										</svg>
+										{session?.worktree?.branch || session?.gitBranch}
+										{session?.worktree && (
+											<Tooltip content="Using isolated git worktree" position="bottom">
+												<GitBranchIcon className="w-3.5 h-3.5 text-purple-400" />
+											</Tooltip>
+										)}
+									</span>
+								</>
 							)}
 						</div>
-					)}
+					</div>
 				</div>
 
 				{/* Options dropdown */}

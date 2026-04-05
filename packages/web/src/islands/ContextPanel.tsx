@@ -348,7 +348,10 @@ export function ContextPanel() {
 		<>
 			{/* Mobile backdrop */}
 			{isPanelOpen && (
-				<div class="fixed inset-0 bg-black/50 z-35 md:hidden" onClick={handlePanelClose} />
+				<div
+					class="fixed inset-0 bg-black/50 z-35 md:hidden cursor-pointer"
+					onClick={handlePanelClose}
+				/>
 			)}
 
 			{/* Space Create Dialog */}
@@ -395,7 +398,12 @@ export function ContextPanel() {
 
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
-					<div class="flex items-center justify-between mb-3">
+					<div
+						class={cn(
+							'flex items-center justify-between',
+							!isRoomDetail && !isSpaceDetail && 'mb-3'
+						)}
+					>
 						{isSpaceDetail ? (
 							<div class="flex items-center gap-1 mr-2 overflow-hidden">
 								<button

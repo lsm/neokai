@@ -85,7 +85,7 @@ describe('CompleteTaskDialog', () => {
 				onConfirm={vi.fn()}
 			/>
 		);
-		expect(getByText('My Special Task')).not.toBeNull();
+		expect(getByText(/My Special Task/)).not.toBeNull();
 	});
 
 	it('calls onConfirm with summary text when confirm button clicked', async () => {
@@ -230,8 +230,9 @@ describe('SetStatusModal', () => {
 			<SetStatusModal task={makeTask()} isOpen={true} onClose={vi.fn()} onConfirm={onConfirm} />
 		);
 
-		// Confirm button should be disabled without a selection
+		// Clicking confirm without a selection should show an error, not call onConfirm
 		const confirmBtn = getByTestId('set-status-confirm') as HTMLButtonElement;
-		expect(confirmBtn.disabled).toBe(true);
+		fireEvent.click(confirmBtn);
+		expect(onConfirm).not.toHaveBeenCalled();
 	});
 });

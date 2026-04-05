@@ -19,6 +19,8 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomAgentActiveSignal,
+	currentRoomActiveTabSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -371,6 +373,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -393,6 +396,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -423,8 +427,10 @@ export function navigateToRoomAgent(roomId: string, replace = false): void {
 
 	if (currentPath === targetPath) {
 		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = `room:chat:${roomId}`;
+		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = true;
+		currentRoomActiveTabSignal.value = 'chat';
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -439,8 +445,10 @@ export function navigateToRoomAgent(roomId: string, replace = false): void {
 		window.history[historyMethod]({ roomId, path: targetPath }, '', targetPath);
 
 		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = `room:chat:${roomId}`;
+		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = true;
+		currentRoomActiveTabSignal.value = 'chat';
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -475,6 +483,7 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = sessionId;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -497,6 +506,7 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = sessionId;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -530,6 +540,7 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		currentRoomIdSignal.value = roomId;
 		currentRoomTaskIdSignal.value = taskId;
 		currentRoomSessionIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -546,6 +557,7 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		currentRoomIdSignal.value = roomId;
 		currentRoomTaskIdSignal.value = taskId;
 		currentRoomSessionIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -1050,8 +1062,10 @@ function handlePopState(_event: PopStateEvent): void {
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = roomAgent;
-		currentRoomSessionIdSignal.value = `room:chat:${roomAgent}`;
+		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = true;
+		currentRoomActiveTabSignal.value = 'chat';
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomTask) {
@@ -1062,6 +1076,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomIdSignal.value = roomTask.roomId;
 		currentRoomTaskIdSignal.value = roomTask.taskId;
 		currentRoomSessionIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomSession) {
@@ -1072,6 +1087,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomIdSignal.value = roomSession.roomId;
 		currentRoomSessionIdSignal.value = roomSession.sessionId;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomId) {
@@ -1082,6 +1098,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 		// Normalize legacy /room/:id/chat URL → /room/:id so the address bar stays clean
@@ -1218,8 +1235,10 @@ export function initializeRouter(): string | null {
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = initialRoomAgent;
-		currentRoomSessionIdSignal.value = `room:chat:${initialRoomAgent}`;
+		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = true;
+		currentRoomActiveTabSignal.value = 'chat';
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (initialRoomTask) {
