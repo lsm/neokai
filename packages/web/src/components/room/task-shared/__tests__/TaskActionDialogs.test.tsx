@@ -230,8 +230,9 @@ describe('SetStatusModal', () => {
 			<SetStatusModal task={makeTask()} isOpen={true} onClose={vi.fn()} onConfirm={onConfirm} />
 		);
 
-		// Confirm button should be disabled without a selection
+		// Clicking confirm without a selection should show an error, not call onConfirm
 		const confirmBtn = getByTestId('set-status-confirm') as HTMLButtonElement;
-		expect(confirmBtn.disabled).toBe(true);
+		fireEvent.click(confirmBtn);
+		expect(onConfirm).not.toHaveBeenCalled();
 	});
 });

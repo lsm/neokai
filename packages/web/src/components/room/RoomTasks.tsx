@@ -132,7 +132,7 @@ export function RoomTasks({
 
 	if (tasks.length === 0) {
 		return (
-			<div class="max-w-3xl mx-auto px-5 py-6 flex flex-col items-center justify-center py-16 text-center">
+			<div class="max-w-3xl mx-auto px-5 flex flex-col items-center justify-center py-16 text-center">
 				<svg
 					class="w-10 h-10 text-gray-700 mb-3"
 					fill="none"

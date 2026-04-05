@@ -172,18 +172,11 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							<button
 								type="button"
 								onClick={() => {
-									// Navigate to the first review task
-									const reviewTask = roomStore.tasks.value.find(
-										(t) =>
-											t.status === 'review' ||
-											t.status === 'needs_attention' ||
-											t.status === 'rate_limited' ||
-											t.status === 'usage_limited'
-									);
+									const reviewTask = roomStore.reviewTasks.value[0];
 									if (reviewTask) {
 										navigateToRoomTask(roomId, reviewTask.id);
 									} else {
-										setActiveTab('tasks');
+										handleTabChange('tasks');
 									}
 								}}
 								class="flex items-center gap-2 w-full px-4 py-2 bg-purple-950/40 border-b border-purple-800/30 text-sm text-purple-300 hover:bg-purple-950/60 transition-colors"

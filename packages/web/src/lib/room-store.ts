@@ -159,10 +159,18 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
-	/** Tasks in review status */
-	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
+	/** Tasks requiring human attention (review, needs_attention, rate/usage limited) */
+	readonly reviewTasks = computed(() =>
+		this.tasks.value.filter(
+			(t) =>
+				t.status === 'review' ||
+				t.status === 'needs_attention' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
+		)
+	);
 
-	/** Count of tasks awaiting review */
+	/** Count of tasks awaiting review/attention */
 	readonly reviewTaskCount = computed(() => this.reviewTasks.value.length);
 
 	/** Session count */

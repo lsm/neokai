@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import type { NeoTask, TaskStatus } from '@neokai/shared';
 import { useState } from 'preact/hooks';
 import { ConfirmModal } from '../../ui/ConfirmModal';
@@ -11,7 +12,7 @@ function InfoBox({
 }: {
 	variant: 'info' | 'warning' | 'danger';
 	heading: string;
-	items: string[];
+	items: ComponentChildren[];
 }) {
 	const styles = {
 		info: { bg: 'bg-dark-800 border-dark-600', text: 'text-gray-300' },
@@ -24,7 +25,7 @@ function InfoBox({
 			<p class={`font-medium ${styles.text} mb-1.5`}>{heading}</p>
 			<ul class="list-disc list-inside space-y-1">
 				{items.map((item, i) => (
-					<li key={i} dangerouslySetInnerHTML={{ __html: item }} />
+					<li key={i}>{item}</li>
 				))}
 			</ul>
 		</div>
@@ -80,7 +81,9 @@ export function CompleteTaskDialog({ task, isOpen, onClose, onConfirm }: Complet
 				variant="info"
 				heading="What happens next:"
 				items={[
-					'Task status changes to <span class="text-green-400">completed</span>',
+					<>
+						Task status changes to <span class="text-green-400">completed</span>
+					</>,
 					'Active sessions will be stopped',
 					'Worktree and branch are preserved — you can reactivate later',
 				]}
@@ -149,7 +152,9 @@ export function CancelTaskDialog({ task, isOpen, onClose, onConfirm }: CancelTas
 				variant="warning"
 				heading="This action is reversible:"
 				items={[
-					'Task will be marked as <span class="text-gray-300">cancelled</span>',
+					<>
+						Task will be marked as <span class="text-gray-300">cancelled</span>
+					</>,
 					'Active sessions will be stopped',
 					'Worktree and branch are preserved — you can reactivate later',
 				]}
@@ -206,7 +211,9 @@ export function ArchiveTaskDialog({ task, isOpen, onClose, onConfirm }: ArchiveT
 				variant="danger"
 				heading="This action is permanent:"
 				items={[
-					'Task will be marked as <span class="text-gray-300">archived</span>',
+					<>
+						Task will be marked as <span class="text-gray-300">archived</span>
+					</>,
 					'All sessions will be terminated',
 					'Isolated worktree and branch will be cleaned up',
 					'The task cannot be reactivated after archiving',
@@ -307,12 +314,18 @@ export function SetStatusModal({ task, isOpen, onClose, onConfirm }: SetStatusMo
 		<ConfirmModal
 			isOpen={isOpen}
 			onClose={handleClose}
-			onConfirm={() => void handleConfirm()}
+			onConfirm={() => {
+				if (!selectedStatus) {
+					setError('Please select a new status.');
+					return;
+				}
+				void handleConfirm();
+			}}
 			title="Set Task Status"
 			message={`Current status: ${STATUS_LABELS[task.status]}`}
 			confirmText={isDestructive ? 'Force Set Status' : 'Set Status'}
 			confirmButtonVariant={isDestructive ? 'warning' : 'primary'}
-			isLoading={loading || !selectedStatus}
+			isLoading={loading}
 			error={error}
 			confirmTestId="set-status-confirm"
 		>
