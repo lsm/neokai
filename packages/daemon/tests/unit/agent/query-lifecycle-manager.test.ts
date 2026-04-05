@@ -106,6 +106,7 @@ describe('QueryLifecycleManager', () => {
 			startStreamingQuery: async () => {
 				startStreamingCalled = true;
 			},
+			processExitedPromise: null,
 			// Cleanup support methods
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
@@ -328,6 +329,93 @@ describe('QueryLifecycleManager', () => {
 			expect(closeIdx).not.toBe(-1);
 			expect(interruptIdx).toBeLessThan(promiseIdx);
 			expect(promiseIdx).toBeLessThan(closeIdx);
+		});
+
+		test('awaits processExitedPromise after close() before clearing references', async () => {
+			const callOrder: string[] = [];
+			let resolveExit: () => void;
+			const exitPromise = new Promise<void>((resolve) => {
+				resolveExit = resolve;
+			});
+
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					callOrder.push('close');
+					// Simulate subprocess exit after a short delay (as it would in reality)
+					setTimeout(() => {
+						callOrder.push('process-exited');
+						resolveExit!();
+					}, 20);
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			mockContext.processExitedPromise = exitPromise;
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			// Process should have exited before stop() returned
+			expect(callOrder).toContain('close');
+			expect(callOrder).toContain('process-exited');
+			expect(mockContext.processExitedPromise).toBeNull();
+		});
+
+		test('stop() times out waiting for processExitedPromise', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			// A promise that never resolves — simulates a stuck subprocess
+			mockContext.processExitedPromise = new Promise<void>(() => {});
+			manager = new QueryLifecycleManager(mockContext);
+
+			const start = Date.now();
+			await manager.stop({ timeoutMs: 100 });
+			const elapsed = Date.now() - start;
+
+			// Should have timed out at the specified timeout
+			expect(elapsed).toBeGreaterThanOrEqual(90);
+			expect(elapsed).toBeLessThan(500);
+		});
+
+		test('stop() works when processExitedPromise is null', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			mockContext.processExitedPromise = null;
+			manager = new QueryLifecycleManager(mockContext);
+
+			// Should not throw or hang
+			await manager.stop();
+
+			expect(mockContext.queryObject).toBeNull();
+		});
+
+		test('stop() awaits already-resolved processExitedPromise without delay', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			// Process already exited
+			mockContext.processExitedPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			const start = Date.now();
+			await manager.stop();
+			const elapsed = Date.now() - start;
+
+			// Should complete near-instantly
+			expect(elapsed).toBeLessThan(100);
+			expect(mockContext.processExitedPromise).toBeNull();
 		});
 	});
 

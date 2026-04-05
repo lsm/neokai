@@ -11,7 +11,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -26,6 +27,21 @@ import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { OriginalEnvVars } from '../provider-service';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
+
+/**
+ * Default spawn implementation matching the SDK's internal behavior.
+ * Used when no custom spawnClaudeCodeProcess is configured, so we can
+ * still intercept the subprocess and track its exit.
+ */
+function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
+	const proc = nodeSpawn(opts.command, opts.args, {
+		cwd: opts.cwd,
+		env: opts.env as NodeJS.ProcessEnv,
+		stdio: ['pipe', 'pipe', 'pipe'],
+		signal: opts.signal,
+	});
+	return proc as unknown as SpawnedProcess;
+}
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 
@@ -64,6 +80,8 @@ export interface QueryRunnerContext {
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	originalEnvVars: OriginalEnvVars;
+	/** Resolves when the SDK subprocess exits. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
+	processExitedPromise: Promise<void> | null;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;
@@ -217,6 +235,17 @@ export class QueryRunner {
 			// Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
 			// so SDK subprocesses cannot inherit the daemon's listening port.
 
+			// Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
+			// This lets stop() await the actual process exit instead of using arbitrary delays.
+			const originalSpawn = queryOptions.spawnClaudeCodeProcess;
+			queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
+				const proc = originalSpawn ? originalSpawn(opts) : defaultSpawn(opts);
+				this.ctx.processExitedPromise = new Promise<void>((resolve) => {
+					proc.once('exit', () => resolve());
+				});
+				return proc;
+			};
+
 			// Create query with AsyncGenerator
 			const queryObject = query({
 				prompt: this.createMessageGeneratorWrapper(),
@@ -331,7 +360,10 @@ export class QueryRunner {
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 
-			// Startup timeout is transient — keep sdkSessionId so resume works on retry.
+			// Startup timeout is transient — always keep sdkSessionId so resume works.
+			// Never clear sdkSessionId on timeout: the session file is valid and the
+			// conversation can be resumed once the workspace lock conflict resolves.
+			// Clearing it would lose the ability to resume the conversation history.
 			// "No conversation found" is permanent — clear sdkSessionId so the next
 			// attempt starts fresh instead of looping on a dead conversation.
 			if (isStartupTimeout && session.sdkSessionId) {
@@ -368,6 +400,15 @@ export class QueryRunner {
 						// Ignore close errors — transport may already be in a broken state
 					}
 					this.ctx.queryObject = null;
+				}
+
+				// Wait for the old subprocess to fully exit before retrying.
+				// close() above terminates the process, but we must wait for it to
+				// release workspace locks before spawning a replacement.
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([exitPromise, new Promise((resolve) => setTimeout(resolve, 5000))]);
+					this.ctx.processExitedPromise = null;
 				}
 
 				// Use `return await` so this call's finally{} runs only after the retry

@@ -48,6 +48,8 @@ export interface QueryLifecycleManagerContext {
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
 	firstMessageReceived: boolean;
+	/** Resolves when the SDK subprocess exits. Used by stop() to wait deterministically. */
+	processExitedPromise: Promise<void> | null;
 
 	// Mutable session state
 	pendingRestartReason: 'settings.local.json' | null;
@@ -145,7 +147,20 @@ export class QueryLifecycleManager {
 			}
 		}
 
-		// 5. Clear references
+		// 5. Wait for the SDK subprocess to fully exit after close().
+		// close() sends SIGTERM but the process may take time to clean up.
+		// Without this, starting a new subprocess immediately can fail because
+		// the old process still holds workspace locks (.claude/ files).
+		const processExitedPromise = this.ctx.processExitedPromise;
+		if (processExitedPromise) {
+			await Promise.race([
+				processExitedPromise,
+				new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+			]);
+			this.ctx.processExitedPromise = null;
+		}
+
+		// 6. Clear references
 		this.ctx.queryObject = null;
 		this.ctx.queryPromise = null;
 	}
@@ -167,12 +182,9 @@ export class QueryLifecycleManager {
 			messageHandler.resetCircuitBreaker();
 			await daemonHub.emit('session.errorClear', { sessionId: session.id });
 
+			// stop() now awaits processExitedPromise, so the old SDK subprocess is
+			// guaranteed to have exited before we proceed. No arbitrary delay needed.
 			await this.stop();
-
-			// Small delay to ensure the old SDK subprocess has fully exited.
-			// Without this, the new subprocess may conflict with the old one
-			// on shared resources (session file, API connections).
-			await new Promise((resolve) => setTimeout(resolve, 100));
 
 			// Validate and repair SDK session file before restarting.
 			// The interrupted query may have left the session file in an inconsistent state

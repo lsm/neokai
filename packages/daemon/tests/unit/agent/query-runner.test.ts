@@ -188,6 +188,8 @@ describe('QueryRunner', () => {
 			startupTimeoutTimer: null,
 			originalEnvVars: {},
 
+			processExitedPromise: null,
+
 			// Methods for state coordination
 			incrementQueryGeneration: () => ++queryGeneration,
 			getQueryGeneration: () => queryGeneration,
