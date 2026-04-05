@@ -10,17 +10,18 @@ Follow the existing `TaskView` pattern closely:
 1. Add a new signal (`currentRoomGoalIdSignal`) for URL-driven mission detail navigation
 2. Add route pattern, extraction, path creation, and navigation functions in `router.ts`
 3. Wire the signal into `handlePopState` and `initializeRouter` (with correct ordering -- must be checked before the plain room route since `getRoomIdFromPath` also matches sub-routes)
-4. Create a `useMissionDetailData` hook (like `useTaskViewData`) for data fetching
-5. Create a `MissionDetail` component with the wireframe layout
-6. Render `MissionDetail` as an overlay in `Room.tsx` when the signal is set (same pattern as `TaskViewToggle`)
-7. Add navigation entry points from the Missions list and task view mission badge
+4. **Critical cross-cutting change**: Add `currentRoomGoalIdSignal.value = null` alongside EVERY existing `currentRoomTaskIdSignal.value = null` in all navigate functions, `handlePopState` branches, and `initializeRouter` branches (~50 occurrences in `router.ts`)
+5. Create a `useMissionDetailData` hook (like `useTaskViewData`) for data fetching
+6. Create a `MissionDetail` component with the wireframe layout
+7. Render `MissionDetail` as an overlay in `Room.tsx` when the signal is set (same pattern as `TaskViewToggle`)
+8. Add navigation entry points from the Missions list and task view mission badge
 
 ## Milestones
 
-### M1: Routing Infrastructure
-### M2: Data Hook and MissionDetail Component
-### M3: Navigation Entry Points and Integration
-### M4: Mobile Responsiveness and Polish
+### M1: Routing Infrastructure (Tasks 1-2)
+### M2: Data Hook and MissionDetail Component (Tasks 3-5) -- **Note: depends on M1 Task 2 (placeholder component)**
+### M3: Navigation Entry Points and Integration (Task 6)
+### M4: Testing (Tasks 7-8)
 
 ---
 
@@ -28,7 +29,7 @@ Follow the existing `TaskView` pattern closely:
 
 ### Task 1: Add mission route to router and signals
 
-**Description:** Add the `/room/:roomId/mission/:goalId` route pattern, signal, extraction functions, path creation, and navigation function to the routing layer. Wire the new route into `handlePopState` and `initializeRouter` so deep links and browser back/forward work correctly.
+**Description:** Add the `/room/:roomId/mission/:goalId` route pattern, signal, extraction functions, path creation, and navigation function to the routing layer. Wire the new route into `handlePopState` and `initializeRouter` so deep links and browser back/forward work correctly. **This is the highest-risk task** because it requires adding `currentRoomGoalIdSignal.value = null` alongside every existing `currentRoomTaskIdSignal.value = null` in `router.ts` (~50 occurrences across navigate functions, `handlePopState` branches, and `initializeRouter` branches).
 
 **Subtasks:**
 1. Add `currentRoomGoalIdSignal` to `packages/web/src/lib/signals.ts` (type `string | null`, initialized to `null`)
@@ -39,21 +40,26 @@ Follow the existing `TaskView` pattern closely:
 4. Update `getRoomIdFromPath(path)` to also match `ROOM_MISSION_ROUTE_PATTERN` and return the roomId (same pattern as how `ROOM_TASK_ROUTE_PATTERN` is handled)
 5. Add `createRoomMissionPath(roomId, goalId)` path creation function
 6. Add `navigateToRoomMission(roomId, goalId, replace?)` navigation function following the exact same pattern as `navigateToRoomTask` -- set `currentRoomGoalIdSignal.value`, clear all other signals (`currentRoomTaskIdSignal`, `currentRoomSessionIdSignal`, `currentRoomAgentActiveSignal`, space signals, etc.)
-7. Update `handlePopState` in `router.ts`:
+7. **CROSS-CUTTING: Add `currentRoomGoalIdSignal.value = null` alongside EVERY existing `currentRoomTaskIdSignal.value = null` in `router.ts`**. Run `grep -n 'currentRoomTaskIdSignal.value = null' packages/web/src/lib/router.ts` and add `currentRoomGoalIdSignal.value = null` on the next line at each occurrence. This covers:
+   - All `navigate*` functions: `navigateToRoom`, `navigateToRoomTask`, `navigateToRoomSession`, `navigateToRoomAgent`, `navigateToSpace*`, `navigateToSession`, `navigateToHome`, `navigateToSpaceTask`, `navigateToSpaceSession`, `navigateToSpaceAgent`
+   - All `handlePopState` branches (roomMission, roomTask, roomSession, roomAgent, roomId, space*, session)
+   - All `initializeRouter` branches (initialRoomMission, initialRoomTask, initialRoomSession, initialRoomAgent, initialRoomId, initialSpace*, initialSession)
+   - **Missing even one occurrence will leave stale state that causes the mission overlay to persist when navigating away.**
+8. Update `handlePopState` in `router.ts`:
    - Extract `roomMission` from path
    - Add the check **before** the `roomTask` branch (ordering matters -- both are sub-routes of `/room/:roomId/`)
    - When matched, set `currentRoomGoalIdSignal.value`, clear `currentRoomTaskIdSignal`, set `navSectionSignal.value = 'rooms'`
-8. Update `initializeRouter` in `router.ts`:
+9. Update `initializeRouter` in `router.ts`:
    - Extract `initialRoomMission` from initial path
    - Add the check **before** `initialRoomTask` branch
    - When matched, set `currentRoomGoalIdSignal.value`, clear `currentRoomTaskIdSignal`
-9. Export the new signal from `signals.ts` and the new functions from `router.ts`
-10. Import `currentRoomGoalIdSignal` in `App.tsx` (add to the signal import block) -- no functional change needed, it will be consumed by `MainContent` and `Room`
+10. Export the new signal from `signals.ts` and the new functions from `router.ts`
 
 **Acceptance Criteria:**
 - `currentRoomGoalIdSignal` exists and is exported from `signals.ts`
 - `navigateToRoomMission(roomId, goalId)` updates URL to `/room/:roomId/mission/:goalId` and sets the signal
 - `navigateToRoomMission` clears all other view signals (task, session, agent, space)
+- **Every existing `navigate*` function in `router.ts` clears `currentRoomGoalIdSignal.value`** -- verify by searching for `currentRoomTaskIdSignal.value = null` and confirming `currentRoomGoalIdSignal.value = null` appears immediately after at each location
 - Browser back/forward correctly restores the mission view signal
 - Page refresh on `/room/:roomId/mission/:goalId` correctly sets `currentRoomGoalIdSignal` on init
 - Navigating away from mission view clears `currentRoomGoalIdSignal`
@@ -104,13 +110,24 @@ Follow the existing `TaskView` pattern closely:
 
 ---
 
-### Task 3: Create useMissionDetailData hook
+### Task 3: Create useMissionDetailData hook and export GoalsEditor sub-components
 
-**Description:** Create a custom hook that encapsulates all data fetching and action handlers for the MissionDetail page, following the `useTaskViewData` pattern. The hook derives the goal reactively from `roomStore.goals` (via LiveQuery) and provides methods for updating, deleting, triggering, and scheduling the mission.
+**Description:** Create a custom hook that encapsulates all data fetching and action handlers for the MissionDetail page, following the `useTaskViewData` pattern. The hook derives the goal reactively from `roomStore.goals` (via LiveQuery) and provides methods for updating, deleting, triggering, and scheduling the mission. Also, export the reusable sub-components from `GoalsEditor.tsx` so `MissionDetail` can import them.
 
 **Subtasks:**
-1. Create `packages/web/src/hooks/useMissionDetailData.ts`
-2. Define the hook interface `UseMissionDetailDataResult`:
+1. **Export reusable sub-components from `GoalsEditor.tsx`** (prerequisite for Task 4 and Task 5). Add `export` keyword to these functions (currently defined as bare `function`):
+   - `StatusIndicator` (line ~141)
+   - `PriorityBadge` (line ~159)
+   - `MissionTypeBadge` (line ~175)
+   - `AutonomyBadge` (line ~194)
+   - `ProgressBar` (line ~221)
+   - `MetricProgress` (line ~269)
+   - `RecurringScheduleInfo` (line ~396)
+   - `GoalShortIdBadge` (line ~1089)
+   - `GoalForm` (line ~1121) -- needed for inline edit mode in MissionDetail
+   - Verify line numbers by searching for `function StatusIndicator`, `function PriorityBadge`, etc. in the current file
+2. Create `packages/web/src/hooks/useMissionDetailData.ts`
+3. Define the hook interface `UseMissionDetailDataResult`:
    - `goal: RoomGoal | null` -- derived from `roomStore.goals` via `useComputed`, matching by UUID or short ID
    - `linkedTasks: NeoTask[]` -- derived from `roomStore.tasks`, filtered by `goal.linkedTaskIds`
    - `executions: MissionExecution[] | null` -- state, loaded on mount for recurring missions
@@ -119,7 +136,7 @@ Follow the existing `TaskView` pattern closely:
    - `isTriggering: boolean`
    - Action handlers: `updateGoal(updates)`, `deleteGoal()`, `triggerNow()`, `scheduleNext(nextRunAt)`, `linkTask(taskId)`, `changeStatus(status)`
    - Available status actions: derived from current goal status (same logic as `getAvailableActions` in `GoalsEditor`)
-3. Implement the hook:
+4. Implement the hook:
    - Use `useComputed` to derive `goal` from `roomStore.goals.value.find(g => g.id === goalId || g.shortId === goalId)`
    - Use `useComputed` to derive `linkedTasks` from `roomStore.tasks.value`
    - Load executions via `roomStore.listExecutions(goalId)` in a `useEffect` when goal is available and missionType is 'recurring'
@@ -127,9 +144,10 @@ Follow the existing `TaskView` pattern closely:
    - For `updateGoal` and `deleteGoal`, call `roomStore.updateGoal(goalId, updates)` and `roomStore.deleteGoal(goalId)` then navigate back on success
    - For `triggerNow`, call `roomStore.triggerNow(goalId)`
    - For `scheduleNext`, call `roomStore.scheduleNext(goalId, nextRunAt)`
-4. Export the hook and its result type
+5. Export the hook and its result type
 
 **Acceptance Criteria:**
+- All 9 reusable sub-components are exported from `GoalsEditor.tsx` (can be imported by `MissionDetail`)
 - `useMissionDetailData(roomId, goalId)` returns the goal matching by UUID or short ID
 - Linked tasks are derived reactively from roomStore.tasks
 - Executions are loaded for recurring missions
@@ -152,11 +170,11 @@ Follow the existing `TaskView` pattern closely:
 2. Component props: `{ roomId: string; goalId: string }`
 3. Use the `useMissionDetailData` hook from Task 3
 4. Implement the header section:
-   - Back button (left arrow icon) that calls `navigateToRoom(roomId)` -- places user back on the room's Missions tab
+   - Back button (left arrow icon) that calls `navigateToRoom(roomId)` and explicitly sets `currentRoomTabSignal.value = 'goals'` to ensure the user lands on the Missions tab (the existing `navigateToRoom` function does NOT set the tab signal, so this must be done manually in the click handler)
    - Mission title (large, bold)
-   - Short ID badge (reuse `GoalShortIdBadge` pattern from `GoalsEditor`)
+   - Short ID badge (reuse `GoalShortIdBadge` from `GoalsEditor`)
    - Status indicator (reuse `StatusIndicator` from `GoalsEditor`)
-   - Edit button -- opens inline edit mode (use `GoalForm` from `GoalsEditor`, or navigate back to list with edit intent)
+   - Edit button -- opens inline edit mode using `GoalForm` from `GoalsEditor` (imported as an exported sub-component). This is the chosen approach over navigating back to the list.
    - Delete button -- opens `ConfirmModal`
 5. Implement the two-column layout structure:
    - Desktop: `grid grid-cols-[1fr_320px]` (main content + sidebar)
@@ -217,11 +235,10 @@ Follow the existing `TaskView` pattern closely:
    - Execution history list (reuse the execution item rendering from `GoalsEditor`)
    - Show loading skeleton while executions are being fetched
    - Show "No executions yet" empty state
-6. Activity timeline (bottom section):
-   - Use execution history + metric history to show a chronological feed of mission events
-   - For recurring missions: show execution entries (started, completed, failed)
-   - For measurable missions: show metric snapshots
-   - For one-shot missions: show created, status changes, linked task completions
+6. Activity timeline (bottom section, recurring missions only):
+   - **Important**: The `goal.getMetricHistory` RPC does NOT exist -- `GoalManager.getMetricHistory()` method exists in the daemon but is not registered as an RPC handler. Do NOT attempt to fetch metric history from the frontend.
+   - For recurring missions only: show execution entries (started, completed, failed) using the `executions` data already loaded by `useMissionDetailData`
+   - For one-shot and measurable missions: do NOT render the activity timeline section (no data source available). These mission types will show "No activity yet" or the section is omitted entirely.
    - If no events, show "No activity yet"
 
 **Acceptance Criteria:**
@@ -233,7 +250,9 @@ Follow the existing `TaskView` pattern closely:
 - Link task input works correctly
 - Schedule info displays cron expression, timezone, next run, paused status
 - Execution history loads and displays correctly for recurring missions
-- Activity timeline shows mission events in chronological order
+- Activity timeline shows execution events in chronological order for recurring missions only
+- Activity timeline section is not rendered for one-shot and measurable missions (no data source available)
+- No attempt is made to call a non-existent `goal.getMetricHistory` RPC
 - All sections conditionally render based on mission type
 - TypeScript compiles with no errors
 
@@ -271,15 +290,21 @@ Follow the existing `TaskView` pattern closely:
      ```
    - Remove the `currentRoomTabSignal` import if no longer needed
 4. In `packages/web/src/components/room/RoomTasks.tsx`:
-   - Update the `onGoalClick` handler signature to accept a goal ID: `onGoalClick?: (goalId: string) => void`
+   - **This is a non-trivial refactor** -- `onGoalClick` is threaded through 6 internal sub-components, each with their own props interface declaring `onGoalClick?: () => void`. ALL of them must be updated:
+     - `RoomTasks` (line 49): `onGoalClick?: (goalId: string) => void` (change signature)
+     - `TaskList` (line 300): `onGoalClick?: (goalId: string) => void` (change signature, thread through)
+     - `TaskGroup` (line 458): `onGoalClick?: (goalId: string) => void` (change signature, thread through)
+     - `TaskItem` (line 598): `onGoalClick?: (goalId: string) => void` (change signature, thread through)
+     - The task-goal badge at line 656: change from `onGoalClick?.()` to `onGoalClick?.(goalId)` -- note: the badge receives `goal: RoomGoal | null` via props but currently calls `onGoalClick` with no arguments
+     - All intermediate components that pass `onGoalClick={onGoalClick}` through must continue to do so (the signature change propagates automatically)
    - Pass the goal ID through to the badge click handler
-   - Update the `TaskBadge` sub-component to call `onGoalClick(goal.id)` instead of just `onGoalClick()`
 5. In `packages/web/src/islands/Room.tsx`:
    - Update the `RoomTasks` `onGoalClick` prop to navigate to the mission detail:
      ```tsx
      onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
      ```
-6. Update any tests affected by the `onGoalClick` signature change in `RoomTasks`
+6. Update existing tests affected by the `onGoalClick` signature change in `RoomTasks`:
+   - `packages/web/src/components/room/RoomTasks.test.tsx` (lines 809-850 area): update any test that mocks or calls `onGoalClick` to pass a goal ID string argument
 
 **Acceptance Criteria:**
 - Clicking a mission card title in the Missions tab navigates to `/room/:roomId/mission/:goalId`
@@ -331,7 +356,39 @@ Follow the existing `TaskView` pattern closely:
 
 ---
 
-### Task 8: Final integration, polish, and PR
+### Task 8: Add E2E tests for MissionDetail navigation
+
+**Description:** Add Playwright E2E tests covering the primary user-visible navigation flows for the new MissionDetail page. Unit tests (Task 7) will not catch broken deep-link navigation, overlay z-index conflicts, or browser history regressions -- E2E tests are essential for this route-driven feature.
+
+**Subtasks:**
+1. Create or extend `packages/e2e/tests/features/mission-detail.e2e.ts` (file already exists with in-list expanded view tests):
+   - Test: direct URL access `/room/:roomId/mission/:goalId` renders the MissionDetail overlay on page load
+   - Test: clicking a mission card title in the Missions tab navigates to `/room/:roomId/mission/:goalId`
+   - Test: browser back button from mission detail returns to the Missions tab list view
+   - Test: clicking the back button in MissionDetail header returns to the Missions tab
+   - Test: clicking a linked task card in MissionDetail navigates to the task detail view
+   - Test: browser back from task detail (reached via mission detail) returns to mission detail
+   - Test: mission detail overlay covers tab bar (clicking other tabs while overlay is shown does NOT navigate away)
+2. Follow existing E2E patterns:
+   - All interactions go through the UI (clicks, typing, navigation)
+   - All assertions verify visible DOM state
+   - Sessions created via "New Session" button
+   - Use `waitFor` for async state transitions
+   - Do NOT use `hub.request()` or `window.sessionStore` for test actions/assertions
+
+**Acceptance Criteria:**
+- All new E2E tests pass
+- Tests cover the three critical navigation flows: direct URL, in-app navigation from list, and browser history
+- Tests verify the overlay behavior (covers tabs, allows back navigation)
+- No prohibited patterns (no direct RPC calls, no internal state access)
+- `make run-e2e TEST=tests/features/mission-detail.e2e.ts` passes
+
+**Dependencies:** Task 5, Task 6
+**Agent type:** coder
+
+---
+
+### Task 9: Final integration, polish, and PR
 
 **Description:** Do a final review pass, ensure everything works end-to-end, fix any edge cases, and create the feature branch PR.
 
@@ -360,12 +417,8 @@ Follow the existing `TaskView` pattern closely:
 - Feature branch created with clean commit history
 - PR targets `dev` branch
 
-**Dependencies:** Task 7
+**Dependencies:** Task 7, Task 8
 **Agent type:** coder
-
----
-
-## Key Implementation Notes
 
 ### Signal ordering in router.ts
 
@@ -381,20 +434,27 @@ The new ordering will be:
 space routes > roomAgent > roomMission > roomTask > roomSession > roomId
 ```
 
+### Cross-cutting signal clearing in router.ts
+
+**This is the single highest-risk change in the plan.** Every place in `router.ts` that clears `currentRoomTaskIdSignal.value = null` must also clear `currentRoomGoalIdSignal.value = null`. As of this writing, there are ~50 occurrences. Missing even one will leave stale state that causes the mission overlay to persist when navigating away.
+
+**Verification approach**: After completing Task 1 subtask 7, run:
+```bash
+grep -c 'currentRoomTaskIdSignal.value = null' packages/web/src/lib/router.ts
+grep -c 'currentRoomGoalIdSignal.value = null' packages/web/src/lib/router.ts
+```
+Both counts should be approximately equal.
+
 ### Component reuse from GoalsEditor
 
-Several sub-components in `GoalsEditor` should be extracted or imported for reuse in `MissionDetail`:
-- `StatusIndicator` -- already a standalone function in `GoalsEditor.tsx`
-- `PriorityBadge` -- already a standalone function
-- `MissionTypeBadge` -- already a standalone function
-- `AutonomyBadge` -- already a standalone function
-- `ProgressBar` -- already a standalone function
-- `MetricProgress` -- already a standalone function
-- `RecurringScheduleInfo` -- already a standalone function
-- `GoalShortIdBadge` -- already a standalone function
-- `GoalForm` -- already a standalone function (for inline editing)
+Nine sub-components in `GoalsEditor.tsx` are currently internal (bare `function` keyword, no `export`). They MUST be exported in Task 3 so `MissionDetail` can import them:
+- `StatusIndicator`, `PriorityBadge`, `MissionTypeBadge`, `AutonomyBadge` -- badge components
+- `ProgressBar`, `MetricProgress` -- progress display
+- `RecurringScheduleInfo` -- schedule display for recurring missions
+- `GoalShortIdBadge` -- short ID display
+- `GoalForm` -- inline edit form (used for the edit action in MissionDetail header)
 
-These should be exported from `GoalsEditor.tsx` or moved to a shared file within `components/room/`. Given the existing pattern where they are defined in the same file, the simplest approach is to export them from `GoalsEditor.tsx`.
+This export work is explicitly assigned as subtask 1 of Task 3.
 
 ### Avoiding duplication
 
@@ -404,9 +464,20 @@ The `MissionDetail` component should NOT duplicate the business logic already in
 - Use `roomStore` methods for actions
 - Focus on the layout and presentation, not the data management
 
+### Back navigation must restore Missions tab
+
+The existing `navigateToRoom(roomId)` function does NOT set `currentRoomTabSignal`. When the user clicks the back button in MissionDetail, the handler must explicitly set `currentRoomTabSignal.value = 'goals'` in addition to calling `navigateToRoom(roomId)`, so the user lands on the Missions tab rather than whatever tab was previously active. This is specified in Task 4 subtask 4.
+
 ### Navigation from GoalsEditor
 
 The current `GoalItem` card has an expand/collapse toggle. When we add `onGoalClick`, we need to decide the interaction model. The recommended approach is:
 - Clicking the mission title navigates to the detail page (calls `onGoalClick`)
 - Clicking the expand/collapse chevron toggles inline expansion (calls `onToggleExpand`)
 - This matches the common pattern where the title is a link and the chevron is a separate control
+
+### Activity timeline data source limitations
+
+The activity timeline section is scoped to **recurring missions only** because:
+- `goal.getMetricHistory` RPC does NOT exist (daemon method exists but is not registered as an RPC handler)
+- One-shot missions have no event history beyond created_at/updated_at timestamps
+- Only recurring missions have execution history data available via `goal.listExecutions`
