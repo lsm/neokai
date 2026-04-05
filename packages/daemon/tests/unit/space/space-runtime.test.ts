@@ -543,9 +543,9 @@ describe('SpaceRuntime', () => {
 	describe('Task Agent integration', () => {
 		/**
 		 * Minimal mock for TaskAgentManager — only implements the methods that
-		 * SpaceRuntime calls: isSpawning(), isTaskAgentAlive(), spawnTaskAgent(), rehydrate().
+		 * SpaceRuntime calls: isSpawning(), isTaskAgentAlive(), spawnWorkflowNodeAgent(), rehydrate().
 		 *
-		 * The default spawnTaskAgent mirrors the real TaskAgentManager's DB side-effect:
+		 * The default spawnWorkflowNodeAgent mirrors the real TaskAgentManager's DB side-effect:
 		 * it writes taskAgentSessionId to the task row. SpaceRuntime relies on this
 		 * contract and only writes status: 'in_progress' itself. If this side-effect
 		 * were absent, the liveness check (Step 1) would never fire for the task.
@@ -554,23 +554,24 @@ describe('SpaceRuntime', () => {
 			overrides: {
 				isSpawning?: (taskId: string) => boolean;
 				isTaskAgentAlive?: (taskId: string) => boolean;
-				spawnTaskAgent?: (task: unknown) => Promise<string>;
+				spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
 				rehydrate?: () => Promise<void>;
 			} = {}
 		) {
 			const spawned: string[] = [];
+			const spawnImpl =
+				overrides.spawnWorkflowNodeAgent ??
+				(async (task: unknown) => {
+					const t = task as { id: string };
+					spawned.push(t.id);
+					// Mirror real TaskAgentManager: writes taskAgentSessionId as a side-effect
+					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+					return `session:${t.id}`;
+				});
 			return {
 				isSpawning: overrides.isSpawning ?? (() => false),
 				isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
-				spawnTaskAgent:
-					overrides.spawnTaskAgent ??
-					(async (task: unknown) => {
-						const t = task as { id: string };
-						spawned.push(t.id);
-						// Mirror real TaskAgentManager: writes taskAgentSessionId as a side-effect
-						taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
-						return `session:${t.id}`;
-					}),
+				spawnWorkflowNodeAgent: spawnImpl,
 				rehydrate: overrides.rehydrate ?? (async () => {}),
 				_spawned: spawned,
 			};
@@ -630,7 +631,7 @@ describe('SpaceRuntime', () => {
 			let spawnCount = 0;
 			const tam = makeMockTaskAgentManager({
 				isTaskAgentAlive: () => true, // always alive
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -646,7 +647,7 @@ describe('SpaceRuntime', () => {
 			expect(spawnCount).toBe(1);
 
 			// Mark task as in_progress (set by SpaceRuntime after spawn)
-			// taskAgentSessionId is already set by mock spawnTaskAgent
+			// taskAgentSessionId is already set by mock spawnWorkflowNodeAgent
 			const taskAfterSpawn = taskRepo.getTask(tasks[0].id)!;
 			expect(taskAfterSpawn.taskAgentSessionId).toBeTruthy();
 
@@ -666,7 +667,7 @@ describe('SpaceRuntime', () => {
 			let spawnCount = 0;
 			const tam = makeMockTaskAgentManager({
 				isTaskAgentAlive: () => false, // agent always reports as dead (crashed)
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}:v${spawnCount}` });
@@ -715,7 +716,7 @@ describe('SpaceRuntime', () => {
 			const spawningSet = new Set<string>();
 			const tam = makeMockTaskAgentManager({
 				isSpawning: (taskId: string) => spawningSet.has(taskId),
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					spawningSet.add(t.id);
@@ -750,7 +751,7 @@ describe('SpaceRuntime', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -778,7 +779,7 @@ describe('SpaceRuntime', () => {
 
 			// Start the run with the real space manager so startWorkflowRun() works.
 			const tam = makeMockTaskAgentManager({
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
@@ -789,7 +790,7 @@ describe('SpaceRuntime', () => {
 
 			let spawnCount = 0;
 			const tamForNull = makeMockTaskAgentManager({
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -880,7 +881,7 @@ describe('SpaceRuntime', () => {
 			const aliveIds = new Set<string>();
 			const tam = makeMockTaskAgentManager({
 				isTaskAgentAlive: (taskId: string) => aliveIds.has(taskId),
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					const sessionId = `session:${t.id}:v${spawnCount}`;

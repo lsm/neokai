@@ -100,23 +100,24 @@ function makeMockTaskAgentManager(
 	overrides: {
 		isSpawning?: (taskId: string) => boolean;
 		isTaskAgentAlive?: (taskId: string) => boolean;
-		spawnTaskAgent?: (task: unknown) => Promise<string>;
+		spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
 		rehydrate?: () => Promise<void>;
 		cancelBySessionId?: (sessionId: string) => void;
 	} = {}
 ) {
 	const spawned: string[] = [];
+	const spawnImpl =
+		overrides.spawnWorkflowNodeAgent ??
+		(async (task: unknown) => {
+			const t = task as { id: string };
+			spawned.push(t.id);
+			taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+			return `session:${t.id}`;
+		});
 	return {
 		isSpawning: overrides.isSpawning ?? (() => false),
 		isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
-		spawnTaskAgent:
-			overrides.spawnTaskAgent ??
-			(async (task: unknown) => {
-				const t = task as { id: string };
-				spawned.push(t.id);
-				taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
-				return `session:${t.id}`;
-			}),
+		spawnWorkflowNodeAgent: spawnImpl,
 		rehydrate: overrides.rehydrate ?? (async () => {}),
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 		_spawned: spawned,
@@ -275,6 +276,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				workflowRunId: run.id,
 				status: 'open',
 			});
+			nodeExecutionRepo.createOrIgnore({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_B,
+				agentName: newTask.title,
+				agentId: AGENT_CODER,
+				status: 'pending',
+			});
 
 			// Second tick picks up the new task
 			await rt.executeTick();
@@ -344,7 +352,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			let spawnCount = 0;
 			const tam = makeMockTaskAgentManager(taskRepo, {
 				isTaskAgentAlive: () => true,
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -386,7 +394,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawned.push(t.id);
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -602,6 +610,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			]);
 			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(rt.executorCount).toBe(1);
+			for (const task of taskRepo.listByWorkflowRun(run.id)) {
+				taskRepo.updateTask(task.id, { status: 'done' });
+			}
 
 			// Delete the run record entirely
 			db.prepare('DELETE FROM space_workflow_runs WHERE id = ?').run(run.id);
@@ -800,7 +811,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					callCount++;
 					if (callCount === 1) {
@@ -842,7 +853,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					if (failOnce) {
 						failOnce = false;

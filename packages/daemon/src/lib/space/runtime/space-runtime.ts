@@ -28,6 +28,7 @@ import type {
 	WorkflowNode,
 	WorkflowChannel,
 	NodeExecutionStatus,
+	NodeExecution,
 } from '@neokai/shared';
 import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
@@ -49,6 +50,47 @@ import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-man
 import { MAX_TASK_AGENT_CRASH_RETRIES } from './constants';
 
 const log = new Logger('space-runtime');
+
+const WORKFLOW_SELECTION_STOP_WORDS = new Set([
+	'the',
+	'and',
+	'for',
+	'are',
+	'but',
+	'not',
+	'you',
+	'all',
+	'can',
+	'was',
+	'one',
+	'our',
+	'out',
+	'day',
+	'get',
+	'has',
+	'him',
+	'his',
+	'how',
+	'its',
+	'may',
+	'new',
+	'now',
+	'old',
+	'see',
+	'two',
+	'use',
+	'way',
+	'who',
+	'did',
+	'let',
+	'put',
+	'say',
+	'she',
+	'too',
+	'had',
+	'any',
+	'via',
+]);
 
 /**
  * Map a SpaceTaskStatus to the equivalent NodeExecutionStatus.
@@ -326,6 +368,7 @@ export class SpaceRuntime {
 			this.rehydrated = true;
 		}
 
+		await this.attachStandaloneTasksToWorkflows();
 		await this.processCompletedTasks();
 		await this.cleanupTerminalExecutors();
 		await this.checkStandaloneTasks();
@@ -587,17 +630,22 @@ export class SpaceRuntime {
 		const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
 		if (allRunTasks.length === 0) return;
 
-		// Sync node_execution status from SpaceTask status.
+		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+		const taskToExecution = this.mapRunTasksToNodeExecutions(allRunTasks, nodeExecutions);
+		const runExecutionTasks = allRunTasks.filter((task) => taskToExecution.has(task.id));
+
+		// Sync node_execution status from workflow execution task status.
+		// Non-execution tasks (for example orchestration/helper tasks) are excluded.
+		//
 		// node_execution records are created by ChannelRouter.activateNode()
 		// and SpaceRuntime.startWorkflowRun(). The mapping key is
 		// node_execution.agentName === task.title.
 		//
 		// When multiple tasks share a title (edge case), worst-status logic
 		// ensures completion requires ALL matching tasks to be terminal.
-		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 		if (nodeExecutions.length > 0) {
 			const tasksByTitle = new Map<string, SpaceTask[]>();
-			for (const task of allRunTasks) {
+			for (const task of runExecutionTasks) {
 				const group = tasksByTitle.get(task.title);
 				if (group) {
 					group.push(task);
@@ -622,7 +670,7 @@ export class SpaceRuntime {
 		}
 
 		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
-		for (const task of allRunTasks) {
+		for (const task of runExecutionTasks) {
 			if (task.status !== 'blocked') {
 				this.notifiedTaskSet.delete(`${task.id}:blocked`);
 			}
@@ -653,8 +701,8 @@ export class SpaceRuntime {
 		// When end-node bypass fires, skip blocked notifications for siblings
 		// — the run will be completed imminently.
 		// This is an explicit check — not inferred from WorkflowTransitionError.
-		if (!endNodeBypass && allRunTasks.some((t) => t.status === 'blocked')) {
-			for (const task of allRunTasks) {
+		if (!endNodeBypass && runExecutionTasks.some((t) => t.status === 'blocked')) {
+			for (const task of runExecutionTasks) {
 				if (task.status !== 'blocked') continue;
 				const dedupKey = `${task.id}:blocked`;
 				if (!this.notifiedTaskSet.has(dedupKey)) {
@@ -671,7 +719,7 @@ export class SpaceRuntime {
 
 			// Escalate the run to blocked for multi-agent steps when ALL tasks are terminal.
 			// Single-task steps: only task_blocked is emitted (backward compat).
-			if (allRunTasks.length > 1 && this.areAllNodeTasksTerminal(allRunTasks)) {
+			if (runExecutionTasks.length > 1 && this.areAllNodeTasksTerminal(runExecutionTasks)) {
 				this.config.workflowRunRepo.transitionStatus(runId, 'blocked');
 				await this.safeNotify({
 					kind: 'workflow_run_blocked',
@@ -692,7 +740,7 @@ export class SpaceRuntime {
 			const taskTimeoutMs = space?.config?.taskTimeoutMs;
 			if (taskTimeoutMs !== undefined) {
 				const now = Date.now();
-				for (const task of allRunTasks) {
+				for (const task of runExecutionTasks) {
 					if (task.status !== 'in_progress' || !task.startedAt) continue;
 					const elapsedMs = now - task.startedAt;
 					if (elapsedMs > taskTimeoutMs) {
@@ -728,7 +776,7 @@ export class SpaceRuntime {
 			// Some tasks may have alive agents while siblings are still pending (e.g. a
 			// spawn failure on a prior tick). An early return here would permanently skip
 			// spawning those unspawned tasks.
-			for (const task of allRunTasks) {
+			for (const task of runExecutionTasks) {
 				if (!task.taskAgentSessionId) continue;
 
 				if (tam.isTaskAgentAlive(task.id)) {
@@ -777,8 +825,15 @@ export class SpaceRuntime {
 			// Must run after dead-agent resets (Step 1) so we only process truly alive agents.
 			// Re-reads tasks from DB to pick up any status resets from Step 1.
 			const freshRunTasksForLiveness = this.config.taskRepo.listByWorkflowRun(runId);
-			const autoCompleted = await autoCompleteStuckAgents(
+			const freshExecutionMap = this.mapRunTasksToNodeExecutions(
 				freshRunTasksForLiveness,
+				this.config.nodeExecutionRepo.listByWorkflowRun(runId)
+			);
+			const executionTasksForLiveness = freshRunTasksForLiveness.filter((task) =>
+				freshExecutionMap.has(task.id)
+			);
+			const autoCompleted = await autoCompleteStuckAgents(
+				executionTasksForLiveness,
 				meta.spaceId,
 				this.config.taskRepo,
 				tam,
@@ -813,7 +868,7 @@ export class SpaceRuntime {
 				// The orchestration task is the one whose taskAgentSessionId follows
 				// the Task Agent pattern (space:${spaceId}:task:${taskId}) — node agent
 				// sub-sessions use UUID-style IDs and are NOT orchestration tasks.
-				for (const t of allRunTasks) {
+				for (const t of runExecutionTasks) {
 					if (t.taskAgentSessionId && t.status === 'in_progress') {
 						// Task Agent sessions follow the pattern "space:UUID:task:UUID"
 						if (t.taskAgentSessionId.startsWith('space:')) {
@@ -851,11 +906,16 @@ export class SpaceRuntime {
 				return;
 			}
 
-			// Step 2: Spawn Task Agents for pending tasks without an agent session.
+			// Step 2: Spawn workflow node agents for pending execution tasks without an agent session.
 			// Re-read from DB to pick up status resets applied in Step 1.
-			const pendingTasksNeedingAgent = this.config.taskRepo
-				.listByWorkflowRun(runId)
-				.filter((t) => t.status === 'open' && !t.taskAgentSessionId);
+			const freshRunTasksForSpawn = this.config.taskRepo.listByWorkflowRun(runId);
+			const spawnExecutionMap = this.mapRunTasksToNodeExecutions(
+				freshRunTasksForSpawn,
+				this.config.nodeExecutionRepo.listByWorkflowRun(runId)
+			);
+			const pendingTasksNeedingAgent = freshRunTasksForSpawn.filter(
+				(t) => t.status === 'open' && !t.taskAgentSessionId && spawnExecutionMap.has(t.id)
+			);
 
 			if (pendingTasksNeedingAgent.length > 0) {
 				if (!space) {
@@ -868,14 +928,17 @@ export class SpaceRuntime {
 					for (const task of pendingTasksNeedingAgent) {
 						if (tam.isSpawning(task.id)) continue; // spawn already in progress
 						try {
-							// spawnTaskAgent writes taskAgentSessionId to the DB as a side effect.
+							// Runtime-managed spawn writes taskAgentSessionId to the DB as a side effect.
 							// SpaceRuntime owns the status transition to 'in_progress' after spawn.
-							await tam.spawnTaskAgent(task, space, meta.workflow, run, {
-								kickoff: false,
+							await tam.spawnWorkflowNodeAgent(task, space, meta.workflow, run, {
+								kickoff: true,
 							});
 							this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
 						} catch (err) {
-							log.error(`SpaceRuntime: failed to spawn task agent for task ${task.id}:`, err);
+							log.error(
+								`SpaceRuntime: failed to spawn workflow node agent for task ${task.id}:`,
+								err
+							);
 						}
 					}
 				}
@@ -1104,6 +1167,152 @@ export class SpaceRuntime {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Attach a workflow run to open standalone tasks so workflow execution is driven
+	 * by the runtime tick (not by Task Agent session creation).
+	 *
+	 * For each open standalone task:
+	 * 1. Select a fallback workflow for the task
+	 * 2. Start a workflow run
+	 * 3. Attach the original task to the run and mark it in_progress
+	 */
+	private async attachStandaloneTasksToWorkflows(): Promise<void> {
+		const spaces = await this.config.spaceManager.listSpaces(false);
+
+		for (const space of spaces) {
+			const workflows = this.config.spaceWorkflowManager.listWorkflows(space.id);
+			if (workflows.length === 0) continue;
+
+			const standaloneOpenTasks = this.config.taskRepo
+				.listStandaloneBySpace(space.id, false)
+				.filter((task) => task.status === 'open');
+
+			for (const task of standaloneOpenTasks) {
+				// Re-read to avoid racing with external updates between list and attach.
+				const fresh = this.config.taskRepo.getTask(task.id);
+				if (!fresh || fresh.workflowRunId) continue;
+				if (fresh.status !== 'open') continue;
+
+				const selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
+				if (!selectedWorkflow) continue;
+
+				try {
+					const { run } = await this.startWorkflowRun(
+						space.id,
+						selectedWorkflow.id,
+						fresh.title,
+						fresh.description
+					);
+
+					this.config.taskRepo.updateTask(fresh.id, {
+						workflowRunId: run.id,
+						status: 'in_progress',
+					});
+				} catch (err) {
+					log.warn(
+						`SpaceRuntime: failed to attach standalone task ${fresh.id} to workflow ${selectedWorkflow.id}:`,
+						err
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Deterministically select a fallback workflow for a standalone task.
+	 *
+	 * Preference order:
+	 * 1. Highest keyword overlap with task title/description
+	 * 2. `default` tag
+	 * 3. `v2` tag
+	 * 4. Most recently updated workflow
+	 */
+	private selectFallbackWorkflowForStandaloneTask(
+		task: SpaceTask,
+		workflows: SpaceWorkflow[]
+	): SpaceWorkflow | null {
+		if (workflows.length === 0) return null;
+		if (workflows.length === 1) return workflows[0];
+
+		const keywords = `${task.title} ${task.description}`
+			.toLowerCase()
+			.split(/\W+/)
+			.filter((word) => word.length >= 3 && !WORKFLOW_SELECTION_STOP_WORDS.has(word));
+
+		const scored = workflows.map((workflow) => {
+			const haystack = [workflow.name, workflow.description ?? '', ...(workflow.tags ?? [])]
+				.join(' ')
+				.toLowerCase();
+			const hits =
+				keywords.length === 0 ? 0 : keywords.filter((keyword) => haystack.includes(keyword)).length;
+			const tags = workflow.tags ?? [];
+			return {
+				workflow,
+				hits,
+				isDefault: tags.includes('default') ? 1 : 0,
+				isV2: tags.includes('v2') ? 1 : 0,
+			};
+		});
+
+		scored.sort((a, b) => {
+			if (b.hits !== a.hits) return b.hits - a.hits;
+			if (b.isDefault !== a.isDefault) return b.isDefault - a.isDefault;
+			if (b.isV2 !== a.isV2) return b.isV2 - a.isV2;
+			return b.workflow.updatedAt - a.workflow.updatedAt;
+		});
+
+		return scored[0]?.workflow ?? null;
+	}
+
+	/**
+	 * Map run tasks to node executions that represent actual workflow agent work.
+	 *
+	 * Mapping strategy:
+	 * 1. Prefer exact session-id match (task.taskAgentSessionId === nodeExecution.agentSessionId)
+	 * 2. Fallback to title/agentName matching for pending unclaimed executions
+	 *
+	 * Non-execution tasks (for example helper/orchestration tasks attached to the run)
+	 * are intentionally excluded.
+	 */
+	private mapRunTasksToNodeExecutions(
+		tasks: SpaceTask[],
+		nodeExecutions: NodeExecution[]
+	): Map<string, NodeExecution> {
+		const mapping = new Map<string, NodeExecution>();
+		const available = [...nodeExecutions];
+
+		// Pass 1: exact session binding.
+		for (const task of tasks) {
+			if (!task.taskAgentSessionId) continue;
+			const idx = available.findIndex((exec) => exec.agentSessionId === task.taskAgentSessionId);
+			if (idx === -1) continue;
+			mapping.set(task.id, available[idx]);
+			available.splice(idx, 1);
+		}
+
+		// Pass 2: pending unclaimed executions by agent name.
+		for (const task of tasks) {
+			if (mapping.has(task.id)) continue;
+			const idx = available.findIndex(
+				(exec) => exec.agentName === task.title && exec.status === 'pending' && !exec.agentSessionId
+			);
+			if (idx === -1) continue;
+			mapping.set(task.id, available[idx]);
+			available.splice(idx, 1);
+		}
+
+		// Pass 3: fallback by agent name (for stale/missing session bindings).
+		for (const task of tasks) {
+			if (mapping.has(task.id)) continue;
+			const idx = available.findIndex((exec) => exec.agentName === task.title);
+			if (idx === -1) continue;
+			mapping.set(task.id, available[idx]);
+			available.splice(idx, 1);
+		}
+
+		return mapping;
 	}
 
 	/**

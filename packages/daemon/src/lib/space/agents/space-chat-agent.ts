@@ -15,7 +15,6 @@
  *   All tools are provided by createSpaceAgentMcpServer in space-agent-tools.ts:
  *     Workflow tools:
  *       - list_workflows
- *       - start_workflow_run
  *       - get_workflow_run
  *       - change_plan
  *       - get_workflow_detail
@@ -79,7 +78,7 @@ export interface SpaceChatAgentContext {
  *   1. Role and purpose statement
  *   2. Available workflows (names, descriptions, tags, step count)
  *   3. Available agents (names, roles, descriptions)
- *   4. Guidance on when to use `start_workflow_run` vs `create_task`
+ *   4. Task-first guidance for workflow-aware execution
  *   5. Operator-supplied background and instructions
  *
  * Background and instructions are interpolated directly — they are
@@ -134,31 +133,21 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 
 	// Workflow vs task guidance — the core decision rule
 	sections.push(`\n## Creating Work — Decision Guide\n`);
+	sections.push(`When the user asks you to create work, follow this task-first flow:`);
+	sections.push('');
 	sections.push(
-		`When the user asks you to create work, decide between a workflow run and a standalone task:`
+		`**Always create work with \`create_standalone_task\`.**\n` +
+			`  - Workflow runs are runtime-managed and should begin from task execution.\n` +
+			`  - Do not attempt to start workflow runs directly.\n` +
+			`  - For multi-step work, use workflow discovery tools first, then create a well-scoped task.`
 	);
 	sections.push('');
 	sections.push(
-		`**Use \`start_workflow_run\`** for multi-step processes that benefit from structured agent handoffs:\n` +
-			`  - The work spans multiple phases (plan → code → review)\n` +
-			`  - Different agents are better suited to different parts\n` +
-			`  - You want human gates between steps\n` +
-			`  - The work matches one of the available workflows above`
-	);
-	sections.push('');
-	sections.push(
-		`**Use \`create_standalone_task\`** for standalone work that needs no multi-step orchestration:\n` +
-			`  - A single, self-contained task (e.g. "fix this bug", "answer this question")\n` +
-			`  - No workflow structure is needed\n` +
-			`  - The work does not match any available workflow`
-	);
-	sections.push('');
-	sections.push(
-		`**How to pick a workflow:**\n` +
+		`**Workflow discovery before task creation:**\n` +
 			`  1. Call \`list_workflows\` to see the full list with steps and descriptions.\n` +
 			`  2. Call \`suggest_workflow\` with a description of the work to get ranked matches.\n` +
 			`  3. Call \`get_workflow_detail\` to inspect a specific workflow's steps and rules in full.\n` +
-			`  4. Once decided, call \`start_workflow_run\` with the explicit \`workflow_id\`.`
+			`  4. Create a task with \`create_standalone_task\` using a clear title/description aligned with the selected workflow.`
 	);
 	sections.push('');
 	sections.push(
@@ -166,7 +155,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`  - The request is too vague to determine what needs to be built (e.g. "improve the app", "make it better", "help me")\n` +
 			`  - The scope or success criteria are unclear\n` +
 			`  - Multiple interpretations are possible and choosing the wrong one would waste significant effort\n` +
-			`  Never start work — create tasks or workflow runs — until the request is specific enough to act on.`
+			`  Never start work until the request is specific enough to act on.`
 	);
 	sections.push('');
 	sections.push(
@@ -174,13 +163,14 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`  - "Implement user authentication with JWT tokens"\n` +
 			`  - "Fix the bug in the payment service where charges fail for international cards"\n` +
 			`  - "Add pagination to the user list endpoint"\n` +
-			`  For clear multi-step coding work, prefer \`start_workflow_run\` with a V2 workflow over \`create_standalone_task\`.`
+			`  For clear multi-step coding work, still create a task with \`create_standalone_task\`; ` +
+			`runtime will attach and execute the best matching workflow.`
 	);
 	sections.push('');
 	sections.push(
 		`**IMPORTANT**: Never create tasks immediately when a goal or plan is mentioned. ` +
-			`If the request involves a workflow, start the workflow run and let the workflow ` +
-			`orchestrate task creation. Only use \`create_standalone_task\` for explicitly standalone work.`
+			`If the request is vague, ask clarifying questions first. When the request is clear, ` +
+			`create the task and let runtime-managed workflow execution handle orchestration.`
 	);
 
 	// Event handling section — always included
@@ -272,8 +262,8 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(`Use these tools to manage tasks and respond to events:`);
 	sections.push('');
 	sections.push(
-		`- **\`create_standalone_task\`** — Create a task outside any workflow. Use for self-contained work ` +
-			`that doesn't require multi-step orchestration. Provide a title, description, and optionally an agent ID.`
+		`- **\`create_standalone_task\`** — Create a task request. Runtime may attach and execute a workflow ` +
+			`for the task during orchestration. Provide a clear title and description.`
 	);
 	sections.push('');
 	sections.push(

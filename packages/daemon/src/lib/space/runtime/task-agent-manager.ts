@@ -37,7 +37,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents } from '@neokai/shared';
 import type {
 	Space,
 	SpaceTask,
@@ -80,51 +80,15 @@ import { ChannelRouter } from './channel-router';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { executeGateScript } from './gate-script-executor';
 import { createTaskAgentInit, buildTaskAgentInitialMessage } from '../agents/task-agent';
+import {
+	buildCustomAgentTaskMessage,
+	resolveAgentInit,
+	type SlotOverrides,
+} from '../agents/custom-agent';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 
 const log = new Logger('task-agent-manager');
-
-const WORKFLOW_SELECTION_STOP_WORDS = new Set([
-	'the',
-	'and',
-	'for',
-	'are',
-	'but',
-	'not',
-	'you',
-	'all',
-	'can',
-	'was',
-	'one',
-	'our',
-	'out',
-	'day',
-	'get',
-	'has',
-	'him',
-	'his',
-	'how',
-	'its',
-	'may',
-	'new',
-	'now',
-	'old',
-	'see',
-	'two',
-	'use',
-	'way',
-	'who',
-	'did',
-	'let',
-	'put',
-	'say',
-	'she',
-	'too',
-	'had',
-	'any',
-	'via',
-]);
 
 // ---------------------------------------------------------------------------
 // Config
@@ -331,21 +295,19 @@ export class TaskAgentManager {
 			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
 			: null;
 
-		// Fallback path: standalone task without an assigned workflow.
-		// We auto-select a workflow, start a run, and attach this existing task to it
-		// so the Task Agent can use workflow-aware tools immediately.
-		if (!workflowRun) {
-			const autoAttached = await this.attachFallbackWorkflowRun(task, space);
-			if (autoAttached) {
-				task = autoAttached.task;
-				workflowRun = autoAttached.workflowRun;
-				workflow = autoAttached.workflow;
-			}
-		}
+		const workflowExecution = workflowRun
+			? this.resolveWorkflowExecutionForTask(task, workflowRun.id)
+			: null;
 
-		await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null, {
-			kickoff: false,
-		});
+		if (workflowRun && workflow && workflowExecution) {
+			await this.spawnWorkflowNodeAgent(task, space, workflow, workflowRun, {
+				kickoff: true,
+			});
+		} else {
+			await this.spawnTaskAgent(task, space, workflow ?? null, workflowRun ?? null, {
+				kickoff: false,
+			});
+		}
 
 		if (task.status === 'open') {
 			this.config.taskRepo.updateTask(taskId, { status: 'in_progress' });
@@ -372,11 +334,22 @@ export class TaskAgentManager {
 		if (live) return true;
 
 		// No persisted session metadata means we cannot restore.
-		const persisted = this.config.sessionManager.getSessionFromDB(sessionId);
-		if (!persisted) return false;
+		const dbSession = this.config.db.getSession(sessionId) as { type?: string } | null;
+		if (!dbSession) return false;
+		const sessionType = dbSession.type;
 
 		try {
-			await this.rehydrateTaskAgent(task, sessionId);
+			// Default to task-agent rehydrate when type metadata is absent.
+			const isWorkflowNodeSession =
+				task.workflowRunId !== undefined &&
+				task.workflowRunId !== null &&
+				sessionType !== undefined &&
+				sessionType !== 'space_task_agent';
+			if (isWorkflowNodeSession) {
+				await this.rehydrateWorkflowNodeSession(task, sessionId);
+			} else {
+				await this.rehydrateTaskAgent(task, sessionId);
+			}
 		} catch (err) {
 			log.warn(
 				`TaskAgentManager: failed to restore persisted task-agent session ${sessionId} for task ${task.id}:`,
@@ -389,107 +362,33 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Attach a workflow run to a standalone task when no workflow was explicitly set.
+	 * Resolve the node execution entry that corresponds to a workflow task.
 	 *
-	 * Strategy:
-	 * - Pick a workflow from this space using lightweight keyword ranking.
-	 * - Start a workflow run through SpaceRuntime.
-	 * - Rebind the existing task to the run as the orchestration task (workflowNodeId: null).
-	 * - Keep node-scoped tasks created by runtime for actual step execution.
-	 *
-	 * Returns null when no workflows exist in the space (task remains standalone).
+	 * Preference:
+	 * 1. Exact session binding (`task.taskAgentSessionId` ↔ `node_execution.agent_session_id`)
+	 * 2. Agent-name binding (`task.title` ↔ `node_execution.agent_name`)
 	 */
-	private async attachFallbackWorkflowRun(
+	private resolveWorkflowExecutionForTask(
 		task: SpaceTask,
-		space: Space
-	): Promise<{ task: SpaceTask; workflow: SpaceWorkflow; workflowRun: SpaceWorkflowRun } | null> {
-		const selectedWorkflow = this.selectFallbackWorkflow(task, space.id);
-		if (!selectedWorkflow) {
-			log.info(
-				`TaskAgentManager.ensureTaskAgentSession: task ${task.id} has no workflow and space ${space.id} has no workflows; continuing as standalone`
-			);
-			return null;
+		workflowRunId: string
+	): { workflowNodeId: string; memberRole: string } | null {
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+		if (executions.length === 0) return null;
+
+		if (task.taskAgentSessionId) {
+			const bySession = executions.find((exec) => exec.agentSessionId === task.taskAgentSessionId);
+			if (bySession) {
+				return { workflowNodeId: bySession.workflowNodeId, memberRole: bySession.agentName };
+			}
 		}
 
-		const runtime = await this.config.spaceRuntimeService.createOrGetRuntime(space.id);
-		const { run, tasks: startTasks } = await runtime.startWorkflowRun(
-			space.id,
-			selectedWorkflow.id,
-			task.title,
-			task.description
+		const byName = executions.find(
+			(exec) =>
+				exec.agentName === task.title &&
+				(exec.status === 'pending' || exec.status === 'in_progress' || exec.agentSessionId !== null)
 		);
-
-		const bootstrapTask = startTasks[0];
-		if (!bootstrapTask) {
-			throw new Error(
-				`Fallback workflow run "${run.id}" did not create any start tasks for workflow "${selectedWorkflow.id}"`
-			);
-		}
-
-		this.config.taskRepo.updateTask(task.id, {
-			workflowRunId: run.id,
-			// Keep orchestration tasks detached from concrete workflow nodes.
-			// Node-scoped tasks are created by the runtime as separate rows.
-		});
-
-		const reboundTask = this.config.taskRepo.getTask(task.id);
-		if (!reboundTask) {
-			throw new Error(`Failed to reload task after fallback workflow attachment: ${task.id}`);
-		}
-
-		log.info(
-			`TaskAgentManager.ensureTaskAgentSession: auto-attached workflow "${selectedWorkflow.id}" (run ${run.id}) to task ${task.id}`
-		);
-
-		return {
-			task: reboundTask,
-			workflow: selectedWorkflow,
-			workflowRun: run,
-		};
-	}
-
-	/**
-	 * Deterministically select a fallback workflow for a standalone task.
-	 *
-	 * Preference order:
-	 * 1. Highest keyword overlap with task title/description.
-	 * 2. Workflows tagged `default`.
-	 * 3. Workflows tagged `v2`.
-	 * 4. Most recently updated workflow.
-	 */
-	private selectFallbackWorkflow(task: SpaceTask, spaceId: string): SpaceWorkflow | null {
-		const workflows = this.config.spaceWorkflowManager.listWorkflows(spaceId);
-		if (workflows.length === 0) return null;
-		if (workflows.length === 1) return workflows[0];
-
-		const keywords = `${task.title} ${task.description}`
-			.toLowerCase()
-			.split(/\W+/)
-			.filter((w) => w.length >= 3 && !WORKFLOW_SELECTION_STOP_WORDS.has(w));
-
-		const scored = workflows.map((workflow) => {
-			const haystack = [workflow.name, workflow.description ?? '', ...(workflow.tags ?? [])]
-				.join(' ')
-				.toLowerCase();
-			const hits =
-				keywords.length === 0 ? 0 : keywords.filter((kw) => haystack.includes(kw)).length;
-			const tags = workflow.tags ?? [];
-			return {
-				workflow,
-				hits,
-				isDefault: tags.includes('default') ? 1 : 0,
-				isV2: tags.includes('v2') ? 1 : 0,
-			};
-		});
-
-		scored.sort((a, b) => {
-			if (b.hits !== a.hits) return b.hits - a.hits;
-			if (b.isDefault !== a.isDefault) return b.isDefault - a.isDefault;
-			if (b.isV2 !== a.isV2) return b.isV2 - a.isV2;
-			return b.workflow.updatedAt - a.workflow.updatedAt;
-		});
-
-		return scored[0]?.workflow ?? null;
+		if (!byName) return null;
+		return { workflowNodeId: byName.workflowNodeId, memberRole: byName.agentName };
 	}
 
 	/**
@@ -755,6 +654,190 @@ export class TaskAgentManager {
 	}
 
 	/**
+	 * Spawn a workflow node-agent session for a run task.
+	 *
+	 * Unlike spawnTaskAgent(), this creates the workflow agent directly (worker
+	 * session + node-agent MCP) instead of creating a Task Agent orchestrator.
+	 */
+	async spawnWorkflowNodeAgent(
+		task: SpaceTask,
+		space: Space,
+		workflow: SpaceWorkflow,
+		workflowRun: SpaceWorkflowRun,
+		options: SpawnTaskAgentOptions = {}
+	): Promise<string> {
+		const taskId = task.id;
+		const existing = this.taskAgentSessions.get(taskId);
+		if (existing) {
+			return existing.session.id;
+		}
+
+		if (this.spawningTasks.has(taskId)) {
+			const CONCURRENT_SPAWN_TIMEOUT_MS = 30_000;
+			const deadline = Date.now() + CONCURRENT_SPAWN_TIMEOUT_MS;
+			return new Promise((resolve, reject) => {
+				const interval = setInterval(() => {
+					const session = this.taskAgentSessions.get(taskId);
+					if (session) {
+						clearInterval(interval);
+						resolve(session.session.id);
+						return;
+					}
+					if (!this.spawningTasks.has(taskId)) {
+						clearInterval(interval);
+						reject(
+							new Error(`Concurrent spawn for task ${taskId} failed before session was created`)
+						);
+						return;
+					}
+					if (Date.now() >= deadline) {
+						clearInterval(interval);
+						reject(
+							new Error(
+								`Concurrent spawn for task ${taskId} timed out after ${CONCURRENT_SPAWN_TIMEOUT_MS}ms`
+							)
+						);
+					}
+				}, 50);
+			});
+		}
+
+		this.spawningTasks.add(taskId);
+
+		try {
+			const execution = this.resolveWorkflowExecutionForTask(task, workflowRun.id);
+			if (!execution) {
+				throw new Error(
+					`No workflow execution mapping found for task ${taskId} in run ${workflowRun.id}`
+				);
+			}
+
+			const node = workflow.nodes.find((n) => n.id === execution.workflowNodeId);
+			if (!node) {
+				throw new Error(
+					`Workflow node "${execution.workflowNodeId}" not found in workflow "${workflow.id}"`
+				);
+			}
+
+			const nodeAgents = resolveNodeAgents(node);
+			const slot =
+				nodeAgents.length === 1
+					? nodeAgents[0]
+					: nodeAgents.find((agentSlot) => agentSlot.name === execution.memberRole);
+			if (!slot?.agentId) {
+				throw new Error(
+					`No agent slot found for role "${execution.memberRole}" in node "${execution.workflowNodeId}"`
+				);
+			}
+
+			const baseSessionId = `space:${space.id}:task:${taskId}`;
+			const sessionId = this.resolveSessionId(baseSessionId);
+
+			let workspacePath = space.workspacePath;
+			if (this.config.worktreeManager) {
+				try {
+					const result = await this.config.worktreeManager.createTaskWorktree(
+						space.id,
+						taskId,
+						task.title,
+						task.taskNumber
+					);
+					workspacePath = result.path;
+					this.taskWorktreePaths.set(taskId, result.path);
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: failed to create worktree for workflow task ${taskId}, falling back to space workspace: ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			}
+
+			const slotOverrides: SlotOverrides = {
+				model: slot.model,
+				systemPrompt: slot.systemPrompt,
+				instructions: slot.instructions,
+			};
+
+			const taskManager = new SpaceTaskManager(
+				this.config.db.getDatabase(),
+				space.id,
+				this.config.reactiveDb
+			);
+
+			let init = resolveAgentInit({
+				task,
+				space,
+				agentManager: this.config.spaceAgentManager,
+				sessionId,
+				workspacePath,
+				workflowRun,
+				workflow,
+				slotOverrides,
+				agentId: slot.agentId,
+			});
+
+			const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+				taskId,
+				sessionId,
+				execution.memberRole,
+				space.id,
+				workflowRun.id,
+				task.id,
+				taskManager,
+				workspacePath
+			);
+			init = {
+				...init,
+				mcpServers: {
+					...init.mcpServers,
+					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+				},
+			};
+
+			const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
+				agentId: slot.agentId,
+				role: execution.memberRole,
+				stepId: execution.workflowNodeId,
+			});
+
+			const spawned = this.getSubSession(actualSessionId);
+			if (!spawned) {
+				throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+			}
+
+			this.taskAgentSessions.set(taskId, spawned);
+			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: actualSessionId });
+
+			// Fallback completion signal for agents that return idle without report_done.
+			this.registerCompletionCallback(actualSessionId, async () => {
+				await this.handleSubSessionComplete(taskId, execution.workflowNodeId, actualSessionId);
+			});
+
+			const shouldKickoff = options.kickoff ?? true;
+			if (shouldKickoff) {
+				const customAgent = this.config.spaceAgentManager.getById(slot.agentId);
+				if (!customAgent) {
+					throw new Error(`Agent not found: ${slot.agentId}`);
+				}
+				const initialMessage = buildCustomAgentTaskMessage({
+					customAgent,
+					task,
+					workflowRun,
+					workflow,
+					space,
+					sessionId: actualSessionId,
+					workspacePath,
+					slotOverrides,
+				});
+				await this.injectMessageIntoSession(spawned, initialMessage);
+			}
+
+			return actualSessionId;
+		} finally {
+			this.spawningTasks.delete(taskId);
+		}
+	}
+
+	/**
 	 * Create a sub-session for a workflow step.
 	 *
 	 * Called internally from the SubSessionFactory.create() closure. Creates the
@@ -870,6 +953,12 @@ export class TaskAgentManager {
 	 * Called by the Task Agent MCP tool handler via the messageInjector callback.
 	 */
 	async injectSubSessionMessage(subSessionId: string, message: string): Promise<void> {
+		const indexed = this.agentSessionIndex.get(subSessionId);
+		if (indexed) {
+			await this.injectMessageIntoSession(indexed, message);
+			return;
+		}
+
 		// Find the sub-session by ID across all task maps
 		for (const [, stepMap] of this.subSessions) {
 			const session = stepMap.get(subSessionId);
@@ -992,14 +1081,20 @@ export class TaskAgentManager {
 			// Skip if already in the map (e.g. double rehydrate call)
 			if (this.taskAgentSessions.has(task.id)) continue;
 
-			// Only rehydrate tasks whose session is a space_task_agent session.
-			// Step sub-sessions (UUID) are stored on step tasks — skip those.
+			// Rehydrate both task-agent sessions and workflow node-agent sessions.
+			// - space_task_agent: full orchestration session rehydrate path
+			// - non-space_task_agent on workflow tasks: node-agent rehydrate path
 			const dbSession = this.config.db.getSession(sessionId);
-			if (!dbSession || dbSession.type !== 'space_task_agent') continue;
+			if (!dbSession) continue;
+			if (dbSession.type !== 'space_task_agent' && !task.workflowRunId) continue;
 
 			attempted++;
 			try {
-				await this.rehydrateTaskAgent(task, sessionId);
+				if (dbSession.type === 'space_task_agent') {
+					await this.rehydrateTaskAgent(task, sessionId);
+				} else if (task.workflowRunId) {
+					await this.rehydrateWorkflowNodeSession(task, sessionId);
+				}
 			} catch (err) {
 				failed++;
 				log.warn(
@@ -1438,6 +1533,92 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * Rehydrate a workflow node-agent session that is persisted on a run task.
+	 */
+	private async rehydrateWorkflowNodeSession(task: SpaceTask, sessionId: string): Promise<void> {
+		const workflowRunId = task.workflowRunId;
+		if (!workflowRunId) return;
+
+		const run = this.config.workflowRunRepo.getRun(workflowRunId);
+		if (!run) return;
+
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		if (!workflow) return;
+
+		const space = await this.config.spaceManager.getSpace(task.spaceId);
+		if (!space) return;
+
+		const execution = this.resolveWorkflowExecutionForTask(task, workflowRunId);
+		if (!execution) return;
+
+		const restored = AgentSession.restore(
+			sessionId,
+			this.config.db,
+			this.config.messageHub,
+			this.config.daemonHub,
+			this.config.getApiKey,
+			this.config.skillsManager,
+			this.config.appMcpServerRepo
+		);
+		if (!restored) return;
+
+		const workspacePath = await (async () => {
+			if (!this.config.worktreeManager) return space.workspacePath;
+			const storedPath = await this.config.worktreeManager.getTaskWorktreePath(space.id, task.id);
+			if (storedPath && existsSync(storedPath)) {
+				this.taskWorktreePaths.set(task.id, storedPath);
+				return storedPath;
+			}
+			return space.workspacePath;
+		})();
+
+		const taskManager = new SpaceTaskManager(
+			this.config.db.getDatabase(),
+			space.id,
+			this.config.reactiveDb
+		);
+		const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+			task.id,
+			sessionId,
+			execution.memberRole,
+			space.id,
+			workflowRunId,
+			task.id,
+			taskManager,
+			workspacePath
+		);
+		const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		const mergedMcpServers: Record<string, McpServerConfig> = {
+			...registryMcpServers,
+			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+		};
+		if (this.config.dbPath) {
+			const dbQueryServer = createDbQueryMcpServer({
+				dbPath: this.config.dbPath,
+				scopeType: 'space',
+				scopeValue: space.id,
+			});
+			this.taskDbQueryServers.set(task.id, dbQueryServer);
+			mergedMcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
+		}
+		restored.setRuntimeMcpServers(mergedMcpServers);
+
+		if (!this.subSessions.has(task.id)) {
+			this.subSessions.set(task.id, new Map());
+		}
+		this.subSessions.get(task.id)!.set(sessionId, restored);
+		this.agentSessionIndex.set(sessionId, restored);
+		this.taskAgentSessions.set(task.id, restored);
+		this.config.sessionManager.registerSession(restored);
+
+		this.registerCompletionCallback(sessionId, async () => {
+			await this.handleSubSessionComplete(task.id, execution.workflowNodeId, sessionId);
+		});
+
+		await restored.startStreamingQuery();
+	}
+
+	/**
 	 * Rehydrate a single Task Agent session after daemon restart.
 	 *
 	 * 1. Loads the associated Space, Workflow, and WorkflowRun from the DB.
@@ -1873,7 +2054,10 @@ export class TaskAgentManager {
 		taskManager: SpaceTaskManager,
 		workspacePath: string
 	) {
-		const workflowNodeId = this.config.taskRepo.getTask(stepTaskId)?.id ?? '';
+		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+		const bySession = nodeExecutions.find((exec) => exec.agentSessionId === subSessionId);
+		const byRole = nodeExecutions.find((exec) => exec.agentName === role);
+		const workflowNodeId = bySession?.workflowNodeId ?? byRole?.workflowNodeId ?? '';
 		// Build the ChannelResolver from the workflow run's stored config at spawn time.
 		// Channels are written once at step-start by SpaceRuntime.storeResolvedChannels(),
 		// so reading them here gives the correct topology for this sub-session's lifetime.

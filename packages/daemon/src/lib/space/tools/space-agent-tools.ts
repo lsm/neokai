@@ -1,21 +1,21 @@
 /**
  * Space Agent Tools — MCP tools for the Space leader agent session.
  *
- * These tools allow the Space agent to start workflow runs, check status,
- * change plans, and query Space tasks. They are in the Space namespace (not Room).
+ * These tools allow the Space agent to inspect workflows, manage existing
+ * workflow runs, and create/query Space tasks. They are in the Space namespace
+ * (not Room).
  *
  * Tools (per M7 spec):
  *   list_workflows      — show all workflows with their descriptions and steps
- *   start_workflow_run  — begin a workflow run (requires explicit workflowId)
  *   get_workflow_run    — check the status of a running workflow
  *   change_plan         — update task description or switch to a different workflow mid-run
  *   list_tasks          — see current and past tasks
  *   get_workflow_detail — get a specific workflow's full definition (steps, transitions, rules)
  *   suggest_workflow    — get workflow recommendations for a described piece of work
  *
- * Design note: workflow selection is LLM-driven. The agent calls list_workflows,
- * reasons about which workflow fits the request, then calls start_workflow_run
- * with an explicit workflowId. There are no server-side heuristics.
+ * Design note: workflow selection is LLM-driven and task-first. The agent uses
+ * workflow discovery tools to reason about orchestration, then creates a task.
+ * Runtime attaches and advances workflow execution from the task lifecycle.
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
@@ -239,7 +239,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * are returned in creation order.
 		 *
 		 * Selection is still LLM-driven: the agent should use this to rank candidates
-		 * and then call start_workflow_run with an explicit workflow_id.
+		 * before creating a task.
 		 */
 		async suggest_workflow(args: { description: string }): Promise<ToolResult> {
 			const allWorkflows = workflowManager.listWorkflows(spaceId);
@@ -518,21 +518,9 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 	const tools = [
 		tool(
 			'list_workflows',
-			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before starting a run.',
+			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
 			{},
 			() => handlers.list_workflows()
-		),
-		tool(
-			'start_workflow_run',
-			'Begin a workflow run. You must call list_workflows first and choose the workflow whose description and steps best match the request.',
-			{
-				workflow_id: z
-					.string()
-					.describe('ID of the workflow to run (required — choose from list_workflows)'),
-				title: z.string().describe('Short title for this workflow run'),
-				description: z.string().optional().describe('Detailed description of the work to be done'),
-			},
-			(args) => handlers.start_workflow_run(args)
 		),
 		tool(
 			'get_workflow_run',
@@ -559,7 +547,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_workflow_detail',
-			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before starting a run.',
+			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before creating a task.',
 			{
 				workflow_id: z.string().describe('ID of the workflow to retrieve'),
 			},
@@ -567,7 +555,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'suggest_workflow',
-			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before calling start_workflow_run.',
+			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before creating a task.',
 			{
 				description: z
 					.string()
@@ -614,7 +602,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'create_standalone_task',
-			'Create a standalone task not associated with any workflow run. Use this to assign ad-hoc work directly to an agent.',
+			'Create a task request. Runtime may attach and execute a workflow for this task during orchestration.',
 			{
 				title: z.string().describe('Short title for the task'),
 				description: z.string().describe('Detailed description of the work to be done'),
