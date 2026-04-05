@@ -143,7 +143,7 @@ class MockTaskAgentManager {
 		return false;
 	}
 
-	async spawnTaskAgent(
+	async spawnWorkflowNodeAgent(
 		_task: SpaceTask,
 		_space: Space,
 		_workflow: SpaceWorkflow | null,
@@ -1241,7 +1241,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	// ─────────────────────────────────────────────────────────────────────────────
 
 	describe('orchestration task auto-complete on run completion', () => {
-		test('in_progress orchestration task auto-completed when run completes', async () => {
+		test('legacy in_progress orchestration task is ignored when run completes', async () => {
 			const rt = makeRuntimeWithTam();
 
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1269,9 +1269,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Run should be done
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
 
-			// Orchestration task should be auto-completed
+			// Legacy helper/orchestration tasks are not workflow execution tasks and are ignored.
 			const orchTaskAfter = taskRepo.getTask(orchTask.id);
-			expect(orchTaskAfter?.status).toBe('done');
+			expect(orchTaskAfter?.status).toBe('in_progress');
 		});
 
 		test('open orchestration task is skipped on run completion (no throw)', async () => {

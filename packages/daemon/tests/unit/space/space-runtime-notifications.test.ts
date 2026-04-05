@@ -1194,7 +1194,7 @@ describe('SpaceRuntime — notification events', () => {
 			return false;
 		}
 
-		async spawnTaskAgent(
+		async spawnWorkflowNodeAgent(
 			_task: SpaceTask,
 			_space: Space,
 			_workflow: SpaceWorkflow | null,

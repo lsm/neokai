@@ -133,7 +133,6 @@ function formatTaskThreadError(err: unknown): string {
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
 	const tasks = spaceStore.tasks.value;
 	const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
-	const runtimeSpaceIdCandidate = task?.spaceId ?? spaceId;
 	const activityMembers: SpaceTaskActivityMember[] = taskId
 		? (spaceStore.taskActivity.value.get(taskId) ?? [])
 		: [];
@@ -231,34 +230,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		setThreadSessionId(task.taskAgentSessionId ?? null);
 	}, [task?.id, task?.taskAgentSessionId]);
 
-	useEffect(() => {
-		if (!task || !runtimeSpaceIdCandidate) return;
-		if (task.status === 'archived' || task.status === 'cancelled' || task.status === 'done') return;
-
-		let cancelled = false;
-		const showSpawnLoading = !task.taskAgentSessionId;
-		if (showSpawnLoading) setEnsuringThread(true);
-		setThreadSendError(null);
-
-		spaceStore
-			.ensureTaskAgentSession(task.id)
-			.then((updatedTask) => {
-				if (cancelled) return;
-				setThreadSessionId(updatedTask.taskAgentSessionId ?? null);
-			})
-			.catch((err) => {
-				if (cancelled) return;
-				setThreadSendError(formatTaskThreadError(err));
-			})
-			.finally(() => {
-				if (!cancelled && showSpawnLoading) setEnsuringThread(false);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [task?.id, task?.taskAgentSessionId, task?.status, runtimeSpaceIdCandidate]);
-
 	if (!taskId) {
 		return (
 			<div class="flex items-center justify-center h-full p-6">
@@ -324,8 +295,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			setThreadSendError(null);
 
 			if (!agentSessionId) {
+				setEnsuringThread(true);
 				const ensured = await spaceStore.ensureTaskAgentSession(task.id);
 				setThreadSessionId(ensured.taskAgentSessionId ?? null);
+				setEnsuringThread(false);
 			}
 
 			await spaceStore.sendTaskMessage(task.id, nextMessage);
@@ -333,6 +306,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
 		} finally {
+			setEnsuringThread(false);
 			setSendingThread(false);
 		}
 	};

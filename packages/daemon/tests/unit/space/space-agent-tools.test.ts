@@ -24,7 +24,10 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
-import { createSpaceAgentToolHandlers } from '../../../src/lib/space/tools/space-agent-tools.ts';
+import {
+	createSpaceAgentMcpServer,
+	createSpaceAgentToolHandlers,
+} from '../../../src/lib/space/tools/space-agent-tools.ts';
 import type { SpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -163,6 +166,39 @@ function makeHandlers(ctx: TestCtx) {
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 	});
 }
+
+function getRegisteredToolNames(server: ReturnType<typeof createSpaceAgentMcpServer>): string[] {
+	const instance = server.instance as unknown as { _registeredTools: Record<string, unknown> };
+	return Object.keys(instance._registeredTools);
+}
+
+describe('createSpaceAgentMcpServer — tool registration', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('does not register start_workflow_run for Space Agent sessions', () => {
+		const server = createSpaceAgentMcpServer({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+		});
+
+		const names = getRegisteredToolNames(server);
+		expect(names).not.toContain('start_workflow_run');
+		expect(names).toContain('create_standalone_task');
+	});
+});
 
 // ---------------------------------------------------------------------------
 // list_workflows

@@ -400,7 +400,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			const mockTAM = {
 				isSpawning: () => false,
 				isTaskAgentAlive: () => false,
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
@@ -440,7 +440,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			const mockTAM = {
 				isSpawning: () => false,
 				isTaskAgentAlive: () => false,
-				spawnTaskAgent: async () => 'session-1',
+				spawnWorkflowNodeAgent: async () => 'session-1',
 				rehydrate: async () => {
 					rehydrateCallCount++;
 				},
@@ -481,7 +481,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			const mockTAM = {
 				isSpawning: () => false,
 				isTaskAgentAlive: () => false,
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
@@ -538,12 +538,19 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 				workflowNodeId: STEP_A,
 				status: 'open',
 			});
+			new NodeExecutionRepository(db).createOrIgnore({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_A,
+				agentName: unspawnedTask.title,
+				agentId: AGENT,
+				status: 'pending',
+			});
 
 			const spawned: string[] = [];
 			const mockTAM = {
 				isSpawning: () => false,
 				isTaskAgentAlive: () => false,
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawned.push(t.id);
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -603,7 +610,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			const mockTAM = {
 				isSpawning: () => false,
 				isTaskAgentAlive: (taskId: string) => taskId === existingTask.id, // alive
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });

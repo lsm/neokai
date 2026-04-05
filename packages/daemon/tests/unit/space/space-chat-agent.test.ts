@@ -4,7 +4,7 @@
  * Verifies:
  * - Prompt includes available workflow names, descriptions, and tags
  * - Prompt includes available agent names and roles
- * - Guidance text for start_workflow_run vs create_standalone_task is present
+ * - Task-first guidance text is present
  * - Operator-supplied background and instructions are included
  * - Empty workflows/agents handled gracefully
  * - Event handling section always included with all four event kinds
@@ -184,9 +184,9 @@ describe('buildSpaceChatSystemPrompt — agent information', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — workflow vs task guidance', () => {
-	test('includes start_workflow_run guidance', () => {
+	test('does not mention start_workflow_run (tool is not exposed to Space Agent)', () => {
 		const prompt = buildSpaceChatSystemPrompt(makeContext());
-		expect(prompt).toContain('start_workflow_run');
+		expect(prompt).not.toContain('start_workflow_run');
 	});
 
 	test('includes create_standalone_task guidance', () => {
@@ -433,9 +433,9 @@ describe('buildSpaceChatSystemPrompt — clarification guidance', () => {
 		expect(prompt).toContain('Clear requests');
 	});
 
-	test('guides to prefer workflow run with V2 for clear coding work', () => {
+	test('guides clear coding requests to task-first workflow orchestration', () => {
 		const prompt = buildSpaceChatSystemPrompt();
-		expect(prompt).toContain('V2 workflow');
+		expect(prompt).toContain('runtime will attach and execute the best matching workflow');
 	});
 
 	test('clarification guidance present regardless of autonomy level', () => {

@@ -1083,23 +1083,22 @@ describe('Task Agent Session Lifecycle', () => {
 	});
 
 	// =======================================================================
-	// 8. selectFallbackWorkflow — keyword ranking
+	// 8. ensureTaskAgentSession — does not auto-attach workflows
 	// =======================================================================
 
-	describe('selectFallbackWorkflow — keyword ranking', () => {
-		test('returns null when no workflows exist', async () => {
+	describe('ensureTaskAgentSession — no workflow auto-attach', () => {
+		test('keeps standalone task detached when no workflows exist', async () => {
 			const task = await makeTask(ctx.taskManager, {
 				title: 'Fix login bug',
 				description: 'Fix the authentication bug',
 			});
 			const result = await ctx.manager.ensureTaskAgentSession(task.id);
 
-			// No workflows in space — should remain without workflowRunId
 			expect(result.workflowRunId).toBeUndefined();
 		});
 
-		test('selects the only workflow when only one exists', async () => {
-			const wfId = ctx.workflowManager.createWorkflow({
+		test('keeps standalone task detached even when workflows exist', async () => {
+			ctx.workflowManager.createWorkflow({
 				spaceId: ctx.spaceId,
 				name: 'Coding Workflow',
 				description: 'A coding workflow',
@@ -1119,89 +1118,7 @@ describe('Task Agent Session Lifecycle', () => {
 			});
 			const result = await ctx.manager.ensureTaskAgentSession(task.id);
 
-			expect(result.workflowRunId).toBeDefined();
-			const run = ctx.workflowRunRepo.getRun(result.workflowRunId!);
-			expect(run?.workflowId).toBe(wfId.id);
-		});
-
-		test('prefers workflow tagged default when multiple exist', async () => {
-			ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'General Workflow',
-				description: 'A general purpose workflow',
-				nodes: [
-					{
-						id: 'step-general',
-						name: 'General',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-general',
-			});
-
-			const defaultWfId = ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Default Coding Workflow',
-				description: 'Default coding path',
-				nodes: [
-					{
-						id: 'step-default',
-						name: 'Code',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-default',
-				tags: ['default'],
-			});
-
-			const task = await makeTask(ctx.taskManager, {
-				title: 'Fix bug',
-				description: 'Fix something',
-			});
-			const result = await ctx.manager.ensureTaskAgentSession(task.id);
-
-			const run = ctx.workflowRunRepo.getRun(result.workflowRunId!);
-			expect(run?.workflowId).toBe(defaultWfId.id);
-		});
-
-		test('prefers workflow with keyword overlap over untagged', async () => {
-			ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Testing Workflow',
-				description: 'A testing workflow',
-				nodes: [
-					{
-						id: 'step-test',
-						name: 'Test',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-test',
-			});
-
-			const codingWfId = ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Coding Workflow',
-				description: 'A coding workflow for bug fixes',
-				nodes: [
-					{
-						id: 'step-code',
-						name: 'Code',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-code',
-			});
-
-			// Task title has keyword overlap with "Coding Workflow" ("coding")
-			const task = await makeTask(ctx.taskManager, {
-				title: 'Fix coding bug',
-				description: 'Fix the coding issue',
-			});
-			const result = await ctx.manager.ensureTaskAgentSession(task.id);
-
-			const run = ctx.workflowRunRepo.getRun(result.workflowRunId!);
-			expect(run?.workflowId).toBe(codingWfId.id);
+			expect(result.workflowRunId).toBeUndefined();
 		});
 	});
 
