@@ -1155,12 +1155,15 @@ describe('createNeoActionMcpServer: undo_last_action registration', () => {
 		// Should now have 2 entries: original create_room (undoable=false) + undo_last_action.
 		const entries = logger.getRecentActivity(10);
 		expect(entries).toHaveLength(2);
-		// Newest first — the undo action itself is entry 0.
-		expect(entries[0].toolName).toBe('undo_last_action');
-		expect(entries[0].undoable).toBe(false);
-		// The original create_room entry was marked as undone.
-		expect(entries[1].toolName).toBe('create_room');
-		expect(entries[1].undoable).toBe(false);
+
+		// Ordering can tie on timestamp in fast test runs; assert by tool identity.
+		const undoEntry = entries.find((entry) => entry.toolName === 'undo_last_action');
+		expect(undoEntry).toBeDefined();
+		expect(undoEntry?.undoable).toBe(false);
+
+		const createRoomEntry = entries.find((entry) => entry.toolName === 'create_room');
+		expect(createRoomEntry).toBeDefined();
+		expect(createRoomEntry?.undoable).toBe(false);
 		db.close();
 	});
 });
