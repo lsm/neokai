@@ -128,10 +128,10 @@ function relativeTime(ts: number): string {
 
 function goalPriorityBorderClass(priority: GoalPriority): string {
 	const map: Record<GoalPriority, string> = {
-		urgent: 'border-l-4 border-l-red-500',
-		high: 'border-l-4 border-l-orange-400',
-		normal: 'border-l-4 border-l-blue-500',
-		low: 'border-l-4 border-l-gray-500',
+		urgent: 'border-l-2 border-l-red-500',
+		high: 'border-l-2 border-l-orange-400',
+		normal: 'border-l-2 border-l-blue-500',
+		low: 'border-l-2 border-l-gray-500',
 	};
 	return map[priority];
 }
@@ -1319,7 +1319,7 @@ function GoalItem({
 		<>
 			<div
 				class={cn(
-					'bg-dark-850 border border-dark-700 rounded-lg overflow-hidden',
+					'bg-dark-850 border border-dark-700 rounded-xl overflow-hidden',
 					goalPriorityBorderClass(goal.priority)
 				)}
 			>
@@ -1802,14 +1802,26 @@ function GoalsSkeleton() {
 function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 	return (
 		<div class="flex flex-col items-center justify-center py-16 text-center">
-			<div class="text-5xl mb-4" aria-hidden="true">
-				🎯
-			</div>
-			<h3 class="text-lg font-semibold text-gray-200 mb-2">No missions yet</h3>
-			<p class="text-sm text-gray-400 max-w-xs mb-6 leading-relaxed">
+			<svg
+				class="w-10 h-10 text-gray-700 mb-3"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width={1.5}
+					d="M13 10V3L4 14h7v7l9-11h-7z"
+				/>
+			</svg>
+			<p class="text-sm text-gray-400 font-medium">No missions yet</p>
+			<p class="text-xs text-gray-500 mt-1 max-w-xs">
 				Set clear missions to give your agent team direction and purpose.
 			</p>
-			<Button onClick={onCreateClick}>+ Create your first mission</Button>
+			<Button onClick={onCreateClick} class="mt-5">
+				Create your first mission
+			</Button>
 		</div>
 	);
 }
@@ -1987,11 +1999,11 @@ export function GoalsEditor({
 	});
 
 	return (
-		<div class="space-y-4">
+		<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
 			{/* Header */}
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-2">
-					<h2 class="text-lg font-semibold text-gray-100">Missions</h2>
+					<h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Missions</h2>
 					<span class="px-2 py-0.5 text-xs font-medium bg-dark-700 text-gray-300 rounded">
 						{goals.length}
 					</span>

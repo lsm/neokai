@@ -16,6 +16,7 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomAgentActiveSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -114,8 +115,11 @@ export function App() {
 			const spaceViewMode = currentSpaceViewModeSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
-			// Detect agent routes: synthetic session IDs follow the pattern <type>:chat:<id>
-			const isAgentRoute = !!(roomSessionId && roomId && roomSessionId === `room:chat:${roomId}`);
+			// Detect agent routes: new signal-based detection, with legacy session ID fallback
+			const isAgentActive = currentRoomAgentActiveSignal.value;
+			const isAgentRoute =
+				!!(roomId && isAgentActive) ||
+				!!(roomSessionId && roomId && roomSessionId === `room:chat:${roomId}`);
 			const isSpaceAgentRoute = !!(
 				spaceSessionId &&
 				spaceId &&

@@ -104,6 +104,8 @@ describe('RoomDashboard', () => {
 		status: status as TaskSummary['status'],
 		priority: 'normal',
 		progress: 0,
+		dependsOn: [],
+		updatedAt: Date.now(),
 		...overrides,
 	});
 
@@ -122,9 +124,9 @@ describe('RoomDashboard', () => {
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).not.toContain('running');
-			expect(container.textContent).not.toContain('paused');
-			expect(container.textContent).not.toContain('stopped');
+			expect(container.textContent).not.toContain('Running');
+			expect(container.textContent).not.toContain('Paused');
+			expect(container.textContent).not.toContain('Stopped');
 		});
 
 		it('should show running state with green indicator', () => {
@@ -132,18 +134,18 @@ describe('RoomDashboard', () => {
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('running');
-			const greenDot = container.querySelector('.bg-green-500');
+			expect(container.textContent).toContain('Running');
+			const greenDot = container.querySelector('.bg-green-400');
 			expect(greenDot).toBeTruthy();
 		});
 
-		it('should show pulse animation for running state', () => {
+		it('should show ping animation for running state', () => {
 			mockRuntimeState.value = 'running';
 
 			const { container } = render(<RoomDashboard />);
 
-			const pulseDot = container.querySelector('.animate-pulse');
-			expect(pulseDot).toBeTruthy();
+			const pingDot = container.querySelector('.animate-ping');
+			expect(pingDot).toBeTruthy();
 		});
 
 		it('should show paused state with yellow indicator', () => {
@@ -151,28 +153,28 @@ describe('RoomDashboard', () => {
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('paused');
-			const yellowDot = container.querySelector('.bg-yellow-500');
+			expect(container.textContent).toContain('Paused');
+			const yellowDot = container.querySelector('.bg-yellow-400');
 			expect(yellowDot).toBeTruthy();
 		});
 
-		it('should not pulse when paused', () => {
+		it('should not ping when paused', () => {
 			mockRuntimeState.value = 'paused';
 
 			const { container } = render(<RoomDashboard />);
 
-			const indicator = container.querySelector('.bg-yellow-500');
-			expect(indicator?.className).not.toContain('animate-pulse');
+			const pingDot = container.querySelector('.animate-ping');
+			expect(pingDot).toBeFalsy();
 		});
 
-		it('should show stopped state with red indicator', () => {
+		it('should show stopped state with gray indicator', () => {
 			mockRuntimeState.value = 'stopped';
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('stopped');
-			const redDot = container.querySelector('.bg-red-500');
-			expect(redDot).toBeTruthy();
+			expect(container.textContent).toContain('Stopped');
+			const grayDot = container.querySelector('.bg-gray-500');
+			expect(grayDot).toBeTruthy();
 		});
 	});
 
@@ -407,11 +409,11 @@ describe('RoomDashboard', () => {
 		});
 	});
 
-	describe('Tasks Section', () => {
-		it('should show Tasks heading', () => {
+	describe('Recent Activity Section', () => {
+		it('should show Recent Activity heading', () => {
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('Tasks');
+			expect(container.textContent).toContain('Recent Activity');
 		});
 	});
 });

@@ -10,11 +10,10 @@ dev:
 		PORT=$(PORT); \
 		echo "$(PORT)" > tmp/.dev-server-running; \
 	else \
-		@echo "Finding available port..." \
+		echo "Finding available port..."; \
 		PORT=$$(node -e "const net = require('net'); const s = net.createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });"); \
-	fi
-	
-	@echo "Starting development server on port $$PORT..."; \
+	fi; \
+	echo "Starting development server on port $$PORT..."; \
 	mkdir -p $(WORKSPACE); \
 	echo ""; \
 	echo "================================================"; \

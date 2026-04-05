@@ -19,6 +19,8 @@ export type { RoomSettingsProps } from './RoomSettings';
 export { RoomAgents } from './RoomAgents';
 export type { RoomAgentsProps } from './RoomAgents';
 // @public - Library export
+export { RoomAgentContextStrip } from './RoomAgentContextStrip';
+// @public - Library export
 export { TurnSummaryBlock } from './TurnSummaryBlock';
 export type { TurnSummaryBlockProps } from './TurnSummaryBlock';
 // @public - Library export
