@@ -442,7 +442,7 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
 			expect(getByText('Coding Workflow')).toBeTruthy();
-			expect(getByText('Fullstack QA Loop Workflow')).toBeTruthy();
+			expect(getByText('Coding with QA Workflow')).toBeTruthy();
 			expect(getByText('Research Workflow')).toBeTruthy();
 			expect(getByText('Review-Only Workflow')).toBeTruthy();
 			expect(getByText('Full-Cycle Coding Workflow')).toBeTruthy();
@@ -584,7 +584,7 @@ describe('WorkflowEditor', () => {
 				'Research Workflow',
 				'Review-Only Workflow',
 				'Full-Cycle Coding Workflow',
-				'Fullstack QA Loop Workflow',
+				'Coding with QA Workflow',
 			]);
 		});
 

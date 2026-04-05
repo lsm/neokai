@@ -1090,7 +1090,7 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(result.seeded).toHaveLength(5);
 		expect(result.seeded).toContain('Coding Workflow');
 		expect(result.seeded).toContain('Full-Cycle Coding Workflow');
-		expect(result.seeded).toContain('Fullstack QA Loop Workflow');
+		expect(result.seeded).toContain('Coding with QA Workflow');
 		expect(result.seeded).toContain('Research Workflow');
 		expect(result.seeded).toContain('Review-Only Workflow');
 	});

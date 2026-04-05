@@ -218,7 +218,7 @@ test.describe('Space Creation UX', () => {
 		// Verify all built-in workflows are visible
 		const BUILT_IN_WORKFLOWS = [
 			'Coding Workflow',
-			'Fullstack QA Loop Workflow',
+			'Coding with QA Workflow',
 			'Research Workflow',
 			'Review-Only Workflow',
 			'Full-Cycle Coding Workflow',
