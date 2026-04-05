@@ -177,10 +177,15 @@ describe('Space Workflow — Edge Cases', () => {
 				'Cancellation Test Run'
 			);
 
-			// Confirm Planning task is pending before cancellation
-			const planningTask = tasks.find((t) => t.title === 'Planning');
-			expect(planningTask).toBeDefined();
-			expect(planningTask!.status).toBe('open');
+			// Wait for Planning node to activate before cancellation
+			const planningTask = await waitForNodeActivated(
+				daemon,
+				space.id,
+				runId,
+				'Planning',
+				NODE_ACTIVATION_TIMEOUT
+			);
+			expect(planningTask.status).toBe('open');
 
 			// Cancel the run
 			const cancelResult = (await daemon.messageHub.request('spaceWorkflowRun.cancel', {
