@@ -281,6 +281,10 @@ export function navigateToSession(sessionId: string, replace = false): void {
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentSessionIdSignal.value = sessionId;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -300,6 +304,10 @@ export function navigateToSession(sessionId: string, replace = false): void {
 
 		// Update the signal
 		currentSessionIdSignal.value = sessionId;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
