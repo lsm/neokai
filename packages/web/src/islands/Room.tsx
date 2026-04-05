@@ -93,7 +93,8 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		}
 	}, [agentActive]);
 
-	// Update URL when tab changes
+	// Update URL when tab changes — uses the pending-tab mechanism
+	// (currentRoomTabSignal) so the Room effect and BottomTabBar stay in sync.
 	const handleTabChange = (tab: RoomTab) => {
 		setActiveTab(tab);
 		currentRoomActiveTabSignal.value = tab;
@@ -101,6 +102,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			navigateToRoomAgent(roomId);
 		} else {
 			currentRoomAgentActiveSignal.value = false;
+			currentRoomTabSignal.value = tab;
 			navigateToRoom(roomId);
 		}
 	};

@@ -21,12 +21,14 @@ const {
 	mockNavigateToHome,
 	mockNavigateToRoomTask,
 	mockNavigateToRoom,
+	mockNavigateToRoomAgent,
 	mockToastSuccess,
 	mockRoomStoreSelect,
 } = vi.hoisted(() => ({
 	mockNavigateToHome: vi.fn(),
 	mockNavigateToRoomTask: vi.fn(),
 	mockNavigateToRoom: vi.fn(),
+	mockNavigateToRoomAgent: vi.fn(),
 	mockToastSuccess: vi.fn(),
 	// Hoisted so it stays the same reference across all mock accesses
 	mockRoomStoreSelect: vi.fn().mockResolvedValue(undefined),
@@ -36,6 +38,7 @@ vi.mock('../../lib/router', () => ({
 	navigateToHome: mockNavigateToHome,
 	navigateToRoomTask: mockNavigateToRoomTask,
 	navigateToRoom: mockNavigateToRoom,
+	navigateToRoomAgent: mockNavigateToRoomAgent,
 }));
 
 vi.mock('../../lib/toast', () => ({
