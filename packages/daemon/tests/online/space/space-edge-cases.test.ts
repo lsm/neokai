@@ -37,7 +37,9 @@ import {
 	approveGate,
 	createTestSpace,
 	getTasksForNode,
+	initializeGitRepo,
 	markRunFailed,
+	mockAgentDone,
 	readGateData,
 	restartDaemon,
 	startWorkflowRun,
@@ -88,9 +90,15 @@ describe('Space Workflow — Edge Cases', () => {
 	test(
 		'Two concurrent workflow runs have independent iteration counters and isolated gate data',
 		async () => {
-			const { space, workflow } = await createTestSpace(daemon);
+			// Create a fresh git repository for the Space (avoids worktree branch conflicts)
+			const gitRepo = await initializeGitRepo();
 
-			// Start two separate runs against the same workflow
+			try {
+				const { space, workflow } = await createTestSpace(daemon, {
+					workspacePath: gitRepo,
+				});
+
+				// Start two separate runs against the same workflow
 			const { runId: runA } = await startWorkflowRun(
 				daemon,
 				space.id,
@@ -117,6 +125,9 @@ describe('Space Workflow — Edge Cases', () => {
 			expect(tasksB[0].workflowRunId).toBe(runB);
 			// Task IDs are distinct
 			expect(tasksA[0].id).not.toBe(tasksB[0].id);
+
+			// Mark Planning task A as done before writing gate data
+			await mockAgentDone(daemon, space.id, tasksA[0].id, 'Plan A complete');
 
 			// Write gate data to runA only — verify runB gate is still empty
 			await writeGateData(daemon, runA, 'plan-pr-gate', {
@@ -145,6 +156,10 @@ describe('Space Workflow — Edge Cases', () => {
 
 			const planReviewTasksB = await getTasksForNode(daemon, space.id, runB, 'Plan Review');
 			expect(planReviewTasksB.length).toBe(0);
+			} finally {
+				// Clean up git repo
+				await Bun.$`rm -rf ${gitRepo}`.quiet();
+			}
 		},
 		TEST_TIMEOUT
 	);
@@ -298,6 +313,9 @@ describe('Space Workflow — Edge Cases', () => {
 			const restartWorkspace = `/tmp/neokai-restart-gate-${Date.now()}`;
 			await Bun.$`mkdir -p ${restartWorkspace}`;
 
+			// Create a fresh git repository for the Space (avoids worktree branch conflicts)
+			const gitRepo = await initializeGitRepo();
+
 			try {
 				// Replace the default daemon with one that won't delete its workspace on exit.
 				// Runs inside the try block so the workspace is always cleaned up in finally
@@ -305,7 +323,9 @@ describe('Space Workflow — Edge Cases', () => {
 				daemon.kill('SIGTERM');
 				await daemon.waitForExit();
 				daemon = await createDaemonServer({ workspacePath: restartWorkspace });
-				const { space, workflow } = await createTestSpace(daemon);
+				const { space, workflow } = await createTestSpace(daemon, {
+					workspacePath: gitRepo,
+				});
 				const { runId } = await startWorkflowRun(
 					daemon,
 					space.id,
@@ -313,7 +333,17 @@ describe('Space Workflow — Edge Cases', () => {
 					'Gate Persistence Test'
 				);
 
+				// Wait for Planning node to activate (start node)
+				const planningTask = await waitForNodeActivated(
+					daemon,
+					space.id,
+					runId,
+					'Planning',
+					NODE_ACTIVATION_TIMEOUT
+				);
+
 				// Simulate planner writing plan-pr-gate (waiting for human review)
+				await mockAgentDone(daemon, space.id, planningTask.id, 'Plan complete');
 				await writeGateData(daemon, runId, 'plan-pr-gate', {
 					plan_submitted: 'https://github.com/example/repo/pull/42',
 					pr_number: 42,
@@ -353,8 +383,9 @@ describe('Space Workflow — Edge Cases', () => {
 				})) as { run: SpaceWorkflowRun };
 				expect(run.status).toBe('in_progress');
 			} finally {
-				// afterEach handles daemon shutdown; clean up the workspace here.
+				// afterEach handles daemon shutdown; clean up the workspace and git repo here.
 				await Bun.$`rm -rf ${restartWorkspace}`.quiet();
+				await Bun.$`rm -rf ${gitRepo}`.quiet();
 			}
 		},
 		TEST_TIMEOUT
@@ -372,13 +403,18 @@ describe('Space Workflow — Edge Cases', () => {
 			const restartWorkspace = `/tmp/neokai-restart-votes-${Date.now()}`;
 			await Bun.$`mkdir -p ${restartWorkspace}`;
 
+			// Create a fresh git repository for the Space (avoids worktree branch conflicts)
+			const gitRepo = await initializeGitRepo();
+
 			try {
 				// Replace the default daemon inside the try block so the workspace is always
 				// cleaned up in finally even if createDaemonServer throws.
 				daemon.kill('SIGTERM');
 				await daemon.waitForExit();
 				daemon = await createDaemonServer({ workspacePath: restartWorkspace });
-				const { space, workflow } = await createTestSpace(daemon);
+				const { space, workflow } = await createTestSpace(daemon, {
+					workspacePath: gitRepo,
+				});
 				const { runId } = await startWorkflowRun(
 					daemon,
 					space.id,
@@ -387,6 +423,16 @@ describe('Space Workflow — Edge Cases', () => {
 				);
 
 				// ── Step 1: advance through Planning → Plan Review → Coding ────
+				// Wait for Planning node to activate (start node)
+				const planningTask = await waitForNodeActivated(
+					daemon,
+					space.id,
+					runId,
+					'Planning',
+					NODE_ACTIVATION_TIMEOUT
+				);
+				// Mark planning as done and write plan-pr-gate to open the channel to Plan Review
+				await mockAgentDone(daemon, space.id, planningTask.id, 'Plan complete');
 				await writeGateData(daemon, runId, 'plan-pr-gate', {
 					plan_submitted: 'https://github.com/example/repo/pull/10',
 					pr_number: 10,
@@ -458,8 +504,9 @@ describe('Space Workflow — Edge Cases', () => {
 				expect(qaTask.workflowRunId).toBe(runId);
 				expect(['open', 'in_progress']).toContain(qaTask.status);
 			} finally {
-				// afterEach handles daemon shutdown; clean up workspace here.
+				// afterEach handles daemon shutdown; clean up workspace and git repo here.
 				await Bun.$`rm -rf ${restartWorkspace}`.quiet();
+				await Bun.$`rm -rf ${gitRepo}`.quiet();
 			}
 		},
 		TEST_TIMEOUT

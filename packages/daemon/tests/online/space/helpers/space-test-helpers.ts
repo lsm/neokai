@@ -214,6 +214,30 @@ async function findNodeExecutionById(
 // ---------------------------------------------------------------------------
 
 /**
+ * Initialize a minimal git repository for Space tests that need worktree support.
+ * Returns the path to the created repository.
+ */
+export async function initializeGitRepo(): Promise<string> {
+	const repoPath = `/tmp/neokai-space-git-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+	await Bun.$`mkdir -p ${repoPath}`.quiet();
+	await Bun.$`git init`.cwd(repoPath).quiet();
+	await Bun.$`git config user.name "test"`.cwd(repoPath).quiet();
+	await Bun.$`git config user.email "test@test.com"`.cwd(repoPath).quiet();
+	await Bun.$`git commit --allow-empty -m "Initial commit"`.cwd(repoPath).quiet();
+	return repoPath;
+}
+
+export interface CreateTestSpaceOptions {
+	/**
+	 * Workspace path for the Space.
+	 * Defaults to process.cwd() if not provided.
+	 * For tests that create agent worktrees, pass a fresh git repository
+	 * created via initializeGitRepo() to avoid branch conflicts.
+	 */
+	workspacePath?: string;
+}
+
+/**
  * Create a Space whose name embeds a unique suffix so tests never collide.
  * space.create auto-seeds preset agents and built-in workflows (including V2).
  *
@@ -221,13 +245,17 @@ async function findNodeExecutionById(
  * Falls back to the first workflow if V2 is not found (should not happen with
  * normal seeding, but keeps tests robust).
  */
-export async function createTestSpace(daemon: DaemonServerContext): Promise<TestSpaceFixture> {
+export async function createTestSpace(
+	daemon: DaemonServerContext,
+	options: CreateTestSpaceOptions = {}
+): Promise<TestSpaceFixture> {
 	const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+	const { workspacePath = process.cwd() } = options;
 
 	const space = (await daemon.messageHub.request('space.create', {
 		name: `Test Space ${suffix}`,
 		description: 'Integration test space — plan-to-approve flow',
-		workspacePath: process.cwd(),
+		workspacePath,
 		autonomyLevel: 'supervised',
 	})) as Space;
 
