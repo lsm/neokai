@@ -218,6 +218,7 @@ interface TestCtx {
 	agentId: string;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	workflowManager: SpaceWorkflowManager;
@@ -351,6 +352,7 @@ function makeCtx(): TestCtx {
 		agentId,
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		workflowManager,
@@ -1008,6 +1010,180 @@ describe('TaskAgentManager', () => {
 			await expect(
 				callHandleSubSessionComplete(ctx.manager, parentTask.id, 'nonexistent-step', 'session-xyz')
 			).resolves.toBeUndefined();
+		});
+
+		test('sends runtime reminder with gate requirements when execution idles without report_done', async () => {
+			const workflow = ctx.workflowManager.createWorkflow({
+				spaceId: ctx.spaceId,
+				name: 'Reminder Workflow',
+				description: '',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coding',
+						agents: [{ agentId: ctx.agentId, name: 'coder' }],
+					},
+					{
+						id: 'review-node',
+						name: 'Review',
+						agents: [{ agentId: ctx.agentId, name: 'reviewer' }],
+					},
+				],
+				startNodeId: 'coding-node',
+				endNodeId: 'review-node',
+				gates: [
+					{
+						id: 'code-pr-gate',
+						description: 'PR URL required before review',
+						fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+						resetOnCycle: false,
+					},
+				],
+				channels: [
+					{
+						from: 'Coding',
+						to: 'Review',
+						direction: 'one-way',
+						gateId: 'code-pr-gate',
+					},
+				],
+			});
+
+			const pendingRun = ctx.workflowRunRepo.createRun({
+				spaceId: ctx.spaceId,
+				workflowId: workflow.id,
+				title: 'Reminder run',
+			});
+			const run = ctx.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Workflow task',
+				description: 'Drive coding -> review',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: run.id,
+			});
+
+			const execution = ctx.nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'coding-node',
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'in_progress',
+			});
+
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execution.id}`;
+			await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId,
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{
+					agentId: ctx.agentId,
+					role: 'coder',
+					stepId: 'coding-node',
+				}
+			);
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			const beforeMessages = subSession._enqueuedMessages.length;
+
+			await callHandleSubSessionComplete(ctx.manager, parentTask.id, 'coding-node', subSessionId);
+
+			const after = ctx.nodeExecutionRepo.getById(execution.id);
+			expect(after?.status).toBe('in_progress');
+			expect(subSession._enqueuedMessages.length).toBeGreaterThan(beforeMessages);
+			const reminder = subSession._enqueuedMessages.at(-1)?.msg ?? '';
+			expect(reminder).toContain('[RUNTIME_REMINDER');
+			expect(reminder).toContain('code-pr-gate');
+			expect(reminder).toContain('pr_url');
+			expect(reminder).toContain('report_done');
+		});
+
+		test('escalates execution to blocked after repeated missing-report_done reminders', async () => {
+			const workflow = ctx.workflowManager.createWorkflow({
+				spaceId: ctx.spaceId,
+				name: 'Reminder Escalation Workflow',
+				description: '',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coding',
+						agents: [{ agentId: ctx.agentId, name: 'coder' }],
+					},
+					{
+						id: 'review-node',
+						name: 'Review',
+						agents: [{ agentId: ctx.agentId, name: 'reviewer' }],
+					},
+				],
+				startNodeId: 'coding-node',
+				endNodeId: 'review-node',
+				gates: [
+					{
+						id: 'code-pr-gate',
+						description: 'PR URL required before review',
+						fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+						resetOnCycle: false,
+					},
+				],
+				channels: [
+					{
+						from: 'Coding',
+						to: 'Review',
+						direction: 'one-way',
+						gateId: 'code-pr-gate',
+					},
+				],
+			});
+
+			const pendingRun = ctx.workflowRunRepo.createRun({
+				spaceId: ctx.spaceId,
+				workflowId: workflow.id,
+				title: 'Reminder escalation run',
+			});
+			const run = ctx.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Workflow task',
+				description: 'Drive coding -> review',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: run.id,
+			});
+
+			const execution = ctx.nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'coding-node',
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'in_progress',
+			});
+
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execution.id}`;
+			await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId,
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{
+					agentId: ctx.agentId,
+					role: 'coder',
+					stepId: 'coding-node',
+				}
+			);
+
+			for (let i = 0; i < 4; i++) {
+				await callHandleSubSessionComplete(ctx.manager, parentTask.id, 'coding-node', subSessionId);
+			}
+
+			const after = ctx.nodeExecutionRepo.getById(execution.id);
+			expect(after?.status).toBe('blocked');
+			expect(after?.result).toContain('without calling report_done');
 		});
 	});
 
