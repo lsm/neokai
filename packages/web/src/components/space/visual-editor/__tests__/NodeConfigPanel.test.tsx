@@ -836,8 +836,9 @@ describe('NodeConfigPanel', () => {
 			const { getByTestId } = render(<Wrapper />);
 			fireEvent.click(getByTestId('edit-single-prompts-button'));
 
-			const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-			const expandButton = modeSelectors[0].querySelector(
+			const systemPromptField = getByTestId('single-prompts-system-prompt');
+			const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
+			const expandButton = systemPromptSection.querySelector(
 				'[data-testid="mode-expand"]'
 			) as HTMLElement;
 			fireEvent.click(expandButton);
@@ -907,9 +908,9 @@ describe('NodeConfigPanel', () => {
 			const { getAllByTestId, getByTestId } = render(<Wrapper />);
 
 			fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-			const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-			const instructionsSelector = modeSelectors[0];
-			const expandButton = instructionsSelector.querySelector(
+			const instructionsField = getByTestId('slot-prompts-instructions');
+			const instructionsSection = instructionsField.closest('.space-y-1') as HTMLElement;
+			const expandButton = instructionsSection.querySelector(
 				'[data-testid="mode-expand"]'
 			) as HTMLElement;
 			fireEvent.click(expandButton);
@@ -964,9 +965,9 @@ describe('NodeConfigPanel', () => {
 			const { getAllByTestId, getByTestId } = render(<Wrapper />);
 
 			fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-			const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-			const systemPromptSelector = modeSelectors[1];
-			const expandButton = systemPromptSelector.querySelector(
+			const systemPromptField = getByTestId('slot-prompts-system-prompt');
+			const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
+			const expandButton = systemPromptSection.querySelector(
 				'[data-testid="mode-expand"]'
 			) as HTMLElement;
 			fireEvent.click(expandButton);
@@ -1002,8 +1003,9 @@ describe('NodeConfigPanel', () => {
 				const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 				fireEvent.click(getByTestId('edit-single-prompts-button'));
 
-				const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-				const expandButton = modeSelectors[0].querySelector(
+				const systemPromptField = getByTestId('single-prompts-system-prompt');
+				const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
+				const expandButton = systemPromptSection.querySelector(
 					'[data-testid="mode-expand"]'
 				) as HTMLElement;
 				fireEvent.click(expandButton);
@@ -1011,6 +1013,36 @@ describe('NodeConfigPanel', () => {
 				expect(onUpdate).toHaveBeenCalledWith(
 					expect.objectContaining({
 						systemPrompt: { mode: 'expand', value: 'Existing prompt.' },
+					})
+				);
+			});
+
+			it('changing single-agent instructions mode from override to expand propagates to data model immediately', async () => {
+				const onUpdate = vi.fn();
+				const step = makeStep({
+					agentId: 'agent-1',
+					instructions: 'Original instructions.',
+				});
+				const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+				fireEvent.click(getByTestId('edit-single-prompts-button'));
+
+				const instructionsField = getByTestId('single-prompts-instructions');
+				const instructionsSection = instructionsField.closest('.space-y-1') as HTMLElement;
+				const expandButton = instructionsSection.querySelector(
+					'[data-testid="mode-expand"]'
+				) as HTMLElement;
+				fireEvent.click(expandButton);
+
+				expect(onUpdate).toHaveBeenCalledWith(
+					expect.objectContaining({
+						agentId: '',
+						instructions: '',
+						agents: [
+							expect.objectContaining({
+								agentId: 'agent-1',
+								instructions: { mode: 'expand', value: 'Original instructions.' },
+							}),
+						],
 					})
 				);
 			});
@@ -1031,8 +1063,11 @@ describe('NodeConfigPanel', () => {
 				const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 				fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
 
-				const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-				const expandButton = modeSelectors[0].querySelector(
+				const instructionsField = document.querySelector(
+					'[data-testid="slot-prompts-instructions"]'
+				) as HTMLElement;
+				const instructionsSection = instructionsField.closest('.space-y-1') as HTMLElement;
+				const expandButton = instructionsSection.querySelector(
 					'[data-testid="mode-expand"]'
 				) as HTMLElement;
 				fireEvent.click(expandButton);
@@ -1065,8 +1100,11 @@ describe('NodeConfigPanel', () => {
 				const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 				fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
 
-				const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-				const expandButton = modeSelectors[1].querySelector(
+				const systemPromptField = document.querySelector(
+					'[data-testid="slot-prompts-system-prompt"]'
+				) as HTMLElement;
+				const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
+				const expandButton = systemPromptSection.querySelector(
 					'[data-testid="mode-expand"]'
 				) as HTMLElement;
 				fireEvent.click(expandButton);
