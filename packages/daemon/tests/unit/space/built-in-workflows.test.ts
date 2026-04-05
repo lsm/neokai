@@ -4,8 +4,8 @@
  * Covers:
  * - Template structure: correct agentId placeholders, transition conditions, step count
  * - agentId placeholders are valid builtin role names (no 'leader')
- * - getBuiltInWorkflows() returns all four templates
- * - seedBuiltInWorkflows(): seeds all four templates with real agent IDs
+ * - getBuiltInWorkflows() returns all built-in templates
+ * - seedBuiltInWorkflows(): seeds all built-in templates with real agent IDs
  * - seedBuiltInWorkflows(): node IDs replaced with real UUIDs (not template placeholders)
  * - seedBuiltInWorkflows(): agent ID resolution from role names to UUIDs (case-insensitive)
  * - seedBuiltInWorkflows(): descriptions, tags, instructions, gates, timestamps preserved
@@ -25,6 +25,7 @@ import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-work
 import {
 	CODING_WORKFLOW,
 	FULL_CYCLE_CODING_WORKFLOW,
+	FULLSTACK_QA_LOOP_WORKFLOW,
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
 	getBuiltInWorkflows,
@@ -362,8 +363,8 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 });
 
 describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
-	test('has six nodes', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.nodes).toHaveLength(6);
+	test('has five nodes', () => {
+		expect(FULL_CYCLE_CODING_WORKFLOW.nodes).toHaveLength(5);
 	});
 
 	test('node names are correct', () => {
@@ -373,7 +374,6 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 			'Coding',
 			'Code Review',
 			'QA',
-			'Done',
 		]);
 	});
 
@@ -388,7 +388,6 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(nodes[3].agents?.map((a) => a.agentId)).toEqual(['Reviewer', 'Reviewer', 'Reviewer']);
 		expect(nodes[3].agents?.map((a) => a.name)).toEqual(['Reviewer 1', 'Reviewer 2', 'Reviewer 3']);
 		expect(nodes[4].agents[0]?.name).toBe('qa'); // QA
-		expect(nodes[5].agents[0]?.name).toBe('general'); // Done
 	});
 
 	test('all V2 nodes define explicit system prompts', () => {
@@ -405,9 +404,9 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(FULL_CYCLE_CODING_WORKFLOW.startNodeId).toBe(planningNode?.id);
 	});
 
-	test('endNodeId points to the Done node', () => {
-		const doneNode = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done');
-		expect(FULL_CYCLE_CODING_WORKFLOW.endNodeId).toBe(doneNode?.id);
+	test('endNodeId points to the QA node', () => {
+		const qaNode = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA');
+		expect(FULL_CYCLE_CODING_WORKFLOW.endNodeId).toBe(qaNode?.id);
 	});
 
 	test('endNodeId references a valid node in the graph', () => {
@@ -415,8 +414,8 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(nodeIds.has(FULL_CYCLE_CODING_WORKFLOW.endNodeId!)).toBe(true);
 	});
 
-	test('has seven gates', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.gates).toHaveLength(7);
+	test('has four gates', () => {
+		expect(FULL_CYCLE_CODING_WORKFLOW.gates).toHaveLength(4);
 	});
 
 	test('gate IDs are correct', () => {
@@ -425,17 +424,17 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(ids).toContain('plan-approval-gate');
 		expect(ids).toContain('code-pr-gate');
 		expect(ids).toContain('review-votes-gate');
-		expect(ids).toContain('review-reject-gate');
-		expect(ids).toContain('qa-result-gate');
-		expect(ids).toContain('qa-fail-gate');
 	});
 
-	test('plan-pr-gate has boolean exists field with planner writer', () => {
+	test('plan-pr-gate has script-based PR check with pr_url output', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-pr-gate')!;
 		expect(gate.fields).toHaveLength(1);
-		expect(gate.fields[0].name).toBe('plan_submitted');
+		expect(gate.fields[0].name).toBe('pr_url');
+		expect(gate.fields[0].type).toBe('string');
 		expect(gate.fields[0].check.op).toBe('exists');
-		expect(gate.fields[0].writers).toContain('planner');
+		expect(gate.fields[0].writers).toEqual(['*']);
+		expect(gate.script?.interpreter).toBe('bash');
+		expect(gate.script?.source.length).toBeGreaterThan(0);
 		expect(gate.resetOnCycle).toBe(false);
 	});
 
@@ -465,33 +464,8 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('review-reject-gate has map count field requiring min 1 rejected', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'review-reject-gate')!;
-		expect(gate.fields[0].type).toBe('map');
-		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'rejected', min: 1 });
-		expect(gate.fields[0].writers).toContain('reviewer');
-		expect(gate.resetOnCycle).toBe(true);
-	});
-
-	test('qa-result-gate has string == passed field with qa writer', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'qa-result-gate')!;
-		expect(gate.fields[0].name).toBe('result');
-		expect(gate.fields[0].check).toMatchObject({ op: '==', value: 'passed' });
-		expect(gate.fields[0].writers).toContain('qa');
-		// Resets on QA->Coding cycle so QA starts clean each time
-		expect(gate.resetOnCycle).toBe(true);
-	});
-
-	test('qa-fail-gate has string == failed field with qa writer', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'qa-fail-gate')!;
-		expect(gate.fields[0].name).toBe('result');
-		expect(gate.fields[0].check).toMatchObject({ op: '==', value: 'failed' });
-		expect(gate.fields[0].writers).toContain('qa');
-		expect(gate.resetOnCycle).toBe(true);
-	});
-
-	test('has 9 node-level channels', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.channels).toHaveLength(9);
+	test('has 8 node-level channels', () => {
+		expect(FULL_CYCLE_CODING_WORKFLOW.channels).toHaveLength(8);
 	});
 
 	test('main progression channels have correct gateIds', () => {
@@ -513,21 +487,15 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(reviewToQA?.gateId).toBe('review-votes-gate');
 	});
 
-	test('QA-to-Done uses qa-result-gate', () => {
-		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!.find((c) => c.from === 'QA' && c.to === 'Done');
-		expect(ch?.gateId).toBe('qa-result-gate');
-		expect(ch?.maxCycles).toBeUndefined();
-	});
-
 	test('cyclic channels have maxCycles set', () => {
 		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!;
 
 		const qaToCoding = ch.find((c) => c.from === 'QA' && c.to === 'Coding');
-		expect(qaToCoding?.gateId).toBe('qa-fail-gate');
+		expect(qaToCoding?.gateId).toBeUndefined();
 		expect(qaToCoding?.maxCycles).toBe(5);
 
 		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
-		expect(reviewToCoding?.gateId).toBe('review-reject-gate');
+		expect(reviewToCoding?.gateId).toBeUndefined();
 		expect(reviewToCoding?.maxCycles).toBe(5);
 
 		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
@@ -541,6 +509,14 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 
 	test('ungated feedback channels have no gateId', () => {
 		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!;
+		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
+		expect(reviewToCoding).toBeDefined();
+		expect(reviewToCoding?.gateId).toBeUndefined();
+
+		const qaToCoding = ch.find((c) => c.from === 'QA' && c.to === 'Coding');
+		expect(qaToCoding).toBeDefined();
+		expect(qaToCoding?.gateId).toBeUndefined();
+
 		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
 		expect(reviewToPlanning).toBeDefined();
 		expect(reviewToPlanning?.gateId).toBeUndefined();
@@ -581,25 +557,20 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 			// slot.instructions is a WorkflowNodeAgentOverride {mode, value} object
 			expect(slot.instructions?.value).toContain('read_gate');
 			expect(slot.instructions?.value).toContain('write_gate');
-			// Must warn against writing only own entry to prevent overwriting peers
+			// Must warn against writing only own entry to prevent overwriting peers.
 			expect(slot.instructions?.value).toContain('overwriting');
 		}
 	});
 
-	test('QA node instructions describe both pass and fail write targets', () => {
+	test('QA node instructions describe pass and fail actions', () => {
 		const qa = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-		expect(qa.instructions).toContain('qa-result-gate');
-		expect(qa.instructions).toContain('qa-fail-gate');
+		expect(qa.instructions).toContain('report_done');
+		expect(qa.instructions).toContain('Coding');
 	});
 
 	test('review-votes-gate description mentions read-merge-write requirement', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'review-votes-gate')!;
 		expect(gate.description).toContain('read-merge-write');
-	});
-
-	test('qa-result-gate description explains it resets on cycle', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'qa-result-gate')!;
-		expect(gate.description).toContain('clean state');
 	});
 
 	test('code-pr-gate description explains it is preserved across fix cycles', () => {
@@ -633,8 +604,8 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 // ---------------------------------------------------------------------------
 
 describe('getBuiltInWorkflows()', () => {
-	test('returns exactly four templates', () => {
-		expect(getBuiltInWorkflows()).toHaveLength(4);
+	test('returns exactly five templates', () => {
+		expect(getBuiltInWorkflows()).toHaveLength(5);
 	});
 
 	test('includes CODING_WORKFLOW', () => {
@@ -645,6 +616,11 @@ describe('getBuiltInWorkflows()', () => {
 	test('includes FULL_CYCLE_CODING_WORKFLOW', () => {
 		const names = getBuiltInWorkflows().map((w) => w.name);
 		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+	});
+
+	test('includes FULLSTACK_QA_LOOP_WORKFLOW', () => {
+		const names = getBuiltInWorkflows().map((w) => w.name);
+		expect(names).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
 	});
 
 	test('includes RESEARCH_WORKFLOW', () => {
@@ -760,17 +736,18 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('seeds all four built-in templates for an empty space', async () => {
+	test('seeds all built-in templates for an empty space', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(4);
+		expect(workflows).toHaveLength(5);
 	});
 
-	test('seeded workflow names match all four templates', async () => {
+	test('seeded workflow names match all templates', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
 		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(names).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
@@ -911,13 +888,13 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[0].agents[0]?.agentId).toBe(REVIEWER_ID);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded correctly — six nodes with code-review agents[]', async () => {
+	test('FULL_CYCLE_CODING_WORKFLOW seeded correctly — five nodes with code-review agents[]', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.nodes).toHaveLength(6);
+		expect(wf!.nodes).toHaveLength(5);
 		expect(wf!.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID); // Planning
 		expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer); // Plan Review
 		expect(wf!.nodes[2].agents[0]?.agentId).toBe(CODER_ID); // Coding
@@ -934,31 +911,27 @@ describe('seedBuiltInWorkflows()', () => {
 			'Reviewer 3',
 		]);
 		expect(wf!.nodes[4].agents[0]?.agentId).toBe(QA_ID); // QA
-		expect(wf!.nodes[5].agents[0]?.agentId).toBe(GENERAL_ID); // Done
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with 9 node-level channels', async () => {
+	test('FULL_CYCLE_CODING_WORKFLOW seeded with 8 node-level channels', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		expect(wf.channels).toHaveLength(9);
+		expect(wf.channels).toHaveLength(8);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with 7 gates', async () => {
+	test('FULL_CYCLE_CODING_WORKFLOW seeded with 4 gates', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		expect(wf.gates).toHaveLength(7);
+		expect(wf.gates).toHaveLength(4);
 		const gateIds = wf.gates!.map((g) => g.id);
 		expect(gateIds).toContain('plan-pr-gate');
 		expect(gateIds).toContain('plan-approval-gate');
 		expect(gateIds).toContain('code-pr-gate');
 		expect(gateIds).toContain('review-votes-gate');
-		expect(gateIds).toContain('review-reject-gate');
-		expect(gateIds).toContain('qa-result-gate');
-		expect(gateIds).toContain('qa-fail-gate');
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded channels use gateId (not legacy gate)', async () => {
@@ -967,8 +940,8 @@ describe('seedBuiltInWorkflows()', () => {
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
-		// 7 channels have gateIds (9 total minus 2 ungated feedback channels)
-		expect(gatedChannels).toHaveLength(7);
+		// 4 channels have gateIds (8 total minus 4 ungated feedback/cycle channels)
+		expect(gatedChannels).toHaveLength(4);
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded cyclic channels have maxCycles set', async () => {
@@ -1051,7 +1024,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(4);
+		expect(workflows).toHaveLength(5);
 	});
 
 	test('is idempotent — leaves user-created workflows untouched', async () => {
@@ -1093,10 +1066,10 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
-		// 'general' is used by FULL_CYCLE_CODING_WORKFLOW.
+		// 'qa' is used by FULL_CYCLE_CODING_WORKFLOW and FULLSTACK_QA_LOOP_WORKFLOW.
 		// Pre-validation catches missing roles before any workflow is persisted.
 		const brokenResolver = (role: string): string | undefined =>
-			role === 'general' ? undefined : roleMap[role];
+			role === 'qa' ? undefined : roleMap[role];
 
 		try {
 			seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
@@ -1114,9 +1087,10 @@ describe('seedBuiltInWorkflows()', () => {
 
 		expect(result.skipped).toBe(false);
 		expect(result.errors).toHaveLength(0);
-		expect(result.seeded).toHaveLength(4);
+		expect(result.seeded).toHaveLength(5);
 		expect(result.seeded).toContain('Coding Workflow');
 		expect(result.seeded).toContain('Full-Cycle Coding Workflow');
+		expect(result.seeded).toContain('Fullstack QA Loop Workflow');
 		expect(result.seeded).toContain('Research Workflow');
 		expect(result.seeded).toContain('Review-Only Workflow');
 	});
@@ -1144,15 +1118,15 @@ describe('seedBuiltInWorkflows()', () => {
 
 		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-		// 3 of 4 succeed, 1 fails
-		expect(result.seeded).toHaveLength(3);
+		// 4 of 5 succeed, 1 fails
+		expect(result.seeded).toHaveLength(4);
 		expect(result.errors).toHaveLength(1);
 		expect(result.errors[0].error).toContain('Simulated DB constraint error');
 		expect(result.skipped).toBe(false);
 
-		// Verify 3 workflows were actually persisted
+		// Verify 4 workflows were actually persisted
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(3);
+		expect(workflows).toHaveLength(4);
 	});
 
 	test('per-workflow error isolation — captures error name correctly', () => {
@@ -1184,7 +1158,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
 		expect(result.seeded).toHaveLength(0);
-		expect(result.errors).toHaveLength(4);
+		expect(result.errors).toHaveLength(5);
 		expect(result.skipped).toBe(false);
 		for (const err of result.errors) {
 			expect(err.error).toContain('DB is read-only');
@@ -1195,7 +1169,13 @@ describe('seedBuiltInWorkflows()', () => {
 
 	test('seeded node IDs are real UUIDs, not template placeholders', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const templatePrefixes = ['tpl-coding-', 'tpl-v2-', 'tpl-research-', 'tpl-review-'];
+		const templatePrefixes = [
+			'tpl-coding-',
+			'tpl-v2-',
+			'tpl-fullstack-',
+			'tpl-research-',
+			'tpl-review-',
+		];
 		for (const wf of manager.listWorkflows(SPACE_ID)) {
 			for (const node of wf.nodes) {
 				for (const prefix of templatePrefixes) {
@@ -1271,7 +1251,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
 		expect(codingNode!.instructions).toContain('code-pr-gate');
 		const qaNode = wf.nodes.find((n) => n.name === 'QA');
-		expect(qaNode!.instructions).toContain('qa-result-gate');
+		expect(qaNode!.instructions).toContain('report_done');
 	});
 
 	test('RESEARCH_WORKFLOW seeded nodes preserve instructions', () => {
@@ -1394,12 +1374,13 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(workflows[0].name).toBe(FULL_CYCLE_CODING_WORKFLOW.name);
 	});
 
-	test('getBuiltInWorkflows returns all four templates', () => {
+	test('getBuiltInWorkflows returns all five templates', () => {
 		const templates = getBuiltInWorkflows();
-		expect(templates).toHaveLength(4);
+		expect(templates).toHaveLength(5);
 		const names = templates.map((t) => t.name);
 		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
+		expect(names).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
@@ -1423,12 +1404,10 @@ describe('seedBuiltInWorkflows()', () => {
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		// Templates use 'Planner', 'Coder', 'Reviewer', 'QA', 'General' (title-case)
-		// Resolver maps via toLowerCase — all should resolve
+		// Templates use title-case role placeholders that must resolve case-insensitively.
 		expect(wf.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
 		expect(wf.nodes[2].agents[0]?.agentId).toBe(CODER_ID);
 		expect(wf.nodes[4].agents[0]?.agentId).toBe(QA_ID);
-		expect(wf.nodes[5].agents[0]?.agentId).toBe(GENERAL_ID);
 	});
 
 	test('no seeded agent IDs contain template placeholder names', () => {
@@ -1564,7 +1543,7 @@ describe('seedBuiltInWorkflows()', () => {
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const nonReviewNodes = wf.nodes.filter((n) => n.name !== 'Code Review');
-		expect(nonReviewNodes.length).toBe(5); // Planning, Plan Review, Coding, QA, Done
+		expect(nonReviewNodes.length).toBe(4); // Planning, Plan Review, Coding, QA
 		for (const node of nonReviewNodes) {
 			for (const agent of node.agents) {
 				expect(agent.instructions).toBeDefined();
@@ -1944,19 +1923,11 @@ describe('FULL_CYCLE_CODING_WORKFLOW agent slot instructions', () => {
 		const agent = node.agents[0];
 		expect(agent.instructions?.mode).toBe('override');
 		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('qa-result-gate');
-	});
-
-	test('Done node has override-mode instructions', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
-		const agent = node.agents[0];
-		expect(agent.instructions?.mode).toBe('override');
-		expect(agent.instructions?.value).toContain('Expected inputs');
 		expect(agent.instructions?.value).toContain('report_done');
 	});
 
-	test('Done node has node-level instructions', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+	test('QA node has node-level instructions', () => {
+		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
 		expect(node.instructions).toBeTruthy();
 	});
 });

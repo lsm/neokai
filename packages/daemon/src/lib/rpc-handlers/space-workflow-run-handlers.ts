@@ -485,8 +485,8 @@ export function setupSpaceWorkflowRunHandlers(
 	// Writes (merges) arbitrary data into a gate's runtime record and triggers
 	// channel re-evaluation so downstream nodes activate when a gate opens.
 	//
-	// Used by test helpers to simulate agent behavior (e.g. planner writing
-	// plan_submitted to plan-pr-gate) without spinning up a real agent session.
+	// Used by test helpers to simulate agent behavior (e.g. writing approval/vote
+	// gate payloads) without spinning up a real agent session.
 	// Does NOT enforce allowedWriterRoles — callers are trusted.
 	//
 	// Disabled in production to prevent unauthorized gate manipulation.
