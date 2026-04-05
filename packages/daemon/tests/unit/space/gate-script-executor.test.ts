@@ -195,6 +195,28 @@ describe('buildRestrictedEnv', () => {
 		expect(buildRestrictedEnv(CTX)['NEOKAI_WORKSPACE_PATH']).toBe('/tmp');
 	});
 
+	test('injects NEOKAI_GATE_DATA_JSON from context gateData', () => {
+		const env = buildRestrictedEnv({
+			...CTX,
+			gateData: { pr_url: 'https://github.com/example/repo/pull/42', approved: true },
+		});
+		expect(env['NEOKAI_GATE_DATA_JSON']).toBe(
+			'{"pr_url":"https://github.com/example/repo/pull/42","approved":true}'
+		);
+	});
+
+	test('injects default empty NEOKAI_GATE_DATA_JSON when gateData is absent', () => {
+		expect(buildRestrictedEnv(CTX)['NEOKAI_GATE_DATA_JSON']).toBe('{}');
+	});
+
+	test('does not inject field-specific aliases (template data stays in JSON payload)', () => {
+		const env = buildRestrictedEnv({
+			...CTX,
+			gateData: { pr_url: 'https://github.com/example/repo/pull/42' },
+		});
+		expect(env['NEOKAI_GATE_PR_URL']).toBeUndefined();
+	});
+
 	test('merges user-provided env vars (safe ones)', () => {
 		expect(buildRestrictedEnv(CTX, { MY_CUSTOM_VAR: 'custom-value' })['MY_CUSTOM_VAR']).toBe(
 			'custom-value'
@@ -217,6 +239,24 @@ describe('buildRestrictedEnv', () => {
 		expect(
 			buildRestrictedEnv(CTX, { NEOKAI_WORKSPACE_PATH: '/hacked' })['NEOKAI_WORKSPACE_PATH']
 		).toBe('/tmp');
+	});
+
+	test('user env cannot override NEOKAI_GATE_DATA_JSON', () => {
+		expect(
+			buildRestrictedEnv(
+				{ ...CTX, gateData: { approved: true } },
+				{ NEOKAI_GATE_DATA_JSON: '{"approved":false}' }
+			)['NEOKAI_GATE_DATA_JSON']
+		).toBe('{"approved":true}');
+	});
+
+	test('user env cannot introduce field-specific NEOKAI aliases', () => {
+		expect(
+			buildRestrictedEnv(
+				{ ...CTX, gateData: { pr_url: 'https://github.com/example/repo/pull/42' } },
+				{ NEOKAI_GATE_PR_URL: 'https://attacker.invalid/pr/1' }
+			)['NEOKAI_GATE_PR_URL']
+		).toBeUndefined();
 	});
 
 	test('user env with restricted prefixes is stripped', () => {
@@ -629,6 +669,25 @@ describe('executeGateScript — integration', () => {
 		);
 		expect(r.success).toBe(true);
 		expect(r.data['ws']).toBe('/tmp');
+	});
+
+	test('injects NEOKAI_GATE_DATA_JSON into script env (no field aliases)', async () => {
+		const r = await executeGateScript(
+			{
+				interpreter: 'node',
+				source:
+					'console.log(JSON.stringify({ gateData: process.env.NEOKAI_GATE_DATA_JSON, prAlias: process.env.NEOKAI_GATE_PR_URL ?? null }))',
+			} as GateScript,
+			{
+				...CTX,
+				gateData: { pr_url: 'https://github.com/example/repo/pull/42', approved: true },
+			}
+		);
+		expect(r.success).toBe(true);
+		expect(r.data['gateData']).toBe(
+			'{"pr_url":"https://github.com/example/repo/pull/42","approved":true}'
+		);
+		expect(r.data['prAlias']).toBeNull();
 	});
 
 	test('JSON stdout with prototype pollution keys is sanitized', async () => {

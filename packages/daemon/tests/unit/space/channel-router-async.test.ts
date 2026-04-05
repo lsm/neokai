@@ -465,6 +465,38 @@ describe('ChannelRouter async gate evaluation', () => {
 			expect(result.allowed).toBe(true);
 		});
 
+		test('gate runtime data JSON is injected and script can read pr_url generically', async () => {
+			const expectedPrUrl = 'https://github.com/example/repo/pull/4242';
+			const gate: Gate = {
+				id: 'env-pr-url-gate',
+				script: {
+					interpreter: 'node',
+					source:
+						'const raw = process.env.NEOKAI_GATE_DATA_JSON ?? "{}"; let parsed = {}; try { parsed = JSON.parse(raw); } catch {} console.log(JSON.stringify({ seenPrUrl: parsed.pr_url ?? null }));',
+					timeoutMs: 5000,
+				},
+				fields: [
+					{
+						name: 'seenPrUrl',
+						type: 'string',
+						writers: ['*'],
+						check: { op: '==', value: expectedPrUrl },
+					},
+				],
+				resetOnCycle: false,
+			};
+			const workflow = buildTwoNodeWorkflow(gate);
+			const run = createActiveRun(workflow);
+			gateDataRepo.set(run.id, gate.id, { pr_url: expectedPrUrl });
+
+			const router = makeRouter({ workspacePath: '/tmp' });
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			if (!result.allowed) {
+				throw new Error(`Gate should be open but was blocked: ${result.reason}`);
+			}
+			expect(result.allowed).toBe(true);
+		});
+
 		test('script-only gate (no fields) opens when script exits 0', async () => {
 			const gate: Gate = {
 				id: 'script-only-gate',
