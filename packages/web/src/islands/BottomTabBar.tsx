@@ -22,7 +22,14 @@ import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id: NavSection | 'room-agent' | 'room-overview' | 'room-tasks' | 'room-agents' | 'room-missions' | 'room-home';
+	id:
+		| NavSection
+		| 'room-agent'
+		| 'room-overview'
+		| 'room-tasks'
+		| 'room-agents'
+		| 'room-missions'
+		| 'room-home';
 	label: string;
 	icon: () => JSX.Element;
 }

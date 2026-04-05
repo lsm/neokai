@@ -53,47 +53,47 @@ export function RoomContext({ room }: RoomContextProps) {
 
 	return (
 		<div class="space-y-6">
-				{/* Background */}
-				<div class="flex flex-col">
-					<label for="room-background" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Background
-					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						Project context shared with all room agents. Describe the project, its architecture,
-						goals, and any relevant technical details.
-					</p>
-					<textarea
-						id="room-background"
-						value={background.value}
-						onInput={(e) => (background.value = (e.target as HTMLTextAreaElement).value)}
-						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 text-sm text-gray-100
+			{/* Background */}
+			<div class="flex flex-col">
+				<label for="room-background" class="block text-sm font-medium text-gray-300 mb-1.5">
+					Background
+				</label>
+				<p class="text-xs text-gray-500 mb-2">
+					Project context shared with all room agents. Describe the project, its architecture,
+					goals, and any relevant technical details.
+				</p>
+				<textarea
+					id="room-background"
+					value={background.value}
+					onInput={(e) => (background.value = (e.target as HTMLTextAreaElement).value)}
+					class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 text-sm text-gray-100
 							placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y font-mono"
-						rows={12}
-						placeholder="Describe the project context, architecture, and goals..."
-						disabled={disabled}
-					/>
-				</div>
+					rows={12}
+					placeholder="Describe the project context, architecture, and goals..."
+					disabled={disabled}
+				/>
+			</div>
 
-				{/* Instructions */}
-				<div class="flex flex-col">
-					<label for="room-instructions" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Instructions
-					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						Custom instructions for how room agents should behave. Coding standards, preferred
-						tools, workflow guidelines, etc.
-					</p>
-					<textarea
-						id="room-instructions"
-						value={instructions.value}
-						onInput={(e) => (instructions.value = (e.target as HTMLTextAreaElement).value)}
-						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 text-sm text-gray-100
+			{/* Instructions */}
+			<div class="flex flex-col">
+				<label for="room-instructions" class="block text-sm font-medium text-gray-300 mb-1.5">
+					Instructions
+				</label>
+				<p class="text-xs text-gray-500 mb-2">
+					Custom instructions for how room agents should behave. Coding standards, preferred tools,
+					workflow guidelines, etc.
+				</p>
+				<textarea
+					id="room-instructions"
+					value={instructions.value}
+					onInput={(e) => (instructions.value = (e.target as HTMLTextAreaElement).value)}
+					class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 text-sm text-gray-100
 							placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y font-mono"
-						rows={8}
-						placeholder="Add behavioral guidelines for room agents..."
-						disabled={disabled}
-					/>
-				</div>
+					rows={8}
+					placeholder="Add behavioral guidelines for room agents..."
+					disabled={disabled}
+				/>
+			</div>
 
 			{/* Save */}
 			{hasChanges() && (

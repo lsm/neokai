@@ -290,222 +290,258 @@ export function RoomSettings({
 			{/* Content */}
 			<div class="flex-1 overflow-y-auto">
 				<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
-				{/* Context & Instructions — collapsible section */}
-				<details class="group surface-elevated overflow-hidden">
-					<summary class="flex items-center justify-between px-4 py-3 hover:bg-dark-800/50 transition-colors select-none">
-						<span class="text-sm font-semibold text-gray-200">Context & Instructions</span>
-						<svg
-							class="w-4 h-4 text-gray-500 transition-transform group-open:rotate-180"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M19 9l-7 7-7-7"
-							/>
-						</svg>
-					</summary>
-					<div class="border-t border-dark-700 px-4 py-4">
-						<RoomContext room={room} />
-					</div>
-				</details>
-
-				{/* Room Name */}
-				<div>
-					<label for="room-name" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Room Name
-					</label>
-					<input
-						id="room-name"
-						type="text"
-						value={name.value}
-						onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
-						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
-              placeholder-gray-500 focus:outline-none focus:border-blue-500"
-						disabled={disabled}
-					/>
-				</div>
-
-				{/* Max Planning Retries */}
-				<div>
-					<label for="max-planning-retries" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Max Planning Retries
-					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						How many times the room will retry planning a mission after failure before escalating to
-						human review. 0 means no automatic retries.
-					</p>
-					<input
-						id="max-planning-retries"
-						type="number"
-						min={0}
-						max={5}
-						value={maxPlanningRetries.value}
-						onInput={(e) => {
-							const v = parseInt((e.target as HTMLInputElement).value, 10);
-							if (!isNaN(v) && v >= 0 && v <= 5) maxPlanningRetries.value = v;
-						}}
-						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
-              focus:outline-none focus:border-blue-500"
-						disabled={disabled}
-					/>
-				</div>
-
-				{/* Allowed Models */}
-				<div>
-					<div class="flex items-center justify-between mb-1.5">
-						<label class="block text-sm font-medium text-gray-300">Allowed Models</label>
-						{!isLoadingModels.value && availableModels.value.length > 0 && (
-							<div class="flex gap-2">
-								<button
-									type="button"
-									onClick={handleSelectAllModels}
-									class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
-									disabled={disabled || allowedModels.value === null}
-								>
-									All
-								</button>
-								<span class="text-xs text-gray-600">·</span>
-								<button
-									type="button"
-									onClick={handleDeselectAllModels}
-									class="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-40"
-									disabled={disabled}
-								>
-									None
-								</button>
-							</div>
-						)}
-					</div>
-					<p class="text-xs text-gray-500 mb-2">
-						Enable the models available in this room. The default model is restricted to this list.
-					</p>
-					{isLoadingModels.value ? (
-						<p class="text-xs text-gray-500">Loading models...</p>
-					) : availableModels.value.length === 0 ? (
-						<p class="text-xs text-gray-500 italic">No models available</p>
-					) : (
-						<div class="space-y-1.5">
-							{availableModels.value.map((model) => (
-								<label key={model.id} class="flex items-center gap-2.5 cursor-pointer group">
-									<input
-										type="checkbox"
-										checked={isModelAllowed(model.id)}
-										onChange={() => handleToggleModel(model.id)}
-										disabled={disabled}
-										class="w-4 h-4 rounded border-dark-500 bg-dark-800 text-blue-500
-                      focus:ring-blue-500 focus:ring-offset-dark-900 cursor-pointer"
-									/>
-									<span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
-										{model.name}
-									</span>
-									{model.id === defaultModel.value && (
-										<span class="text-xs text-blue-400 ml-auto">default</span>
-									)}
-								</label>
-							))}
+					{/* Context & Instructions — collapsible section */}
+					<details class="group surface-elevated overflow-hidden">
+						<summary class="flex items-center justify-between px-4 py-3 hover:bg-dark-800/50 transition-colors select-none">
+							<span class="text-sm font-semibold text-gray-200">Context & Instructions</span>
+							<svg
+								class="w-4 h-4 text-gray-500 transition-transform group-open:rotate-180"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M19 9l-7 7-7-7"
+								/>
+							</svg>
+						</summary>
+						<div class="border-t border-dark-700 px-4 py-4">
+							<RoomContext room={room} />
 						</div>
-					)}
-				</div>
+					</details>
 
-				{/* Default Model */}
-				<div>
-					<label for="default-model" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Default Model
-					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						Default model for new sessions in this room. Leave empty to use the system default.
-					</p>
-					<select
-						id="default-model"
-						value={defaultModel.value}
-						onChange={(e) => (defaultModel.value = (e.target as HTMLSelectElement).value)}
-						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
-              focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
-						disabled={disabled || isLoadingModels.value}
-					>
-						<option value="">Use system default</option>
-						{selectableModels().map((model) => (
-							<option key={model.id} value={model.id}>
-								{model.name}
-							</option>
-						))}
-					</select>
-				</div>
+					{/* Room Name */}
+					<div>
+						<label for="room-name" class="block text-sm font-medium text-gray-300 mb-1.5">
+							Room Name
+						</label>
+						<input
+							id="room-name"
+							type="text"
+							value={name.value}
+							onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
+							class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
+              placeholder-gray-500 focus:outline-none focus:border-blue-500"
+							disabled={disabled}
+						/>
+					</div>
 
-				{/* Workspace Paths */}
-				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace Paths</label>
-					<p class="text-xs text-gray-500 mb-2">
-						Allowed workspace paths for this room. The room agent can work on files in these
-						directories.
-					</p>
+					{/* Max Planning Retries */}
+					<div>
+						<label
+							for="max-planning-retries"
+							class="block text-sm font-medium text-gray-300 mb-1.5"
+						>
+							Max Planning Retries
+						</label>
+						<p class="text-xs text-gray-500 mb-2">
+							How many times the room will retry planning a mission after failure before escalating
+							to human review. 0 means no automatic retries.
+						</p>
+						<input
+							id="max-planning-retries"
+							type="number"
+							min={0}
+							max={5}
+							value={maxPlanningRetries.value}
+							onInput={(e) => {
+								const v = parseInt((e.target as HTMLInputElement).value, 10);
+								if (!isNaN(v) && v >= 0 && v <= 5) maxPlanningRetries.value = v;
+							}}
+							class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
+              focus:outline-none focus:border-blue-500"
+							disabled={disabled}
+						/>
+					</div>
 
-					{/* Path list */}
-					<div class="space-y-2 mb-3">
-						{allowedPaths.value.map((wp) => (
-							<div key={wp.path} class="bg-dark-800 border border-dark-600 rounded-lg px-3 py-2">
-								<div class="flex items-center gap-2">
-									<span class="flex-1 text-sm text-gray-300 truncate font-mono">{wp.path}</span>
+					{/* Allowed Models */}
+					<div>
+						<div class="flex items-center justify-between mb-1.5">
+							<label class="block text-sm font-medium text-gray-300">Allowed Models</label>
+							{!isLoadingModels.value && availableModels.value.length > 0 && (
+								<div class="flex gap-2">
 									<button
 										type="button"
-										onClick={() => handleSetDefaultPath(wp.path)}
-										class={`text-xs px-2 py-1 rounded ${
-											defaultPath.value === wp.path
-												? 'bg-blue-600 text-white'
-												: 'bg-dark-700 text-gray-400 hover:text-gray-200'
-										}`}
-										title="Set as default path"
+										onClick={handleSelectAllModels}
+										class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+										disabled={disabled || allowedModels.value === null}
 									>
-										{defaultPath.value === wp.path ? 'Default' : 'Set Default'}
+										All
 									</button>
+									<span class="text-xs text-gray-600">·</span>
 									<button
 										type="button"
-										onClick={() => handleRemovePath(wp.path)}
-										class="text-gray-500 hover:text-red-400 p-1"
-										title="Remove path"
+										onClick={handleDeselectAllModels}
+										class="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-40"
+										disabled={disabled}
 									>
-										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M6 18L18 6M6 6l12 12"
-											/>
-										</svg>
+										None
 									</button>
 								</div>
-								<input
-									type="text"
-									value={wp.description || ''}
-									onInput={(e) =>
-										handleUpdatePathDescription(wp.path, (e.target as HTMLInputElement).value)
-									}
-									placeholder="Add description (optional)"
-									class="w-full mt-2 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs
-                      text-gray-400 placeholder-gray-600 focus:outline-none focus:border-gray-500"
-									disabled={disabled}
-								/>
+							)}
+						</div>
+						<p class="text-xs text-gray-500 mb-2">
+							Enable the models available in this room. The default model is restricted to this
+							list.
+						</p>
+						{isLoadingModels.value ? (
+							<p class="text-xs text-gray-500">Loading models...</p>
+						) : availableModels.value.length === 0 ? (
+							<p class="text-xs text-gray-500 italic">No models available</p>
+						) : (
+							<div class="space-y-1.5">
+								{availableModels.value.map((model) => (
+									<label key={model.id} class="flex items-center gap-2.5 cursor-pointer group">
+										<input
+											type="checkbox"
+											checked={isModelAllowed(model.id)}
+											onChange={() => handleToggleModel(model.id)}
+											disabled={disabled}
+											class="w-4 h-4 rounded border-dark-500 bg-dark-800 text-blue-500
+                      focus:ring-blue-500 focus:ring-offset-dark-900 cursor-pointer"
+										/>
+										<span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+											{model.name}
+										</span>
+										{model.id === defaultModel.value && (
+											<span class="text-xs text-blue-400 ml-auto">default</span>
+										)}
+									</label>
+								))}
 							</div>
-						))}
-						{allowedPaths.value.length === 0 && (
-							<p class="text-sm text-gray-500 italic">No workspace paths configured</p>
 						)}
 					</div>
 
-					{/* Add new path */}
-					<div class="space-y-2">
-						<div class="flex gap-2">
+					{/* Default Model */}
+					<div>
+						<label for="default-model" class="block text-sm font-medium text-gray-300 mb-1.5">
+							Default Model
+						</label>
+						<p class="text-xs text-gray-500 mb-2">
+							Default model for new sessions in this room. Leave empty to use the system default.
+						</p>
+						<select
+							id="default-model"
+							value={defaultModel.value}
+							onChange={(e) => (defaultModel.value = (e.target as HTMLSelectElement).value)}
+							class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
+              focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
+							disabled={disabled || isLoadingModels.value}
+						>
+							<option value="">Use system default</option>
+							{selectableModels().map((model) => (
+								<option key={model.id} value={model.id}>
+									{model.name}
+								</option>
+							))}
+						</select>
+					</div>
+
+					{/* Workspace Paths */}
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace Paths</label>
+						<p class="text-xs text-gray-500 mb-2">
+							Allowed workspace paths for this room. The room agent can work on files in these
+							directories.
+						</p>
+
+						{/* Path list */}
+						<div class="space-y-2 mb-3">
+							{allowedPaths.value.map((wp) => (
+								<div key={wp.path} class="bg-dark-800 border border-dark-600 rounded-lg px-3 py-2">
+									<div class="flex items-center gap-2">
+										<span class="flex-1 text-sm text-gray-300 truncate font-mono">{wp.path}</span>
+										<button
+											type="button"
+											onClick={() => handleSetDefaultPath(wp.path)}
+											class={`text-xs px-2 py-1 rounded ${
+												defaultPath.value === wp.path
+													? 'bg-blue-600 text-white'
+													: 'bg-dark-700 text-gray-400 hover:text-gray-200'
+											}`}
+											title="Set as default path"
+										>
+											{defaultPath.value === wp.path ? 'Default' : 'Set Default'}
+										</button>
+										<button
+											type="button"
+											onClick={() => handleRemovePath(wp.path)}
+											class="text-gray-500 hover:text-red-400 p-1"
+											title="Remove path"
+										>
+											<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width={2}
+													d="M6 18L18 6M6 6l12 12"
+												/>
+											</svg>
+										</button>
+									</div>
+									<input
+										type="text"
+										value={wp.description || ''}
+										onInput={(e) =>
+											handleUpdatePathDescription(wp.path, (e.target as HTMLInputElement).value)
+										}
+										placeholder="Add description (optional)"
+										class="w-full mt-2 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs
+                      text-gray-400 placeholder-gray-600 focus:outline-none focus:border-gray-500"
+										disabled={disabled}
+									/>
+								</div>
+							))}
+							{allowedPaths.value.length === 0 && (
+								<p class="text-sm text-gray-500 italic">No workspace paths configured</p>
+							)}
+						</div>
+
+						{/* Add new path */}
+						<div class="space-y-2">
+							<div class="flex gap-2">
+								<input
+									type="text"
+									value={newPath.value}
+									onInput={(e) => (newPath.value = (e.target as HTMLInputElement).value)}
+									placeholder="/path/to/workspace"
+									class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
+                    placeholder-gray-500 focus:outline-none focus:border-blue-500 font-mono"
+									disabled={disabled}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											handleAddPath();
+										}
+									}}
+								/>
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={handleFolderPick}
+									disabled={disabled}
+									title="Browse folders"
+								>
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+										/>
+									</svg>
+								</Button>
+							</div>
 							<input
 								type="text"
-								value={newPath.value}
-								onInput={(e) => (newPath.value = (e.target as HTMLInputElement).value)}
-								placeholder="/path/to/workspace"
-								class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
-                    placeholder-gray-500 focus:outline-none focus:border-blue-500 font-mono"
+								value={newDescription.value}
+								onInput={(e) => (newDescription.value = (e.target as HTMLInputElement).value)}
+								placeholder="Description for this path (optional)"
+								class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
+                  placeholder-gray-500 focus:outline-none focus:border-blue-500"
 								disabled={disabled}
 								onKeyDown={(e) => {
 									if (e.key === 'Enter') {
@@ -517,212 +553,180 @@ export function RoomSettings({
 							<Button
 								variant="secondary"
 								size="sm"
-								onClick={handleFolderPick}
-								disabled={disabled}
-								title="Browse folders"
+								onClick={handleAddPath}
+								disabled={!newPath.value.trim() || disabled}
 							>
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-									/>
-								</svg>
+								Add Path
 							</Button>
 						</div>
-						<input
-							type="text"
-							value={newDescription.value}
-							onInput={(e) => (newDescription.value = (e.target as HTMLInputElement).value)}
-							placeholder="Description for this path (optional)"
-							class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
-                  placeholder-gray-500 focus:outline-none focus:border-blue-500"
-							disabled={disabled}
-							onKeyDown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									handleAddPath();
-								}
-							}}
-						/>
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={handleAddPath}
-							disabled={!newPath.value.trim() || disabled}
-						>
-							Add Path
-						</Button>
 					</div>
-				</div>
 
-				{/* MCP Servers */}
-				<div>
-					<div class="flex items-center justify-between mb-1.5">
-						<label class="block text-sm font-medium text-gray-300">MCP Servers</label>
-						{appMcpStore.appMcpServers.value.length > 0 && !roomMcpStore.loading.value && (
-							<button
-								type="button"
-								onClick={async () => {
-									try {
-										await resetRoomMcpToGlobal(room.id);
-										toast.success('Reset to global defaults');
-									} catch {
-										toast.error('Failed to reset to global defaults');
-									}
-								}}
-								class="text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40"
-								disabled={disabled}
-							>
-								Reset to Global Defaults
-							</button>
+					{/* MCP Servers */}
+					<div>
+						<div class="flex items-center justify-between mb-1.5">
+							<label class="block text-sm font-medium text-gray-300">MCP Servers</label>
+							{appMcpStore.appMcpServers.value.length > 0 && !roomMcpStore.loading.value && (
+								<button
+									type="button"
+									onClick={async () => {
+										try {
+											await resetRoomMcpToGlobal(room.id);
+											toast.success('Reset to global defaults');
+										} catch {
+											toast.error('Failed to reset to global defaults');
+										}
+									}}
+									class="text-xs text-gray-400 hover:text-gray-200 disabled:opacity-40"
+									disabled={disabled}
+								>
+									Reset to Global Defaults
+								</button>
+							)}
+						</div>
+						<p class="text-xs text-gray-500 mb-3">
+							Enable or disable MCP servers for this room. Changes override global settings.
+						</p>
+
+						{roomMcpStore.loading.value || appMcpStore.loading.value ? (
+							<div class="flex items-center gap-2 py-2">
+								<Spinner size="sm" />
+								<span class="text-xs text-gray-500">Loading MCP servers...</span>
+							</div>
+						) : appMcpStore.appMcpServers.value.length === 0 ? (
+							<div class="text-sm text-gray-500">
+								No MCP servers configured.{' '}
+								<a
+									href="#"
+									onClick={(e) => {
+										e.preventDefault();
+										// TODO: Navigate to global MCP settings - this would require router integration
+									}}
+									class="text-blue-400 hover:text-blue-300"
+								>
+									Add MCP servers in global settings
+								</a>
+							</div>
+						) : (
+							<div class="space-y-2">
+								{appMcpStore.appMcpServers.value.map((server) => {
+									const effectiveEnabled = roomMcpStore.getEffectiveEnabled(
+										server.id,
+										server.enabled
+									);
+									const hasOverride = roomMcpStore.overrides.value.has(server.id);
+
+									return (
+										<label
+											key={server.id}
+											class="flex items-start gap-3 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2.5 cursor-pointer hover:border-dark-500 transition-colors"
+										>
+											<input
+												type="checkbox"
+												checked={effectiveEnabled}
+												onChange={async () => {
+													try {
+														await setRoomMcpEnabled(room.id, server.id, !effectiveEnabled);
+													} catch {
+														toast.error(
+															`Failed to ${effectiveEnabled ? 'disable' : 'enable'} ${server.name}`
+														);
+													}
+												}}
+												disabled={disabled}
+												class="w-4 h-4 mt-0.5 rounded border-dark-500 bg-dark-700 text-blue-500
+												focus:ring-blue-500 focus:ring-offset-dark-900 cursor-pointer"
+											/>
+											<div class="flex-1 min-w-0">
+												<div class="flex items-center gap-2">
+													<span class="text-sm font-medium text-gray-200">{server.name}</span>
+													{hasOverride && (
+														<span class="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400">
+															room override
+														</span>
+													)}
+													{!hasOverride && !server.enabled && (
+														<span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-500">
+															disabled globally
+														</span>
+													)}
+												</div>
+												{server.description && (
+													<p class="text-xs text-gray-500 mt-0.5 truncate">{server.description}</p>
+												)}
+												<p class="text-xs text-gray-600 mt-0.5 font-mono">
+													{sourceTypeLabel(server.sourceType)}
+												</p>
+											</div>
+										</label>
+									);
+								})}
+							</div>
 						)}
 					</div>
-					<p class="text-xs text-gray-500 mb-3">
-						Enable or disable MCP servers for this room. Changes override global settings.
-					</p>
 
-					{roomMcpStore.loading.value || appMcpStore.loading.value ? (
-						<div class="flex items-center gap-2 py-2">
-							<Spinner size="sm" />
-							<span class="text-xs text-gray-500">Loading MCP servers...</span>
+					{/* Skills */}
+					<div>
+						<div class="flex items-center justify-between mb-1.5">
+							<label class="block text-sm font-medium text-gray-300">Skills</label>
 						</div>
-					) : appMcpStore.appMcpServers.value.length === 0 ? (
-						<div class="text-sm text-gray-500">
-							No MCP servers configured.{' '}
-							<a
-								href="#"
-								onClick={(e) => {
-									e.preventDefault();
-									// TODO: Navigate to global MCP settings - this would require router integration
-								}}
-								class="text-blue-400 hover:text-blue-300"
-							>
-								Add MCP servers in global settings
-							</a>
-						</div>
-					) : (
-						<div class="space-y-2">
-							{appMcpStore.appMcpServers.value.map((server) => {
-								const effectiveEnabled = roomMcpStore.getEffectiveEnabled(
-									server.id,
-									server.enabled
-								);
-								const hasOverride = roomMcpStore.overrides.value.has(server.id);
+						<p class="text-xs text-gray-500 mb-3">
+							Enable or disable skills for this room. Built-in skills are always active.
+						</p>
+						<RoomSkillsSettings
+							skills={roomSkills}
+							setOverride={setOverride}
+							clearOverride={clearOverride}
+							disabled={disabled}
+						/>
+					</div>
 
-								return (
-									<label
-										key={server.id}
-										class="flex items-start gap-3 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2.5 cursor-pointer hover:border-dark-500 transition-colors"
-									>
-										<input
-											type="checkbox"
-											checked={effectiveEnabled}
-											onChange={async () => {
-												try {
-													await setRoomMcpEnabled(room.id, server.id, !effectiveEnabled);
-												} catch {
-													toast.error(
-														`Failed to ${effectiveEnabled ? 'disable' : 'enable'} ${server.name}`
-													);
-												}
-											}}
-											disabled={disabled}
-											class="w-4 h-4 mt-0.5 rounded border-dark-500 bg-dark-700 text-blue-500
-												focus:ring-blue-500 focus:ring-offset-dark-900 cursor-pointer"
-										/>
-										<div class="flex-1 min-w-0">
-											<div class="flex items-center gap-2">
-												<span class="text-sm font-medium text-gray-200">{server.name}</span>
-												{hasOverride && (
-													<span class="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400">
-														room override
-													</span>
-												)}
-												{!hasOverride && !server.enabled && (
-													<span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-500">
-														disabled globally
-													</span>
-												)}
-											</div>
-											{server.description && (
-												<p class="text-xs text-gray-500 mt-0.5 truncate">{server.description}</p>
-											)}
-											<p class="text-xs text-gray-600 mt-0.5 font-mono">
-												{sourceTypeLabel(server.sourceType)}
+					{/* Danger Zone */}
+					{(onArchive ?? onDelete) && (
+						<div class="border border-red-900/50 rounded-lg overflow-hidden">
+							<div class="px-4 py-2.5 bg-red-950/30">
+								<h3 class="text-sm font-semibold text-red-400">Danger Zone</h3>
+							</div>
+							<div class="divide-y divide-red-900/30">
+								{onArchive && (
+									<div class="px-4 py-3 flex items-center justify-between gap-4">
+										<div class="min-w-0">
+											<p class="text-sm font-medium text-gray-200">Archive room</p>
+											<p class="text-xs text-gray-500 mt-0.5">
+												Hide from the active list. All data is preserved and can be restored later.
 											</p>
 										</div>
-									</label>
-								);
-							})}
+										<button
+											type="button"
+											onClick={() => setShowArchiveModal(true)}
+											disabled={disabled}
+											class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+										>
+											Archive
+										</button>
+									</div>
+								)}
+								{onDelete && (
+									<div class="px-4 py-3 flex items-center justify-between gap-4">
+										<div class="min-w-0">
+											<p class="text-sm font-medium text-gray-200">Delete this room</p>
+											<p class="text-xs text-gray-500 mt-0.5">
+												Permanently remove this room and all sessions, tasks, missions, and
+												messages. Cannot be undone.
+											</p>
+										</div>
+										<button
+											type="button"
+											onClick={() => setShowDeleteModal(true)}
+											disabled={disabled}
+											class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-red-700/60 text-red-400 hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+										>
+											Delete
+										</button>
+									</div>
+								)}
+							</div>
 						</div>
 					)}
-				</div>
-
-				{/* Skills */}
-				<div>
-					<div class="flex items-center justify-between mb-1.5">
-						<label class="block text-sm font-medium text-gray-300">Skills</label>
-					</div>
-					<p class="text-xs text-gray-500 mb-3">
-						Enable or disable skills for this room. Built-in skills are always active.
-					</p>
-					<RoomSkillsSettings
-						skills={roomSkills}
-						setOverride={setOverride}
-						clearOverride={clearOverride}
-						disabled={disabled}
-					/>
-				</div>
-
-				{/* Danger Zone */}
-				{(onArchive ?? onDelete) && (
-					<div class="border border-red-900/50 rounded-lg overflow-hidden">
-						<div class="px-4 py-2.5 bg-red-950/30">
-							<h3 class="text-sm font-semibold text-red-400">Danger Zone</h3>
-						</div>
-						<div class="divide-y divide-red-900/30">
-							{onArchive && (
-								<div class="px-4 py-3 flex items-center justify-between gap-4">
-									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-200">Archive room</p>
-										<p class="text-xs text-gray-500 mt-0.5">
-											Hide from the active list. All data is preserved and can be restored later.
-										</p>
-									</div>
-									<button
-										type="button"
-										onClick={() => setShowArchiveModal(true)}
-										disabled={disabled}
-										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-									>
-										Archive
-									</button>
-								</div>
-							)}
-							{onDelete && (
-								<div class="px-4 py-3 flex items-center justify-between gap-4">
-									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-200">Delete this room</p>
-										<p class="text-xs text-gray-500 mt-0.5">
-											Permanently remove this room and all sessions, tasks, missions, and messages.
-											Cannot be undone.
-										</p>
-									</div>
-									<button
-										type="button"
-										onClick={() => setShowDeleteModal(true)}
-										disabled={disabled}
-										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-red-700/60 text-red-400 hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-									>
-										Delete
-									</button>
-								</div>
-							)}
-						</div>
-					</div>
-				)}
 				</div>
 			</div>
 

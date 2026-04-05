@@ -156,7 +156,11 @@ export interface RoomAgentsProps {
 
 // ─── Dropdown (shared) ───────────────────────────────────────────────────────
 
-function useClickOutside(ref: { current: HTMLElement | null }, onClose: () => void, active: boolean) {
+function useClickOutside(
+	ref: { current: HTMLElement | null },
+	onClose: () => void,
+	active: boolean
+) {
 	useEffect(() => {
 		if (!active) return;
 		const handler = (e: MouseEvent) => {
@@ -214,9 +218,7 @@ function AgentModelSelector({
 							<span class="text-sm font-medium text-gray-100 block truncate">
 								{selectedModel?.name ?? placeholder}
 							</span>
-							{!value && (
-								<span class="text-xs text-gray-500">Uses team default</span>
-							)}
+							{!value && <span class="text-xs text-gray-500">Uses team default</span>}
 						</div>
 						<svg
 							class={cn(
@@ -227,7 +229,12 @@ function AgentModelSelector({
 							viewBox="0 0 24 24"
 							stroke="currentColor"
 						>
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M19 9l-7 7-7-7"
+							/>
 						</svg>
 					</>
 				)}
@@ -240,7 +247,10 @@ function AgentModelSelector({
 							'w-full text-left px-4 py-2.5 hover:bg-dark-700 text-sm flex items-center gap-3 transition-colors',
 							!value ? 'text-blue-400' : 'text-gray-300'
 						)}
-						onClick={() => { onChange(''); isOpen.value = false; }}
+						onClick={() => {
+							onChange('');
+							isOpen.value = false;
+						}}
 					>
 						<span class="text-lg">🤖</span>
 						<span>{placeholder}</span>
@@ -253,7 +263,10 @@ function AgentModelSelector({
 								'w-full text-left px-4 py-2.5 hover:bg-dark-700 text-sm flex items-center gap-3 transition-colors',
 								model.id === value ? (roleColor ?? 'text-blue-400') : 'text-gray-300'
 							)}
-							onClick={() => { onChange(model.id); isOpen.value = false; }}
+							onClick={() => {
+								onChange(model.id);
+								isOpen.value = false;
+							}}
 						>
 							<span class="text-lg">{getModelIcon(model.id, model.family)}</span>
 							<span class="truncate">{model.name}</span>
@@ -291,11 +304,19 @@ function AssistantPill({
 			{children}
 			{onRemove && !disabled && (
 				<button
-					onClick={(e) => { e.stopPropagation(); onRemove(); }}
+					onClick={(e) => {
+						e.stopPropagation();
+						onRemove();
+					}}
 					class="ml-0.5 w-4 h-4 flex items-center justify-center rounded-full text-gray-500 hover:text-red-400 hover:bg-red-900/20 transition-colors opacity-0 group-hover:opacity-100"
 				>
 					<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M6 18L18 6M6 6l12 12"
+						/>
 					</svg>
 				</button>
 			)}
@@ -335,7 +356,12 @@ function AddPillButton({
 				class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-dark-700/60 hover:bg-dark-700 border border-dark-600 text-gray-400 hover:text-gray-200 transition-all disabled:opacity-30"
 			>
 				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M12 4v16m8-8H4" />
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M12 4v16m8-8H4"
+					/>
 				</svg>
 			</button>
 
@@ -396,7 +422,12 @@ function Stepper({
 				class="px-3 py-2 text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
 			>
 				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M12 4v16m8-8H4" />
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2.5}
+						d="M12 4v16m8-8H4"
+					/>
 				</svg>
 			</button>
 		</div>
@@ -436,7 +467,9 @@ function AgentCard({
 			class={cn(
 				'rounded-xl border-l-2 border border-dark-700 overflow-hidden transition-all',
 				agent.color.border,
-				isExpanded ? 'bg-dark-850/80 shadow-lg shadow-black/10' : 'bg-dark-850/40 hover:bg-dark-850/60'
+				isExpanded
+					? 'bg-dark-850/80 shadow-lg shadow-black/10'
+					: 'bg-dark-850/40 hover:bg-dark-850/60'
 			)}
 		>
 			{/* Card header */}
@@ -494,7 +527,12 @@ function AgentCard({
 					viewBox="0 0 24 24"
 					stroke="currentColor"
 				>
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M19 9l-7 7-7-7" />
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M19 9l-7 7-7-7"
+					/>
 				</svg>
 			</button>
 
@@ -745,7 +783,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 			[role]: current.map((r) => {
 				if (r.type === 'cli' && r.model === agentId) {
 					const next = { ...r };
-					if (cliModel) { next.cliModel = cliModel; } else { delete next.cliModel; }
+					if (cliModel) {
+						next.cliModel = cliModel;
+					} else {
+						delete next.cliModel;
+					}
 					return next;
 				}
 				return r;
@@ -938,9 +980,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 																onRemove={() => {
 																	if (info) toggleCliAgentFor(agent.key, info);
 																}}
-																onChangeModel={(m) =>
-																	changeCliModelFor(agent.key, config.model, m)
-																}
+																onChangeModel={(m) => changeCliModelFor(agent.key, config.model, m)}
 															/>
 														);
 													})}
@@ -958,9 +998,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 																<span class="flex items-center justify-between w-full">
 																	<span>
 																		{a?.name ?? item.id}
-																		<span class="text-xs text-gray-500 ml-1.5">
-																			{a?.provider}
-																		</span>
+																		<span class="text-xs text-gray-500 ml-1.5">{a?.provider}</span>
 																	</span>
 																	{a?.authenticated ? (
 																		<span class="flex items-center gap-1 text-[10px] text-green-400">
