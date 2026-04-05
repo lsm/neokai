@@ -44,7 +44,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
-import type { Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type {
+	NodeExecution,
+	Space,
+	SpaceAgent,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+} from '@neokai/shared';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
@@ -58,10 +64,9 @@ const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
 // The global spaces agent session ID — auto-provisioned when NEOKAI_ENABLE_SPACES_AGENT=1
 const GLOBAL_SPACES_SESSION_ID = 'spaces:global';
 
-// Pre-assigned step IDs used in all test workflows so mocks can reference them by ID.
+// Pre-assigned step ID used in all test workflows so mocks can reference it by ID.
 // Fresh DB per test daemon means no cross-test ID conflicts.
 const STEP_CODE_ID = 'step-code-lifecycle-001';
-const STEP_REVIEW_ID = 'step-review-lifecycle-001';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -70,17 +75,15 @@ const STEP_REVIEW_ID = 'step-review-lifecycle-001';
 type TestFixtures = {
 	space: Space;
 	coderAgent: SpaceAgent;
-	reviewerAgent: SpaceAgent;
 	workflow: SpaceWorkflow;
 };
 
 /**
- * Create a Space with a 2-step Code→Review workflow.
+ * Create a Space with a single-step workflow.
  *
- * space.create auto-seeds preset agents (Coder, General, Planner, Reviewer).
- * This fixture looks up the pre-seeded Coder and Reviewer agents and creates
- * a workflow that references them. Step IDs are pre-assigned so dev proxy mocks
- * can reference them by ID.
+ * The runtime now spawns workflow node-agent sessions directly from node_executions
+ * (one-task-per-run architecture), so a single step is enough to exercise spawn,
+ * session liveness, completion, and global notification behavior.
  */
 async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixtures> {
 	const space = (await daemon.messageHub.request('space.create', {
@@ -90,40 +93,34 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		autonomyLevel: 'supervised',
 	})) as Space;
 
-	// space.create auto-seeds preset agents — look up Coder and Reviewer by role
+	// space.create auto-seeds preset agents — look up Coder by role
 	const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
 		spaceId: space.id,
 	})) as { agents: SpaceAgent[] };
 
 	const coderAgent = agents.find((a) => a.name === 'Coder');
-	const reviewerAgent = agents.find((a) => a.name === 'Reviewer');
-
 	if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');
-	if (!reviewerAgent) throw new Error('Pre-seeded Reviewer agent not found');
 
 	const workflowResult = (await daemon.messageHub.request('spaceWorkflow.create', {
 		spaceId: space.id,
-		name: 'Code Review Workflow',
-		description: 'A simple code-then-review workflow for lifecycle testing',
-		nodes: [
-			{ id: STEP_CODE_ID, name: 'Code Implementation', agentId: coderAgent.id },
-			{ id: STEP_REVIEW_ID, name: 'Code Review', agentId: reviewerAgent.id },
-		],
-		transitions: [{ from: STEP_CODE_ID, to: STEP_REVIEW_ID }],
+		name: 'Single-step Workflow',
+		description: 'Single-step workflow for lifecycle testing',
+		nodes: [{ id: STEP_CODE_ID, name: 'Code Implementation', agentId: coderAgent.id }],
+		transitions: [],
 		startNodeId: STEP_CODE_ID,
 	})) as { workflow: SpaceWorkflow };
 
 	return {
 		space,
 		coderAgent,
-		reviewerAgent,
 		workflow: workflowResult.workflow,
 	};
 }
 
 /**
- * Start a workflow run and return the newly-created pending task.
- * spaceTask.list returns the task array directly (not wrapped in { tasks }).
+ * Start a workflow run and return:
+ * - the canonical run task (one-task-per-run envelope)
+ * - the first node execution created for the start node
  */
 async function startWorkflowRunAndGetTask(
 	daemon: DaemonServerContext,
@@ -132,7 +129,14 @@ async function startWorkflowRunAndGetTask(
 	runTitle: string
 ): Promise<{
 	runId: string;
-	task: { id: string; status: string; taskAgentSessionId: string | null };
+	task: { id: string; status: string };
+	execution: {
+		id: string;
+		workflowNodeId: string;
+		agentName: string;
+		status: string;
+		agentSessionId: string | null;
+	};
 }> {
 	const { run } = (await daemon.messageHub.request('spaceWorkflowRun.start', {
 		spaceId,
@@ -140,70 +144,105 @@ async function startWorkflowRunAndGetTask(
 		title: runTitle,
 	})) as { run: { id: string } };
 
-	// spaceTask.list returns an array directly
 	const tasks = (await daemon.messageHub.request('spaceTask.list', {
 		spaceId,
 	})) as Array<{
 		id: string;
 		workflowRunId: string;
 		status: string;
-		taskAgentSessionId: string | null;
 	}>;
+	const task = tasks.find((candidate) => candidate.workflowRunId === run.id);
+	if (!task) throw new Error(`No canonical task found for workflow run ${run.id}`);
 
-	const task = tasks.find((t) => t.workflowRunId === run.id && t.status === 'open');
-	if (!task) throw new Error(`No open task found for workflow run ${run.id}`);
+	const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
+		workflowRunId: run.id,
+		spaceId,
+	})) as { executions: NodeExecution[] };
+	const execution = executions[0];
+	if (!execution) throw new Error(`No node execution found for workflow run ${run.id}`);
 
-	return { runId: run.id, task };
+	return {
+		runId: run.id,
+		task,
+		execution: {
+			id: execution.id,
+			workflowNodeId: execution.workflowNodeId,
+			agentName: execution.agentName,
+			status: execution.status,
+			agentSessionId: execution.agentSessionId,
+		},
+	};
 }
 
 /**
- * Poll spaceTask.get until taskAgentSessionId is set (Task Agent was spawned).
- * SpaceRuntime's tick loop runs every 5 s by default.
- * spaceTask.get returns the task directly (not wrapped in { task }).
- * The handler parameter is `taskId`, not `id`.
+ * Poll nodeExecution.list until agentSessionId is set for the given execution.
  */
-async function waitForTaskAgentSpawned(
+async function waitForNodeAgentSpawned(
 	daemon: DaemonServerContext,
 	spaceId: string,
-	taskId: string,
+	runId: string,
+	executionId: string,
 	timeout: number
 ): Promise<string> {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
-		const task = (await daemon.messageHub.request('spaceTask.get', {
-			taskId,
+		const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
+			workflowRunId: runId,
 			spaceId,
-		})) as { taskAgentSessionId: string | null };
+		})) as { executions: NodeExecution[] };
 
-		if (task.taskAgentSessionId) return task.taskAgentSessionId;
+		const execution = executions.find((candidate) => candidate.id === executionId);
+		if (execution?.agentSessionId) return execution.agentSessionId;
 		await new Promise((resolve) => setTimeout(resolve, 400));
 	}
-	throw new Error(`Task Agent session was not spawned within ${timeout}ms for task ${taskId}`);
+	throw new Error(
+		`Node agent session was not spawned within ${timeout}ms for execution ${executionId}`
+	);
 }
 
 /**
- * Poll spaceTask.get until the task status matches one of the expected statuses.
- * spaceTask.get returns the task directly (not wrapped in { task }).
+ * Poll nodeExecution.list until the execution status matches one of expected statuses.
  */
-async function waitForTaskStatus(
+async function waitForExecutionStatus(
 	daemon: DaemonServerContext,
 	spaceId: string,
-	taskId: string,
+	runId: string,
+	executionId: string,
 	expectedStatuses: string[],
 	timeout: number
 ): Promise<string> {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
-		const task = (await daemon.messageHub.request('spaceTask.get', {
-			taskId,
+		const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
+			workflowRunId: runId,
 			spaceId,
-		})) as { status: string };
+		})) as { executions: NodeExecution[] };
 
-		if (expectedStatuses.includes(task.status)) return task.status;
+		const execution = executions.find((candidate) => candidate.id === executionId);
+		if (execution && expectedStatuses.includes(execution.status)) return execution.status;
 		await new Promise((resolve) => setTimeout(resolve, 400));
 	}
 	throw new Error(
-		`Task status did not reach one of [${expectedStatuses.join(', ')}] within ${timeout}ms`
+		`Node execution status did not reach one of [${expectedStatuses.join(', ')}] within ${timeout}ms`
+	);
+}
+
+async function waitForRunStatus(
+	daemon: DaemonServerContext,
+	runId: string,
+	expectedStatuses: string[],
+	timeout: number
+): Promise<SpaceWorkflowRun> {
+	const deadline = Date.now() + timeout;
+	while (Date.now() < deadline) {
+		const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
+			id: runId,
+		})) as { run: SpaceWorkflowRun };
+		if (expectedStatuses.includes(run.status)) return run;
+		await new Promise((resolve) => setTimeout(resolve, 400));
+	}
+	throw new Error(
+		`Run ${runId} did not reach one of [${expectedStatuses.join(', ')}] within ${timeout}ms`
 	);
 }
 
@@ -224,26 +263,6 @@ function extractTextContent(assistantMessages: Array<Record<string, unknown>>): 
 			return (betaMsg?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text as string);
 		})
 		.join(' ');
-}
-
-function extractToolUses(
-	assistantMessages: Array<Record<string, unknown>>
-): Array<{ name: string; id: string; input: Record<string, unknown> }> {
-	const toolUses: Array<{ name: string; id: string; input: Record<string, unknown> }> = [];
-	for (const msg of assistantMessages) {
-		const betaMsg = msg.message as { content?: Array<Record<string, unknown>> } | undefined;
-		if (!betaMsg?.content) continue;
-		for (const block of betaMsg.content) {
-			if (block.type === 'tool_use') {
-				toolUses.push({
-					name: block.name as string,
-					id: block.id as string,
-					input: (block.input as Record<string, unknown>) ?? {},
-				});
-			}
-		}
-	}
-	return toolUses;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,51 +286,46 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	}, SETUP_TIMEOUT);
 
 	// -------------------------------------------------------------------------
-	// Test 1: Pending task pickup and Task Agent session creation
+	// Test 1: Pending node execution pickup and node-agent session creation
 	// -------------------------------------------------------------------------
 	test(
-		'SpaceRuntime spawns a Task Agent session for a pending task',
+		'SpaceRuntime spawns a workflow node-agent session for a pending node execution',
 		async () => {
 			const { space, workflow } = await createTestFixtures(daemon);
 
-			const { task } = await startWorkflowRunAndGetTask(
+			const { runId, task, execution } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
 				'Lifecycle test run — spawning'
 			);
 
-			// Before the tick fires, taskAgentSessionId must not be set
-			expect(task.taskAgentSessionId).toBeFalsy();
 			expect(task.status).toBe('open');
+			expect(execution.status).toBe('pending');
+			expect(execution.agentSessionId).toBeNull();
 
-			// Wait for SpaceRuntime tick loop to detect the pending task and spawn a Task Agent
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
 
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
 
-			// The session must exist — session.get returns { session, activeTools, context }
 			const sessionResult = (await daemon.messageHub.request('session.get', {
-				sessionId: taskAgentSessionId,
+				sessionId: nodeAgentSessionId,
 			})) as { session: Record<string, unknown> };
 
 			const session = sessionResult.session;
 			expect(session).toBeDefined();
-			expect(session.id).toBe(taskAgentSessionId);
+			expect(session.id).toBe(nodeAgentSessionId);
+			expect(session.type).toBe('worker');
+			expect(nodeAgentSessionId).toContain(`space:${space.id}`);
+			expect(nodeAgentSessionId).toContain(`task:${task.id}`);
+			expect(nodeAgentSessionId).toContain(`exec:${execution.id}`);
 
-			// Session type must be 'space_task_agent'
-			expect(session.type).toBe('space_task_agent');
-
-			// Session ID follows the convention: space:${spaceId}:task:${taskId}
-			expect(taskAgentSessionId).toContain(`task:${task.id}`);
-			expect(taskAgentSessionId).toContain(`space:${space.id}`);
-
-			// Session context must include spaceId and taskId
 			const sessionContext = session.context as { spaceId?: string; taskId?: string } | undefined;
 			expect(sessionContext?.spaceId).toBe(space.id);
 			expect(sessionContext?.taskId).toBe(task.id);
@@ -320,97 +334,79 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 2: Task Agent starts idle (no automatic kickoff) when spawned via RPC
+	// Test 2: Node agent gets kickoff context when spawned for pending execution
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent session starts idle without automatic kickoff when spawned via direct RPC',
+		'Node-agent session receives kickoff context when spawned via runtime tick',
 		async () => {
-			// With kickoff: false (the default for RPC-spawned workflow runs), the
-			// SpaceRuntime spawns the task agent session but does NOT inject an initial
-			// context message. The explicit kickoff is the Space Agent's responsibility
-			// when it orchestrates a run via the start_workflow_run MCP tool.
 			const { space, workflow } = await createTestFixtures(daemon);
 
-			const { task } = await startWorkflowRunAndGetTask(
+			const { runId, execution } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
-				'Lifecycle test run — idle kickoff check'
+				'Lifecycle test run — kickoff check'
 			);
 
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
 
-			// Agent starts idle — no automatic initial message injected.
-			// waitForSdkMessages resolves immediately when there are no messages to wait for.
-			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
+			const { sdkMessages } = await waitForSdkMessages(daemon, nodeAgentSessionId, {
 				minCount: 1,
-				timeout: 2_000,
-			}).catch(() => ({ sdkMessages: [] as Array<Record<string, unknown>> }));
+				timeout: 5_000,
+			});
 
-			expect(sdkMessages.length).toBe(0);
+			expect(sdkMessages.length).toBeGreaterThan(0);
 		},
 		TEST_TIMEOUT
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 3: spawn_node_agent tool invocation
+	// Test 3: probe response contains spawn_node_agent marker
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent uses spawn_node_agent to create a sub-session for a workflow step',
+		'Node-agent session receives probe response mentioning spawn_node_agent',
 		async () => {
-			// NOTE: The probe mock returns a text-only response (no tool_use blocks) to
-			// prevent the Claude Agent SDK from dispatching the short tool name
-			// "spawn_node_agent" (registered as "mcp__task-agent__spawn_node_agent").
-			// Dispatching a non-matching tool name causes the SDK to retry indefinitely.
-			// We verify the mock was matched by checking the text content mentions the
-			// tool name and step ID.
-			// See probe mock "probe_task_agent_spawn_step_001" in .devproxy/mocks.json.
 			const { space, workflow } = await createTestFixtures(daemon);
 
-			const { task } = await startWorkflowRunAndGetTask(
+			const { runId, execution } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
 				'Lifecycle test run — spawn step'
 			);
 
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
 
-			// Wait for initial message processing before injecting probe
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			// Inject a probe message that triggers the spawn_node_agent mock.
-			// The probe phrase "probe_task_agent_spawn_step_001" is unique to this request
-			// body at this point (earlier conversation does not contain it).
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 			await sendMessage(
 				daemon,
-				taskAgentSessionId,
+				nodeAgentSessionId,
 				'probe_task_agent_spawn_step_001: Please spawn the node agent for the first workflow step.'
 			);
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-			// Verify the mock was matched: the probe response mentions spawn_node_agent and
-			// the pre-assigned step ID step-code-lifecycle-001
-			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 4, // initial user + initial assistant + probe user + probe assistant
+			const { sdkMessages } = await waitForSdkMessages(daemon, nodeAgentSessionId, {
+				minCount: 4,
 				timeout: 5_000,
 			});
 
 			const assistantMsgs = getAssistantMessages(sdkMessages);
 			const textContent = extractTextContent(assistantMsgs);
-
 			expect(textContent).toContain('spawn_node_agent');
 			expect(textContent).toContain(STEP_CODE_ID);
 		},
@@ -418,109 +414,86 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 4: check_node_status tool invocation
+	// Test 4: probe response contains check_node_status marker
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent uses check_node_status to monitor a spawned sub-session',
+		'Node-agent session receives probe response mentioning check_node_status',
 		async () => {
-			// NOTE: The probe mock returns text-only (no tool_use blocks) to prevent the
-			// SDK from dispatching the short tool name "check_node_status".
-			// We verify the mock was matched by checking the text content.
-			// See probe mock "probe_task_agent_check_step_001" in .devproxy/mocks.json.
 			const { space, workflow } = await createTestFixtures(daemon);
 
-			const { task } = await startWorkflowRunAndGetTask(
+			const { runId, execution } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
 				'Lifecycle test run — check step'
 			);
 
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
 
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 			await sendMessage(
 				daemon,
-				taskAgentSessionId,
+				nodeAgentSessionId,
 				'probe_task_agent_check_step_001: Please check the status of the running node agent.'
 			);
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
+			const { sdkMessages } = await waitForSdkMessages(daemon, nodeAgentSessionId, {
 				minCount: 4,
 				timeout: 5_000,
 			});
 
 			const assistantMsgs = getAssistantMessages(sdkMessages);
 			const textContent = extractTextContent(assistantMsgs);
-
 			expect(textContent).toContain('check_node_status');
 		},
 		TEST_TIMEOUT
 	);
 
 	// -------------------------------------------------------------------------
-	// Test 5: report_result tool execution and task completion
+	// Test 5: direct execution completion via nodeExecution.update
 	// -------------------------------------------------------------------------
 	test(
-		'Task Agent calls report_result to complete the task (full execution)',
+		'Completing a node execution marks it done',
 		async () => {
-			// This test uses the FULL MCP tool name "mcp__task-agent__report_result" with
-			// stop_reason "tool_use" so the SDK dispatches the tool. The handler updates the
-			// task status to 'done' and emits the DaemonHub space.task.done event.
-			// See probe mock "probe_task_agent_report_complete_001" in .devproxy/mocks.json.
 			const { space, workflow } = await createTestFixtures(daemon);
 
-			const { task } = await startWorkflowRunAndGetTask(
+			const { runId, execution } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
-				'Lifecycle test run — report result'
+				'Lifecycle test run — execution complete'
 			);
 
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			// Inject probe message — mock returns report_result with full MCP name (stop_reason: tool_use)
-			await sendMessage(
-				daemon,
-				taskAgentSessionId,
-				'probe_task_agent_report_complete_001: Please call report_result to mark this task as completed.'
-			);
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			// Verify the report_result tool_use block appears in SDK messages
-			const { sdkMessages } = await waitForSdkMessages(daemon, taskAgentSessionId, {
-				minCount: 4,
-				timeout: 5_000,
+			await daemon.messageHub.request('nodeExecution.update', {
+				id: execution.id,
+				spaceId: space.id,
+				status: 'done',
+				result: 'Lifecycle completion test',
 			});
 
-			const assistantMsgs = getAssistantMessages(sdkMessages);
-			const toolUses = extractToolUses(assistantMsgs);
-			const reportUses = toolUses.filter(
-				(t) => t.name === 'report_result' || t.name === 'mcp__task-agent__report_result'
-			);
-			expect(reportUses.length).toBeGreaterThan(0);
-
-			// The task status must have changed to 'done' because the tool was executed
-			const finalStatus = await waitForTaskStatus(
+			const finalStatus = await waitForExecutionStatus(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				['done'],
 				IS_MOCK ? 8_000 : 30_000
 			);
@@ -533,10 +506,8 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	// Test 6: Space Agent receives completion notification
 	// -------------------------------------------------------------------------
 	test(
-		'Space Agent receives a completion notification when report_result completes a task',
+		'Space Agent receives a completion notification when a run completes',
 		async () => {
-			// Wait for the global spaces agent to be ready before proceeding.
-			// provisionGlobalSpacesAgent() is fire-and-forget at startup.
 			const spacesAgentDeadline = Date.now() + SETUP_TIMEOUT;
 			let spacesAgentReady = false;
 			while (Date.now() < spacesAgentDeadline) {
@@ -556,25 +527,23 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			daemon.trackSession(GLOBAL_SPACES_SESSION_ID);
 
 			const { space, workflow } = await createTestFixtures(daemon);
-
-			const { task } = await startWorkflowRunAndGetTask(
+			const { runId, execution } = await startWorkflowRunAndGetTask(
 				daemon,
 				space.id,
 				workflow.id,
 				'Lifecycle test run — space agent notification'
 			);
 
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
+			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
-
-			// Snapshot Space Agent SDK message count before triggering completion
 			const { sdkMessages: beforeMessages } = await waitForSdkMessages(
 				daemon,
 				GLOBAL_SPACES_SESSION_ID,
@@ -582,34 +551,30 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			).catch(() => ({ sdkMessages: [] as Array<Record<string, unknown>> }));
 			const messageCountBefore = beforeMessages.length;
 
-			// Trigger report_result via probe message (full MCP name → tool executed)
-			await sendMessage(
-				daemon,
-				taskAgentSessionId,
-				'probe_task_agent_report_complete_001: Please call report_result to mark this task as completed.'
-			);
-			await waitForIdle(daemon, taskAgentSessionId, IDLE_TIMEOUT);
+			await daemon.messageHub.request('nodeExecution.update', {
+				id: execution.id,
+				spaceId: space.id,
+				status: 'done',
+				result: 'Completion notification test',
+			});
 
-			// Verify the task is completed (report_result tool was dispatched and executed)
-			const finalStatus = await waitForTaskStatus(
+			await waitForExecutionStatus(
 				daemon,
 				space.id,
-				task.id,
+				runId,
+				execution.id,
 				['done'],
 				IS_MOCK ? 8_000 : 30_000
 			);
-			expect(finalStatus).toBe('done');
 
-			// Wait for the Space Agent to receive and process the completion notification.
-			// provision-global-agent.ts subscribes to space.task.done and injects
-			// a notification message into the spaces:global session.
+			// Run completion is processed on runtime ticks.
+			await waitForRunStatus(daemon, runId, ['done'], IS_MOCK ? 15_000 : 45_000);
 			await waitForIdle(daemon, GLOBAL_SPACES_SESSION_ID, IDLE_TIMEOUT);
 
-			// Space Agent must have at least one more SDK message than before (the notification)
 			const { sdkMessages: afterMessages } = await waitForSdkMessages(
 				daemon,
 				GLOBAL_SPACES_SESSION_ID,
-				{ minCount: messageCountBefore + 1, timeout: 10_000 }
+				{ minCount: messageCountBefore + 1, timeout: 15_000 }
 			);
 			expect(afterMessages.length).toBeGreaterThan(messageCountBefore);
 		},
