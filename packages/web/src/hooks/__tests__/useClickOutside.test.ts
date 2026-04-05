@@ -24,9 +24,9 @@ function createMockRef(element: Partial<HTMLElement> | null = {}): RefObject<HTM
 	return { current: mockElement };
 }
 
-// Helper to simulate click events
+// Helper to simulate mousedown events (useClickOutside listens on mousedown)
 function simulateClick(target: Node) {
-	const event = new MouseEvent('click', {
+	const event = new MouseEvent('mousedown', {
 		bubbles: true,
 		cancelable: true,
 	});

@@ -11,11 +11,21 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
-import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
-import { currentRoomTabSignal, currentRoomActiveTabSignal } from '../lib/signals';
+import {
+	navigateToHome,
+	navigateToRoomTask,
+	navigateToRoom,
+	navigateToRoomAgent,
+} from '../lib/router';
+import {
+	currentRoomTabSignal,
+	currentRoomActiveTabSignal,
+	currentRoomAgentActiveSignal,
+} from '../lib/signals';
 import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import { RoomTasks } from '../components/room/RoomTasks';
+import { RoomAgentContextStrip } from '../components/room/RoomAgentContextStrip';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomSettings, RoomAgents } from '../components/room';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
@@ -24,8 +34,9 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 import { toast } from '../lib/toast';
+import { cn } from '../lib/utils';
 
-type RoomTab = 'overview' | 'tasks' | 'agents' | 'goals' | 'settings';
+type RoomTab = 'chat' | 'overview' | 'tasks' | 'agents' | 'goals' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -35,7 +46,9 @@ interface RoomProps {
 
 export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
+	const [activeTab, setActiveTab] = useState<RoomTab>(
+		currentRoomAgentActiveSignal.value ? 'chat' : 'overview'
+	);
 
 	// Manage LiveQuery subscriptions for tasks and goals.
 	// Intentionally declared before the select() effect so that LiveQuery
@@ -52,6 +65,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 			// Clear any pending tab signal when leaving a room to prevent cross-room contamination
 			currentRoomTabSignal.value = null;
 			currentRoomActiveTabSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
 		};
 	}, [roomId]);
 
@@ -59,7 +73,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const pendingTab = currentRoomTabSignal.value;
 	useEffect(() => {
 		if (pendingTab && !taskViewId) {
-			const validTabs: RoomTab[] = ['overview', 'tasks', 'agents', 'goals', 'settings'];
+			const validTabs: RoomTab[] = ['chat', 'overview', 'tasks', 'agents', 'goals', 'settings'];
 			if (validTabs.includes(pendingTab as RoomTab)) {
 				setActiveTab(pendingTab as RoomTab);
 				currentRoomActiveTabSignal.value = pendingTab;
@@ -68,11 +82,24 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		}
 	}, [pendingTab, taskViewId, roomId]);
 
+	// Watch for Room Agent activation (e.g., sidebar click, popstate)
+	const agentActive = currentRoomAgentActiveSignal.value;
+	useEffect(() => {
+		if (agentActive) {
+			setActiveTab('chat');
+		}
+	}, [agentActive]);
+
 	// Update URL when tab changes
 	const handleTabChange = (tab: RoomTab) => {
 		setActiveTab(tab);
 		currentRoomActiveTabSignal.value = tab;
-		navigateToRoom(roomId);
+		if (tab === 'chat') {
+			navigateToRoomAgent(roomId);
+		} else {
+			currentRoomAgentActiveSignal.value = false;
+			navigateToRoom(roomId);
+		}
 	};
 
 	const loading = roomStore.loading.value;
@@ -150,17 +177,19 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		navigateToHome();
 	};
 
+	// Non-agent room sessions still use full takeover (e.g., worker session views)
+	const isSessionTakeover = sessionViewId && !currentRoomAgentActiveSignal.value;
+
 	return (
 		<div class="flex-1 flex bg-dark-900 overflow-hidden">
 			{/* Main content area */}
 			<div class="flex-1 flex flex-col overflow-hidden">
-				{/* Session view: show a specific session within the room (takes over fully) */}
-				{sessionViewId ? (
+				{isSessionTakeover ? (
 					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
 				) : (
 					<>
 						{/* Header */}
-						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4 flex-shrink-0">
 							<div class="flex items-center gap-3">
 								<MobileMenuButton />
 								<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
@@ -179,7 +208,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										handleTabChange('tasks');
 									}
 								}}
-								class="flex items-center gap-2 w-full px-4 py-2 bg-purple-950/40 border-b border-purple-800/30 text-sm text-purple-300 hover:bg-purple-950/60 transition-colors"
+								class="flex items-center gap-2 w-full px-3 py-3 bg-purple-950/40 border-b border-purple-800/30 text-xs text-purple-300 hover:bg-purple-950/60 transition-colors flex-shrink-0"
 							>
 								<svg
 									class="w-4 h-4 flex-shrink-0"
@@ -221,9 +250,10 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 						)}
 
 						{/* Tab bar */}
-						<div class="flex border-b border-dark-700 bg-dark-850">
+						<div class="flex border-b border-dark-700 bg-dark-850 flex-shrink-0">
 							{(
 								[
+									{ id: 'chat' as const, label: 'Coordinator' },
 									{ id: 'overview' as const, label: 'Overview' },
 									{ id: 'tasks' as const, label: 'Tasks' },
 									{ id: 'agents' as const, label: 'Agents' },
@@ -233,11 +263,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							).map((tab) => (
 								<button
 									key={tab.id}
-									class={`px-4 py-2.5 text-sm font-medium transition-colors ${
+									class={cn(
+										'px-4 py-2.5 text-sm font-medium transition-colors',
 										activeTab === tab.id
 											? 'text-blue-400 border-b-2 border-blue-400'
 											: 'text-gray-400 hover:text-gray-200'
-									}`}
+									)}
 									onClick={() => handleTabChange(tab.id)}
 								>
 									{tab.label}
@@ -252,6 +283,20 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 
 						{/* Tab content */}
 						<div class="flex-1 overflow-hidden relative">
+							{/* Chat tab — always mounted (hidden when inactive) to preserve state */}
+							<div
+								class={cn('h-full flex flex-col overflow-hidden', activeTab !== 'chat' && 'hidden')}
+							>
+								<RoomAgentContextStrip />
+								<div class="flex-1 flex flex-col overflow-hidden">
+									<ChatContainer
+										key={`room:chat:${roomId}`}
+										sessionId={`room:chat:${roomId}`}
+										hideRoomBreadcrumb
+									/>
+								</div>
+							</div>
+
 							{activeTab === 'overview' && (
 								<div class="h-full overflow-y-auto">
 									<RoomDashboard />

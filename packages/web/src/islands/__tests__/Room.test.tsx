@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, fireEvent, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
+import { currentRoomAgentActiveSignal } from '../../lib/signals';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -54,6 +55,9 @@ let mockGoalsLoadingSignal: ReturnType<typeof signal<boolean>>;
 let mockAutoCompletedNotificationsSignal: ReturnType<typeof signal<any[]>>;
 let mockReviewTaskCountSignal: ReturnType<typeof signal<number>>;
 let mockGoalByTaskIdSignal: ReturnType<typeof signal<Record<string, any>>>;
+let mockRuntimeStateSignal: ReturnType<typeof signal<string | null>>;
+let mockActiveTasksSignal: ReturnType<typeof signal<any[]>>;
+let mockReviewTasksSignal: ReturnType<typeof signal<any[]>>;
 
 function initRoomStoreSignals(roomOverride?: object) {
 	mockLoadingSignal = signal(false);
@@ -69,6 +73,9 @@ function initRoomStoreSignals(roomOverride?: object) {
 	mockAutoCompletedNotificationsSignal = signal([]);
 	mockReviewTaskCountSignal = signal(0);
 	mockGoalByTaskIdSignal = signal({});
+	mockRuntimeStateSignal = signal(null);
+	mockActiveTasksSignal = signal([]);
+	mockReviewTasksSignal = signal([]);
 }
 
 vi.mock('../../lib/room-store', () => ({
@@ -100,6 +107,15 @@ vi.mock('../../lib/room-store', () => ({
 			},
 			get goalByTaskId() {
 				return mockGoalByTaskIdSignal;
+			},
+			get runtimeState() {
+				return mockRuntimeStateSignal;
+			},
+			get activeTasks() {
+				return mockActiveTasksSignal;
+			},
+			get reviewTasks() {
+				return mockReviewTasksSignal;
 			},
 			select: mockRoomStoreSelect,
 			subscribeRoom: vi.fn().mockResolvedValue(undefined),
@@ -154,6 +170,10 @@ vi.mock('../../components/room', () => ({
 	RoomAgents: () => <div data-testid="room-agents">RoomAgents</div>,
 }));
 
+vi.mock('../../components/room/RoomAgentContextStrip', () => ({
+	RoomAgentContextStrip: () => <div data-testid="room-agent-context-strip" />,
+}));
+
 vi.mock('../../components/room/RoomTasks', () => ({
 	RoomTasks: () => <div data-testid="room-tasks">RoomTasks</div>,
 }));
@@ -195,6 +215,7 @@ describe('Room', () => {
 		// Re-apply the resolved value since clearAllMocks resets mockImplementation
 		mockRoomStoreSelect.mockResolvedValue(undefined);
 		initRoomStoreSignals();
+		currentRoomAgentActiveSignal.value = false;
 	});
 
 	afterEach(() => {
@@ -213,14 +234,14 @@ describe('Room', () => {
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders ChatContainer when sessionViewId is the synthetic room:chat:<roomId> value (agent route)', () => {
-			const syntheticId = `room:chat:${roomId}`;
-			render(<Room roomId={roomId} sessionViewId={syntheticId} />);
+		it('renders Chat tab with ChatContainer when agent signal is active', () => {
+			currentRoomAgentActiveSignal.value = true;
+			render(<Room roomId={roomId} />);
 
-			const container = screen.getByTestId('chat-container');
-			expect(container).toBeTruthy();
-			expect(container.getAttribute('data-session-id')).toBe(syntheticId);
-			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
+			// Chat tab is rendered (always mounted), and dashboard is not visible
+			const containers = screen.getAllByTestId('chat-container');
+			expect(containers.length).toBeGreaterThan(0);
+			// Overview dashboard should not be visible since chat tab is active
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
@@ -232,14 +253,15 @@ describe('Room', () => {
 			expect(taskViewToggle.getAttribute('data-task-id')).toBe('task-xyz');
 			// tabs and tab content are still in the DOM behind the overlay
 			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-			expect(screen.queryByTestId('chat-container')).toBeNull();
 		});
 
-		it('sessionViewId takes over the full area; taskViewId has no effect when sessionViewId is set', () => {
-			render(<Room roomId={roomId} taskViewId="task-xyz" sessionViewId={`room:chat:${roomId}`} />);
+		it('non-agent sessionViewId takes over the full area', () => {
+			render(<Room roomId={roomId} taskViewId="task-xyz" sessionViewId="some-worker-session" />);
 
-			// sessionViewId replaces the whole content area, so no task view toggle and no dashboard
-			expect(screen.getByTestId('chat-container')).toBeTruthy();
+			// Non-agent sessionViewId replaces the whole content area
+			const container = screen.getByTestId('chat-container');
+			expect(container).toBeTruthy();
+			expect(container.getAttribute('data-session-id')).toBe('some-worker-session');
 			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
@@ -248,7 +270,6 @@ describe('Room', () => {
 			render(<Room roomId={roomId} />);
 
 			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-			expect(screen.queryByTestId('chat-container')).toBeNull();
 			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 		});
 
@@ -256,7 +277,6 @@ describe('Room', () => {
 			render(<Room roomId={roomId} sessionViewId={null} />);
 
 			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-			expect(screen.queryByTestId('chat-container')).toBeNull();
 		});
 
 		it('renders tabbed dashboard when taskViewId is null', () => {

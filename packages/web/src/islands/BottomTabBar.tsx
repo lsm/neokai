@@ -7,6 +7,7 @@ import {
 	currentRoomTaskIdSignal,
 	currentRoomTabSignal,
 	currentRoomActiveTabSignal,
+	currentRoomAgentActiveSignal,
 	type NavSection,
 } from '../lib/signals.ts';
 import {
@@ -16,20 +17,12 @@ import {
 	navigateToInbox,
 	navigateToRoom,
 	navigateToRoomAgent,
-	navigateToHome,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id:
-		| NavSection
-		| 'room-agent'
-		| 'room-overview'
-		| 'room-tasks'
-		| 'room-agents'
-		| 'room-missions'
-		| 'room-home';
+	id: NavSection | 'room-agent' | 'room-overview' | 'room-tasks' | 'room-agents' | 'room-missions';
 	label: string;
 	icon: () => JSX.Element;
 }
@@ -84,17 +77,6 @@ const SettingsIcon = () => (
 	</svg>
 );
 
-const HomeIcon = () => (
-	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-		<path
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			stroke-width={2}
-			d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
-		/>
-	</svg>
-);
-
 const MissionIcon = () => (
 	<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 		<path
@@ -128,6 +110,17 @@ const AgentsIcon = () => (
 	</svg>
 );
 
+const RoomChatIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+		/>
+	</svg>
+);
+
 const RoomOverviewIcon = () => (
 	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 		<path
@@ -147,11 +140,11 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 ];
 
 const ROOM_BOTTOM_TABS: TabItem[] = [
+	{ id: 'room-agent', label: 'Coord.', icon: RoomChatIcon },
 	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
 	{ id: 'room-tasks', label: 'Tasks', icon: TasksIcon },
 	{ id: 'room-agents', label: 'Agents', icon: AgentsIcon },
 	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
-	{ id: 'room-home', label: '/', icon: HomeIcon },
 ];
 
 export function BottomTabBar() {
@@ -194,14 +187,15 @@ export function BottomTabBar() {
 
 	const navSection = navSectionSignal.value;
 	const roomId = currentRoomIdSignal.value;
-	const roomSessionId = currentRoomSessionIdSignal.value;
 	const inboxBadgeCount = inboxStore.reviewCount.value;
 
+	const roomSessionId = currentRoomSessionIdSignal.value;
 	const roomTaskId = currentRoomTaskIdSignal.value;
 	const isInRoomContext = navSection === 'rooms' && roomId !== null;
-	const isViewingRoomAgent = roomSessionId === `room:chat:${roomId}`;
-	// Overview is only active when on the room dashboard (no task and no session open)
-	const isViewingRoomDashboard = roomSessionId === null && roomTaskId === null;
+	const isViewingRoomAgent = currentRoomAgentActiveSignal.value;
+	// Overview is only active when on the room dashboard (no task, no session, no agent chat)
+	const isViewingRoomDashboard =
+		!isViewingRoomAgent && roomTaskId === null && roomSessionId === null;
 
 	const tabs = isInRoomContext ? ROOM_BOTTOM_TABS : GLOBAL_BOTTOM_TABS;
 
@@ -243,15 +237,12 @@ export function BottomTabBar() {
 					navigateToRoom(roomId);
 				}
 				break;
-			case 'room-home':
-				navigateToHome();
-				break;
 		}
 	};
 
 	const isTabActive = (id: TabItem['id']): boolean => {
 		if (isInRoomContext) {
-			if (id === 'room-agent') return isViewingRoomAgent;
+			if (id === 'room-agent') return currentRoomActiveTabSignal.value === 'chat';
 			if (id === 'room-tasks') return currentRoomActiveTabSignal.value === 'tasks';
 			if (id === 'room-agents') return currentRoomActiveTabSignal.value === 'agents';
 			if (id === 'room-missions') return currentRoomActiveTabSignal.value === 'goals';
@@ -259,7 +250,7 @@ export function BottomTabBar() {
 				return (
 					isViewingRoomDashboard &&
 					navSection === 'rooms' &&
-					!['goals', 'tasks', 'agents'].includes(currentRoomActiveTabSignal.value ?? '')
+					!['goals', 'tasks', 'agents', 'chat'].includes(currentRoomActiveTabSignal.value ?? '')
 				);
 		}
 		return navSection === id;

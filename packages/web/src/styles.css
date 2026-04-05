@@ -127,6 +127,7 @@ html,
 body {
 	background-color: var(--color-dark-950);
 	color: rgb(243 244 246);
+	color-scheme: dark;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
 	/* Prevent page-level scrolling - only message container should scroll */

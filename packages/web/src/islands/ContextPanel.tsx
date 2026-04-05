@@ -398,7 +398,12 @@ export function ContextPanel() {
 
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
-					<div class="flex items-center justify-between mb-3">
+					<div
+						class={cn(
+							'flex items-center justify-between',
+							!isRoomDetail && !isSpaceDetail && 'mb-3'
+						)}
+					>
 						{isSpaceDetail ? (
 							<div class="flex items-center gap-1 mr-2 overflow-hidden">
 								<button

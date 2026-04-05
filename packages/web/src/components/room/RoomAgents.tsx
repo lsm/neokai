@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { type Room, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { roomStore } from '../../lib/room-store';
+import { useClickOutside } from '../../hooks/useClickOutside';
 import { Spinner } from '../ui/Spinner';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
@@ -152,23 +153,6 @@ const BUILTIN_AGENTS: AgentRole[] = [
 
 export interface RoomAgentsProps {
 	room: Room;
-}
-
-// ─── Dropdown (shared) ───────────────────────────────────────────────────────
-
-function useClickOutside(
-	ref: { current: HTMLElement | null },
-	onClose: () => void,
-	active: boolean
-) {
-	useEffect(() => {
-		if (!active) return;
-		const handler = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-		};
-		document.addEventListener('mousedown', handler);
-		return () => document.removeEventListener('mousedown', handler);
-	}, [active]);
 }
 
 // ─── Model Selector (full-width, large) ──────────────────────────────────────
@@ -332,12 +316,14 @@ function AddPillButton({
 	renderItem,
 	disabled,
 	emptyLabel = 'None available',
+	ariaLabel = 'Add',
 }: {
 	items: Array<{ id: string }>;
 	onSelect: (id: string) => void;
 	renderItem: (item: { id: string }) => preact.ComponentChildren;
 	disabled?: boolean;
 	emptyLabel?: string;
+	ariaLabel?: string;
 }) {
 	const isOpen = useSignal(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -351,6 +337,7 @@ function AddPillButton({
 		<div class="relative inline-block" ref={ref}>
 			<button
 				type="button"
+				aria-label={ariaLabel}
 				disabled={disabled || items.length === 0}
 				onClick={() => (isOpen.value = !isOpen.value)}
 				class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-dark-700/60 hover:bg-dark-700 border border-dark-600 text-gray-400 hover:text-gray-200 transition-all disabled:opacity-30"
@@ -393,17 +380,24 @@ function Stepper({
 	max,
 	onChange,
 	disabled,
+	label,
 }: {
 	value: number;
 	min: number;
 	max: number;
 	onChange: (v: number) => void;
 	disabled?: boolean;
+	label?: string;
 }) {
 	return (
-		<div class="inline-flex items-center rounded-xl border border-dark-600 bg-dark-800/60 overflow-hidden">
+		<div
+			class="inline-flex items-center rounded-xl border border-dark-600 bg-dark-800/60 overflow-hidden"
+			role="group"
+			aria-label={label}
+		>
 			<button
 				type="button"
+				aria-label="Decrease"
 				disabled={disabled || value <= min}
 				onClick={() => onChange(Math.max(min, value - 1))}
 				class="px-3 py-2 text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
@@ -412,11 +406,15 @@ function Stepper({
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2.5} d="M20 12H4" />
 				</svg>
 			</button>
-			<span class="px-4 py-2 text-sm font-semibold text-gray-100 tabular-nums min-w-[3rem] text-center border-x border-dark-600">
+			<span
+				class="px-4 py-2 text-sm font-semibold text-gray-100 tabular-nums min-w-[3rem] text-center border-x border-dark-600"
+				aria-live="polite"
+			>
 				{value}
 			</span>
 			<button
 				type="button"
+				aria-label="Increase"
 				disabled={disabled || value >= max}
 				onClick={() => onChange(Math.min(max, value + 1))}
 				class="px-3 py-2 text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
@@ -476,6 +474,7 @@ function AgentCard({
 			<button
 				type="button"
 				onClick={onToggle}
+				aria-expanded={isExpanded}
 				class="w-full flex items-center gap-4 px-5 py-4 text-left transition-colors"
 			>
 				{/* Avatar */}
@@ -494,20 +493,19 @@ function AgentCard({
 						<span class="text-sm font-semibold text-gray-100">{agent.label}</span>
 						{subagentCount > 0 && (
 							<span class={cn('text-[10px] px-1.5 py-0.5 rounded-full', agent.color.badge)}>
-								{subagentCount} assistant{subagentCount !== 1 ? 's' : ''}
+								{subagentCount} sub-agent{subagentCount !== 1 ? 's' : ''}
 							</span>
 						)}
 					</div>
 					<span class="text-xs text-gray-500">{agent.description}</span>
 				</div>
 
-				{/* Model badge */}
+				{/* Model badge (read-only indicator) */}
 				<span
 					class={cn(
-						'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium flex-shrink-0',
+						'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium flex-shrink-0 pointer-events-none',
 						modelValue ? agent.color.badge : 'bg-dark-700/60 text-gray-400'
 					)}
-					onClick={(e) => e.stopPropagation()}
 				>
 					{selectedModel && (
 						<span class="text-sm leading-none">
@@ -685,7 +683,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				}));
 				cliAgents.value = cliRes.agents ?? [];
 			} catch {
-				// Silent fail
+				toast.error('Failed to load available models');
 			} finally {
 				isLoadingModels.value = false;
 			}
@@ -925,14 +923,14 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 										onModelChange={(model) => updateAgentModel(agent.key, model)}
 										disabled={disabled}
 									>
-										{/* Assistants section */}
+										{/* Sub-agents section */}
 										<div>
 											<label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">
-												Assistants
+												Sub-Agents
 											</label>
 
 											{/* SDK Model pills */}
-											<div class="mb-3">
+											<div class={installedCli.length > 0 || cliSubs.length > 0 ? 'mb-3' : ''}>
 												<div class="text-[11px] text-gray-500 mb-1.5">SDK Models</div>
 												<div class="flex flex-wrap items-center gap-1.5">
 													{sdkSubs.map((sub) => {
@@ -951,6 +949,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 														items={availableSdk}
 														onSelect={(id) => addSdkSubagentFor(agent.key, id)}
 														disabled={disabled}
+														ariaLabel="Add SDK model"
 														emptyLabel={sdkSubs.length === 0 ? 'No models added' : ''}
 														renderItem={(item) => {
 															const m = availableSdk.find((x) => x.id === item.id);
@@ -965,58 +964,65 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 												</div>
 											</div>
 
-											{/* CLI Agent pills */}
-											<div>
-												<div class="text-[11px] text-gray-500 mb-1.5">CLI Agents</div>
-												<div class="flex flex-wrap items-center gap-1.5">
-													{cliSubs.map((config) => {
-														const info = cliAgents.value.find((a) => a.id === config.model);
-														return (
-															<CliAgentPill
-																key={config.model}
-																config={config}
-																agent={info}
-																disabled={disabled}
-																onRemove={() => {
-																	if (info) toggleCliAgentFor(agent.key, info);
-																}}
-																onChangeModel={(m) => changeCliModelFor(agent.key, config.model, m)}
-															/>
-														);
-													})}
-													<AddPillButton
-														items={availableCli}
-														onSelect={(id) => {
-															const a = cliAgents.value.find((x) => x.id === id);
-															if (a) toggleCliAgentFor(agent.key, a);
-														}}
-														disabled={disabled}
-														emptyLabel={cliSubs.length === 0 ? 'No CLI agents' : ''}
-														renderItem={(item) => {
-															const a = cliAgents.value.find((x) => x.id === item.id);
+											{/* CLI Agent pills — only shown when CLI agents are installed */}
+											{(installedCli.length > 0 || cliSubs.length > 0) && (
+												<div>
+													<div class="text-[11px] text-gray-500 mb-1.5">CLI Agents</div>
+													<div class="flex flex-wrap items-center gap-1.5">
+														{cliSubs.map((config) => {
+															const info = cliAgents.value.find((a) => a.id === config.model);
 															return (
-																<span class="flex items-center justify-between w-full">
-																	<span>
-																		{a?.name ?? item.id}
-																		<span class="text-xs text-gray-500 ml-1.5">{a?.provider}</span>
-																	</span>
-																	{a?.authenticated ? (
-																		<span class="flex items-center gap-1 text-[10px] text-green-400">
-																			<span class="w-1 h-1 rounded-full bg-green-400" />
-																			Ready
-																		</span>
-																	) : (
-																		<span class="flex items-center gap-1 text-[10px] text-yellow-400">
-																			<span class="w-1 h-1 rounded-full bg-yellow-400" />
-																			No auth
-																		</span>
-																	)}
-																</span>
+																<CliAgentPill
+																	key={config.model}
+																	config={config}
+																	agent={info}
+																	disabled={disabled}
+																	onRemove={() => {
+																		if (info) toggleCliAgentFor(agent.key, info);
+																	}}
+																	onChangeModel={(m) =>
+																		changeCliModelFor(agent.key, config.model, m)
+																	}
+																/>
 															);
-														}}
-													/>
+														})}
+														<AddPillButton
+															items={availableCli}
+															onSelect={(id) => {
+																const a = cliAgents.value.find((x) => x.id === id);
+																if (a) toggleCliAgentFor(agent.key, a);
+															}}
+															disabled={disabled}
+															ariaLabel="Add CLI agent"
+															emptyLabel={cliSubs.length === 0 ? 'No CLI agents' : ''}
+															renderItem={(item) => {
+																const a = cliAgents.value.find((x) => x.id === item.id);
+																return (
+																	<span class="flex items-center justify-between w-full">
+																		<span>
+																			{a?.name ?? item.id}
+																			<span class="text-xs text-gray-500 ml-1.5">
+																				{a?.provider}
+																			</span>
+																		</span>
+																		{a?.authenticated ? (
+																			<span class="flex items-center gap-1 text-[10px] text-green-400">
+																				<span class="w-1 h-1 rounded-full bg-green-400" />
+																				Ready
+																			</span>
+																		) : (
+																			<span class="flex items-center gap-1 text-[10px] text-yellow-400">
+																				<span class="w-1 h-1 rounded-full bg-yellow-400" />
+																				No auth
+																			</span>
+																		)}
+																	</span>
+																);
+															}}
+														/>
+													</div>
 												</div>
-											</div>
+											)}
 										</div>
 									</AgentCard>
 								);
@@ -1058,6 +1064,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 								max={MAX_CONCURRENT_GROUPS_LIMIT}
 								onChange={(v) => (maxConcurrentGroups.value = v)}
 								disabled={disabled}
+								label="Concurrent tasks"
 							/>
 						</div>
 
@@ -1075,6 +1082,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 								max={MAX_REVIEW_ROUNDS_LIMIT}
 								onChange={(v) => (maxReviewRounds.value = v)}
 								disabled={disabled}
+								label="Review rounds"
 							/>
 						</div>
 					</section>

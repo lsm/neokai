@@ -13,7 +13,6 @@ import { signal, computed } from '@preact/signals';
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSessions: vi.fn(),
 	navigateToSettings: vi.fn(),
-	navigateToHome: vi.fn(),
 	navigateToRooms: vi.fn(),
 	navigateToInbox: vi.fn(),
 	navigateToSpaces: vi.fn(),
@@ -48,6 +47,7 @@ import {
 	currentRoomTaskIdSignal,
 	currentRoomTabSignal,
 	currentRoomActiveTabSignal,
+	currentRoomAgentActiveSignal,
 } from '../../lib/signals.ts';
 import {
 	navigateToInbox,
@@ -56,7 +56,6 @@ import {
 	navigateToSettings,
 	navigateToRoom,
 	navigateToRoomAgent,
-	navigateToHome,
 } from '../../lib/router.ts';
 
 describe('BottomTabBar', () => {
@@ -67,6 +66,7 @@ describe('BottomTabBar', () => {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomTabSignal.value = null;
 		currentRoomActiveTabSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
 		mockItemsSignal.value = [];
 		vi.clearAllMocks();
 	});
@@ -331,14 +331,14 @@ describe('BottomTabBar', () => {
 			currentRoomTaskIdSignal.value = null;
 		});
 
-		it('should show room-specific tabs (Overview, Tasks, Agents, Missions, /) when in room context', () => {
+		it('should show room-specific tabs (Chat, Overview, Tasks, Agents, Missions) when in room context', () => {
 			render(<BottomTabBar />);
 
+			expect(screen.getByRole('tab', { name: 'Coord.' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Overview' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Tasks' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Agents' })).toBeTruthy();
 			expect(screen.getByRole('tab', { name: 'Missions' })).toBeTruthy();
-			expect(screen.getByRole('tab', { name: '/' })).toBeTruthy();
 		});
 
 		it('should hide global Rooms and Chats tabs when in room context', () => {
@@ -417,13 +417,13 @@ describe('BottomTabBar', () => {
 			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
 		});
 
-		it('should call navigateToHome when "/" tab is clicked', () => {
+		it('should call navigateToRoomAgent when Chat tab is clicked', () => {
 			render(<BottomTabBar />);
 
-			const homeTab = screen.getByRole('tab', { name: '/' });
-			fireEvent.click(homeTab);
+			const chatTab = screen.getByRole('tab', { name: 'Coord.' });
+			fireEvent.click(chatTab);
 
-			expect(navigateToHome).toHaveBeenCalledTimes(1);
+			expect(navigateToRoomAgent).toHaveBeenCalledWith(ROOM_ID);
 		});
 
 		it('should mark Missions tab as active when currentRoomActiveTabSignal is goals', () => {
