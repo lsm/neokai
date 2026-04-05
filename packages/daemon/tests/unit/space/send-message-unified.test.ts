@@ -340,18 +340,13 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 			makeResolvedChannel('coder', 'reviewer'),
 		]);
 		seedPeerTask(ctx.nodeExecutionRepo, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
-		const injected: string[] = [];
-		const config: NodeConfigWithInjector = {
-			...makeBaseConfig(
-				ctx,
-				workflowRunId,
-				[],
-				new ChannelResolver([makeResolvedChannel('coder', 'reviewer')])
-			),
-			messageInjector: async (sid) => {
-				injected.push(sid);
-			},
-		};
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const config = makeBaseConfig(
+			ctx,
+			workflowRunId,
+			injected,
+			new ChannelResolver([makeResolvedChannel('coder', 'reviewer')])
+		);
 
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: '*', message: 'broadcast legacy' });
@@ -359,7 +354,7 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
-		expect(injected).toContain(ctx.reviewerSessionId);
+		expect(injected.map((item) => item.sessionId)).toContain(ctx.reviewerSessionId);
 	});
 });
 

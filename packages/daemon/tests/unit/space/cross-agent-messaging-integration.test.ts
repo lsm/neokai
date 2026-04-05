@@ -13,12 +13,12 @@
  *   - Suite 7: Fresh repository instances over the same DB — verifies channel resolution
  *              survives daemon restart (the only suite that cannot be replaced by unit tests).
  *   - Suite 8: Missing workflowRunId edge case: when no workflowRunId is set, list_peers
- *              returns empty peers and send_message fails with no-active-sessions.
+ *              returns empty peers and send_message returns an unknown-target error
+ *              (no reachable targets can be resolved).
  *   - Suite 9: Task Agent participation in channel topology — via list_peers and
- *              send_message to 'task-agent' target. By design, send_message to task-agent
- *              fails with "no active sessions" even when channel is declared (task-agent is
- *              filtered from delivery targets). list_peers correctly shows the
- *              channel in permittedTargets for both the sender and Task Agent.
+ *              send_message to 'task-agent' target. Without an injected taskAgentRouter,
+ *              send_message to task-agent returns unknown-target even when the channel is
+ *              declared. list_peers includes seeded task-agent executions.
  *
  * Suites 2–6 provide complementary coverage for the direction-enforcement and topology
  * patterns that also exist in node-agent-tools.test.ts, exercised here end-to-end through
@@ -31,9 +31,9 @@
  *   5. Hub-spoke A↔[B,C,D]       — hub broadcasts, spokes reply to hub only, spoke isolation
  *   6. Concurrent injection       — both messages delivered when two agents inject simultaneously
  *   7. Data reload                — channel resolution survives DB re-fetch
- *   8. Error paths                — missing workflowRunId returns empty peers / no active sessions
- *   9. Task Agent in topology     — channel to/from task-agent is reflected in permittedTargets
- *                                  but send_message to task-agent fails (delivery target filtered)
+ *   8. Error paths                — missing workflowRunId returns empty peers / unknown-target
+ *   9. Task Agent in topology     — channel to/from task-agent is reflected in permittedTargets;
+ *                                  send_message needs taskAgentRouter for explicit task-agent routing
  *
  * All tests pass with:
  *   cd packages/daemon && bun test tests/unit/space/cross-agent-messaging-integration.test.ts
@@ -995,7 +995,7 @@ describe('data reload and DB-based validation', () => {
 // Test Suite 8: Error Paths — Missing workflowRunId
 // ===========================================================================
 // Covers the edge case where workflowRunId is empty — list_peers returns empty
-// peers and send_message fails with no-active-sessions.
+// peers and send_message fails with unknown-target (no reachable peers).
 
 describe('error paths — missing workflowRunId', () => {
 	let tdb: TestDb;
@@ -1009,7 +1009,7 @@ describe('error paths — missing workflowRunId', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	test('send_message returns no-active-sessions when workflowRunId is empty', async () => {
+	test('send_message returns unknown-target when workflowRunId is empty', async () => {
 		const { messages, injector } = makeMessageCapture();
 		const channelResolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
 		const agentMessageRouter = new AgentMessageRouter({
@@ -1037,7 +1037,8 @@ describe('error paths — missing workflowRunId', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions');
+		expect((data.error as string).toLowerCase()).toContain("unknown target 'reviewer'");
+		expect((data.error as string).toLowerCase()).toContain('no reachable targets available');
 		expect(messages).toHaveLength(0);
 	});
 
@@ -1075,9 +1076,8 @@ describe('error paths — missing workflowRunId', () => {
 // Verifies that:
 //   - ChannelResolver.canSend correctly handles task-agent as fromRole/toRole
 //   - ChannelResolver.getPermittedTargets correctly returns task-agent when channel declared
-//   - send_message to 'task-agent' fails with "no active sessions" even when channel declared
-//     (task-agent is filtered from delivery targets — this is the known gap)
-//   - list_peers correctly shows the channel in permittedTargets involving task-agent
+//   - send_message to 'task-agent' returns unknown-target when no taskAgentRouter is injected
+//   - list_peers includes task-agent when a task-agent execution exists on the node
 
 describe('Task Agent channel participation', () => {
 	let tdb: TestDb;
@@ -1127,8 +1127,10 @@ describe('Task Agent channel participation', () => {
 		expect(permitted).toContain('coder');
 	});
 
-	test('send_message to task-agent fails with "no active sessions" even when channel declared', async () => {
-		// Seed coder task (no task-agent task — send_message filters task-agent anyway)
+	test('send_message to task-agent returns unknown-target when no taskAgentRouter is injected', async () => {
+		// Seed coder task only.
+		// A declared coder→task-agent channel does not make task-agent targetable unless
+		// AgentMessageRouter is configured with taskAgentRouter.
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
 
 		// Channel coder→task-agent is declared
@@ -1141,17 +1143,13 @@ describe('Task Agent channel participation', () => {
 		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
 		const data = JSON.parse(result.content[0].text);
 
-		// send_message to task-agent fails with "No active sessions" because task-agent
-		// is filtered from the delivery targets list, even though the channel resolver
-		// check would pass
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions');
+		expect((data.error as string).toLowerCase()).toContain("unknown target 'task-agent'");
 		expect(messages).toHaveLength(0);
 	});
 
-	test('list_peers excludes task-agent even when task-agent task is seeded', async () => {
-		// list_peers explicitly filters task-agent from the peers list.
-		// send_message in the legacy path does NOT filter task-agent from delivery.
+	test('list_peers includes task-agent when task-agent task is seeded', async () => {
+		// list_peers reflects node executions and includes task-agent when present.
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'task-agent', 'session-task-agent');
 
@@ -1163,11 +1161,10 @@ describe('Task Agent channel participation', () => {
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
-		// list_peers filters out task-agent
 		expect(data.success).toBe(true);
 		const peers = data.peers as Array<{ sessionId: string; role: string }>;
 		const peerIds = peers.map((p: { sessionId: string }) => p.sessionId);
-		expect(peerIds).not.toContain('session-task-agent');
+		expect(peerIds).toContain('session-task-agent');
 		expect(peerIds).not.toContain('session-coder'); // self excluded
 	});
 

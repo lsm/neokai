@@ -254,6 +254,7 @@ function makeCtx(): TestCtx {
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
 	const taskRepo = new SpaceTaskRepository(bunDb);
+	const nodeExecutionRepo = new NodeExecutionRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
 	const runtime = new SpaceRuntime({
@@ -263,7 +264,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
-		nodeExecutionRepo: new NodeExecutionRepository(bunDb),
+		nodeExecutionRepo,
 	});
 	const daemonHub = new TestDaemonHub();
 	const space = makeSpace(spaceId, workspacePath);
@@ -339,6 +340,7 @@ function makeCtx(): TestCtx {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
+		nodeExecutionRepo,
 	});
 
 	return {
@@ -899,7 +901,7 @@ describe('TaskAgentManager', () => {
 			).handleSubSessionComplete(taskId, stepId, subSessionId);
 		}
 
-		test('marks matching step task as completed', async () => {
+		test('does not mutate step task status directly (runtime owns progression)', async () => {
 			// Seed a workflow, workflow step, and workflow run (needed to satisfy FK constraints)
 			const wfRunId = 'wf-run-complete-test';
 			const wfId = 'wf-id-complete-test';
@@ -955,9 +957,9 @@ describe('TaskAgentManager', () => {
 
 			await callHandleSubSessionComplete(ctx.manager, parentTask.id, stepId, subSessionId);
 
-			// Step task should now be 'completed'
+			// Step status remains runtime-driven; handleSubSessionComplete only notifies.
 			const updated = ctx.taskRepo.getTask(stepTask.id);
-			expect(updated?.status).toBe('done');
+			expect(updated?.status).toBe('in_progress');
 		});
 
 		test('injects [STEP_COMPLETE] notification into Task Agent session', async () => {

@@ -214,6 +214,7 @@ interface TestCtx {
 	agentId: string;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	workflowManager: SpaceWorkflowManager;
@@ -250,6 +251,7 @@ function makeCtx(): TestCtx {
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
 	const taskRepo = new SpaceTaskRepository(bunDb);
+	const nodeExecutionRepo = new NodeExecutionRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
 	const runtime = new SpaceRuntime({
@@ -259,7 +261,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
-		nodeExecutionRepo: new NodeExecutionRepository(bunDb),
+		nodeExecutionRepo,
 	});
 	const daemonHub = new TestDaemonHub();
 	const space = makeSpace(spaceId, workspacePath);
@@ -329,7 +331,7 @@ function makeCtx(): TestCtx {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
-		nodeExecutionRepo: new NodeExecutionRepository(bunDb),
+		nodeExecutionRepo,
 		gateDataRepo: {
 			getFields: () => [],
 			getData: () => ({}),
@@ -355,6 +357,7 @@ function makeCtx(): TestCtx {
 		agentId,
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		workflowManager,
@@ -1036,11 +1039,24 @@ describe('Task Agent Session Lifecycle', () => {
 				workspacePath: '/tmp/ws',
 			} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
+			const nodeExecution = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: 'error-step-2',
+				agentName: 'coder',
+				agentSessionId: subSessionId,
+				status: 'in_progress',
+			});
+			ctx.nodeExecutionRepo.update(nodeExecution.id, {
+				agentSessionId: subSessionId,
+				status: 'in_progress',
+			});
+
 			await callHandleSubSessionError(ctx.manager, subSessionId, 'Crashed');
 
-			// The step task should be marked as blocked
-			const updatedStep = ctx.taskRepo.getTask(stepTask.id);
-			expect(updatedStep?.status).toBe('blocked');
+			// Sub-session errors now mark node_execution as blocked (space_tasks are not mutated here).
+			const updatedExecution = ctx.nodeExecutionRepo.getById(nodeExecution.id);
+			expect(updatedExecution?.status).toBe('blocked');
+			expect(updatedExecution?.result).toBe('Crashed');
 
 			void stepTask;
 		});
@@ -1236,8 +1252,8 @@ describe('Task Agent Session Lifecycle', () => {
 				}
 			).handleSubSessionComplete(parentTask.id, stepId, subSessionId);
 
-			// Step task should be marked done
-			expect(ctx.taskRepo.getTask(stepTask.id)?.status).toBe('done');
+			// Step completion notifications are session-context only; step task status is runtime-driven.
+			expect(ctx.taskRepo.getTask(stepTask.id)?.status).toBe('in_progress');
 
 			// Task agent should receive [STEP_COMPLETE] notification
 			const taskAgentSession = ctx.createdSessions.get(taskSessionId)!;
