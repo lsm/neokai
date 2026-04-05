@@ -814,7 +814,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 };
 
 /**
- * Fullstack QA Loop Workflow
+ * Coding with QA Workflow
  *
  * Three-node workflow for backend+frontend tasks that need explicit code review
  * and deeper QA validation (including browser-based checks).
@@ -832,7 +832,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
-	name: 'Fullstack QA Loop Workflow',
+	name: 'Coding with QA Workflow',
 	description:
 		'Coder ↔ Reviewer loop with explicit QA validation before completion. ' +
 		'Designed for backend+frontend changes that require thorough test coverage, including browser tests.',

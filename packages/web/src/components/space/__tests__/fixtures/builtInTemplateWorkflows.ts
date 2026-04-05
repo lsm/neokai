@@ -238,7 +238,7 @@ export function makeBuiltInTemplateWorkflows(
 		{
 			id: 'tpl-fullstack-qa-loop',
 			spaceId: 'space-1',
-			name: 'Fullstack QA Loop Workflow',
+			name: 'Coding with QA Workflow',
 			nodes: [
 				{
 					id: 'fs1',
