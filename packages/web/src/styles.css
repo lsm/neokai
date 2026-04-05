@@ -77,6 +77,12 @@ summary {
 	cursor: pointer;
 }
 
+/* Disabled interactive elements — show not-allowed cursor */
+button:disabled,
+[role="button"][aria-disabled="true"] {
+	cursor: not-allowed;
+}
+
 /* ─── Visual depth utilities ─────────────────────────────────── */
 
 /* Elevated surface — used for primary cards, panels, modals */

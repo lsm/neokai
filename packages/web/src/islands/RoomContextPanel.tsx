@@ -61,7 +61,11 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
 	).length;
 	const reviewCount = tasks.filter(
-		(t) => t.status === 'review' || t.status === 'needs_attention'
+		(t) =>
+			t.status === 'review' ||
+			t.status === 'needs_attention' ||
+			t.status === 'rate_limited' ||
+			t.status === 'usage_limited'
 	).length;
 
 	// Goals data

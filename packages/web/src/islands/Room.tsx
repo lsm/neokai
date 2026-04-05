@@ -62,10 +62,13 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		});
 		return () => {
 			roomStore.select(null);
-			// Clear any pending tab signal when leaving a room to prevent cross-room contamination
+			// Clear any pending tab signal when leaving a room to prevent cross-room contamination.
+			// Note: do NOT clear currentRoomAgentActiveSignal here — navigation functions
+			// (navigateToRoom, navigateToRoomAgent) manage it explicitly. Clearing it during
+			// room-to-room navigation would race with the incoming room's agent URL sync and
+			// cause the Coordinator view to be lost.
 			currentRoomTabSignal.value = null;
 			currentRoomActiveTabSignal.value = null;
-			currentRoomAgentActiveSignal.value = false;
 		};
 	}, [roomId]);
 
