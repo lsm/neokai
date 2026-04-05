@@ -2,8 +2,10 @@
  * Room Island Component
  *
  * Main room page component with:
- * - Room dashboard showing sessions and tasks
+ * - Room overview (stats + runtime controls)
+ * - Tasks tab
  * - Missions tab
+ * - Settings tab (includes Context & Agents)
  * - Real-time updates via state channels
  */
 
@@ -13,8 +15,9 @@ import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/route
 import { currentRoomTabSignal, currentRoomActiveTabSignal } from '../lib/signals';
 import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
+import { RoomTasks } from '../components/room/RoomTasks';
 import ChatContainer from './ChatContainer';
-import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
+import { GoalsEditor, RoomSettings, RoomAgents } from '../components/room';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
 import { TaskViewToggle } from '../components/room/TaskViewToggle';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -22,7 +25,7 @@ import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'overview' | 'context' | 'agents' | 'goals' | 'settings';
+type RoomTab = 'overview' | 'tasks' | 'agents' | 'goals' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -56,7 +59,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const pendingTab = currentRoomTabSignal.value;
 	useEffect(() => {
 		if (pendingTab && !taskViewId) {
-			const validTabs: RoomTab[] = ['overview', 'context', 'agents', 'goals', 'settings'];
+			const validTabs: RoomTab[] = ['overview', 'tasks', 'agents', 'goals', 'settings'];
 			if (validTabs.includes(pendingTab as RoomTab)) {
 				setActiveTab(pendingTab as RoomTab);
 				currentRoomActiveTabSignal.value = pendingTab;
@@ -151,11 +154,8 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		<div class="flex-1 flex bg-dark-900 overflow-hidden">
 			{/* Main content area */}
 			<div class="flex-1 flex flex-col overflow-hidden">
-				{/* Task view: show Craft + Lead sessions for the selected task */}
-				{taskViewId ? (
-					<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
-				) : sessionViewId ? (
-					/* Session view: show a specific session within the room */
+				{/* Session view: show a specific session within the room (takes over fully) */}
+				{sessionViewId ? (
 					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
 				) : (
 					<>
@@ -167,70 +167,118 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							</div>
 						</div>
 
+						{/* Review notification banner */}
+						{roomStore.reviewTaskCount.value > 0 && !taskViewId && (
+							<button
+								type="button"
+								onClick={() => {
+									// Navigate to the first review task
+									const reviewTask = roomStore.tasks.value.find(
+										(t) =>
+											t.status === 'review' ||
+											t.status === 'needs_attention' ||
+											t.status === 'rate_limited' ||
+											t.status === 'usage_limited'
+									);
+									if (reviewTask) {
+										navigateToRoomTask(roomId, reviewTask.id);
+									} else {
+										setActiveTab('tasks');
+									}
+								}}
+								class="flex items-center gap-2 w-full px-4 py-2 bg-purple-950/40 border-b border-purple-800/30 text-sm text-purple-300 hover:bg-purple-950/60 transition-colors"
+							>
+								<svg
+									class="w-4 h-4 flex-shrink-0"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+									/>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+									/>
+								</svg>
+								<span>
+									<strong>{roomStore.reviewTaskCount.value}</strong> task
+									{roomStore.reviewTaskCount.value > 1 ? 's' : ''} awaiting review
+								</span>
+								<svg
+									class="w-3.5 h-3.5 ml-auto text-purple-400"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M9 5l7 7-7 7"
+									/>
+								</svg>
+							</button>
+						)}
+
 						{/* Tab bar */}
 						<div class="flex border-b border-dark-700 bg-dark-850">
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'overview'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('overview')}
-							>
-								Overview
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'context'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('context')}
-							>
-								Context
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'agents'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('agents')}
-							>
-								Agents
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'goals'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('goals')}
-							>
-								Missions
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'settings'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('settings')}
-							>
-								Settings
-							</button>
+							{(
+								[
+									{ id: 'overview' as const, label: 'Overview' },
+									{ id: 'tasks' as const, label: 'Tasks' },
+									{ id: 'agents' as const, label: 'Agents' },
+									{ id: 'goals' as const, label: 'Missions' },
+									{ id: 'settings' as const, label: 'Settings' },
+								] satisfies { id: RoomTab; label: string }[]
+							).map((tab) => (
+								<button
+									key={tab.id}
+									class={`px-4 py-2.5 text-sm font-medium transition-colors ${
+										activeTab === tab.id
+											? 'text-blue-400 border-b-2 border-blue-400'
+											: 'text-gray-400 hover:text-gray-200'
+									}`}
+									onClick={() => handleTabChange(tab.id)}
+								>
+									{tab.label}
+									{tab.id === 'tasks' && roomStore.reviewTaskCount.value > 0 && (
+										<span class="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-purple-900/40 text-purple-400">
+											{roomStore.reviewTaskCount.value}
+										</span>
+									)}
+								</button>
+							))}
 						</div>
 
 						{/* Tab content */}
-						<div class="flex-1 overflow-hidden">
+						<div class="flex-1 overflow-hidden relative">
 							{activeTab === 'overview' && (
 								<div class="h-full overflow-y-auto">
 									<RoomDashboard />
 								</div>
 							)}
-							{activeTab === 'context' && (
+							{activeTab === 'tasks' && (
 								<div class="h-full overflow-y-auto p-4">
-									<RoomContext room={room} />
+									<RoomTasks
+										tasks={roomStore.tasks.value}
+										goalByTaskId={roomStore.goalByTaskId.value}
+										onTaskClick={
+											roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
+										}
+										onGoalClick={() => {
+											currentRoomTabSignal.value = 'goals';
+										}}
+										onReactivate={async (taskId) => {
+											await roomStore.setTaskStatus(taskId, 'in_progress');
+										}}
+									/>
 								</div>
 							)}
 							{activeTab === 'agents' && (
@@ -271,6 +319,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										onDelete={handleDeleteRoom}
 										isLoading={roomStore.loading.value}
 									/>
+								</div>
+							)}
+							{/* Task slide-over: overlays tab content, keeps header/tabs accessible */}
+							{taskViewId && (
+								<div class="absolute inset-0 z-10 bg-dark-900 flex flex-col overflow-hidden">
+									<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
 								</div>
 							)}
 						</div>

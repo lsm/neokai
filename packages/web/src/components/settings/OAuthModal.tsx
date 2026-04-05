@@ -61,7 +61,10 @@ export function OAuthModal({
 	return (
 		<div class="fixed inset-0 z-50 flex items-center justify-center">
 			{/* Backdrop */}
-			<div class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onClick={onCancel} />
+			<div
+				class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"
+				onClick={onCancel}
+			/>
 
 			{/* Modal */}
 			<div class="relative bg-dark-900 border border-dark-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">

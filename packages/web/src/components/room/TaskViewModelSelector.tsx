@@ -253,7 +253,9 @@ export function TaskViewModelSelector({
 			)}
 
 			{/* Click outside handler */}
-			{dropdownOpen && <div class="fixed inset-0 z-40 cursor-pointer" onClick={() => setDropdownOpen(false)} />}
+			{dropdownOpen && (
+				<div class="fixed inset-0 z-40 cursor-pointer" onClick={() => setDropdownOpen(false)} />
+			)}
 		</div>
 	);
 }

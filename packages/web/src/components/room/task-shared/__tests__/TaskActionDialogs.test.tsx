@@ -85,7 +85,7 @@ describe('CompleteTaskDialog', () => {
 				onConfirm={vi.fn()}
 			/>
 		);
-		expect(getByText('My Special Task')).not.toBeNull();
+		expect(getByText(/My Special Task/)).not.toBeNull();
 	});
 
 	it('calls onConfirm with summary text when confirm button clicked', async () => {

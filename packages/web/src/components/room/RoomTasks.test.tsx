@@ -50,7 +50,7 @@ describe('RoomTasks', () => {
 			const { container } = render(<RoomTasks tasks={[]} />);
 
 			expect(container.textContent).toContain('No tasks yet');
-			expect(container.textContent).toContain('Create a task to get started');
+			expect(container.textContent).toContain('Create a mission to get started');
 		});
 
 		it('should not show any status sections when no tasks', () => {

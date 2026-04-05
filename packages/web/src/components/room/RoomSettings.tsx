@@ -20,6 +20,7 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { toast } from '../../lib/toast';
 import { useRoomSkills } from '../../hooks/useRoomSkills';
 import { RoomSkillsSettings } from './RoomSkillsSettings';
+import { RoomContext } from './RoomContext';
 
 export interface RoomSettingsProps {
 	room: Room;
@@ -277,6 +278,29 @@ export function RoomSettings({
 
 			{/* Content */}
 			<div class="flex-1 overflow-y-auto py-4 space-y-6">
+				{/* Context & Instructions — collapsible section */}
+				<details class="group surface-elevated overflow-hidden">
+					<summary class="flex items-center justify-between px-4 py-3 hover:bg-dark-800/50 transition-colors select-none">
+						<span class="text-sm font-semibold text-gray-200">Context & Instructions</span>
+						<svg
+							class="w-4 h-4 text-gray-500 transition-transform group-open:rotate-180"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M19 9l-7 7-7-7"
+							/>
+						</svg>
+					</summary>
+					<div class="border-t border-dark-700 px-4 py-4">
+						<RoomContext room={room} />
+					</div>
+				</details>
+
 				{/* Room Name */}
 				<div>
 					<label for="room-name" class="block text-sm font-medium text-gray-300 mb-1.5">

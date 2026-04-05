@@ -348,7 +348,10 @@ export function ContextPanel() {
 		<>
 			{/* Mobile backdrop */}
 			{isPanelOpen && (
-				<div class="fixed inset-0 bg-black/50 z-35 md:hidden cursor-pointer" onClick={handlePanelClose} />
+				<div
+					class="fixed inset-0 bg-black/50 z-35 md:hidden cursor-pointer"
+					onClick={handlePanelClose}
+				/>
 			)}
 
 			{/* Space Create Dialog */}

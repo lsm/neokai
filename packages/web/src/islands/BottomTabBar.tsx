@@ -22,7 +22,7 @@ import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
 
 interface TabItem {
-	id: NavSection | 'room-agent' | 'room-overview' | 'room-missions' | 'room-home';
+	id: NavSection | 'room-agent' | 'room-overview' | 'room-tasks' | 'room-agents' | 'room-missions' | 'room-home';
 	label: string;
 	icon: () => JSX.Element;
 }
@@ -99,6 +99,28 @@ const MissionIcon = () => (
 	</svg>
 );
 
+const TasksIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+		/>
+	</svg>
+);
+
+const AgentsIcon = () => (
+	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+		<path
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			stroke-width={2}
+			d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+		/>
+	</svg>
+);
+
 const RoomOverviewIcon = () => (
 	<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 		<path
@@ -119,7 +141,8 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 
 const ROOM_BOTTOM_TABS: TabItem[] = [
 	{ id: 'room-overview', label: 'Overview', icon: RoomOverviewIcon },
-	{ id: 'room-agent', label: 'Agent', icon: ChatsIcon },
+	{ id: 'room-tasks', label: 'Tasks', icon: TasksIcon },
+	{ id: 'room-agents', label: 'Agents', icon: AgentsIcon },
 	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
 	{ id: 'room-home', label: '/', icon: HomeIcon },
 ];
@@ -192,8 +215,20 @@ export function BottomTabBar() {
 			case 'room-overview':
 				if (roomId) navigateToRoom(roomId);
 				break;
+			case 'room-tasks':
+				if (roomId) {
+					currentRoomTabSignal.value = 'tasks';
+					navigateToRoom(roomId);
+				}
+				break;
 			case 'room-agent':
 				if (roomId) navigateToRoomAgent(roomId);
+				break;
+			case 'room-agents':
+				if (roomId) {
+					currentRoomTabSignal.value = 'agents';
+					navigateToRoom(roomId);
+				}
 				break;
 			case 'room-missions':
 				if (roomId) {
@@ -210,13 +245,14 @@ export function BottomTabBar() {
 	const isTabActive = (id: TabItem['id']): boolean => {
 		if (isInRoomContext) {
 			if (id === 'room-agent') return isViewingRoomAgent;
+			if (id === 'room-tasks') return currentRoomActiveTabSignal.value === 'tasks';
+			if (id === 'room-agents') return currentRoomActiveTabSignal.value === 'agents';
 			if (id === 'room-missions') return currentRoomActiveTabSignal.value === 'goals';
-			// Overview is only active when on dashboard and no specific room tab is selected
 			if (id === 'room-overview')
 				return (
 					isViewingRoomDashboard &&
 					navSection === 'rooms' &&
-					currentRoomActiveTabSignal.value !== 'goals'
+					!['goals', 'tasks', 'agents'].includes(currentRoomActiveTabSignal.value ?? '')
 				);
 		}
 		return navSection === id;
@@ -228,33 +264,38 @@ export function BottomTabBar() {
 			data-testid="bottom-tab-bar"
 			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md border-t border-dark-700 pb-safe"
 			role="tablist"
-			aria-label="Main navigation"
+			aria-label={isInRoomContext ? 'Room navigation' : 'Main navigation'}
 		>
-			{tabs.map((tab) => {
-				const isActive = isTabActive(tab.id);
-				const isInbox = tab.id === 'inbox';
-				const badge = isInbox ? inboxBadgeCount : 0;
+			<div
+				class="flex w-full transition-opacity duration-200 ease-out"
+				key={isInRoomContext ? 'room' : 'global'}
+			>
+				{tabs.map((tab) => {
+					const isActive = isTabActive(tab.id);
+					const isInbox = tab.id === 'inbox';
+					const badge = isInbox ? inboxBadgeCount : 0;
 
-				return (
-					<button
-						key={tab.id}
-						type="button"
-						role="tab"
-						aria-selected={isActive}
-						aria-label={tab.label}
-						onClick={() => handleTabClick(tab.id)}
-						class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
-							isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
-						}`}
-					>
-						<div class="relative">
-							<tab.icon />
-							<InboxBadge count={badge} class="absolute -top-0.5 -right-0.5" />
-						</div>
-						<span class="text-[10px] font-medium leading-none">{tab.label}</span>
-					</button>
-				);
-			})}
+					return (
+						<button
+							key={tab.id}
+							type="button"
+							role="tab"
+							aria-selected={isActive}
+							aria-label={tab.label}
+							onClick={() => handleTabClick(tab.id)}
+							class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
+								isActive ? 'text-indigo-400' : 'text-gray-500 active:text-gray-300'
+							}`}
+						>
+							<div class="relative">
+								<tab.icon />
+								<InboxBadge count={badge} class="absolute -top-0.5 -right-0.5" />
+							</div>
+							<span class="text-[10px] font-medium leading-none">{tab.label}</span>
+						</button>
+					);
+				})}
+			</div>
 		</div>
 	);
 }
