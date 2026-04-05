@@ -398,13 +398,14 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
 			let rehydrateCallCount = 0;
 			const mockTAM = {
-				isSpawning: () => false,
-				isTaskAgentAlive: () => false,
-				spawnWorkflowNodeAgent: async (task: unknown) => {
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				spawnWorkflowNodeAgentForExecution: async (task: unknown) => {
 					const t = task as { id: string };
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
 				},
+				cancelBySessionId: () => {},
 				rehydrate: async () => {
 					rehydrateCallCount++;
 				},
@@ -438,9 +439,10 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			// it's always called as part of the startup sequence
 			let rehydrateCallCount = 0;
 			const mockTAM = {
-				isSpawning: () => false,
-				isTaskAgentAlive: () => false,
-				spawnWorkflowNodeAgent: async () => 'session-1',
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
+				cancelBySessionId: () => {},
 				rehydrate: async () => {
 					rehydrateCallCount++;
 				},
@@ -479,13 +481,14 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 			let rtRef: SpaceRuntime | null = null;
 
 			const mockTAM = {
-				isSpawning: () => false,
-				isTaskAgentAlive: () => false,
-				spawnWorkflowNodeAgent: async (task: unknown) => {
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				spawnWorkflowNodeAgentForExecution: async (task: unknown) => {
 					const t = task as { id: string };
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
 				},
+				cancelBySessionId: () => {},
 				rehydrate: async () => {
 					// Capture executor count at the moment rehydrate() is called
 					executorCountAtRehydrate = rtRef?.executorCount ?? 0;
@@ -548,14 +551,15 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
 			const spawned: string[] = [];
 			const mockTAM = {
-				isSpawning: () => false,
-				isTaskAgentAlive: () => false,
-				spawnWorkflowNodeAgent: async (task: unknown) => {
+				isExecutionSpawning: () => false,
+				isSessionAlive: () => false,
+				spawnWorkflowNodeAgentForExecution: async (task: unknown) => {
 					const t = task as { id: string };
 					spawned.push(t.id);
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
 				},
+				cancelBySessionId: () => {},
 				rehydrate: async () => {},
 			};
 
@@ -608,14 +612,15 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
 			let spawnCount = 0;
 			const mockTAM = {
-				isSpawning: () => false,
-				isTaskAgentAlive: (taskId: string) => taskId === existingTask.id, // alive
-				spawnWorkflowNodeAgent: async (task: unknown) => {
+				isExecutionSpawning: () => false,
+				isSessionAlive: (sessionId: string) => sessionId === 'session:existing', // alive
+				spawnWorkflowNodeAgentForExecution: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
 					return `session:${t.id}`;
 				},
+				cancelBySessionId: () => {},
 				rehydrate: async () => {},
 			};
 

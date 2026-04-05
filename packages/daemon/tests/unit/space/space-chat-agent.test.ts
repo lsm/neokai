@@ -485,9 +485,9 @@ describe('buildSpaceChatSystemPrompt — coordination tools', () => {
 		expect(prompt).toContain('reassign_task');
 	});
 
-	test('documents send_message_to_task tool', () => {
+	test('does not document send_message_to_task tool', () => {
 		const prompt = buildSpaceChatSystemPrompt();
-		expect(prompt).toContain('send_message_to_task');
+		expect(prompt).not.toContain('send_message_to_task');
 	});
 
 	test('coordination tools section present for all autonomy levels', () => {

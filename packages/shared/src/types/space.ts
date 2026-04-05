@@ -313,6 +313,7 @@ export interface UpdateSpaceTaskParams {
 	dependsOn?: string[];
 	result?: string | null;
 	workflowRunId?: string | null;
+	createdByTaskId?: string | null;
 	activeSession?: 'worker' | 'leader' | null;
 	prUrl?: string | null;
 	prNumber?: number | null;

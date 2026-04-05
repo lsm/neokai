@@ -183,6 +183,10 @@ export class SpaceTaskRepository {
 			fields.push('workflow_run_id = ?');
 			values.push(params.workflowRunId ?? null);
 		}
+		if (params.createdByTaskId !== undefined) {
+			fields.push('created_by_task_id = ?');
+			values.push(params.createdByTaskId ?? null);
+		}
 		if (params.result !== undefined) {
 			fields.push('result = ?');
 			values.push(params.result ?? null);

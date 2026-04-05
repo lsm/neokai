@@ -44,14 +44,14 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
 	createNodeAgentToolHandlers,
 	type NodeAgentToolsConfig,
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
+import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { ResolvedChannel } from '@neokai/shared';
 
@@ -95,21 +95,25 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
  */
 function seedTask(
 	db: BunDatabase,
-	spaceId: string,
+	_spaceId: string,
 	workflowRunId: string,
 	agentName: string,
 	sessionId: string | null,
-	_nodeId: string = STEP_NODE_ID,
-	status: string = 'in_progress'
+	nodeId: string = STEP_NODE_ID,
+	status: 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' = 'in_progress'
 ): void {
-	const now = Date.now();
-	const id = `task-int-${Math.random().toString(36).slice(2)}`;
-	db.prepare(
-		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, labels,
-        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', '[]', ?, '[]', ?, ?, ?)`
-	).run(id, spaceId, spaceId, agentName, status, workflowRunId, sessionId, now, now);
+	const repo = new NodeExecutionRepository(db);
+	const execution = repo.create({
+		workflowRunId,
+		workflowNodeId: nodeId,
+		agentName,
+		agentSessionId: sessionId,
+		status,
+	});
+	repo.update(execution.id, {
+		agentSessionId: sessionId,
+		status,
+	});
 }
 
 /**
@@ -162,19 +166,17 @@ interface TestDb {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	spaceTaskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	workflowRunId: string;
-	taskManager: SpaceTaskManager;
 }
 
 function makeTestDb(): TestDb {
 	const { db, dir } = makeDb();
 	const spaceId = `space-${Math.random().toString(36).slice(2)}`;
 	seedSpaceRow(db, spaceId);
-	const spaceTaskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
-	const taskManager = new SpaceTaskManager(db, spaceId);
 
 	// Create a workflow run for this test DB
 	const workflowRepo = new SpaceWorkflowRepository(db);
@@ -193,10 +195,9 @@ function makeTestDb(): TestDb {
 		db,
 		dir,
 		spaceId,
-		spaceTaskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		workflowRunId: run.id,
-		taskManager,
 	};
 }
 
@@ -229,18 +230,22 @@ function makeStepConfig(
 	channelResolver: ChannelResolver,
 	injector: (sessionId: string, message: string) => Promise<void>
 ): NodeAgentToolsConfig {
+	const agentMessageRouter = new AgentMessageRouter({
+		nodeExecutionRepo: tdb.nodeExecutionRepo,
+		workflowRunId: tdb.workflowRunId,
+		resolvedChannels: channelResolver.getResolvedChannels(),
+		messageInjector: injector,
+	});
 	return {
 		mySessionId: sessionId,
 		myRole: role,
 		taskId: 'task-integration-test',
-		stepTaskId: '',
 		spaceId: tdb.spaceId,
 		channelResolver,
 		workflowRunId: tdb.workflowRunId,
-		spaceTaskRepo: tdb.spaceTaskRepo,
+		nodeExecutionRepo: tdb.nodeExecutionRepo,
 		workflowNodeId: STEP_NODE_ID,
-		messageInjector: injector,
-		taskManager: tdb.taskManager,
+		agentMessageRouter,
 	};
 }
 
@@ -925,7 +930,7 @@ describe('data reload and DB-based validation', () => {
 	});
 
 	test('send_message works correctly with a resolver built from workflow channel data', async () => {
-		// Seed tasks for this test's workflowRunId
+		// Seed executions for this test's workflowRunId
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-rs');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-rs');
 
@@ -935,20 +940,24 @@ describe('data reload and DB-based validation', () => {
 
 		const { messages, injector } = makeMessageCapture();
 
-		// Simulate post-restart: fresh repo instances over same DB
-		const freshTaskRepo = new SpaceTaskRepository(tdb.db);
+		// Simulate post-restart: fresh node execution repository over same DB
+		const freshNodeExecutionRepo = new NodeExecutionRepository(tdb.db);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: freshNodeExecutionRepo,
+			workflowRunId: tdb.workflowRunId,
+			resolvedChannels: channelResolver.getResolvedChannels(),
+			messageInjector: injector,
+		});
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-rs',
 			myRole: 'coder',
 			taskId: 'task-reload-send',
-			stepTaskId: '',
 			spaceId: tdb.spaceId,
 			channelResolver,
 			workflowRunId: tdb.workflowRunId,
-			spaceTaskRepo: freshTaskRepo,
+			nodeExecutionRepo: freshNodeExecutionRepo,
 			workflowNodeId: STEP_NODE_ID,
-			messageInjector: injector,
-			taskManager: tdb.taskManager,
+			agentMessageRouter,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -964,20 +973,19 @@ describe('data reload and DB-based validation', () => {
 		expect(messages[0].message).toContain('post-reload check');
 	});
 
-	test('tasks are still accessible after fresh SpaceTaskRepository over same DB', async () => {
-		// Seed a task, then query via a fresh repository instance
+	test('node executions are still accessible after fresh repository over same DB', async () => {
+		// Seed executions, then query via a fresh repository instance
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-reload');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-reload');
 
-		// Simulate post-restart: fresh repo over same DB
-		// After M71, workflowNodeId is no longer on SpaceTask — filter by taskAgentSessionId only.
-		const freshRepo = new SpaceTaskRepository(tdb.db);
-		const tasks = freshRepo
+		// Simulate post-restart: fresh node execution repo over same DB.
+		const freshRepo = new NodeExecutionRepository(tdb.db);
+		const executions = freshRepo
 			.listByWorkflowRun(tdb.workflowRunId)
-			.filter((t) => t.taskAgentSessionId);
+			.filter((e) => e.agentSessionId);
 
-		expect(tasks.length).toBe(2);
-		const sessionIds = tasks.map((t) => t.taskAgentSessionId);
+		expect(executions.length).toBe(2);
+		const sessionIds = executions.map((e) => e.agentSessionId);
 		expect(sessionIds).toContain('session-coder-reload');
 		expect(sessionIds).toContain('session-reviewer-reload');
 	});
@@ -1003,20 +1011,25 @@ describe('error paths — missing workflowRunId', () => {
 
 	test('send_message returns no-active-sessions when workflowRunId is empty', async () => {
 		const { messages, injector } = makeMessageCapture();
+		const channelResolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: tdb.nodeExecutionRepo,
+			workflowRunId: '',
+			resolvedChannels: channelResolver.getResolvedChannels(),
+			messageInjector: injector,
+		});
 
 		// workflowRunId is empty — no peers can be found
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-norun',
 			myRole: 'coder',
 			taskId: 'task-norun',
-			stepTaskId: '',
 			spaceId: tdb.spaceId,
-			channelResolver: new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]),
+			channelResolver,
 			workflowRunId: '',
-			spaceTaskRepo: tdb.spaceTaskRepo,
+			nodeExecutionRepo: tdb.nodeExecutionRepo,
 			workflowNodeId: STEP_NODE_ID,
-			messageInjector: injector,
-			taskManager: tdb.taskManager,
+			agentMessageRouter,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1029,18 +1042,22 @@ describe('error paths — missing workflowRunId', () => {
 	});
 
 	test('list_peers returns empty peers when workflowRunId is empty', async () => {
+		const channelResolver = new ChannelResolver([]);
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-norun',
 			myRole: 'coder',
 			taskId: 'task-norun',
-			stepTaskId: '',
 			spaceId: tdb.spaceId,
-			channelResolver: new ChannelResolver([]),
+			channelResolver,
 			workflowRunId: '',
-			spaceTaskRepo: tdb.spaceTaskRepo,
+			nodeExecutionRepo: tdb.nodeExecutionRepo,
 			workflowNodeId: STEP_NODE_ID,
-			messageInjector: async () => {},
-			taskManager: tdb.taskManager,
+			agentMessageRouter: new AgentMessageRouter({
+				nodeExecutionRepo: tdb.nodeExecutionRepo,
+				workflowRunId: '',
+				resolvedChannels: channelResolver.getResolvedChannels(),
+				messageInjector: async () => {},
+			}),
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);

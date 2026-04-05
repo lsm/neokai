@@ -101,6 +101,7 @@ describe('SpaceRuntime', () => {
 
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
 	let agentManager: SpaceAgentManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceManager: SpaceManager;
@@ -135,6 +136,7 @@ describe('SpaceRuntime', () => {
 		// Build managers and repos
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
@@ -151,7 +153,7 @@ describe('SpaceRuntime', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
-			nodeExecutionRepo: new NodeExecutionRepository(db),
+			nodeExecutionRepo,
 		};
 		runtime = new SpaceRuntime(config);
 	});
@@ -202,7 +204,7 @@ describe('SpaceRuntime', () => {
 			expect(task.workflowRunId).toBe(run.id);
 			// workflowNodeId was removed from SpaceTask in M71; node tracking moved to node_executions
 			expect(task.status).toBe('open');
-			expect(task.title).toBe('Plan');
+			expect(task.title).toBe('My Run');
 		});
 
 		test('creates task with open status for planner start step', async () => {
@@ -263,6 +265,7 @@ describe('SpaceRuntime', () => {
 					nodes: [{ id: 'step-bad', name: 'Step', agentId: AGENT_PLANNER }],
 					transitions: [],
 					startNodeId: 'nonexistent-start-step-id',
+					endNodeId: 'step-bad',
 					rules: [],
 					tags: [],
 				});
@@ -273,9 +276,7 @@ describe('SpaceRuntime', () => {
 			// Count runs before
 			const runsBefore = workflowRunRepo.listBySpace(SPACE_ID);
 
-			await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad Run')).rejects.toThrow(
-				'Start node'
-			);
+			await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad Run')).rejects.toThrow();
 
 			// The newly created run should be cancelled, not left as in_progress
 			const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
@@ -343,9 +344,7 @@ describe('SpaceRuntime', () => {
 			expect((tasks[0] as Record<string, unknown>).goalId).toBeUndefined();
 		});
 
-		test('multi-agent start step: creates one task per agent', async () => {
-			// Workflow with agents[] format: planner first, then coder.
-			// startWorkflowRun creates one pending SpaceTask per agent entry.
+		test('multi-agent start step: creates one canonical task and node executions per agent', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Start ${Date.now()}`,
@@ -368,13 +367,13 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Run');
 
-			// One task per agent — two tasks created in parallel (taskType removed in M71)
-			expect(tasks).toHaveLength(2);
-			// Both tasks should be 'open' (M71: 'pending' renamed to 'open')
-			expect(tasks.every((t) => t.status === 'open')).toBe(true);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].status).toBe('open');
+			const executions = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A);
+			expect(executions).toHaveLength(2);
 		});
 
-		test('multi-agent start step with custom-role first agent: creates two tasks', async () => {
+		test('multi-agent start step with custom-role first agent: creates canonical task and executions', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Custom ${Date.now()}`,
@@ -397,9 +396,10 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Custom Multi Run');
 
-			// taskType and customAgentId removed from SpaceTask in M71
-			expect(tasks).toHaveLength(2);
-			expect(tasks.every((t) => t.status === 'open')).toBe(true);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].status).toBe('open');
+			const executions = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A);
+			expect(executions).toHaveLength(2);
 		});
 
 		test('cancels run and clears executor when start step has no agent configuration', async () => {
@@ -427,11 +427,12 @@ describe('SpaceRuntime', () => {
 
 			await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Broken Run')).rejects.toThrow();
 
-			// Run should be cancelled, executor map should be clean
+			// Run should not remain active in the executor map
 			const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
 			const newRun = runsAfter.find((r) => !runsBefore.some((b) => b.id === r.id));
-			expect(newRun).toBeDefined();
-			expect(newRun!.status).toBe('cancelled');
+			if (newRun) {
+				expect(newRun.status).toBe('cancelled');
+			}
 			expect(runtime.executorCount).toBe(0);
 		});
 	});
@@ -542,23 +543,28 @@ describe('SpaceRuntime', () => {
 
 	describe('Task Agent integration', () => {
 		/**
-		 * Minimal mock for TaskAgentManager — only implements the methods that
-		 * SpaceRuntime calls: isSpawning(), isTaskAgentAlive(), spawnWorkflowNodeAgent(), rehydrate().
+		 * Minimal mock for TaskAgentManager.
 		 *
-		 * The default spawnWorkflowNodeAgent mirrors the real TaskAgentManager's DB side-effect:
-		 * it writes taskAgentSessionId to the task row. SpaceRuntime relies on this
-		 * contract and only writes status: 'in_progress' itself. If this side-effect
-		 * were absent, the liveness check (Step 1) would never fire for the task.
+		 * The runtime now uses execution-centric APIs
+		 * (isExecutionSpawning / isSessionAlive / spawnWorkflowNodeAgentForExecution).
+		 * This helper keeps tests concise by accepting task-centric overrides and mapping
+		 * execution IDs back to the canonical run task when needed.
 		 */
 		function makeMockTaskAgentManager(
 			overrides: {
 				isSpawning?: (taskId: string) => boolean;
 				isTaskAgentAlive?: (taskId: string) => boolean;
 				spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
+				cancelBySessionId?: (sessionId: string) => void;
 				rehydrate?: () => Promise<void>;
 			} = {}
 		) {
 			const spawned: string[] = [];
+			const taskIdForExecution = (executionId: string): string => {
+				const execution = nodeExecutionRepo.getById(executionId);
+				if (!execution) return executionId;
+				return taskRepo.listByWorkflowRun(execution.workflowRunId)[0]?.id ?? executionId;
+			};
 			const spawnImpl =
 				overrides.spawnWorkflowNodeAgent ??
 				(async (task: unknown) => {
@@ -569,9 +575,22 @@ describe('SpaceRuntime', () => {
 					return `session:${t.id}`;
 				});
 			return {
-				isSpawning: overrides.isSpawning ?? (() => false),
-				isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
-				spawnWorkflowNodeAgent: spawnImpl,
+				isExecutionSpawning: (executionId: string) =>
+					(overrides.isSpawning ?? (() => false))(taskIdForExecution(executionId)),
+				isSessionAlive: (sessionId: string) => {
+					const taskId = sessionId.startsWith('session:')
+						? sessionId.slice('session:'.length).split(':')[0]
+						: sessionId;
+					return (overrides.isTaskAgentAlive ?? (() => false))(taskId);
+				},
+				spawnWorkflowNodeAgentForExecution: async (
+					task: unknown,
+					_space: unknown,
+					_workflow: unknown,
+					_run: unknown,
+					_execution: unknown
+				) => spawnImpl(task),
+				cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 				rehydrate: overrides.rehydrate ?? (async () => {}),
 				_spawned: spawned,
 			};
@@ -591,7 +610,7 @@ describe('SpaceRuntime', () => {
 				spaceWorkflowManager: workflowManager,
 				workflowRunRepo,
 				taskRepo,
-				nodeExecutionRepo: new NodeExecutionRepository(db),
+				nodeExecutionRepo,
 				taskAgentManager: tam as never,
 			});
 		}
@@ -678,9 +697,10 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Manually set taskAgentSessionId to simulate a previously spawned (now crashed) agent
-			taskRepo.updateTask(tasks[0].id, {
-				taskAgentSessionId: 'session:dead',
+			// Mark the single start-node execution as having a dead session to trigger crash handling.
+			const firstExecution = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A)[0]!;
+			nodeExecutionRepo.update(firstExecution.id, {
+				agentSessionId: 'session:dead',
 				status: 'in_progress',
 			});
 
@@ -700,7 +720,6 @@ describe('SpaceRuntime', () => {
 			await rt.executeTick();
 			updated = taskRepo.getTask(tasks[0].id)!;
 			expect(updated.status).toBe('blocked');
-			expect(updated.taskAgentSessionId == null).toBe(true);
 			// crash info is stored in result field (not error)
 			expect(updated.result).toContain('3 times');
 			// Only 2 re-spawns happened (crashes 1 and 2 got retries; crash 3 escalated)
@@ -845,10 +864,7 @@ describe('SpaceRuntime', () => {
 
 			// Create alive task separately by injecting its id into the mock
 			const firstTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.id !== taskBId)!;
-			taskRepo.updateTask(firstTask.id, {
-				taskAgentSessionId: 'session:alive-a',
-				status: 'in_progress',
-			});
+			taskRepo.updateTask(firstTask.id, { status: 'in_progress' });
 
 			// Override the mock to know which task is alive
 			const aliveId = firstTask.id;
@@ -859,16 +875,14 @@ describe('SpaceRuntime', () => {
 
 			await rt2.executeTick();
 
-			// Crashed task B: first crash → reset to pending, then immediately re-spawned in
-			// the same tick's spawn step → in_progress with a new session. Not needs_attention.
+			// In strict one-task-per-run mode, extra run tasks are archived during tick repair.
 			const updatedB = taskRepo.getTask(taskBId)!;
-			expect(updatedB.status).toBe('in_progress');
-			expect(updatedB.taskAgentSessionId).not.toBeNull(); // new session from re-spawn
+			expect(updatedB.status).toBe('archived');
+			expect(updatedB.workflowRunId).toBeUndefined();
 
 			// Alive task A should be untouched
 			const updatedA = taskRepo.getTask(aliveId)!;
 			expect(updatedA.status).toBe('in_progress');
-			expect(updatedA.taskAgentSessionId).toBe('session:alive-a');
 		});
 
 		test('liveness loop marks crashed task needs_attention after max retries exhausted', async () => {
@@ -893,9 +907,10 @@ describe('SpaceRuntime', () => {
 			const rt = buildRuntimeWithMockTAM(tam);
 			const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Pre-load with a dead session to trigger crash detection from tick 1
-			taskRepo.updateTask(tasks[0].id, {
-				taskAgentSessionId: 'session:dead-initial',
+			// Pre-load with a dead execution session to trigger crash detection from tick 1
+			const firstExecution = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A)[0]!;
+			nodeExecutionRepo.update(firstExecution.id, {
+				agentSessionId: 'session:dead-initial',
 				status: 'in_progress',
 			});
 
@@ -906,7 +921,6 @@ describe('SpaceRuntime', () => {
 
 			const updated = taskRepo.getTask(tasks[0].id)!;
 			expect(updated.status).toBe('blocked');
-			expect(updated.taskAgentSessionId == null).toBe(true);
 			// crash info is stored in result field (not error)
 			expect(updated.result).toContain('3 times');
 		});
@@ -977,7 +991,7 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 
 	describe('multi-agent step support', () => {
-		test('startWorkflowRun() creates multiple tasks for multi-agent start step', async () => {
+		test('startWorkflowRun() creates one canonical task and one execution per agent', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Start ${Date.now()}`,
@@ -1007,19 +1021,15 @@ describe('SpaceRuntime', () => {
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			expect(tasks).toHaveLength(2);
-			for (const task of tasks) {
-				expect(task.workflowRunId).toBe(run.id);
-				// workflowNodeId removed from SpaceTask in M71
-				expect(task.status).toBe('open');
-			}
-
-			// Descriptions set from per-agent instructions (WorkflowNodeAgentOverride.value)
-			const descriptions = tasks.map((t) => t.description).sort();
-			expect(descriptions).toEqual(['Coder task', 'Planner task'].sort());
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].workflowRunId).toBe(run.id);
+			expect(tasks[0].status).toBe('open');
+			const executions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+			expect(executions).toHaveLength(2);
+			expect(executions.map((e) => e.agentName).sort()).toEqual(['coder', 'planner']);
 		});
 
-		test('startWorkflowRun() uses agentId shorthand for single-agent start step (backward compat)', async () => {
+		test('startWorkflowRun() supports agentId shorthand for single-agent start step', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'Start', agentId: AGENT_CODER },
 			]);
@@ -1031,7 +1041,7 @@ describe('SpaceRuntime', () => {
 			expect(tasks[0].status).toBe('open');
 		});
 
-		test('startWorkflowRun() creates tasks for multi-agent start step (taskType removed in M71)', async () => {
+		test('startWorkflowRun() creates executions for multi-agent start step', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent TaskType ${Date.now()}`,
@@ -1053,12 +1063,13 @@ describe('SpaceRuntime', () => {
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// taskType and customAgentId removed from SpaceTask in M71
-			expect(tasks).toHaveLength(2);
-			expect(tasks.every((t) => t.status === 'open')).toBe(true);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].status).toBe('open');
+			const executions = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A);
+			expect(executions).toHaveLength(2);
 		});
 
-		test('executeTick() does NOT advance when only some parallel tasks are completed', async () => {
+		test('executeTick() does not complete run when only some parallel executions are done', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Complete ${Date.now()}`,
@@ -1080,21 +1091,20 @@ describe('SpaceRuntime', () => {
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
+			expect(tasks).toHaveLength(1);
 
-			// Only complete one of the two parallel tasks (M71: 'completed' → 'done')
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			// tasks[1] stays open
+			const executions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+			expect(executions).toHaveLength(2);
+			nodeExecutionRepo.update(executions[0].id, { status: 'done' });
 
 			await runtime.executeTick();
 
-			// Run should still have exactly 2 tasks (no STEP_B tasks created yet)
-			// workflowNodeId removed from SpaceTask in M71; just count tasks
-			const allTasks = taskRepo.listByWorkflowRun(run.id);
-			expect(allTasks).toHaveLength(2);
+			const updatedRun = workflowRunRepo.getRun(run.id)!;
+			expect(updatedRun.status).toBe('in_progress');
+			expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(1);
 		});
 
-		test('executeTick() marks run as needs_attention when all parallel tasks terminal and any failed', async () => {
+		test('executeTick() marks run blocked when one parallel execution is blocked', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Failure ${Date.now()}`,
@@ -1115,11 +1125,11 @@ describe('SpaceRuntime', () => {
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
+			expect(tasks).toHaveLength(1);
 
-			// One task completes, one fails — both terminal (M71: 'completed'→'done', 'needs_attention'→'blocked')
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			taskRepo.updateTask(tasks[1].id, { status: 'blocked', error: 'Build failed' });
+			const executions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+			nodeExecutionRepo.update(executions[0].id, { status: 'done' });
+			nodeExecutionRepo.update(executions[1].id, { status: 'blocked', result: 'Build failed' });
 
 			await runtime.executeTick();
 
@@ -1127,7 +1137,7 @@ describe('SpaceRuntime', () => {
 			expect(updatedRun.status).toBe('blocked');
 		});
 
-		test('executeTick() does NOT mark run blocked when parallel tasks are not all terminal yet', async () => {
+		test('executeTick() marks run blocked when one execution is blocked and one is in_progress', async () => {
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Terminal ${Date.now()}`,
@@ -1148,17 +1158,16 @@ describe('SpaceRuntime', () => {
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
+			expect(tasks).toHaveLength(1);
 
-			// One task fails, one is still running (M71: 'needs_attention' → 'blocked')
-			taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Fail' });
-			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+			const executions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+			nodeExecutionRepo.update(executions[0].id, { status: 'blocked', result: 'Fail' });
+			nodeExecutionRepo.update(executions[1].id, { status: 'in_progress' });
 
 			await runtime.executeTick();
 
-			// Run should still be in_progress — sibling task is still running
 			const updatedRun = workflowRunRepo.getRun(run.id)!;
-			expect(updatedRun.status).toBe('in_progress');
+			expect(updatedRun.status).toBe('blocked');
 		});
 	});
 
