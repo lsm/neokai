@@ -183,6 +183,24 @@ describe('ChannelRouter', () => {
 		gateDataRepo = new GateDataRepository(db);
 		channelCycleRepo = new ChannelCycleRepository(db);
 
+		// One-task-per-run architecture: ensure every test run has a canonical task.
+		const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
+		(
+			workflowRunRepo as unknown as {
+				createRun: typeof workflowRunRepo.createRun;
+			}
+		).createRun = ((params: Parameters<typeof workflowRunRepo.createRun>[0]) => {
+			const run = createRunOriginal(params);
+			taskRepo.createTask({
+				spaceId: params.spaceId,
+				title: params.title,
+				description: params.description ?? '',
+				status: 'open',
+				workflowRunId: run.id,
+			});
+			return run;
+		}) as typeof workflowRunRepo.createRun;
+
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
 
@@ -231,7 +249,7 @@ describe('ChannelRouter', () => {
 			// workflowNodeId, agentName, taskType, customAgentId removed in M71
 		});
 
-		test('creates one task per agent for a multi-agent node', async () => {
+		test('creates one canonical task and one node_execution per agent for a multi-agent node', async () => {
 			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
 				{
 					id: NODE_A,
@@ -252,10 +270,16 @@ describe('ChannelRouter', () => {
 
 			const tasks = await router.activateNode(run.id, NODE_A);
 
-			expect(tasks).toHaveLength(2);
-			// agentName, taskType removed in M71; verify by task count and workflowRunId
-			expect(tasks.every((t) => t.workflowRunId === run.id)).toBe(true);
-			expect(tasks.every((t) => t.status === 'open')).toBe(true);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].workflowRunId).toBe(run.id);
+			expect(tasks[0].status).toBe('open');
+
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			const nodeExecutions = nodeExecutionRepo.listByNode(run.id, NODE_A);
+			expect(nodeExecutions).toHaveLength(2);
+			expect(nodeExecutions.map((e) => e.agentName).sort()).toEqual(
+				['coder-slot', 'planner-slot'].sort()
+			);
 		});
 
 		test('sets correct taskType for custom-role agent', async () => {
@@ -328,11 +352,11 @@ describe('ChannelRouter', () => {
 			// Cancel the task
 			taskRepo.updateTask(firstTasks[0].id, { status: 'cancelled' });
 
-			// Second activation should create fresh tasks (cancelled tasks are excluded)
+			// Second activation should reuse the canonical run task.
 			const secondTasks = await router.activateNode(run.id, NODE_A);
 			expect(secondTasks).toHaveLength(1);
-			expect(secondTasks[0].id).not.toBe(firstTasks[0].id);
-			expect(secondTasks[0].status).toBe('open');
+			expect(secondTasks[0].id).toBe(firstTasks[0].id);
+			expect(secondTasks[0].status).toBe('cancelled');
 		});
 
 		// -----------------------------------------------------------------------
@@ -355,24 +379,22 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Simulate a concurrent activation by directly inserting a task for the run
-			// before the router creates its task — triggering the idempotency path.
-			// NODE_A has a single agent slot; activateNode() uses node.name ('Node A')
-			// as the task title for single-agent nodes.
-			const firstTask = taskRepo.createTask({
-				spaceId: SPACE_ID,
-				title: 'Node A',
-				description: '',
+			// Simulate a concurrent activation by pre-seeding the node_execution row.
+			// activateNode() should hit createOrIgnore/idempotent path and not throw.
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			nodeExecutionRepo.create({
 				workflowRunId: run.id,
-				status: 'open',
+				workflowNodeId: NODE_A,
+				agentName: 'coder-slot',
+				agentId: AGENT_CODER,
+				status: 'pending',
 			});
 
-			// The router's activateNode() should detect the UNIQUE constraint violation
-			// and return the already-inserted task instead of throwing.
 			const tasks = await router.activateNode(run.id, NODE_A);
 
 			expect(tasks).toHaveLength(1);
-			expect(tasks[0].id).toBe(firstTask.id);
+			expect(tasks[0].workflowRunId).toBe(run.id);
+			expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(1);
 		});
 
 		// -----------------------------------------------------------------------
@@ -500,17 +522,8 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Pre-create a task for NODE_B so it is already active.
-			// After M72, getActiveTasksForNode identifies node tasks by task.title.
-			// For single-agent nodes the title equals node.name ('Receiver Node').
-			taskRepo.createTask({
-				spaceId: SPACE_ID,
-				title: 'Receiver Node',
-				description: '',
-				workflowRunId: run.id,
-				status: 'in_progress',
-			});
-
+			// Pre-activate NODE_B so it already has active node executions.
+			await router.activateNode(run.id, NODE_B);
 			const beforeCount = taskRepo.listByWorkflowRun(run.id).length;
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hi again');
@@ -605,11 +618,12 @@ describe('ChannelRouter', () => {
 
 			expect(result.targetNodeId).toBe(NODE_B);
 			expect(result.isFanOut).toBe(true);
-			// Both agents in NODE_B should be activated
+			// Fan-out activation creates one canonical task envelope and two node executions.
 			expect(result.activatedTasks).toBeDefined();
-			expect(result.activatedTasks).toHaveLength(2);
-			// agentName removed in M71; verify both tasks belong to the run
-			expect(result.activatedTasks!.every((t) => t.workflowRunId === run.id)).toBe(true);
+			expect(result.activatedTasks).toHaveLength(1);
+			expect(result.activatedTasks![0].workflowRunId).toBe(run.id);
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(2);
 		});
 
 		test('fan-out: isFanOut is false when targeting by agent role', async () => {
@@ -1267,8 +1281,8 @@ describe('ChannelRouter', () => {
 			// Gate still closed before writing
 			const noTasks1 = await router.onGateDataChanged(run.id, 'plan-ready-gate');
 			expect(noTasks1).toHaveLength(0);
-			// workflowNodeId removed in M71; check no tasks exist for the run yet
-			expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+			// Canonical run task already exists (one-task-per-run).
+			expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(1);
 
 			// Write gate data to open the gate
 			gateDataRepo.set(run.id, 'plan-ready-gate', { ready: true });

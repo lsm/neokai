@@ -89,6 +89,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 	let dir: string;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
 	let workflowManager: SpaceWorkflowManager;
 	let runtime: SpaceRuntime;
 
@@ -109,6 +110,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		const agentManager = new SpaceAgentManager(agentRepo);
@@ -124,7 +126,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
-			nodeExecutionRepo: new NodeExecutionRepository(db),
+			nodeExecutionRepo,
 		};
 		runtime = new SpaceRuntime(config);
 	});
@@ -146,7 +148,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 	// Subtask 3: startWorkflowRun() with multi-agent start step
 	// -------------------------------------------------------------------------
 
-	test('creates one task per agent for a multi-agent start step', async () => {
+	test('creates one workflow task and one node_execution per start agent', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start ${Date.now()}`,
@@ -168,14 +170,18 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Start Run');
 
-		expect(tasks).toHaveLength(2);
-		for (const task of tasks) {
-			expect(task.workflowRunId).toBe(run.id);
-			expect(task.status).toBe('open');
-		}
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].workflowRunId).toBe(run.id);
+		expect(tasks[0].status).toBe('open');
+
+		const nodeExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(nodeExecutions).toHaveLength(2);
+		expect(nodeExecutions.map((exec) => exec.agentId).sort()).toEqual(
+			[AGENT_CODER, AGENT_PLANNER].sort()
+		);
 	});
 
-	test('per-agent instructions set task descriptions on multi-agent start step', async () => {
+	test('per-agent instructions are tracked in node executions (not split into multiple tasks)', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start Instructions ${Date.now()}`,
@@ -203,13 +209,15 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		const descriptions = tasks.map((t) => t.description).sort();
-		expect(descriptions).toEqual(['Coder task', 'Planner task'].sort());
+		expect(tasks).toHaveLength(1);
+		const nodeExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(nodeExecutions).toHaveLength(2);
+		expect(nodeExecutions.map((exec) => exec.agentName).sort()).toEqual(['coder', 'planner']);
 	});
 
-	test('per-agent taskType is resolved for multi-agent start step', async () => {
+	test('multi-agent start step still yields a single workflow task', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start TaskType ${Date.now()}`,
@@ -229,17 +237,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		expect(tasks).toHaveLength(2);
-		// taskType and customAgentId were removed in M71
-		// Verify both tasks were created with correct status
-		for (const task of tasks) {
-			expect(task.status).toBe('open');
-		}
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].status).toBe('open');
+		expect(nodeExecutionRepo.listByNode(run.id, STEP_A)).toHaveLength(2);
 	});
 
-	test('custom-role agent in multi-agent start step sets customAgentId on its task', async () => {
+	test('custom-role agent in multi-agent start step still uses one workflow task', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Custom Role Start ${Date.now()}`,
@@ -259,14 +264,11 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		expect(tasks).toHaveLength(2);
-		// taskType and customAgentId were removed in M71
-		// Verify both tasks were created with correct status
-		for (const task of tasks) {
-			expect(task.status).toBe('open');
-		}
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].status).toBe('open');
+		expect(nodeExecutionRepo.listByNode(run.id, STEP_A)).toHaveLength(2);
 	});
 
 	// -------------------------------------------------------------------------
@@ -295,25 +297,27 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(tasks).toHaveLength(2);
+		expect(tasks).toHaveLength(1);
 
-		// Complete only one of the two parallel tasks
-		taskRepo.updateTask(tasks[0].id, { status: 'done' });
-		// tasks[1] remains pending
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(2);
+
+		// Complete only one parallel execution; keep sibling active.
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
 		await runtime.executeTick();
 
-		// Step B task must NOT have been created yet
-		const allTasks = taskRepo.listByWorkflowRun(run.id);
-		const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
-		expect(stepBTasks).toHaveLength(0);
+		// Next node should not be activated until the current node is fully terminal.
+		const stepBExecutions = nodeExecutionRepo.listByNode(run.id, STEP_B);
+		expect(stepBExecutions).toHaveLength(0);
 	});
 
 	// -------------------------------------------------------------------------
 	// Subtask 6: Parallel failure — one task fails, others still active → waits
 	// -------------------------------------------------------------------------
 
-	test('does NOT mark run needs_attention when one task fails but sibling is still running', async () => {
+	test('marks run blocked when any parallel node execution blocks', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Partial Terminal ${Date.now()}`,
@@ -333,17 +337,20 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// One task fails, but sibling is still in_progress
-		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Build failed' });
-		taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(2);
+
+		// One execution fails, but sibling is still active.
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'blocked', result: 'Build failed' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
 		await runtime.executeTick();
 
-		// Run should still be in_progress — sibling is not terminal yet
+		// Runtime now blocks the run as soon as any branch reports blocked.
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
-		expect(updatedRun.status).toBe('in_progress');
+		expect(updatedRun.status).toBe('blocked');
 	});
 
 	// -------------------------------------------------------------------------
@@ -371,11 +378,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(tasks).toHaveLength(2);
+		expect(tasks).toHaveLength(1);
 
-		// One completes, one fails — both are terminal
-		taskRepo.updateTask(tasks[0].id, { status: 'done' });
-		taskRepo.updateTask(tasks[1].id, { status: 'blocked', error: 'Agent crashed' });
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(2);
+
+		// One completes, one fails — both are terminal.
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'blocked', result: 'Agent crashed' });
 
 		await runtime.executeTick();
 
@@ -408,11 +418,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(tasks).toHaveLength(3);
+		expect(tasks).toHaveLength(1);
 
-		taskRepo.updateTask(tasks[0].id, { status: 'done' });
-		taskRepo.updateTask(tasks[1].id, { status: 'done' });
-		taskRepo.updateTask(tasks[2].id, { status: 'blocked', error: 'Crash' });
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(3);
+
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[2].id, { status: 'blocked', result: 'Crash' });
 
 		await runtime.executeTick();
 
@@ -769,8 +782,8 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Two tasks for the multi-agent start step
-		expect(tasks).toHaveLength(2);
+		// One workflow task for the multi-agent start step.
+		expect(tasks).toHaveLength(1);
 
 		// resolveAndStoreChannels called for start step; channels are in-memory (not in DB run config)
 		const resolvedChannels = runtime.getRunResolvedChannels(run.id);
