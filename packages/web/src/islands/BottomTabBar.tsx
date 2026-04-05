@@ -214,7 +214,16 @@ export function BottomTabBar() {
 				navigateToSettings();
 				break;
 			case 'room-overview':
-				if (roomId) navigateToRoom(roomId);
+				if (roomId) {
+					currentRoomTabSignal.value = 'overview';
+					navigateToRoom(roomId);
+				}
+				break;
+			case 'room-tasks':
+				if (roomId) {
+					currentRoomTabSignal.value = 'tasks';
+					navigateToRoom(roomId);
+				}
 				break;
 			case 'room-tasks':
 				if (roomId) {

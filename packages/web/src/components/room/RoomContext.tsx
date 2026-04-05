@@ -22,11 +22,14 @@ export function RoomContext({ room }: RoomContextProps) {
 	const instructions = useSignal(room.instructions || '');
 	const isSaving = useSignal(false);
 
-	// Sync with room props when they change
+	// Sync with room props only when the context fields actually change.
+	// This prevents resetting unsaved edits when unrelated room fields update.
+	const roomBackground = room.background || '';
+	const roomInstructions = room.instructions || '';
 	useEffect(() => {
-		background.value = room.background || '';
-		instructions.value = room.instructions || '';
-	}, [room]);
+		background.value = roomBackground;
+		instructions.value = roomInstructions;
+	}, [roomBackground, roomInstructions]);
 
 	const hasChanges = () => {
 		return (
