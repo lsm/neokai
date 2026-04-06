@@ -131,9 +131,12 @@ export interface RPCHandlerDependencies {
 const log = new Logger('rpc-handlers');
 
 /**
- * Cleanup function type for RPC handlers
+ * Cleanup function type for RPC handlers.
+ *
+ * Returns a Promise to allow async teardown (e.g. awaiting in-flight SpaceRuntime ticks
+ * before the database is closed).
  */
-export type RPCHandlerCleanup = () => void;
+export type RPCHandlerCleanup = () => void | Promise<void>;
 
 /**
  * Result returned by setupRPCHandlers — includes both the cleanup function
@@ -701,11 +704,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Return result with cleanup function and exposed services
 	return {
-		cleanup: () => {
+		cleanup: async () => {
 			unsubRoomCreated();
 			unsubLiveQuery();
 			roomRuntimeService.stop();
-			spaceRuntimeService.stop();
+			await spaceRuntimeService.stop();
 			fileIndex.dispose();
 		},
 		spaceRuntimeService,

@@ -533,14 +533,33 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Stops the periodic tick loop.
+	 * Stops the periodic tick loop and waits for any in-flight tick to complete.
+	 *
+	 * This prevents race conditions during shutdown where an in-flight tick
+	 * continues to perform DB operations after the database has been closed.
+	 *
 	 * Does not affect in-progress executors — they remain in the map and can
 	 * be resumed by calling start() again.
 	 */
-	stop(): void {
+	async stop(): Promise<void> {
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
+		}
+		// Wait for any in-flight executeTick() to finish so that all DB
+		// reads/writes and DaemonHub event emissions complete before the
+		// caller proceeds to close the database.
+		if (this.tickInFlight) {
+			await new Promise<void>((resolve) => {
+				const check = () => {
+					if (!this.tickInFlight) {
+						resolve();
+					} else {
+						setTimeout(check, 10);
+					}
+				};
+				check();
+			});
 		}
 	}
 
