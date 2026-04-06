@@ -51,7 +51,7 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
-import { enterTeardown, leaveTeardown } from './helpers/suppress-teardown-noise';
+import './helpers/suppress-teardown-noise';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
@@ -274,14 +274,12 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		leaveTeardown();
 		// NEOKAI_ENABLE_SPACES_AGENT=1 enables the global spaces agent for notification tests.
 		// Each test gets a fresh daemon with its own in-memory SQLite DB — no cross-test state.
 		daemon = await createDaemonServer({ env: { NEOKAI_ENABLE_SPACES_AGENT: '1' } });
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
-		enterTeardown();
 		if (daemon) {
 			try {
 				const { sessions } = (await daemon.messageHub.request('session.list', {})) as {

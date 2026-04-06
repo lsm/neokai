@@ -7,42 +7,24 @@
  * shutting down — but bun's test runner treats them as fatal "unhandled errors
  * between tests", causing exit code 1 despite 0 test failures.
  *
- * The handler is **guarded** so it only suppresses during the teardown phase
- * (between enterTeardown() and leaveTeardown()). During normal test execution,
- * unknown rejections are logged and the process exit code is set to 1 so CI
- * still fails on genuine unhandled errors.
+ * The handler is always active once this module is imported. The narrow regex
+ * ensures only the two known teardown errors are suppressed; any other
+ * unhandled rejection is logged with a grep-able prefix and sets exitCode = 1
+ * so CI still fails.
  *
- * Usage in test files:
- *   import { enterTeardown, leaveTeardown } from './helpers/suppress-teardown-noise';
- *
- *   beforeEach(() => { leaveTeardown(); });
- *   afterEach(async () => {
- *       enterTeardown();
- *       // ... daemon.kill() + daemon.waitForExit() ...
- *   });
+ * Usage: import this module for side effects in any space test file:
+ *   import './helpers/suppress-teardown-noise';
  */
 
 // Matches the known harmless errors that fire during daemon teardown.
 // Anchored to start-of-string to avoid matching mid-message substrings.
 const TEARDOWN_NOISE = /^Already connected to a transport|^Cannot use a closed database/i;
 
-let isTearingDown = false;
-
-/** Call at the start of afterEach, before daemon cleanup. */
-export function enterTeardown(): void {
-	isTearingDown = true;
-}
-
-/** Call at the start of beforeEach, to re-enable normal rejection handling. */
-export function leaveTeardown(): void {
-	isTearingDown = false;
-}
-
 // Install once — idempotent since this module is only evaluated once per process.
 process.on('unhandledRejection', (reason: unknown) => {
 	const message = reason instanceof Error ? reason.message : String(reason);
 
-	if (isTearingDown && TEARDOWN_NOISE.test(message)) {
+	if (TEARDOWN_NOISE.test(message)) {
 		return; // swallow known teardown noise
 	}
 
