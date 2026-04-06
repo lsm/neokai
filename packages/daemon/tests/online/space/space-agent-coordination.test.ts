@@ -67,23 +67,7 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 import { formatEventMessage } from '../../../src/lib/space/runtime/session-notification-sink';
 import type { Space } from '@neokai/shared';
-
-// ---------------------------------------------------------------------------
-// Suppress known teardown noise
-// ---------------------------------------------------------------------------
-// After daemon.waitForExit() closes the database and MCP transports, in-flight
-// SDK async work (MCP Protocol.connect retries, session updates via
-// ReactiveDatabase) may reject. These rejections are harmless — the daemon is
-// shutting down — but bun's test runner treats them as fatal "unhandled errors
-// between tests". Catching them here prevents the 0-fail / N-error exit code 1.
-const TEARDOWN_NOISE =
-	/Already connected to a transport|Cannot use a closed database|transport is closed/i;
-process.on('unhandledRejection', (reason: unknown) => {
-	const message = reason instanceof Error ? reason.message : String(reason);
-	if (TEARDOWN_NOISE.test(message)) return; // swallow known teardown noise
-	// Re-throw anything unexpected so it still surfaces as a test error
-	throw reason;
-});
+import { enterTeardown, leaveTeardown } from './helpers/suppress-teardown-noise';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
@@ -185,6 +169,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
+		leaveTeardown();
 		// NEOKAI_ENABLE_SPACES_AGENT=1 opts in to spaces:global provisioning in test mode.
 		// Without it, the daemon skips provisioning when NODE_ENV=test to avoid side-effects
 		// on other test suites that don't need the global spaces agent.
@@ -217,6 +202,7 @@ describe('Space Agent Coordination — Online Tests', () => {
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
+		enterTeardown();
 		if (daemon) {
 			// Explicitly delete all sessions to prevent "Already connected to a transport"
 			// errors in subsequent tests. Fan-out sessions created by workflow runs
