@@ -138,7 +138,7 @@ function goalPriorityBorderClass(priority: GoalPriority): string {
 
 // ─── Status Indicator ─────────────────────────────────────────────────────────
 
-function StatusIndicator({ status }: { status: GoalStatus }) {
+export function StatusIndicator({ status }: { status: GoalStatus }) {
 	const config: Record<GoalStatus, { dot: string; label: string }> = {
 		active: { dot: 'bg-green-400', label: 'Active' },
 		completed: { dot: 'bg-gray-400', label: 'Completed' },
@@ -156,7 +156,7 @@ function StatusIndicator({ status }: { status: GoalStatus }) {
 
 // ─── Priority Badge ───────────────────────────────────────────────────────────
 
-function PriorityBadge({ priority }: { priority: GoalPriority }) {
+export function PriorityBadge({ priority }: { priority: GoalPriority }) {
 	const styles: Record<GoalPriority, string> = {
 		low: 'bg-gray-700 text-gray-300',
 		normal: 'bg-blue-900/50 text-blue-300',
@@ -172,7 +172,7 @@ function PriorityBadge({ priority }: { priority: GoalPriority }) {
 
 // ─── Mission Type Badge ───────────────────────────────────────────────────────
 
-function MissionTypeBadge({ type }: { type: MissionType }) {
+export function MissionTypeBadge({ type }: { type: MissionType }) {
 	const config: Record<MissionType, { label: string; style: string }> = {
 		one_shot: { label: 'One-Shot', style: 'bg-gray-700 text-gray-300' },
 		measurable: { label: 'Measurable', style: 'bg-purple-900/50 text-purple-300' },
@@ -191,7 +191,7 @@ function MissionTypeBadge({ type }: { type: MissionType }) {
 
 // ─── Autonomy Level Badge ─────────────────────────────────────────────────────
 
-function AutonomyBadge({ level }: { level: AutonomyLevel }) {
+export function AutonomyBadge({ level }: { level: AutonomyLevel }) {
 	const config: Record<AutonomyLevel, { label: string; style: string; title: string }> = {
 		supervised: {
 			label: 'Supervised',
@@ -218,7 +218,7 @@ function AutonomyBadge({ level }: { level: AutonomyLevel }) {
 
 // ─── Progress Bar ─────────────────────────────────────────────────────────────
 
-function ProgressBar({ progress }: { progress: number }) {
+export function ProgressBar({ progress }: { progress: number }) {
 	const getColor = (prog: number): string => {
 		if (prog < 30) return 'bg-red-500';
 		if (prog < 70) return 'bg-yellow-500';
@@ -266,7 +266,7 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 
 // ─── Short ID Badge ───────────────────────────────────────────────────────────
 
-function GoalShortIdBadge({ shortId }: { shortId: string }) {
+export function GoalShortIdBadge({ shortId }: { shortId: string }) {
 	const copied = useSignal(false);
 
 	const handleCopy = (e: MouseEvent) => {
@@ -371,7 +371,7 @@ function scheduleToPreset(schedule?: CronSchedule): string {
 		: 'custom';
 }
 
-interface GoalFormProps {
+export interface GoalFormProps {
 	initialTitle?: string;
 	initialDescription?: string;
 	initialPriority?: GoalPriority;
@@ -393,7 +393,7 @@ function newMetricEntry(metric: MissionMetric): MetricEntry {
 	return { id: `m-${++_metricKeyCounter}`, metric };
 }
 
-function GoalForm({
+export function GoalForm({
 	initialTitle = '',
 	initialDescription = '',
 	initialPriority = 'normal',
@@ -1086,7 +1086,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 
 // ─── Metric Progress Display ──────────────────────────────────────────────────
 
-function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
+export function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
 	if (metrics.length === 0) return null;
 	return (
 		<div class="space-y-2">
@@ -1118,7 +1118,7 @@ function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
 
 // ─── Recurring Schedule Display ───────────────────────────────────────────────
 
-function RecurringScheduleInfo({ goal }: { goal: RoomGoal }) {
+export function RecurringScheduleInfo({ goal }: { goal: RoomGoal }) {
 	return (
 		<div class="space-y-2 text-sm">
 			{goal.schedule && (
