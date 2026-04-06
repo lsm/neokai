@@ -201,10 +201,32 @@ describe('Space Agent Coordination — Online Tests', () => {
 
 	afterEach(async () => {
 		if (daemon) {
+			// Explicitly delete all sessions to prevent "Already connected to a transport"
+			// errors in subsequent tests. Fan-out sessions created by workflow runs
+			// aren't tracked, so we list all sessions and delete them individually.
+			try {
+				const { sessions } = (await daemon.messageHub.request('session.list', {})) as {
+					sessions: Array<{ id: string }>;
+				};
+				await Promise.all(
+					sessions.map((s) =>
+						Promise.race([
+							daemon.messageHub.request('session.delete', { sessionId: s.id }),
+							new Promise((_, reject) =>
+								setTimeout(() => reject(new Error('session delete timeout')), 5000)
+							),
+						]).catch(() => {
+							// Session may already be stopping — ignore
+						})
+					)
+				);
+			} catch {
+				// Hub may already be disconnected — fall through to kill+exit
+			}
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	}, SETUP_TIMEOUT);
+	}, 30_000);
 
 	test(
 		'supervised mode: agent escalates to human when receiving task_blocked',
