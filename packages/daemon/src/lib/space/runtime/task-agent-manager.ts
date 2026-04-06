@@ -1602,6 +1602,7 @@ export class TaskAgentManager {
 			lines.push('No outbound gated channels are currently mapped from this role/node.');
 		} else {
 			const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
+			const roleAliases = this.buildRoleAliasesForExecution(workflow, execution);
 			lines.push('Before completion, satisfy outbound gate requirements:');
 
 			for (const channel of outboundGatedChannels) {
@@ -1615,12 +1616,13 @@ export class TaskAgentManager {
 					continue;
 				}
 
-				const writableFields = (gate.fields ?? []).filter(
-					(field) => field.writers.includes('*') || field.writers.includes(execution.agentName)
+				const writableFields = (gate.fields ?? []).filter((field) =>
+					this.isWriterAuthorizedForRoleAliases(field.writers, roleAliases)
 				);
 				if (writableFields.length === 0) {
+					const aliasSuffix = roleAliases.length > 1 ? ` (aliases: ${roleAliases.join(', ')})` : '';
 					lines.push(
-						`  - No gate fields are writable by role "${execution.agentName}"; ensure required artifacts/checks are ready.`
+						`  - No gate fields are writable by role "${execution.agentName}"${aliasSuffix}; ensure required artifacts/checks are ready.`
 					);
 					continue;
 				}
@@ -1652,6 +1654,67 @@ export class TaskAgentManager {
 		if (check.op === '==') return `== ${JSON.stringify(check.value)}`;
 		if (check.op === '!=') return `!= ${JSON.stringify(check.value)}`;
 		return check.op;
+	}
+
+	private normalizeRoleToken(value: string): string {
+		return value.trim().toLowerCase();
+	}
+
+	private roleNameVariants(value: string): string[] {
+		const trimmed = value.trim();
+		if (!trimmed) return [];
+		const variants = new Set<string>([trimmed]);
+		const kebab = trimmed
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '');
+		if (kebab) variants.add(kebab);
+		return [...variants];
+	}
+
+	private buildRoleAliasesForExecution(
+		workflow: SpaceWorkflow | null,
+		execution: NodeExecution
+	): string[] {
+		const aliases = new Set<string>(this.roleNameVariants(execution.agentName));
+		if (!workflow) return [...aliases];
+
+		const node = workflow.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
+		if (!node) return [...aliases];
+
+		const nodeAgents = resolveNodeAgents(node);
+		const slot =
+			nodeAgents.find((agent) => agent.name === execution.agentName) ??
+			(execution.agentId
+				? nodeAgents.find((agent) => agent.agentId === execution.agentId)
+				: undefined);
+		if (slot?.name) {
+			for (const variant of this.roleNameVariants(slot.name)) {
+				aliases.add(variant);
+			}
+		}
+
+		const spaceAgentId = execution.agentId ?? slot?.agentId;
+		if (spaceAgentId) {
+			const spaceAgent = this.config.spaceAgentManager.getById(spaceAgentId);
+			if (spaceAgent?.name) {
+				for (const variant of this.roleNameVariants(spaceAgent.name)) {
+					aliases.add(variant);
+				}
+			}
+		}
+
+		return [...aliases];
+	}
+
+	private isWriterAuthorizedForRoleAliases(writers: string[], roleAliases: string[]): boolean {
+		const normalizedAliases = new Set(
+			roleAliases.map((alias) => this.normalizeRoleToken(alias)).filter((alias) => alias.length > 0)
+		);
+		return writers.some((writer) => {
+			const normalizedWriter = this.normalizeRoleToken(writer);
+			return normalizedWriter === '*' || normalizedAliases.has(normalizedWriter);
+		});
 	}
 
 	// -------------------------------------------------------------------------
@@ -2029,8 +2092,8 @@ export class TaskAgentManager {
 		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
 		const bySession = nodeExecutions.find((exec) => exec.agentSessionId === subSessionId);
 		const byRole = nodeExecutions.find((exec) => exec.agentName === role);
-		const workflowNodeId =
-			workflowNodeIdHint ?? bySession?.workflowNodeId ?? byRole?.workflowNodeId ?? '';
+		const execution = bySession ?? byRole;
+		const workflowNodeId = workflowNodeIdHint ?? execution?.workflowNodeId ?? '';
 		const run = this.config.workflowRunRepo.getRun(workflowRunId);
 		const workflow = run?.workflowId
 			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
@@ -2075,9 +2138,14 @@ export class TaskAgentManager {
 			},
 		});
 
+		const roleAliases = execution
+			? this.buildRoleAliasesForExecution(workflow, execution)
+			: this.roleNameVariants(role);
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myRole: role,
+			myRoleAliases: roleAliases,
 			taskId,
 			spaceId,
 			channelResolver,

@@ -212,6 +212,24 @@ function resolveStepId(node: VisualNode, generatedIds: Map<string, string>): str
 	return generatedIds.get(key)!;
 }
 
+function toRoleSlug(value: string): string {
+	const slug = value
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+	return slug;
+}
+
+function deriveSingleAgentRoleName(node: VisualNode, fallbackIndex: number): string {
+	const fromSingleSlot =
+		Array.isArray(node.step.agents) && node.step.agents.length === 1
+			? node.step.agents[0]?.name
+			: '';
+	const fromNodeName = toRoleSlug(node.step.name);
+	return fromSingleSlot?.trim() || fromNodeName || `agent-${fallbackIndex + 1}`;
+}
+
 /**
  * Build the serialized workflow fields from a VisualEditorState.
  * Shared between create and update serialisation.
@@ -263,7 +281,12 @@ function buildWorkflowFields(state: VisualEditorState): {
 		const agents: WorkflowNodeAgent[] = hasMultiAgent
 			? node.step.agents!
 			: node.step.agentId
-				? [{ agentId: node.step.agentId, name: node.step.agentId }]
+				? [
+						{
+							agentId: node.step.agentId,
+							name: deriveSingleAgentRoleName(node, i),
+						},
+					]
 				: [];
 		return {
 			id: persistedId,

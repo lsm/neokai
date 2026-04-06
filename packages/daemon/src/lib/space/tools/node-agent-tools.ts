@@ -66,6 +66,10 @@ export type { ToolResult };
 
 const log = new Logger('node-agent-tools');
 
+function normalizeRoleToken(value: string): string {
+	return value.trim().toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -79,6 +83,11 @@ export interface NodeAgentToolsConfig {
 	mySessionId: string;
 	/** Role of this node agent (e.g., 'coder', 'reviewer'). */
 	myRole: string;
+	/**
+	 * Optional role aliases that should be treated as equivalent to myRole for
+	 * writer authorization checks (e.g., slot role + underlying agent name).
+	 */
+	myRoleAliases?: string[];
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
 	/** Space ID — used for event emission in report_done. */
@@ -154,6 +163,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 	const {
 		mySessionId,
 		myRole,
+		myRoleAliases,
 		spaceId,
 		channelResolver,
 		workflowRunId,
@@ -167,6 +177,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		scriptExecutor,
 		scriptContext,
 	} = config;
+
+	const roleAliases = new Set(
+		[myRole, ...(myRoleAliases ?? [])]
+			.map((value) => normalizeRoleToken(value))
+			.filter((value) => value.length > 0)
+	);
 
 	return {
 		/**
@@ -554,7 +570,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					});
 				}
 				const writers = fieldDef.writers;
-				const isAuthorized = writers.includes('*') || writers.includes(myRole);
+				const isAuthorized = writers.some((writer) => {
+					const normalizedWriter = normalizeRoleToken(writer);
+					return normalizedWriter === '*' || roleAliases.has(normalizedWriter);
+				});
 				if (!isAuthorized) {
 					return jsonResult({
 						success: false,
@@ -563,6 +582,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							`Allowed writers: ${writers.length > 0 ? writers.join(', ') : '(none)'}.`,
 						allowedWriters: writers,
 						myRole,
+						myRoleAliases: [...roleAliases],
 					});
 				}
 			}
