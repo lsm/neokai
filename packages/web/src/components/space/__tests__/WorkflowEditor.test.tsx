@@ -542,8 +542,10 @@ describe('WorkflowEditor', () => {
 				]
 			);
 
-			expect(nodes[0].agentId).toBe('agent-b');
-			expect(nodes[1].agentId).toBe('agent-c');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-b');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+			expect(nodes[1].agents?.[0].agentId).toBe('agent-c');
+			expect(nodes[1].agents?.[0].name).toBe('reviewer');
 		});
 
 		it('template assigns fallback agents when no role-name match exists', () => {
@@ -559,8 +561,10 @@ describe('WorkflowEditor', () => {
 				[makeAgent('agent-x', 'Alice'), makeAgent('agent-y', 'Bob')]
 			);
 
-			expect(nodes[0].agentId).toBe('agent-x');
-			expect(nodes[1].agentId).toBe('agent-y');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-x');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+			expect(nodes[1].agents?.[0].agentId).toBe('agent-y');
+			expect(nodes[1].agents?.[0].name).toBe('reviewer');
 		});
 
 		it('uses explicit agentId from template step when provided', () => {
@@ -572,7 +576,8 @@ describe('WorkflowEditor', () => {
 				},
 				mockAgents.value
 			);
-			expect(nodes[0].agentId).toBe('agent-2');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-2');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
 		});
 
 		it('prefers built-in workflows from store as template source', () => {
@@ -607,6 +612,21 @@ describe('WorkflowEditor', () => {
 				mockAgents.value
 			);
 			expect(nodes[0].systemPrompt).toEqual({ mode: 'override', value: 'Be careful.' });
+		});
+
+		it('creates a single-slot agents entry for single-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Single Slot Template',
+					description: 'Single slot',
+					steps: [{ name: 'Review', role: 'reviewer' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agentId).toBe('agent-4');
+			expect(nodes[0].agents).toHaveLength(1);
+			expect(nodes[0].agents?.[0].name).toBe('reviewer');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-4');
 		});
 
 		it('wraps per-slot systemPrompt in WorkflowNodeAgentOverride for multi-agent steps', () => {

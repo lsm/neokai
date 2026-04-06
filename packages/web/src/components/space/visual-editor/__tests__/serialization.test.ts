@@ -294,6 +294,12 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes![1].agents[0].agentId).toBe('a2');
 	});
 
+	it('single-agent shorthand derives role name from node name (not raw agentId)', () => {
+		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
+		expect(params.nodes![0].agents[0].name).toBe('step-1');
+		expect(params.nodes![1].agents[0].name).toBe('step-2');
+	});
+
 	it('produces agents array (model/systemPrompt removed from WorkflowNodeInput)', () => {
 		// model and systemPrompt are NodeDraft-only fields (not on WorkflowNodeInput or WorkflowNodeAgent)
 		const params = visualStateToCreateParams(

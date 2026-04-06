@@ -1341,6 +1341,37 @@ describe('node-agent-tools: write_gate', () => {
 		expect(data.myRole).toBe('coder');
 	});
 
+	test('succeeds when writer matches a role alias (case-insensitive)', async () => {
+		const gate: Gate = {
+			id: 'gate-alias-writable',
+			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, {
+			workflow,
+			myRole: '3de067fc-82f3-4f8c-a3fc-c2c3205648dd',
+			myRoleAliases: ['Reviewer'],
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-alias-writable', data: { x: 'ok' } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.updatedData).toEqual({ x: 'ok' });
+	});
+
 	test('succeeds when role is in field writers and merges data', async () => {
 		const gate: Gate = {
 			id: 'gate-writable',

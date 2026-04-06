@@ -306,14 +306,26 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				if (agents.length === 0) return undefined;
 				return agents[Math.min(fallbackUsed, agents.length - 1)];
 			})();
+		const resolvedSystemPrompt = step.systemPrompt?.trim()
+			? { mode: 'override' as const, value: step.systemPrompt.trim() }
+			: undefined;
+		const resolvedRoleName =
+			role || assigned?.name?.trim() || name.toLowerCase().replace(/\s+/g, '-') || 'agent';
 		return {
 			localId: makeLocalId(),
 			name,
 			agentId: assigned?.id ?? '',
+			agents: [
+				{
+					agentId: assigned?.id ?? '',
+					name: resolvedRoleName,
+					model: step.model?.trim() || undefined,
+					systemPrompt: resolvedSystemPrompt,
+				},
+			],
+			// Keep legacy top-level fields in sync for single-slot UI paths.
 			model: step.model?.trim() || undefined,
-			systemPrompt: step.systemPrompt?.trim()
-				? { mode: 'override' as const, value: step.systemPrompt.trim() }
-				: undefined,
+			systemPrompt: resolvedSystemPrompt,
 			instructions: step.instructions?.trim() ?? '',
 		};
 	});
