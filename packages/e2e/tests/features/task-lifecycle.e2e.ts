@@ -144,9 +144,15 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		// Click the Done stat card to switch from overview to the Tasks room-level tab.
 		// Note: the stat card only switches the room tab — it does NOT set the internal
 		// Done sub-filter within RoomTasks, so we must click the Done sub-tab separately.
-		await page.getByRole('button', { name: /Done/ }).click();
+		// Scope the locator to the stats grid (grid-cols-3) which only exists in the
+		// overview dashboard, so waitFor('detached') doesn't match the RoomTasks sub-tab.
+		const doneStatCard = page.locator('.grid-cols-3').getByRole('button', { name: /Done/ });
+		await doneStatCard.click();
 
-		// Now click the Done sub-tab within RoomTasks to filter for completed tasks
+		// Wait for the overview to unmount (stat card detaches) before clicking the
+		// Done sub-tab within RoomTasks, to avoid a race where both buttons exist
+		// momentarily and the second click hits the stat card again (a no-op).
+		await doneStatCard.waitFor({ state: 'detached', timeout: 5000 });
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Wait for the task to appear in the list
