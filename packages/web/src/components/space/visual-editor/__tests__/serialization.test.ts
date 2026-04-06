@@ -324,9 +324,10 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes![0].agents[0].agentId).toBe('a1');
 	});
 
-	it('omits empty instructions', () => {
+	it('nodes have no instructions field (removed from schema)', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.nodes![0].instructions).toBeUndefined();
+		// WorkflowNodeInput no longer has an instructions field
+		expect('instructions' in params.nodes![0]).toBe(false);
 	});
 
 	it('passes startNodeId through', () => {
@@ -645,10 +646,7 @@ describe('multi-agent step serialization', () => {
 
 	it('workflowToVisualState preserves channels array at workflow level', () => {
 		const workflow = makeWorkflow({
-			channels: [
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'PR' },
-				{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' },
-			],
+			channels: [],
 			nodes: [
 				{
 					id: 's1',
@@ -763,7 +761,6 @@ describe('multi-agent step serialization', () => {
 				{
 					from: 'Plan',
 					to: 'Code',
-					direction: 'one-way',
 					gateId: 'review-votes-gate',
 				},
 			],
@@ -813,10 +810,7 @@ describe('multi-agent step serialization', () => {
 
 	it('full round-trip workflowToVisualState -> visualStateToUpdateParams preserves multi-agent data', () => {
 		const workflow = makeWorkflow({
-			channels: [
-				{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
-				{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' as const },
-			],
+			channels: [],
 			nodes: [
 				{
 					id: 's1',
@@ -850,12 +844,10 @@ describe('multi-agent step serialization', () => {
 		expect(params.channels![0]).toMatchObject({
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 		});
 		expect(params.channels![1]).toMatchObject({
 			from: 'reviewer',
 			to: ['coder', 'qa'],
-			direction: 'bidirectional',
 		});
 	});
 });
@@ -1124,7 +1116,6 @@ describe('per-slot agent overrides round-trip', () => {
 		// Simulates the user renaming a slot role via the role input field and then saving.
 		// Workflow-level channels are preserved through serialization (user must update them manually).
 		const wf = makeWorkflow({
-			channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' as const }],
 			nodes: [
 				{
 					id: 's1',
@@ -1150,7 +1141,6 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(params.channels![0]).toMatchObject({
 			from: 'task-agent',
 			to: 'coder',
-			direction: 'bidirectional',
 		});
 	});
 });

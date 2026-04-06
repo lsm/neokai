@@ -38,7 +38,6 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		workspacePath: '/projects/my-space',
 		description: '',
 		backgroundContext: '',
-		instructions: '',
 		sessionIds: [],
 		status: 'active',
 		createdAt: Date.now(),

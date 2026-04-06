@@ -25,11 +25,9 @@ import type {
 	UpdateSpaceTaskParams,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
-	ResolvedChannel,
-	WorkflowNode,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -244,7 +242,7 @@ export class SpaceRuntime {
 	private taskCrashCounts = new Map<string, number>();
 
 	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
-	private resolvedChannelsMap = new Map<string, ResolvedChannel[]>();
+	private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
@@ -695,7 +693,7 @@ export class SpaceRuntime {
 		// Resolve channel topology for the start node and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
-		this.resolveAndStoreChannels(run.id, space.id, startStep, workflow.channels ?? []);
+		this.storeWorkflowChannels(run.id, workflow.channels ?? []);
 
 		return { run, tasks: canonicalTask ? [canonicalTask] : [] };
 	}
@@ -1248,18 +1246,11 @@ export class SpaceRuntime {
 		};
 
 		// Collect node IDs that appear as channel sources (have outbound channels).
-		// Bidirectional channels flow both ways, so both endpoints are non-terminal.
+		// Each channel is one-way; a node has outbound if it appears in channel.from.
 		const nodesWithOutbound = new Set<string>();
 		for (const ch of channels) {
 			const fromId = resolveRef(ch.from);
 			if (fromId) nodesWithOutbound.add(fromId);
-			if (ch.direction === 'bidirectional') {
-				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
-				for (const target of targets) {
-					const toId = resolveRef(target);
-					if (toId) nodesWithOutbound.add(toId);
-				}
-			}
 		}
 
 		// Terminal nodes are those with no outbound channels
@@ -1569,28 +1560,23 @@ export class SpaceRuntime {
 	 * workflow channels array. This function only resolves and stores user-declared
 	 * channels — no runtime auto-generation.
 	 */
-	resolveAndStoreChannels(
-		runId: string,
-		_spaceId: string,
-		step: WorkflowNode,
-		channels: WorkflowChannel[]
-	): void {
-		// Resolve user-declared channels from workflow-level channels array
-		const resolved = resolveNodeChannels(step, channels);
-		this.resolvedChannelsMap.set(runId, resolved);
+	/**
+	 * Stores the workflow channels for a run in memory.
+	 * Channels are node-to-node (WorkflowNode.name) and need no slot-level resolution.
+	 */
+	storeWorkflowChannels(runId: string, channels: WorkflowChannel[]): void {
+		this.workflowChannelsMap.set(runId, channels);
 	}
 
 	/**
-	 * Returns the resolved channels for the given run ID.
-	 * Used by consumers that replaced ChannelResolver.fromRunConfig(run.config).
+	 * Returns the channels for the given run ID.
 	 */
-	getRunResolvedChannels(runId: string): ResolvedChannel[] {
-		return this.resolvedChannelsMap.get(runId) ?? [];
+	getRunWorkflowChannels(runId: string): WorkflowChannel[] {
+		return this.workflowChannelsMap.get(runId) ?? [];
 	}
 
 	/**
 	 * Returns the channels array for the workflow associated with the given run.
-	 * Used by task-agent-tools.ts to pass channels to resolveAndStoreChannels.
 	 */
 	getWorkflowChannels(runId: string): WorkflowChannel[] {
 		const run = this.config.workflowRunRepo.getRun(runId);

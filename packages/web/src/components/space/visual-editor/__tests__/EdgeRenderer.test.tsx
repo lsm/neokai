@@ -426,27 +426,27 @@ describe('Channel edge constants', () => {
 describe('computeChannelEdgePoints', () => {
 	it('returns null when from-node is missing', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'missing',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		expect(computeChannelEdgePoints(channel, NODE_POSITIONS)).toBeNull();
 	});
 
 	it('returns null when to-node is missing', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'missing',
-			direction: 'bidirectional',
 		};
 		expect(computeChannelEdgePoints(channel, NODE_POSITIONS)).toBeNull();
 	});
 
 	it('source x is bottom-center of from-node for regular channel', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
@@ -456,9 +456,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('source y is bottom edge of from-node', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
@@ -468,9 +468,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('target x is top-center of to-node', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
@@ -480,9 +480,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('target y is top edge of to-node', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
@@ -492,9 +492,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('task-agent channel uses TASK_AGENT_X as source x', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'task-agent',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
@@ -503,9 +503,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('task-agent channel uses top-center of target node', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'task-agent',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 		};
 		const pts = computeChannelEdgePoints(channel, NODE_POSITIONS);
 		expect(pts).not.toBeNull();
@@ -516,9 +516,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('builds an orthogonal path for routed semantic channels', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
-			direction: 'one-way',
 			sourceSide: 'right',
 			targetSide: 'left',
 		};
@@ -533,9 +533,9 @@ describe('computeChannelEdgePoints', () => {
 
 	it('trims the visible bidirectional channel path so arrowheads are not buried in nodes', () => {
 		const channel: ResolvedWorkflowChannel = {
+			direction: 'one-way' as const,
 			fromStepId: 'step-1',
 			toStepId: 'step-2',
-			direction: 'bidirectional',
 			sourceSide: 'right',
 			targetSide: 'left',
 		};
@@ -572,28 +572,20 @@ function renderEdgesWithChannels(props: Partial<EdgeRendererProps> = {}) {
 
 describe('EdgeRenderer — channel edge rendering', () => {
 	it('renders channel edges when channels prop is provided', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-			{ fromStepId: 'task-agent', toStepId: 'step-2', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const channelEdgeGroups = container.querySelectorAll('g[data-channel-edge="true"]');
 		expect(channelEdgeGroups).toHaveLength(2);
 	});
 
 	it('channel edges have correct data-testid attribute', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
 		expect(getByTestId('channel-edge-task-agent-step-1')).toBeTruthy();
 	});
 
 	it('channel edges have correct data-channel-direction attribute', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const bidirectional = container.querySelector('g[data-channel-direction="bidirectional"]');
 		const oneWay = container.querySelector('g[data-channel-direction="one-way"]');
@@ -602,9 +594,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('bidirectional channel has both markerStart and markerEnd on visible path', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const visiblePath = container.querySelector(
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
@@ -617,9 +607,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('one-way channel has only markerEnd on visible path', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const visiblePath = container.querySelector(
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
@@ -632,9 +620,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('selected channel uses the white selected arrowhead marker', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ id: 'plan:review', fromStepId: 'step-1', toStepId: 'step-2', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({
 			channels,
 			selectedChannelId: 'plan:review',
@@ -654,9 +640,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				id: 'plan:review',
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'condition',
 			},
 		];
@@ -666,9 +652,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('one-way ungated channel edges use dashed stroke style', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const visiblePath = container.querySelector(
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
@@ -680,9 +664,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('one-way gated channel edges still use dashed stroke style', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'human',
 			},
 		];
@@ -695,9 +679,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('bidirectional channel edges use solid stroke style', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const visiblePath = container.querySelector(
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
@@ -709,9 +691,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('renders a midpoint gate badge when a channel is gated', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'condition',
 			},
 		];
@@ -723,9 +705,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('one-way gated badge renders a directional arrow polygon', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 			},
 		];
@@ -742,9 +724,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		// must NOT show ⇄ — it shows a single directional arrow (same as one-way).
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				gateType: 'check',
 				// no reverseGateType
 			},
@@ -758,9 +740,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('bidirectional channel with only reverse gate renders a single reverse arrow', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				// no gateType
 				reverseGateType: 'check',
 			},
@@ -772,9 +754,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('bidirectional channel with both direction gates renders two arrows', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				gateType: 'check',
 				reverseGateType: 'check',
 			},
@@ -789,9 +771,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('both-direction gated badge label has no ⇄ prefix', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				gateType: 'check',
 				reverseGateType: 'check',
 			},
@@ -803,9 +785,9 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	it('renders a loop badge when a channel is cyclic', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-2',
 				toStepId: 'step-1',
-				direction: 'one-way',
 				isCyclic: true,
 			},
 		];
@@ -814,17 +796,13 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('does not render a midpoint gate badge when a channel is ungated', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'step-1', toStepId: 'step-2', direction: 'one-way' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { queryByTestId } = renderEdgesWithChannels({ channels });
 		expect(queryByTestId('channel-gate-step-1-step-2')).toBeNull();
 	});
 
 	it('channel edges use teal color (distinct from transition edge colors)', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const visiblePath = container.querySelector(
 			'g[data-channel-edge="true"] path:not([stroke="transparent"])'
@@ -838,19 +816,14 @@ describe('EdgeRenderer — channel edge rendering', () => {
 	});
 
 	it('skips channel edges where target node position is missing', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-			{ fromStepId: 'task-agent', toStepId: 'missing-node', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const channelEdgeGroups = container.querySelectorAll('g[data-channel-edge="true"]');
 		expect(channelEdgeGroups).toHaveLength(1);
 	});
 
 	it('channel edge defs include channel arrowhead markers', () => {
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId: 'task-agent', toStepId: 'step-1', direction: 'bidirectional' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		const { container } = renderEdgesWithChannels({ channels });
 		const defs = container.querySelector('defs');
 		expect(defs).not.toBeNull();
@@ -868,9 +841,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('renders custom gateLabel when set on one-way channel', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				gateLabel: 'Custom Gate',
 			},
@@ -882,9 +855,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('falls back to heuristic label when gateLabel is not set', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'human',
 			},
 		];
@@ -895,9 +868,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('renders custom gateColor on badge text when set', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				gateColor: '#ff6600',
 			},
@@ -910,9 +883,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('falls back to heuristic color when gateColor is not set', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 			},
 		];
@@ -925,9 +898,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('applies custom gateColor to arrow polygon fills', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'condition',
 				gateColor: '#00ff88',
 			},
@@ -943,9 +916,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				id: 'custom:gate',
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				gateColor: '#ff6600',
 			},
@@ -959,9 +932,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				id: 'custom:gate',
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				gateColor: '#ff6600',
 			},
@@ -976,9 +949,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('renders script indicator (S) when hasScript is true', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				hasScript: true,
 			},
@@ -997,9 +970,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('does not render script icon when hasScript is false', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				hasScript: false,
 			},
@@ -1015,9 +988,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('does not render script icon when hasScript is undefined', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				// hasScript not set
 			},
@@ -1032,9 +1005,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('script icon uses gateColor when hasScript is true', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				gateColor: '#ff6600',
 				hasScript: true,
@@ -1052,9 +1025,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				id: 'script:gate',
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'one-way',
 				gateType: 'check',
 				hasScript: true,
 			},
@@ -1070,9 +1043,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('custom gateLabel on bidirectional forward gate renders correctly', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				gateType: 'human',
 				gateLabel: 'Approve',
 				reverseGateType: 'check',
@@ -1085,9 +1058,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('custom gateColor on bidirectional both-direction gates applies to both arrows', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				gateType: 'check',
 				gateColor: '#00ccff',
 				reverseGateType: 'check',
@@ -1107,9 +1080,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('loop badge is unaffected by gateLabel/gateColor', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-2',
 				toStepId: 'step-1',
-				direction: 'one-way',
 				isCyclic: true,
 				gateType: 'check',
 				gateLabel: 'Custom',
@@ -1124,9 +1097,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('uses reverseHasScript when only reverse gate is set on bidirectional', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				reverseGateType: 'check',
 				reverseHasScript: true,
 			},
@@ -1143,9 +1116,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('uses reverseGateLabel when only reverse gate is set on bidirectional', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				reverseGateType: 'human',
 				reverseGateLabel: 'Reverse Label',
 			},
@@ -1157,9 +1130,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('uses reverseGateColor when only reverse gate is set on bidirectional', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				reverseGateType: 'check',
 				reverseGateColor: '#00ff00',
 			},
@@ -1172,9 +1145,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('forward gateLabel/gateColor takes precedence over reverse on bidirectional with both gates', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				gateType: 'human',
 				gateLabel: 'Forward',
 				gateColor: '#ff0000',
@@ -1192,9 +1165,9 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 	it('reverseGateColor on arrow polygon when only reverse gate is set', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
+				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				direction: 'bidirectional',
 				reverseGateType: 'check',
 				reverseGateColor: '#aa00ff',
 			},
@@ -1323,9 +1296,7 @@ describe('gate badge arrow SVG transform', () => {
 			[fromStepId]: { x: 50, y: 50, width: 160, height: 80 },
 			[toStepId]: { x: 300, y: 50, width: 160, height: 80 },
 		};
-		const channels: ResolvedWorkflowChannel[] = [
-			{ fromStepId, toStepId, direction: 'one-way', gateType: 'check' },
-		];
+		const channels: ResolvedWorkflowChannel[] = [];
 		// We need to override the angle — use a path that produces the desired angle
 		// by swapping fromStepId/toStepId or using node positions that force the angle.
 		// For a direct test of the badge, render it with known node positions.

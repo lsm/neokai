@@ -102,8 +102,7 @@ function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
 		});
 		agentLabel = labels.join(', ');
 	}
-	const instructions = step.instructions ? `\n    Instructions: ${step.instructions}` : '';
-	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})${instructions}`;
+	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})`;
 }
 
 function formatChannelGateLabel(ch: WorkflowChannel, gates: Gate[]): string {
@@ -115,10 +114,9 @@ function formatChannelGateLabel(ch: WorkflowChannel, gates: Gate[]): string {
 
 function formatChannel(ch: WorkflowChannel, gates: Gate[]): string {
 	const to = Array.isArray(ch.to) ? ch.to.join(', ') : ch.to;
-	const dir = ch.direction === 'bidirectional' ? '↔' : '→';
 	const gateLabel = formatChannelGateLabel(ch, gates);
 	const label = ch.label ? ` (${ch.label})` : '';
-	return `- \`${ch.from}\` ${dir} \`${to}\`${label}${gateLabel}`;
+	return `- \`${ch.from}\` → \`${to}\`${label}${gateLabel}`;
 }
 
 function formatGate(gate: Gate): string {

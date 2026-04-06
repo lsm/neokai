@@ -1322,9 +1322,7 @@ describe('multi-agent step import', () => {
 									{ agentRef: 'Coder', name: 'coder' },
 									{ agentRef: 'Reviewer', name: 'reviewer' },
 								],
-								channels: [
-									{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
-								],
+								channels: [],
 							},
 						},
 					],
@@ -1430,7 +1428,6 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Solo',
 								agents: [{ agentRef: 'Coder', name: 'coder' }],
-								channels: [{ from: '*', to: '*', direction: 'bidirectional' as const }],
 							},
 						},
 					],
@@ -1613,7 +1610,6 @@ type MultiAgentStepEntry =
 				channels?: Array<{
 					from: string;
 					to: string | string[];
-					direction: 'one-way' | 'bidirectional';
 					label?: string;
 				}>;
 				instructions?: string;
@@ -1641,7 +1637,6 @@ function makeMultiAgentBundle(
 			const workflowChannels: Array<{
 				from: string;
 				to: string | string[];
-				direction: 'one-way' | 'bidirectional';
 				label?: string;
 			}> = [];
 			const nodes = w.nodes.map((s) => {
@@ -1869,7 +1864,6 @@ describe('full export→import round-trip', () => {
 			],
 			startNodeId: 'step-ma',
 			tags: ['collab'],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2008,7 +2002,6 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-ow',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'alpha', to: 'beta', direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2071,7 +2064,6 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-fo',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2114,7 +2106,6 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-wc',
 			rules: [],
 			tags: [],
-			channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2180,7 +2171,6 @@ describe('full export→import round-trip', () => {
 			],
 			startNodeId: 'step-plan',
 			tags: ['mixed'],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};

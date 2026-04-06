@@ -637,7 +637,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				],
 				startNodeId: 'chan-plan',
 				tags: [],
-				channels: [{ from: 'planner', to: 'coder', direction: 'one-way' }],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -672,7 +671,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
-				channels: [{ from: 'planner', to: 'coder', direction: 'one-way' }],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -742,7 +740,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
-				channels: [{ from: 'planner', to: '*', direction: 'one-way' }],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

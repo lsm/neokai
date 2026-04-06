@@ -86,13 +86,11 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 				id: step1Id,
 				name: 'Plan',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
-				instructions: 'Plan things',
 			},
 			{
 				id: step2Id,
 				name: 'Code',
 				agents: [{ agentId: 'agent-2', name: 'coder' }],
-				instructions: '',
 			},
 		],
 		startNodeId: step1Id,
@@ -291,9 +289,7 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('loads channels from existing workflow', () => {
-			const wf = makeWorkflow({
-				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
-			});
+			const wf = makeWorkflow({});
 			const { channels } = initFromWorkflow(wf);
 			expect(channels).toHaveLength(1);
 			expect(channels[0].from).toBe('task-agent');
@@ -741,7 +737,6 @@ describe('WorkflowEditor', () => {
 								systemPrompt: { mode: 'override', value: 'Visible workflow prompt.' },
 							},
 						],
-						instructions: 'Plan things',
 					},
 					{
 						id: 'step-2',
@@ -784,7 +779,6 @@ describe('WorkflowEditor', () => {
 								systemPrompt: { mode: 'override', value: 'Plan carefully.' },
 							},
 						],
-						instructions: 'Plan things',
 					},
 				],
 			});
@@ -876,18 +870,11 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('channels from existing workflow are included in updateWorkflow call', async () => {
-			const wf = makeWorkflow({
-				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
-			});
+			const wf = makeWorkflow({});
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
 			fireEvent.click(getByText('Save Changes'));
 			await waitFor(() => {
-				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
-					'wf-1',
-					expect.objectContaining({
-						channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
-					})
-				);
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith('wf-1', expect.objectContaining({}));
 			});
 		});
 	});

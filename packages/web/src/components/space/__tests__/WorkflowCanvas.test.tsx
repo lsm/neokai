@@ -138,7 +138,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 			{ id: 'n2', name: 'Coder', agents: [] },
 		],
 		startNodeId: 'n1',
-		channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way' }],
 		gates: [],
 		tags: [],
 		createdAt: 1000,
@@ -276,11 +275,7 @@ describe('WorkflowCanvas', () => {
 					{ id: 'n3', name: 'Verify', agents: [] },
 				],
 				startNodeId: 'n1',
-				channels: [
-					{ id: 'ch-1', from: 'Plan', to: 'Code', direction: 'one-way' },
-					{ id: 'ch-2', from: 'Code', to: 'Verify', direction: 'one-way' },
-					{ id: 'ch-3', from: 'Verify', to: 'Plan', direction: 'one-way' },
-				],
+				channels: [],
 			}),
 		];
 		const { getByTestId } = render(<WorkflowCanvas workflowId="wf-1" spaceId="sp-1" />);
@@ -294,7 +289,6 @@ describe('WorkflowCanvas', () => {
 	it('renders gate icon ON the channel line (not as separate node)', () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -311,7 +305,6 @@ describe('WorkflowCanvas', () => {
 	it('shows waiting_human gate status for human approval gate with no data', () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -326,7 +319,6 @@ describe('WorkflowCanvas', () => {
 	it('shows open gate status when approved=true in gate data', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -342,7 +334,6 @@ describe('WorkflowCanvas', () => {
 	it('shows blocked gate status when approved=false', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -358,7 +349,6 @@ describe('WorkflowCanvas', () => {
 	it('updates gate status on space.gateData.updated event', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -457,7 +447,6 @@ describe('WorkflowCanvas', () => {
 	it('shows remove-gate button on gated channels in template mode', () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -493,7 +482,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -527,7 +515,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -582,7 +569,6 @@ describe('WorkflowCanvas', () => {
 	it('"View Artifacts" button opens artifacts panel overlay for waiting_human gate', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -611,7 +597,6 @@ describe('WorkflowCanvas', () => {
 	it('closing the artifacts panel overlay hides it', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -650,7 +635,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -686,7 +670,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -713,7 +696,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -756,7 +738,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -774,7 +755,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'check-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -793,7 +773,6 @@ describe('WorkflowCanvas', () => {
 	it('clicking Approve on waiting_human gate calls approveGate RPC', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -835,7 +814,6 @@ describe('WorkflowCanvas', () => {
 	it('script-only gate (no fields) with _scriptResult.success:false shows blocked gate icon in runtime mode', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -860,7 +838,6 @@ describe('WorkflowCanvas', () => {
 	it('script-only gate with _scriptResult.success:false renders gate-script-error-badge', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -886,7 +863,6 @@ describe('WorkflowCanvas', () => {
 	it('script-only gate with no _scriptResult shows open gate icon (backward compat)', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -916,7 +892,6 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'combo-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -945,7 +920,6 @@ describe('WorkflowCanvas', () => {
 	it('field-only gate failure (approved=false, no _scriptResult) shows blocked (existing behavior)', async () => {
 		const gate = makeGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'gate-1' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -968,9 +942,7 @@ describe('WorkflowCanvas', () => {
 			],
 		});
 		const wf = makeWorkflow({
-			channels: [
-				{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'combo-gate-2' },
-			],
+			channels: [],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -999,7 +971,6 @@ describe('WorkflowCanvas', () => {
 	it('script error badge has the reason in its title attribute', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -1027,7 +998,6 @@ describe('WorkflowCanvas', () => {
 	it('script error badge is NOT shown in template mode', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -1040,7 +1010,6 @@ describe('WorkflowCanvas', () => {
 	it('script-only gate with _scriptResult.success:false but no reason still blocks (no badge shown)', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];
@@ -1068,7 +1037,6 @@ describe('WorkflowCanvas', () => {
 	it('gate data event with script error updates gate to blocked', async () => {
 		const gate = makeScriptGate();
 		const wf = makeWorkflow({
-			channels: [{ id: 'ch-1', from: 'n1', to: 'n2', direction: 'one-way', gateId: 'script-gate' }],
 			gates: [gate],
 		});
 		mockWorkflows.value = [wf];

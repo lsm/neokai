@@ -128,7 +128,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			name: s.name,
 			agentId: '',
 			agents: s.agents,
-			instructions: s.instructions ?? '',
+			instructions: '',
 		};
 		return { step, position };
 	});

@@ -132,9 +132,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 			sections.push(`\n**Nodes:**`);
 			for (const node of workflow.nodes) {
 				sections.push(`- **${node.name}** (id: \`${node.id}\`)`);
-				if (node.instructions) {
-					sections.push(`  Instructions: ${node.instructions}`);
-				}
 			}
 		}
 	}

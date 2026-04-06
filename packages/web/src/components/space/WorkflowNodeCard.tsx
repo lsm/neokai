@@ -583,11 +583,6 @@ interface ChannelsSectionProps {
 	onUpdate: (node: NodeDraft) => void;
 }
 
-/** Human-readable label for a channel direction. */
-function channelDirectionLabel(direction: 'one-way' | 'bidirectional'): string {
-	return direction === 'bidirectional' ? '↔' : '→';
-}
-
 /** Format a to value for display. */
 function formatTo(to: string | string[]): string {
 	return Array.isArray(to) ? `[${to.join(', ')}]` : to;
@@ -608,12 +603,7 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 		updateChannels(channels.filter((_, i) => i !== index));
 	}
 
-	function addChannel(
-		from: string,
-		to: string,
-		direction: 'one-way' | 'bidirectional',
-		label?: string
-	) {
+	function addChannel(from: string, to: string, label?: string) {
 		if (!from || !to) return;
 		// Support comma-separated multi-select for fan-out
 		const toValue: string | string[] = to.includes(',')
@@ -622,7 +612,10 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 					.map((s) => s.trim())
 					.filter(Boolean)
 			: to;
-		updateChannels([...channels, { from, to: toValue, direction, label: label || undefined }]);
+		updateChannels([
+			...channels,
+			{ id: crypto.randomUUID(), from, to: toValue, label: label || undefined },
+		]);
 	}
 
 	return (
@@ -643,7 +636,7 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 						class="flex items-center gap-2 bg-dark-800 border border-dark-600 rounded px-2 py-1.5"
 					>
 						<span class="text-xs text-gray-300 font-mono flex-1">
-							{ch.from} {channelDirectionLabel(ch.direction)} {formatTo(ch.to)}
+							{ch.from} → {formatTo(ch.to)}
 							{ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
 						</span>
 						<button
@@ -673,7 +666,7 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 
 interface AddChannelFormProps {
 	knownRoles: string[];
-	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional', label?: string) => void;
+	onAdd: (from: string, to: string, label?: string) => void;
 }
 
 function AddChannelForm({ knownRoles, onAdd }: AddChannelFormProps) {
@@ -689,7 +682,7 @@ function AddChannelForm({ knownRoles, onAdd }: AddChannelFormProps) {
 
 interface ChannelFormBodyProps {
 	knownRoles: string[];
-	onAdd: (from: string, to: string, direction: 'one-way' | 'bidirectional', label?: string) => void;
+	onAdd: (from: string, to: string, label?: string) => void;
 }
 
 function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
@@ -699,11 +692,8 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 		const form = e.currentTarget as HTMLFormElement;
 		const from = (form.elements.namedItem('from') as HTMLSelectElement).value;
 		const to = (form.elements.namedItem('to') as HTMLInputElement).value.trim();
-		const direction = (form.elements.namedItem('direction') as HTMLSelectElement).value as
-			| 'one-way'
-			| 'bidirectional';
 		const label = (form.elements.namedItem('label') as HTMLInputElement).value.trim();
-		onAdd(from, to, direction, label || undefined);
+		onAdd(from, to, label || undefined);
 		form.reset();
 	}
 
@@ -723,13 +713,6 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
 							{r}
 						</option>
 					))}
-				</select>
-				<select
-					name="direction"
-					class="text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
-				>
-					<option value="one-way">→ one-way</option>
-					<option value="bidirectional">↔ bidirectional</option>
 				</select>
 			</div>
 			<input

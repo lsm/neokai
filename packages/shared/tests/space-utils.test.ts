@@ -1,9 +1,17 @@
 import { describe, test, expect } from 'bun:test';
-import type { SpaceAgent, WorkflowChannel, WorkflowNode } from '../src/types/space.ts';
+import type {
+	SpaceAgent,
+	SpaceWorkflow,
+	WorkflowChannel,
+	WorkflowNode,
+} from '../src/types/space.ts';
 import {
 	resolveNodeAgents,
-	resolveNodeChannels,
-	validateNodeChannels,
+	validateChannels,
+	isGateWriterAuthorized,
+	findChannel,
+	getChannelsFromNode,
+	getChannelsToNode,
 } from '../src/types/space-utils.ts';
 
 // ============================================================================
@@ -30,6 +38,29 @@ function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
 	};
 }
 
+function makeChannel(overrides: Partial<WorkflowChannel> = {}): WorkflowChannel {
+	return {
+		id: 'ch-1',
+		from: 'Code',
+		to: 'Review',
+		...overrides,
+	};
+}
+
+function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
+	return {
+		id: 'wf-1',
+		spaceId: 'space-1',
+		name: 'Test Workflow',
+		nodes: [],
+		startNodeId: '',
+		tags: [],
+		createdAt: 0,
+		updatedAt: 0,
+		...overrides,
+	};
+}
+
 const agentCoder = makeAgent('agent-coder-id', 'coder agent');
 const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer agent');
 const agentSecurity = makeAgent('agent-security-id', 'security agent');
@@ -42,7 +73,6 @@ const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
 describe('resolveNodeAgents', () => {
 	test('returns agents array when agents is set (non-empty)', () => {
 		const node = makeNode({
-			instructions: 'shared guidance',
 			agents: [
 				{ agentId: 'agent-coder-id', name: 'coder' },
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
@@ -79,8 +109,6 @@ describe('resolveNodeAgents', () => {
 		expect(result).toHaveLength(2);
 		expect(result[0].name).toBe('strict-reviewer');
 		expect(result[1].name).toBe('quick-reviewer');
-		expect(result[0].agentId).toBe('agent-coder-id');
-		expect(result[1].agentId).toBe('agent-coder-id');
 	});
 
 	test('preserves systemPrompt and instructions overrides on agent slots', () => {
@@ -101,448 +129,231 @@ describe('resolveNodeAgents', () => {
 });
 
 // ============================================================================
-// resolveNodeChannels
+// validateChannels — node uniqueness and channel addressing
 // ============================================================================
 
-describe('resolveNodeChannels', () => {
-	test('returns empty array when no channels defined', () => {
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		expect(resolveNodeChannels(node, [])).toEqual([]);
-	});
-
-	test('returns empty array when channels is an empty array', () => {
-		const channels: WorkflowChannel[] = [];
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		expect(resolveNodeChannels(node, channels)).toEqual([]);
-	});
-
-	test('A→B one-way: produces one resolved channel', () => {
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+describe('validateChannels', () => {
+	test('returns no errors for a valid workflow with unique node names', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
+				{ id: 'n2', name: 'Review', agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }] },
 			],
+			channels: [{ id: 'ch-1', from: 'Code', to: 'Review' }],
 		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(1);
-		expect(result[0]).toMatchObject({
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			fromAgentId: 'agent-coder-id',
-			toAgentId: 'agent-reviewer-id',
-			direction: 'one-way',
-			isHubSpoke: false,
-		});
-	});
-
-	test('A↔B bidirectional point-to-point: produces two one-way channels', () => {
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(2);
-
-		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
-		const reverse = result.find((r) => r.fromRole === 'reviewer' && r.toRole === 'coder');
-
-		expect(forward).toBeDefined();
-		expect(forward!.isHubSpoke).toBe(false);
-		expect(forward!.direction).toBe('one-way');
-
-		expect(reverse).toBeDefined();
-		expect(reverse!.isHubSpoke).toBe(false);
-		expect(reverse!.direction).toBe('one-way');
-	});
-
-	test('A→[B,C] fan-out: produces one channel per target', () => {
-		const channels = [
-			{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' as const },
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(2);
-
-		const toReviewer = result.find((r) => r.toRole === 'reviewer');
-		const toSecurity = result.find((r) => r.toRole === 'security');
-
-		expect(toReviewer).toBeDefined();
-		expect(toReviewer!.fromRole).toBe('coder');
-		expect(toReviewer!.isHubSpoke).toBe(false);
-
-		expect(toSecurity).toBeDefined();
-		expect(toSecurity!.fromRole).toBe('coder');
-		expect(toSecurity!.isHubSpoke).toBe(false);
-	});
-
-	test('A↔[B,C] hub-spoke: produces hub→spoke + spoke→hub, no spoke-to-spoke', () => {
-		const channels = [
-			{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' as const },
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-
-		// 2 spokes × 2 directions = 4 channels
-		expect(result).toHaveLength(4);
-
-		// All channels should be marked as hub-spoke
-		expect(result.every((r) => r.isHubSpoke)).toBe(true);
-
-		// Hub → each spoke
-		expect(result.some((r) => r.fromRole === 'coder' && r.toRole === 'reviewer')).toBe(true);
-		expect(result.some((r) => r.fromRole === 'coder' && r.toRole === 'security')).toBe(true);
-
-		// Each spoke → hub
-		expect(result.some((r) => r.fromRole === 'reviewer' && r.toRole === 'coder')).toBe(true);
-		expect(result.some((r) => r.fromRole === 'security' && r.toRole === 'coder')).toBe(true);
-
-		// No spoke-to-spoke
-		expect(result.some((r) => r.fromRole === 'reviewer' && r.toRole === 'security')).toBe(false);
-		expect(result.some((r) => r.fromRole === 'security' && r.toRole === 'reviewer')).toBe(false);
-	});
-
-	test('wildcard *→B: all agents send to B', () => {
-		const channels = [{ from: '*', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-
-		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
-		expect(result).toHaveLength(2);
-		expect(result.every((r) => r.toRole === 'reviewer')).toBe(true);
-		expect(result.every((r) => r.fromRole !== 'reviewer')).toBe(true);
-	});
-
-	test('wildcard A→*: A sends to all other agents', () => {
-		const channels = [{ from: 'coder', to: '*', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-
-		// coder→reviewer and coder→security (coder→coder self-loop skipped)
-		expect(result).toHaveLength(2);
-		expect(result.every((r) => r.fromRole === 'coder')).toBe(true);
-		expect(result.every((r) => r.toRole !== 'coder')).toBe(true);
-	});
-
-	test('channel label is propagated to all resolved channels', () => {
-		const channels = [
-			{
-				from: 'coder',
-				to: ['reviewer', 'security'],
-				direction: 'bidirectional' as const,
-				label: 'feedback',
-			},
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result.every((r) => r.label === 'feedback')).toBe(true);
-	});
-
-	test('skips channels referencing unknown roles (does not throw)', () => {
-		const channels = [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(0);
-	});
-
-	test('self-loop (from === to) is skipped', () => {
-		const channels = [{ from: 'coder', to: 'coder', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(0);
-	});
-
-	test('multiple channels expand independently', () => {
-		const channels = [
-			{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
-			{ from: 'reviewer', to: 'security', direction: 'one-way' as const },
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(2);
-		expect(result[0]).toMatchObject({ fromRole: 'coder', toRole: 'reviewer' });
-		expect(result[1]).toMatchObject({ fromRole: 'reviewer', toRole: 'security' });
-	});
-
-	test('same agentId with different names routes channels correctly', () => {
-		// Two slots using the same agent but different names
-		const channels = [
-			{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' as const },
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'strict-reviewer' },
-				{ agentId: 'agent-coder-id', name: 'quick-reviewer' },
-			],
-		});
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(1);
-		expect(result[0].fromRole).toBe('strict-reviewer');
-		expect(result[0].toRole).toBe('quick-reviewer');
-		// Both resolve to the same agentId
-		expect(result[0].fromAgentId).toBe('agent-coder-id');
-		expect(result[0].toAgentId).toBe('agent-coder-id');
-	});
-});
-
-// ============================================================================
-// validateNodeChannels
-// ============================================================================
-
-describe('validateNodeChannels', () => {
-	test('returns empty errors for node with no channels', () => {
-		const node = makeNode({ agents: [{ agentId: 'agent-coder-id', name: 'coder' }] });
-		expect(validateNodeChannels(node, allAgents, [])).toEqual([]);
-	});
-
-	test('returns empty errors for node with empty channels array', () => {
-		const channels: WorkflowChannel[] = [];
-		const node = makeNode({ agents: [{ agentId: 'agent-coder-id', name: 'coder' }] });
-		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
-	});
-
-	test('returns no errors for valid channel references', () => {
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
-	});
-
-	test('accepts wildcard * in from without error', () => {
-		const channels = [{ from: '*', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
-	});
-
-	test('accepts wildcard * in to without error', () => {
-		const channels = [{ from: 'coder', to: '*', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
-	});
-
-	test('reports error for unknown from role', () => {
-		const channels = [{ from: 'nonexistent', to: 'coder', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('channels[0].from "nonexistent"');
-	});
-
-	test('reports error for unknown to role', () => {
-		const channels = [{ from: 'coder', to: 'nonexistent', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('channels[0].to "nonexistent"');
-	});
-
-	test('reports error for unknown role in array to', () => {
-		const channels = [
-			{ from: 'coder', to: ['reviewer', 'ghost-role'], direction: 'one-way' as const },
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('"ghost-role"');
-	});
-
-	test('reports error for agent not found in space agents list', () => {
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [{ agentId: 'unknown-agent-id', name: 'coder' }],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors.some((e) => e.includes('"unknown-agent-id"'))).toBe(true);
-	});
-
-	test('returns error from resolveNodeAgents when agents is empty', () => {
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors).toHaveLength(1);
-		expect(errors[0]).toContain('no agents defined');
-	});
-
-	test('accumulates multiple errors', () => {
-		const channels = [
-			{ from: 'bad-from', to: 'bad-to', direction: 'one-way' as const },
-			{ from: 'coder', to: 'another-bad', direction: 'one-way' as const },
-		];
-		const node = makeNode({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors.length).toBeGreaterThanOrEqual(3); // bad-from, bad-to, another-bad
-	});
-
-	test('reports error when two agent slots share the same name', () => {
-		// Two slots with the same name — duplicate names make channels ambiguous
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'reviewer' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' }, // duplicate name
-			],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors.some((e) => e.includes('Duplicate names'))).toBe(true);
-	});
-
-	test('allows same agentId with different names (no error)', () => {
-		// Same agent used twice with different names — this is permitted
-		const channels = [
-			{ from: 'strict-reviewer', to: 'quick-reviewer', direction: 'one-way' as const },
-		];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'strict-reviewer' },
-				{ agentId: 'agent-coder-id', name: 'quick-reviewer' },
-			],
-		});
-		const errors = validateNodeChannels(node, allAgents, channels);
+		const errors = validateChannels(workflow, allAgents);
 		expect(errors).toEqual([]);
 	});
 
-	test('reports error when * is mixed with other roles in array to', () => {
-		const channels = [{ from: 'coder', to: ['reviewer', '*'], direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+	test('returns error when node names are not unique', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Review', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
+				{
+					id: 'n2',
+					name: 'Review',
+					agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }],
+				},
 			],
 		});
-		const errors = validateNodeChannels(node, allAgents, channels);
-		expect(errors.some((e) => e.includes("mixes wildcard '*'"))).toBe(true);
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors.some((e) => e.includes('Review') && e.includes('unique'))).toBe(true);
 	});
 
-	test('plain * in to (not in array) is accepted', () => {
-		const channels = [{ from: 'coder', to: '*', direction: 'one-way' as const }];
-		const node = makeNode({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
+	test('returns error when channel.from references unknown node', () => {
+		const workflow = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] }],
+			channels: [{ id: 'ch-1', from: 'NonExistent', to: 'Code' }],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors.some((e) => e.includes('NonExistent'))).toBe(true);
+	});
+
+	test('returns error when channel.to references unknown node', () => {
+		const workflow = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] }],
+			channels: [{ id: 'ch-1', from: 'Code', to: 'NonExistent' }],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors.some((e) => e.includes('NonExistent'))).toBe(true);
+	});
+
+	test('returns error when gate is referenced by more than one channel', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
+				{ id: 'n2', name: 'Review', agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }] },
+				{
+					id: 'n3',
+					name: 'QA',
+					agents: [{ agentId: 'agent-security-id', name: 'qa' }],
+				},
+			],
+			channels: [
+				{ id: 'ch-1', from: 'Code', to: 'Review', gateId: 'shared-gate' },
+				{ id: 'ch-2', from: 'Code', to: 'QA', gateId: 'shared-gate' },
 			],
 		});
-		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors.some((e) => e.includes('shared-gate'))).toBe(true);
+	});
+
+	test('returns error when channel id is missing', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
+				{ id: 'n2', name: 'Review', agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }] },
+			],
+			channels: [{ id: '', from: 'Code', to: 'Review' }],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors.some((e) => e.includes('id'))).toBe(true);
+	});
+
+	test('wildcard from is allowed', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
+				{ id: 'n2', name: 'Review', agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }] },
+			],
+			channels: [{ id: 'ch-1', from: '*', to: 'Review' }],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors).toEqual([]);
+	});
+
+	test('fan-out to multiple nodes is valid', () => {
+		const workflow = makeWorkflow({
+			nodes: [
+				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
+				{ id: 'n2', name: 'Review', agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }] },
+				{ id: 'n3', name: 'QA', agents: [{ agentId: 'agent-security-id', name: 'qa' }] },
+			],
+			channels: [{ id: 'ch-1', from: 'Code', to: ['Review', 'QA'] }],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors).toEqual([]);
+	});
+
+	test('returns error for agent not found in space agents', () => {
+		const workflow = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Code', agents: [{ agentId: 'unknown-agent-id', name: 'coder' }] }],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors.some((e) => e.includes('unknown-agent-id'))).toBe(true);
+	});
+
+	test('empty channels returns no errors', () => {
+		const workflow = makeWorkflow({
+			nodes: [{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] }],
+			channels: [],
+		});
+		const errors = validateChannels(workflow, allAgents);
+		expect(errors).toEqual([]);
 	});
 });
 
 // ============================================================================
-// Multi-agent nodes
+// isGateWriterAuthorized — node-level gate write authorization
 // ============================================================================
 
-describe('multi-agent nodes', () => {
-	test('resolveNodeAgents works for multi-agent nodes', () => {
-		const node: WorkflowNode = {
-			id: 'multi-node',
-			name: 'Multi Node',
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		};
-		const result = resolveNodeAgents(node);
-		expect(result).toHaveLength(2);
-		expect(result[0].agentId).toBe('agent-coder-id');
-		expect(result[0].name).toBe('coder');
+describe('isGateWriterAuthorized', () => {
+	const channel = makeChannel({ from: 'Code', to: 'Review' });
+
+	test('empty writers → FROM node agent authorized', () => {
+		expect(isGateWriterAuthorized('Code', channel, [])).toBe(true);
 	});
 
-	test('resolveNodeChannels works for multi-agent nodes', () => {
-		const node: WorkflowNode = {
-			id: 'multi-node',
-			name: 'Multi Node',
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		};
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		const result = resolveNodeChannels(node, channels);
-		expect(result).toHaveLength(1);
-		expect(result[0].fromAgentId).toBe('agent-coder-id');
-		expect(result[0].toAgentId).toBe('agent-reviewer-id');
+	test('empty writers → non-FROM node agent NOT authorized', () => {
+		expect(isGateWriterAuthorized('Review', channel, [])).toBe(false);
 	});
 
-	test('validateNodeChannels returns no errors for valid multi-agent nodes', () => {
-		const node: WorkflowNode = {
-			id: 'multi-node',
-			name: 'Multi Node',
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		};
-		const channels = [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }];
-		expect(validateNodeChannels(node, allAgents, channels)).toEqual([]);
+	test("writers: ['*'] → any node authorized", () => {
+		expect(isGateWriterAuthorized('Code', channel, ['*'])).toBe(true);
+		expect(isGateWriterAuthorized('Review', channel, ['*'])).toBe(true);
+		expect(isGateWriterAuthorized('SomeOtherNode', channel, ['*'])).toBe(true);
+	});
+
+	test("writers: ['human'] → never authorized (human-only gate)", () => {
+		expect(isGateWriterAuthorized('Code', channel, ['human'])).toBe(false);
+		expect(isGateWriterAuthorized('Review', channel, ['human'])).toBe(false);
+	});
+
+	test('writers with explicit node name → that node authorized', () => {
+		expect(isGateWriterAuthorized('Code', channel, ['Code'])).toBe(true);
+		expect(isGateWriterAuthorized('Review', channel, ['Code'])).toBe(false);
+	});
+
+	test('writers with explicit node name + human → only explicit node authorized', () => {
+		expect(isGateWriterAuthorized('Code', channel, ['Code', 'human'])).toBe(true);
+		expect(isGateWriterAuthorized('Review', channel, ['Code', 'human'])).toBe(false);
+	});
+
+	test('writers with multiple node names → listed nodes authorized', () => {
+		expect(isGateWriterAuthorized('Code', channel, ['Code', 'Review'])).toBe(true);
+		expect(isGateWriterAuthorized('Review', channel, ['Code', 'Review'])).toBe(true);
+		expect(isGateWriterAuthorized('Other', channel, ['Code', 'Review'])).toBe(false);
+	});
+});
+
+// ============================================================================
+// findChannel / getChannelsFromNode / getChannelsToNode
+// ============================================================================
+
+describe('findChannel', () => {
+	const channels: WorkflowChannel[] = [
+		{ id: 'ch-1', from: 'Code', to: 'Review' },
+		{ id: 'ch-2', from: 'Review', to: 'Code' },
+		{ id: 'ch-3', from: 'Review', to: 'QA' },
+		{ id: 'ch-4', from: 'Code', to: ['Review', 'QA'] },
+	];
+
+	test('finds a simple from → to channel', () => {
+		const found = findChannel(channels, 'Review', 'Code');
+		expect(found?.id).toBe('ch-2');
+	});
+
+	test('returns undefined when no channel matches', () => {
+		expect(findChannel(channels, 'QA', 'Code')).toBeUndefined();
+	});
+
+	test('matches fan-out channel when target is in array', () => {
+		const found = findChannel(channels, 'Code', 'QA');
+		expect(found?.id).toBe('ch-4');
+	});
+});
+
+describe('getChannelsFromNode', () => {
+	const channels: WorkflowChannel[] = [
+		{ id: 'ch-1', from: 'Code', to: 'Review' },
+		{ id: 'ch-2', from: 'Review', to: 'Code' },
+		{ id: 'ch-3', from: '*', to: 'QA' },
+	];
+
+	test('returns channels where from matches node name', () => {
+		const result = getChannelsFromNode(channels, 'Code');
+		expect(result.map((c) => c.id)).toEqual(['ch-1', 'ch-3']);
+	});
+
+	test('returns empty when no channels from node', () => {
+		expect(getChannelsFromNode(channels, 'QA')).toHaveLength(1); // wildcard
+	});
+});
+
+describe('getChannelsToNode', () => {
+	const channels: WorkflowChannel[] = [
+		{ id: 'ch-1', from: 'Code', to: 'Review' },
+		{ id: 'ch-2', from: 'Review', to: 'Code' },
+		{ id: 'ch-3', from: 'Code', to: ['Review', 'QA'] },
+	];
+
+	test('returns channels where to matches node name (string)', () => {
+		const result = getChannelsToNode(channels, 'Code');
+		expect(result.map((c) => c.id)).toEqual(['ch-2']);
+	});
+
+	test('returns channels where to matches node name (array)', () => {
+		const result = getChannelsToNode(channels, 'Review');
+		expect(result.map((c) => c.id)).toEqual(['ch-1', 'ch-3']);
 	});
 });

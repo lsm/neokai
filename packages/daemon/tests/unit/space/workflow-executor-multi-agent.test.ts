@@ -555,7 +555,6 @@ describe('resolveNodeChannels()', () => {
 				{ agentId: 'agent-coder-id', name: 'coder' },
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(1);
@@ -564,7 +563,6 @@ describe('resolveNodeChannels()', () => {
 			toRole: 'reviewer',
 			fromAgentId: 'agent-coder-id',
 			toAgentId: 'agent-reviewer-id',
-			direction: 'one-way',
 			isHubSpoke: false,
 		});
 	});
@@ -576,7 +574,6 @@ describe('resolveNodeChannels()', () => {
 				{ agentId: 'agent-coder-id', name: 'coder' },
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(2);
@@ -601,7 +598,6 @@ describe('resolveNodeChannels()', () => {
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 				{ agentId: 'agent-security-id', name: 'security' },
 			],
-			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(2);
@@ -622,7 +618,6 @@ describe('resolveNodeChannels()', () => {
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 				{ agentId: 'agent-security-id', name: 'security' },
 			],
-			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 
@@ -653,7 +648,6 @@ describe('resolveNodeChannels()', () => {
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 				{ agentId: 'agent-security-id', name: 'security' },
 			],
-			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 
@@ -671,7 +665,6 @@ describe('resolveNodeChannels()', () => {
 				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
 				{ agentId: 'agent-security-id', name: 'security' },
 			],
-			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 
@@ -685,7 +678,6 @@ describe('resolveNodeChannels()', () => {
 	test('invalid role reference is skipped silently (does not throw)', () => {
 		const step = makeStep({
 			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
 		});
 		const result = resolveNodeChannels(step, step.channels ?? []);
 		expect(result).toHaveLength(0);
@@ -773,7 +765,6 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 					],
 				},
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'review-request' }],
 			transitions: [],
 			startNodeId: STEP_A,
 			rules: [],
@@ -796,7 +787,6 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		expect(userChannel).toMatchObject({
 			fromRole: 'coder',
 			toRole: 'reviewer',
-			direction: 'one-way',
 			label: 'review-request',
 		});
 		// No auto-generated task-agent channels (M3 auto-generation removed)

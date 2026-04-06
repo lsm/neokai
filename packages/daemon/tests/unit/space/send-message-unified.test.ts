@@ -90,7 +90,6 @@ function makeResolvedChannel(fromRole: string, toRole: string): ResolvedChannel 
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke: false,
 	};
 }

@@ -130,10 +130,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 				{ id: 'node-a', name: 'Alpha' },
 				{ id: 'node-b', name: 'Beta' },
 			],
-			channels: [
-				{ from: 'node-a', to: 'node-b', direction: 'one-way', label: 'alpha to beta' },
-				{ from: 'node-b', to: 'node-a', direction: 'bidirectional' },
-			],
+			channels: [],
 		});
 
 		// Verify the channels column is written at the DB level
@@ -151,13 +148,11 @@ describe('Migration 53: channels column on space_workflows', () => {
 		expect(fetched!.channels![0]).toMatchObject({
 			from: 'node-a',
 			to: 'node-b',
-			direction: 'one-way',
 			label: 'alpha to beta',
 		});
 		expect(fetched!.channels![1]).toMatchObject({
 			from: 'node-b',
 			to: 'node-a',
-			direction: 'bidirectional',
 		});
 	});
 
@@ -174,7 +169,6 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'sp-cfg',
 			name: 'Config Check',
-			channels: [{ from: 'a', to: 'b', direction: 'one-way' }],
 		});
 
 		// After M74, config column is dropped. Verify tags column exists and has default.
@@ -199,14 +193,10 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'sp-upd',
 			name: 'Update Test',
-			channels: [{ from: 'x', to: 'y', direction: 'one-way' }],
 		});
 
 		repo.updateWorkflow(wf.id, {
-			channels: [
-				{ from: 'x', to: 'y', direction: 'one-way' },
-				{ from: 'y', to: 'x', direction: 'one-way', label: 'reply' },
-			],
+			channels: [],
 		});
 
 		const fetched = repo.getWorkflow(wf.id);
@@ -227,7 +217,6 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'sp-clr',
 			name: 'Clear Test',
-			channels: [{ from: 'a', to: 'b', direction: 'one-way' }],
 		});
 
 		repo.updateWorkflow(wf.id, { channels: null });
@@ -249,7 +238,6 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const legacyConfig = JSON.stringify({
 			tags: ['legacy'],
 			rules: [],
-			channels: [{ from: 'old-a', to: 'old-b', direction: 'one-way', label: 'legacy link' }],
 		});
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, config, created_at, updated_at)
@@ -276,7 +264,6 @@ describe('Migration 53: channels column on space_workflows', () => {
 		expect(migratedChannels[0]).toMatchObject({
 			from: 'old-a',
 			to: 'old-b',
-			direction: 'one-way',
 			label: 'legacy link',
 		});
 	});

@@ -9,10 +9,15 @@ export interface SemanticWorkflowEdge {
 	id: string;
 	fromStepId: string;
 	toStepId: string;
-	direction: 'one-way' | 'bidirectional';
 	channelCount: number;
 	hasGate: boolean;
 	hasCyclic: boolean;
+	/**
+	 * Visual direction derived from the channel topology.
+	 * 'bidirectional' means channels exist in both directions (rendered as ↔).
+	 * 'one-way' means a single direction.
+	 */
+	direction: 'one-way' | 'bidirectional';
 	/**
 	 * Gate type for the forward direction (from→to / lowId→highId).
 	 * For one-way edges this is the only gate. For bidirectional edges
@@ -214,21 +219,7 @@ export function buildSemanticWorkflowEdges(
 			}
 			aggregate.channelIndexes.add(channelIndex);
 
-			if (channel.direction === 'bidirectional') {
-				// A bidirectional underlying channel gates both directions.
-				aggregate.lowToHigh = true;
-				aggregate.highToLow = true;
-				if (gateInfo.type) {
-					aggregate.lowToHighGateType ??= gateInfo.type;
-					aggregate.lowToHighGateLabel ??= gateInfo.label;
-					aggregate.lowToHighGateColor ??= gateInfo.color;
-					if (gateInfo.hasScript) aggregate.lowToHighHasScript = true;
-					aggregate.highToLowGateType ??= gateInfo.type;
-					aggregate.highToLowGateLabel ??= gateInfo.label;
-					aggregate.highToLowGateColor ??= gateInfo.color;
-					if (gateInfo.hasScript) aggregate.highToLowHasScript = true;
-				}
-			} else if (fromIsLow) {
+			if (fromIsLow) {
 				aggregate.lowToHigh = true;
 				if (gateInfo.type) {
 					aggregate.lowToHighGateType ??= gateInfo.type;
@@ -252,9 +243,7 @@ export function buildSemanticWorkflowEdges(
 
 	return Array.from(aggregates.values()).map((aggregate) => {
 		if (aggregate.lowToHigh && aggregate.highToLow) {
-			// Bidirectional: fromStepId = lowId, toStepId = highId.
-			// gateType       = forward gate (lowId → highId)
-			// reverseGateType = reverse gate (highId → lowId)
+			// Two one-way channels in opposite directions — rendered as a bidirectional arrow.
 			return {
 				id: `${aggregate.lowId}:${aggregate.highId}`,
 				fromStepId: aggregate.lowId,

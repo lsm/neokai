@@ -230,12 +230,7 @@ export async function ensureChannelsSectionOpen(editor: Locator): Promise<void> 
  * @param to - Target agent role name (e.g. "reviewer")
  * @param direction - Channel direction ('one-way' | 'bidirectional'), defaults to 'one-way'
  */
-export async function addWorkflowChannel(
-	editor: Locator,
-	from: string,
-	to: string,
-	direction: 'one-way' | 'bidirectional' = 'one-way'
-): Promise<void> {
+export async function addWorkflowChannel(editor: Locator, from: string, to: string): Promise<void> {
 	const form = editor.getByTestId('add-channel-form');
 
 	// From — prefer select, fall back to text input

@@ -20,7 +20,7 @@
  * provide a stable `key` prop to force remount when switching between workflows.
  */
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
+import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -88,7 +88,6 @@ function buildTemplateCanvasSignature(
 				node.step.channels?.map((channel) => ({
 					from: channel.from,
 					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-					direction: channel.direction,
 					gateId: channel.gateId,
 				})) ?? [],
 			position: { x: node.position.x, y: node.position.y },
@@ -109,7 +108,6 @@ function buildTemplateCanvasSignature(
 		.map((channel) => ({
 			from: channel.from,
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-			direction: channel.direction,
 			gateId: channel.gateId ?? null,
 			maxCycles: channel.maxCycles ?? null,
 		}))
@@ -497,7 +495,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 		const visibleLinkCount = forwardLinks.length + reverseLinks.length;
 		const relationIsBidirectional =
-			reverseLinks.length > 0 || relation.direction === 'bidirectional';
+			reverseLinks.length > 0 || relation.direction === 'bidirectional' || false;
 
 		return {
 			relation,
@@ -560,7 +558,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					edge.direction === 'bidirectional'
 						? `${fromNode.step.name || 'Unnamed'} ↔ ${toNode.step.name || 'Unnamed'}`
 						: `${fromNode.step.name || 'Unnamed'} → ${toNode.step.name || 'Unnamed'}`,
-				direction: edge.direction,
 				channelCount: edge.channelCount,
 				hasGate: edge.hasGate,
 			};
@@ -571,54 +568,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 		return linksByNodeId;
 	}, [nodes, routedSemanticEdges]);
-
-	useEffect(() => {
-		if (!selectedChannelInfo) return;
-
-		const legacyBidirectionalLinks = selectedChannelInfo.forwardLinks.filter(
-			({ channel }) => channel.direction === 'bidirectional'
-		);
-		if (legacyBidirectionalLinks.length === 0 || selectedChannelInfo.reverseLinks.length > 0)
-			return;
-
-		setChannels((prev) => {
-			const next = [...prev];
-			let changed = false;
-
-			for (const { index } of legacyBidirectionalLinks) {
-				const current = next[index];
-				if (!current || current.direction !== 'bidirectional') continue;
-
-				next[index] = {
-					...current,
-					direction: 'one-way',
-				};
-
-				const targets = Array.isArray(current.to) ? current.to : [current.to];
-				for (const target of targets) {
-					const reverseExists = next.some(
-						(existing) =>
-							existing.from === target &&
-							(Array.isArray(existing.to)
-								? existing.to.includes(current.from)
-								: existing.to === current.from)
-					);
-					if (reverseExists) continue;
-
-					next.push({
-						from: target,
-						to: current.from,
-						direction: 'one-way',
-						maxCycles: current.maxCycles,
-						gateId: current.gateId,
-					});
-				}
-				changed = true;
-			}
-
-			return changed ? next : prev;
-		});
-	}, [selectedChannelInfo]);
 
 	// ------------------------------------------------------------------
 	// Node operations
@@ -794,7 +743,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				const newChannel: WorkflowChannel = {
 					from: fromName,
 					to: toName,
-					direction: 'one-way',
 				};
 
 				// Deduplicate exact same directed channel produced by repeated drags.
@@ -804,7 +752,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							ch.from === newChannel.from &&
 							!Array.isArray(ch.to) &&
 							ch.to === newChannel.to &&
-							ch.direction === newChannel.direction
+							true // direction removed from schema
 					)
 				) {
 					return prev;
@@ -874,7 +822,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const reverseChannel: WorkflowChannel = {
 				from: reverseSourceName,
 				to: reverseTargetName,
-				direction: 'one-way',
 			};
 			if (inferChannelIsCyclic(reverseChannel, next, endpointNodeIdLookup, nodeOrderByLocalId)) {
 				reverseChannel.maxCycles = 5;

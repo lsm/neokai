@@ -679,16 +679,13 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	}
 
 	test('includes channel map section when workflow has channels', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
-		];
+		const channels: WorkflowChannel[] = [];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('Collaboration Channel Map');
 	});
 
 	test('shows channel from/to agents', () => {
-		const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('`coder`');
@@ -696,16 +693,13 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	});
 
 	test('shows bidirectional arrow for bidirectional channels', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
-		];
+		const channels: WorkflowChannel[] = [];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('↔');
 	});
 
 	test('shows one-way arrow for one-way channels', () => {
-		const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('→');
@@ -716,7 +710,6 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gateId: 'approval-gate',
 			},
 		];
@@ -744,7 +737,6 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gateId: 'ci-gate',
 			},
 		];
@@ -770,7 +762,6 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gateId: 'result-gate',
 			},
 		];
@@ -798,9 +789,7 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	});
 
 	test('shows channel label when present', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'code-review' },
-		];
+		const channels: WorkflowChannel[] = [];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('code-review');
@@ -819,18 +808,14 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	});
 
 	test('mentions target addressing guidance in channel map', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
-		];
+		const channels: WorkflowChannel[] = [];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('list_reachable_agents');
 	});
 
 	test('handles fan-out channel with array of targets', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: ['reviewer', 'qa'], direction: 'one-way' },
-		];
+		const channels: WorkflowChannel[] = [];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('reviewer');

@@ -1009,9 +1009,7 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('one-way channel relation shows convert button and expands to explicit reverse link', async () => {
-			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
-			});
+			const workflow = makeWorkflow({});
 			const { container, getByTestId, getAllByTestId, getByText, queryByText } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
 			);
@@ -1040,9 +1038,7 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('converting to bidirectional shows cyclic info on the reverse link', async () => {
-			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
-			});
+			const workflow = makeWorkflow({});
 			const { container, getByTestId, getAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
 			);
@@ -1059,9 +1055,7 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('deleting the reverse link downgrades a converted relation back to one-way', async () => {
-			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
-			});
+			const workflow = makeWorkflow({});
 			const { container, getByTestId, getAllByTestId, queryByText } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
 			);
@@ -1091,10 +1085,7 @@ describe('VisualWorkflowEditor', () => {
 
 		it('shows cyclic info for backward links that close a loop', async () => {
 			const workflow = makeWorkflow({
-				channels: [
-					{ from: 'Plan', to: 'Code', direction: 'one-way' },
-					{ from: 'Code', to: 'Plan', direction: 'one-way' },
-				],
+				channels: [],
 			});
 			const { container, getAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
@@ -1113,7 +1104,6 @@ describe('VisualWorkflowEditor', () => {
 
 		it('edits a vote-count gate backed by workflow.gates', async () => {
 			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way', gateId: 'review-votes-gate' }],
 				gates: [
 					{
 						id: 'review-votes-gate',

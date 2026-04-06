@@ -72,6 +72,7 @@ const HITBOX_STROKE_WIDTH = 12;
 export interface ResolvedWorkflowChannel {
 	fromStepId: string;
 	toStepId: string;
+	/** Visual direction derived from channel topology: 'bidirectional' means arrows in both directions. */
 	direction: 'one-way' | 'bidirectional';
 	isCyclic?: boolean;
 	/**
