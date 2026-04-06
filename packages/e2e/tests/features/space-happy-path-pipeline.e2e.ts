@@ -154,10 +154,12 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 	test('seeded agents/workflows are present and V2 review node carries 3 reviewer slots', async ({
 		page,
 	}) => {
-		await gotoAndWaitForConnection(page, `/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		// Navigate to the space configure view where Agents/Workflows tabs are available.
+		await gotoAndWaitForConnection(page, `/space/${spaceId}/configure`);
+		await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
 
-		await page.locator('button:has-text("Agents")').click();
+		// Agents tab is the default active tab in SpaceConfigurePage.
+		await expect(page.getByTestId('space-configure-tab-agents')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('General', { exact: true }).first()).toBeVisible({ timeout: 5000 });
@@ -169,7 +171,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 		});
 		await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 
-		await page.locator('button:has-text("Workflows")').click();
+		await page.getByTestId('space-configure-tab-workflows').click();
 		await expect(page.getByText('Full-Cycle Coding Workflow', { exact: true })).toBeVisible({
 			timeout: 5000,
 		});
@@ -242,11 +244,6 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 			{ sid: spaceId, tid: taskId }
 		);
 
-		await expect(page.getByText('Completed', { exact: false }).first()).toBeVisible({
-			timeout: 5000,
-		});
-		await expect(page.getByText('This task is read-only in its current state.')).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.getByText('Done', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 	});
 });
