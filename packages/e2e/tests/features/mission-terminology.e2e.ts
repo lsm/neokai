@@ -4,7 +4,7 @@
  * Verifies that the UI displays "Mission" terminology (not "Goal") after the
  * Task 5 copy rename. Tests cover:
  * - "Missions" tab label in room page
- * - Empty state heading "No missions yet"
+ * - Empty state text "No missions yet"
  * - Empty state call-to-action "Create Mission" button
  * - No residual "Goal" text visible to users
  *

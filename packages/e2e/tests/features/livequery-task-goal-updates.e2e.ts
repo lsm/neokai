@@ -89,6 +89,7 @@ test.describe('LiveQuery — task created via RPC appears in room UI without pag
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
 		// Clear persisted tab selection so tasks (pending status → Active tab) are always visible
 		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 		await page
