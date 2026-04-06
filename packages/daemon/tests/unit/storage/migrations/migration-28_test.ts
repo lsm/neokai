@@ -542,14 +542,14 @@ describe('getEffectiveMaxPlanningAttempts', () => {
 		expect(getEffectiveMaxPlanningAttempts(goal, { maxPlanningRetries: 0 })).toBe(1);
 	});
 
-	test('returns 1 when neither goal nor roomConfig specifies', () => {
+	test('returns 2 when neither goal nor roomConfig specifies (default allows 1 retry)', () => {
 		const goal = makeGoal(undefined);
-		expect(getEffectiveMaxPlanningAttempts(goal)).toBe(1);
+		expect(getEffectiveMaxPlanningAttempts(goal)).toBe(2);
 	});
 
-	test('returns 1 when roomConfig has no maxPlanningRetries', () => {
+	test('returns 2 when roomConfig has no maxPlanningRetries', () => {
 		const goal = makeGoal(undefined);
-		expect(getEffectiveMaxPlanningAttempts(goal, { someOtherKey: 99 })).toBe(1);
+		expect(getEffectiveMaxPlanningAttempts(goal, { someOtherKey: 99 })).toBe(2);
 	});
 
 	test('ignores goal.maxPlanningAttempts of 0 (falls through to roomConfig)', () => {

@@ -188,6 +188,8 @@ describe('QueryRunner', () => {
 			startupTimeoutTimer: null,
 			originalEnvVars: {},
 
+			processExitedPromise: null,
+
 			// Methods for state coordination
 			incrementQueryGeneration: () => ++queryGeneration,
 			getQueryGeneration: () => queryGeneration,
@@ -882,6 +884,44 @@ describe('QueryRunner', () => {
 			// After the close, queryObject should be null (cleaned up by the fix).
 			// The finally block may re-check it, but it will see null and skip redundant close.
 			expect(ctx.queryObject).toBeNull();
+		});
+
+		it('should await processExitedPromise before retrying after startup timeout', async () => {
+			// Verify the retry path waits for the old subprocess to exit
+			// before spawning a replacement.
+			const callOrder: string[] = [];
+			let resolveExit: () => void;
+			const exitPromise = new Promise<void>((resolve) => {
+				resolveExit = resolve;
+			});
+
+			const mockQueryObject = {
+				close: () => {
+					callOrder.push('close');
+					// Simulate subprocess exit after a delay
+					setTimeout(() => {
+						callOrder.push('process-exited');
+						resolveExit!();
+					}, 20);
+				},
+				[Symbol.asyncIterator]: function* () {},
+			} as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
+
+			const ctx = createContext({
+				queryObject: mockQueryObject,
+				processExitedPromise: exitPromise,
+			});
+			runner = new QueryRunner(ctx);
+
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// close() and process-exited should both have been called
+			// before the retry attempt proceeded
+			expect(callOrder).toContain('close');
+			expect(callOrder).toContain('process-exited');
+			// processExitedPromise should be cleared after the wait
+			expect(ctx.processExitedPromise).toBeNull();
 		});
 	});
 

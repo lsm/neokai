@@ -481,3 +481,4 @@ The activity timeline section is scoped to **recurring missions only** because:
 - `goal.getMetricHistory` RPC does NOT exist (daemon method exists but is not registered as an RPC handler)
 - One-shot missions have no event history beyond created_at/updated_at timestamps
 - Only recurring missions have execution history data available via `goal.listExecutions`
+

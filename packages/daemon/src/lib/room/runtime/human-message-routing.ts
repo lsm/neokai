@@ -2,22 +2,17 @@
  * Human Message Routing
  *
  * Routes a human message to the worker or leader session of an **active** group.
- * - Active groups (completedAt = null): messages are injected directly
- * - Terminated groups (completedAt set): messages are blocked regardless of status
+ * Uses getActiveGroupsForTask() to find only groups where completed_at IS NULL.
  *
- * Callers are responsible for pre-processing terminated tasks before calling this
- * function. For example:
+ * Callers are responsible for pre-processing tasks before calling this function:
  * - needs_attention/cancelled → caller should use runtime.reviveTaskForMessage()
  * - completed → caller should use runtime.reviveTaskForMessage() or block with an error
+ * - in_progress with no active group (phase transition) → caller should reviveTaskForMessage()
+ * - archived → caller should block immediately (terminal state)
  */
 
-import type { TaskStatus } from '@neokai/shared';
 import type { RoomRuntime } from './room-runtime';
 import type { SessionGroupRepository } from '../state/session-group-repository';
-
-export interface TaskOperator {
-	getTask(taskId: string): Promise<{ status: TaskStatus } | null>;
-}
 
 export interface HumanMessageResult {
 	success: boolean;
@@ -28,11 +23,10 @@ export type HumanMessageTarget = 'worker' | 'leader';
 
 /**
  * Route a human message to the specified agent of an active session group.
- * Returns an error if the group is terminated (completedAt is set).
+ * Returns an error if no active (completedAt = null) group exists for the task.
  *
  * @param runtime       The RoomRuntime instance for the room
  * @param groupRepo     The SessionGroupRepository for DB access
- * @param taskManager   The TaskManager for task operations
  * @param taskId        The task ID to route the message to
  * @param message       The human message content
  * @param target        Target agent ('worker' | 'leader'), defaults to 'worker'
@@ -40,29 +34,17 @@ export type HumanMessageTarget = 'worker' | 'leader';
 export async function routeHumanMessageToGroup(
 	runtime: RoomRuntime,
 	groupRepo: SessionGroupRepository,
-	taskManager: TaskOperator,
 	taskId: string,
 	message: string,
 	target: HumanMessageTarget = 'worker'
 ): Promise<HumanMessageResult> {
-	const group = groupRepo.getGroupByTaskId(taskId);
+	const activeGroups = groupRepo.getActiveGroupsForTask(taskId);
 
-	if (!group) {
+	if (activeGroups.length === 0) {
 		return { success: false, error: 'No active session group found for this task' };
 	}
 
-	// Terminated groups cannot accept injected messages. Callers must revive or
-	// restart the task through the appropriate path before calling this function.
-	if (group.completedAt !== null) {
-		const task = await taskManager.getTask(taskId);
-		const statusLabel = task ? `'${task.status}' status` : 'a terminated state';
-		return {
-			success: false,
-			error: `Task is in ${statusLabel} and cannot receive messages. Use the appropriate restart mechanism.`,
-		};
-	}
-
-	// Simple routing — group is active
+	// Simple routing — at least one active group exists
 	if (target === 'leader') {
 		const injected = await runtime.injectMessageToLeader(taskId, message);
 		return injected

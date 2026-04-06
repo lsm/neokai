@@ -11,7 +11,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -27,7 +28,41 @@ import type { OriginalEnvVars } from '../provider-service';
 // Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
 export type { OriginalEnvVars } from '../provider-service';
 
+/**
+ * Default spawn implementation matching the SDK's internal spawnLocalProcess().
+ * Used when no custom spawnClaudeCodeProcess is configured, so we can
+ * still intercept the subprocess and track its exit.
+ *
+ * Mirrors the SDK's spawn behavior (verified in sdk.mjs):
+ * - stdio: ['pipe', 'pipe', stderr] where stderr is 'pipe' when
+ *   DEBUG_CLAUDE_AGENT_SDK is set, otherwise 'ignore'
+ * - windowsHide: true
+ * - Same cwd, env, signal passthrough
+ *
+ * Node's ChildProcess structurally satisfies the SDK's SpawnedProcess
+ * interface (stdin, stdout, killed, exitCode, kill, on/once/off for
+ * 'exit' and 'error' events).
+ *
+ * SDK coupling: This mirrors the internal spawnLocalProcess() in the SDK (sdk.mjs).
+ * Re-verify this implementation matches the SDK's spawn behavior on SDK upgrades —
+ * mismatches in stdio/env/signal can cause subtle subprocess communication failures.
+ */
+function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
+	const debugSdk = opts.env?.DEBUG_CLAUDE_AGENT_SDK;
+	const stderr = debugSdk && debugSdk !== '0' && debugSdk !== 'false' ? 'pipe' : 'ignore';
+	const proc = nodeSpawn(opts.command, opts.args, {
+		cwd: opts.cwd,
+		env: opts.env as NodeJS.ProcessEnv,
+		stdio: ['pipe', 'pipe', stderr],
+		signal: opts.signal,
+		windowsHide: true,
+	});
+	return proc as unknown as SpawnedProcess;
+}
+
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+/** Max time to wait for subprocess exit before retrying after startup timeout. */
+const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
 	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
@@ -64,6 +99,8 @@ export interface QueryRunnerContext {
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	originalEnvVars: OriginalEnvVars;
+	/** Resolves when the SDK subprocess exits. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
+	processExitedPromise: Promise<void> | null;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;
@@ -217,6 +254,17 @@ export class QueryRunner {
 			// Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
 			// so SDK subprocesses cannot inherit the daemon's listening port.
 
+			// Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
+			// This lets stop() await the actual process exit instead of using arbitrary delays.
+			const originalSpawn = queryOptions.spawnClaudeCodeProcess;
+			queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
+				const proc = originalSpawn ? originalSpawn(opts) : defaultSpawn(opts);
+				this.ctx.processExitedPromise = new Promise<void>((resolve) => {
+					proc.once('exit', () => resolve());
+				});
+				return proc;
+			};
+
 			// Create query with AsyncGenerator
 			const queryObject = query({
 				prompt: this.createMessageGeneratorWrapper(),
@@ -331,7 +379,10 @@ export class QueryRunner {
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 
-			// Startup timeout is transient — keep sdkSessionId so resume works on retry.
+			// Startup timeout is transient — always keep sdkSessionId so resume works.
+			// Never clear sdkSessionId on timeout: the session file is valid and the
+			// conversation can be resumed once the workspace lock conflict resolves.
+			// Clearing it would lose the ability to resume the conversation history.
 			// "No conversation found" is permanent — clear sdkSessionId so the next
 			// attempt starts fresh instead of looping on a dead conversation.
 			if (isStartupTimeout && session.sdkSessionId) {
@@ -368,6 +419,18 @@ export class QueryRunner {
 						// Ignore close errors — transport may already be in a broken state
 					}
 					this.ctx.queryObject = null;
+				}
+
+				// Wait for the old subprocess to fully exit before retrying.
+				// close() above terminates the process, but we must wait for it to
+				// release workspace locks before spawning a replacement.
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
+					this.ctx.processExitedPromise = null;
 				}
 
 				// Use `return await` so this call's finally{} runs only after the retry
@@ -501,6 +564,13 @@ export class QueryRunner {
 					abortController.abort();
 					this.ctx.queryAbortController = null;
 				}
+
+				// Clear process exit tracking — the subprocess has exited (or will be
+				// cleaned up by close() below). Prevents a resolved promise from a
+				// previous generation being observed by stop() after a restart: without
+				// this clear, a future stop() call on a new query could snapshot a stale
+				// resolved promise and skip the real wait for the new subprocess's exit.
+				this.ctx.processExitedPromise = null;
 
 				messageQueue.stop();
 

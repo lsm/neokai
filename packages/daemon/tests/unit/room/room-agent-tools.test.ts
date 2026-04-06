@@ -1391,6 +1391,90 @@ describe('Room Agent Tools', () => {
 			const task = await taskManager.getTask(taskId);
 			expect(task!.status).toBe('needs_attention');
 		});
+
+		it('should revive in_progress task with no active group (phase transition scenario)', async () => {
+			// Simulates the bug: task.setStatus() transitions task to in_progress without creating
+			// a new group (e.g., after a planning phase completes and execution phase begins).
+			let reviveCalledWith: unknown[] = [];
+			const mockRuntime = {
+				reviveTaskForMessage: async (...args: unknown[]) => {
+					reviveCalledWith = args;
+					return true;
+				},
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Task starts in_progress with a group — then the group gets completed (phase done),
+			// but task stays in_progress (next phase hasn't created its group yet).
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+
+			// Confirm: task is in_progress but no active group
+			const taskBefore = await taskManager.getTask(taskId);
+			expect(taskBefore!.status).toBe('in_progress');
+			expect(groupRepo.getActiveGroupsForTask(taskId)).toHaveLength(0);
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'continue working' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('revived');
+
+			// reviveTaskForMessage should have been called with taskId and message
+			expect(reviveCalledWith[0]).toBe(taskId);
+			expect(reviveCalledWith[1]).toBe('continue working');
+
+			// Task status remains in_progress (no pre-transition was made, no rollback needed)
+			const taskAfter = await taskManager.getTask(taskId);
+			expect(taskAfter!.status).toBe('in_progress');
+		});
+
+		it('should return failure when in_progress revival fails (no status rollback needed)', async () => {
+			// Unlike cancelled/needs_attention paths, no status transition is made before revival
+			// so there is nothing to roll back when revival fails.
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Task in_progress with terminated group
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_human');
+			const groupInserted = groupRepo.getGroup(groupId);
+			groupRepo.completeGroup(groupId, groupInserted!.version);
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'continue working' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('no active group and revival failed');
+
+			// Task should still be in_progress — no rollback attempted (none needed)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+		});
 	});
 
 	describe('get_task_detail', () => {
