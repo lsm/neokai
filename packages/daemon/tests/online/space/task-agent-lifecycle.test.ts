@@ -435,6 +435,13 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 				// Mock routing worked — verify expected keywords
 				expect(textContent).toContain('spawn_node_agent');
 				expect(textContent).toContain(STEP_CODE_ID);
+			} else if (IS_MOCK) {
+				// eslint-disable-next-line no-console
+				console.warn(
+					'[DIAG test3] Targeted mock did not match — catch-all fired instead.',
+					'Response prefix:',
+					textContent.substring(0, 80)
+				);
 			}
 		},
 		TEST_TIMEOUT
@@ -485,6 +492,13 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			if (IS_MOCK && textContent.includes('[MOCKED LIFECYCLE]')) {
 				// Mock routing worked — verify expected keywords
 				expect(textContent).toContain('check_node_status');
+			} else if (IS_MOCK) {
+				// eslint-disable-next-line no-console
+				console.warn(
+					'[DIAG test4] Targeted mock did not match — catch-all fired instead.',
+					'Response prefix:',
+					textContent.substring(0, 80)
+				);
 			}
 		},
 		TEST_TIMEOUT
