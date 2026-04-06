@@ -40,7 +40,7 @@ async function makeGitRepo(label: string): Promise<string> {
 	const dir = join(TMP_ROOT, `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 
-	execSync('git init', { cwd: dir });
+	execSync('git -c init.defaultBranch=main init', { cwd: dir, stdio: 'pipe' });
 	execSync('git config user.name "Test User"', { cwd: dir });
 	execSync('git config user.email "test@example.com"', { cwd: dir });
 

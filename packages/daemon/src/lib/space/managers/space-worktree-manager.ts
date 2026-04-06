@@ -144,6 +144,7 @@ export class SpaceWorktreeManager {
 							{
 								cwd: space.workspacePath,
 								timeout: 30_000,
+								stdio: 'pipe', // suppress git hints
 							}
 						)
 					),

@@ -29,7 +29,7 @@ import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-wor
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../src/lib/space/runtime/space-runtime.ts';
-import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceAgent, WorkflowNode } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -522,169 +522,6 @@ describe('resolveNodeAgents()', () => {
 });
 
 // ===========================================================================
-// Subtask 10: resolveNodeChannels() utility — all topology patterns
-// ===========================================================================
-
-describe('resolveNodeChannels()', () => {
-	const agentCoder = makeSpaceAgent('agent-coder-id', 'coder');
-	const agentReviewer = makeSpaceAgent('agent-reviewer-id', 'reviewer');
-	const agentSecurity = makeSpaceAgent('agent-security-id', 'security');
-	const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
-
-	function makeStep(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
-		return { id: 'step-1', name: 'Test Step', agents: [], ...overrides };
-	}
-
-	test('returns empty array when no channels defined', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' } as unknown as Partial<WorkflowNode>);
-		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
-	});
-
-	test('returns empty array when channels is an empty array', () => {
-		const step = makeStep({
-			agentId: 'agent-coder-id',
-			channels: [],
-		} as unknown as Partial<WorkflowNode>);
-		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
-	});
-
-	// A → B one-way
-	test('A→B one-way: resolves to single directed channel', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(1);
-		expect(result[0]).toMatchObject({
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			fromAgentId: 'agent-coder-id',
-			toAgentId: 'agent-reviewer-id',
-			isHubSpoke: false,
-		});
-	});
-
-	// A ↔ B bidirectional point-to-point
-	test('A↔B bidirectional point-to-point: resolves to two directed channels (A→B and B→A)', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(2);
-
-		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
-		const reverse = result.find((r) => r.fromRole === 'reviewer' && r.toRole === 'coder');
-
-		expect(forward).toBeDefined();
-		expect(forward!.isHubSpoke).toBe(false);
-		expect(forward!.direction).toBe('one-way');
-
-		expect(reverse).toBeDefined();
-		expect(reverse!.isHubSpoke).toBe(false);
-		expect(reverse!.direction).toBe('one-way');
-	});
-
-	// A → [B, C, D] fan-out one-way
-	test('A→[B,C,D] fan-out one-way: resolves to three directed channels, no reverse', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(2);
-
-		// All originate from coder
-		expect(result.every((r) => r.fromRole === 'coder')).toBe(true);
-		// No reverse channels
-		expect(result.some((r) => r.toRole === 'coder')).toBe(false);
-		// isHubSpoke false for one-way fan-out
-		expect(result.every((r) => r.isHubSpoke === false)).toBe(true);
-	});
-
-	// A ↔ [B, C, D] fan-out bidirectional (hub-spoke)
-	test('A↔[B,C,D] hub-spoke: resolves to A→B, A→C, A→D, B→A, C→A, D→A; B cannot send to C', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-
-		// 2 spokes × 2 directions = 4 channels
-		expect(result).toHaveLength(4);
-
-		// All marked hub-spoke
-		expect(result.every((r) => r.isHubSpoke)).toBe(true);
-
-		// Hub → each spoke
-		expect(result.some((r) => r.fromRole === 'coder' && r.toRole === 'reviewer')).toBe(true);
-		expect(result.some((r) => r.fromRole === 'coder' && r.toRole === 'security')).toBe(true);
-
-		// Each spoke → hub
-		expect(result.some((r) => r.fromRole === 'reviewer' && r.toRole === 'coder')).toBe(true);
-		expect(result.some((r) => r.fromRole === 'security' && r.toRole === 'coder')).toBe(true);
-
-		// No spoke-to-spoke (B cannot send to C)
-		expect(result.some((r) => r.fromRole === 'reviewer' && r.toRole === 'security')).toBe(false);
-		expect(result.some((r) => r.fromRole === 'security' && r.toRole === 'reviewer')).toBe(false);
-	});
-
-	// * → B wildcard from
-	test('*→B wildcard from: resolves to channels from all agents to B', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-
-		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
-		expect(result).toHaveLength(2);
-		expect(result.every((r) => r.toRole === 'reviewer')).toBe(true);
-		expect(result.every((r) => r.fromRole !== 'reviewer')).toBe(true);
-	});
-
-	// A → * wildcard to
-	test('A→* wildcard to: resolves to channels from A to all other agents', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-
-		// coder→reviewer and coder→security (coder→coder self-loop skipped)
-		expect(result).toHaveLength(2);
-		expect(result.every((r) => r.fromRole === 'coder')).toBe(true);
-		expect(result.every((r) => r.toRole !== 'coder')).toBe(true);
-	});
-
-	// Invalid role reference → skipped silently
-	test('invalid role reference is skipped silently (does not throw)', () => {
-		const step = makeStep({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(0);
-	});
-});
-
-// ===========================================================================
 // Subtask 11: Channel validation in persistence (SpaceWorkflowManager)
 // ===========================================================================
 
@@ -776,23 +613,9 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 		// One workflow task for the multi-agent start step.
 		expect(tasks).toHaveLength(1);
 
-		// resolveAndStoreChannels called for start step; channels are in-memory (not in DB run config)
-		const resolvedChannels = runtime.getRunResolvedChannels(run.id);
-
-		expect(resolvedChannels.length).toBeGreaterThan(0);
-		// User-declared channel: coder → reviewer (resolved from workflow-level channels)
-		const userChannel = resolvedChannels.find(
-			(ch) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
-		);
-		expect(userChannel).toMatchObject({
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			label: 'review-request',
-		});
-		// No auto-generated task-agent channels (M3 auto-generation removed)
-		const taskAgentToCoder = resolvedChannels.find(
-			(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
-		);
-		expect(taskAgentToCoder).toBeUndefined();
+		// Workflow channels are now stored in-memory via storeWorkflowChannels()
+		const channels = runtime.getRunWorkflowChannels(run.id);
+		// No channels declared on this workflow → empty
+		expect(channels).toHaveLength(0);
 	});
 });

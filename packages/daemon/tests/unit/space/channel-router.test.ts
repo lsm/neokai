@@ -1086,7 +1086,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'plan-gate' },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'plan-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1430,7 +1431,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'review-votes-gate' },
+				{ id: 'ch-1', from: 'Coder Node', to: 'QA Node', gateId: 'review-votes-gate' },
 			];
 			const AGENT_REVIEWER = 'agent-reviewer';
 			db.prepare(
@@ -1498,7 +1499,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'review-votes-gate' },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1546,7 +1548,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'script-only-gate' },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'script-only-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1602,7 +1605,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'review-votes-gate' },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1661,7 +1665,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'review-votes-gate' },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1821,8 +1826,11 @@ describe('ChannelRouter', () => {
 				).run(id, SPACE_ID, name, Date.now(), Date.now());
 			}
 
+			// Three channels share the same gate — when it opens, all 3 reviewer nodes activate
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'code-pr-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'reviewer-1', gateId: 'code-pr-gate' },
+				{ id: 'ch-2', from: 'coder', to: 'reviewer-2', gateId: 'code-pr-gate' },
+				{ id: 'ch-3', from: 'coder', to: 'reviewer-3', gateId: 'code-pr-gate' },
 			];
 
 			const workflow = buildWorkflowWithGates(
@@ -1894,7 +1902,8 @@ describe('ChannelRouter', () => {
 			).run(AGENT_C, SPACE_ID, Date.now(), Date.now());
 
 			const channels: WorkflowChannel[] = [
-				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'shared-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'shared-gate' }, // fan-out to both targets
+				{ id: 'ch-2', from: 'coder', to: 'agent-c', gateId: 'shared-gate' }, // same gate, second target
 			];
 
 			const workflow = buildWorkflowWithGates(
@@ -2164,21 +2173,16 @@ describe('ChannelRouter', () => {
 
 			function buildQaWorkflow(qaMaxCycles = 5) {
 				const channels: WorkflowChannel[] = [
-					// Coding → Code Review node
-					// Code Review node → QA
-					{
-						from: 'Code Review',
-						to: 'QA',
-						gateId: 'review-votes-gate',
-					},
-					// QA → Done (success)
-					// QA → Coding (backward/cyclic channel — topologically backward since QA is after Coding in nodes array)
-					{
-						from: 'QA',
-						to: 'Coding',
-						gateId: 'qa-fail-gate',
-						maxCycles: qaMaxCycles,
-					},
+					// index 0: Coding → Code Review (gated by code-pr-gate)
+					{ id: 'ch-0', from: 'Coding', to: 'Code Review', gateId: 'code-pr-gate' },
+					// index 1: Code Review → Coding (feedback, ungated back-channel)
+					{ id: 'ch-1', from: 'Code Review', to: 'Coding', maxCycles: qaMaxCycles },
+					// index 2: Code Review → QA (gated by review-votes-gate)
+					{ id: 'ch-2', from: 'Code Review', to: 'QA', gateId: 'review-votes-gate' },
+					// index 3: QA → Coding (cyclic, gated by qa-fail-gate)
+					{ id: 'ch-3', from: 'QA', to: 'Coding', gateId: 'qa-fail-gate', maxCycles: qaMaxCycles },
+					// index 4: QA → Done (success path, gated by qa-result-gate)
+					{ id: 'ch-4', from: 'QA', to: 'Done', gateId: 'qa-result-gate' },
 				];
 				return buildWorkflowWithGates(
 					SPACE_ID,
