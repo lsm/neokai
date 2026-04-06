@@ -4,6 +4,10 @@
 
 Create a dedicated route and page for viewing a single mission (goal) within a room, following the same architectural pattern used by `TaskView`. Currently, missions are only shown as expandable cards in the Missions tab list view (`GoalsEditor`). This plan adds a `/room/:roomId/mission/:goalId` route with a full-featured detail page.
 
+## URL Format
+
+**Singular form:** `/room/:roomId/mission/:goalId` — consistent with existing `/room/:roomId/task/:taskId`. Do NOT use plural `/rooms/` or `/missions/`.
+
 ## Approach
 
 Follow the existing `TaskView` pattern closely:
@@ -72,17 +76,19 @@ Follow the existing `TaskView` pattern closely:
 
 ### Task 2: Wire MissionDetail view into Room component
 
-**Description:** Pass the new `currentRoomGoalIdSignal` value through `MainContent` to `Room`, and render a `MissionDetail` overlay in `Room.tsx` when the goal ID is set (following the exact same overlay pattern used for `TaskViewToggle`).
+**Description:** Pass the new `currentRoomGoalIdSignal` value through `MainContent` to `Room`, and render `MissionDetail` in `Room.tsx` when the goal ID is set, following the **exact same rendering pattern** used for `TaskViewToggle`.
+
+**⚠️ IMPORTANT (P1 from review):** The plan's original JSX snippet assumed an `absolute inset-0 z-10` overlay, but this may NOT match how `TaskViewToggle` is actually rendered in `Room.tsx`. The implementing agent **MUST read the full Room.tsx render block** (particularly lines 180-280) to confirm whether the task view uses an absolute overlay or a content-replacement pattern, then follow the same pattern for MissionDetail. Do NOT blindly copy the JSX snippet below — adapt it to match the actual structure.
 
 **Subtasks:**
 1. In `packages/web/src/islands/MainContent.tsx`:
    - Import `currentRoomGoalIdSignal` from signals
    - Read `const roomGoalId = currentRoomGoalIdSignal.value` in the component body
    - Pass `goalViewId={roomGoalId}` prop to `<Room>`
-2. In `packages/web/src/islands/Room.tsx`:
+2. **Read the full Room.tsx render tree first.** Then in `packages/web/src/islands/Room.tsx`:
    - Add `goalViewId?: string | null` to `RoomProps` interface
    - Import the new `navigateToRoomMission` function (will be created in Task 1)
-   - Render a `MissionDetail` overlay when `goalViewId` is set, using the same `absolute inset-0 z-10` pattern as `TaskViewToggle`:
+   - Render `MissionDetail` when `goalViewId` is set, using the **same pattern** as `TaskViewToggle` (whether that is an absolute overlay or content replacement — confirm by reading the code):
      ```tsx
      {goalViewId && (
        <div class="absolute inset-0 z-10 bg-dark-900 flex flex-col overflow-hidden">
@@ -90,8 +96,9 @@ Follow the existing `TaskView` pattern closely:
        </div>
      )}
      ```
+     *(Adapt this snippet to match the actual TaskViewToggle rendering pattern)*
    - For now, use a placeholder `<MissionDetail>` component -- the real component will be created in Task 3
-   - The overlay should appear inside the same `relative` container as the task overlay, after the task overlay block
+   - The MissionDetail should appear in the same container and follow the same pattern as the task view block
 3. Create a minimal placeholder file `packages/web/src/components/room/MissionDetail.tsx`:
    - Export a `MissionDetail` component that accepts `{ roomId: string; goalId: string }` props
    - For now, render "Mission detail view -- coming soon" with a back button that calls `navigateToRoom(roomId)`
@@ -115,17 +122,17 @@ Follow the existing `TaskView` pattern closely:
 **Description:** Create a custom hook that encapsulates all data fetching and action handlers for the MissionDetail page, following the `useTaskViewData` pattern. The hook derives the goal reactively from `roomStore.goals` (via LiveQuery) and provides methods for updating, deleting, triggering, and scheduling the mission. Also, export the reusable sub-components from `GoalsEditor.tsx` so `MissionDetail` can import them.
 
 **Subtasks:**
-1. **Export reusable sub-components from `GoalsEditor.tsx`** (prerequisite for Task 4 and Task 5). Add `export` keyword to these functions (currently defined as bare `function`):
-   - `StatusIndicator` (line ~141)
-   - `PriorityBadge` (line ~159)
-   - `MissionTypeBadge` (line ~175)
-   - `AutonomyBadge` (line ~194)
-   - `ProgressBar` (line ~221)
-   - `MetricProgress` (line ~269)
-   - `RecurringScheduleInfo` (line ~396)
-   - `GoalShortIdBadge` (line ~1089)
-   - `GoalForm` (line ~1121) -- needed for inline edit mode in MissionDetail
-   - Verify line numbers by searching for `function StatusIndicator`, `function PriorityBadge`, etc. in the current file
+1. **Export reusable sub-components from `GoalsEditor.tsx`** (prerequisite for Task 4 and Task 5). Add `export` keyword to these functions (currently defined as bare `function`). **⚠️ Line numbers below may be stale — always search by function name** (e.g., `grep -n 'function StatusIndicator' packages/web/src/components/room/GoalsEditor.tsx`):
+   - `StatusIndicator`
+   - `PriorityBadge`
+   - `MissionTypeBadge`
+   - `AutonomyBadge`
+   - `ProgressBar`
+   - `MetricProgress`
+   - `RecurringScheduleInfo`
+   - `GoalShortIdBadge`
+   - `GoalForm` -- needed for inline edit mode in MissionDetail
+   - **Primary instruction: search by function name, not by line number.** Line numbers in plans go stale after any edit to the file.
 2. Create `packages/web/src/hooks/useMissionDetailData.ts`
 3. Define the hook interface `UseMissionDetailDataResult`:
    - `goal: RoomGoal | null` -- derived from `roomStore.goals` via `useComputed`, matching by UUID or short ID
@@ -170,7 +177,7 @@ Follow the existing `TaskView` pattern closely:
 2. Component props: `{ roomId: string; goalId: string }`
 3. Use the `useMissionDetailData` hook from Task 3
 4. Implement the header section:
-   - Back button (left arrow icon) that calls `navigateToRoom(roomId)` and explicitly sets `currentRoomTabSignal.value = 'goals'` to ensure the user lands on the Missions tab (the existing `navigateToRoom` function does NOT set the tab signal, so this must be done manually in the click handler)
+   - Back button (left arrow icon) that calls `navigateToRoom(roomId)` and explicitly sets `currentRoomTabSignal.value = 'goals'` to ensure the user lands on the Missions tab (the existing `navigateToRoom` function does NOT set the tab signal, so this must be done manually in the click handler). **⚠️ Do NOT modify `navigateToRoom` itself** — setting the tab signal must be done in the MissionDetail click handler only, to avoid unintended side effects elsewhere.
    - Mission title (large, bold)
    - Short ID badge (reuse `GoalShortIdBadge` from `GoalsEditor`)
    - Status indicator (reuse `StatusIndicator` from `GoalsEditor`)
@@ -295,7 +302,7 @@ Follow the existing `TaskView` pattern closely:
      - `TaskList` (line 300): `onGoalClick?: (goalId: string) => void` (change signature, thread through)
      - `TaskGroup` (line 458): `onGoalClick?: (goalId: string) => void` (change signature, thread through)
      - `TaskItem` (line 598): `onGoalClick?: (goalId: string) => void` (change signature, thread through)
-     - The task-goal badge at line 656: change from `onGoalClick?.()` to `onGoalClick?.(goalId)` -- note: the badge receives `goal: RoomGoal | null` via props but currently calls `onGoalClick` with no arguments
+     - **⚠️ KEY CHANGE:** The task-goal badge currently calls `onGoalClick?.()` with NO arguments. Change to `onGoalClick?.(goal.id)` — the badge already receives `goal: RoomGoal | null` via props, so use `goal.id` as the argument. Search for `onGoalClick?.()` (with empty parens) and replace with `onGoalClick?.(goal.id)` or the equivalent from the goal prop available in scope.
      - All intermediate components that pass `onGoalClick={onGoalClick}` through must continue to do so (the signature change propagates automatically)
    - Pass the goal ID through to the badge click handler
 5. In `packages/web/src/islands/Room.tsx`:
@@ -331,6 +338,7 @@ Follow the existing `TaskView` pattern closely:
    - Test `createRoomMissionPath` generates correct URL
    - Test `navigateToRoomMission` sets the correct signal values and URL
    - Test `navigateToRoomMission` clears other view signals
+   - **Test concurrent state transition:** Navigate to a task detail (set `currentRoomTaskIdSignal`), then navigate to a mission URL — verify `currentRoomTaskIdSignal` is cleared and `currentRoomGoalIdSignal` is set. And vice versa.
 2. Create `packages/web/src/components/room/MissionDetail.test.tsx`:
    - Test loading state (goal not yet loaded)
    - Test error state (goal not found)
@@ -361,7 +369,7 @@ Follow the existing `TaskView` pattern closely:
 **Description:** Add Playwright E2E tests covering the primary user-visible navigation flows for the new MissionDetail page. Unit tests (Task 7) will not catch broken deep-link navigation, overlay z-index conflicts, or browser history regressions -- E2E tests are essential for this route-driven feature.
 
 **Subtasks:**
-1. Create or extend `packages/e2e/tests/features/mission-detail.e2e.ts` (file already exists with in-list expanded view tests):
+1. Create or extend `packages/e2e/tests/features/mission-detail.e2e.ts` (file already exists with in-list expanded view tests). **⚠️ After Task 6 changes `onGoalClick` behavior (title click navigates to detail instead of expanding), verify that existing tests in this file still pass.** If any existing tests rely on clicking the mission title to expand inline, they will need to be updated to use the expand/collapse chevron instead:
    - Test: direct URL access `/room/:roomId/mission/:goalId` renders the MissionDetail overlay on page load
    - Test: clicking a mission card title in the Missions tab navigates to `/room/:roomId/mission/:goalId`
    - Test: browser back button from mission detail returns to the Missions tab list view
