@@ -234,6 +234,19 @@ function getTopTabButton(page: Page, label: string) {
 		.filter({ hasText: label });
 }
 
+/**
+ * Assert that the top tab bar button with the given label has the full active styling:
+ * text-blue-400 (text color) + border-b-2 border-blue-400 (bottom border indicator).
+ * Uses separate assertions for each class to avoid false positives from partial matches.
+ * Each assertion auto-retries on failure, handling Preact signal propagation timing.
+ */
+async function expectTopTabActive(page: Page, label: string) {
+	const tab = getTopTabButton(page, label);
+	await expect(tab).toHaveClass(/text-blue-400/, { timeout: 5000 });
+	await expect(tab).toHaveClass(/border-b-2/, { timeout: 5000 });
+	await expect(tab).toHaveClass(/border-blue-400/, { timeout: 5000 });
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Room Sidebar Sections', () => {
@@ -289,10 +302,11 @@ test.describe('Room Sidebar Sections', () => {
 		await expect(statsButton).toBeVisible({ timeout: 10000 });
 		await statsButton.click();
 
-		// The Tasks tab should become active — indicated by the top tab bar button
-		// having the active styling (text-blue-400 with border-b-2 border-blue-400)
-		const tasksTab = getTopTabButton(page, 'Tasks');
-		await expect(tasksTab).toHaveClass(/text-blue-400/, { timeout: 5000 });
+		// The Tasks tab should become active — expectTopTabActive checks both the
+		// text color (text-blue-400) and the bottom border indicator (border-b-2
+		// border-blue-400). Each assertion auto-retries to handle Preact signal
+		// propagation timing (client-side only, no network request).
+		await expectTopTabActive(page, 'Tasks');
 	});
 
 	// ── Pinned items ──────────────────────────────────────────────────────
@@ -325,8 +339,7 @@ test.describe('Room Sidebar Sections', () => {
 		await coordinatorBtn.click();
 
 		// The Coordinator tab should become active in the top tab bar
-		const coordinatorTab = getTopTabButton(page, 'Coordinator');
-		await expect(coordinatorTab).toHaveClass(/text-blue-400/, { timeout: 5000 });
+		await expectTopTabActive(page, 'Coordinator');
 	});
 
 	// ── Missions section ──────────────────────────────────────────────────
@@ -366,8 +379,7 @@ test.describe('Room Sidebar Sections', () => {
 		await missionsSection.locator('button').filter({ hasText: 'Ship Auth Feature' }).click();
 
 		// The Missions tab should become active in the top tab bar
-		const missionsTab = getTopTabButton(page, 'Missions');
-		await expect(missionsTab).toHaveClass(/text-blue-400/, { timeout: 5000 });
+		await expectTopTabActive(page, 'Missions');
 	});
 
 	test('Missions section: expand and collapse', async ({ page }) => {
