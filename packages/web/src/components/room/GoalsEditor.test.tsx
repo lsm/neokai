@@ -1092,4 +1092,109 @@ describe('GoalsEditor', () => {
 			expect(container.querySelector('[data-testid^="goal-short-id-badge-"]')).toBeNull();
 		});
 	});
+
+	describe('Goal Title Navigation (onGoalClick)', () => {
+		it('should render title as a clickable button when onGoalClick is provided', () => {
+			const goals = [createMockGoal('goal-1', { title: 'Clickable Goal' })];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			// Should be a button, not an h4
+			const titleButton = container.querySelector(
+				'button.text-sm.font-semibold'
+			) as HTMLButtonElement;
+			expect(titleButton).toBeTruthy();
+			expect(titleButton.textContent).toBe('Clickable Goal');
+		});
+
+		it('should render title as a plain h4 when onGoalClick is not provided', () => {
+			const goals = [createMockGoal('goal-1', { title: 'Static Goal' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			const h4 = container.querySelector('h4.text-sm.font-semibold');
+			expect(h4).toBeTruthy();
+			expect(h4?.textContent).toBe('Static Goal');
+
+			// No title button
+			expect(container.querySelector('button.text-sm.font-semibold')).toBeNull();
+		});
+
+		it('should call onGoalClick with the correct goalId when title button is clicked', () => {
+			const goals = [createMockGoal('goal-abc', { title: 'Nav Goal' })];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			const titleButton = container.querySelector(
+				'button.text-sm.font-semibold'
+			) as HTMLButtonElement;
+			fireEvent.click(titleButton);
+
+			expect(onGoalClick).toHaveBeenCalledWith('goal-abc');
+		});
+
+		it('should NOT expand/collapse when the title button is clicked (stopPropagation)', () => {
+			const goals = [
+				createMockGoal('goal-1', { title: 'Stop Prop Goal', description: 'Some description' }),
+			];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			// The card header has data-testid="goal-item-header"; clicking title should NOT trigger expand
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			const titleButton = container.querySelector(
+				'button.text-sm.font-semibold'
+			) as HTMLButtonElement;
+
+			// Capture whether expansion toggled by checking for expanded content before and after
+			const expandedContentBefore = container.querySelector(
+				'[data-testid="goal-expanded-content"]'
+			);
+			fireEvent.click(titleButton);
+			const expandedContentAfter = container.querySelector('[data-testid="goal-expanded-content"]');
+
+			// onGoalClick was called
+			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
+			// The header's toggle should NOT have fired — expansion state unchanged
+			expect(expandedContentBefore).toBe(expandedContentAfter);
+		});
+
+		it('should still expand/collapse when the card header (outside title) is clicked', () => {
+			const goals = [createMockGoal('goal-1', { title: 'Expandable Goal' })];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			// Click the header itself (not the button child) to toggle expand
+			fireEvent.click(header);
+
+			// onGoalClick should NOT have been called (clicked header, not title)
+			expect(onGoalClick).not.toHaveBeenCalled();
+		});
+
+		it('should call onGoalClick with the correct goalId for multiple goals', () => {
+			const goals = [
+				createMockGoal('goal-x', { title: 'Goal X' }),
+				createMockGoal('goal-y', { title: 'Goal Y' }),
+			];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			const titleButtons = container.querySelectorAll('button.text-sm.font-semibold');
+			expect(titleButtons.length).toBe(2);
+
+			fireEvent.click(titleButtons[1]); // click 'Goal Y'
+			expect(onGoalClick).toHaveBeenCalledWith('goal-y');
+			expect(onGoalClick).toHaveBeenCalledTimes(1);
+		});
+	});
 });
