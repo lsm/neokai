@@ -77,13 +77,14 @@ function checkGate(id: string, overrides?: Partial<Gate>): Gate {
 
 describe('buildSemanticWorkflowEdges', () => {
 	it('preserves a node-level channel between a single-agent node and a multi-agent node', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review' }];
 
 		expect(buildSemanticWorkflowEdges(NODES, channels)).toEqual([
 			{
 				id: 'plan:review',
 				fromStepId: 'plan',
 				toStepId: 'review',
+				direction: 'one-way',
 				channelCount: 1,
 				hasGate: false,
 				hasCyclic: false,
@@ -97,13 +98,17 @@ describe('buildSemanticWorkflowEdges', () => {
 	});
 
 	it('collapses opposite directions into one bidirectional semantic edge', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review' },
+			{ from: 'Code Review', to: 'Planning' },
+		];
 
 		expect(buildSemanticWorkflowEdges(NODES, channels)).toEqual([
 			{
 				id: 'plan:review',
 				fromStepId: 'plan',
 				toStepId: 'review',
+				direction: 'bidirectional',
 				channelCount: 2,
 				hasGate: false,
 				hasCyclic: false,
@@ -121,7 +126,11 @@ describe('buildSemanticWorkflowEdges', () => {
 	});
 
 	it('ignores task-agent and intra-node channels for the semantic canvas graph', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'task-agent', to: 'Planning' },
+			{ from: 'Reviewer 1', to: 'Reviewer 2' },
+			{ from: 'Code Review', to: 'QA', gateId: 'g1' },
+		];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels);
 		expect(result).toHaveLength(1);
@@ -138,7 +147,10 @@ describe('buildSemanticWorkflowEdges', () => {
 	it('tracks per-direction gate types for bidirectional edges', () => {
 		// Two one-way channels going opposite directions, each with a gate.
 		// plan→review (lowId→highId) has a gate; review→plan (highId→lowId) also has a gate.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review', gateId: 'gate-fwd' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [humanGate('gate-fwd'), humanGate('gate-rev')];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
@@ -152,7 +164,10 @@ describe('buildSemanticWorkflowEdges', () => {
 	});
 
 	it('does not set reverseGateType when only the forward direction has a gate', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review', gateId: 'gate-fwd' },
+			{ from: 'Code Review', to: 'Planning' },
+		];
 		const gates = [humanGate('gate-fwd')];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
@@ -162,7 +177,10 @@ describe('buildSemanticWorkflowEdges', () => {
 	});
 
 	it('does not set gateType when only the reverse direction has a gate', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [humanGate('gate-rev')];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
@@ -173,11 +191,8 @@ describe('buildSemanticWorkflowEdges', () => {
 
 	it('a bidirectional underlying channel gates both directions', () => {
 		const channels: WorkflowChannel[] = [
-			{
-				from: 'Planning',
-				to: 'Reviewer 1',
-				gateId: 'gate-both',
-			},
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-both' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-both' },
 		];
 		const gates = [humanGate('gate-both')];
 
@@ -190,7 +205,7 @@ describe('buildSemanticWorkflowEdges', () => {
 
 describe('gate label/color/hasScript propagation', () => {
 	it('propagates gate label and color for a one-way edge', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			humanGate('g1', {
 				label: 'Team Lead',
@@ -208,7 +223,7 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('propagates hasScript when gate has a script', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			checkGate('g1', {
 				script: { interpreter: 'bash', source: 'exit 0' },
@@ -223,7 +238,7 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('returns undefined for label/color when gate has neither', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [humanGate('g1')];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
@@ -233,7 +248,9 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('returns undefined for label/color/hasScript when gate is missing from lookup', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review', gateId: 'missing-gate' },
+		];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels);
 		expect(result[0].gateType).toBe('check');
@@ -243,7 +260,7 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('returns undefined for label/color/hasScript when channel has no gateId', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review' }];
 
 		const result = buildSemanticWorkflowEdges(NODES, channels);
 		expect(result[0].gateType).toBeUndefined();
@@ -253,7 +270,10 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('propagates label/color/hasScript for bidirectional edges per direction', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review', gateId: 'gate-fwd' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [
 			humanGate('gate-fwd', {
 				label: 'Forward',
@@ -282,11 +302,8 @@ describe('gate label/color/hasScript propagation', () => {
 
 	it('propagates label/color/hasScript for a bidirectional underlying channel to both directions', () => {
 		const channels: WorkflowChannel[] = [
-			{
-				from: 'Planning',
-				to: 'Reviewer 1',
-				gateId: 'gate-both',
-			},
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-both' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-both' },
 		];
 		const gates = [
 			humanGate('gate-both', {
@@ -310,7 +327,10 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('tracks label/color/hasScript only for forward direction when only forward has a gate', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review', gateId: 'gate-fwd' },
+			{ from: 'Code Review', to: 'Planning' },
+		];
 		const gates = [
 			checkGate('gate-fwd', {
 				label: 'Fwd Only',
@@ -331,7 +351,10 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('tracks label/color/hasScript only for reverse direction when only reverse has a gate', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Code Review' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [
 			checkGate('gate-rev', {
 				label: 'Rev Only',
@@ -355,7 +378,9 @@ describe('gate label/color/hasScript propagation', () => {
 
 	it('propagates label/color/hasScript for a one-way highToLow edge', () => {
 		// review→plan direction (highId→lowId) for a one-way edge
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [
 			checkGate('gate-rev', {
 				label: 'HighToLow',
@@ -376,7 +401,7 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('gates with label but no color propagate label and undefined color', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			humanGate('g1', {
 				label: 'Label Only',
@@ -391,7 +416,7 @@ describe('gate label/color/hasScript propagation', () => {
 	});
 
 	it('gates with color but no label propagate color and undefined label', () => {
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			humanGate('g1', {
 				color: '#998877',
@@ -408,7 +433,10 @@ describe('gate label/color/hasScript propagation', () => {
 	it('uses first gate label/color when multiple gates exist on the same direction', () => {
 		// Two channels from Planning→Review (different agents), each with a gate.
 		// Implementation uses ??= (nullish coalesce assignment) so first non-undefined wins.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-a' },
+			{ from: 'Planning', to: 'Reviewer 2', gateId: 'gate-b' },
+		];
 		const gates = [
 			humanGate('gate-a', { label: 'First', color: '#aa0000' }),
 			humanGate('gate-b', { label: 'Second', color: '#00bb00' }),
@@ -427,7 +455,10 @@ describe('gate label/color/hasScript propagation', () => {
 	it('second gate label wins when first gate has no label (??= undefined propagation)', () => {
 		// ??= only skips assignment when the current value is non-nullish.
 		// If the first gate has label: undefined, the second gate's label propagates.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-a' },
+			{ from: 'Planning', to: 'Reviewer 2', gateId: 'gate-b' },
+		];
 		const gates = [
 			humanGate('gate-a'), // no label
 			humanGate('gate-b', { label: 'Second', color: '#00bb00' }),
@@ -441,7 +472,10 @@ describe('gate label/color/hasScript propagation', () => {
 	it('sets hasScript to true when any gate on the same direction has a script', () => {
 		// Two channels same direction: first gate has no script, second gate has script.
 		// Implementation uses `if (gateInfo.hasScript)` which is true if ANY gate has a script.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-1' },
+			{ from: 'Planning', to: 'Reviewer 2', gateId: 'gate-2' },
+		];
 		const gates = [
 			humanGate('gate-1'),
 			humanGate('gate-2', { script: { interpreter: 'bash', source: 'exit 0' } }),
@@ -454,7 +488,7 @@ describe('gate label/color/hasScript propagation', () => {
 	it('gate with both fields and script propagates both gateType and hasScript', () => {
 		// A human gate (with approved field) that also has a script.
 		// Should produce gateType='human' AND hasScript=true.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			humanGate('g1', {
 				label: 'Hybrid Gate',
@@ -476,7 +510,11 @@ describe('gate label/color/hasScript propagation', () => {
 		// Multiple channels in each direction of a bidirectional edge.
 		// Forward: two gates (gate-fwd-1 with label/color, gate-fwd-2 with different label/color)
 		// Reverse: one gate with its own label/color
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-fwd-1' },
+			{ from: 'Planning', to: 'Reviewer 2', gateId: 'gate-fwd-2' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [
 			humanGate('gate-fwd-1', { label: 'Fwd 1', color: '#111111' }),
 			humanGate('gate-fwd-2', { label: 'Fwd 2', color: '#222222' }),
@@ -499,7 +537,11 @@ describe('gate label/color/hasScript propagation', () => {
 	it('hasScript is true on each direction independently when multiple gates have scripts', () => {
 		// Forward: two gates, one with script. Reverse: one gate with script.
 		// Both directions should have hasScript=true.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Reviewer 1', gateId: 'gate-fwd-a' },
+			{ from: 'Planning', to: 'Reviewer 2', gateId: 'gate-fwd-b' },
+			{ from: 'Code Review', to: 'Planning', gateId: 'gate-rev' },
+		];
 		const gates = [
 			humanGate('gate-fwd-a'), // no script
 			humanGate('gate-fwd-b', { script: { interpreter: 'bash', source: 'exit 0' } }),
@@ -515,7 +557,7 @@ describe('gate label/color/hasScript propagation', () => {
 
 	it('gate with script but no fields resolves to check type with hasScript true', () => {
 		// Script-only gate (no fields) should still derive gateType='check' from the fallback.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			checkGate('g1', {
 				script: { interpreter: 'node', source: 'console.log("ok")' },
@@ -532,7 +574,10 @@ describe('gate label/color/hasScript propagation', () => {
 	it('different agents from same multi-agent node with gates propagate independently per direction', () => {
 		// Reviewer 1→QA with gate A, Reviewer 2→QA with gate B (both same direction: review→qa).
 		// Both channels are lowToHigh since review comes before qa in node order.
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Reviewer 1', to: 'QA', gateId: 'gate-a' },
+			{ from: 'Reviewer 2', to: 'QA', gateId: 'gate-b' },
+		];
 		const gates = [
 			humanGate('gate-a', { label: 'R1 Check', color: '#ff0000' }),
 			checkGate('gate-b', { label: 'R2 Check', color: '#0000ff' }),
