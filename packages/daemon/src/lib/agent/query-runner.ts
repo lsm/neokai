@@ -42,6 +42,10 @@ export type { OriginalEnvVars } from '../provider-service';
  * Node's ChildProcess structurally satisfies the SDK's SpawnedProcess
  * interface (stdin, stdout, killed, exitCode, kill, on/once/off for
  * 'exit' and 'error' events).
+ *
+ * SDK coupling: This mirrors the internal spawnLocalProcess() in the SDK (sdk.mjs).
+ * Re-verify this implementation matches the SDK's spawn behavior on SDK upgrades —
+ * mismatches in stdio/env/signal can cause subtle subprocess communication failures.
  */
 function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 	const debugSdk = opts.env?.DEBUG_CLAUDE_AGENT_SDK;
@@ -562,8 +566,10 @@ export class QueryRunner {
 				}
 
 				// Clear process exit tracking — the subprocess has exited (or will be
-				// cleaned up by close() below). Prevents stale resolved promises from
-				// being misread as "subprocess is running" by future callers.
+				// cleaned up by close() below). Prevents a resolved promise from a
+				// previous generation being observed by stop() after a restart: without
+				// this clear, a future stop() call on a new query could snapshot a stale
+				// resolved promise and skip the real wait for the new subprocess's exit.
 				this.ctx.processExitedPromise = null;
 
 				messageQueue.stop();

@@ -417,6 +417,44 @@ describe('QueryLifecycleManager', () => {
 			expect(elapsed).toBeLessThan(100);
 			expect(mockContext.processExitedPromise).toBeNull();
 		});
+
+		test('snapshots processExitedPromise before queryPromise settles (regression for race condition)', async () => {
+			// Simulate the race: runQuery's finally block clears ctx.processExitedPromise during settlement.
+			// The old code read this.ctx.processExitedPromise AFTER awaiting queryPromise,
+			// so by then the finally block had already nulled it — making the exit wait a no-op.
+			// The fix snapshots it at the top of stop(), before any awaits.
+			let resolveQueryPromise!: () => void;
+			let resolveProcessExited!: () => void;
+			const processExitedPromise = new Promise<void>((r) => (resolveProcessExited = r));
+
+			// When queryPromise resolves, its finally block clears ctx.processExitedPromise
+			// (mirrors what runQuery() does in production)
+			const queryPromise = new Promise<void>((r) => (resolveQueryPromise = r)).then(() => {
+				mockContext.processExitedPromise = null; // mirrors runQuery()'s finally block
+			});
+
+			mockContext.queryPromise = queryPromise;
+			mockContext.processExitedPromise = processExitedPromise;
+			manager = new QueryLifecycleManager(mockContext);
+
+			// Start stop() but don't await yet
+			const stopPromise = manager.stop();
+
+			// Let queryPromise resolve (clears ctx.processExitedPromise as in production)
+			resolveQueryPromise();
+			await Promise.resolve(); // yield to let .then() run
+
+			// stop() should still be waiting for process exit (via the snapshot)
+			let stopResolved = false;
+			stopPromise.then(() => (stopResolved = true));
+			await Promise.resolve();
+			expect(stopResolved).toBe(false); // not done yet — waiting for process exit
+
+			// Now resolve process exit — stop() should complete
+			resolveProcessExited();
+			await stopPromise;
+			expect(stopResolved).toBe(true);
+		});
 	});
 
 	describe('restart', () => {

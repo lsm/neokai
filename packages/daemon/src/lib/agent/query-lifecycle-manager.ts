@@ -96,6 +96,10 @@ export class QueryLifecycleManager {
 		const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
 		const { messageQueue } = this.ctx;
 
+		// Snapshot BEFORE awaiting — runQuery()'s finally block clears ctx.processExitedPromise
+		// during queryPromise settlement, so capture it here while it's still set.
+		const processExitedPromise = this.ctx.processExitedPromise;
+
 		// 1. Stop the message queue (no new messages processed)
 		messageQueue.stop();
 
@@ -151,7 +155,9 @@ export class QueryLifecycleManager {
 		// close() sends SIGTERM but the process may take time to clean up.
 		// Without this, starting a new subprocess immediately can fail because
 		// the old process still holds workspace locks (.claude/ files).
-		const processExitedPromise = this.ctx.processExitedPromise;
+		// Uses the local snapshot captured at the top — ctx.processExitedPromise may
+		// have already been cleared by runQuery()'s finally block during queryPromise
+		// settlement above (the race condition this snapshot was introduced to fix).
 		if (processExitedPromise) {
 			await Promise.race([
 				processExitedPromise,
@@ -279,7 +285,10 @@ export class QueryLifecycleManager {
 
 			// Optionally restart
 			if (restartAfter) {
-				// No delay needed — stop() already awaits processExitedPromise.
+				// No delay needed — stop() snapshots processExitedPromise before awaiting
+				// queryPromise, so the old SDK subprocess is guaranteed to have exited
+				// before we proceed (even if runQuery()'s finally block already cleared
+				// ctx.processExitedPromise during queryPromise settlement).
 
 				// Validate and repair SDK session file before restarting.
 				// The interrupted query may have left the session file in an inconsistent state
