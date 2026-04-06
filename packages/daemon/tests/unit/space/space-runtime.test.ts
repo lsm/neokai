@@ -1176,8 +1176,7 @@ describe('SpaceRuntime', () => {
 	// -------------------------------------------------------------------------
 
 	describe('channel topology resolution', () => {
-		test('storeResolvedChannels: step with channels stores resolved channels in run config', async () => {
-			// Need two agents with different roles for channel resolution
+		test('storeWorkflowChannels: step with channels stores channels in memory', async () => {
 			const AGENT_REVIEWER = 'agent-reviewer';
 			seedAgentRow(db, AGENT_REVIEWER, SPACE_ID, 'Reviewer');
 
@@ -1185,57 +1184,41 @@ describe('SpaceRuntime', () => {
 				spaceId: SPACE_ID,
 				name: `Channel Step ${Date.now()}`,
 				nodes: [
+					{ id: STEP_A, name: 'Code', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{
-						id: STEP_A,
-						name: 'Code and Review',
-						agents: [
-							{ agentId: AGENT_CODER, name: 'coder' },
-							{ agentId: AGENT_REVIEWER, name: 'reviewer' },
-						],
+						id: 'step-review',
+						name: 'Review',
+						agents: [{ agentId: AGENT_REVIEWER, name: 'reviewer' }],
 					},
 				],
-				channels: [
-					{
-						from: 'coder',
-						to: 'reviewer',
-						label: 'submit',
-					},
-				],
-				transitions: [],
+				channels: [{ id: 'ch-1', from: 'Code', to: 'Review', label: 'submit' }],
 				startNodeId: STEP_A,
-				rules: [],
 				tags: [],
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Resolved channels are now stored in-memory via runtime.getRunResolvedChannels()
-			// (M71: no longer stored in run.config._resolvedChannels)
-			const resolvedChannels = runtime.getRunResolvedChannels(run.id);
-			expect(Array.isArray(resolvedChannels)).toBe(true);
-			expect(resolvedChannels.length).toBeGreaterThan(0);
+			// Channels stored in-memory via runtime.getRunWorkflowChannels()
+			const channels = runtime.getRunWorkflowChannels(run.id);
+			expect(Array.isArray(channels)).toBe(true);
+			expect(channels.length).toBeGreaterThan(0);
+			expect(channels[0].from).toBe('Code');
+			expect(channels[0].to).toBe('Review');
 		});
 
-		test('storeResolvedChannels: step without channels does NOT store task-agent channels', async () => {
-			// When a step has no user-declared channels, no channels should be stored.
-			// M3 auto-generation of task-agent channels has been removed.
+		test('storeWorkflowChannels: workflow without channels returns empty array', async () => {
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
 				{ id: STEP_A, name: 'No Channels', agentId: AGENT_CODER },
 			]);
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Resolved channels now stored in-memory (M71)
-			const resolvedChannels = runtime.getRunResolvedChannels(run.id);
-			// Should be empty array when no user-declared channels exist
-			expect(Array.isArray(resolvedChannels)).toBe(true);
-			expect(resolvedChannels.length).toBe(0);
+			const channels = runtime.getRunWorkflowChannels(run.id);
+			expect(Array.isArray(channels)).toBe(true);
+			expect(channels.length).toBe(0);
 		});
 
-		test('storeResolvedChannels: no auto-generated channels when step has multiple agents with the same role', async () => {
-			// When a step has no user-declared channels, no channels should be stored,
-			// even if the step has multiple agents with the same role.
-			// M3 auto-generation has been removed.
+		test('storeWorkflowChannels: no auto-generated channels for multi-agent step', async () => {
 			const AGENT_CODER_2 = 'agent-coder-2-duplicate-role';
 			seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2');
 
@@ -1246,25 +1229,21 @@ describe('SpaceRuntime', () => {
 				nodes: [
 					{
 						id: stepId,
-						name: 'Two Coders Same Role',
+						name: 'Two Coders',
 						agents: [
 							{ agentId: AGENT_CODER, name: 'coder' },
 							{ agentId: AGENT_CODER_2, name: 'coder-2' },
 						],
 					},
 				],
-				transitions: [],
 				startNodeId: stepId,
-				rules: [],
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-			// Resolved channels now stored in-memory (M71)
-			const resolvedChannels = runtime.getRunResolvedChannels(run.id);
-			expect(Array.isArray(resolvedChannels)).toBe(true);
-			// No auto-generated channels when no user-declared channels exist
-			expect(resolvedChannels.length).toBe(0);
+			const channels = runtime.getRunWorkflowChannels(run.id);
+			expect(Array.isArray(channels)).toBe(true);
+			expect(channels.length).toBe(0);
 		});
 	});
 });

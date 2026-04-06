@@ -30,7 +30,7 @@ import {
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -61,8 +61,8 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
-	channels: ResolvedChannel[]
-): { runId: string; channels: ResolvedChannel[] } {
+	channels: WorkflowChannel[]
+): { runId: string; channels: WorkflowChannel[] } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
@@ -84,14 +84,8 @@ function seedWorkflowRunWithChannels(
 	return { runId: run.id, channels };
 }
 
-function makeResolvedChannel(fromRole: string, toRole: string): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		isHubSpoke: false,
-	};
+function makeResolvedChannel(from: string, to: string | string[]): WorkflowChannel {
+	return { id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`, from, to };
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +169,7 @@ function makeBaseConfig(
 		agentMessageRouter: new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channelResolver.getResolvedChannels(),
+			workflowChannels: channelResolver.getChannels(),
 			messageInjector,
 		}),
 		messageInjector,
@@ -209,7 +203,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -234,7 +228,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -257,7 +251,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -280,7 +274,7 @@ describe('send_message with ChannelRouter injected', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -400,7 +394,7 @@ describe('both paths produce same behavior for role-based DM', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: routerBaseConfig.messageInjector,
 		});
 		const routerHandlers = createNodeAgentToolHandlers({ ...routerBaseConfig, agentMessageRouter });
@@ -441,9 +435,9 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 	});
 
 	test('node name target fans out to all agents mapped to that node', async () => {
+		// Use node-name channels consistent with nodeGroups
 		const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-			makeResolvedChannel('coder', 'reviewer'),
-			makeResolvedChannel('coder', 'security'),
+			makeResolvedChannel('code-node', 'review-node'),
 		]);
 		seedPeerTask(ctx.nodeExecutionRepo, workflowRunId, NODE_ID, 'reviewer', ctx.reviewerSessionId);
 		seedPeerTask(
@@ -461,9 +455,10 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 			nodeGroups: {
+				'code-node': ['coder'],
 				'review-node': ['reviewer', 'security'],
 			},
 		});
@@ -499,7 +494,7 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -546,7 +541,7 @@ describe('send_message: cross-node delivery', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -577,7 +572,7 @@ describe('send_message: cross-node delivery', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -622,7 +617,7 @@ describe('send_message: gate blocked via topology', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -648,7 +643,7 @@ describe('send_message: gate blocked via topology', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 
@@ -676,7 +671,7 @@ describe('send_message: gate blocked via topology', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: ctx.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channels,
+			workflowChannels: channels,
 			messageInjector: baseConfig.messageInjector,
 		});
 

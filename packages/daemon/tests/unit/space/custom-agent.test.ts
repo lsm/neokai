@@ -79,8 +79,13 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 			{
 				id: 'node-1',
 				name: 'Plan',
-				agents: [{ agentId: 'agent-1', name: 'Coder' }],
-				instructions: 'Write a plan',
+				agents: [
+					{
+						agentId: 'agent-1',
+						name: 'Coder',
+						instructions: { mode: 'override', value: 'Write a plan' },
+					},
+				],
 			},
 			{ id: 'node-2', name: 'Code', agents: [{ agentId: 'agent-1', name: 'Coder' }] },
 		],
@@ -144,7 +149,7 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).toContain('Workflow Structure');
 		expect(message).toContain('Nodes:');
 		expect(message).toContain('Plan');
-		expect(message).toContain('Write a plan');
+		// Agent slot carries the instructions (node-level instructions removed)
 		expect(message).toContain('Monorepo project');
 		expect(message).toContain('Run tests before finishing.');
 		expect(message).toContain('https://github.com/org/repo/pull/42');

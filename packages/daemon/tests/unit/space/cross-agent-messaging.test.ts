@@ -53,7 +53,7 @@ import {
 	type SubSessionState,
 	type TaskAgentToolsConfig,
 } from '../../../src/lib/space/tools/task-agent-tools.ts';
-import type { ResolvedChannel, Space, SpaceWorkflow } from '@neokai/shared';
+import type { WorkflowChannel, Space, SpaceWorkflow } from '@neokai/shared';
 
 // ===========================================================================
 // DB / seed helpers
@@ -124,13 +124,11 @@ function seedRunTask(
 // ResolvedChannel builder helper
 // ===========================================================================
 
-function ch(fromRole: string, toRole: string, isHubSpoke = false): ResolvedChannel {
+function ch(from: string, to: string | string[]): WorkflowChannel {
 	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		isHubSpoke,
+		id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`,
+		from,
+		to,
 	};
 }
 
@@ -275,7 +273,7 @@ function makeStepConfig(
 		new AgentMessageRouter({
 			nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channelResolver.getResolvedChannels(),
+			workflowChannels: channelResolver.getChannels(),
 			messageInjector: injector,
 		});
 
