@@ -707,6 +707,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		cleanup: async () => {
 			unsubRoomCreated();
 			unsubLiveQuery();
+			// roomRuntimeService.stop() is synchronous today. If it becomes
+			// async in the future, add await here to prevent silent promise discard.
 			roomRuntimeService.stop();
 			await spaceRuntimeService.stop();
 			fileIndex.dispose();

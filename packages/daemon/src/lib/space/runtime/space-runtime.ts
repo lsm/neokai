@@ -550,11 +550,20 @@ export class SpaceRuntime {
 		// reads/writes and DaemonHub event emissions complete before the
 		// caller proceeds to close the database.
 		if (this.tickInFlight) {
+			const MAX_TICK_DRAIN_MS = 30_000;
+			const start = Date.now();
 			await new Promise<void>((resolve) => {
 				const check = () => {
 					if (!this.tickInFlight) {
 						resolve();
+					} else if (Date.now() - start > MAX_TICK_DRAIN_MS) {
+						log.warn(
+							`SpaceRuntime: timed out waiting for in-flight tick after ${MAX_TICK_DRAIN_MS}ms — proceeding with shutdown`
+						);
+						resolve();
 					} else {
+						// 10 ms balances low latency (fast shutdown) against
+						// CPU churn (no busy-spin) during the drain window.
 						setTimeout(check, 10);
 					}
 				};
