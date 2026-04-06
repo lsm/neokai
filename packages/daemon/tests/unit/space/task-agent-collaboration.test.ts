@@ -263,7 +263,6 @@ function buildTwoNodeWorkflow(ctx: TestCtx): SpaceWorkflow {
 		transitions: [],
 		startNodeId: node1Id,
 		rules: [],
-		channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 	});
 }
 
@@ -286,7 +285,6 @@ function buildHumanGateWorkflow(ctx: TestCtx): SpaceWorkflow {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gate: { type: 'human', description: 'Human must approve before reviewer is notified' },
 			},
 		],

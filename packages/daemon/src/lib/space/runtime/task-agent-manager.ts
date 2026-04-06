@@ -37,7 +37,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { generateUUID, resolveChannels, resolveNodeAgents } from '@neokai/shared';
+import { generateUUID, resolveNodeAgents } from '@neokai/shared';
 import type {
 	Space,
 	SpaceTask,
@@ -2098,8 +2098,8 @@ export class TaskAgentManager {
 		const workflow = run?.workflowId
 			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
 			: null;
-		const resolvedChannels = workflow ? resolveChannels(workflow) : [];
-		const channelResolver = new ChannelResolver(resolvedChannels);
+		const channels = workflow?.channels ?? [];
+		const channelResolver = new ChannelResolver(channels);
 
 		const nodeGroups = workflow
 			? Object.fromEntries(
@@ -2126,7 +2126,7 @@ export class TaskAgentManager {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels,
+			workflowChannels: channels,
 			messageInjector: (targetSessionId, message) =>
 				this.injectSubSessionMessage(targetSessionId, message),
 			channelRouter: nodeAgentChannelRouter,

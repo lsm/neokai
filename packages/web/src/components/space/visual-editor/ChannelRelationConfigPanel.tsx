@@ -173,7 +173,6 @@ export function ChannelRelationConfigPanel({
 							onGatesChange={onGatesChange}
 							onEditGate={handleEditGate}
 							showHeader={false}
-							showDirectionControls={false}
 						/>
 					))}
 				</div>
@@ -196,7 +195,6 @@ export function ChannelRelationConfigPanel({
 							onGatesChange={onGatesChange}
 							onEditGate={handleEditGate}
 							showHeader={false}
-							showDirectionControls={false}
 						/>
 					))}
 				</div>

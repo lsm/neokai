@@ -17,7 +17,7 @@
  */
 
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 import { ChannelResolver } from './channel-resolver';
 import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';
 
@@ -26,8 +26,8 @@ export interface AgentMessageRouterConfig {
 	nodeExecutionRepo: NodeExecutionRepository;
 	/** Workflow run ID for looking up peer tasks. */
 	workflowRunId: string;
-	/** Pre-resolved channel topology for this step. */
-	resolvedChannels: ResolvedChannel[];
+	/** Workflow channel definitions for this run. */
+	workflowChannels: WorkflowChannel[];
 	/** Injects a message into a target session as a user turn. */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
 	/**
@@ -116,7 +116,7 @@ export class AgentMessageRouter {
 		const {
 			nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels,
+			workflowChannels,
 			messageInjector,
 			channelRouter,
 			nodeGroups,
@@ -124,7 +124,7 @@ export class AgentMessageRouter {
 		} = this.config;
 
 		// --- Build channel resolver ---
-		const resolver = new ChannelResolver(resolvedChannels);
+		const resolver = new ChannelResolver(workflowChannels);
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');

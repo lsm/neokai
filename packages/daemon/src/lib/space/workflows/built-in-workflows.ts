@@ -234,10 +234,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Implement the task. When done, create a pull request with `gh pr create` ' +
-				'and ensure the PR URL is available from `gh pr view`. The code-ready-gate ' +
-				'will verify this automatically before advancing to Review.',
 		},
 		{
 			id: CODING_REVIEW_STEP,
@@ -271,9 +267,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the pull request for correctness and quality. If changes are needed, send feedback to Code. ' +
-				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
 	startNodeId: CODING_CODE_STEP,
@@ -305,14 +298,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Code',
 			to: 'Review',
-			direction: 'one-way',
 			gateId: 'code-ready-gate',
 			label: 'Code → Review',
 		},
 		{
 			from: 'Review',
 			to: 'Code',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Review → Code (changes requested)',
 		},
@@ -371,9 +362,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Research the topic thoroughly. When done, commit all findings and open a pull request with `gh pr create`. ' +
-				'The research-ready-gate will verify the PR automatically before advancing to Review.',
 		},
 		{
 			id: RESEARCH_REVIEW_STEP,
@@ -408,9 +396,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the research pull request for completeness and quality. If more research is needed, send feedback to Research. ' +
-				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
 	startNodeId: RESEARCH_STEP,
@@ -442,14 +427,12 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Research',
 			to: 'Review',
-			direction: 'one-way',
 			gateId: 'research-ready-gate',
 			label: 'Research → Review',
 		},
 		{
 			from: 'Review',
 			to: 'Research',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Review → Research (more research needed)',
 		},
@@ -502,9 +485,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the code or PR specified in the task. Provide a thorough review ' +
-				'and call report_done() when complete.',
 		},
 	],
 	startNodeId: REVIEW_REVIEW_STEP,
@@ -566,9 +546,6 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Break down the task into an actionable implementation plan and commit it. ' +
-				'Open or update the PR; plan-pr-gate will verify the PR automatically before Plan Review starts.',
 		},
 		{
 			id: V2_PLAN_REVIEW_STEP,
@@ -592,9 +569,6 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the implementation plan for feasibility and completeness. ' +
-				'Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
 		},
 		{
 			id: V2_CODING_STEP,
@@ -620,9 +594,6 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Implement the approved plan. Open a pull request when done. ' +
-				'Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
 		},
 		{
 			id: V2_REVIEW_STEP,
@@ -699,9 +670,6 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Verify tests, CI, and mergeability for release readiness. ' +
-				'Call report_done() when QA passes; otherwise send detailed feedback to Coding for fixes.',
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
@@ -768,56 +736,48 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Planning',
 			to: 'Plan Review',
-			direction: 'one-way',
 			gateId: 'plan-pr-gate',
 			label: 'Planning → Plan Review',
 		},
 		{
 			from: 'Plan Review',
 			to: 'Coding',
-			direction: 'one-way',
 			gateId: 'plan-approval-gate',
 			label: 'Plan Review → Coding',
 		},
 		{
 			from: 'Coding',
 			to: 'Code Review',
-			direction: 'one-way',
 			gateId: 'code-pr-gate',
 			label: 'Coding → Code Review',
 		},
 		{
 			from: 'Code Review',
 			to: 'QA',
-			direction: 'one-way',
 			gateId: 'review-votes-gate',
 			label: 'Code Review → QA',
 		},
 		{
 			from: 'Code Review',
 			to: 'Coding',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Code Review → Coding (feedback)',
 		},
 		{
 			from: 'QA',
 			to: 'Coding',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'QA → Coding (issues found)',
 		},
 		{
 			from: 'Plan Review',
 			to: 'Planning',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Plan Review → Planning (feedback)',
 		},
 		{
 			from: 'Coding',
 			to: 'Planning',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Coding → Planning (feedback)',
 		},
@@ -871,9 +831,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Implement backend and frontend changes, update tests, write code-pr-gate (pr_url), ' +
-				'and call report_done() when Coding is handoff-ready.',
 		},
 		{
 			id: FULLSTACK_REVIEW_STEP,
@@ -895,8 +852,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the implementation quality. Approve via review-approval-gate to send to QA, or send feedback to Coding.',
 		},
 		{
 			id: FULLSTACK_QA_STEP,
@@ -920,8 +875,6 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Run comprehensive validation (including browser tests). Call report_done() on pass, or send fixes back to Coding.',
 		},
 	],
 	startNodeId: FULLSTACK_CODING_STEP,
@@ -959,28 +912,24 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Coding',
 			to: 'Review',
-			direction: 'one-way',
 			gateId: 'code-pr-gate',
 			label: 'Coding → Review',
 		},
 		{
 			from: 'Review',
 			to: 'QA',
-			direction: 'one-way',
 			gateId: 'review-approval-gate',
 			label: 'Review → QA',
 		},
 		{
 			from: 'Review',
 			to: 'Coding',
-			direction: 'one-way',
 			maxCycles: 6,
 			label: 'Review → Coding (feedback)',
 		},
 		{
 			from: 'QA',
 			to: 'Coding',
-			direction: 'one-way',
 			maxCycles: 6,
 			label: 'QA → Coding (issues found)',
 		},
@@ -1104,7 +1053,6 @@ export function seedBuiltInWorkflows(
 					...a,
 					agentId: resolvedIds.get(a.agentId)!,
 				})),
-				instructions: s.instructions,
 			}));
 
 			const startNodeId = nodeIdMap.get(template.startNodeId);

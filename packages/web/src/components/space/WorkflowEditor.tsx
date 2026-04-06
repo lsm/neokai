@@ -207,7 +207,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 					systemPrompt: extractInstructionText(agent.systemPrompt),
 					instructions: extractInstructionText(agent.instructions),
 				})),
-				instructions: node.instructions,
 			};
 		}
 
@@ -218,7 +217,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 			agentId: primary?.agentId,
 			model: primary?.model,
 			systemPrompt: extractInstructionText(primary?.systemPrompt),
-			instructions: node.instructions,
 		};
 	});
 
@@ -373,7 +371,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 					: typeof startNode.agents?.[0]?.systemPrompt === 'string'
 						? { mode: 'override' as const, value: startNode.agents[0].systemPrompt }
 						: undefined,
-			instructions: startNode.instructions ?? '',
+			instructions: '',
 			agents: startNode.agents && startNode.agents.length > 1 ? startNode.agents : undefined,
 		});
 	}
@@ -392,7 +390,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 						: typeof s.agents?.[0]?.systemPrompt === 'string'
 							? { mode: 'override' as const, value: s.agents[0].systemPrompt }
 							: undefined,
-				instructions: s.instructions ?? '',
+				instructions: '',
 				agents: s.agents && s.agents.length > 1 ? s.agents : undefined,
 			});
 		}
@@ -638,7 +636,6 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 					id: stepIds[i],
 					name: s.name || `Step ${i + 1}`,
 					agents: nodeAgents,
-					instructions: s.instructions || undefined,
 				};
 			});
 

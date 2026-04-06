@@ -170,9 +170,7 @@ describe('WorkflowNode rendering', () => {
 		const { queryByTestId, queryByText } = render(
 			<WorkflowNode
 				{...makeProps({
-					workflowChannels: [
-						{ from: 'agent-1', to: 'agent-2', direction: 'one-way', label: 'handoff' },
-					],
+					workflowChannels: [],
 				})}
 			/>
 		);

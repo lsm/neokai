@@ -347,10 +347,7 @@ describe('SpaceWorkflowRepository', () => {
 					],
 				},
 			],
-			channels: [
-				{ from: 'multi-1', to: 'multi-2', direction: 'one-way', label: 'feedback' },
-				{ from: 'multi-2', to: ['multi-1', 'multi-1'], direction: 'bidirectional' },
-			],
+			channels: [],
 		});
 
 		const read = repo.getWorkflow(wf.id);
@@ -359,13 +356,11 @@ describe('SpaceWorkflowRepository', () => {
 		expect(read!.channels![0]).toMatchObject({
 			from: 'multi-1',
 			to: 'multi-2',
-			direction: 'one-way',
 			label: 'feedback',
 		});
 		expect(read!.channels![1]).toMatchObject({
 			from: 'multi-2',
 			to: ['multi-1', 'multi-1'],
-			direction: 'bidirectional',
 		});
 	});
 
@@ -846,7 +841,6 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
-				channels: [{ from: '', to: 'b', direction: 'one-way' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -865,7 +859,6 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
-				channels: [{ from: 'a', to: '', direction: 'one-way' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -884,7 +877,6 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
-				channels: [{ from: 'a', to: [], direction: 'one-way' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -906,7 +898,6 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
-				channels: [{ from: '   ', to: 'reviewer', direction: 'one-way' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -925,7 +916,6 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
-				channels: [{ from: 'coder', to: '   ', direction: 'one-way' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -944,7 +934,6 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
-				channels: [{ from: 'coder', to: ['reviewer', '   '], direction: 'one-way' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -962,11 +951,7 @@ describe('SpaceWorkflowManager', () => {
 					],
 				},
 			],
-			channels: [
-				{ from: '*', to: 'reviewer', direction: 'one-way' },
-				{ from: 'coder', to: '*', direction: 'bidirectional' },
-				{ from: '*', to: '*', direction: 'one-way' },
-			],
+			channels: [],
 		});
 		expect(wf.channels).toHaveLength(3);
 	});
@@ -984,7 +969,6 @@ describe('SpaceWorkflowManager', () => {
 					],
 				},
 			],
-			channels: [{ from: 'hub', to: ['spoke-a', 'spoke-b'], direction: 'bidirectional' }],
 		});
 		expect(wf.channels).toHaveLength(1);
 	});
@@ -1011,7 +995,6 @@ describe('SpaceWorkflowManager', () => {
 					],
 				},
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		});
 		expect(wf.channels).toHaveLength(1);
 		expect(wf.nodes[0].channels).toBeUndefined();
@@ -1028,7 +1011,6 @@ describe('SpaceWorkflowManager', () => {
 					agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
 				},
 			],
-			channels: [{ from: 'any-role', to: 'any-other-role', direction: 'one-way' }],
 		});
 		expect(wf.channels).toHaveLength(1);
 	});
@@ -1043,7 +1025,6 @@ describe('SpaceWorkflowManager', () => {
 					agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
 				},
 			],
-			channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
 		});
 		expect(wf.channels).toHaveLength(1);
 	});
@@ -1058,7 +1039,6 @@ describe('SpaceWorkflowManager', () => {
 					agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
 				},
 			],
-			channels: [{ from: 'coder', to: 'any-role', direction: 'one-way' }],
 		});
 		expect(updated!.channels).toHaveLength(1);
 		expect(updated!.nodes[0].channels).toBeUndefined();
@@ -1083,7 +1063,6 @@ describe('SpaceWorkflowManager', () => {
 					instructions: 'shared context',
 				},
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'submit' }],
 		});
 
 		const read = manager.getWorkflow(wf.id)!;
@@ -1098,7 +1077,6 @@ describe('SpaceWorkflowManager', () => {
 		expect(read.channels![0]).toMatchObject({
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 			label: 'submit',
 		});
 		expect(node.instructions).toBe('shared context');
@@ -1122,7 +1100,6 @@ describe('SpaceWorkflowManager', () => {
 					],
 				},
 			],
-			channels: [{ from: 'a', to: ['a', 'b'], direction: 'bidirectional' }],
 		})!;
 
 		const node = updated.nodes[0];
@@ -1147,7 +1124,6 @@ describe('SpaceWorkflowManager', () => {
 					],
 				},
 			],
-			channels: [{ from: 'a', to: 'b', direction: 'one-way' }],
 		});
 
 		expect(manager.deleteWorkflow(wf.id)).toBe(true);
@@ -1174,7 +1150,6 @@ describe('SpaceWorkflowManager', () => {
 					],
 				},
 			],
-			channels: [{ from: 'x', to: 'y', direction: 'bidirectional' }],
 		});
 
 		const workflows = manager.listWorkflows('space-1');

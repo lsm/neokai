@@ -792,7 +792,6 @@ describe('exportWorkflow — multi-agent nodes', () => {
 				{
 					from: 'coder',
 					to: 'reviewer',
-					direction: 'bidirectional',
 				},
 			],
 			startNodeId: 'node-uuid-1',
@@ -877,7 +876,6 @@ describe('exportWorkflow — multi-agent nodes', () => {
 					agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
 				},
 			],
-			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
 			startNodeId: 'node-uuid-1',
 		});
 		const agents = [makeAgent()];
@@ -985,7 +983,6 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 					name: 'Step',
 				},
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
 			transitions: [],
 			startNode: 'Step',
 			rules: [],
@@ -1015,7 +1012,6 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 					name: 'Fan-out',
 				},
 			],
-			channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
 			transitions: [],
 			startNode: 'Fan-out',
 			rules: [],
@@ -1224,7 +1220,6 @@ describe('round-trip: multi-agent + channels', () => {
 					agents: [{ agentId: 'agent-uuid-2', name: 'planner' }],
 				},
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' }],
 			startNodeId: 'node-1',
 			tags: ['collab'],
 			createdAt: 1000,
@@ -1559,7 +1554,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 					id: 'ch-uuid-1',
 					from: 'coder',
 					to: 'reviewer',
-					direction: 'bidirectional',
 					label: 'feedback',
 				},
 			],
@@ -1612,7 +1606,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 					id: 'ch-gate-uuid',
 					from: 'coder',
 					to: 'reviewer',
-					direction: 'one-way',
 					gateId: 'approval-gate',
 				},
 			],
@@ -1651,7 +1644,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 					id: 'ch-cyclic-uuid',
 					from: 'coder',
 					to: 'reviewer',
-					direction: 'one-way',
 					maxCycles: 3,
 				},
 			],
@@ -1691,7 +1683,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Collab',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(true);
@@ -1716,7 +1707,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Code',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'Review', direction: 'one-way' }],
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(true);
@@ -1737,7 +1727,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Work',
 			rules: [],
 			tags: [],
-			channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(true);
@@ -1761,7 +1750,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Collab',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'unknown-agent', to: 'reviewer', direction: 'one-way' }],
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
@@ -1789,7 +1777,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Collab',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'ghost', direction: 'one-way' }],
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
@@ -1817,7 +1804,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Fan-out',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'hub', to: ['spoke1', 'missing-spoke'], direction: 'one-way' }],
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
@@ -1848,7 +1834,6 @@ describe('ExportedWorkflowChannel — export and validation', () => {
 			startNode: 'Step',
 			rules: [],
 			tags: [],
-			channels: [{ id: 'ch-123', from: 'coder', to: 'reviewer', direction: 'one-way' }],
 		};
 		const result = validateExportedWorkflow(data);
 		// Channel id is stripped by the schema (not included in exportedWorkflowChannelSchema)

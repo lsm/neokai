@@ -32,7 +32,6 @@ import { GateEditorPanel } from './GateEditorPanel';
 export interface NodeChannelLink {
 	id: string;
 	label: string;
-	direction: 'one-way' | 'bidirectional';
 	channelCount: number;
 	hasGate: boolean;
 }

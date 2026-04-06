@@ -553,7 +553,6 @@ describe('NodeConfigPanel', () => {
 					{ agentId: 'agent-2', name: 'coder' },
 					{ agentId: 'agent-1', name: 'planner-2' },
 				],
-				channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' as const }],
 			});
 			const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
 			fireEvent.click(getAllByTestId('remove-agent-button')[2]);

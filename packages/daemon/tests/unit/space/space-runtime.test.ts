@@ -1198,7 +1198,6 @@ describe('SpaceRuntime', () => {
 					{
 						from: 'coder',
 						to: 'reviewer',
-						direction: 'one-way',
 						label: 'submit',
 					},
 				],

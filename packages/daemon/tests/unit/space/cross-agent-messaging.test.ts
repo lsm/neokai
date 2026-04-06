@@ -130,7 +130,6 @@ function ch(fromRole: string, toRole: string, isHubSpoke = false): ResolvedChann
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke,
 	};
 }

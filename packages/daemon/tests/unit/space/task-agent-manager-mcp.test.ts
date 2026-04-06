@@ -545,7 +545,6 @@ function makeResolvedChannel(
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke,
 	};
 }

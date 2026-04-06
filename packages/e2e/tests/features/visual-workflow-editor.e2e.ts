@@ -661,13 +661,11 @@ test.describe('Visual Workflow Editor', () => {
 							id: step1,
 							name: 'Start',
 							agentId: aId,
-							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
 						{
 							id: step2,
 							name: 'End',
 							agentId: aId,
-							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
 					],
 					startNodeId: step1,

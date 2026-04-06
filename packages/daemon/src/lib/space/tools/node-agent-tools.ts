@@ -318,14 +318,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Does NOT include self or the task-agent coordinator.
 		 */
 		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
-			const resolver = channelResolver;
+			// Determine this agent's node name from the workflow definition
+			const myNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
+			const myNodeName = myNode?.name ?? '';
 
-			const reachableExecs = workflowRunId
-				? nodeExecutionRepo.listByWorkflowRun(workflowRunId)
+			// Within-node peers: other agents in the same node
+			const nodeExecs = workflowRunId
+				? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
 				: [];
-
-			// Within-node peers: executions in this run excluding self
-			const withinNodePeers = reachableExecs
+			const withinNodePeers = nodeExecs
 				.filter((e) => e.agentSessionId !== mySessionId)
 				.map((e) => {
 					const ts = e.status;
@@ -340,74 +341,57 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					};
 				});
 
-			const reachabilityDeclared = !resolver.isEmpty();
+			const channels = workflow?.channels ?? [];
+			const reachabilityDeclared = channels.length > 0;
 
-			// Cross-node targets: outgoing channel entries where the target role is NOT
-			// already in the current node tasks (i.e., it lives on a different node).
-			const withinNodeRoles = new Set(reachableExecs.map((e) => e.agentName));
-
+			// Cross-node targets: channels where FROM node is this agent's node
 			type CrossNodeTarget = {
-				agentName: string;
-				isFanOut: boolean;
+				nodeName: string;
 				gate: { type: string; isGated: boolean; description?: string };
 			};
 			const crossNodeTargets: CrossNodeTarget[] = [];
 
-			if (reachabilityDeclared) {
-				const seen = new Set<string>();
-				// Build a lookup from (from, to) → gateId from original workflow channels
-				const channelGateMap = new Map<string, string>();
-				for (const wCh of workflow?.channels ?? []) {
-					if (wCh.gateId) {
-						const tos = Array.isArray(wCh.to) ? wCh.to : [wCh.to];
-						for (const t of tos) {
-							channelGateMap.set(`${wCh.from}→${t}`, wCh.gateId);
-						}
-					}
-				}
+			if (reachabilityDeclared && myNodeName) {
 				const gatesById = new Map((workflow?.gates ?? []).map((g) => [g.id, g]));
+				const seen = new Set<string>();
 
-				for (const ch of resolver.getResolvedChannels()) {
-					if (ch.fromRole !== myRole) continue;
-					if (withinNodeRoles.has(ch.toRole)) continue; // within-node — already listed above
-					if (seen.has(ch.toRole)) continue; // deduplicate (e.g. bidirectional split)
-					seen.add(ch.toRole);
-
-					// Look up gate from the original workflow channels via gateId
-					const gateId = channelGateMap.get(`${ch.fromRole}→${ch.toRole}`);
-					const gateEntity = gateId ? gatesById.get(gateId) : undefined;
-					const gateType = gateEntity
-						? (gateEntity.fields ?? []).some((f) => f.type === 'map' && f.check.op === 'count')
-							? 'count'
-							: 'check'
-						: 'none';
-					const isGated = gateEntity !== undefined;
-					const entry: CrossNodeTarget = {
-						agentName: ch.toRole,
-						isFanOut: ch.isFanOut ?? false,
-						gate: { type: gateType, isGated },
-					};
-					if (gateEntity?.description) {
-						entry.gate.description = gateEntity.description;
+				for (const ch of channels) {
+					if (ch.from !== myNodeName && ch.from !== '*') continue;
+					const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+					for (const toNode of tos) {
+						if (toNode === myNodeName || seen.has(toNode)) continue;
+						seen.add(toNode);
+						const gateEntity = ch.gateId ? gatesById.get(ch.gateId) : undefined;
+						const gateType = gateEntity
+							? (gateEntity.fields ?? []).some((f) => f.type === 'map' && f.check.op === 'count')
+								? 'count'
+								: 'check'
+							: 'none';
+						const entry: CrossNodeTarget = {
+							nodeName: toNode,
+							gate: { type: gateType, isGated: gateEntity !== undefined },
+						};
+						if (gateEntity?.description) entry.gate.description = gateEntity.description;
+						crossNodeTargets.push(entry);
 					}
-					crossNodeTargets.push(entry);
 				}
 			}
 
 			const totalReachable = withinNodePeers.length + crossNodeTargets.length;
 			const crossNodeSummary =
 				crossNodeTargets.length > 0
-					? ` Cross-node targets: ${crossNodeTargets.map((t) => t.agentName).join(', ')}.`
+					? ` Cross-node targets: ${crossNodeTargets.map((t) => t.nodeName).join(', ')}.`
 					: '';
 
 			return jsonResult({
 				success: true,
 				myAgentName: myRole,
+				myNodeName,
 				withinNodePeers,
 				crossNodeTargets,
 				reachabilityDeclared,
 				message:
-					`You can reach ${totalReachable} agent(s) in total. ` +
+					`You can reach ${totalReachable} target(s) in total. ` +
 					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
 					crossNodeSummary,
 			});
@@ -431,7 +415,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				channelId: ch.id ?? null,
 				from: ch.from,
 				to: ch.to,
-				direction: ch.direction,
 				maxCycles: ch.maxCycles ?? null,
 				label: ch.label ?? null,
 				hasGate: ch.gateId !== undefined,

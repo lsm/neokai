@@ -122,7 +122,6 @@ export class SpaceWorkflowManager {
 							id: n.id,
 							name: n.name,
 							agents: n.agents,
-							instructions: n.instructions,
 						})
 					)
 				: existing.nodes.map(
@@ -130,7 +129,6 @@ export class SpaceWorkflowManager {
 							id: n.id,
 							name: n.name,
 							agents: n.agents,
-							instructions: n.instructions,
 						})
 					);
 
@@ -270,22 +268,13 @@ export class SpaceWorkflowManager {
 	}
 
 	private validateChannels(channels: WorkflowChannel[]): void {
-		const validDirections = new Set(['one-way', 'bidirectional']);
-
 		for (let ci = 0; ci < channels.length; ci++) {
 			const ch = channels[ci];
 			const loc = `channels[${ci}]`;
 
-			// Validate direction
-			if (!validDirections.has(ch.direction)) {
-				throw new WorkflowValidationError(
-					`${loc}: direction must be 'one-way' or 'bidirectional', got "${ch.direction}"`
-				);
-			}
-
 			// Validate from
 			if (!ch.from || !ch.from.trim()) {
-				throw new WorkflowValidationError(`${loc}: 'from' must be a non-empty agent name string`);
+				throw new WorkflowValidationError(`${loc}: 'from' must be a non-empty node name string`);
 			}
 
 			// Validate to

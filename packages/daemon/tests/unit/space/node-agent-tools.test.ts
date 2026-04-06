@@ -156,7 +156,6 @@ function makeResolvedChannel(
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke,
 		...overrides,
 	};
@@ -976,7 +975,6 @@ describe('node-agent-tools: list_channels', () => {
 			id: 'ch-1',
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 		};
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
@@ -1007,7 +1005,6 @@ describe('node-agent-tools: list_channels', () => {
 			id: 'ch-2',
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 			gateId: 'approval-gate',
 		};
 		const workflow: SpaceWorkflow = {
@@ -1718,7 +1715,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'approval-gate' }],
 			gates: [
 				{
 					id: 'approval-gate',
@@ -1750,7 +1746,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [
 				{
 					id: 'vote-gate',
@@ -1787,7 +1782,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way' }],
 		};
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
@@ -1810,7 +1804,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'lead-gate' }],
 			gates: [
 				{
 					id: 'lead-gate',

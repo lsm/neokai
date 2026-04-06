@@ -307,14 +307,12 @@ describe('SpaceAgentEditor', () => {
 				description: 'Implementation worker',
 				tools: ['Read', 'Write', 'Edit', 'Bash'],
 				systemPrompt: 'You are a coder.',
-				instructions: 'Write code.',
 			},
 			{
 				name: 'Reviewer',
 				description: 'Review specialist',
 				tools: ['Read', 'Bash', 'Grep', 'Glob'],
 				systemPrompt: 'You are a reviewer.',
-				instructions: 'Review code.',
 			},
 		];
 
@@ -334,7 +332,6 @@ describe('SpaceAgentEditor', () => {
 				description: 'Research specialist',
 				tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 				systemPrompt: 'You are a research specialist.',
-				instructions: 'Research and summarize findings.',
 			},
 		];
 
@@ -370,7 +367,6 @@ describe('SpaceAgentEditor', () => {
 				description: 'Code review specialist',
 				tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
 				systemPrompt: 'You are an expert code reviewer.',
-				instructions: 'Review changes.',
 			},
 		];
 		const agent = makeAgent({ name: 'Custom Agent', description: 'Existing description' });

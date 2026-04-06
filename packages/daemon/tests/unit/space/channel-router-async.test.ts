@@ -181,7 +181,6 @@ describe('ChannelRouter async gate evaluation', () => {
 					{
 						from: 'coder',
 						to: 'planner',
-						direction: 'one-way',
 						gateId: channelGateId ?? gate.id,
 					},
 				]
@@ -575,10 +574,7 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'slow-script-a' },
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', gateId: 'slow-script-b' },
-			];
+			const channels: WorkflowChannel[] = [];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -644,10 +640,7 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'conc-script-a' },
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', gateId: 'conc-script-b' },
-			];
+			const channels: WorkflowChannel[] = [];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -744,11 +737,7 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			}));
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'sem-ov-a' },
-				{ from: 'coder', to: 'reviewer-a', direction: 'one-way', gateId: 'sem-ov-b' },
-				{ from: 'coder', to: 'reviewer-b', direction: 'one-way', gateId: 'sem-ov-c' },
-			];
+			const channels: WorkflowChannel[] = [];
 
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -804,11 +793,7 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			}));
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'sem-start-x' },
-				{ from: 'coder', to: 'reviewer-a', direction: 'one-way', gateId: 'sem-start-y' },
-				{ from: 'coder', to: 'reviewer-b', direction: 'one-way', gateId: 'sem-start-z' },
-			];
+			const channels: WorkflowChannel[] = [];
 
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -862,7 +847,6 @@ describe('ChannelRouter async gate evaluation', () => {
 					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
 				],
-				[{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'field-sem-bypass' }],
 				[gate]
 			);
 			const run = createActiveRun(workflow);
@@ -1065,10 +1049,7 @@ describe('ChannelRouter async gate evaluation', () => {
 			const AGENT_REVIEWER = 'agent-async-reviewer';
 			seedAgent(db, AGENT_REVIEWER, SPACE_ID, 'planner');
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'script-gate-a' },
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', gateId: 'script-gate-b' },
-			];
+			const channels: WorkflowChannel[] = [];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -1137,10 +1118,7 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'sem-ok-gate' },
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', gateId: 'sem-fail-gate' },
-			];
+			const channels: WorkflowChannel[] = [];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -1246,9 +1224,7 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'indep-gate-a' },
-			];
+			const channels: WorkflowChannel[] = [];
 
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1294,7 +1270,6 @@ describe('ChannelRouter async gate evaluation', () => {
 					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
 				],
-				[{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'shared-script-gate' }],
 				[gate]
 			);
 
@@ -1329,7 +1304,6 @@ describe('ChannelRouter async gate evaluation', () => {
 					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
 				],
-				[{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'iso-gate' }],
 				[gate]
 			);
 

@@ -206,21 +206,21 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 					result.push({
 						fromStepId: 'task-agent',
 						toStepId: toNodeId,
-						direction: channel.direction,
+						direction: 'one-way' as const,
 					});
 				} else if (toNodeId === 'task-agent' && fromNodeId !== 'task-agent') {
 					// Also add edge when task-agent is the target (channel is defined on another node)
 					result.push({
 						fromStepId: fromNodeId,
 						toStepId: 'task-agent',
-						direction: channel.direction,
+						direction: 'one-way' as const,
 					});
 				} else if (fromNodeId !== 'task-agent' && toNodeId !== 'task-agent') {
 					// Regular inter-node channel between two non-task-agent nodes
 					result.push({
 						fromStepId: fromNodeId,
 						toStepId: toNodeId,
-						direction: channel.direction,
+						direction: 'one-way' as const,
 					});
 				}
 			}

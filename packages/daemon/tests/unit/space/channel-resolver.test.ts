@@ -23,7 +23,6 @@ function oneWayChannel(fromRole: string, toRole: string): ResolvedChannel {
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke: false,
 	};
 }
@@ -34,7 +33,6 @@ function hubSpokeChannel(fromRole: string, toRole: string): ResolvedChannel {
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke: true,
 	};
 }
@@ -85,7 +83,6 @@ describe('ChannelResolver.fromRunConfig', () => {
 				toRole: 'reviewer',
 				fromAgentId: 'a',
 				toAgentId: 'b',
-				direction: 'one-way',
 				isHubSpoke: false,
 			}, // empty fromRole
 			'string-entry', // wrong type
@@ -94,7 +91,6 @@ describe('ChannelResolver.fromRunConfig', () => {
 				toRole: 'coder',
 				fromAgentId: 'a',
 				toAgentId: 'b',
-				direction: 'one-way',
 				isHubSpoke: false,
 			}, // valid
 		];
@@ -223,7 +219,6 @@ describe('ChannelResolver.getPermittedTargets', () => {
 			toRole: 'reviewer',
 			fromAgentId: 'agent-coder',
 			toAgentId: 'agent-reviewer-1',
-			direction: 'one-way',
 			isHubSpoke: false,
 		};
 		const ch2: ResolvedChannel = {
@@ -231,7 +226,6 @@ describe('ChannelResolver.getPermittedTargets', () => {
 			toRole: 'reviewer',
 			fromAgentId: 'agent-coder',
 			toAgentId: 'agent-reviewer-2',
-			direction: 'one-way',
 			isHubSpoke: false,
 		};
 		const resolver = new ChannelResolver([ch1, ch2]);
@@ -291,7 +285,6 @@ describe('ChannelResolver — gate field', () => {
 			toRole,
 			fromAgentId: `agent-${fromRole}`,
 			toAgentId: `agent-${toRole}`,
-			direction: 'one-way',
 			isHubSpoke: false,
 			gate: g,
 		};

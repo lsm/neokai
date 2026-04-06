@@ -1081,7 +1081,6 @@ describe('TaskAgentManager', () => {
 					{
 						from: 'Coding',
 						to: 'Review',
-						direction: 'one-way',
 						gateId: 'code-pr-gate',
 					},
 				],
@@ -1171,7 +1170,6 @@ describe('TaskAgentManager', () => {
 					{
 						from: 'Coding',
 						to: 'Review',
-						direction: 'one-way',
 						gateId: 'code-pr-gate',
 					},
 				],
