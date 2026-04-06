@@ -67,7 +67,6 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 import { formatEventMessage } from '../../../src/lib/space/runtime/session-notification-sink';
 import type { Space } from '@neokai/shared';
-import './helpers/suppress-teardown-noise';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
