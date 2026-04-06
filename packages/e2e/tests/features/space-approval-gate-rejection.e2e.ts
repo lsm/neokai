@@ -45,7 +45,7 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 async function createSpaceWithRun(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<{ spaceId: string; runId: string; taskId: string }> {
+): Promise<{ spaceId: string; runId: string }> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
 	// Use a unique subdirectory to avoid conflicts with other parallel tests
@@ -72,25 +72,7 @@ async function createSpaceWithRun(
 			})) as { run: { id: string } };
 			const runId = runRes.run.id;
 
-			// Poll for the task created by the workflow run
-			const startTime = Date.now();
-			const maxWait = 20000;
-			let taskId = '';
-			while (Date.now() - startTime < maxWait) {
-				const tasks = (await hub.request('spaceTask.list', { spaceId })) as Array<{
-					id: string;
-					workflowRunId?: string;
-				}>;
-				const match = tasks.find((t) => t.workflowRunId === runId);
-				if (match) {
-					taskId = match.id;
-					break;
-				}
-				await new Promise((r) => setTimeout(r, 250));
-			}
-			if (!taskId) throw new Error(`No task found for run ${runId} after ${maxWait}ms`);
-
-			return { spaceId, runId, taskId };
+			return { spaceId, runId };
 		},
 		{ wsPath }
 	);
@@ -129,32 +111,20 @@ async function deleteSpace(
 // ─── UI action helpers ────────────────────────────────────────────────────────
 
 /**
- * Navigate to the task pane, wait for WebSocket reconnection, then click the
- * Canvas toggle to reveal the workflow canvas.
- */
-async function openCanvasAndWait(page: Page, spaceId: string, taskId: string): Promise<void> {
-	await page.goto(`/space/${spaceId}/task/${taskId}`);
-	await waitForWebSocketConnected(page);
-
-	// Wait for the Canvas toggle to appear (confirms task data loaded with workflowRunId)
-	await expect(page.getByTestId('canvas-toggle')).toBeVisible({ timeout: 30000 });
-
-	// Click Canvas toggle to reveal the workflow canvas
-	await page.getByTestId('canvas-toggle').click();
-
-	// Wait for canvas SVG to render inside the canvas-view container
-	await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
-		timeout: 30000,
-	});
-}
-
-/**
  * Waits for the canvas to be fully initialized (SVG rendered + gate data loaded),
  * then rejects the waiting_human gate via the action popup.
  * Resolves once the gate-icon-blocked state is visible on the canvas.
  */
-async function rejectViaPopup(page: Page, spaceId: string, taskId: string): Promise<void> {
-	await openCanvasAndWait(page, spaceId, taskId);
+async function rejectViaPopup(page: Page): Promise<void> {
+	// Wait for canvas to be in runtime mode with gate data fetched.
+	// Both the container and SVG must be visible before gate icons appear.
+	// Use 30s timeout — workflow data from the store (live query) may load slowly under load.
+	await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
+		timeout: 30000,
+	});
+	await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+		timeout: 30000,
+	});
 
 	// Gate data is fetched async after canvas renders; wait for the gate icon.
 	const waitingGate = page.getByTestId('canvas-view').getByTestId('gate-icon-waiting_human');
@@ -190,23 +160,15 @@ test.describe('Approval Gate Rejection', () => {
 
 	let spaceId = '';
 	let runId = '';
-	let taskId = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		const ids = await createSpaceWithRun(page);
 		spaceId = ids.spaceId;
 		runId = ids.runId;
-		taskId = ids.taskId;
 	});
 
 	test.afterEach(async ({ page }) => {
-		try {
-			await page.goto('/');
-			await waitForWebSocketConnected(page, 5000);
-		} catch {
-			// If navigation fails, cleanup is best-effort
-		}
 		if (runId) {
 			await cancelRun(page, runId);
 			runId = '';
@@ -215,7 +177,6 @@ test.describe('Approval Gate Rejection', () => {
 			await deleteSpace(page, spaceId);
 			spaceId = '';
 		}
-		taskId = '';
 	});
 
 	// ─── Test 1: Reject via GateArtifactsView closes overlay and transitions run ──
@@ -223,7 +184,18 @@ test.describe('Approval Gate Rejection', () => {
 	test('rejecting via GateArtifactsView closes overlay and transitions run to needs_attention', async ({
 		page,
 	}) => {
-		await openCanvasAndWait(page, spaceId, taskId);
+		await page.goto(`/space/${spaceId}`);
+		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+
+		// Wait for canvas to be fully initialized (container + SVG + gate data).
+		// Use 30s here — the canvas panel requires workflow data from the store (live query),
+		// which may take longer when the server is under load at test start.
+		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
+			timeout: 30000,
+		});
+		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+			timeout: 30000,
+		});
 
 		// The plan-approval-gate starts in waiting_human (amber pulsing).
 		const waitingGate = page.getByTestId('canvas-view').getByTestId('gate-icon-waiting_human');
@@ -272,7 +244,10 @@ test.describe('Approval Gate Rejection', () => {
 	test('rejecting directly from gate popup sets gate to blocked without opening overlay', async ({
 		page,
 	}) => {
-		await rejectViaPopup(page, spaceId, taskId);
+		await page.goto(`/space/${spaceId}`);
+		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+
+		await rejectViaPopup(page);
 
 		// Overlay must NOT have appeared (we never opened it).
 		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
@@ -288,7 +263,10 @@ test.describe('Approval Gate Rejection', () => {
 	// ─── Test 3: Canvas shows error/attention state after rejection ───────────
 
 	test('canvas shows needs_attention banner and blocked gate after rejection', async ({ page }) => {
-		await rejectViaPopup(page, spaceId, taskId);
+		await page.goto(`/space/${spaceId}`);
+		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+
+		await rejectViaPopup(page);
 
 		// Canvas shows the needs_attention banner.
 		await expect(
@@ -309,7 +287,10 @@ test.describe('Approval Gate Rejection', () => {
 	// ─── Test 4: Space remains usable after rejection ─────────────────────────
 
 	test('space remains fully navigable and usable after gate rejection', async ({ page }) => {
-		await rejectViaPopup(page, spaceId, taskId);
+		await page.goto(`/space/${spaceId}`);
+		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+
+		await rejectViaPopup(page);
 
 		// Verify canvas still renders with the blocked gate after rejection.
 		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
@@ -323,14 +304,18 @@ test.describe('Approval Gate Rejection', () => {
 			timeout: 10000,
 		});
 
-		// Navigate away from the task pane and back — canvas should still render.
-		// Click the back button to return to the space overview.
-		await page.getByTestId('task-back-button').click();
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		// Tab bar should still be navigable — clicking Agents shows agent content.
+		// SpaceAgentList does NOT depend on spaceStore.space being non-null (unlike
+		// WorkflowList / SpaceSettings), so it's a more reliable navigation target.
+		await page.locator('button:has-text("Agents")').click();
+		await expect(page.locator('text=Planner')).toBeVisible({ timeout: 30000 });
+		await expect(page.locator('text=Coder')).toBeVisible({ timeout: 10000 });
 
-		// Navigate back to the task pane and open canvas again.
-		await openCanvasAndWait(page, spaceId, taskId);
-
+		// Return to Dashboard — canvas should still be visible with the blocked state.
+		await page.locator('button:has-text("Dashboard")').click();
+		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
+			timeout: 30000,
+		});
 		await expect(
 			page
 				.getByTestId('canvas-view')
@@ -345,14 +330,18 @@ test.describe('Approval Gate Rejection', () => {
 	test('rejected gate icon transitions from waiting_human (amber) to blocked (red lock)', async ({
 		page,
 	}) => {
-		await openCanvasAndWait(page, spaceId, taskId);
+		await page.goto(`/space/${spaceId}`);
+		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
 
 		// Initially: amber waiting_human gate is visible.
+		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+			timeout: 10000,
+		});
 		await expect(
 			page.getByTestId('canvas-view').getByTestId('gate-icon-waiting_human')
 		).toBeVisible({ timeout: 10000 });
 
-		await rejectViaPopup(page, spaceId, taskId);
+		await rejectViaPopup(page);
 
 		// After rejection: blocked gate is visible.
 		await expect(
