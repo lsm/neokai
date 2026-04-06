@@ -270,7 +270,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 				new AgentMessageRouter({
 					nodeExecutionRepo,
 					workflowRunId,
-					resolvedChannels: channelResolver.getResolvedChannels(),
+					workflowChannels: channelResolver.getChannels(),
 					messageInjector: async () => {},
 				}),
 			...overrides,
