@@ -363,9 +363,10 @@ describe('QueryLifecycleManager', () => {
 		});
 
 		test('stop() times out waiting for processExitedPromise', async () => {
+			const closeMock = mock(() => {});
 			mockContext.queryObject = {
 				interrupt: mock(async () => {}),
-				close: mock(() => {}),
+				close: closeMock,
 			} as unknown as QueryLifecycleManagerContext['queryObject'];
 			mockContext.firstMessageReceived = true;
 			mockContext.queryPromise = Promise.resolve();
@@ -379,7 +380,13 @@ describe('QueryLifecycleManager', () => {
 
 			// Should have timed out at the specified timeout
 			expect(elapsed).toBeGreaterThanOrEqual(90);
-			expect(elapsed).toBeLessThan(500);
+			expect(elapsed).toBeLessThan(300);
+			// close() must be called so the subprocess is not silently leaked
+			expect(closeMock).toHaveBeenCalled();
+			// All three context references are cleared even after a timeout
+			expect(mockContext.queryObject).toBeNull();
+			expect(mockContext.queryPromise).toBeNull();
+			expect(mockContext.processExitedPromise).toBeNull();
 		});
 
 		test('stop() works when processExitedPromise is null', async () => {
