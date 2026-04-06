@@ -34,6 +34,8 @@ import {
 	createRoomWithTaskAndGoal,
 	deleteRoom,
 	createTask,
+	createTestFile,
+	deleteTestFile,
 } from '../helpers/room-helpers';
 import {
 	typeInChatInput,
@@ -86,6 +88,15 @@ async function insertAndSend(page: Page, text: string, waitFor?: string): Promis
 	if (waitFor) {
 		await waitForMessageSent(page, waitFor);
 	}
+}
+
+/** Trigger an immediate FileIndex rescan via RPC. */
+async function rescanFileIndex(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub?.request) throw new Error('MessageHub not available');
+		await hub.request('fileindex.rescan', {});
+	});
 }
 
 // ─── Selectors (Task 5.4) ─────────────────────────────────────────────────────
@@ -225,9 +236,13 @@ test.describe('Reference Selection — Input Insertion', () => {
 	});
 
 	test('selecting a file result inserts @ref{file:…} or @ref{folder:…}', async ({ page }) => {
-		// Use seed file already indexed by FileIndex at server startup.
-		// Creating a new file right before searching races with the FileIndex's
-		// 10s polling interval, causing flaky failures in CI.
+		// Create a test file in the workspace and trigger FileIndex rescan.
+		// In CI the workspace is an empty temp dir, so seed files from test-env.ts
+		// are not available. We create a file and use fileindex.rescan RPC to
+		// index it immediately instead of waiting for the 10s polling interval.
+		await createTestFile(page, 'src/utils/helpers.ts', 'export const helpers = true;\n');
+		await rescanFileIndex(page);
+
 		await typeInChatInput(page, '@helpers');
 		// Wait for file search results to load
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
@@ -417,10 +432,12 @@ test.describe('Reference Autocomplete — Standalone Session', () => {
 	});
 
 	test('typing @ shows only file/folder results (no tasks or goals)', async ({ page }) => {
-		// Use seed file already indexed by FileIndex at server startup.
-		// Creating a new file right before searching would race with the
-		// FileIndex's 10s polling interval, causing flaky failures in CI.
-		// Seed files (README.md, src/index.ts, etc.) are guaranteed to be indexed.
+		// Create a test file in the workspace and trigger FileIndex rescan.
+		// In CI the workspace is an empty temp dir, so we create a file and
+		// use fileindex.rescan RPC to index it immediately.
+		await createTestFile(page, 'README.md', '# Test README\n');
+		await rescanFileIndex(page);
+
 		await typeInChatInput(page, '@README');
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
 		await dropdown.waitFor({ state: 'visible', timeout: 10000 });
