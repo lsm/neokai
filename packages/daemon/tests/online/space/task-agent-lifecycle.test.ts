@@ -51,7 +51,6 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 } from '@neokai/shared';
-import './helpers/suppress-teardown-noise';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;

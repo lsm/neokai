@@ -39,7 +39,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import './helpers/suppress-teardown-noise';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import type { SpaceWorkflowRun } from '@neokai/shared';
