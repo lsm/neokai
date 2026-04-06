@@ -30,6 +30,7 @@ import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomSettings, RoomAgents } from '../components/room';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
 import { TaskViewToggle } from '../components/room/TaskViewToggle';
+import { MissionDetail } from '../components/room/MissionDetail';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
@@ -42,9 +43,10 @@ interface RoomProps {
 	roomId: string;
 	sessionViewId?: string | null; // When set, show this session content instead of room tabs
 	taskViewId?: string | null; // When set, show TaskView (Craft + Lead) for this task
+	missionViewId?: string | null; // When set, show MissionDetail for this goal
 }
 
-export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
+export default function Room({ roomId, sessionViewId, taskViewId, missionViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>(
 		currentRoomAgentActiveSignal.value ? 'chat' : 'overview'
@@ -368,6 +370,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							{taskViewId && (
 								<div class="absolute inset-0 z-10 bg-dark-900 flex flex-col overflow-hidden">
 									<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
+								</div>
+							)}
+							{/* Mission slide-over: overlays tab content, keeps header/tabs accessible */}
+							{missionViewId && (
+								<div class="absolute inset-0 z-10 bg-dark-900 flex flex-col overflow-hidden">
+									<MissionDetail key={missionViewId} roomId={roomId} goalId={missionViewId} />
 								</div>
 							)}
 						</div>
