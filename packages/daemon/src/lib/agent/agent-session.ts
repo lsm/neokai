@@ -229,6 +229,7 @@ export class AgentSession
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 	originalEnvVars: OriginalEnvVars = {};
+	processExitedPromise: Promise<void> | null = null;
 	// Whether to auto-queue /context after each turn (default: true)
 	// Disabled for room-managed agents to prevent interleaved messages after terminal state
 	contextAutoQueueEnabled = true;
