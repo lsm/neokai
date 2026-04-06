@@ -279,8 +279,7 @@ export class QueryLifecycleManager {
 
 			// Optionally restart
 			if (restartAfter) {
-				// Small delay to ensure process cleanup completes
-				await new Promise((resolve) => setTimeout(resolve, 100));
+				// No delay needed — stop() already awaits processExitedPromise.
 
 				// Validate and repair SDK session file before restarting.
 				// The interrupted query may have left the session file in an inconsistent state

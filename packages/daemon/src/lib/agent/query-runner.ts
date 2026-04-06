@@ -29,21 +29,36 @@ import type { OriginalEnvVars } from '../provider-service';
 export type { OriginalEnvVars } from '../provider-service';
 
 /**
- * Default spawn implementation matching the SDK's internal behavior.
+ * Default spawn implementation matching the SDK's internal spawnLocalProcess().
  * Used when no custom spawnClaudeCodeProcess is configured, so we can
  * still intercept the subprocess and track its exit.
+ *
+ * Mirrors the SDK's spawn behavior (verified in sdk.mjs):
+ * - stdio: ['pipe', 'pipe', stderr] where stderr is 'pipe' when
+ *   DEBUG_CLAUDE_AGENT_SDK is set, otherwise 'ignore'
+ * - windowsHide: true
+ * - Same cwd, env, signal passthrough
+ *
+ * Node's ChildProcess structurally satisfies the SDK's SpawnedProcess
+ * interface (stdin, stdout, killed, exitCode, kill, on/once/off for
+ * 'exit' and 'error' events).
  */
 function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
+	const debugSdk = opts.env?.DEBUG_CLAUDE_AGENT_SDK;
+	const stderr = debugSdk && debugSdk !== '0' && debugSdk !== 'false' ? 'pipe' : 'ignore';
 	const proc = nodeSpawn(opts.command, opts.args, {
 		cwd: opts.cwd,
 		env: opts.env as NodeJS.ProcessEnv,
-		stdio: ['pipe', 'pipe', 'pipe'],
+		stdio: ['pipe', 'pipe', stderr],
 		signal: opts.signal,
+		windowsHide: true,
 	});
 	return proc as unknown as SpawnedProcess;
 }
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+/** Max time to wait for subprocess exit before retrying after startup timeout. */
+const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
 	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
@@ -407,7 +422,10 @@ export class QueryRunner {
 				// release workspace locks before spawning a replacement.
 				const exitPromise = this.ctx.processExitedPromise;
 				if (exitPromise) {
-					await Promise.race([exitPromise, new Promise((resolve) => setTimeout(resolve, 5000))]);
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
 					this.ctx.processExitedPromise = null;
 				}
 
@@ -542,6 +560,11 @@ export class QueryRunner {
 					abortController.abort();
 					this.ctx.queryAbortController = null;
 				}
+
+				// Clear process exit tracking — the subprocess has exited (or will be
+				// cleaned up by close() below). Prevents stale resolved promises from
+				// being misread as "subprocess is running" by future callers.
+				this.ctx.processExitedPromise = null;
 
 				messageQueue.stop();
 
