@@ -132,13 +132,21 @@ test.describe('Task Lifecycle — Reactivate', () => {
 	test('reactivates completed task via Reactivate button in Done tab list', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
+		// Clear persisted task filter tab so RoomTasks defaults to "Active"
+		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
+
 		// Navigate to the room dashboard (not individual task)
 		await page.goto(`/room/${roomId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Click the Done tab to see completed tasks
+		// Click the Done stat card to switch from overview to the Tasks room-level tab.
+		// Note: the stat card only switches the room tab — it does NOT set the internal
+		// Done sub-filter within RoomTasks, so we must click the Done sub-tab separately.
+		await page.getByRole('button', { name: /Done/ }).click();
+
+		// Now click the Done sub-tab within RoomTasks to filter for completed tasks
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Wait for the task to appear in the list
@@ -153,7 +161,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await expect(reactivateBtn).toBeVisible({ timeout: 5000 });
 		await reactivateBtn.click();
 
-		// Task should move from Done tab — click Active tab to confirm it's there
+		// Task should move from Done tab — click Active sub-tab to confirm it's there
 		await page.getByRole('button', { name: /Active/ }).click();
 		await expect(
 			page.getByRole('heading', { name: 'E2E Lifecycle Test Task' }).first()
