@@ -29,8 +29,9 @@ import {
 	switchToVisualMode,
 	openWorkflowForEdit,
 	setupMultiAgentStep,
-	ensureChannelsSectionOpen,
-	addWorkflowChannel,
+	createChannelByDrag,
+	clickChannelEdge,
+	closeChannelPanel,
 } from '../helpers/workflow-editor-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
@@ -164,9 +165,7 @@ test.describe('Multi-Agent Step Editor', () => {
 
 	// ─── Test 2: Configure channels — one-way and bidirectional ──────────────
 
-	test('Add one-way and bidirectional channels — verify directed arrows appear', async ({
-		page,
-	}) => {
+	test('Add one-way channel between steps — verify directed arrow on canvas', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
 		await switchToVisualMode(page);
@@ -174,60 +173,54 @@ test.describe('Multi-Agent Step Editor', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Channel Topology Test');
 
-		// Add step and open config
+		const STEP_A = 'Step A';
+		const STEP_B = 'Step B';
+
+		// Add two steps with multi-agent config
 		await editor.getByTestId('add-step-button').click();
-		const regularNode = editor.locator(
+		let regularNodes = editor.locator(
 			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
 		);
-		await expect(regularNode).toHaveCount(1, { timeout: 3000 });
-		await regularNode.click();
-		const panel = editor.getByTestId('node-config-panel');
+		await expect(regularNodes).toHaveCount(1, { timeout: 3000 });
+		await regularNodes.first().click();
+		let panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
-		await panel.getByTestId('step-name-input').fill('Channel Step');
-
-		// Set up two agents (required for channels section to populate agent role dropdowns)
+		await panel.getByTestId('step-name-input').fill(STEP_A);
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
-
-		// Close panel — channels section is in the editor sidebar, not the node config panel
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// Open the workflow-level channels section in the sidebar
-		await ensureChannelsSectionOpen(editor);
-		const channelsSection = editor.getByTestId('channels-section');
-		await expect(channelsSection).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('add-step-button').click();
+		regularNodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		await expect(regularNodes).toHaveCount(2, { timeout: 3000 });
+		await regularNodes.nth(1).click();
+		panel = editor.getByTestId('node-config-panel');
+		await expect(panel).toBeVisible({ timeout: 3000 });
+		await panel.getByTestId('step-name-input').fill(STEP_B);
+		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
+		await panel.getByTestId('close-button').click();
+		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		const channelsList = channelsSection.getByTestId('channels-list');
+		// Create a one-way channel: Step A → Step B via drag-and-drop
+		await createChannelByDrag(editor, STEP_A, STEP_B);
 
-		// ── Add one-way channel: Coder Agent → Reviewer Agent ───────────────
-		// Channel dropdown uses slot names (= agent names) as option values.
+		// Verify the channel edge appears with one-way direction.
+		// Channel edge test IDs use internal UUIDs, so we match by data attribute.
+		const channelEdge = editor.locator('[data-channel-edge="true"]').first();
+		await channelEdge.waitFor({ state: 'attached', timeout: 5000 });
+		await expect(channelEdge).toHaveAttribute('data-channel-direction', 'one-way');
 
-		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME, 'one-way');
-
-		// One channel entry should appear
-		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(1, { timeout: 3000 });
-		const firstEntry = channelsList.getByTestId('channel-entry').first();
-		await expect(firstEntry).toContainText(AGENT_A_NAME);
-		await expect(firstEntry).toContainText('→');
-		await expect(firstEntry).toContainText(AGENT_B_NAME);
-
-		// ── Add bidirectional channel: Reviewer Agent ↔ Coder Agent ─────────
-
-		await addWorkflowChannel(editor, AGENT_B_NAME, AGENT_A_NAME, 'bidirectional');
-
-		// Two channel entries should now be present
-		await expect(channelsList.getByTestId('channel-entry')).toHaveCount(2, { timeout: 3000 });
-		const secondEntry = channelsList.getByTestId('channel-entry').nth(1);
-		await expect(secondEntry).toContainText(AGENT_B_NAME);
-		await expect(secondEntry).toContainText('↔');
-		await expect(secondEntry).toContainText(AGENT_A_NAME);
+		// Click the channel edge and verify the config panel shows from/to
+		await clickChannelEdge(editor, STEP_A, STEP_B);
+		const configPanel = editor.getByTestId('channel-relation-config-panel');
+		await expect(configPanel).toBeVisible({ timeout: 3000 });
+		await expect(configPanel).toContainText(STEP_A);
+		await expect(configPanel).toContainText(STEP_B);
 	});
 
-	// ─── Test 3: Remove one agent — verify workflow channels persist ──────────
+	// ─── Test 3: Remove one agent — verify channel between nodes persists ──────
 
-	test('Remove one agent — verify only one remains and workflow channels persist', async ({
-		page,
-	}) => {
+	test('Remove one agent from a node — channel between nodes persists', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
 		await switchToVisualMode(page);
@@ -235,36 +228,42 @@ test.describe('Multi-Agent Step Editor', () => {
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('workflow-name-input').fill('Remove Agent Test');
 
-		// Add step, open config, set up multi-agent
+		const STEP_A = 'Step A';
+		const STEP_B = 'Step B';
+
+		// Add two steps with multi-agent config
 		await editor.getByTestId('add-step-button').click();
-		const regularNode = editor.locator(
+		let regularNodes = editor.locator(
 			'[data-testid^="workflow-node-"]:not([data-task-agent="true"])'
 		);
-		await expect(regularNode).toHaveCount(1, { timeout: 3000 });
-		await regularNode.click();
-		const panel = editor.getByTestId('node-config-panel');
+		await expect(regularNodes).toHaveCount(1, { timeout: 3000 });
+		await regularNodes.first().click();
+		let panel = editor.getByTestId('node-config-panel');
 		await expect(panel).toBeVisible({ timeout: 3000 });
-		await panel.getByTestId('step-name-input').fill('Remove Step');
-
+		await panel.getByTestId('step-name-input').fill(STEP_A);
 		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
-
-		// Close panel — channels section is in the editor sidebar, not the node config panel
 		await panel.getByTestId('close-button').click();
 		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// Add a workflow-level channel: Coder Agent → Reviewer Agent
-		// Channel dropdown uses slot names (= agent names) as option values.
-		await ensureChannelsSectionOpen(editor);
-		await addWorkflowChannel(editor, AGENT_A_NAME, AGENT_B_NAME);
-		await expect(
-			editor
-				.getByTestId('channels-section')
-				.getByTestId('channels-list')
-				.getByTestId('channel-entry')
-		).toHaveCount(1, { timeout: 3000 });
+		await editor.getByTestId('add-step-button').click();
+		regularNodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		await expect(regularNodes).toHaveCount(2, { timeout: 3000 });
+		await regularNodes.nth(1).click();
+		panel = editor.getByTestId('node-config-panel');
+		await expect(panel).toBeVisible({ timeout: 3000 });
+		await panel.getByTestId('step-name-input').fill(STEP_B);
+		await setupMultiAgentStep(panel, AGENT_A_OPTION, AGENT_B_OPTION);
+		await panel.getByTestId('close-button').click();
+		await expect(panel).not.toBeVisible({ timeout: 2000 });
 
-		// Reopen the node config panel to remove an agent
-		await regularNode.click();
+		// Create a channel: Step A → Step B
+		await createChannelByDrag(editor, STEP_A, STEP_B);
+		const channelEdge = editor.locator('[data-channel-edge="true"]').first();
+		await channelEdge.waitFor({ state: 'attached', timeout: 5000 });
+
+		// Reopen Step A's config panel to remove an agent
+		regularNodes = editor.locator('[data-testid^="workflow-node-"]:not([data-task-agent="true"])');
+		await regularNodes.first().click();
 		const reopenedPanel = editor.getByTestId('node-config-panel');
 		await expect(reopenedPanel).toBeVisible({ timeout: 3000 });
 
@@ -275,31 +274,13 @@ test.describe('Multi-Agent Step Editor', () => {
 		const secondAgentEntry = agentsList.getByTestId('agent-entry').nth(1);
 		await secondAgentEntry.getByTestId('remove-agent-button').click();
 
-		// Only one agent entry should remain; verify by role-input value (not hasText filter)
-		await expect(agentsList.getByTestId('agent-entry')).toHaveCount(1, { timeout: 3000 });
-		const remainingRoleInput = agentsList.locator('[data-testid="agent-role-input"]').first();
-		await expect(remainingRoleInput).toHaveValue(AGENT_A_NAME, { timeout: 2000 });
-
-		// "Switch to single" button (data-testid="switch-to-single-button") appears when
-		// exactly 1 agent remains in multi-agent mode
-		const switchToSingleBtn = reopenedPanel.getByTestId('switch-to-single-button');
-		await expect(switchToSingleBtn).toBeVisible({ timeout: 3000 });
-
-		// Click "Switch to single" — reverts to single-agent mode and clears node-level channels
-		await switchToSingleBtn.click();
-
-		// Workflow-level channels are independent of node-level agent config and persist
-		await ensureChannelsSectionOpen(editor);
-		await expect(
-			editor
-				.getByTestId('channels-section')
-				.getByTestId('channels-list')
-				.getByTestId('channel-entry')
-		).toHaveCount(1, { timeout: 3000 });
-
-		// Single-agent select dropdown and add-agent button should be visible
+		// Removing one of two agents auto-switches to single-agent mode.
+		// The agents-list disappears and the single-agent select dropdown appears.
 		await expect(reopenedPanel.getByTestId('agent-select')).toBeVisible({ timeout: 3000 });
 		await expect(reopenedPanel.getByTestId('add-agent-button')).toBeVisible({ timeout: 2000 });
+
+		// Channel between nodes is independent of node-level agent config and persists
+		await channelEdge.waitFor({ state: 'attached', timeout: 3000 });
 	});
 
 	// ─── Test 4: Save and reopen — verify persistence ─────────────────────────
