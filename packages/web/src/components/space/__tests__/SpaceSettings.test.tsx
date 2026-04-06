@@ -76,6 +76,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		name: 'My Space',
 		workspacePath: '/projects/my-space',
 		description: 'Original description',
+		instructions: 'Use TypeScript strict mode',
 		backgroundContext: '',
 		sessionIds: [],
 		status: 'active',
@@ -147,7 +148,7 @@ describe('SpaceSettings', () => {
 				id: 'space-1',
 				name: 'Updated Name',
 				description: 'Original description',
-				instructions: undefined,
+				instructions: 'Use TypeScript strict mode',
 				backgroundContext: undefined,
 			});
 		});
@@ -361,6 +362,7 @@ describe('SpaceSettings', () => {
 				id: 'space-1',
 				name: 'Updated',
 				description: 'Original description',
+				instructions: 'Use strict mode',
 				backgroundContext: 'Bun + Hono',
 			});
 		});
@@ -368,6 +370,7 @@ describe('SpaceSettings', () => {
 
 	it('Discard resets instructions and backgroundContext to original values', () => {
 		const space = makeSpace({
+			instructions: 'Original instructions',
 			backgroundContext: 'Original context',
 		});
 		const { getByDisplayValue, getByText, queryByText } = render(<SpaceSettings space={space} />);
@@ -387,6 +390,7 @@ describe('SpaceSettings', () => {
 
 	it('shows character count for instructions and backgroundContext', () => {
 		const space = makeSpace({
+			instructions: 'hello',
 			backgroundContext: 'world!',
 		});
 		const { getByText } = render(<SpaceSettings space={space} />);

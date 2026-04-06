@@ -143,6 +143,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 			{ id: STEP_2_ID, name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
 		],
 		startNodeId: STEP_1_ID,
+		channels: [{ from: 'Plan', to: 'Code' }],
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,
@@ -1085,7 +1086,10 @@ describe('VisualWorkflowEditor', () => {
 
 		it('shows cyclic info for backward links that close a loop', async () => {
 			const workflow = makeWorkflow({
-				channels: [],
+				channels: [
+					{ from: 'Plan', to: 'Code' },
+					{ from: 'Code', to: 'Plan' },
+				],
 			});
 			const { container, getAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
@@ -1104,6 +1108,7 @@ describe('VisualWorkflowEditor', () => {
 
 		it('edits a vote-count gate backed by workflow.gates', async () => {
 			const workflow = makeWorkflow({
+				channels: [{ from: 'Plan', to: 'Code', gateId: 'review-votes-gate' }],
 				gates: [
 					{
 						id: 'review-votes-gate',
