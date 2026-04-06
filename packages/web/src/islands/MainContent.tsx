@@ -3,6 +3,7 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomGoalIdSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -36,6 +37,7 @@ export default function MainContent() {
 	const roomId = currentRoomIdSignal.value;
 	const roomSessionId = currentRoomSessionIdSignal.value;
 	const roomTaskId = currentRoomTaskIdSignal.value;
+	const roomGoalId = currentRoomGoalIdSignal.value;
 	const spaceId = currentSpaceIdSignal.value;
 	const spaceSessionViewId = currentSpaceSessionIdSignal.value;
 	const spaceTaskViewId = currentSpaceTaskIdSignal.value;
@@ -91,7 +93,13 @@ export default function MainContent() {
 		// Room route
 		if (roomId) {
 			return (
-				<Room key={roomId} roomId={roomId} sessionViewId={roomSessionId} taskViewId={roomTaskId} />
+				<Room
+					key={roomId}
+					roomId={roomId}
+					sessionViewId={roomSessionId}
+					taskViewId={roomTaskId}
+					missionViewId={roomGoalId}
+				/>
 			);
 		}
 
