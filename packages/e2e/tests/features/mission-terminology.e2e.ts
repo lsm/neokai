@@ -25,6 +25,7 @@ test.describe('Mission Terminology', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
 		roomId = await createRoom(page, 'E2E Mission Terminology Test Room');
 	});
 
@@ -70,8 +71,8 @@ test.describe('Mission Terminology', () => {
 		await expect(missionsTab).toBeVisible({ timeout: 10000 });
 		await missionsTab.click();
 
-		// Empty state heading should read "No missions yet"
-		await expect(page.locator('h3:has-text("No missions yet")')).toBeVisible({ timeout: 5000 });
+		// Empty state should read "No missions yet"
+		await expect(page.locator('p:has-text("No missions yet")')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('should show "Create Mission" button in empty state', async ({ page }) => {
