@@ -363,9 +363,10 @@ describe('QueryLifecycleManager', () => {
 		});
 
 		test('stop() times out waiting for processExitedPromise', async () => {
+			const closeMock = mock(() => {});
 			mockContext.queryObject = {
 				interrupt: mock(async () => {}),
-				close: mock(() => {}),
+				close: closeMock,
 			} as unknown as QueryLifecycleManagerContext['queryObject'];
 			mockContext.firstMessageReceived = true;
 			mockContext.queryPromise = Promise.resolve();
@@ -379,7 +380,13 @@ describe('QueryLifecycleManager', () => {
 
 			// Should have timed out at the specified timeout
 			expect(elapsed).toBeGreaterThanOrEqual(90);
-			expect(elapsed).toBeLessThan(500);
+			expect(elapsed).toBeLessThan(300);
+			// close() must be called so the subprocess is not silently leaked
+			expect(closeMock).toHaveBeenCalled();
+			// All three context references are cleared even after a timeout
+			expect(mockContext.queryObject).toBeNull();
+			expect(mockContext.queryPromise).toBeNull();
+			expect(mockContext.processExitedPromise).toBeNull();
 		});
 
 		test('stop() works when processExitedPromise is null', async () => {
@@ -416,29 +423,6 @@ describe('QueryLifecycleManager', () => {
 			// Should complete near-instantly
 			expect(elapsed).toBeLessThan(100);
 			expect(mockContext.processExitedPromise).toBeNull();
-		});
-
-		test('stop() times out and continues if processExitedPromise never resolves', async () => {
-			mockContext.queryObject = {
-				interrupt: mock(async () => {}),
-				close: mock(() => {}),
-			} as unknown as QueryLifecycleManagerContext['queryObject'];
-			mockContext.firstMessageReceived = true;
-			mockContext.queryPromise = Promise.resolve();
-			// Process never exits — simulate hung subprocess
-			mockContext.processExitedPromise = new Promise<void>(() => {}); // never resolves
-			manager = new QueryLifecycleManager(mockContext);
-
-			const start = Date.now();
-			await manager.stop({ timeoutMs: 100 });
-			const elapsed = Date.now() - start;
-
-			// Should have timed out and continued rather than hanging
-			expect(elapsed).toBeGreaterThanOrEqual(90);
-			expect(elapsed).toBeLessThan(500);
-			// References are still cleared after timeout
-			expect(mockContext.queryObject).toBeNull();
-			expect(mockContext.queryPromise).toBeNull();
 		});
 
 		test('snapshots processExitedPromise before queryPromise settles (regression for race condition)', async () => {
