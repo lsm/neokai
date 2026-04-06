@@ -173,11 +173,17 @@ export async function openWorkflowForEdit(page: Page, workflowName: string): Pro
  * Configure a node config panel to have two agents in multi-agent mode.
  *
  * Precondition: the NodeConfigPanel is already open (panel locator is visible).
- * Postcondition: agents-list has 2 agent-entry items.
+ * Postcondition: agents-list has 2 agent-entry items with the specified agents.
+ *
+ * The "Add agent" button creates 2 slots: primary (selected agent) and secondary
+ * (auto-selected from the first non-primary agent in the space's agent list). Since
+ * spaces have pre-seeded preset agents, the auto-selected secondary is typically a
+ * preset agent — not the desired agent. This helper updates the secondary slot's
+ * agent assignment and role name to match the desired agent.
  *
  * @param panel - Locator scoped to the `node-config-panel` element
- * @param agentAOption - Exact option label for the first agent (e.g. "coder" when agent name === role)
- * @param agentBOption - Exact option label for the second agent (e.g. "reviewer" when agent name === role)
+ * @param agentAOption - Exact option label for the first agent (e.g. "Coder Agent")
+ * @param agentBOption - Exact option label for the second agent (e.g. "Reviewer Agent")
  */
 export async function setupMultiAgentStep(
 	panel: Locator,
@@ -187,12 +193,23 @@ export async function setupMultiAgentStep(
 	// Select first agent in single-agent mode
 	await panel.getByTestId('agent-select').selectOption({ label: agentAOption });
 
-	// Switch to multi-agent mode — moves the selected agent into the agents[] array
+	// Switch to multi-agent mode — creates 2 slots:
+	//   1) primary slot from the selected agent
+	//   2) secondary slot auto-selected from the first non-primary agent in the list
 	await panel.getByTestId('add-agent-button').click();
 	await expect(panel.getByTestId('agents-list')).toBeVisible({ timeout: 3000 });
 
-	// Add second agent from the dropdown (shows remaining agents)
-	await panel.getByTestId('add-agent-select').selectOption({ label: agentBOption });
+	// Verify 2 slots were created by the button
+	const agentEntries = panel.getByTestId('agents-list').getByTestId('agent-entry');
+	await expect(agentEntries).toHaveCount(2, { timeout: 3000 });
+
+	// Update the secondary slot's agent assignment to the desired agent
+	await agentEntries.nth(1).getByTestId('agent-slot-select').selectOption({ label: agentBOption });
+
+	// Update the secondary slot's role name to match the agent name
+	const secondaryRoleInput = agentEntries.nth(1).getByTestId('agent-role-input');
+	await secondaryRoleInput.clear();
+	await secondaryRoleInput.fill(agentBOption);
 
 	// Verify both entries are present before returning
 	await expect(panel.getByTestId('agents-list').getByTestId('agent-entry')).toHaveCount(2, {
