@@ -875,8 +875,7 @@ describe('Router Utility', () => {
 			expect(currentRoomIdSignal.value).toBeNull();
 		});
 
-		it('should prefer mission route over task route when both could match (ordering check)', () => {
-			// This test verifies handlePopState checks roomMission before roomTask
+		it('should set goalId signal and clear taskId signal when popstate navigates to mission path', () => {
 			mockLocation.pathname = '/';
 			initializeRouter();
 
@@ -885,7 +884,6 @@ describe('Router Utility', () => {
 
 			window.dispatchEvent(new PopStateEvent('popstate', {}));
 
-			// Should use the mission handler, not the task handler
 			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
 			expect(currentRoomTaskIdSignal.value).toBeNull();
 		});
