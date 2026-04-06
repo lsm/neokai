@@ -432,7 +432,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 			},
 			{
 				from: 'Coding',
-				to: ['Reviewer 1', 'Reviewer 2', 'Reviewer 3'],
+				to: 'Code Review', // fan-out to all agents in the Code Review node
 				gateId: 'code-pr-gate',
 				label: 'Coding → Code Review',
 			},
