@@ -289,7 +289,9 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('loads channels from existing workflow', () => {
-			const wf = makeWorkflow({});
+			const wf = makeWorkflow({
+				channels: [{ from: 'task-agent', to: 'coder' }],
+			});
 			const { channels } = initFromWorkflow(wf);
 			expect(channels).toHaveLength(1);
 			expect(channels[0].from).toBe('task-agent');

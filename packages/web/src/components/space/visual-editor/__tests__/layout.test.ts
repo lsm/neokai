@@ -42,7 +42,15 @@ describe('autoLayout', () => {
 			makeStep('qa', 'QA'),
 			makeStep('done', 'Done'),
 		];
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Plan Review' },
+			{ from: 'Plan Review', to: 'Planning' },
+			{ from: 'Plan Review', to: 'Coding' },
+			{ from: 'Coding', to: 'Code Review' },
+			{ from: 'Code Review', to: 'Coding' },
+			{ from: 'Code Review', to: 'QA' },
+			{ from: 'QA', to: 'Done' },
+		];
 
 		const result = autoLayout(steps, [], 'planning', channels);
 		expect(result.get('plan-review')!.x).toBeGreaterThan(result.get('planning')!.x);
@@ -56,7 +64,11 @@ describe('autoLayout', () => {
 			makeStep('review', 'Plan Review'),
 			makeStep('coding', 'Coding'),
 		];
-		const channels: WorkflowChannel[] = [];
+		const channels: WorkflowChannel[] = [
+			{ from: 'Planning', to: 'Plan Review' },
+			{ from: 'Plan Review', to: 'Planning' },
+			{ from: 'Plan Review', to: 'Coding' },
+		];
 
 		const result = autoLayout(steps, [], 'planning', channels);
 		expect(result.get('review')!.y).toBeGreaterThan(result.get('planning')!.y);

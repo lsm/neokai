@@ -810,7 +810,10 @@ describe('multi-agent step serialization', () => {
 
 	it('full round-trip workflowToVisualState -> visualStateToUpdateParams preserves multi-agent data', () => {
 		const workflow = makeWorkflow({
-			channels: [],
+			channels: [
+				{ from: 'coder', to: 'reviewer' },
+				{ from: 'reviewer', to: ['coder', 'qa'] },
+			],
 			nodes: [
 				{
 					id: 's1',
@@ -1123,6 +1126,7 @@ describe('per-slot agent overrides round-trip', () => {
 					agents: [{ agentId: 'a1', name: 'coder' }],
 				},
 			],
+			channels: [{ from: 'task-agent', to: 'coder' }],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);

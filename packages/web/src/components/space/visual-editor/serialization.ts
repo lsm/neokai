@@ -292,7 +292,7 @@ function buildWorkflowFields(state: VisualEditorState): {
 			id: persistedId,
 			name: node.step.name || `Step ${i + 1}`,
 			agents,
-			instructions: node.step.instructions || undefined,
+			...(node.step.instructions ? { instructions: node.step.instructions } : {}),
 		};
 	});
 
