@@ -13,11 +13,22 @@
 // depend on the HTTPS response) but produce noisy stderr output.
 {
 	const _origStderrWrite = process.stderr.write.bind(process.stderr);
-	const TLS_NOISE =
-		/unable to get local issuer certificate|TLS connections and HTTPS requests insecure/;
+	// Narrow pattern: only suppress the specific OpenSSL/Node TLS error that
+	// happy-dom triggers when it fetches https://example.com URLs.
+	const TLS_NOISE = /unable to get local issuer certificate/;
 	process.stderr.write = function (chunk: unknown, ...args: unknown[]) {
-		if (typeof chunk === 'string' && TLS_NOISE.test(chunk)) return true;
-		if (Buffer.isBuffer(chunk) && TLS_NOISE.test(chunk.toString())) return true;
+		if (typeof chunk === 'string' && TLS_NOISE.test(chunk)) {
+			const cb =
+				typeof args[args.length - 1] === 'function' ? (args[args.length - 1] as Function) : null;
+			cb?.();
+			return true;
+		}
+		if (Buffer.isBuffer(chunk) && TLS_NOISE.test(chunk.toString())) {
+			const cb =
+				typeof args[args.length - 1] === 'function' ? (args[args.length - 1] as Function) : null;
+			cb?.();
+			return true;
+		}
 		return (_origStderrWrite as Function)(chunk, ...args);
 	} as typeof process.stderr.write;
 }
