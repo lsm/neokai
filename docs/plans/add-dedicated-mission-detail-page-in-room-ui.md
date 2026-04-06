@@ -482,3 +482,4 @@ The activity timeline section is scoped to **recurring missions only** because:
 - One-shot missions have no event history beyond created_at/updated_at timestamps
 - Only recurring missions have execution history data available via `goal.listExecutions`
 
+# Plan rerun - task creation pending
