@@ -838,16 +838,24 @@ export class TaskAgentManager {
 		);
 
 		// Inject registry-sourced MCP servers so sub-sessions have the same app-level MCP
-		// access as the parent task agent session. Note: unlike sub-session rehydration (which
-		// always calls setRuntimeMcpServers because it also re-attaches the node-agent server),
-		// fresh sub-sessions don't yet have a node-agent server — it's attached later by the
-		// task agent via buildNodeAgentMcpServerForSession. So we only call setRuntimeMcpServers
-		// here when there are registry entries to inject.
+		// access as the parent task agent session.
+		//
+		// IMPORTANT: preserve MCP servers already present in init.mcpServers (notably
+		// the per-session node-agent server attached by spawnWorkflowNodeAgentForExecution).
+		// setRuntimeMcpServers() replaces the in-memory map, so we must merge first.
+		//
+		// Precedence rule: init.mcpServers wins on key collisions so internal workflow
+		// servers (e.g. 'node-agent') cannot be shadowed by registry entries.
+		//
 		// Note: skills-based MCP servers (from skillsManager) are injected separately at query
 		// start time via QueryOptionsBuilder.getMcpServersFromSkills(), NOT via setRuntimeMcpServers.
 		const subSessionRegistryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
-		if (Object.keys(subSessionRegistryMcpServers).length > 0) {
-			subSession.setRuntimeMcpServers(subSessionRegistryMcpServers);
+		const mergedSubSessionMcpServers = {
+			...subSessionRegistryMcpServers,
+			...init.mcpServers,
+		};
+		if (Object.keys(mergedSubSessionMcpServers).length > 0) {
+			subSession.setRuntimeMcpServers(mergedSubSessionMcpServers);
 		}
 
 		// Determine step ID from session convention or task context.

@@ -689,6 +689,44 @@ describe('TaskAgentManager', () => {
 
 			expect(returnedId).toBe(subSessionId);
 		});
+
+		test('preserves init mcpServers when app MCP registry servers are injected', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const configRef = ctx.manager as unknown as {
+				config: {
+					appMcpManager?: {
+						getEnabledMcpConfigs: () => Record<string, unknown>;
+					};
+				};
+			};
+			configRef.config.appMcpManager = {
+				getEnabledMcpConfigs: () => ({
+					'registry-mcp': {
+						type: 'stdio',
+						command: 'echo',
+						args: ['ok'],
+					},
+				}),
+			};
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-merge-mcp`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+				mcpServers: {
+					'node-agent': {
+						type: 'local',
+						path: '/tmp/node-agent-mcp',
+					},
+				},
+			} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			expect(subSession._mcpServers['node-agent']).toBeDefined();
+			expect(subSession._mcpServers['registry-mcp']).toBeDefined();
+		});
 	});
 
 	// -----------------------------------------------------------------------
