@@ -73,14 +73,14 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		});
 	});
 
-	test('Room Agent URL is /room/:id/agent and survives page refresh', async ({ page }) => {
+	test('Coordinator URL is /room/:id/agent and survives page refresh', async ({ page }) => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
-		// Click "Room Agent" in sidebar
-		const roomAgentButton = page.locator('button', { hasText: 'Room Agent' });
-		await expect(roomAgentButton).toBeVisible({ timeout: 10000 });
-		await roomAgentButton.click();
+		// Click "Coordinator" in sidebar (first match — sidebar pinned button)
+		const coordinatorButton = page.locator('button', { hasText: 'Coordinator' }).first();
+		await expect(coordinatorButton).toBeVisible({ timeout: 10000 });
+		await coordinatorButton.click();
 
 		// Verify URL changed to /room/:id/agent
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 5000 });
