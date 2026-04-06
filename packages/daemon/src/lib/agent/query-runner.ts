@@ -265,31 +265,11 @@ export class QueryRunner {
 				return proc;
 			};
 
-			// Create query with AsyncGenerator.
-			// query() synchronously constructs the SDK session object which calls
-			// connectSdkMcpServer → Protocol.connect(). If a previous session's MCP
-			// transport was not fully closed (e.g., during daemon shutdown or rapid
-			// session teardown), the Protocol instance still holds a stale connection
-			// and connect() throws "Already connected to a transport". This is a
-			// transient race condition — not a permanent failure — so we catch it,
-			// log a warning, and bail out of this query gracefully.
-			let queryObject: ReturnType<typeof query>;
-			try {
-				queryObject = query({
-					prompt: this.createMessageGeneratorWrapper(),
-					options: queryOptions,
-				});
-			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err);
-				if (msg.includes('Already connected to a transport')) {
-					logger.warn(
-						'[QueryRunner] Stale MCP transport detected during query setup — ' +
-							'skipping query (session may be shutting down)'
-					);
-					return;
-				}
-				throw err;
-			}
+			// Create query with AsyncGenerator
+			const queryObject = query({
+				prompt: this.createMessageGeneratorWrapper(),
+				options: queryOptions,
+			});
 			this.ctx.queryObject = queryObject;
 
 			// Set up startup timeout
@@ -417,15 +397,7 @@ export class QueryRunner {
 						'Clearing sdkSessionId — next attempt will start fresh.'
 				);
 				session.sdkSessionId = undefined;
-				try {
-					this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
-				} catch (dbErr) {
-					// Database may already be closed during daemon shutdown.
-					// Log and continue — the session state is already cleared in memory.
-					logger.warn(
-						`[QueryRunner] Failed to persist sdkSessionId clear: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`
-					);
-				}
+				this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
