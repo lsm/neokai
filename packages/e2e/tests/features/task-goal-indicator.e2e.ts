@@ -121,6 +121,9 @@ test.describe('Task Goal Indicator — Task List', () => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
+		// Switch to Tasks tab (default is Overview)
+		await page.getByRole('button', { name: 'Tasks' }).click();
+
 		// Should see the goal badge with mission title
 		const badge = page.locator(`[data-testid="task-goal-badge-${result.taskId}"]`);
 		await expect(badge).toBeVisible({ timeout: 10000 });
@@ -133,6 +136,9 @@ test.describe('Task Goal Indicator — Task List', () => {
 
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
+
+		// Switch to Tasks tab (default is Overview)
+		await page.getByRole('button', { name: 'Tasks' }).click();
 
 		// Ensure the task is visible first
 		await expect(page.locator('h4:has-text("Unlinked Task")')).toBeVisible({ timeout: 10000 });
@@ -148,6 +154,9 @@ test.describe('Task Goal Indicator — Task List', () => {
 
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
+
+		// Switch to Tasks tab (default is Overview)
+		await page.getByRole('button', { name: 'Tasks' }).click();
 
 		// Wait for and click the goal badge
 		const badge = page.locator(`[data-testid="task-goal-badge-${result.taskId}"]`);
