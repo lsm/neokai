@@ -130,7 +130,10 @@ describe('Migration 53: channels column on space_workflows', () => {
 				{ id: 'node-a', name: 'Alpha' },
 				{ id: 'node-b', name: 'Beta' },
 			],
-			channels: [],
+			channels: [
+				{ id: 'ch-1', from: 'node-a', to: 'node-b', label: 'alpha to beta' },
+				{ id: 'ch-2', from: 'node-b', to: 'node-a' },
+			],
 		});
 
 		// Verify the channels column is written at the DB level
@@ -196,7 +199,10 @@ describe('Migration 53: channels column on space_workflows', () => {
 		});
 
 		repo.updateWorkflow(wf.id, {
-			channels: [],
+			channels: [
+				{ id: 'ch-1', from: 'node-x', to: 'node-y' },
+				{ id: 'ch-2', from: 'node-y', to: 'node-x', label: 'reply' },
+			],
 		});
 
 		const fetched = repo.getWorkflow(wf.id);
@@ -238,6 +244,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const legacyConfig = JSON.stringify({
 			tags: ['legacy'],
 			rules: [],
+			channels: [{ id: 'ch-1', from: 'old-a', to: 'old-b', label: 'legacy link' }],
 		});
 		db.exec(
 			`INSERT INTO space_workflows (id, space_id, name, config, created_at, updated_at)
