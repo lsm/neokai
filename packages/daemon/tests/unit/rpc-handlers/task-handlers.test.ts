@@ -132,15 +132,30 @@ function makeGroupRow(submittedForReview = false): Record<string, unknown> {
 /**
  * Build a mock Database whose getDatabase() returns a fake Bun SQLite db.
  * All prepare() calls return a statement that responds with the given groupRow.
+ * When groupRow is active (completed_at === null), all() returns it as an active-groups array.
+ * When groupRow is null or terminated (completed_at !== null), all() returns [] (no active groups).
  */
 function makeDb(groupRow: Record<string, unknown> | null): Database {
+	// getActiveGroupsForTask() uses .all() — only return active groups (completed_at = null)
+	const activeRows = groupRow !== null && groupRow['completed_at'] === null ? [groupRow] : [];
 	const stmt = {
 		get: mock(() => groupRow),
 		run: mock(() => ({ lastInsertRowid: 1 })),
-		all: mock(() => []),
+		all: mock(() => activeRows),
 	};
 	const rawDb = { prepare: mock(() => stmt) };
 	return { getDatabase: mock(() => rawDb) } as unknown as Database;
+}
+
+/**
+ * Build a group row that has completed_at set (terminated group).
+ * Use this to simulate an in_progress task whose group was already completed.
+ */
+function makeTerminatedGroupRow(): Record<string, unknown> {
+	return {
+		...makeGroupRow(),
+		completed_at: Date.now() - 1000,
+	};
 }
 
 /** Build a mock RoomRuntimeService with a runtime that can resume/inject. */
@@ -319,18 +334,73 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('throws when no active group exists for the task', async () => {
-			// makeDb with null groupRow → getGroupByTaskId returns null
+		it('revives in_progress task that has no active group', async () => {
+			// in_progress + no active group → reviveTaskForMessage (instead of error)
+			// This covers the bug fix: task.setStatus() → in_progress without creating a new group
 			const mh = createMockMessageHub();
 			hub = mh.hub;
 			handlers = mh.handlers;
 
-			const { service } = makeRuntimeService();
+			const { service, runtime } = makeRuntimeService(true, true, true);
 			setupTaskHandlers(
 				hub,
 				mockRoomManager,
 				createMockDaemonHub(),
-				makeDb(null), // no group row
+				makeDb(null), // no group row → getActiveGroupsForTask returns []
+				{ notifyChange: () => {} } as never,
+				makeTaskManagerFactory(mockTask),
+				service
+			);
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' },
+				{}
+			);
+			expect(result).toEqual({ success: true });
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(TASK_UUID, 'hello', 'worker');
+		});
+
+		it('revives in_progress task whose group is terminated (phase transition scenario)', async () => {
+			// Simulates the core bug: task is in_progress but its group has completed_at set
+			// (e.g., planning group completed → task set to in_progress via setStatus → execution starts)
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeTerminatedGroupRow()), // group exists but completed_at is set → all() returns []
+				{ notifyChange: () => {} } as never,
+				makeTaskManagerFactory(mockTask),
+				service
+			);
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: TASK_UUID, message: 'continue work' },
+				{}
+			);
+			expect(result).toEqual({ success: true });
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith(
+				TASK_UUID,
+				'continue work',
+				'worker'
+			);
+		});
+
+		it('throws when in_progress task has no active group and revival fails', async () => {
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			const { service } = makeRuntimeService(true, true, false); // reviveResult = false
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(null), // no group row → getActiveGroupsForTask returns []
 				{ notifyChange: () => {} } as never,
 				makeTaskManagerFactory(mockTask),
 				service
@@ -338,7 +408,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: TASK_UUID, message: 'hello' }, {})
-			).rejects.toThrow('No active session group');
+			).rejects.toThrow('no active group and revival failed');
 		});
 	});
 
