@@ -50,6 +50,7 @@ test.describe('Mission Creation', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
 		roomId = await createRoom(page, 'E2E Mission Creation Test Room');
 	});
 
