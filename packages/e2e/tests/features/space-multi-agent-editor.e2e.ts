@@ -163,8 +163,10 @@ test.describe('Multi-Agent Step Editor', () => {
 	});
 
 	// ─── Test 2: Configure channels — one-way and bidirectional ──────────────
+	// Skipping: channels editor was removed from the workflow UI (db4118316).
+	// These tests need to be rewritten for the new channel interaction model.
 
-	test('Add one-way and bidirectional channels — verify directed arrows appear', async ({
+	test.skip('Add one-way and bidirectional channels — verify directed arrows appear', async ({
 		page,
 	}) => {
 		await navigateToSpace(page, spaceId);
@@ -224,8 +226,9 @@ test.describe('Multi-Agent Step Editor', () => {
 	});
 
 	// ─── Test 3: Remove one agent — verify workflow channels persist ──────────
+	// Skipping: channels editor was removed from the workflow UI (db4118316).
 
-	test('Remove one agent — verify only one remains and workflow channels persist', async ({
+	test.skip('Remove one agent — verify only one remains and workflow channels persist', async ({
 		page,
 	}) => {
 		await navigateToSpace(page, spaceId);

@@ -109,8 +109,11 @@ test.describe('Agent-Centric Workflow', () => {
 	});
 
 	// ─── Test 1: Create workflow with workflow-level channels ─────────────────
+	// Skipping: channels editor was removed from the workflow UI (db4118316).
 
-	test('Add workflow-level channels between agents and verify channel list', async ({ page }) => {
+	test.skip('Add workflow-level channels between agents and verify channel list', async ({
+		page,
+	}) => {
 		await navigateToSpace(page, spaceId);
 		await openNewWorkflowEditor(page);
 		await switchToVisualMode(page);
@@ -168,8 +171,9 @@ test.describe('Agent-Centric Workflow', () => {
 	});
 
 	// ─── Test 2: Add gate condition to a workflow channel ─────────────────────
+	// Skipping: channels editor was removed from the workflow UI (db4118316).
 
-	test('Configure human-approval gate on workflow channel — gate badge appears', async ({
+	test.skip('Configure human-approval gate on workflow channel — gate badge appears', async ({
 		page,
 	}) => {
 		await navigateToSpace(page, spaceId);
@@ -284,8 +288,11 @@ test.describe('Agent-Centric Workflow', () => {
 	});
 
 	// ─── Test 4: Workflow channels persist after save and reopen ─────────────
+	// Skipping: channels editor was removed from the workflow UI (db4118316).
 
-	test('Workflow-level channels and gate configuration persist after save', async ({ page }) => {
+	test.skip('Workflow-level channels and gate configuration persist after save', async ({
+		page,
+	}) => {
 		const WORKFLOW_NAME = `Channel Persist Test ${Date.now()}`;
 
 		await navigateToSpace(page, spaceId);
