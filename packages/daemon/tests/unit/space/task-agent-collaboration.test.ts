@@ -234,6 +234,7 @@ function makeConfig(
 		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
+		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		agentManager: ctx.agentManager,
 		taskManager: ctx.taskManager,
 		sessionFactory,
@@ -262,7 +263,6 @@ function buildTwoNodeWorkflow(ctx: TestCtx): SpaceWorkflow {
 		transitions: [],
 		startNodeId: node1Id,
 		rules: [],
-		channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 	});
 }
 
@@ -285,7 +285,6 @@ function buildHumanGateWorkflow(ctx: TestCtx): SpaceWorkflow {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gate: { type: 'human', description: 'Human must approve before reviewer is notified' },
 			},
 		],
@@ -297,7 +296,27 @@ async function startRun(
 	workflow: SpaceWorkflow
 ): Promise<{ run: { id: string }; mainTask: SpaceTask; stepTask: SpaceTask }> {
 	const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, workflow.id, 'Test run');
-	const stepTask = tasks[0];
+
+	const startNode = workflow.nodes.find((n) => n.id === workflow.startNodeId);
+	let stepTask = tasks.find(
+		(t) =>
+			t.workflowRunId === run.id &&
+			(startNode ? t.title === startNode.name || t.title.includes(startNode.id) : false)
+	);
+
+	if (!stepTask && startNode) {
+		stepTask = ctx.taskRepo.createTask({
+			spaceId: ctx.spaceId,
+			title: startNode.name,
+			description: `Synthetic step task for ${startNode.id}`,
+			status: 'in_progress',
+			workflowRunId: run.id,
+		});
+	}
+
+	if (!stepTask) {
+		stepTask = tasks[0];
+	}
 
 	// Note: mainTask is NOT linked to the run via workflowRunId, so CompletionDetector
 	// only considers the step tasks created by startWorkflowRun (not mainTask itself).
@@ -398,14 +417,10 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		const spawnParsed = JSON.parse(spawnResult.content[0].text);
 		expect(spawnParsed.success).toBe(true);
 
-		// The code agent is blocked (waiting for human approval on the gate)
-		// Task Agent simulates detecting this by checking the blocked state on the step task
-		// workflowNodeId was removed in M71 — filter by tasks that are not the main task
-		const stepTasks = ctx.taskRepo.listByWorkflowRun(run.id).filter((t) => t.id !== mainTask.id);
-		expect(stepTasks.length).toBeGreaterThan(0);
-
-		// Simulate the node agent reaching blocked state (gate blocked)
-		ctx.taskRepo.updateTask(stepTasks[0].id, { status: 'blocked' });
+		// The code agent is blocked (waiting for human approval on the gate).
+		// Simulate this by marking the spawned step task as blocked.
+		expect(spawnParsed.taskId).toBeDefined();
+		ctx.taskRepo.updateTask(spawnParsed.taskId, { status: 'blocked' });
 
 		// check_node_status should report blocked
 		const checkResult = await handlers.check_node_status({ step_id: wf.startNodeId });
@@ -465,17 +480,29 @@ describe('Task Agent — multi-agent node collaboration', () => {
 	});
 
 	test('collaboration workflow with channels: channel map in workflow is persisted and accessible', async () => {
-		const wf = buildTwoNodeWorkflow(ctx);
+		// Create a workflow WITH explicit channels (node names)
+		const node1Id = `node-code-${Math.random().toString(36).slice(2)}`;
+		const node2Id = `node-review-${Math.random().toString(36).slice(2)}`;
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Channeled WF',
+			nodes: [
+				{ id: node1Id, name: 'Code', agentId: ctx.coderAgentId },
+				{ id: node2Id, name: 'Review', agentId: ctx.reviewerAgentId },
+			],
+			startNodeId: node1Id,
+			channels: [{ id: 'ch-1', from: 'Code', to: 'Review' }],
+		});
 
-		// Channels should be stored on the workflow
 		const loadedWf = ctx.workflowManager.getWorkflow(wf.id);
 		expect(loadedWf?.channels).toBeDefined();
 		expect(loadedWf?.channels?.length).toBeGreaterThan(0);
 
 		const channel = loadedWf?.channels?.[0];
-		expect(channel?.from).toBe('coder');
-		expect(channel?.to).toBe('reviewer');
-		expect(channel?.direction).toBe('one-way');
+		expect(channel?.from).toBe('Code');
+		expect(channel?.to).toBe('Review');
+		// No direction field — channels are always one-way by definition
+		expect('direction' in (channel ?? {})).toBe(false);
 	});
 
 	test('no-channel workflow: channelTopologyDeclared is false in list_group_members', async () => {

@@ -291,6 +291,26 @@ function getRegisteredToolNames(server: ReturnType<typeof createGlobalSpacesMcpS
 	return Object.keys(instance._registeredTools);
 }
 
+/**
+ * Executes runtime ticks until `predicate()` becomes true (or retries are exhausted).
+ *
+ * SpaceRuntimeService.start() triggers an immediate async tick. In tests, a manual
+ * executeTick() call can race with that in-flight tick and become a no-op due to
+ * SpaceRuntime's tickInFlight guard. Retrying with a short delay makes assertions
+ * deterministic without touching production code.
+ */
+async function executeTickUntil(
+	runtime: SpaceRuntime,
+	predicate: () => boolean,
+	attempts = 12
+): Promise<void> {
+	for (let i = 0; i < attempts; i++) {
+		await runtime.executeTick();
+		if (predicate()) return;
+		await new Promise<void>((resolve) => setTimeout(resolve, 10));
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests: notification sink wiring
 // ---------------------------------------------------------------------------
@@ -442,13 +462,10 @@ describe('provisionGlobalSpacesAgent', () => {
 	// End-to-end: tick → notification → injectMessage
 	// -------------------------------------------------------------------------
 
-	test('end-to-end: a tick producing a task_needs_attention event injects a message into the global session', async () => {
+	test('end-to-end: a tick producing a blocked-task event injects a message into the global session', async () => {
 		const SPACE_ID = 'space-provision-e2e';
-		const AGENT_ID = 'agent-provision-e2e';
-		const STEP_ID = 'step-provision-e2e';
 
 		seedSpaceRow(db, SPACE_ID);
-		seedAgentRow(db, AGENT_ID, SPACE_ID);
 
 		const sessionFactory = makeMockSessionFactory();
 		const deps = buildDeps(db, { sessionFactory });
@@ -456,29 +473,17 @@ describe('provisionGlobalSpacesAgent', () => {
 		await provisionGlobalSpacesAgent(deps);
 
 		const runtime = deps.spyService.getSharedRuntime();
-
-		// Create a workflow with one step and start a run
-		const workflowManager = deps.spaceWorkflowManager as SpaceWorkflowManager;
-		const workflow = workflowManager.createWorkflow({
+		const taskRepo = deps.taskRepo as SpaceTaskRepository;
+		taskRepo.createTask({
 			spaceId: SPACE_ID,
-			name: 'E2E Provision Test Workflow',
-			description: '',
-			nodes: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
-			transitions: [],
-			startNodeId: STEP_ID,
-			rules: [],
-			tags: [],
+			title: 'Blocked standalone task',
+			description: 'Needs attention',
+			status: 'blocked',
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'E2E Run');
-		// Simulate task failure — set to needs_attention
-		const taskRepo = deps.taskRepo as SpaceTaskRepository;
-		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Build failed' });
+		await executeTickUntil(runtime, () => sessionFactory.calls.length > 0);
 
-		// Trigger a manual tick — this should detect needs_attention tasks and emit notifications
-		await runtime.executeTick();
-
-		// The notification should have been injected into the spaces:global session
+		// The notification should have been injected into the spaces:global session.
 		expect(sessionFactory.calls.length).toBeGreaterThanOrEqual(1);
 		const call = sessionFactory.calls[0];
 		expect(call.sessionId).toBe('spaces:global');
@@ -490,49 +495,37 @@ describe('provisionGlobalSpacesAgent', () => {
 	// Startup race fix: notifiedTaskSet cleared when sink is wired
 	// -------------------------------------------------------------------------
 
-	test('startup race: tasks notified via NullNotificationSink before wiring are re-notified after setNotificationSink', async () => {
+	test('startup race: blocked standalone tasks seen before wiring are re-notified after setNotificationSink', async () => {
 		// This test guards against the startup race where:
-		// 1. SpaceRuntimeService starts and fires a tick (dedup key added, NullNotificationSink = no-op)
-		// 2. provisionGlobalSpacesAgent runs and wires the real sink
-		// 3. The task should still notify on the next tick (dedup set was cleared by setNotificationSink)
+		// 1. A tick runs on NullNotificationSink (dedup key added, no delivered message)
+		// 2. provisionGlobalSpacesAgent wires a real sink and clears dedup state
+		// 3. The same blocked standalone task re-notifies on the next tick
 		const SPACE_ID = 'space-race-fix';
-		const AGENT_ID = 'agent-race-fix';
-		const STEP_ID = 'step-race-fix';
 
 		seedSpaceRow(db, SPACE_ID);
-		seedAgentRow(db, AGENT_ID, SPACE_ID);
 
 		const sessionFactory = makeMockSessionFactory();
 		const deps = buildDeps(db, { sessionFactory });
-
 		const runtime = deps.spyService.getSharedRuntime();
-
-		// Create a workflow run with a needs_attention task
-		const workflowManager = deps.spaceWorkflowManager as SpaceWorkflowManager;
-		const workflow = workflowManager.createWorkflow({
-			spaceId: SPACE_ID,
-			name: 'Race Fix Workflow',
-			description: '',
-			nodes: [{ id: STEP_ID, name: 'Code', agentId: AGENT_ID }],
-			transitions: [],
-			startNodeId: STEP_ID,
-			rules: [],
-			tags: [],
-		});
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Race Run');
 		const taskRepo = deps.taskRepo as SpaceTaskRepository;
-		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Pre-wiring failure' });
 
-		// Simulate an early tick BEFORE provisioning — fires on NullNotificationSink, dedup key added
-		await runtime.executeTick();
-		// No real sink yet, so no injected calls
+		taskRepo.createTask({
+			spaceId: SPACE_ID,
+			title: 'Pre-wiring blocked task',
+			description: '',
+			status: 'blocked',
+		});
+
+		// Early tick before provisioning: dedup key is recorded, but NullNotificationSink delivers nothing.
+		await executeTickUntil(runtime, () => runtime.getNotifiedTaskSet().size > 0);
+		expect(runtime.getNotifiedTaskSet().size).toBeGreaterThan(0);
 		expect(sessionFactory.calls).toHaveLength(0);
 
-		// Now provision (wires the real sink — clears notifiedTaskSet)
+		// Wire real sink (also clears dedup set)
 		await provisionGlobalSpacesAgent(deps);
 
-		// Fire a tick AFTER provisioning — task should re-notify because dedup was cleared
-		await runtime.executeTick();
+		// Tick again: blocked task should be re-notified now.
+		await executeTickUntil(runtime, () => sessionFactory.calls.length > 0);
 		expect(sessionFactory.calls.length).toBeGreaterThanOrEqual(1);
 		expect(sessionFactory.calls[0].message).toContain('[TASK_EVENT]');
 	});

@@ -39,7 +39,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import type { NodeExecution, Space, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
@@ -88,7 +88,7 @@ async function startWorkflowRun(
 	spaceId: string,
 	workflowId: string,
 	title: string
-): Promise<{ runId: string; taskId: string }> {
+): Promise<{ runId: string; taskId: string; executionId: string }> {
 	const { run } = (await daemon.messageHub.request('spaceWorkflowRun.start', {
 		spaceId,
 		workflowId,
@@ -98,30 +98,40 @@ async function startWorkflowRun(
 	const tasks = (await daemon.messageHub.request('spaceTask.list', {
 		spaceId,
 	})) as Array<{ id: string; workflowRunId: string; status: string }>;
+	const task = tasks.find((candidate) => candidate.workflowRunId === run.id);
+	if (!task) throw new Error(`No canonical task found for workflow run ${run.id}`);
 
-	const task = tasks.find((t) => t.workflowRunId === run.id && t.status === 'open');
-	if (!task) throw new Error(`No open task found for workflow run ${run.id}`);
+	const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
+		workflowRunId: run.id,
+		spaceId,
+	})) as { executions: NodeExecution[] };
+	const execution = executions[0];
+	if (!execution) throw new Error(`No node execution found for workflow run ${run.id}`);
 
-	return { runId: run.id, taskId: task.id };
+	return { runId: run.id, taskId: task.id, executionId: execution.id };
 }
 
-async function waitForTaskAgentSpawned(
+async function waitForNodeAgentSpawned(
 	daemon: DaemonServerContext,
 	spaceId: string,
-	taskId: string,
+	runId: string,
+	executionId: string,
 	timeout: number
 ): Promise<string> {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
-		const task = (await daemon.messageHub.request('spaceTask.get', {
-			taskId,
+		const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
+			workflowRunId: runId,
 			spaceId,
-		})) as { taskAgentSessionId: string | null };
+		})) as { executions: NodeExecution[] };
 
-		if (task.taskAgentSessionId) return task.taskAgentSessionId;
+		const execution = executions.find((candidate) => candidate.id === executionId);
+		if (execution?.agentSessionId) return execution.agentSessionId;
 		await new Promise((resolve) => setTimeout(resolve, 400));
 	}
-	throw new Error(`Task Agent session was not spawned within ${timeout}ms for task ${taskId}`);
+	throw new Error(
+		`Node agent session was not spawned within ${timeout}ms for execution ${executionId}`
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -193,26 +203,26 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 			expect(ourSkill).toBeDefined();
 			expect(ourSkill!.enabled).toBe(true);
 
-			// Step 4: Create a space + workflow to trigger a task agent session
+			// Step 4: Create a space + workflow to trigger a workflow node-agent session
 			const { space, workflow } = await createTestFixtures(daemon);
 
-			const { taskId } = await startWorkflowRun(
+			const { runId, taskId, executionId } = await startWorkflowRun(
 				daemon,
 				space.id,
 				workflow.id,
 				'Skills injection test run'
 			);
 
-			// Step 5: Wait for the task agent session to be spawned.
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			// Step 5: Wait for the node-agent session to be spawned for the execution.
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				taskId,
+				runId,
+				executionId,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
 
-			daemon.trackSession(taskAgentSessionId);
-
+			daemon.trackSession(nodeAgentSessionId);
 			// Step 6: Verify the task agent session exists, is accessible, and has the
 			// registry-sourced MCP server in its runtime config.
 			//
@@ -227,18 +237,20 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 			// confirms that skillsManager/appMcpServerRepo were wired through and the registry
 			// MCPs were injected into the task agent session.
 			const sessionResult = (await daemon.messageHub.request('session.get', {
-				sessionId: taskAgentSessionId,
+				sessionId: nodeAgentSessionId,
 			})) as {
 				session: { id: string; type: string; config?: { mcpServers?: Record<string, unknown> } };
 			};
 
-			expect(sessionResult.session.id).toBe(taskAgentSessionId);
-			expect(sessionResult.session.type).toBe('space_task_agent');
+			expect(sessionResult.session.id).toBe(nodeAgentSessionId);
+			expect(sessionResult.session.type).toBe('worker');
+			expect(nodeAgentSessionId).toContain(`space:${space.id}`);
+			expect(nodeAgentSessionId).toContain(`task:${taskId}`);
+			expect(nodeAgentSessionId).toContain(`exec:${executionId}`);
 
 			// Verify registry MCP servers are present in the session's runtime config
 			const mcpServerKeys = Object.keys(sessionResult.session.config?.mcpServers ?? {});
 			expect(mcpServerKeys).toContain('test-skills-mcp');
-			expect(mcpServerKeys).toContain('task-agent');
 		},
 		TEST_TIMEOUT
 	);
@@ -290,31 +302,32 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 			})) as { skill: { id: string; enabled: boolean } };
 			expect(updated.enabled).toBe(true);
 
-			// Create space + task and wait for task agent to spawn
+			// Create space + run and wait for node-agent spawn
 			const { space, workflow } = await createTestFixtures(daemon);
-			const { taskId } = await startWorkflowRun(
+			const { runId, executionId } = await startWorkflowRun(
 				daemon,
 				space.id,
 				workflow.id,
 				'Skills enabled test run'
 			);
 
-			const taskAgentSessionId = await waitForTaskAgentSpawned(
+			const nodeAgentSessionId = await waitForNodeAgentSpawned(
 				daemon,
 				space.id,
-				taskId,
+				runId,
+				executionId,
 				TASK_AGENT_SPAWN_TIMEOUT
 			);
 
-			daemon.trackSession(taskAgentSessionId);
+			daemon.trackSession(nodeAgentSessionId);
 
-			// Verify the session is live — proves the skills wiring didn't crash the session start
+			// Verify the session is live — proves skills wiring didn't crash session start
 			const sessionResult = (await daemon.messageHub.request('session.get', {
-				sessionId: taskAgentSessionId,
+				sessionId: nodeAgentSessionId,
 			})) as { session: { id: string; type: string } };
 
-			expect(sessionResult.session.id).toBe(taskAgentSessionId);
-			expect(sessionResult.session.type).toBe('space_task_agent');
+			expect(sessionResult.session.id).toBe(nodeAgentSessionId);
+			expect(sessionResult.session.type).toBe('worker');
 		},
 		TEST_TIMEOUT
 	);

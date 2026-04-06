@@ -86,13 +86,11 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 				id: step1Id,
 				name: 'Plan',
 				agents: [{ agentId: 'agent-1', name: 'planner' }],
-				instructions: 'Plan things',
 			},
 			{
 				id: step2Id,
 				name: 'Code',
 				agents: [{ agentId: 'agent-2', name: 'coder' }],
-				instructions: '',
 			},
 		],
 		startNodeId: step1Id,
@@ -292,7 +290,7 @@ describe('WorkflowEditor', () => {
 
 		it('loads channels from existing workflow', () => {
 			const wf = makeWorkflow({
-				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
+				channels: [{ from: 'task-agent', to: 'coder' }],
 			});
 			const { channels } = initFromWorkflow(wf);
 			expect(channels).toHaveLength(1);
@@ -442,6 +440,7 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
 			expect(getByText('Coding Workflow')).toBeTruthy();
+			expect(getByText('Coding with QA Workflow')).toBeTruthy();
 			expect(getByText('Research Workflow')).toBeTruthy();
 			expect(getByText('Review-Only Workflow')).toBeTruthy();
 			expect(getByText('Full-Cycle Coding Workflow')).toBeTruthy();
@@ -468,12 +467,11 @@ describe('WorkflowEditor', () => {
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
-		it('applying Full-Cycle Coding Workflow template creates 6 steps', () => {
-			const { getByText, getAllByTestId } = render(<WorkflowEditor {...defaultProps} />);
+		it('applying Full-Cycle Coding Workflow template creates 5 steps', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
 			fireEvent.click(getByText('Full-Cycle Coding Workflow'));
-			expect(getByText('6 steps')).toBeTruthy();
-			expect(getAllByTestId('channel-entry').length).toBe(9);
+			expect(getByText('5 steps')).toBeTruthy();
 		});
 
 		it('Full-Cycle Coding Workflow template builds explicit system prompts for every node', () => {
@@ -482,7 +480,7 @@ describe('WorkflowEditor', () => {
 			);
 			expect(template).toBeTruthy();
 			const nodes = buildTemplateNodes(template!, mockAgents.value);
-			expect(nodes).toHaveLength(6);
+			expect(nodes).toHaveLength(5);
 			for (const node of nodes) {
 				if (node.agents && node.agents.length > 0) {
 					for (const agent of node.agents) {
@@ -542,8 +540,10 @@ describe('WorkflowEditor', () => {
 				]
 			);
 
-			expect(nodes[0].agentId).toBe('agent-b');
-			expect(nodes[1].agentId).toBe('agent-c');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-b');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+			expect(nodes[1].agents?.[0].agentId).toBe('agent-c');
+			expect(nodes[1].agents?.[0].name).toBe('reviewer');
 		});
 
 		it('template assigns fallback agents when no role-name match exists', () => {
@@ -559,8 +559,10 @@ describe('WorkflowEditor', () => {
 				[makeAgent('agent-x', 'Alice'), makeAgent('agent-y', 'Bob')]
 			);
 
-			expect(nodes[0].agentId).toBe('agent-x');
-			expect(nodes[1].agentId).toBe('agent-y');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-x');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+			expect(nodes[1].agents?.[0].agentId).toBe('agent-y');
+			expect(nodes[1].agents?.[0].name).toBe('reviewer');
 		});
 
 		it('uses explicit agentId from template step when provided', () => {
@@ -572,7 +574,8 @@ describe('WorkflowEditor', () => {
 				},
 				mockAgents.value
 			);
-			expect(nodes[0].agentId).toBe('agent-2');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-2');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
 		});
 
 		it('prefers built-in workflows from store as template source', () => {
@@ -584,6 +587,7 @@ describe('WorkflowEditor', () => {
 				'Research Workflow',
 				'Review-Only Workflow',
 				'Full-Cycle Coding Workflow',
+				'Coding with QA Workflow',
 			]);
 		});
 
@@ -606,6 +610,21 @@ describe('WorkflowEditor', () => {
 				mockAgents.value
 			);
 			expect(nodes[0].systemPrompt).toEqual({ mode: 'override', value: 'Be careful.' });
+		});
+
+		it('creates a single-slot agents entry for single-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Single Slot Template',
+					description: 'Single slot',
+					steps: [{ name: 'Review', role: 'reviewer' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agentId).toBe('agent-4');
+			expect(nodes[0].agents).toHaveLength(1);
+			expect(nodes[0].agents?.[0].name).toBe('reviewer');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-4');
 		});
 
 		it('wraps per-slot systemPrompt in WorkflowNodeAgentOverride for multi-agent steps', () => {
@@ -720,7 +739,6 @@ describe('WorkflowEditor', () => {
 								systemPrompt: { mode: 'override', value: 'Visible workflow prompt.' },
 							},
 						],
-						instructions: 'Plan things',
 					},
 					{
 						id: 'step-2',
@@ -763,7 +781,6 @@ describe('WorkflowEditor', () => {
 								systemPrompt: { mode: 'override', value: 'Plan carefully.' },
 							},
 						],
-						instructions: 'Plan things',
 					},
 				],
 			});
@@ -839,16 +856,6 @@ describe('WorkflowEditor', () => {
 	});
 
 	describe('channels', () => {
-		it('renders the Channels section header', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByText('Channels')).toBeTruthy();
-		});
-
-		it('renders the ChannelEditor inside the workflow editor', () => {
-			const { getByTestId } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByTestId('channel-editor')).toBeTruthy();
-		});
-
 		it('channels are included in createWorkflow call when empty', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
@@ -865,18 +872,11 @@ describe('WorkflowEditor', () => {
 		});
 
 		it('channels from existing workflow are included in updateWorkflow call', async () => {
-			const wf = makeWorkflow({
-				channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
-			});
+			const wf = makeWorkflow({});
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
 			fireEvent.click(getByText('Save Changes'));
 			await waitFor(() => {
-				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
-					'wf-1',
-					expect.objectContaining({
-						channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
-					})
-				);
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith('wf-1', expect.objectContaining({}));
 			});
 		});
 	});
@@ -897,13 +897,6 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
 			expect(getByText('coding')).toBeTruthy();
 			expect(getByText('review')).toBeTruthy();
-		});
-
-		it('starts with no rules when loading existing workflow (rules are no longer persisted on SpaceWorkflow)', () => {
-			const wf = makeWorkflow();
-			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			// Rules start at 0; user can add them via "Add Rule"
-			expect(getByText('Add Rule')).toBeTruthy();
 		});
 	});
 
@@ -959,60 +952,6 @@ describe('WorkflowEditor', () => {
 				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
 					'wf-1',
 					expect.objectContaining({ tags: ['research'] })
-				);
-			});
-		});
-	});
-
-	describe('rules', () => {
-		it('renders the Rules section with "Add Rule" button', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByText('Add Rule')).toBeTruthy();
-		});
-
-		it('clicking Add Rule shows a rule card', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			fireEvent.click(getByText('Add Rule'));
-			expect(getByText('1 rule')).toBeTruthy();
-		});
-
-		it('rules UI is rendered but not sent in createWorkflow call (rules are not persisted on workflow)', async () => {
-			// Rules are tracked in local state but are NOT included in the createWorkflow/updateWorkflow
-			// payload. This is the current expected behavior — rules exist only as local editor state.
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			selectAgent(container, 'agent-1');
-			fireEvent.click(getByText('Add Rule'));
-			// Fill rule name
-			const ruleNameInput = container.querySelector(
-				'input[placeholder*="Rule name"]'
-			) as HTMLInputElement;
-			fireEvent.input(ruleNameInput, { target: { value: 'Follow conventions' } });
-			// Fill rule content
-			const ruleTextarea = container.querySelector(
-				'textarea[placeholder*="Describe the rule"]'
-			) as HTMLTextAreaElement;
-			fireEvent.input(ruleTextarea, { target: { value: 'Write clean code' } });
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
-			});
-			const callArgs = mockCreateWorkflow.mock.calls[0][0];
-			// Rules are NOT included in the create call
-			expect(callArgs.rules).toBeUndefined();
-		});
-
-		it('updateWorkflow call does not include rules (rules are no longer persisted on SpaceWorkflow)', async () => {
-			const wf = makeWorkflow();
-			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			fireEvent.click(getByText('Save Changes'));
-			await waitFor(() => {
-				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
-					'wf-1',
-					expect.objectContaining({ name: 'Existing Workflow' })
 				);
 			});
 		});

@@ -1,21 +1,21 @@
 /**
  * Space Agent Tools — MCP tools for the Space leader agent session.
  *
- * These tools allow the Space agent to start workflow runs, check status,
- * change plans, and query Space tasks. They are in the Space namespace (not Room).
+ * These tools allow the Space agent to inspect workflows, manage existing
+ * workflow runs, and create/query Space tasks. They are in the Space namespace
+ * (not Room).
  *
  * Tools (per M7 spec):
  *   list_workflows      — show all workflows with their descriptions and steps
- *   start_workflow_run  — begin a workflow run (requires explicit workflowId)
  *   get_workflow_run    — check the status of a running workflow
  *   change_plan         — update task description or switch to a different workflow mid-run
  *   list_tasks          — see current and past tasks
  *   get_workflow_detail — get a specific workflow's full definition (steps, transitions, rules)
  *   suggest_workflow    — get workflow recommendations for a described piece of work
  *
- * Design note: workflow selection is LLM-driven. The agent calls list_workflows,
- * reasons about which workflow fits the request, then calls start_workflow_run
- * with an explicit workflowId. There are no server-side heuristics.
+ * Design note: workflow selection is LLM-driven and task-first. The agent uses
+ * workflow discovery tools to reason about orchestration, then creates a task.
+ * Runtime attaches and advances workflow execution from the task lifecycle.
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
@@ -30,7 +30,6 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
@@ -56,11 +55,6 @@ export interface SpaceAgentToolsConfig {
 	taskManager: SpaceTaskManager;
 	/** Space agent manager for reassign validation. */
 	spaceAgentManager: SpaceAgentManager;
-	/**
-	 * Task Agent Manager for injecting messages into Task Agent sessions.
-	 * Optional — when not provided, send_message_to_task returns an error.
-	 */
-	taskAgentManager?: TaskAgentManager | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +75,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
-		taskAgentManager,
 	} = config;
 
 	return {
@@ -92,43 +85,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		async list_workflows(): Promise<ToolResult> {
 			const workflows = workflowManager.listWorkflows(spaceId);
 			return jsonResult({ success: true, workflows });
-		},
-
-		/**
-		 * Start a new workflow run with an explicit workflowId.
-		 * The agent must call list_workflows first and pick the right workflow.
-		 */
-		async start_workflow_run(args: {
-			workflow_id: string;
-			title: string;
-			description?: string;
-		}): Promise<ToolResult> {
-			try {
-				const { run, tasks } = await runtime.startWorkflowRun(
-					spaceId,
-					args.workflow_id,
-					args.title,
-					args.description
-				);
-
-				// Event-driven kickoff:
-				// - Runtime creates/spawns task-agent sessions in idle mode.
-				// - Space Agent explicitly sends the first orchestration message.
-				if (taskAgentManager) {
-					for (const task of tasks) {
-						await taskAgentManager.ensureTaskAgentSession(task.id);
-						await taskAgentManager.injectTaskAgentMessage(
-							task.id,
-							'Workflow run started. Spawn pending node agents for this task, then wait for inbound [STEP_*] events to continue orchestration.'
-						);
-					}
-				}
-
-				return jsonResult({ success: true, run, tasks });
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
 		},
 
 		/**
@@ -239,7 +195,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		 * are returned in creation order.
 		 *
 		 * Selection is still LLM-driven: the agent should use this to rank candidates
-		 * and then call start_workflow_run with an explicit workflow_id.
+		 * before creating a task.
 		 */
 		async suggest_workflow(args: { description: string }): Promise<ToolResult> {
 			const allWorkflows = workflowManager.listWorkflows(spaceId);
@@ -461,46 +417,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
-
-		/**
-		 * Send a message to the Task Agent session managing a specific task.
-		 * Use this to check progress, provide feedback, or redirect work.
-		 */
-		async send_message_to_task(args: { task_id: string; message: string }): Promise<ToolResult> {
-			if (!taskAgentManager) {
-				return jsonResult({
-					success: false,
-					error: 'TaskAgentManager is not configured — cannot send messages to task agents.',
-				});
-			}
-
-			// Use taskManager.getTask() (not taskRepo) to enforce space ownership — ensures
-			// Space Agent A cannot inject messages into Space B's Task Agent sessions.
-			const task = await taskManager.getTask(args.task_id);
-			if (!task) {
-				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-			}
-
-			if (!task.taskAgentSessionId) {
-				return jsonResult({
-					success: false,
-					error: `Task ${args.task_id} has no active Task Agent session (status: ${task.status}).`,
-					taskStatus: task.status,
-				});
-			}
-
-			try {
-				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
-				return jsonResult({
-					success: true,
-					taskId: task.id,
-					taskStatus: task.status,
-				});
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
-		},
 	};
 }
 
@@ -518,21 +434,9 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 	const tools = [
 		tool(
 			'list_workflows',
-			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before starting a run.',
+			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
 			{},
 			() => handlers.list_workflows()
-		),
-		tool(
-			'start_workflow_run',
-			'Begin a workflow run. You must call list_workflows first and choose the workflow whose description and steps best match the request.',
-			{
-				workflow_id: z
-					.string()
-					.describe('ID of the workflow to run (required — choose from list_workflows)'),
-				title: z.string().describe('Short title for this workflow run'),
-				description: z.string().optional().describe('Detailed description of the work to be done'),
-			},
-			(args) => handlers.start_workflow_run(args)
 		),
 		tool(
 			'get_workflow_run',
@@ -559,7 +463,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_workflow_detail',
-			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before starting a run.',
+			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before creating a task.',
 			{
 				workflow_id: z.string().describe('ID of the workflow to retrieve'),
 			},
@@ -567,7 +471,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'suggest_workflow',
-			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before calling start_workflow_run.',
+			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before creating a task.',
 			{
 				description: z
 					.string()
@@ -614,7 +518,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'create_standalone_task',
-			'Create a standalone task not associated with any workflow run. Use this to assign ad-hoc work directly to an agent.',
+			'Create a task request. Runtime may attach and execute a workflow for this task during orchestration.',
 			{
 				title: z.string().describe('Short title for the task'),
 				description: z.string().describe('Detailed description of the work to be done'),
@@ -685,17 +589,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Agent type to assign (coder or general)'),
 			},
 			(args) => handlers.reassign_task(args)
-		),
-		tool(
-			'send_message_to_task',
-			'Send a message to the Task Agent session managing a specific task. Use this to check on progress, provide feedback, or redirect work. The message will be delivered directly to the Task Agent which may relay relevant parts to its active sub-session.',
-			{
-				task_id: z
-					.string()
-					.describe('ID of the task whose Task Agent session should receive the message'),
-				message: z.string().describe('The message to send to the Task Agent'),
-			},
-			(args) => handlers.send_message_to_task(args)
 		),
 	];
 

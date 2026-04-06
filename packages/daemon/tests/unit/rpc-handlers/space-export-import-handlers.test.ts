@@ -1322,9 +1322,7 @@ describe('multi-agent step import', () => {
 									{ agentRef: 'Coder', name: 'coder' },
 									{ agentRef: 'Reviewer', name: 'reviewer' },
 								],
-								channels: [
-									{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' },
-								],
+								channels: [{ from: 'coder', to: 'reviewer', label: 'feedback' }],
 							},
 						},
 					],
@@ -1341,7 +1339,7 @@ describe('multi-agent step import', () => {
 		expect(wf.channels).toHaveLength(1);
 		expect(wf.channels![0].from).toBe('coder');
 		expect(wf.channels![0].to).toBe('reviewer');
-		expect(wf.channels![0].direction).toBe('bidirectional');
+		// direction field removed from WorkflowChannel
 		expect(wf.channels![0].label).toBe('feedback');
 	});
 
@@ -1430,7 +1428,6 @@ describe('multi-agent step import', () => {
 							multiAgentStep: {
 								name: 'Solo',
 								agents: [{ agentRef: 'Coder', name: 'coder' }],
-								channels: [{ from: '*', to: '*', direction: 'bidirectional' as const }],
 							},
 						},
 					],
@@ -1613,7 +1610,6 @@ type MultiAgentStepEntry =
 				channels?: Array<{
 					from: string;
 					to: string | string[];
-					direction: 'one-way' | 'bidirectional';
 					label?: string;
 				}>;
 				instructions?: string;
@@ -1641,7 +1637,6 @@ function makeMultiAgentBundle(
 			const workflowChannels: Array<{
 				from: string;
 				to: string | string[];
-				direction: 'one-way' | 'bidirectional';
 				label?: string;
 			}> = [];
 			const nodes = w.nodes.map((s) => {
@@ -1815,7 +1810,7 @@ describe('full export→import round-trip', () => {
 		expect(step.agents![0].agentId).toBe(importedAgent.id);
 		// Must NOT be the original source UUID
 		expect(step.agents![0].agentId).not.toBe('src-agent-1');
-		expect(step.instructions).toBe('Write clean code');
+		// node.instructions removed from WorkflowNode schema
 
 		// Events emitted for real-time frontend updates
 		const agentCreatedEvents = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
@@ -1864,12 +1859,11 @@ describe('full export→import round-trip', () => {
 							instructions: { mode: 'override', value: 'Review thoroughly' },
 						},
 					],
-					instructions: 'Collaborate on the task',
 				},
 			],
+			channels: [{ id: 'ch-1', from: 'coder', to: 'reviewer', label: 'hand-off' }],
 			startNodeId: 'step-ma',
 			tags: ['collab'],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional', label: 'feedback' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -1911,14 +1905,14 @@ describe('full export→import round-trip', () => {
 		expect(reviewerEntry.name).toBe('reviewer');
 
 		// Shared step instructions preserved
-		expect(importedStep.instructions).toBe('Collaborate on the task');
+		// node.instructions removed from WorkflowNode schema
 
 		// Channels preserved at workflow level (role strings, not UUIDs)
 		expect(importedWf.channels).toHaveLength(1);
 		expect(importedWf.channels![0].from).toBe('coder');
 		expect(importedWf.channels![0].to).toBe('reviewer');
-		expect(importedWf.channels![0].direction).toBe('bidirectional');
-		expect(importedWf.channels![0].label).toBe('feedback');
+		// direction field removed from WorkflowChannel schema
+		expect(importedWf.channels![0].label).toBe('hand-off');
 	});
 
 	it('import rejects bundle with empty name in agents[] entry (Zod validation)', async () => {
@@ -2008,7 +2002,7 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-ow',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'alpha', to: 'beta', direction: 'one-way' }],
+			channels: [{ id: 'ch-1', from: 'alpha', to: 'beta', label: 'handoff' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2023,7 +2017,7 @@ describe('full export→import round-trip', () => {
 		const ch = importedWf.channels![0];
 		expect(ch.from).toBe('alpha');
 		expect(ch.to).toBe('beta');
-		expect(ch.direction).toBe('one-way');
+		// direction field removed from WorkflowChannel
 	});
 
 	it('channel topology round-trip: fan-out (array `to`) preserved', async () => {
@@ -2071,7 +2065,7 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-fo',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'hub', to: ['spoke1', 'spoke2'], direction: 'one-way' }],
+			channels: [{ id: 'ch-1', from: 'hub', to: ['spoke1', 'spoke2'] }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2086,7 +2080,7 @@ describe('full export→import round-trip', () => {
 		const ch = importedWf.channels![0];
 		expect(ch.from).toBe('hub');
 		expect(ch.to).toEqual(['spoke1', 'spoke2']);
-		expect(ch.direction).toBe('one-way');
+		// direction field removed from WorkflowChannel
 	});
 
 	it('channel topology round-trip: wildcard (*) preserved', async () => {
@@ -2114,7 +2108,7 @@ describe('full export→import round-trip', () => {
 			startNodeId: 'step-wc',
 			rules: [],
 			tags: [],
-			channels: [{ from: '*', to: '*', direction: 'bidirectional' }],
+			channels: [{ id: 'ch-1', from: '*', to: '*' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2129,7 +2123,7 @@ describe('full export→import round-trip', () => {
 		const ch = importedWf.channels![0];
 		expect(ch.from).toBe('*');
 		expect(ch.to).toBe('*');
-		expect(ch.direction).toBe('bidirectional');
+		// direction field removed from WorkflowChannel
 	});
 
 	it('mixed single/multi-agent workflow round-trip preserves both step types', async () => {
@@ -2167,7 +2161,6 @@ describe('full export→import round-trip', () => {
 					id: 'step-plan',
 					name: 'Plan',
 					agents: [{ agentId: 'src-planner', name: 'planner' }],
-					instructions: 'Create a plan',
 				},
 				{
 					id: 'step-collab',
@@ -2178,9 +2171,9 @@ describe('full export→import round-trip', () => {
 					],
 				},
 			],
+			channels: [{ id: 'ch-1', from: 'planner', to: 'coder' }],
 			startNodeId: 'step-plan',
 			tags: ['mixed'],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2201,13 +2194,13 @@ describe('full export→import round-trip', () => {
 		// Step 0: single-agent (plan)
 		const planStep = importedWf.nodes.find((s) => s.name === 'Plan')!;
 		expect(planStep.agents).toHaveLength(1);
-		expect(planStep.instructions).toBe('Create a plan');
+		// node.instructions removed from WorkflowNode schema
 
 		// Step 1: multi-agent (implement and review)
 		const collabStep = importedWf.nodes.find((s) => s.name === 'Implement and Review')!;
 		expect(collabStep.agents).toHaveLength(2);
 		expect(importedWf.channels).toHaveLength(1);
-		expect(importedWf.channels![0].direction).toBe('one-way');
+		// direction field removed from WorkflowChannel
 
 		expect(importedWf.startNodeId).toBe(planStep.id);
 

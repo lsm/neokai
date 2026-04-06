@@ -12,17 +12,10 @@ export interface ChannelEdgeConfigPanelProps {
 	onEditGate?: (gateId: string) => void;
 	onClose?: () => void;
 	showHeader?: boolean;
-	showDirectionControls?: boolean;
 }
 
 function formatTo(to: string | string[]): string {
 	return Array.isArray(to) ? to.join(', ') : to;
-}
-
-function modeButtonClass(active: boolean): string {
-	return active
-		? 'border-blue-500 bg-blue-500/10 text-blue-200'
-		: 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500 hover:text-gray-200';
 }
 
 /** Compute a short label for a field's check. */
@@ -61,7 +54,6 @@ export function ChannelEdgeConfigPanel({
 	onEditGate,
 	onClose,
 	showHeader = true,
-	showDirectionControls = true,
 }: ChannelEdgeConfigPanelProps) {
 	const currentGate = channel.gateId ? gates.find((gate) => gate.id === channel.gateId) : undefined;
 
@@ -73,9 +65,7 @@ export function ChannelEdgeConfigPanel({
 		const gateId = `gate-${generateUUID()}`;
 		const newGate: Gate = {
 			id: gateId,
-			description:
-				channel.label ??
-				`${channel.from} ${channel.direction === 'bidirectional' ? '\u2194' : '\u2192'} ${formatTo(channel.to)}`,
+			description: channel.label ?? `${channel.from} \u2192 ${formatTo(channel.to)}`,
 			fields: [],
 			resetOnCycle: shouldBeCyclic,
 		};
@@ -123,34 +113,6 @@ export function ChannelEdgeConfigPanel({
 					</span>
 				</div>
 			</div>
-
-			{showDirectionControls && (
-				<div class="space-y-1">
-					<label class="text-xs text-gray-400 font-medium">Direction</label>
-					<div class="grid grid-cols-2 gap-2">
-						<button
-							type="button"
-							data-testid="channel-direction-one-way"
-							onClick={() => updateChannel({ ...channel, direction: 'one-way' })}
-							class={`rounded border px-2 py-1.5 text-xs transition-colors ${modeButtonClass(
-								channel.direction === 'one-way'
-							)}`}
-						>
-							One-way
-						</button>
-						<button
-							type="button"
-							data-testid="channel-direction-bidirectional"
-							onClick={() => updateChannel({ ...channel, direction: 'bidirectional' })}
-							class={`rounded border px-2 py-1.5 text-xs transition-colors ${modeButtonClass(
-								channel.direction === 'bidirectional'
-							)}`}
-						>
-							Bidirectional
-						</button>
-					</div>
-				</div>
-			)}
 
 			{/* Gate summary */}
 			<div class="space-y-1.5">

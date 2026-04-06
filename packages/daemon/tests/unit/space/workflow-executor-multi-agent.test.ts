@@ -29,7 +29,7 @@ import type { SpaceAgentLookup } from '../../../src/lib/space/managers/space-wor
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../src/lib/space/runtime/space-runtime.ts';
-import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceAgent, WorkflowNode } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +89,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 	let dir: string;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
 	let workflowManager: SpaceWorkflowManager;
 	let runtime: SpaceRuntime;
 
@@ -109,6 +110,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 		taskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 
 		const agentRepo = new SpaceAgentRepository(db);
 		const agentManager = new SpaceAgentManager(agentRepo);
@@ -124,7 +126,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			spaceWorkflowManager: workflowManager,
 			workflowRunRepo,
 			taskRepo,
-			nodeExecutionRepo: new NodeExecutionRepository(db),
+			nodeExecutionRepo,
 		};
 		runtime = new SpaceRuntime(config);
 	});
@@ -146,7 +148,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 	// Subtask 3: startWorkflowRun() with multi-agent start step
 	// -------------------------------------------------------------------------
 
-	test('creates one task per agent for a multi-agent start step', async () => {
+	test('creates one workflow task and one node_execution per start agent', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start ${Date.now()}`,
@@ -168,14 +170,18 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Start Run');
 
-		expect(tasks).toHaveLength(2);
-		for (const task of tasks) {
-			expect(task.workflowRunId).toBe(run.id);
-			expect(task.status).toBe('open');
-		}
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].workflowRunId).toBe(run.id);
+		expect(tasks[0].status).toBe('open');
+
+		const nodeExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(nodeExecutions).toHaveLength(2);
+		expect(nodeExecutions.map((exec) => exec.agentId).sort()).toEqual(
+			[AGENT_CODER, AGENT_PLANNER].sort()
+		);
 	});
 
-	test('per-agent instructions set task descriptions on multi-agent start step', async () => {
+	test('per-agent instructions are tracked in node executions (not split into multiple tasks)', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start Instructions ${Date.now()}`,
@@ -203,13 +209,15 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		const descriptions = tasks.map((t) => t.description).sort();
-		expect(descriptions).toEqual(['Coder task', 'Planner task'].sort());
+		expect(tasks).toHaveLength(1);
+		const nodeExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(nodeExecutions).toHaveLength(2);
+		expect(nodeExecutions.map((exec) => exec.agentName).sort()).toEqual(['coder', 'planner']);
 	});
 
-	test('per-agent taskType is resolved for multi-agent start step', async () => {
+	test('multi-agent start step still yields a single workflow task', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Multi Start TaskType ${Date.now()}`,
@@ -229,17 +237,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		expect(tasks).toHaveLength(2);
-		// taskType and customAgentId were removed in M71
-		// Verify both tasks were created with correct status
-		for (const task of tasks) {
-			expect(task.status).toBe('open');
-		}
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].status).toBe('open');
+		expect(nodeExecutionRepo.listByNode(run.id, STEP_A)).toHaveLength(2);
 	});
 
-	test('custom-role agent in multi-agent start step sets customAgentId on its task', async () => {
+	test('custom-role agent in multi-agent start step still uses one workflow task', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Custom Role Start ${Date.now()}`,
@@ -259,14 +264,11 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		expect(tasks).toHaveLength(2);
-		// taskType and customAgentId were removed in M71
-		// Verify both tasks were created with correct status
-		for (const task of tasks) {
-			expect(task.status).toBe('open');
-		}
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0].status).toBe('open');
+		expect(nodeExecutionRepo.listByNode(run.id, STEP_A)).toHaveLength(2);
 	});
 
 	// -------------------------------------------------------------------------
@@ -295,25 +297,27 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(tasks).toHaveLength(2);
+		expect(tasks).toHaveLength(1);
 
-		// Complete only one of the two parallel tasks
-		taskRepo.updateTask(tasks[0].id, { status: 'done' });
-		// tasks[1] remains pending
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(2);
+
+		// Complete only one parallel execution; keep sibling active.
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
 		await runtime.executeTick();
 
-		// Step B task must NOT have been created yet
-		const allTasks = taskRepo.listByWorkflowRun(run.id);
-		const stepBTasks = allTasks.filter((t) => t.workflowNodeId === STEP_B);
-		expect(stepBTasks).toHaveLength(0);
+		// Next node should not be activated until the current node is fully terminal.
+		const stepBExecutions = nodeExecutionRepo.listByNode(run.id, STEP_B);
+		expect(stepBExecutions).toHaveLength(0);
 	});
 
 	// -------------------------------------------------------------------------
 	// Subtask 6: Parallel failure — one task fails, others still active → waits
 	// -------------------------------------------------------------------------
 
-	test('does NOT mark run needs_attention when one task fails but sibling is still running', async () => {
+	test('marks run blocked when any parallel node execution blocks', async () => {
 		const workflow = workflowManager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: `Partial Terminal ${Date.now()}`,
@@ -333,17 +337,20 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			tags: [],
 		});
 
-		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// One task fails, but sibling is still in_progress
-		taskRepo.updateTask(tasks[0].id, { status: 'blocked', error: 'Build failed' });
-		taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(2);
+
+		// One execution fails, but sibling is still active.
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'blocked', result: 'Build failed' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
 		await runtime.executeTick();
 
-		// Run should still be in_progress — sibling is not terminal yet
+		// Runtime now blocks the run as soon as any branch reports blocked.
 		const updatedRun = workflowRunRepo.getRun(run.id)!;
-		expect(updatedRun.status).toBe('in_progress');
+		expect(updatedRun.status).toBe('blocked');
 	});
 
 	// -------------------------------------------------------------------------
@@ -371,11 +378,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(tasks).toHaveLength(2);
+		expect(tasks).toHaveLength(1);
 
-		// One completes, one fails — both are terminal
-		taskRepo.updateTask(tasks[0].id, { status: 'done' });
-		taskRepo.updateTask(tasks[1].id, { status: 'blocked', error: 'Agent crashed' });
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(2);
+
+		// One completes, one fails — both are terminal.
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'blocked', result: 'Agent crashed' });
 
 		await runtime.executeTick();
 
@@ -408,11 +418,14 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		expect(tasks).toHaveLength(3);
+		expect(tasks).toHaveLength(1);
 
-		taskRepo.updateTask(tasks[0].id, { status: 'done' });
-		taskRepo.updateTask(tasks[1].id, { status: 'done' });
-		taskRepo.updateTask(tasks[2].id, { status: 'blocked', error: 'Crash' });
+		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
+		expect(stepAExecutions).toHaveLength(3);
+
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[2].id, { status: 'blocked', result: 'Crash' });
 
 		await runtime.executeTick();
 
@@ -509,177 +522,6 @@ describe('resolveNodeAgents()', () => {
 });
 
 // ===========================================================================
-// Subtask 10: resolveNodeChannels() utility — all topology patterns
-// ===========================================================================
-
-describe('resolveNodeChannels()', () => {
-	const agentCoder = makeSpaceAgent('agent-coder-id', 'coder');
-	const agentReviewer = makeSpaceAgent('agent-reviewer-id', 'reviewer');
-	const agentSecurity = makeSpaceAgent('agent-security-id', 'security');
-	const allAgents: SpaceAgent[] = [agentCoder, agentReviewer, agentSecurity];
-
-	function makeStep(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
-		return { id: 'step-1', name: 'Test Step', agents: [], ...overrides };
-	}
-
-	test('returns empty array when no channels defined', () => {
-		const step = makeStep({ agentId: 'agent-coder-id' } as unknown as Partial<WorkflowNode>);
-		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
-	});
-
-	test('returns empty array when channels is an empty array', () => {
-		const step = makeStep({
-			agentId: 'agent-coder-id',
-			channels: [],
-		} as unknown as Partial<WorkflowNode>);
-		expect(resolveNodeChannels(step, step.channels ?? [])).toEqual([]);
-	});
-
-	// A → B one-way
-	test('A→B one-way: resolves to single directed channel', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(1);
-		expect(result[0]).toMatchObject({
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			fromAgentId: 'agent-coder-id',
-			toAgentId: 'agent-reviewer-id',
-			direction: 'one-way',
-			isHubSpoke: false,
-		});
-	});
-
-	// A ↔ B bidirectional point-to-point
-	test('A↔B bidirectional point-to-point: resolves to two directed channels (A→B and B→A)', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'bidirectional' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(2);
-
-		const forward = result.find((r) => r.fromRole === 'coder' && r.toRole === 'reviewer');
-		const reverse = result.find((r) => r.fromRole === 'reviewer' && r.toRole === 'coder');
-
-		expect(forward).toBeDefined();
-		expect(forward!.isHubSpoke).toBe(false);
-		expect(forward!.direction).toBe('one-way');
-
-		expect(reverse).toBeDefined();
-		expect(reverse!.isHubSpoke).toBe(false);
-		expect(reverse!.direction).toBe('one-way');
-	});
-
-	// A → [B, C, D] fan-out one-way
-	test('A→[B,C,D] fan-out one-way: resolves to three directed channels, no reverse', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'one-way' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(2);
-
-		// All originate from coder
-		expect(result.every((r) => r.fromRole === 'coder')).toBe(true);
-		// No reverse channels
-		expect(result.some((r) => r.toRole === 'coder')).toBe(false);
-		// isHubSpoke false for one-way fan-out
-		expect(result.every((r) => r.isHubSpoke === false)).toBe(true);
-	});
-
-	// A ↔ [B, C, D] fan-out bidirectional (hub-spoke)
-	test('A↔[B,C,D] hub-spoke: resolves to A→B, A→C, A→D, B→A, C→A, D→A; B cannot send to C', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-			channels: [{ from: 'coder', to: ['reviewer', 'security'], direction: 'bidirectional' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-
-		// 2 spokes × 2 directions = 4 channels
-		expect(result).toHaveLength(4);
-
-		// All marked hub-spoke
-		expect(result.every((r) => r.isHubSpoke)).toBe(true);
-
-		// Hub → each spoke
-		expect(result.some((r) => r.fromRole === 'coder' && r.toRole === 'reviewer')).toBe(true);
-		expect(result.some((r) => r.fromRole === 'coder' && r.toRole === 'security')).toBe(true);
-
-		// Each spoke → hub
-		expect(result.some((r) => r.fromRole === 'reviewer' && r.toRole === 'coder')).toBe(true);
-		expect(result.some((r) => r.fromRole === 'security' && r.toRole === 'coder')).toBe(true);
-
-		// No spoke-to-spoke (B cannot send to C)
-		expect(result.some((r) => r.fromRole === 'reviewer' && r.toRole === 'security')).toBe(false);
-		expect(result.some((r) => r.fromRole === 'security' && r.toRole === 'reviewer')).toBe(false);
-	});
-
-	// * → B wildcard from
-	test('*→B wildcard from: resolves to channels from all agents to B', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-			channels: [{ from: '*', to: 'reviewer', direction: 'one-way' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-
-		// coder→reviewer and security→reviewer (reviewer→reviewer self-loop skipped)
-		expect(result).toHaveLength(2);
-		expect(result.every((r) => r.toRole === 'reviewer')).toBe(true);
-		expect(result.every((r) => r.fromRole !== 'reviewer')).toBe(true);
-	});
-
-	// A → * wildcard to
-	test('A→* wildcard to: resolves to channels from A to all other agents', () => {
-		const step = makeStep({
-			agents: [
-				{ agentId: 'agent-coder-id', name: 'coder' },
-				{ agentId: 'agent-reviewer-id', name: 'reviewer' },
-				{ agentId: 'agent-security-id', name: 'security' },
-			],
-			channels: [{ from: 'coder', to: '*', direction: 'one-way' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-
-		// coder→reviewer and coder→security (coder→coder self-loop skipped)
-		expect(result).toHaveLength(2);
-		expect(result.every((r) => r.fromRole === 'coder')).toBe(true);
-		expect(result.every((r) => r.toRole !== 'coder')).toBe(true);
-	});
-
-	// Invalid role reference → skipped silently
-	test('invalid role reference is skipped silently (does not throw)', () => {
-		const step = makeStep({
-			agents: [{ agentId: 'agent-coder-id', name: 'coder' }],
-			channels: [{ from: 'coder', to: 'nonexistent-role', direction: 'one-way' }],
-		});
-		const result = resolveNodeChannels(step, step.channels ?? []);
-		expect(result).toHaveLength(0);
-	});
-});
-
-// ===========================================================================
 // Subtask 11: Channel validation in persistence (SpaceWorkflowManager)
 // ===========================================================================
 
@@ -760,7 +602,6 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 					],
 				},
 			],
-			channels: [{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'review-request' }],
 			transitions: [],
 			startNodeId: STEP_A,
 			rules: [],
@@ -769,27 +610,12 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-		// Two tasks for the multi-agent start step
-		expect(tasks).toHaveLength(2);
+		// One workflow task for the multi-agent start step.
+		expect(tasks).toHaveLength(1);
 
-		// resolveAndStoreChannels called for start step; channels are in-memory (not in DB run config)
-		const resolvedChannels = runtime.getRunResolvedChannels(run.id);
-
-		expect(resolvedChannels.length).toBeGreaterThan(0);
-		// User-declared channel: coder → reviewer (resolved from workflow-level channels)
-		const userChannel = resolvedChannels.find(
-			(ch) => ch.fromRole === 'coder' && ch.toRole === 'reviewer'
-		);
-		expect(userChannel).toMatchObject({
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			direction: 'one-way',
-			label: 'review-request',
-		});
-		// No auto-generated task-agent channels (M3 auto-generation removed)
-		const taskAgentToCoder = resolvedChannels.find(
-			(ch) => ch.fromRole === 'task-agent' && ch.toRole === 'coder'
-		);
-		expect(taskAgentToCoder).toBeUndefined();
+		// Workflow channels are now stored in-memory via storeWorkflowChannels()
+		const channels = runtime.getRunWorkflowChannels(run.id);
+		// No channels declared on this workflow → empty
+		expect(channels).toHaveLength(0);
 	});
 });

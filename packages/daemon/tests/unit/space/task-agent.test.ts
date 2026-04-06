@@ -84,7 +84,6 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 				id: 'step-code',
 				name: 'Code',
 				agents: [{ agentId: 'agent-1', name: 'Coder' }],
-				instructions: 'Write tests too.',
 			},
 			{
 				id: 'step-review',
@@ -388,9 +387,11 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('Reviewer');
 	});
 
-	test('includes step instructions when present', () => {
+	test('step node names are present in message', () => {
+		// Node-level instructions were removed; workflow.instructions covers global context.
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('Write tests too.');
+		expect(msg).toContain('Code');
+		expect(msg).toContain('step-code');
 	});
 
 	test('includes workflow step IDs and names', () => {
@@ -456,7 +457,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('no steps defined');
 	});
 
-	test('handles workflow with no steps — start instruction directs to report_result failure', () => {
+	test('handles workflow with no steps — remains in runtime helper mode', () => {
 		const ctx = makeContext({
 			workflow: makeWorkflow({
 				name: 'Empty Workflow',
@@ -465,7 +466,8 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 			}),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('report_result');
+		expect(msg).toContain('Space Runtime has already started workflow execution');
+		expect(msg).toContain('list_group_members');
 		expect(msg).toContain('Empty Workflow');
 		expect(msg).toContain('no steps');
 	});
@@ -584,16 +586,18 @@ describe('buildTaskAgentInitialMessage — previous task results', () => {
 });
 
 describe('buildTaskAgentInitialMessage — start instruction', () => {
-	test('instructs to begin with spawn_node_agent for workflow tasks', () => {
+	test('instructs helper-mode monitoring for workflow tasks', () => {
 		const msg = buildTaskAgentInitialMessage(makeContext());
-		expect(msg).toContain('spawn_node_agent');
-		expect(msg).toContain('step-plan');
+		expect(msg).toContain('Space Runtime has already started workflow execution');
+		expect(msg).toContain('list_group_members');
+		expect(msg).toContain('send_message');
 	});
 
-	test('instructs to spawn agent for tasks without workflow', () => {
+	test('instructs helper-mode monitoring for tasks without workflow', () => {
 		const ctx = makeContext({ workflow: undefined, workflowRun: undefined });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('spawn_node_agent');
+		expect(msg).toContain('Space Runtime has already started workflow execution');
+		expect(msg).toContain('request_human_input');
 	});
 });
 
@@ -612,10 +616,10 @@ describe('buildTaskAgentSystemPrompt — collaboration manager role', () => {
 		expect(prompt).not.toContain('workflow orchestrator');
 	});
 
-	test('mentions monitoring completion via list_group_members querying space_tasks', () => {
+	test('mentions monitoring completion via list_group_members querying node execution state', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
 		expect(prompt).toContain('list_group_members');
-		expect(prompt).toContain('space_tasks');
+		expect(prompt).toContain('node execution state');
 	});
 });
 
@@ -676,34 +680,25 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	}
 
 	test('includes channel map section when workflow has channels', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
-		];
+		const channels: WorkflowChannel[] = [];
 		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('Collaboration Channel Map');
 	});
 
-	test('shows channel from/to agents', () => {
-		const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
-		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('`coder`');
-		expect(msg).toContain('`reviewer`');
-	});
-
-	test('shows bidirectional arrow for bidirectional channels', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
+	test('shows channel from/to nodes', () => {
+		const localChannels: WorkflowChannel[] = [
+			{ id: 'ch-1', from: 'Code', to: 'Review', label: 'code-review' },
 		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(localChannels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('↔');
+		expect(msg).toContain('`Code`');
+		expect(msg).toContain('`Review`');
 	});
 
-	test('shows one-way arrow for one-way channels', () => {
-		const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+	test('shows one-way arrow for channels (all channels are one-way)', () => {
+		const localChannels: WorkflowChannel[] = [{ id: 'ch-1', from: 'Code', to: 'Review' }];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(localChannels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('→');
 	});
@@ -713,7 +708,6 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gateId: 'approval-gate',
 			},
 		];
@@ -741,7 +735,6 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gateId: 'ci-gate',
 			},
 		];
@@ -767,7 +760,6 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 			{
 				from: 'coder',
 				to: 'reviewer',
-				direction: 'one-way',
 				gateId: 'result-gate',
 			},
 		];
@@ -795,10 +787,10 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	});
 
 	test('shows channel label when present', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'code-review' },
+		const localChannels: WorkflowChannel[] = [
+			{ id: 'ch-1', from: 'Code', to: 'Review', label: 'code-review' },
 		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(localChannels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('code-review');
 	});
@@ -816,21 +808,17 @@ describe('buildTaskAgentInitialMessage — channel map', () => {
 	});
 
 	test('mentions target addressing guidance in channel map', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: 'reviewer', direction: 'bidirectional' },
-		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const localChannels: WorkflowChannel[] = [{ id: 'ch-1', from: 'Code', to: 'Review' }];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(localChannels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
 		expect(msg).toContain('list_reachable_agents');
 	});
 
 	test('handles fan-out channel with array of targets', () => {
-		const channels: WorkflowChannel[] = [
-			{ from: 'coder', to: ['reviewer', 'qa'], direction: 'one-way' },
-		];
-		const ctx = makeContext({ workflow: makeWorkflowWithChannels(channels) });
+		const localChannels: WorkflowChannel[] = [{ id: 'ch-1', from: 'Code', to: ['Review', 'QA'] }];
+		const ctx = makeContext({ workflow: makeWorkflowWithChannels(localChannels) });
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('reviewer');
-		expect(msg).toContain('qa');
+		expect(msg).toContain('Review');
+		expect(msg).toContain('QA');
 	});
 });

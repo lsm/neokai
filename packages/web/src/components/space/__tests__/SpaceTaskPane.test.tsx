@@ -194,14 +194,11 @@ describe('SpaceTaskPane', () => {
 		expect(getByTestId('space-task-unified-thread')).toBeTruthy();
 	});
 
-	it('shows startup copy while session is being ensured', () => {
-		mockEnsureTaskAgentSession.mockImplementation(async () => {
-			await new Promise(() => {});
-			return makeTask({ status: 'in_progress', taskAgentSessionId: null });
-		});
+	it('shows unavailable-thread copy when no task session exists', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
 		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByText('Starting task thread...')).toBeTruthy();
+		expect(getByText('Task thread is not available yet.')).toBeTruthy();
+		expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
 	});
 
 	it('shows Open Space Agent button when no task session exists', () => {
@@ -262,7 +259,7 @@ describe('SpaceTaskPane — composer', () => {
 		await waitFor(() =>
 			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me')
 		);
-		expect(mockEnsureTaskAgentSession).toHaveBeenCalledWith('task-1');
+		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
 
 	it('shows send error text when sending fails', async () => {
@@ -359,22 +356,18 @@ describe('SpaceTaskPane — composer', () => {
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
 
-	it('calls ensureTaskAgentSession when task has no session before send', async () => {
+	it('does not render composer when task has no session yet', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
-		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
-
-		// Wait for the auto-ensure effect to fire and finish
-		await waitFor(() => expect(mockEnsureTaskAgentSession).toHaveBeenCalled());
-
-		const textarea = getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
+		const { queryByPlaceholderText, queryByText, getByText } = render(
+			<SpaceTaskPane taskId="task-1" />
 		);
-		fireEvent.input(textarea, { target: { value: 'Can you check this?' } });
-		fireEvent.click(getByText('Send to Task Agent'));
 
-		await waitFor(() =>
-			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Can you check this?')
-		);
+		expect(
+			queryByPlaceholderText('Message the task agent (Enter to send, Shift+Enter for newline)')
+		).toBeNull();
+		expect(queryByText('Send to Task Agent')).toBeNull();
+		expect(getByText('Waiting for task thread before messages can be sent.')).toBeTruthy();
+		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
 
 	it('clears threadSendError when a new send succeeds', async () => {

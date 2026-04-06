@@ -5,6 +5,34 @@
  * Note: happy-dom environment is automatically initialized by vitest.config.ts
  */
 
+// Suppress TLS certificate errors from happy-dom making real HTTPS requests
+// (e.g., https://example.com/oauth in ProvidersSettings tests). Happy-dom
+// attempts actual network requests for URLs rendered in test fixtures. On
+// systems with custom CA certificates (VPN/proxy), these fail with "unable
+// to get local issuer certificate". The errors are harmless (tests don't
+// depend on the HTTPS response) but produce noisy stderr output.
+{
+	const _origStderrWrite = process.stderr.write.bind(process.stderr);
+	// Narrow pattern: only suppress the specific OpenSSL/Node TLS error that
+	// happy-dom triggers when it fetches https://example.com URLs.
+	const TLS_NOISE = /unable to get local issuer certificate/;
+	process.stderr.write = function (chunk: unknown, ...args: unknown[]) {
+		if (typeof chunk === 'string' && TLS_NOISE.test(chunk)) {
+			const cb =
+				typeof args[args.length - 1] === 'function' ? (args[args.length - 1] as Function) : null;
+			cb?.();
+			return true;
+		}
+		if (Buffer.isBuffer(chunk) && TLS_NOISE.test(chunk.toString())) {
+			const cb =
+				typeof args[args.length - 1] === 'function' ? (args[args.length - 1] as Function) : null;
+			cb?.();
+			return true;
+		}
+		return (_origStderrWrite as Function)(chunk, ...args);
+	} as typeof process.stderr.write;
+}
+
 import { beforeEach, afterEach, vi } from 'vitest';
 
 // Mock window.location with specific values (happy-dom doesn't set all properties)

@@ -215,9 +215,10 @@ test.describe('Space Creation UX', () => {
 		// Navigate to the Workflows tab
 		await page.getByTestId('space-configure-tab-workflows').click();
 
-		// Verify all 4 built-in workflows are visible
+		// Verify all built-in workflows are visible
 		const BUILT_IN_WORKFLOWS = [
 			'Coding Workflow',
+			'Coding with QA Workflow',
 			'Research Workflow',
 			'Review-Only Workflow',
 			'Full-Cycle Coding Workflow',

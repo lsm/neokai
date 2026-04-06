@@ -1,4 +1,56 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+
+// Re-declare the SDK mock so db-query tests are insulated from test-order-dependent
+// overrides in other suites (some replace tool() with a minimal { name } shape).
+mock.module('@anthropic-ai/claude-agent-sdk', () => {
+	class MockMcpServer {
+		readonly _registeredTools: Record<string, object> = {};
+
+		connect(): void {}
+		disconnect(): void {}
+	}
+
+	let toolBatch: Array<{ name: string; def: object }> = [];
+
+	function tool(name: string, description: string, inputSchema: unknown, handler: unknown): object {
+		const def = { name, description, inputSchema, handler };
+		toolBatch.push({ name, def });
+		return def;
+	}
+
+	return {
+		query: mock(async () => ({ interrupt: () => {} })),
+		interrupt: mock(async () => {}),
+		supportedModels: mock(async () => {
+			throw new Error('SDK unavailable in unit test');
+		}),
+		createSdkMcpServer: mock((options: { name: string; version?: string; tools?: unknown[] }) => {
+			const server = new MockMcpServer();
+			for (const { name, def } of toolBatch) {
+				server._registeredTools[name] = def;
+			}
+			if (Object.keys(server._registeredTools).length === 0 && Array.isArray(options.tools)) {
+				for (const candidate of options.tools) {
+					const toolDef = candidate as { name?: string };
+					if (toolDef.name) {
+						server._registeredTools[toolDef.name] = candidate as object;
+					}
+				}
+			}
+			toolBatch = [];
+
+			return {
+				type: 'sdk' as const,
+				name: options.name,
+				version: options.version ?? '1.0.0',
+				tools: options.tools ?? [],
+				instance: server,
+			};
+		}),
+		tool,
+	};
+});
+
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

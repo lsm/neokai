@@ -2,8 +2,9 @@
  * Space Node Execution RPC Handlers
  *
  * RPC handlers for NodeExecution queries:
- * - nodeExecution.list - Lists node executions for a workflow run (requires spaceId)
- * - nodeExecution.create - Creates a node execution record (E2E test infrastructure only)
+ * - nodeExecution.list   - Lists node executions for a workflow run (requires spaceId)
+ * - nodeExecution.create - Creates a node execution record (test infrastructure only)
+ * - nodeExecution.update - Updates an execution status/result (test infrastructure only)
  */
 
 import type { MessageHub, NodeExecutionStatus } from '@neokai/shared';
@@ -40,12 +41,10 @@ export function setupNodeExecutionHandlers(
 		return { executions };
 	});
 
-	// ─── nodeExecution.create (E2E test infrastructure only) ────────────────
+	// ─── nodeExecution.create / update (test infrastructure only) ───────────
 	//
-	// Creates a node execution record directly. Used by E2E tests to simulate
-	// node activation without spinning up a real agent session or channel router.
 	// Disabled in production to prevent unauthorized state manipulation.
-	if (process.env.NODE_ENV !== 'production')
+	if (process.env.NODE_ENV !== 'production') {
 		messageHub.onRequest('nodeExecution.create', async (data) => {
 			const params = data as {
 				workflowRunId: string;
@@ -77,4 +76,42 @@ export function setupNodeExecutionHandlers(
 
 			return { execution };
 		});
+
+		messageHub.onRequest('nodeExecution.update', async (data) => {
+			const params = data as {
+				id: string;
+				spaceId: string;
+				status?: NodeExecutionStatus;
+				result?: string | null;
+				agentSessionId?: string | null;
+			};
+
+			if (!params.id) throw new Error('id is required');
+			if (!params.spaceId) throw new Error('spaceId is required');
+			if (
+				params.status === undefined &&
+				params.result === undefined &&
+				params.agentSessionId === undefined
+			) {
+				throw new Error('At least one update field is required');
+			}
+
+			const current = nodeExecutionRepo.getById(params.id);
+			if (!current) throw new Error(`NodeExecution not found: ${params.id}`);
+
+			const run = workflowRunRepo.getRun(current.workflowRunId);
+			if (!run || run.spaceId !== params.spaceId) {
+				throw new Error(`WorkflowRun not found: ${current.workflowRunId}`);
+			}
+
+			const updated = nodeExecutionRepo.update(params.id, {
+				status: params.status,
+				result: params.result,
+				agentSessionId: params.agentSessionId,
+			});
+			if (!updated) throw new Error(`Failed to update NodeExecution: ${params.id}`);
+
+			return { execution: updated };
+		});
+	}
 }

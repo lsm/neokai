@@ -15,7 +15,7 @@
  * `onGateDataChanged(runId, gateId)`:
  *    Called by agents (via MCP write_gate) whenever gate data changes.
  *    Re-evaluates all channels that reference the changed gate. If a previously
- *    blocked channel is now open and its target node has no active tasks,
+ *    blocked channel is now open and its target node has no active executions,
  *    the node is lazily activated.
  *
  * `resetOnCycle`:
@@ -24,14 +24,11 @@
  *    is performed in the same SQLite transaction as the per-channel cycle increment.
  *
  * Lazy node activation:
- * - activateNode() is idempotent: if tasks already exist for the node the
- *   existing tasks are returned unchanged.
- * - Concurrency is handled via a DB UNIQUE partial index on
- *   (workflow_run_id, workflow_node_id, agent_name). A duplicate INSERT throws
- *   a SQLiteError; the handler re-reads and returns the tasks created by the
- *   winning writer.
+ * - activateNode() is idempotent: if active node_executions already exist for
+ *   the node, activation is a no-op.
+ * - For cyclic re-entry, terminal node_executions are reset to `pending`.
  * - No session group creation — that is the responsibility of TaskAgentManager.
- *   ChannelRouter only creates SpaceTask DB records.
+ *   ChannelRouter only mutates node_executions and gate/cycle state.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -221,19 +218,10 @@ export class ChannelRouter {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Lazily activate a workflow node by creating a pending SpaceTask for each
-	 * agent declared on the node.
+	 * Lazily activate a workflow node by ensuring pending node_execution rows
+	 * exist (or are reset) for every declared node agent.
 	 *
-	 * Idempotency rules (checked in order):
-	 * 1. If non-cancelled tasks already exist for (runId, nodeId) → return them.
-	 * 2. If a concurrent writer beats this call (UNIQUE constraint violation) →
-	 *    re-read and return the tasks created by the winning writer.
-	 *
-	 * @param runId  - ID of the SpaceWorkflowRun that owns the node
-	 * @param nodeId - ID of the WorkflowNode to activate
-	 * @returns Array of created (or pre-existing) SpaceTask records (≥ 1)
-	 * @throws ActivationError when the run/workflow/node is not found, or the
-	 *   run is in a terminal state (cancelled / done)
+	 * No per-node SpaceTask rows are created.
 	 */
 	async activateNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
 		// ── 1. Load the run ────────────────────────────────────────────────────
@@ -245,7 +233,7 @@ export class ChannelRouter {
 			throw new ActivationError(`Cannot activate node for run in status "${run.status}": ${runId}`);
 		}
 
-		// ── 2. Idempotency check — return existing active tasks if present ─────
+		// ── 2. Idempotency check — return when node already has active executions ─────
 		const existingTasks = this.getActiveTasksForNode(runId, nodeId);
 		if (existingTasks.length > 0) {
 			return existingTasks;
@@ -261,7 +249,7 @@ export class ChannelRouter {
 			throw new ActivationError(`Node "${nodeId}" not found in workflow "${run.workflowId}"`);
 		}
 
-		// ── 4. Resolve agent slots and create one task per slot ───────────────
+		// ── 4. Resolve agent slots and ensure pending executions ───────────────
 		let agents: ReturnType<typeof resolveNodeAgents>;
 		try {
 			agents = resolveNodeAgents(node);
@@ -272,64 +260,38 @@ export class ChannelRouter {
 			);
 		}
 
-		// For single-agent nodes, use the node name as the task title so test helpers
-		// and external observers can find tasks by the familiar node name (e.g.
-		// 'Plan Review', 'Coding'). For multi-agent nodes, use each agent slot's own
-		// name so the individual slots are distinguishable (e.g. 'Reviewer 1',
-		// 'Reviewer 2', 'Reviewer 3').
-		const isMultiAgent = agents.length > 1;
+		const existingExecutions = this.config.nodeExecutionRepo.listByNode(runId, nodeId);
+		const existingByAgentName = new Map(
+			existingExecutions.map((execution) => [execution.agentName, execution])
+		);
 
-		const tasks: SpaceTask[] = [];
 		for (const agentEntry of agents) {
-			try {
-				const task = this.config.taskRepo.createTask({
-					spaceId: run.spaceId,
-					title: isMultiAgent ? agentEntry.name : node.name,
-					// Use only the agent-slot instructions for the task description.
-					// Node-level instructions are not carried into task descriptions —
-					// they belong to the workflow definition, not the task card UI.
-					description: agentEntry.instructions?.value ?? '',
-					workflowRunId: runId,
-					status: 'open',
-				});
-				tasks.push(task);
-			} catch (err) {
-				// Detect DB UNIQUE constraint violation caused by a concurrent activateNode() call.
-				// The winning writer already created the tasks — re-read and return them.
-				//
-				// Note on partial-activation tradeoff: when the violation occurs on the nth
-				// agent slot (n > 1), the tasks already pushed to `tasks` earlier in this
-				// loop are silently discarded in favour of the re-read set. This is safe
-				// because both callers resolved task metadata from the same DB state, so the
-				// winning writer's tasks are equivalent. The returned set is guaranteed to be
-				// a superset of what this caller created so far, so no task is lost.
-				if (isDuplicateConstraintError(err)) {
-					const concurrentTasks = this.getActiveTasksForNode(runId, nodeId);
-					if (concurrentTasks.length > 0) {
-						return concurrentTasks;
-					}
+			const agentName = agentEntry.name;
+			const existing = existingByAgentName.get(agentName);
+			if (existing) {
+				// Re-activation path for cyclic channels.
+				if (TERMINAL_NODE_EXECUTION_STATUSES.has(existing.status)) {
+					this.config.nodeExecutionRepo.update(existing.id, {
+						status: 'pending',
+						agentSessionId: null,
+						result: null,
+						startedAt: null,
+						completedAt: null,
+					});
 				}
-				throw new ActivationError(
-					`Failed to create task for agent "${agentEntry.name}" on node "${nodeId}": ${err instanceof Error ? err.message : String(err)}`,
-					err
-				);
+				continue;
 			}
-		}
-
-		// Create node_execution records for each created task.
-		// Uses createOrIgnore for idempotency: if a concurrent activateNode()
-		// already created these records, the existing ones are returned.
-		for (const agentEntry of agents) {
 			this.config.nodeExecutionRepo.createOrIgnore({
 				workflowRunId: runId,
 				workflowNodeId: nodeId,
-				agentName: isMultiAgent ? agentEntry.name : node.name,
+				agentName,
 				agentId: agentEntry.agentId ?? null,
 				status: 'pending',
 			});
 		}
 
-		return tasks;
+		const canonicalTask = this.getCanonicalTaskForRun(runId);
+		return canonicalTask ? [canonicalTask] : [];
 	}
 
 	/**
@@ -722,6 +684,7 @@ export class ChannelRouter {
 			workspacePath: this.config.workspacePath ?? process.cwd(),
 			gateId,
 			runId,
+			gateData: runtimeData,
 		};
 
 		return this.withScriptSemaphore(async () => {
@@ -766,31 +729,12 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Returns all in-flight tasks for a given (runId, nodeId) pair.
+	 * Returns a non-empty array when the node currently has any active executions.
 	 *
-	 * "In-flight" means the task is in an active (non-terminal) status:
-	 * open or in_progress.
-	 *
-	 * Terminal tasks (done, blocked, cancelled, archived) are excluded so cyclic
-	 * workflows can re-activate a node after its tasks complete.
-	 *
-	 * Since M72 removed the `workflow_node_id` column from `space_tasks`, node
-	 * identity is determined by matching `task.title`:
-	 * - Single-agent nodes: title equals `node.name` (e.g. 'Plan Review', 'Coding')
-	 * - Multi-agent nodes: each task title equals its agent slot name
-	 *   (e.g. 'Reviewer 1', 'Reviewer 2', 'Reviewer 3')
-	 *
-	 * The `nodeId` parameter is tried first as a node UUID; if no node matches,
-	 * it is retried as a node name so callers passing names work correctly too.
+	 * The returned task array contains the canonical run task (single item), which
+	 * is used only as a compatibility envelope for existing callers.
 	 */
 	private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
-		const ACTIVE_STATUSES = new Set(['open', 'in_progress']);
-		const allActive = this.config.taskRepo
-			.listByWorkflowRun(runId)
-			.filter((t) => ACTIVE_STATUSES.has(t.status));
-		if (allActive.length === 0) return [];
-
-		// Resolve the node — try by UUID first, fall back to name.
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return [];
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
@@ -799,20 +743,21 @@ export class ChannelRouter {
 			workflow?.nodes.find((n) => n.name === nodeId);
 		if (!node) return [];
 
-		let agents: ReturnType<typeof resolveNodeAgents>;
-		try {
-			agents = resolveNodeAgents(node);
-		} catch {
-			return [];
-		}
+		const activeExecutions = this.config.nodeExecutionRepo
+			.listByNode(runId, node.id)
+			.filter((execution) => !TERMINAL_NODE_EXECUTION_STATUSES.has(execution.status));
+		if (activeExecutions.length === 0) return [];
 
-		// Mirror the title convention used in activateNode():
-		// single-agent → node.name; multi-agent → individual slot names.
-		if (agents.length > 1) {
-			const agentNames = new Set(agents.map((a) => a.name));
-			return allActive.filter((t) => agentNames.has(t.title));
-		}
-		return allActive.filter((t) => t.title === node.name);
+		const canonicalTask = this.getCanonicalTaskForRun(runId);
+		return canonicalTask ? [canonicalTask] : [];
+	}
+
+	/**
+	 * Returns the canonical run task (one-task-per-run model).
+	 */
+	private getCanonicalTaskForRun(runId: string): SpaceTask | null {
+		const runTasks = this.config.taskRepo.listByWorkflowRun(runId);
+		return runTasks[0] ?? null;
 	}
 
 	/**
@@ -939,16 +884,4 @@ export class ChannelRouter {
 			}
 		}
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true when `err` is a SQLite UNIQUE constraint violation.
- * Bun's SQLite driver throws an Error whose message contains "UNIQUE constraint failed".
- */
-function isDuplicateConstraintError(err: unknown): boolean {
-	return err instanceof Error && err.message.includes('UNIQUE constraint failed');
 }

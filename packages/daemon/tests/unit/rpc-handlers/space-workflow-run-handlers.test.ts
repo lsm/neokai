@@ -333,7 +333,7 @@ describe('space-workflow-run-handlers', () => {
 			).rejects.toThrow('No workflows found for space: space-1');
 		});
 
-		it('creates run via runtime and emits space.workflowRun.created', async () => {
+		it('creates run via runtime (event emission is owned by SpaceRuntimeService callbacks)', async () => {
 			const result = await call('spaceWorkflowRun.start', {
 				spaceId: 'space-1',
 				title: 'My Run',
@@ -347,12 +347,7 @@ describe('space-workflow-run-handlers', () => {
 				'My Run',
 				'Some context'
 			);
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.workflowRun.created', {
-				sessionId: 'global',
-				spaceId: 'space-1',
-				runId: mockRun.id,
-				run: mockRun,
-			});
+			expect(daemonHub.emit).not.toHaveBeenCalled();
 		});
 
 		it('auto-selects first workflow when workflowId not provided', async () => {

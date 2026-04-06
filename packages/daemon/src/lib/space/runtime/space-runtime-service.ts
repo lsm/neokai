@@ -94,7 +94,37 @@ export class SpaceRuntimeService {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
 		this.nodeExecutionRepo =
 			this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
-		this.runtime = new SpaceRuntime({ ...config, nodeExecutionRepo: this.nodeExecutionRepo });
+		this.runtime = new SpaceRuntime({
+			...config,
+			nodeExecutionRepo: this.nodeExecutionRepo,
+			onTaskUpdated: async ({ spaceId, task }) => {
+				if (!this.config.daemonHub) return;
+				await this.config.daemonHub.emit('space.task.updated', {
+					sessionId: 'global',
+					spaceId,
+					taskId: task.id,
+					task,
+				});
+			},
+			onWorkflowRunCreated: async ({ spaceId, run }) => {
+				if (!this.config.daemonHub) return;
+				await this.config.daemonHub.emit('space.workflowRun.created', {
+					sessionId: 'global',
+					spaceId,
+					runId: run.id,
+					run,
+				});
+			},
+			onWorkflowRunUpdated: async ({ spaceId, run }) => {
+				if (!this.config.daemonHub) return;
+				await this.config.daemonHub.emit('space.workflowRun.updated', {
+					sessionId: 'global',
+					spaceId,
+					runId: run.id,
+					run,
+				});
+			},
+		});
 	}
 
 	/**
@@ -235,7 +265,6 @@ export class SpaceRuntimeService {
 			workflowRunRepo,
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
-			taskAgentManager: this.taskAgentManager,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

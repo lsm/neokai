@@ -13,23 +13,20 @@
  *  - Editing edge conditions via EdgeConfigPanel
  *  - Designating the start node
  *  - Persisting layout positions on save
- *  - Tags and WorkflowRulesEditor (collapsible)
+ *  - Tags
  *
  * NOTE: This component is designed for mount-only initialisation. If `workflow`
  * changes after mount, the component will NOT re-initialise — callers should
  * provide a stable `key` prop to force remount when switching between workflows.
  */
 
-import { useState, useMemo, useCallback, useRef, useEffect } from 'preact/hooks';
+import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
 import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../WorkflowEditor';
 import type { WorkflowTemplate } from '../WorkflowEditor';
-import { WorkflowRulesEditor } from '../WorkflowRulesEditor';
-import { ChannelEditor } from '../ChannelEditor';
 import { ConfirmModal } from '../../ui/ConfirmModal';
-import type { RuleDraft } from '../WorkflowRulesEditor';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import type { ViewportState, Point, VisualTransition, WorkflowConditionType } from './types';
 import type { VisualNode, VisualEdge, VisualEditorState } from './serialization';
@@ -83,6 +80,7 @@ function buildTemplateCanvasSignature(
 				node.step.agents?.map((agent) => ({
 					agentId: agent.agentId ?? null,
 					name: agent.name ?? '',
+					model: agent.model ?? null,
 					systemPrompt: agent.systemPrompt ?? null,
 					instructions: agent.instructions ?? null,
 				})) ?? [],
@@ -90,7 +88,6 @@ function buildTemplateCanvasSignature(
 				node.step.channels?.map((channel) => ({
 					from: channel.from,
 					to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-					direction: channel.direction,
 					gateId: channel.gateId,
 				})) ?? [],
 			position: { x: node.position.x, y: node.position.y },
@@ -111,7 +108,6 @@ function buildTemplateCanvasSignature(
 		.map((channel) => ({
 			from: channel.from,
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-			direction: channel.direction,
 			gateId: channel.gateId ?? null,
 			maxCycles: channel.maxCycles ?? null,
 		}))
@@ -223,7 +219,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		];
 	});
 	const [edges, setEdges] = useState<VisualEdge[]>(() => initState?.edges ?? []);
-	const [rules, setRules] = useState<RuleDraft[]>(() => initState?.rules ?? []);
 	const [tags, setTags] = useState<string[]>(() => initState?.tags ?? []);
 	const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
 	const [endNodeId, setEndNodeId] = useState<string | undefined>(() => initState?.endNodeId);
@@ -246,8 +241,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [showRules, setShowRules] = useState(false);
-	const [showChannels, setShowChannels] = useState(true);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [tagInput, setTagInput] = useState('');
 	const [pendingTemplate, setPendingTemplate] = useState<WorkflowTemplate | null>(null);
@@ -366,18 +359,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 		() => buildNodeAnchorUsage(routedSemanticEdges),
 		[routedSemanticEdges]
 	);
-
-	// Agent role names from all multi-agent nodes — used by ChannelEditor dropdowns.
-	const agentRolesFromNodes = useMemo<string[]>(() => {
-		const roles: string[] = [];
-		for (const node of nodes) {
-			if (node.step.localId === TASK_AGENT_NODE_ID || node.step.id === TASK_AGENT_NODE_ID) continue;
-			for (const agent of node.step.agents ?? []) {
-				if (agent.name && !roles.includes(agent.name)) roles.push(agent.name);
-			}
-		}
-		return roles;
-	}, [nodes]);
 
 	const channelEdges = useMemo<ResolvedWorkflowChannel[]>(() => {
 		return routedSemanticEdges.map((edge) => ({
@@ -514,7 +495,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 		const visibleLinkCount = forwardLinks.length + reverseLinks.length;
 		const relationIsBidirectional =
-			reverseLinks.length > 0 || relation.direction === 'bidirectional';
+			reverseLinks.length > 0 || relation.direction === 'bidirectional' || false;
 
 		return {
 			relation,
@@ -577,7 +558,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 					edge.direction === 'bidirectional'
 						? `${fromNode.step.name || 'Unnamed'} ↔ ${toNode.step.name || 'Unnamed'}`
 						: `${fromNode.step.name || 'Unnamed'} → ${toNode.step.name || 'Unnamed'}`,
-				direction: edge.direction,
 				channelCount: edge.channelCount,
 				hasGate: edge.hasGate,
 			};
@@ -588,54 +568,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 		return linksByNodeId;
 	}, [nodes, routedSemanticEdges]);
-
-	useEffect(() => {
-		if (!selectedChannelInfo) return;
-
-		const legacyBidirectionalLinks = selectedChannelInfo.forwardLinks.filter(
-			({ channel }) => channel.direction === 'bidirectional'
-		);
-		if (legacyBidirectionalLinks.length === 0 || selectedChannelInfo.reverseLinks.length > 0)
-			return;
-
-		setChannels((prev) => {
-			const next = [...prev];
-			let changed = false;
-
-			for (const { index } of legacyBidirectionalLinks) {
-				const current = next[index];
-				if (!current || current.direction !== 'bidirectional') continue;
-
-				next[index] = {
-					...current,
-					direction: 'one-way',
-				};
-
-				const targets = Array.isArray(current.to) ? current.to : [current.to];
-				for (const target of targets) {
-					const reverseExists = next.some(
-						(existing) =>
-							existing.from === target &&
-							(Array.isArray(existing.to)
-								? existing.to.includes(current.from)
-								: existing.to === current.from)
-					);
-					if (reverseExists) continue;
-
-					next.push({
-						from: target,
-						to: current.from,
-						direction: 'one-way',
-						maxCycles: current.maxCycles,
-						gateId: current.gateId,
-					});
-				}
-				changed = true;
-			}
-
-			return changed ? next : prev;
-		});
-	}, [selectedChannelInfo]);
 
 	// ------------------------------------------------------------------
 	// Node operations
@@ -811,7 +743,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				const newChannel: WorkflowChannel = {
 					from: fromName,
 					to: toName,
-					direction: 'one-way',
 				};
 
 				// Deduplicate exact same directed channel produced by repeated drags.
@@ -821,7 +752,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							ch.from === newChannel.from &&
 							!Array.isArray(ch.to) &&
 							ch.to === newChannel.to &&
-							ch.direction === newChannel.direction
+							true // direction removed from schema
 					)
 				) {
 					return prev;
@@ -891,7 +822,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			const reverseChannel: WorkflowChannel = {
 				from: reverseSourceName,
 				to: reverseTargetName,
-				direction: 'one-way',
 			};
 			if (inferChannelIsCyclic(reverseChannel, next, endpointNodeIdLookup, nodeOrderByLocalId)) {
 				reverseChannel.maxCycles = 5;
@@ -1151,7 +1081,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			edges,
 			startNodeId,
 			endNodeId: endNodeId || undefined,
-			rules,
 			tags,
 			channels,
 			gates,
@@ -1484,45 +1413,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				</ConfirmModal>
 			</div>
 
-			{/* ---- Channels (collapsible) ---- */}
-			<div class="flex-shrink-0 border-t border-dark-700">
-				{/* Toggle button is outside the scroll container so it stays visible */}
-				<div class="px-4 py-2">
-					<button
-						onClick={() => setShowChannels((v) => !v)}
-						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-						data-testid="toggle-channels-button"
-					>
-						<svg
-							class={`w-3 h-3 transition-transform ${showChannels ? 'rotate-90' : ''}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M9 5l7 7-7 7"
-							/>
-						</svg>
-						<span class="font-semibold uppercase tracking-wider">
-							Channels {channels.length > 0 ? `(${channels.length})` : ''}
-						</span>
-					</button>
-				</div>
-				{showChannels && (
-					<div class="px-4 pb-2 max-h-48 overflow-y-auto" data-testid="channels-section">
-						<ChannelEditor
-							channels={channels}
-							onChange={setChannels}
-							agentRoles={agentRolesFromNodes}
-						/>
-					</div>
-				)}
-			</div>
-
-			{/* ---- Tags and Rules (collapsible) ---- */}
+			{/* ---- Tags ---- */}
 			<div class="flex-shrink-0 border-t border-dark-700 max-h-64 overflow-y-auto">
 				{/* Tags row */}
 				<div class="px-4 py-3 border-b border-dark-800">
@@ -1561,47 +1452,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 							/>
 						</div>
 					</div>
-				</div>
-
-				{/* Rules — collapsible */}
-				<div class="px-4 py-2">
-					<button
-						onClick={() => setShowRules((v) => !v)}
-						class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-						data-testid="toggle-rules-button"
-					>
-						<svg
-							class={`w-3 h-3 transition-transform ${showRules ? 'rotate-90' : ''}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M9 5l7 7-7 7"
-							/>
-						</svg>
-						<span class="font-semibold uppercase tracking-wider">
-							Rules {rules.length > 0 ? `(${rules.length})` : ''}
-						</span>
-					</button>
-
-					{showRules && (
-						<div class="mt-3">
-							<WorkflowRulesEditor
-								rules={rules}
-								steps={nodes.map((n, i) => ({
-									id: n.step.id ?? n.step.localId,
-									name: n.step.name || `Node ${i + 1}`,
-									agents: n.step.agents ?? [],
-									instructions: n.step.instructions,
-								}))}
-								onChange={setRules}
-							/>
-						</div>
-					)}
 				</div>
 			</div>
 		</div>

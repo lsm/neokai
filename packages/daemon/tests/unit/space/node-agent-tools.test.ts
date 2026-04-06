@@ -17,14 +17,16 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../src/storage/repositories/gate-data-repository.ts';
 import {
 	createNodeAgentToolHandlers,
 	createNodeAgentMcpServer,
 	type NodeAgentToolsConfig,
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
+import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel, SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
+import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -76,14 +78,37 @@ function makeFreshRunId(db: BunDatabase, spaceId: string): string {
 	return runId;
 }
 
+function toNodeExecutionStatus(
+	status: string
+): 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' {
+	switch (status) {
+		case 'pending':
+		case 'open':
+			return 'pending';
+		case 'in_progress':
+			return 'in_progress';
+		case 'done':
+		case 'completed':
+			return 'done';
+		case 'blocked':
+		case 'failed':
+			return 'blocked';
+		case 'cancelled':
+			return 'cancelled';
+		default:
+			return 'in_progress';
+	}
+}
+
 function seedSpaceTask(
 	db: BunDatabase,
 	spaceId: string,
 	workflowRunId: string,
-	_workflowNodeId: string,
+	workflowNodeId: string,
 	agentName: string,
 	status: string = 'in_progress',
-	result: string | null = null
+	result: string | null = null,
+	sessionId: string | null = null
 ): string {
 	const id = `task-${Math.random().toString(36).slice(2)}`;
 	const now = Date.now();
@@ -94,7 +119,25 @@ function seedSpaceTask(
           workflow_run_id, depends_on, created_at, updated_at)
          VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, '[]', ?, ?)`
 	).run(id, spaceId, spaceId, agentName, status, result, workflowRunId, now, now);
+	if (sessionId) {
+		db.prepare('UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?').run(sessionId, id);
+	}
 	db.exec('PRAGMA foreign_keys = ON');
+
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
+	const execution = nodeExecutionRepo.createOrIgnore({
+		workflowRunId,
+		workflowNodeId,
+		agentName,
+		agentSessionId: sessionId,
+		status: toNodeExecutionStatus(status),
+	});
+	nodeExecutionRepo.update(execution.id, {
+		agentSessionId: sessionId,
+		status: toNodeExecutionStatus(status),
+		result,
+	});
+
 	return id;
 }
 
@@ -103,19 +146,15 @@ function seedSpaceTask(
 // ---------------------------------------------------------------------------
 
 function makeResolvedChannel(
-	fromRole: string,
-	toRole: string,
-	isHubSpoke = false,
-	overrides: Partial<ResolvedChannel> = {}
-): ResolvedChannel {
+	from: string,
+	to: string,
+	_isHubSpoke = false,
+	_overrides: Record<string, unknown> = {}
+): WorkflowChannel {
 	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
-		isHubSpoke,
-		...overrides,
+		id: `ch-${from}-${to}`,
+		from,
+		to,
 	};
 }
 
@@ -130,6 +169,7 @@ interface TestCtx {
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
 	spaceTaskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Workflow run ID for peer task seeding. */
 	workflowRunId: string;
 	/** Workflow node ID for peer task seeding. */
@@ -152,6 +192,7 @@ function makeCtx(): TestCtx {
 	const taskRepo = new SpaceTaskRepository(db);
 	const spaceTaskRepo = taskRepo;
 	const taskManager = new SpaceTaskManager(db, spaceId);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 
 	// Session IDs for peers
 	const taskAgentSessionId = 'session-task-agent';
@@ -166,20 +207,17 @@ function makeCtx(): TestCtx {
 	seedSpaceWorkflowRunRow(db, workflowRunId, spaceId, 'wf-seed');
 
 	// Seed peer tasks: coder and reviewer on the default node
-	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
-	// Set coder task's session ID
-	db.exec('PRAGMA foreign_keys = OFF');
-	db.prepare(
-		'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-	).run(coderSessionId, 'coder', workflowRunId);
-	db.exec('PRAGMA foreign_keys = ON');
-
-	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'in_progress', null);
-	db.exec('PRAGMA foreign_keys = OFF');
-	db.prepare(
-		'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-	).run(reviewerSessionId, 'reviewer', workflowRunId);
-	db.exec('PRAGMA foreign_keys = ON');
+	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null, coderSessionId);
+	seedSpaceTask(
+		db,
+		spaceId,
+		workflowRunId,
+		nodeId,
+		'reviewer',
+		'in_progress',
+		null,
+		reviewerSessionId
+	);
 
 	// Seed a parent task and a step task in the DB
 	const parentTask = taskRepo.createTask({
@@ -202,6 +240,7 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		taskManager,
 		spaceTaskRepo,
+		nodeExecutionRepo,
 		workflowRunId,
 		nodeId,
 		coderSessionId,
@@ -212,30 +251,38 @@ function makeCtx(): TestCtx {
 	};
 }
 
-function makeConfig(
-	ctx: TestCtx,
-	overrides: Partial<NodeAgentToolsConfig> = {}
-): NodeAgentToolsConfig {
-	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
+type NodeConfigOverrides = Partial<NodeAgentToolsConfig> & {
+	messageInjector?: (sessionId: string, message: string) => Promise<void>;
+};
+
+function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgentToolsConfig {
+	const { messageInjector, ...configOverrides } = overrides;
+	const workflowRunId = configOverrides.workflowRunId ?? ctx.workflowRunId;
+	const nodeExecutionRepo = configOverrides.nodeExecutionRepo ?? ctx.nodeExecutionRepo;
+	const channelResolver = configOverrides.channelResolver ?? new ChannelResolver([]);
+	const injector = messageInjector ?? (async () => {});
+	const agentMessageRouter =
+		configOverrides.agentMessageRouter ??
+		new AgentMessageRouter({
+			nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: channelResolver.getChannels(),
+			messageInjector: injector,
+		});
 
 	return {
 		mySessionId: ctx.coderSessionId,
 		myRole: 'coder',
 		taskId: ctx.parentTaskId,
-		stepTaskId: ctx.stepTaskId,
 		spaceId: ctx.spaceId,
-		channelResolver: new ChannelResolver([]),
-		workflowRunId: ctx.workflowRunId,
+		channelResolver,
+		workflowRunId,
 		workflowNodeId: ctx.nodeId,
-		spaceTaskRepo: ctx.spaceTaskRepo,
-		messageInjector: async (sessionId, message) => {
-			injectedMessages.push({ sessionId, message });
-		},
-		taskManager: ctx.taskManager,
-		// New M1.3 fields — default to null/no-op so existing tests are unaffected
+		nodeExecutionRepo,
+		agentMessageRouter,
 		workflow: null,
 		gateDataRepo: new GateDataRepository(ctx.db),
-		...overrides,
+		...configOverrides,
 	};
 }
 
@@ -243,7 +290,7 @@ function makeConfig(
  * Build a ChannelResolver directly from resolved channel entries.
  * Replaces the old seedWorkflowRunWithChannels + DB approach.
  */
-function makeResolver(channels: ResolvedChannel[]): ChannelResolver {
+function makeResolver(channels: WorkflowChannel[]): ChannelResolver {
 	return new ChannelResolver(channels);
 }
 
@@ -305,18 +352,12 @@ describe('node-agent-tools: list_peers', () => {
 			ctx.db,
 			ctx.spaceId,
 			isolatedRunId,
-			'node-isolated',
+			ctx.nodeId,
 			'coder',
 			'in_progress',
-			null
+			null,
+			ctx.coderSessionId
 		);
-		ctx.db.exec('PRAGMA foreign_keys = OFF');
-		ctx.db
-			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-			)
-			.run(ctx.coderSessionId, 'coder', isolatedRunId);
-		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
 		const handlers = createNodeAgentToolHandlers(config);
@@ -330,7 +371,7 @@ describe('node-agent-tools: list_peers', () => {
 	test('excludes open task with no session from peers list', async () => {
 		// Seed an open task with no session — should not appear in peers
 		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
-		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, 'node-no-session', 'tester', 'open', null);
+		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'open', null);
 		// Do NOT set task_agent_session_id — simulates not-yet-spawned task
 
 		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
@@ -349,7 +390,7 @@ describe('node-agent-tools: list_peers', () => {
 			ctx.db,
 			ctx.spaceId,
 			isolatedRunId,
-			'node-failed-no-sess',
+			ctx.nodeId,
 			'tester',
 			'blocked',
 			'Failed before session'
@@ -367,15 +408,7 @@ describe('node-agent-tools: list_peers', () => {
 	test('includes done task with no session in peers list', async () => {
 		// A done task whose session was cleared should still appear for visibility
 		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
-		seedSpaceTask(
-			ctx.db,
-			ctx.spaceId,
-			isolatedRunId,
-			'node-done-no-sess',
-			'tester',
-			'done',
-			'Done'
-		);
+		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'done', 'Done');
 		// Do NOT set task_agent_session_id — simulates post-session cleanup
 
 		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
@@ -501,15 +534,9 @@ describe('node-agent-tools: send_message', () => {
 			ctx.nodeId,
 			'security',
 			'in_progress',
-			null
+			null,
+			'session-security'
 		);
-		ctx.db.exec('PRAGMA foreign_keys = OFF');
-		ctx.db
-			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-			)
-			.run('session-security', 'security', ctx.workflowRunId);
-		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
@@ -543,15 +570,9 @@ describe('node-agent-tools: send_message', () => {
 			ctx.nodeId,
 			'security',
 			'in_progress',
-			null
+			null,
+			'session-security'
 		);
-		ctx.db.exec('PRAGMA foreign_keys = OFF');
-		ctx.db
-			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-			)
-			.run('session-security', 'security', ctx.workflowRunId);
-		ctx.db.exec('PRAGMA foreign_keys = ON');
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([
 				makeResolvedChannel('coder', 'reviewer'),
@@ -589,14 +610,16 @@ describe('node-agent-tools: send_message', () => {
 
 	test('hub-spoke: spoke can reply to hub', async () => {
 		// Add hub peer task
-		seedSpaceTask(ctx.db, ctx.spaceId, ctx.workflowRunId, ctx.nodeId, 'hub', 'in_progress', null);
-		ctx.db.exec('PRAGMA foreign_keys = OFF');
-		ctx.db
-			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-			)
-			.run('session-hub', 'hub', ctx.workflowRunId);
-		ctx.db.exec('PRAGMA foreign_keys = ON');
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'hub',
+			'in_progress',
+			null,
+			'session-hub'
+		);
 		const injected: string[] = [];
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([
@@ -648,16 +671,16 @@ describe('node-agent-tools: send_message', () => {
 		expect(JSON.parse(r2.content[0].text).success).toBe(true);
 	});
 
-	test('returns error when target role has no active sessions', async () => {
+	test('returns unknown-target when role is not present in active peers', async () => {
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]), // 'tester' role not in group
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]), // tester is permitted by topology but not active
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'tester', message: 'test pls' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.error).toContain('No active sessions found for target role(s): tester');
+		expect(data.error).toContain("Unknown target 'tester'");
 	});
 
 	test('handles partial injection failures gracefully (partial success)', async () => {
@@ -670,15 +693,9 @@ describe('node-agent-tools: send_message', () => {
 			ctx.nodeId,
 			'security',
 			'in_progress',
-			null
+			null,
+			'session-security'
 		);
-		ctx.db.exec('PRAGMA foreign_keys = OFF');
-		ctx.db
-			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-			)
-			.run('session-security', 'security', ctx.workflowRunId);
-		ctx.db.exec('PRAGMA foreign_keys = ON');
 		let callCount = 0;
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([
@@ -719,7 +736,7 @@ describe('node-agent-tools: send_message', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.failed).toHaveLength(1);
-		expect(data.delivered).toHaveLength(0);
+		expect(data.delivered).toBeUndefined();
 	});
 
 	test('best-effort multicast: first delivery succeeds, second fails — partial success', async () => {
@@ -731,15 +748,9 @@ describe('node-agent-tools: send_message', () => {
 			ctx.nodeId,
 			'security',
 			'in_progress',
-			null
+			null,
+			'session-security'
 		);
-		ctx.db.exec('PRAGMA foreign_keys = OFF');
-		ctx.db
-			.prepare(
-				'UPDATE space_tasks SET task_agent_session_id = ? WHERE title = ? AND workflow_run_id = ?'
-			)
-			.run('session-security', 'security', ctx.workflowRunId);
-		ctx.db.exec('PRAGMA foreign_keys = ON');
 
 		let callCount = 0;
 		const config = makeConfig(ctx, {
@@ -782,7 +793,7 @@ describe('node-agent-tools: send_message', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.delivered).toHaveLength(0);
+		expect(data.delivered).toBeUndefined();
 		expect(data.failed).toHaveLength(1);
 	});
 });
@@ -803,135 +814,107 @@ describe('node-agent-tools: report_done', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('marks step task as completed without summary', async () => {
-		const config = makeConfig(ctx);
-		const handlers = createNodeAgentToolHandlers(config);
+	function getCoderExecution() {
+		return ctx.nodeExecutionRepo
+			.listByNode(ctx.workflowRunId, ctx.nodeId)
+			.find((e) => e.agentName === 'coder');
+	}
+
+	test('marks node execution as done without summary', async () => {
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		expect(data.stepTaskId).toBe(ctx.stepTaskId);
-		expect(data.message).toContain('completed');
+		expect(data.executionId).toBe(myExec!.id);
+		expect(data.agentName).toBe('coder');
+		expect(data.message).toContain('marked as completed');
 
-		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
+		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
 		expect(updated?.status).toBe('done');
-		expect(updated?.completedAt).toBeDefined();
+		expect(updated?.result).toBeNull();
+		expect(updated?.completedAt).not.toBeNull();
 	});
 
-	test('persists summary as result field', async () => {
-		const config = makeConfig(ctx);
-		const handlers = createNodeAgentToolHandlers(config);
+	test('persists summary to node execution result', async () => {
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
 		const result = await handlers.report_done({ summary: 'PR #42 merged successfully.' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
 		expect(data.summary).toBe('PR #42 merged successfully.');
 
-		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
+		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
+		expect(updated?.status).toBe('done');
 		expect(updated?.result).toBe('PR #42 merged successfully.');
 	});
 
-	test('emits space.task.updated event via daemonHub', async () => {
-		const emitted: Array<{ name: string; payload: unknown }> = [];
-		const fakeDaemonHub = {
-			emit: async (name: string, payload: unknown) => {
-				emitted.push({ name, payload });
-			},
-		};
+	test('calling report_done twice is idempotent for status done', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const first = JSON.parse((await handlers.report_done({ summary: 'first' })).content[0].text);
+		expect(first.success).toBe(true);
 
-		const config = makeConfig(ctx, {
-			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		await handlers.report_done({ summary: 'done' });
+		const second = JSON.parse((await handlers.report_done({ summary: 'second' })).content[0].text);
+		expect(second.success).toBe(true);
 
-		expect(emitted).toHaveLength(1);
-		expect(emitted[0].name).toBe('space.task.updated');
-		const payload = emitted[0].payload as Record<string, unknown>;
-		expect(payload.taskId).toBe(ctx.stepTaskId);
-		expect(payload.spaceId).toBe(ctx.spaceId);
-		expect(payload.sessionId).toBe('global');
-		const task = payload.task as Record<string, unknown>;
-		expect(task.status).toBe('done');
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+		expect(myExec?.status).toBe('done');
+		expect(myExec?.result).toBe('second');
 	});
 
-	test('does not emit event when daemonHub is absent', async () => {
-		const config = makeConfig(ctx); // no daemonHub
-		const handlers = createNodeAgentToolHandlers(config);
-		// Should not throw
-		const result = await handlers.report_done({});
-		const data = JSON.parse(result.content[0].text);
-		expect(data.success).toBe(true);
-	});
-
-	test('returns error when step task not found', async () => {
-		const config = makeConfig(ctx, { stepTaskId: 'nonexistent-step-task' });
-		const handlers = createNodeAgentToolHandlers(config);
+	test('returns error when node execution for myRole is missing', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { myRole: 'ghost-agent' }));
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.error).toContain('not found');
+		expect(data.error).toContain('NodeExecution not found');
+		expect(data.error).toContain('ghost-agent');
 	});
 
-	test('returns error on invalid status transition', async () => {
-		// Move step task to completed first
-		await ctx.taskManager.setTaskStatus(ctx.stepTaskId, 'done');
-
-		const config = makeConfig(ctx);
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.report_done({ summary: 'already done' });
-		const data = JSON.parse(result.content[0].text);
-
-		// completed → completed is invalid
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('Invalid status transition');
-	});
-
-	test('daemonHub emit throwing does not affect tool success', async () => {
-		// If the event emit fails (e.g. hub is shutting down), the DB update should
-		// still be committed and the tool should still return success.
-		const throwingHub = {
-			emit: async (_name: string, _payload: unknown) => {
-				throw new Error('hub unavailable');
-			},
-		};
-
-		const config = makeConfig(ctx, {
-			daemonHub: throwingHub as unknown as NodeAgentToolsConfig['daemonHub'],
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.report_done({ summary: 'done despite hub error' });
-		const data = JSON.parse(result.content[0].text);
-
-		// Tool should succeed — hub error is non-fatal
-		expect(data.success).toBe(true);
-		expect(data.stepTaskId).toBe(ctx.stepTaskId);
-
-		// DB state should reflect completion
-		const updated = ctx.taskRepo.getTask(ctx.stepTaskId);
-		expect(updated?.status).toBe('done');
-	});
-
-	test('daemonHub not called when task update fails', async () => {
-		// Verify that the hub is NOT called when setTaskStatus throws (e.g. task not found)
+	test('daemonHub is not used by report_done in node_execution path', async () => {
 		const emitted: string[] = [];
-		const trackingHub = {
-			emit: async (name: string, _payload: unknown) => {
+		const fakeDaemonHub = {
+			emit: async (name: string) => {
 				emitted.push(name);
 			},
 		};
 
-		const config = makeConfig(ctx, {
-			stepTaskId: 'nonexistent-step-task',
-			daemonHub: trackingHub as unknown as NodeAgentToolsConfig['daemonHub'],
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.report_done({});
-		const data = JSON.parse(result.content[0].text);
+		const handlers = createNodeAgentToolHandlers(
+			makeConfig(ctx, {
+				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			})
+		);
+		const data = JSON.parse((await handlers.report_done({ summary: 'done' })).content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(emitted).toHaveLength(0);
+	});
+
+	test('daemonHub is not called when report_done fails', async () => {
+		const emitted: string[] = [];
+		const fakeDaemonHub = {
+			emit: async (name: string) => {
+				emitted.push(name);
+			},
+		};
+
+		const handlers = createNodeAgentToolHandlers(
+			makeConfig(ctx, {
+				myRole: 'ghost-agent',
+				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			})
+		);
+		const data = JSON.parse((await handlers.report_done({})).content[0].text);
 
 		expect(data.success).toBe(false);
-		// Hub should not have been called since the DB update never happened
 		expect(emitted).toHaveLength(0);
 	});
 });
@@ -989,7 +972,6 @@ describe('node-agent-tools: list_channels', () => {
 			id: 'ch-1',
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 		};
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
@@ -1020,7 +1002,6 @@ describe('node-agent-tools: list_channels', () => {
 			id: 'ch-2',
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 			gateId: 'approval-gate',
 		};
 		const workflow: SpaceWorkflow = {
@@ -1354,6 +1335,37 @@ describe('node-agent-tools: write_gate', () => {
 		expect(data.myRole).toBe('coder');
 	});
 
+	test('succeeds when writer matches a role alias (case-insensitive)', async () => {
+		const gate: Gate = {
+			id: 'gate-alias-writable',
+			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, {
+			workflow,
+			myRole: '3de067fc-82f3-4f8c-a3fc-c2c3205648dd',
+			myRoleAliases: ['Reviewer'],
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-alias-writable', data: { x: 'ok' } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.updatedData).toEqual({ x: 'ok' });
+	});
+
 	test('succeeds when role is in field writers and merges data', async () => {
 		const gate: Gate = {
 			id: 'gate-writable',
@@ -1661,8 +1673,8 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.success).toBe(true);
 		expect(data.reachabilityDeclared).toBe(true);
 		expect(data.crossNodeTargets).toHaveLength(1);
-		expect(data.crossNodeTargets[0].agentName).toBe('tester');
-		expect(data.crossNodeTargets[0].isFanOut).toBe(false);
+		expect(data.crossNodeTargets[0].nodeName).toBe('tester');
+		// isFanOut removed from cross-node targets (fan-out is determined by array 'to')
 	});
 
 	test('within-node peer with a channel does not appear in cross-node targets', async () => {
@@ -1700,7 +1712,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'approval-gate' }],
 			gates: [
 				{
 					id: 'approval-gate',
@@ -1712,7 +1723,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			],
 		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'approval-gate' },
+			]),
 			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1732,7 +1745,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'vote-gate' }],
 			gates: [
 				{
 					id: 'vote-gate',
@@ -1749,7 +1761,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			],
 		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'vote-gate' },
+			]),
 			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1769,7 +1783,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way' }],
 		};
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
@@ -1792,7 +1805,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [{ from: 'coder', to: 'tester', direction: 'one-way', gateId: 'lead-gate' }],
 			gates: [
 				{
 					id: 'lead-gate',
@@ -1805,7 +1817,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			],
 		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'lead-gate' },
+			]),
 			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1826,8 +1840,8 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.crossNodeTargets).toHaveLength(1);
-		expect(data.crossNodeTargets[0].agentName).toBe('qa-node');
-		expect(data.crossNodeTargets[0].isFanOut).toBe(true);
+		expect(data.crossNodeTargets[0].nodeName).toBe('qa-node');
+		// isFanOut removed - channel to[] array already indicates fan-out
 	});
 
 	test('deduplicates cross-node targets from multiple channels to same role', async () => {
@@ -1926,6 +1940,8 @@ describe('list_peers — completion state', () => {
 		const workflowNodeId = 'node-abc';
 		const workflowRunId = 'run-test-abc';
 
+		seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
+
 		// Seed a completed task for the reviewer peer
 		seedSpaceTask(
 			ctx.db,
@@ -1940,7 +1956,6 @@ describe('list_peers — completion state', () => {
 		const config = makeConfig(ctx, {
 			workflowRunId,
 			workflowNodeId,
-			spaceTaskRepo: ctx.spaceTaskRepo,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
@@ -1959,6 +1974,8 @@ describe('list_peers — completion state', () => {
 		const workflowNodeId = 'node-xyz';
 		const workflowRunId = 'run-test-xyz';
 
+		seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
+
 		// Seed tasks for both coder and reviewer on the same node
 		seedSpaceTask(ctx.db, ctx.spaceId, workflowRunId, workflowNodeId, 'coder', 'in_progress', null);
 		seedSpaceTask(
@@ -1974,7 +1991,6 @@ describe('list_peers — completion state', () => {
 		const config = makeConfig(ctx, {
 			workflowRunId,
 			workflowNodeId,
-			spaceTaskRepo: ctx.spaceTaskRepo,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});
@@ -2006,7 +2022,6 @@ describe('list_peers — completion state', () => {
 		const config = makeConfig(ctx, {
 			workflowRunId,
 			workflowNodeId,
-			spaceTaskRepo: ctx.spaceTaskRepo,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.list_peers({});

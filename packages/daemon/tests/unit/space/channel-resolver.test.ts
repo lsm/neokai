@@ -2,114 +2,49 @@
  * Unit tests for ChannelResolver
  *
  * Covers:
- *   - Static factory fromRunConfig()
- *   - canSend() validation
+ *   - canSend() by node name
  *   - getPermittedTargets() results
- *   - getResolvedChannels() accessor
+ *   - getChannels() accessor
  *   - isEmpty() for empty/non-empty topology
  */
 
 import { describe, test, expect } from 'bun:test';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel, WorkflowCondition } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test data helpers
 // ---------------------------------------------------------------------------
 
-function oneWayChannel(fromRole: string, toRole: string): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
-		isHubSpoke: false,
-	};
-}
-
-function hubSpokeChannel(fromRole: string, toRole: string): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
-		isHubSpoke: true,
-	};
+function ch(from: string, to: string | string[], gateId?: string): WorkflowChannel {
+	return { id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`, from, to, gateId };
 }
 
 // ===========================================================================
-// fromRunConfig()
+// isEmpty / getChannels
 // ===========================================================================
 
-describe('ChannelResolver.fromRunConfig', () => {
-	test('returns empty resolver when config is undefined', () => {
-		const resolver = ChannelResolver.fromRunConfig(undefined);
-		expect(resolver.isEmpty()).toBe(true);
-		expect(resolver.getResolvedChannels()).toEqual([]);
-	});
-
-	test('returns empty resolver when config has no _resolvedChannels field', () => {
-		const resolver = ChannelResolver.fromRunConfig({ someOtherField: 'value' });
+describe('ChannelResolver.isEmpty', () => {
+	test('returns true when no channels declared', () => {
+		const resolver = new ChannelResolver([]);
 		expect(resolver.isEmpty()).toBe(true);
 	});
 
-	test('returns empty resolver when _resolvedChannels is not an array', () => {
-		const resolver = ChannelResolver.fromRunConfig({
-			_resolvedChannels: 'not-an-array',
-		});
-		expect(resolver.isEmpty()).toBe(true);
-	});
-
-	test('returns empty resolver when _resolvedChannels is an empty array', () => {
-		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: [] });
-		expect(resolver.isEmpty()).toBe(true);
-	});
-
-	test('returns populated resolver from valid _resolvedChannels', () => {
-		const channels = [oneWayChannel('coder', 'reviewer')];
-		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: channels });
+	test('returns false when channels are declared', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review')]);
 		expect(resolver.isEmpty()).toBe(false);
-		expect(resolver.getResolvedChannels()).toHaveLength(1);
 	});
+});
 
-	test('filters out structurally invalid entries instead of casting blindly', () => {
-		// Mix of valid and invalid entries
-		const raw = [
-			oneWayChannel('coder', 'reviewer'), // valid
-			{ fromRole: 'coder', toRole: 'reviewer' }, // missing direction + isHubSpoke
-			null, // null
-			{
-				fromRole: '',
-				toRole: 'reviewer',
-				fromAgentId: 'a',
-				toAgentId: 'b',
-				direction: 'one-way',
-				isHubSpoke: false,
-			}, // empty fromRole
-			'string-entry', // wrong type
-			{
-				fromRole: 'qa',
-				toRole: 'coder',
-				fromAgentId: 'a',
-				toAgentId: 'b',
-				direction: 'one-way',
-				isHubSpoke: false,
-			}, // valid
-		];
-		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: raw });
-		// Only the 2 fully valid entries pass the structural filter
-		expect(resolver.getResolvedChannels()).toHaveLength(2);
-	});
-
-	test('getResolvedChannels returns a copy (mutations do not affect internal state)', () => {
-		const channels = [oneWayChannel('coder', 'reviewer')];
-		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: channels });
-		const first = resolver.getResolvedChannels();
-		first.push(oneWayChannel('qa', 'coder')); // mutate returned array
-		// Internal state must be unaffected
-		expect(resolver.getResolvedChannels()).toHaveLength(1);
+describe('ChannelResolver.getChannels', () => {
+	test('returns a copy of the channels array', () => {
+		const channels = [ch('Code', 'Review'), ch('Review', 'Code')];
+		const resolver = new ChannelResolver(channels);
+		const result = resolver.getChannels();
+		expect(result).toHaveLength(2);
+		// It's a shallow copy — mutations don't affect the resolver
+		result.splice(0);
+		expect(resolver.getChannels()).toHaveLength(2);
 	});
 });
 
@@ -118,62 +53,50 @@ describe('ChannelResolver.fromRunConfig', () => {
 // ===========================================================================
 
 describe('ChannelResolver.canSend', () => {
-	test('returns true for declared one-way channel', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
+	test('returns true when a matching channel exists', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review')]);
+		expect(resolver.canSend('Code', 'Review')).toBe(true);
 	});
 
-	test('returns false for reverse direction when only one-way declared', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		expect(resolver.canSend('reviewer', 'coder')).toBe(false);
-	});
-
-	test('returns true for both directions when bidirectional (two one-way entries)', () => {
-		const resolver = new ChannelResolver([
-			oneWayChannel('coder', 'reviewer'),
-			oneWayChannel('reviewer', 'coder'),
-		]);
-		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
-		expect(resolver.canSend('reviewer', 'coder')).toBe(true);
-	});
-
-	test('returns false for self-loop', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		expect(resolver.canSend('coder', 'coder')).toBe(false);
-	});
-
-	test('returns false for unknown roles', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		expect(resolver.canSend('security', 'coder')).toBe(false);
-	});
-
-	test('returns false when resolver is empty', () => {
+	test('returns false when no channels declared', () => {
 		const resolver = new ChannelResolver([]);
-		expect(resolver.canSend('coder', 'reviewer')).toBe(false);
+		expect(resolver.canSend('Code', 'Review')).toBe(false);
 	});
 
-	test('handles hub-spoke channels correctly', () => {
-		// Hub: coder (hub) ↔ reviewer, qa (spokes) — expanded to 4 entries
-		const resolver = new ChannelResolver([
-			hubSpokeChannel('coder', 'reviewer'),
-			hubSpokeChannel('reviewer', 'coder'),
-			hubSpokeChannel('coder', 'qa'),
-			hubSpokeChannel('qa', 'coder'),
-		]);
-		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
-		expect(resolver.canSend('coder', 'qa')).toBe(true);
-		expect(resolver.canSend('reviewer', 'coder')).toBe(true);
-		expect(resolver.canSend('qa', 'coder')).toBe(true);
-		// Spoke-to-spoke is NOT declared in hub-spoke topology
-		expect(resolver.canSend('reviewer', 'qa')).toBe(false);
-		expect(resolver.canSend('qa', 'reviewer')).toBe(false);
+	test('returns false in the reverse direction for a one-way channel', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review')]);
+		expect(resolver.canSend('Review', 'Code')).toBe(false);
 	});
 
-	test('matches by exact role string', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		// Case sensitive
-		expect(resolver.canSend('Coder', 'reviewer')).toBe(false);
-		expect(resolver.canSend('coder', 'Reviewer')).toBe(false);
+	test('both directions work when two one-way channels declared', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review'), ch('Review', 'Code')]);
+		expect(resolver.canSend('Code', 'Review')).toBe(true);
+		expect(resolver.canSend('Review', 'Code')).toBe(true);
+	});
+
+	test('wildcard from matches any sender', () => {
+		const resolver = new ChannelResolver([ch('*', 'Review')]);
+		expect(resolver.canSend('Code', 'Review')).toBe(true);
+		expect(resolver.canSend('QA', 'Review')).toBe(true);
+	});
+
+	test('fan-out channel matches each target', () => {
+		const resolver = new ChannelResolver([ch('Code', ['Review', 'QA'])]);
+		expect(resolver.canSend('Code', 'Review')).toBe(true);
+		expect(resolver.canSend('Code', 'QA')).toBe(true);
+		expect(resolver.canSend('Review', 'Code')).toBe(false);
+	});
+
+	test('wildcard to matches any target', () => {
+		const resolver = new ChannelResolver([ch('Code', '*')]);
+		expect(resolver.canSend('Code', 'Review')).toBe(true);
+		expect(resolver.canSend('Code', 'Anything')).toBe(true);
+		expect(resolver.canSend('Review', 'Code')).toBe(false);
+	});
+
+	test('channel with gate is still matched by canSend', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review', 'my-gate')]);
+		expect(resolver.canSend('Code', 'Review')).toBe(true);
 	});
 });
 
@@ -182,145 +105,31 @@ describe('ChannelResolver.canSend', () => {
 // ===========================================================================
 
 describe('ChannelResolver.getPermittedTargets', () => {
-	test('returns empty array for unknown sender', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		expect(resolver.getPermittedTargets('unknown-role')).toEqual([]);
-	});
-
-	test('returns empty array when resolver is empty', () => {
+	test('returns empty array when no channels declared', () => {
 		const resolver = new ChannelResolver([]);
-		expect(resolver.getPermittedTargets('coder')).toEqual([]);
+		expect(resolver.getPermittedTargets('Code')).toEqual([]);
 	});
 
-	test('returns all targets for a sender with multiple channels', () => {
-		const resolver = new ChannelResolver([
-			oneWayChannel('coder', 'reviewer'),
-			oneWayChannel('coder', 'qa'),
-			oneWayChannel('reviewer', 'coder'),
-		]);
-		const targets = resolver.getPermittedTargets('coder').sort();
-		expect(targets).toEqual(['qa', 'reviewer']);
+	test('returns target for a simple channel', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review')]);
+		expect(resolver.getPermittedTargets('Code')).toEqual(['Review']);
 	});
 
-	test('returns only targets for the specified sender', () => {
-		const resolver = new ChannelResolver([
-			oneWayChannel('coder', 'reviewer'),
-			oneWayChannel('reviewer', 'coder'),
-		]);
-		expect(resolver.getPermittedTargets('coder')).toEqual(['reviewer']);
-		expect(resolver.getPermittedTargets('reviewer')).toEqual(['coder']);
+	test('returns multiple targets for fan-out channel', () => {
+		const resolver = new ChannelResolver([ch('Code', ['Review', 'QA'])]);
+		const targets = resolver.getPermittedTargets('Code');
+		expect(targets).toContain('Review');
+		expect(targets).toContain('QA');
 	});
 
-	test('returns single target for one-way channel', () => {
-		const resolver = new ChannelResolver([oneWayChannel('coder', 'reviewer')]);
-		expect(resolver.getPermittedTargets('coder')).toEqual(['reviewer']);
+	test('deduplicates targets across multiple channels to same node', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review'), ch('Code', 'Review')]);
+		expect(resolver.getPermittedTargets('Code')).toHaveLength(1);
+		expect(resolver.getPermittedTargets('Code')[0]).toBe('Review');
 	});
 
-	test('deduplicates target roles when multiple agent IDs share the same role', () => {
-		// Two different agent IDs both map to the 'reviewer' role
-		const ch1: ResolvedChannel = {
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			fromAgentId: 'agent-coder',
-			toAgentId: 'agent-reviewer-1',
-			direction: 'one-way',
-			isHubSpoke: false,
-		};
-		const ch2: ResolvedChannel = {
-			fromRole: 'coder',
-			toRole: 'reviewer',
-			fromAgentId: 'agent-coder',
-			toAgentId: 'agent-reviewer-2',
-			direction: 'one-way',
-			isHubSpoke: false,
-		};
-		const resolver = new ChannelResolver([ch1, ch2]);
-		// 'reviewer' should appear only once despite two channel entries
-		expect(resolver.getPermittedTargets('coder')).toEqual(['reviewer']);
-	});
-});
-
-// ===========================================================================
-// getResolvedChannels()
-// ===========================================================================
-
-describe('ChannelResolver.getResolvedChannels', () => {
-	test('returns empty array when no channels', () => {
-		const resolver = new ChannelResolver([]);
-		expect(resolver.getResolvedChannels()).toEqual([]);
-	});
-
-	test('returns all channels in original order', () => {
-		const ch1 = oneWayChannel('coder', 'reviewer');
-		const ch2 = oneWayChannel('reviewer', 'coder');
-		const resolver = new ChannelResolver([ch1, ch2]);
-		expect(resolver.getResolvedChannels()).toEqual([ch1, ch2]);
-	});
-
-	test('preserves isHubSpoke field', () => {
-		const ch = hubSpokeChannel('hub', 'spoke');
-		const resolver = new ChannelResolver([ch]);
-		expect(resolver.getResolvedChannels()[0].isHubSpoke).toBe(true);
-	});
-});
-
-// ===========================================================================
-// isEmpty()
-// ===========================================================================
-
-describe('ChannelResolver.isEmpty', () => {
-	test('true when no channels', () => {
-		expect(new ChannelResolver([]).isEmpty()).toBe(true);
-	});
-
-	test('false when at least one channel', () => {
-		expect(new ChannelResolver([oneWayChannel('a', 'b')]).isEmpty()).toBe(false);
-	});
-});
-
-// ===========================================================================
-// gate field
-// ===========================================================================
-
-describe('ChannelResolver — gate field', () => {
-	const gate: WorkflowCondition = { type: 'condition', expression: 'ci-passing' };
-
-	function gatedChannel(fromRole: string, toRole: string, g: WorkflowCondition): ResolvedChannel {
-		return {
-			fromRole,
-			toRole,
-			fromAgentId: `agent-${fromRole}`,
-			toAgentId: `agent-${toRole}`,
-			direction: 'one-way',
-			isHubSpoke: false,
-			gate: g,
-		};
-	}
-
-	test('gate field is preserved through getResolvedChannels()', () => {
-		const ch = gatedChannel('coder', 'reviewer', gate);
-		const resolver = new ChannelResolver([ch]);
-		const [result] = resolver.getResolvedChannels();
-		expect(result.gate).toEqual(gate);
-	});
-
-	test('channel with gate passes structural validation in fromRunConfig()', () => {
-		const ch = gatedChannel('coder', 'reviewer', gate);
-		const resolver = ChannelResolver.fromRunConfig({ _resolvedChannels: [ch] });
-		expect(resolver.isEmpty()).toBe(false);
-		expect(resolver.getResolvedChannels()[0].gate).toEqual(gate);
-	});
-
-	test('channel without gate has undefined gate field', () => {
-		const ch = oneWayChannel('coder', 'reviewer');
-		const resolver = new ChannelResolver([ch]);
-		expect(resolver.getResolvedChannels()[0].gate).toBeUndefined();
-	});
-
-	test('canSend still works correctly for channels with gate', () => {
-		// canSend checks routing permission only — gate evaluation is a separate concern
-		const resolver = new ChannelResolver([gatedChannel('coder', 'reviewer', gate)]);
-		expect(resolver.canSend('coder', 'reviewer')).toBe(true);
-		expect(resolver.canSend('reviewer', 'coder')).toBe(false);
+	test('returns empty for node with no outbound channels', () => {
+		const resolver = new ChannelResolver([ch('Code', 'Review')]);
+		expect(resolver.getPermittedTargets('Review')).toEqual([]);
 	});
 });

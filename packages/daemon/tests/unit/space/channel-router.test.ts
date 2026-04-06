@@ -183,6 +183,24 @@ describe('ChannelRouter', () => {
 		gateDataRepo = new GateDataRepository(db);
 		channelCycleRepo = new ChannelCycleRepository(db);
 
+		// One-task-per-run architecture: ensure every test run has a canonical task.
+		const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
+		(
+			workflowRunRepo as unknown as {
+				createRun: typeof workflowRunRepo.createRun;
+			}
+		).createRun = ((params: Parameters<typeof workflowRunRepo.createRun>[0]) => {
+			const run = createRunOriginal(params);
+			taskRepo.createTask({
+				spaceId: params.spaceId,
+				title: params.title,
+				description: params.description ?? '',
+				status: 'open',
+				workflowRunId: run.id,
+			});
+			return run;
+		}) as typeof workflowRunRepo.createRun;
+
 		const agentRepo = new SpaceAgentRepository(db);
 		agentManager = new SpaceAgentManager(agentRepo);
 
@@ -231,7 +249,7 @@ describe('ChannelRouter', () => {
 			// workflowNodeId, agentName, taskType, customAgentId removed in M71
 		});
 
-		test('creates one task per agent for a multi-agent node', async () => {
+		test('creates one canonical task and one node_execution per agent for a multi-agent node', async () => {
 			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
 				{
 					id: NODE_A,
@@ -252,10 +270,16 @@ describe('ChannelRouter', () => {
 
 			const tasks = await router.activateNode(run.id, NODE_A);
 
-			expect(tasks).toHaveLength(2);
-			// agentName, taskType removed in M71; verify by task count and workflowRunId
-			expect(tasks.every((t) => t.workflowRunId === run.id)).toBe(true);
-			expect(tasks.every((t) => t.status === 'open')).toBe(true);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].workflowRunId).toBe(run.id);
+			expect(tasks[0].status).toBe('open');
+
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			const nodeExecutions = nodeExecutionRepo.listByNode(run.id, NODE_A);
+			expect(nodeExecutions).toHaveLength(2);
+			expect(nodeExecutions.map((e) => e.agentName).sort()).toEqual(
+				['coder-slot', 'planner-slot'].sort()
+			);
 		});
 
 		test('sets correct taskType for custom-role agent', async () => {
@@ -328,11 +352,11 @@ describe('ChannelRouter', () => {
 			// Cancel the task
 			taskRepo.updateTask(firstTasks[0].id, { status: 'cancelled' });
 
-			// Second activation should create fresh tasks (cancelled tasks are excluded)
+			// Second activation should reuse the canonical run task.
 			const secondTasks = await router.activateNode(run.id, NODE_A);
 			expect(secondTasks).toHaveLength(1);
-			expect(secondTasks[0].id).not.toBe(firstTasks[0].id);
-			expect(secondTasks[0].status).toBe('open');
+			expect(secondTasks[0].id).toBe(firstTasks[0].id);
+			expect(secondTasks[0].status).toBe('cancelled');
 		});
 
 		// -----------------------------------------------------------------------
@@ -355,24 +379,22 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Simulate a concurrent activation by directly inserting a task for the run
-			// before the router creates its task — triggering the idempotency path.
-			// NODE_A has a single agent slot; activateNode() uses node.name ('Node A')
-			// as the task title for single-agent nodes.
-			const firstTask = taskRepo.createTask({
-				spaceId: SPACE_ID,
-				title: 'Node A',
-				description: '',
+			// Simulate a concurrent activation by pre-seeding the node_execution row.
+			// activateNode() should hit createOrIgnore/idempotent path and not throw.
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			nodeExecutionRepo.create({
 				workflowRunId: run.id,
-				status: 'open',
+				workflowNodeId: NODE_A,
+				agentName: 'coder-slot',
+				agentId: AGENT_CODER,
+				status: 'pending',
 			});
 
-			// The router's activateNode() should detect the UNIQUE constraint violation
-			// and return the already-inserted task instead of throwing.
 			const tasks = await router.activateNode(run.id, NODE_A);
 
 			expect(tasks).toHaveLength(1);
-			expect(tasks[0].id).toBe(firstTask.id);
+			expect(tasks[0].workflowRunId).toBe(run.id);
+			expect(nodeExecutionRepo.listByNode(run.id, NODE_A)).toHaveLength(1);
 		});
 
 		// -----------------------------------------------------------------------
@@ -500,17 +522,8 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Pre-create a task for NODE_B so it is already active.
-			// After M72, getActiveTasksForNode identifies node tasks by task.title.
-			// For single-agent nodes the title equals node.name ('Receiver Node').
-			taskRepo.createTask({
-				spaceId: SPACE_ID,
-				title: 'Receiver Node',
-				description: '',
-				workflowRunId: run.id,
-				status: 'in_progress',
-			});
-
+			// Pre-activate NODE_B so it already has active node executions.
+			await router.activateNode(run.id, NODE_B);
 			const beforeCount = taskRepo.listByWorkflowRun(run.id).length;
 
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'hi again');
@@ -605,11 +618,12 @@ describe('ChannelRouter', () => {
 
 			expect(result.targetNodeId).toBe(NODE_B);
 			expect(result.isFanOut).toBe(true);
-			// Both agents in NODE_B should be activated
+			// Fan-out activation creates one canonical task envelope and two node executions.
 			expect(result.activatedTasks).toBeDefined();
-			expect(result.activatedTasks).toHaveLength(2);
-			// agentName removed in M71; verify both tasks belong to the run
-			expect(result.activatedTasks!.every((t) => t.workflowRunId === run.id)).toBe(true);
+			expect(result.activatedTasks).toHaveLength(1);
+			expect(result.activatedTasks![0].workflowRunId).toBe(run.id);
+			const nodeExecutionRepo = new NodeExecutionRepository(db);
+			expect(nodeExecutionRepo.listByNode(run.id, NODE_B)).toHaveLength(2);
 		});
 
 		test('fan-out: isFanOut is false when targeting by agent role', async () => {
@@ -669,10 +683,10 @@ describe('ChannelRouter', () => {
 		// -----------------------------------------------------------------------
 
 		test('cyclic channel: increments cycle count on successful delivery', async () => {
-			// Two channels form a cycle: forward coder→planner, backward planner→coder
+			// Two channels form a cycle: forward Sender→Receiver, backward Receiver→Sender
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 5 },
+				{ id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+				{ id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -708,8 +722,8 @@ describe('ChannelRouter', () => {
 
 		test('cyclic channel: throws ActivationError when cycle cap is reached', async () => {
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 2 },
+				{ id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+				{ id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -745,7 +759,6 @@ describe('ChannelRouter', () => {
 				{
 					from: 'coder',
 					to: 'planner',
-					direction: 'one-way',
 					// Forward channel — not cyclic
 				},
 			];
@@ -797,7 +810,8 @@ describe('ChannelRouter', () => {
 		});
 
 		test("open topology: allowed even when channels exist but don't match the pair", async () => {
-			const channels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer', direction: 'one-way' }];
+			// Channel reviewer→Node A exists but coder→planner pair has no declared channel → open topology
+			const channels: WorkflowChannel[] = [{ id: 'ch-other', from: 'Node B', to: 'Node A' }];
 			const workflow = buildWorkflow(
 				SPACE_ID,
 				workflowManager,
@@ -821,7 +835,7 @@ describe('ChannelRouter', () => {
 		});
 
 		test('channel with no gate: always allowed', async () => {
-			const channels: WorkflowChannel[] = [{ from: 'coder', to: 'planner', direction: 'one-way' }];
+			const channels: WorkflowChannel[] = [{ id: 'ch-1', from: 'Node A', to: 'Node B' }];
 			const workflow = buildWorkflow(
 				SPACE_ID,
 				workflowManager,
@@ -844,10 +858,10 @@ describe('ChannelRouter', () => {
 		});
 
 		test('cyclic channel: blocked when cycle count >= maxCycles', async () => {
-			// Backward channel planner→coder forms a cycle with forward coder→planner
+			// Backward channel Node B→Node A forms a cycle with forward Node A→Node B
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 3 },
+				{ id: 'ch-fwd', from: 'Node A', to: 'Node B' },
+				{ id: 'ch-bwd', from: 'Node B', to: 'Node A', maxCycles: 3 },
 			];
 			const workflow = buildWorkflow(
 				SPACE_ID,
@@ -876,10 +890,7 @@ describe('ChannelRouter', () => {
 		});
 
 		test('cyclic channel: allowed when below the cap', async () => {
-			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 5 },
-			];
+			const channels: WorkflowChannel[] = [];
 			const workflow = buildWorkflow(
 				SPACE_ID,
 				workflowManager,
@@ -908,7 +919,6 @@ describe('ChannelRouter', () => {
 				{
 					from: 'coder',
 					to: 'planner',
-					direction: 'one-way',
 					// Forward channel — not cyclic
 				},
 			];
@@ -979,7 +989,7 @@ describe('ChannelRouter', () => {
 		// -----------------------------------------------------------------------
 
 		test('gateless channel: deliverMessage always delivers (no gateId, no gate)', async () => {
-			const channels: WorkflowChannel[] = [{ from: 'coder', to: 'planner', direction: 'one-way' }];
+			const channels: WorkflowChannel[] = [{ id: 'ch-1', from: 'Sender', to: 'Receiver' }];
 			const workflow = buildWorkflow(
 				SPACE_ID,
 				workflowManager,
@@ -1005,7 +1015,7 @@ describe('ChannelRouter', () => {
 		});
 
 		test('gateless channel: canDeliver always allowed', async () => {
-			const channels: WorkflowChannel[] = [{ from: 'coder', to: 'planner', direction: 'one-way' }];
+			const channels: WorkflowChannel[] = [{ id: 'ch-1', from: 'Sender', to: 'Receiver' }];
 			const workflow = buildWorkflow(
 				SPACE_ID,
 				workflowManager,
@@ -1037,8 +1047,9 @@ describe('ChannelRouter', () => {
 				fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
 				resetOnCycle: false,
 			};
+			// Channel: planner → coder, gated by plan-gate
 			const channels: WorkflowChannel[] = [
-				{ from: 'planner', to: 'coder', direction: 'one-way', gateId: 'plan-gate' },
+				{ id: 'ch-1', from: 'planner', to: 'coder', gateId: 'plan-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1075,7 +1086,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'planner', to: 'coder', direction: 'one-way', gateId: 'plan-gate' },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'plan-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1116,7 +1128,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'allow-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'allow-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1156,7 +1168,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'approval-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'approval-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1190,7 +1202,7 @@ describe('ChannelRouter', () => {
 
 		test('gated channel (check): missing gate definition → channel closed (misconfiguration)', async () => {
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'nonexistent-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'plan-ready-gate' },
 			];
 			// No gates array in workflow
 			const workflow = buildWorkflowWithGates(
@@ -1240,7 +1252,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'planner', to: 'coder', direction: 'one-way', gateId: 'plan-ready-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'plan-ready-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1267,8 +1279,8 @@ describe('ChannelRouter', () => {
 			// Gate still closed before writing
 			const noTasks1 = await router.onGateDataChanged(run.id, 'plan-ready-gate');
 			expect(noTasks1).toHaveLength(0);
-			// workflowNodeId removed in M71; check no tasks exist for the run yet
-			expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(0);
+			// Canonical run task already exists (one-task-per-run).
+			expect(taskRepo.listByWorkflowRun(run.id)).toHaveLength(1);
 
 			// Write gate data to open the gate
 			gateDataRepo.set(run.id, 'plan-ready-gate', { ready: true });
@@ -1290,7 +1302,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'planner', to: 'coder', direction: 'one-way', gateId: 'ready-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'ready-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1314,8 +1326,8 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-			// Manually pre-activate coder node
-			await router.activateNode(run.id, NODE_B);
+			// Manually pre-activate the TARGET node (planner/NODE_A)
+			await router.activateNode(run.id, NODE_A);
 
 			// Open gate and call onGateDataChanged
 			gateDataRepo.set(run.id, 'ready-gate', { ready: true });
@@ -1334,7 +1346,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'planner', to: 'coder', direction: 'one-way', gateId: 'still-closed-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'still-closed-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1372,7 +1384,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'planner', to: 'coder', direction: 'one-way', gateId: 'done-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'done-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1419,7 +1431,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'qa', direction: 'one-way', gateId: 'review-votes-gate' },
+				{ id: 'ch-1', from: 'Coder Node', to: 'QA Node', gateId: 'review-votes-gate' },
 			];
 			const AGENT_REVIEWER = 'agent-reviewer';
 			db.prepare(
@@ -1487,8 +1499,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1536,8 +1548,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'script-only-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1593,8 +1605,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1653,8 +1665,8 @@ describe('ChannelRouter', () => {
 				resetOnCycle: true,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way' },
-				{ from: 'planner', to: 'coder', direction: 'one-way', maxCycles: 10 },
+				{ id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' }, // index 0
+				{ id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1716,7 +1728,7 @@ describe('ChannelRouter', () => {
 				resetOnCycle: false,
 			};
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'accumulate-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'accumulate-gate' },
 			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1814,10 +1826,11 @@ describe('ChannelRouter', () => {
 				).run(id, SPACE_ID, name, Date.now(), Date.now());
 			}
 
+			// Three channels share the same gate — when it opens, all 3 reviewer nodes activate
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'reviewer-1', direction: 'one-way', gateId: 'code-pr-gate' },
-				{ from: 'coder', to: 'reviewer-2', direction: 'one-way', gateId: 'code-pr-gate' },
-				{ from: 'coder', to: 'reviewer-3', direction: 'one-way', gateId: 'code-pr-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'reviewer-1', gateId: 'code-pr-gate' },
+				{ id: 'ch-2', from: 'coder', to: 'reviewer-2', gateId: 'code-pr-gate' },
+				{ id: 'ch-3', from: 'coder', to: 'reviewer-3', gateId: 'code-pr-gate' },
 			];
 
 			const workflow = buildWorkflowWithGates(
@@ -1889,8 +1902,8 @@ describe('ChannelRouter', () => {
 			).run(AGENT_C, SPACE_ID, Date.now(), Date.now());
 
 			const channels: WorkflowChannel[] = [
-				{ from: 'coder', to: 'planner', direction: 'one-way', gateId: 'shared-gate' },
-				{ from: 'coder', to: 'agent-c', direction: 'one-way', gateId: 'shared-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'shared-gate' }, // fan-out to both targets
+				{ id: 'ch-2', from: 'coder', to: 'agent-c', gateId: 'shared-gate' }, // same gate, second target
 			];
 
 			const workflow = buildWorkflowWithGates(
@@ -1964,19 +1977,16 @@ describe('ChannelRouter', () => {
 				{
 					from: 'reviewer-1',
 					to: 'qa-agent',
-					direction: 'one-way',
 					gateId: 'review-votes-gate',
 				},
 				{
 					from: 'reviewer-2',
 					to: 'qa-agent',
-					direction: 'one-way',
 					gateId: 'review-votes-gate',
 				},
 				{
 					from: 'reviewer-3',
 					to: 'qa-agent',
-					direction: 'one-way',
 					gateId: 'review-votes-gate',
 				},
 			];
@@ -2060,7 +2070,7 @@ describe('ChannelRouter', () => {
 			).run(AGENT_QA, SPACE_ID, Date.now(), Date.now());
 
 			const channels: WorkflowChannel[] = [
-				{ from: 'reviewer-1', to: 'qa', direction: 'one-way', gateId: 'review-votes-gate' },
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'review-votes-gate' },
 			];
 
 			const workflow = buildWorkflowWithGates(
@@ -2163,25 +2173,16 @@ describe('ChannelRouter', () => {
 
 			function buildQaWorkflow(qaMaxCycles = 5) {
 				const channels: WorkflowChannel[] = [
-					// Coding → Code Review node
-					{ from: 'Coding', to: 'Code Review', direction: 'one-way', gateId: 'code-pr-gate' },
-					// Code Review node → QA
-					{
-						from: 'Code Review',
-						to: 'QA',
-						direction: 'one-way',
-						gateId: 'review-votes-gate',
-					},
-					// QA → Done (success)
-					{ from: 'QA', to: 'Done', direction: 'one-way', gateId: 'qa-result-gate' },
-					// QA → Coding (backward/cyclic channel — topologically backward since QA is after Coding in nodes array)
-					{
-						from: 'QA',
-						to: 'Coding',
-						direction: 'one-way',
-						gateId: 'qa-fail-gate',
-						maxCycles: qaMaxCycles,
-					},
+					// index 0: Coding → Code Review (gated by code-pr-gate)
+					{ id: 'ch-0', from: 'Coding', to: 'Code Review', gateId: 'code-pr-gate' },
+					// index 1: Code Review → Coding (feedback, ungated back-channel)
+					{ id: 'ch-1', from: 'Code Review', to: 'Coding', maxCycles: qaMaxCycles },
+					// index 2: Code Review → QA (gated by review-votes-gate)
+					{ id: 'ch-2', from: 'Code Review', to: 'QA', gateId: 'review-votes-gate' },
+					// index 3: QA → Coding (cyclic, gated by qa-fail-gate)
+					{ id: 'ch-3', from: 'QA', to: 'Coding', gateId: 'qa-fail-gate', maxCycles: qaMaxCycles },
+					// index 4: QA → Done (success path, gated by qa-result-gate)
+					{ id: 'ch-4', from: 'QA', to: 'Done', gateId: 'qa-result-gate' },
 				];
 				return buildWorkflowWithGates(
 					SPACE_ID,
@@ -2452,7 +2453,6 @@ describe('ChannelRouter', () => {
 				{
 					from: 'coder',
 					to: 'planner',
-					direction: 'one-way',
 					gateId: 'new-gate',
 				},
 			];

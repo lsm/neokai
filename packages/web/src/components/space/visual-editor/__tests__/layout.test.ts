@@ -43,12 +43,13 @@ describe('autoLayout', () => {
 			makeStep('done', 'Done'),
 		];
 		const channels: WorkflowChannel[] = [
-			{ from: 'Planning', to: 'Plan Review', direction: 'one-way' },
-			{ from: 'Plan Review', to: 'Coding', direction: 'one-way' },
-			{ from: 'Coding', to: 'Code Review', direction: 'one-way' },
-			{ from: 'Code Review', to: 'QA', direction: 'one-way' },
-			{ from: 'QA', to: 'Done', direction: 'one-way' },
-			{ from: 'QA', to: 'Coding', direction: 'one-way', maxCycles: 5 },
+			{ from: 'Planning', to: 'Plan Review' },
+			{ from: 'Plan Review', to: 'Planning' },
+			{ from: 'Plan Review', to: 'Coding' },
+			{ from: 'Coding', to: 'Code Review' },
+			{ from: 'Code Review', to: 'Coding' },
+			{ from: 'Code Review', to: 'QA' },
+			{ from: 'QA', to: 'Done' },
 		];
 
 		const result = autoLayout(steps, [], 'planning', channels);
@@ -64,9 +65,9 @@ describe('autoLayout', () => {
 			makeStep('coding', 'Coding'),
 		];
 		const channels: WorkflowChannel[] = [
-			{ from: 'Planning', to: 'Plan Review', direction: 'one-way' },
-			{ from: 'Plan Review', to: 'Planning', direction: 'one-way' },
-			{ from: 'Plan Review', to: 'Coding', direction: 'one-way' },
+			{ from: 'Planning', to: 'Plan Review' },
+			{ from: 'Plan Review', to: 'Planning' },
+			{ from: 'Plan Review', to: 'Coding' },
 		];
 
 		const result = autoLayout(steps, [], 'planning', channels);

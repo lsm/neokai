@@ -600,9 +600,13 @@ orchestration AS (
     tt.title AS task_title,
     tt.status AS task_status,
     NULL AS workflow_node_id,
-    NULL AS agent_name
+    NULL AS agent_name,
+    NULL AS execution_status,
+    NULL AS execution_updated_at
   FROM target_task tt
+  JOIN sessions s ON s.id = tt.task_agent_session_id
   WHERE tt.task_agent_session_id IS NOT NULL
+    AND s.type = 'space_task_agent'
 ),
 -- Leg 2: node agents via node_executions
 node_agents AS (
@@ -611,21 +615,19 @@ node_agents AS (
     'node_agent' AS kind,
     COALESCE(sa.name, ne.agent_name, 'agent') AS label,
     ne.agent_name AS role,
-    st.id AS task_id,
-    st.title AS task_title,
-    st.status AS task_status,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status,
     ne.workflow_node_id AS workflow_node_id,
-    ne.agent_name AS agent_name
+    ne.agent_name AS agent_name,
+    ne.status AS execution_status,
+    ne.updated_at AS execution_updated_at
   FROM node_executions ne
   JOIN target_task tt
     ON tt.workflow_run_id IS NOT NULL
    AND ne.workflow_run_id = tt.workflow_run_id
-  JOIN space_tasks st
-    ON st.task_agent_session_id = ne.agent_session_id
-   AND st.id != tt.id  -- Exclude orchestration task (covered by Leg 1)
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE ne.agent_session_id IS NOT NULL
-    AND st.status != 'archived'
 ),
 -- Union both legs
 all_sessions AS (
@@ -653,6 +655,11 @@ SELECT
   ase.label AS label,
   ase.role AS role,
   CASE
+    WHEN ase.kind = 'node_agent' AND ase.execution_status = 'done' THEN 'completed'
+    WHEN ase.kind = 'node_agent' AND ase.execution_status = 'cancelled' THEN 'interrupted'
+    WHEN ase.kind = 'node_agent' AND ase.execution_status = 'blocked' THEN 'failed'
+    WHEN ase.kind = 'node_agent' AND ase.execution_status = 'pending' THEN 'queued'
+    WHEN ase.kind = 'node_agent' AND ase.execution_status = 'in_progress' THEN 'active'
     WHEN ase.task_status = 'done' THEN 'completed'
     WHEN ase.task_status = 'cancelled' THEN 'interrupted'
     WHEN ase.task_status = 'blocked' THEN 'failed'
@@ -676,8 +683,9 @@ SELECT
   NULL AS completionSummary,
   CAST(
     MAX(
-      st.updated_at,
-      COALESCE(CAST((julianday(s.last_active_at) - 2440587.5) * 86400000 AS INTEGER), st.updated_at)
+      COALESCE(st.updated_at, 0),
+      COALESCE(ase.execution_updated_at, 0),
+      COALESCE(CAST((julianday(s.last_active_at) - 2440587.5) * 86400000 AS INTEGER), 0)
     ) AS INTEGER
   ) AS updatedAt,
   ms.lastMessageAt AS lastMessageAt
@@ -710,7 +718,9 @@ orchestration AS (
     tt.id AS task_id,
     tt.title AS task_title
   FROM target_task tt
+  JOIN sessions s ON s.id = tt.task_agent_session_id
   WHERE tt.task_agent_session_id IS NOT NULL
+    AND s.type = 'space_task_agent'
 ),
 -- Leg 2: node agents via node_executions
 node_agents AS (
@@ -719,18 +729,14 @@ node_agents AS (
     'node_agent' AS kind,
     ne.agent_name AS role,
     COALESCE(sa.name, ne.agent_name, 'agent') AS label,
-    st.id AS task_id,
-    st.title AS task_title
+    tt.id AS task_id,
+    tt.title AS task_title
   FROM node_executions ne
   JOIN target_task tt
     ON tt.workflow_run_id IS NOT NULL
    AND ne.workflow_run_id = tt.workflow_run_id
-  JOIN space_tasks st
-    ON st.task_agent_session_id = ne.agent_session_id
-   AND st.id != tt.id  -- Exclude orchestration task (covered by Leg 1)
   LEFT JOIN space_agents sa ON sa.id = ne.agent_id
   WHERE ne.agent_session_id IS NOT NULL
-    AND st.status != 'archived'
 ),
 -- Union both legs
 all_sessions AS (
