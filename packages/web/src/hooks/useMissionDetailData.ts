@@ -17,7 +17,7 @@ import { toast } from '../lib/toast';
 export type AvailableStatusAction = 'complete' | 'reactivate' | 'needs_human' | 'archive';
 
 export interface UseMissionDetailDataResult {
-	/** Goal matching by UUID or short ID, null if not found */
+	/** Goal matching by UUID or short ID, null if not found or not yet loaded */
 	goal: RoomGoal | null;
 	/** Tasks linked to this goal, derived reactively */
 	linkedTasks: NeoTask[];
@@ -27,6 +27,7 @@ export interface UseMissionDetailDataResult {
 	isLoadingExecutions: boolean;
 	isUpdating: boolean;
 	isTriggering: boolean;
+	isDeleting: boolean;
 	/** Status actions available from current goal status */
 	availableStatusActions: AvailableStatusAction[];
 	/** Action handlers */
@@ -59,40 +60,42 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 	const [isLoadingExecutions, setIsLoadingExecutions] = useState(false);
 	const [isUpdating, setIsUpdating] = useState(false);
 	const [isTriggering, setIsTriggering] = useState(false);
+	const [isDeleting, setIsDeleting] = useState(false);
 
-	// Load execution history for recurring missions on mount (or when goalId changes).
+	// Load execution history for recurring missions. We depend on both goalId
+	// (URL change) and goal.value?.missionType so the effect re-runs when:
+	//   1. The goal arrives asynchronously after mount (null → RoomGoal).
+	//   2. The goal's missionType changes to/from 'recurring'.
+	const goalMissionType = goal.value?.missionType;
+	const resolvedGoalId = goal.value?.id;
 	useEffect(() => {
+		const g = goal.value;
+		if (!g || g.missionType !== 'recurring') return;
+
 		let cancelled = false;
+		setIsLoadingExecutions(true);
 
-		const load = async () => {
-			// Wait until goal is available before deciding whether to load executions.
-			// goal.value may be null initially while the LiveQuery snapshot arrives.
-			const g = goal.value;
-			if (!g) return;
-			if (g.missionType !== 'recurring') return;
-
-			setIsLoadingExecutions(true);
-			try {
-				const execs = await roomStore.listExecutions(g.id);
+		roomStore
+			.listExecutions(g.id)
+			.then((execs) => {
 				if (!cancelled) setExecutions(execs);
-			} catch (err) {
+			})
+			.catch((err: unknown) => {
 				if (!cancelled) {
 					toast.error(err instanceof Error ? err.message : 'Failed to load executions');
 				}
-			} finally {
+			})
+			.finally(() => {
 				if (!cancelled) setIsLoadingExecutions(false);
-			}
-		};
-
-		load();
+			});
 
 		return () => {
 			cancelled = true;
 		};
-		// We intentionally re-run when goalId changes. goal.value is read inside the
-		// async body — the reactive subscription on the computed happens elsewhere.
+		// goalId covers URL changes; resolvedGoalId+goalMissionType cover async goal arrival
+		// and missionType changes (e.g. goal arriving from null → recurring).
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [goalId]);
+	}, [goalId, resolvedGoalId, goalMissionType]);
 
 	// Derived available status actions based on current goal status.
 	const availableStatusActions = useComputed<AvailableStatusAction[]>(() => {
@@ -107,7 +110,7 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 		} else if (s === 'completed' || s === 'archived') {
 			actions.push('reactivate');
 		}
-		// 'archive' is always available except when already archived
+		// 'archive' is available for any non-archived status
 		if (s !== 'archived') {
 			actions.push('archive');
 		}
@@ -134,17 +137,22 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 	);
 
 	const deleteGoal = useCallback(async () => {
+		if (isDeleting) return;
 		const g = goal.value;
 		if (!g) return;
+		setIsDeleting(true);
 		try {
 			await roomStore.deleteGoal(g.id);
 			toast.info('Mission deleted');
+			// Navigate back to the room view; the missions list is the default room tab.
 			navigateToRoom(roomId);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Failed to delete mission');
 			throw err;
+		} finally {
+			setIsDeleting(false);
 		}
-	}, [goal, roomId]);
+	}, [isDeleting, goal, roomId]);
 
 	const triggerNow = useCallback(async () => {
 		if (isTriggering) return;
@@ -196,15 +204,18 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 			const g = goal.value;
 			if (!g) return;
 			try {
-				if (action === 'complete') {
-					await roomStore.updateGoal(g.id, { status: 'completed' });
-					toast.success('Mission completed');
-				} else if (action === 'reactivate') {
+				// reactivate and needs_human use dedicated RPC handlers because they carry
+				// server-side side effects (e.g. resetting consecutiveFailures, pausing schedules).
+				// complete and archive have no dedicated handlers so they go through updateGoal.
+				if (action === 'reactivate') {
 					await request('goal.reactivate', { roomId, goalId: g.id });
 					toast.success('Mission reactivated');
 				} else if (action === 'needs_human') {
 					await request('goal.needsHuman', { roomId, goalId: g.id });
 					toast.info('Mission marked as needs human input');
+				} else if (action === 'complete') {
+					await roomStore.updateGoal(g.id, { status: 'completed' });
+					toast.success('Mission completed');
 				} else if (action === 'archive') {
 					await roomStore.updateGoal(g.id, { status: 'archived' });
 					toast.info('Mission archived');
@@ -224,6 +235,7 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 		isLoadingExecutions,
 		isUpdating,
 		isTriggering,
+		isDeleting,
 		availableStatusActions: availableStatusActions.value,
 		updateGoal,
 		deleteGoal,
