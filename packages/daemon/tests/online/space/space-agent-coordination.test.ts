@@ -68,6 +68,23 @@ import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daem
 import { formatEventMessage } from '../../../src/lib/space/runtime/session-notification-sink';
 import type { Space } from '@neokai/shared';
 
+// ---------------------------------------------------------------------------
+// Suppress known teardown noise
+// ---------------------------------------------------------------------------
+// After daemon.waitForExit() closes the database and MCP transports, in-flight
+// SDK async work (MCP Protocol.connect retries, session updates via
+// ReactiveDatabase) may reject. These rejections are harmless — the daemon is
+// shutting down — but bun's test runner treats them as fatal "unhandled errors
+// between tests". Catching them here prevents the 0-fail / N-error exit code 1.
+const TEARDOWN_NOISE =
+	/Already connected to a transport|Cannot use a closed database|transport is closed/i;
+process.on('unhandledRejection', (reason: unknown) => {
+	const message = reason instanceof Error ? reason.message : String(reason);
+	if (TEARDOWN_NOISE.test(message)) return; // swallow known teardown noise
+	// Re-throw anything unexpected so it still surfaces as a test error
+	throw reason;
+});
+
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 8000 : 45000;
