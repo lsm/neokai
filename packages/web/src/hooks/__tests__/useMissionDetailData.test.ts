@@ -28,6 +28,7 @@ vi.mock('../useMessageHub.ts', () => ({
 // roomStore mock — goals and tasks are signals so useComputed subscribes reactively.
 const mockGoalsSignal = signal<RoomGoal[]>([]);
 const mockTasksSignal = signal<NeoTask[]>([]);
+const mockGoalsLoadingSignal = signal<boolean>(false);
 
 const mockUpdateGoal = vi.fn();
 const mockDeleteGoal = vi.fn();
@@ -43,6 +44,9 @@ vi.mock('../../lib/room-store.ts', () => ({
 		},
 		get tasks() {
 			return mockTasksSignal;
+		},
+		get goalsLoading() {
+			return mockGoalsLoadingSignal;
 		},
 		updateGoal: (...args: unknown[]) => mockUpdateGoal(...args),
 		deleteGoal: (...args: unknown[]) => mockDeleteGoal(...args),
@@ -150,6 +154,18 @@ describe('useMissionDetailData — goal derivation', () => {
 		const { result } = renderHook(() => useMissionDetailData('room-1', 'nonexistent'));
 
 		expect(result.current.goal).toBeNull();
+	});
+
+	it('exposes goalsLoading=false when the store loading signal is false', () => {
+		mockGoalsLoadingSignal.value = false;
+		const { result } = renderHook(() => useMissionDetailData('room-1', 'goal-1'));
+		expect(result.current.goalsLoading).toBe(false);
+	});
+
+	it('exposes goalsLoading=true when the store loading signal is true', () => {
+		mockGoalsLoadingSignal.value = true;
+		const { result } = renderHook(() => useMissionDetailData('room-1', 'goal-1'));
+		expect(result.current.goalsLoading).toBe(true);
 	});
 
 	it('updates reactively when goal appears in store after mount', () => {

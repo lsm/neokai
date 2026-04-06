@@ -255,6 +255,7 @@ function StatusSidebar({
 export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 	const {
 		goal,
+		goalsLoading,
 		availableStatusActions,
 		isUpdating,
 		isTriggering,
@@ -280,28 +281,61 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 			priority: data.priority,
 			missionType: data.missionType,
 			autonomyLevel: data.autonomyLevel,
-			structuredMetrics: data.structuredMetrics,
-			schedule: data.schedule,
+			// Only carry structured metrics for measurable missions; clear otherwise.
+			structuredMetrics: data.missionType === 'measurable' ? data.structuredMetrics : undefined,
+			// Only carry schedule for recurring missions; clear otherwise to avoid
+			// orphaned schedule data when a mission type is changed during edit.
+			schedule: data.missionType === 'recurring' ? data.schedule : undefined,
 		});
 		setIsEditOpen(false);
 	};
 
 	const handleDelete = async () => {
-		await deleteGoal();
+		await deleteGoal().catch(() => {
+			/* toast already shown by hook */
+		});
 		setIsDeleteOpen(false);
 	};
 
 	// ── Loading state ──────────────────────────────────────────────────────────
 	if (goal === null) {
-		// Distinguish between "still loading" (goalId provided) and "not found":
-		// roomStore.goals starts empty and populates asynchronously. Show skeleton
-		// first, then "not found" is shown only if goalId has no match once goals
-		// are populated (i.e., the store has items but none match).
-		return <MissionDetailSkeleton />;
-	}
+		// goalsLoading=true means the LiveQuery snapshot is in flight — show skeleton.
+		// goalsLoading=false means goals have loaded but none matched goalId — show error.
+		if (goalsLoading) {
+			return <MissionDetailSkeleton />;
+		}
 
-	// ── Not found state ────────────────────────────────────────────────────────
-	// (unreachable in practice — we return skeleton above; kept for type safety)
+		// ── Not found state ────────────────────────────────────────────────────
+		return (
+			<div class="flex flex-col h-full bg-dark-900" data-testid="mission-not-found">
+				<div class="flex items-center gap-2 px-3 sm:px-4 py-2.5 border-b border-dark-700 bg-dark-850 flex-shrink-0">
+					<MobileMenuButton />
+					<button
+						type="button"
+						class="text-gray-400 hover:text-gray-200 transition-colors text-sm p-1 flex items-center justify-center"
+						onClick={handleBack}
+						data-testid="mission-not-found-back-button"
+					>
+						←
+					</button>
+				</div>
+				<div class="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
+					<div class="text-4xl text-gray-600">⚑</div>
+					<h2 class="text-lg font-semibold text-gray-300">Mission not found</h2>
+					<p class="text-sm text-gray-500 max-w-xs">
+						The mission you're looking for doesn't exist or may have been deleted.
+					</p>
+					<button
+						type="button"
+						onClick={handleBack}
+						class="px-4 py-2 text-sm font-medium text-gray-300 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors"
+					>
+						← Back to Missions
+					</button>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div class="flex flex-col h-full bg-dark-900" data-testid="mission-detail">
@@ -338,6 +372,7 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 						variant="ghost"
 						size="sm"
 						onClick={() => setIsEditOpen(true)}
+						disabled={isUpdating}
 						title="Edit mission"
 						data-testid="mission-detail-edit-button"
 					>
@@ -362,6 +397,7 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 						variant="ghost"
 						size="sm"
 						onClick={() => setIsDeleteOpen(true)}
+						disabled={isDeleting}
 						title="Delete mission"
 						data-testid="mission-detail-delete-button"
 						class="text-red-400 hover:text-red-300 hover:bg-red-900/20"

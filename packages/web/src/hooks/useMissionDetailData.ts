@@ -19,6 +19,8 @@ export type AvailableStatusAction = 'complete' | 'reactivate' | 'needs_human' | 
 export interface UseMissionDetailDataResult {
 	/** Goal matching by UUID or short ID, null if not found or not yet loaded */
 	goal: RoomGoal | null;
+	/** True while the goals LiveQuery snapshot is in flight */
+	goalsLoading: boolean;
 	/** Tasks linked to this goal, derived reactively */
 	linkedTasks: NeoTask[];
 	/** Execution history — loaded on mount for recurring missions */
@@ -230,6 +232,7 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 
 	return {
 		goal: goal.value,
+		goalsLoading: roomStore.goalsLoading.value,
 		linkedTasks: linkedTasks.value,
 		executions,
 		isLoadingExecutions,

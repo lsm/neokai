@@ -197,6 +197,7 @@ function makeDefaultHookResult(
 ) {
 	return {
 		goal: BASE_GOAL,
+		goalsLoading: false,
 		linkedTasks: [],
 		executions: null,
 		isLoadingExecutions: false,
@@ -231,16 +232,50 @@ describe('MissionDetail', () => {
 
 	// ── Loading state ──────────────────────────────────────────────────────────
 
-	it('shows skeleton when goal is null (loading state)', () => {
-		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal: null }));
+	it('shows skeleton when goal is null and goalsLoading is true', () => {
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal: null, goalsLoading: true })
+		);
 		const { getAllByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-1" />);
 		expect(getAllByTestId('skeleton').length).toBeGreaterThan(0);
 	});
 
-	it('does not show main content when goal is null', () => {
-		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal: null }));
+	it('does not show main content when loading', () => {
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal: null, goalsLoading: true })
+		);
 		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-1" />);
 		expect(queryByTestId('mission-detail')).toBeNull();
+		expect(queryByTestId('mission-not-found')).toBeNull();
+	});
+
+	// ── Not found state ────────────────────────────────────────────────────────
+
+	it('shows "Mission not found" when goal is null and goals have loaded', () => {
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal: null, goalsLoading: false })
+		);
+		const { getByTestId, getByText } = render(<MissionDetail roomId="room-1" goalId="bad-id" />);
+		expect(getByTestId('mission-not-found')).toBeTruthy();
+		expect(getByText('Mission not found')).toBeTruthy();
+	});
+
+	it('not-found back button calls navigateToRoom and sets tab signal', () => {
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal: null, goalsLoading: false })
+		);
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="bad-id" />);
+		fireEvent.click(getByTestId('mission-not-found-back-button'));
+		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+		expect(mockCurrentRoomTabSignal.value).toBe('goals');
+	});
+
+	it('not-found state does not show the skeleton', () => {
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal: null, goalsLoading: false })
+		);
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="bad-id" />);
+		expect(queryByTestId('skeleton')).toBeNull();
 	});
 
 	// ── Header ────────────────────────────────────────────────────────────────
@@ -348,6 +383,32 @@ describe('MissionDetail', () => {
 		expect(getByTestId('confirm-modal')).toBeTruthy();
 		fireEvent.click(getByTestId('cancel-button'));
 		expect(queryByTestId('confirm-modal')).toBeNull();
+	});
+
+	// ── Disabled states ───────────────────────────────────────────────────────
+
+	it('edit button is disabled when isUpdating is true', () => {
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ isUpdating: true }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-detail-edit-button').hasAttribute('disabled')).toBe(true);
+	});
+
+	it('edit button is enabled when isUpdating is false', () => {
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ isUpdating: false }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-detail-edit-button').hasAttribute('disabled')).toBe(false);
+	});
+
+	it('delete button is disabled when isDeleting is true', () => {
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ isDeleting: true }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-detail-delete-button').hasAttribute('disabled')).toBe(true);
+	});
+
+	it('delete button is enabled when isDeleting is false', () => {
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ isDeleting: false }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-detail-delete-button').hasAttribute('disabled')).toBe(false);
 	});
 
 	// ── Status sidebar ────────────────────────────────────────────────────────
