@@ -67,7 +67,7 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 import { formatEventMessage } from '../../../src/lib/space/runtime/session-notification-sink';
 import type { Space } from '@neokai/shared';
-import { enterTeardown, leaveTeardown } from './helpers/suppress-teardown-noise';
+import './helpers/suppress-teardown-noise';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
@@ -169,7 +169,6 @@ describe('Space Agent Coordination — Online Tests', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		leaveTeardown();
 		// NEOKAI_ENABLE_SPACES_AGENT=1 opts in to spaces:global provisioning in test mode.
 		// Without it, the daemon skips provisioning when NODE_ENV=test to avoid side-effects
 		// on other test suites that don't need the global spaces agent.
@@ -202,7 +201,6 @@ describe('Space Agent Coordination — Online Tests', () => {
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
-		enterTeardown();
 		if (daemon) {
 			// Explicitly delete all sessions to prevent "Already connected to a transport"
 			// errors in subsequent tests. Fan-out sessions created by workflow runs
