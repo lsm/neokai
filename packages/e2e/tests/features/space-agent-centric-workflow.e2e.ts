@@ -189,13 +189,20 @@ test.describe('Agent-Centric Workflow', () => {
 		await createChannelByDrag(editor, STEP_A_NAME, STEP_B_NAME);
 
 		// Click the channel edge to open the channel relation config panel
-		await clickChannelEdge(editor, STEP_A_NAME, STEP_B_NAME);
+		await clickChannelEdge(editor);
 
-		// Add a gate to the channel
+		// Add a gate to the channel and verify it was created.
+		// Gates have no "type" field — an empty gate is created first (no label, no fields).
+		// Clicking "Add Gate" auto-opens the GateEditorPanel; go back to verify the gate exists.
 		await addGateToChannel(editor);
+		await expect(editor.getByTestId('gate-editor-panel')).toBeVisible({ timeout: 3000 });
+		await editor.getByTestId('gate-editor-back').click();
 
-		// Close the panel and verify the gate badge appears on the canvas edge.
-		// Gate badge test IDs use internal UUIDs, so we match by data attribute.
+		// After going back, the "Add Gate" button is replaced by "Edit Gate".
+		const editGateBtn = editor.getByTestId(/^channel-edge-edit-gate-/);
+		await expect(editGateBtn).toHaveCount(1, { timeout: 3000 });
+
+		// Close the panel and verify the gate indicator appears on the canvas edge.
 		await closeChannelPanel(editor);
 
 		const gatedEdge = editor.locator('[data-channel-gated="true"]').first();
@@ -262,7 +269,7 @@ test.describe('Agent-Centric Workflow', () => {
 		await createChannelByDrag(editor, STEP_A_NAME, STEP_B_NAME);
 
 		// Add a gate to the channel
-		await clickChannelEdge(editor, STEP_A_NAME, STEP_B_NAME);
+		await clickChannelEdge(editor);
 		await addGateToChannel(editor);
 		await closeChannelPanel(editor);
 

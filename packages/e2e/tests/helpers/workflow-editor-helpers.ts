@@ -199,11 +199,17 @@ export async function setupMultiAgentStep(
 	// Update the second entry to use the desired agent and role name.
 	// The auto-picked secondary may not be the desired agent, so we change both
 	// the agent assignment (via agent-slot-select) and the role name (via agent-role-input).
+	// Note: fill() must be used (not pressSequentially) because the onInput handler
+	// matches agents by their current name in a closure. Character-by-character typing
+	// would rename the agent on the first keystroke, making subsequent keystrokes fail
+	// to match the original name in the stale closure.
 	const secondEntry = entries.nth(1);
 	await secondEntry.getByTestId('agent-slot-select').selectOption({ label: agentBOption });
 	const roleInput = secondEntry.getByTestId('agent-role-input');
 	await roleInput.clear();
 	await roleInput.fill(agentBOption);
+	// Verify the role name persisted correctly
+	await expect(roleInput).toHaveValue(agentBOption, { timeout: 2000 });
 }
 
 // ─── Channel helpers (canvas edge-based) ────────────────────────────────────
@@ -257,16 +263,9 @@ export async function createChannelByDrag(
  * explicit index; defaults to the first edge.
  *
  * @param editor - Locator scoped to the `visual-workflow-editor` element
- * @param _fromStepName - Step name of the source node (kept for API compatibility)
- * @param _toStepName - Step name of the target node (kept for API compatibility)
  * @param edgeIndex - Zero-based index of the edge to click (default: 0)
  */
-export async function clickChannelEdge(
-	editor: Locator,
-	_fromStepName: string,
-	_toStepName: string,
-	edgeIndex = 0
-): Promise<void> {
+export async function clickChannelEdge(editor: Locator, edgeIndex = 0): Promise<void> {
 	const edge = editor.locator('[data-channel-edge="true"]').nth(edgeIndex);
 	await edge.waitFor({ state: 'attached', timeout: 5000 });
 	// The click handler is on the hitbox <path> (first child) with pointerEvents: 'stroke'.
@@ -286,9 +285,10 @@ export async function clickChannelEdge(
  */
 export async function addGateToChannel(editor: Locator): Promise<void> {
 	const panel = editor.getByTestId('channel-relation-config-panel');
-	// Click the "Add Gate" button in the channel edge config panel
+	// Click the "Add Gate" button in the channel edge config panel.
+	// Assert exactly one button matches to avoid ambiguity when multiple edges exist.
 	const addGateBtn = panel.getByTestId(/^channel-edge-add-gate-/);
-	await expect(addGateBtn).toBeVisible({ timeout: 3000 });
+	await expect(addGateBtn).toHaveCount(1, { timeout: 3000 });
 	await addGateBtn.click();
 }
 

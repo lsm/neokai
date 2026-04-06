@@ -211,7 +211,7 @@ test.describe('Multi-Agent Step Editor', () => {
 		await expect(channelEdge).toHaveAttribute('data-channel-direction', 'one-way');
 
 		// Click the channel edge and verify the config panel shows from/to
-		await clickChannelEdge(editor, STEP_A, STEP_B);
+		await clickChannelEdge(editor);
 		const configPanel = editor.getByTestId('channel-relation-config-panel');
 		await expect(configPanel).toBeVisible({ timeout: 3000 });
 		await expect(configPanel).toContainText(STEP_A);
@@ -277,6 +277,10 @@ test.describe('Multi-Agent Step Editor', () => {
 		// Removing one of two agents auto-switches to single-agent mode.
 		// The agents-list disappears and the single-agent select dropdown appears.
 		await expect(reopenedPanel.getByTestId('agent-select')).toBeVisible({ timeout: 3000 });
+		// Verify the correct agent (Coder Agent, the first entry) remains selected.
+		// The select value is the agent ID (UUID), so we check the selected option's text.
+		const selectedOption = reopenedPanel.getByTestId('agent-select').locator('option:checked');
+		await expect(selectedOption).toHaveText(AGENT_A_NAME, { timeout: 2000 });
 		await expect(reopenedPanel.getByTestId('add-agent-button')).toBeVisible({ timeout: 2000 });
 
 		// Channel between nodes is independent of node-level agent config and persists
