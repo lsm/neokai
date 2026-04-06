@@ -226,15 +226,16 @@ function createMockDatabaseWithGroup(groupState: string = 'awaiting_leader'): Da
 		created_at: Date.now(),
 		completed_at: null,
 	};
+	// getActiveGroupsForTask() uses .all() — return the active group row since completed_at is null
 	const mockRawDb = {
 		prepare: mock(() => ({
 			run: mock(() => ({ changes: 1 })),
 			get: mock(() => groupRow),
-			all: mock(() => []),
+			all: mock(() => [groupRow]),
 		})),
 		run: mock(() => ({ changes: 1 })),
 		get: mock(() => groupRow),
-		all: mock(() => []),
+		all: mock(() => [groupRow]),
 	};
 	return {
 		getDatabase: mock(() => mockRawDb),

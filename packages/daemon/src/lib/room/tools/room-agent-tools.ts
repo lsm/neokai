@@ -825,10 +825,36 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				});
 			}
 
+			// in_progress tasks with no active group: this can happen when set_task_status
+			// transitions a task back to in_progress (e.g., after a phase transition) without
+			// creating a new group. Revive the task so a fresh execution group is created.
+			// Note: no target parameter — reviveTaskForMessage defaults to 'leader', which is
+			// correct here since agents always communicate with the leader session.
+			if (
+				task.status === 'in_progress' &&
+				groupRepo.getActiveGroupsForTask(args.task_id).length === 0
+			) {
+				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
+				if (!revived) {
+					// No status rollback needed — unlike needs_attention/cancelled paths, no status
+					// transition was made before calling reviveTaskForMessage (task is already in_progress).
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to revive task ${args.task_id}: no active group and revival failed. ` +
+							`Use set_task_status to restart the task explicitly.`,
+					});
+				}
+				// reviveTaskForMessage emits task updates internally — no extra daemonHub.emit needed.
+				return jsonResult({
+					success: true,
+					message: `Task ${args.task_id} revived and message delivered to agent`,
+				});
+			}
+
 			const { success, error } = await routeHumanMessageToGroup(
 				runtime,
 				groupRepo,
-				taskManager,
 				args.task_id,
 				args.message
 			);
