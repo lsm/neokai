@@ -318,9 +318,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Does NOT include self or the task-agent coordinator.
 		 */
 		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
-			// Determine this agent's node name from the workflow definition
+			// Determine this agent's node name from the workflow definition.
+			// Falls back to myRole (agent slot name) for backward compatibility
+			// when no workflow is available (e.g. direct MCP calls without a workflow).
 			const myNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
-			const myNodeName = myNode?.name ?? '';
+			const myNodeName = myNode?.name ?? myRole;
 
 			// Within-node peers: other agents in the same node
 			const nodeExecs = workflowRunId
@@ -341,7 +343,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					};
 				});
 
-			const channels = workflow?.channels ?? [];
+			// Use channels from the resolver (which was built from the workflow channels at spawn time)
+			// or fall back to workflow.channels directly. This ensures the handler works both
+			// when a full workflow is available and when only a channel resolver is provided.
+			const channels =
+				channelResolver.getChannels().length > 0
+					? channelResolver.getChannels()
+					: (workflow?.channels ?? []);
 			const reachabilityDeclared = channels.length > 0;
 
 			// Cross-node targets: channels where FROM node is this agent's node
@@ -355,11 +363,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				const gatesById = new Map((workflow?.gates ?? []).map((g) => [g.id, g]));
 				const seen = new Set<string>();
 
+				// Track within-node agent names to exclude them from cross-node targets
+				const withinNodeAgentNames = new Set([myRole, ...nodeExecs.map((e) => e.agentName)]);
+
 				for (const ch of channels) {
-					if (ch.from !== myNodeName && ch.from !== '*') continue;
+					// Match channels where FROM is this agent's node name, slot name, or wildcard
+					if (ch.from !== myNodeName && ch.from !== myRole && ch.from !== '*') continue;
 					const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
 					for (const toNode of tos) {
-						if (toNode === myNodeName || seen.has(toNode)) continue;
+						// Skip: same as source, already seen, or is a within-node agent
+						if (toNode === myNodeName || toNode === myRole) continue;
+						if (seen.has(toNode)) continue;
+						if (withinNodeAgentNames.has(toNode)) continue; // within-node agent → not cross-node
 						seen.add(toNode);
 						const gateEntity = ch.gateId ? gatesById.get(ch.gateId) : undefined;
 						const gateType = gateEntity

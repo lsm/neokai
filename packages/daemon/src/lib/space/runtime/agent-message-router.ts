@@ -123,8 +123,20 @@ export class AgentMessageRouter {
 			taskAgentRouter,
 		} = this.config;
 
-		// --- Build channel resolver ---
+		// --- Build channel resolver + slot-to-node translation map ---
 		const resolver = new ChannelResolver(workflowChannels);
+		// Channels use node names as addresses. Build a reverse map from agent slot name
+		// → node name so the router can translate 'coder' → 'Code' before calling canSend.
+		const slotToNode = new Map<string, string>();
+		if (nodeGroups) {
+			for (const [nodeName, slots] of Object.entries(nodeGroups)) {
+				for (const slot of slots) {
+					slotToNode.set(slot, nodeName);
+				}
+			}
+		}
+		const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
+		const fromNodeName = resolveNodeName(fromRole);
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
@@ -160,8 +172,9 @@ export class AgentMessageRouter {
 
 		if (target === '*') {
 			// Broadcast: expand to all topology-permitted targets
-			const permitted = resolver.getPermittedTargets(fromRole);
-			if (permitted.length === 0) {
+			// getPermittedTargets returns node names; translate back to slot names for delivery
+			const permittedNodes = resolver.getPermittedTargets(fromNodeName);
+			if (permittedNodes.length === 0) {
 				return {
 					success: false,
 					delivered: [],
@@ -169,7 +182,8 @@ export class AgentMessageRouter {
 					reason: `No permitted targets for role '${fromRole}' in the declared channel topology.`,
 				};
 			}
-			targetRoles = permitted;
+			// Map node names back to slot names for delivery (or keep node name for fan-out)
+			targetRoles = permittedNodes;
 		} else if (Array.isArray(target)) {
 			// Multicast: explicit list of role names
 			targetRoles = target;
@@ -204,20 +218,22 @@ export class AgentMessageRouter {
 			}
 		}
 
-		// --- Authorization check ---
+		// --- Authorization check (translate slot names → node names for canSend) ---
 		const topologyTargets = targetRoles.filter((r) => r !== 'task-agent');
-		const unauthorized = topologyTargets.filter((r) => !resolver.canSend(fromRole, r));
+		const unauthorized = topologyTargets.filter(
+			(r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
+		);
 		if (unauthorized.length > 0) {
-			const permitted = resolver.getPermittedTargets(fromRole);
+			const permittedNodes = resolver.getPermittedTargets(fromNodeName);
 			return {
 				success: false,
 				delivered: [],
 				failed: [],
 				reason:
 					`Channel topology does not permit '${fromRole}' to send to: ${unauthorized.join(', ')}. ` +
-					`Permitted targets: ${permitted.length > 0 ? permitted.join(', ') : 'none'}.`,
+					`Permitted targets: ${permittedNodes.length > 0 ? permittedNodes.join(', ') : 'none'}.`,
 				unauthorizedRoles: unauthorized,
-				permittedTargets: permitted,
+				permittedTargets: permittedNodes,
 			};
 		}
 

@@ -23,7 +23,7 @@ import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import type { AgentMessageRouterConfig } from '../../../src/lib/space/runtime/agent-message-router.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -54,8 +54,8 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
-	channels: ResolvedChannel[]
-): { runId: string; channels: ResolvedChannel[] } {
+	channels: WorkflowChannel[]
+): { runId: string; channels: WorkflowChannel[] } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
@@ -78,18 +78,19 @@ function seedWorkflowRunWithChannels(
 	return { runId: run.id, channels };
 }
 
+function makeChannel(from: string, to: string | string[]): WorkflowChannel {
+	return {
+		id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`,
+		from,
+		to,
+	};
+}
 function makeResolvedChannel(
 	fromRole: string,
 	toRole: string,
-	isHubSpoke = false
-): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		isHubSpoke,
-	};
+	_isHubSpoke = false
+): WorkflowChannel {
+	return makeChannel(fromRole, toRole);
 }
 
 // ---------------------------------------------------------------------------
@@ -168,13 +169,13 @@ function makeRouter(
 	ctx: TestCtx,
 	workflowRunId: string,
 	injected: Array<{ sessionId: string; message: string }>,
-	channels: ResolvedChannel[] = [],
+	channels: WorkflowChannel[] = [],
 	overrides: Partial<AgentMessageRouterConfig> = {}
 ): AgentMessageRouter {
 	return new AgentMessageRouter({
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		workflowRunId,
-		resolvedChannels: channels,
+		workflowChannels: channels,
 		messageInjector: async (sessionId, message) => {
 			injected.push({ sessionId, message });
 		},
@@ -604,14 +605,14 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 	});
 
 	test('delivers to all roles mapped to a node name', async () => {
+		// Use node names in channels (coder-node → review-node), matching nodeGroups
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,
 			ctx.spaceId,
-			[makeResolvedChannel('coder', 'reviewer'), makeResolvedChannel('coder', 'security')]
+			[makeChannel('coder-node', 'review-node')]
 		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		// Add security member
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'security', 'session-security');
 
 		const injected: string[] = [];
@@ -620,6 +621,7 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 				injected.push(sid);
 			},
 			nodeGroups: {
+				'coder-node': ['coder'],
 				'review-node': ['reviewer', 'security'],
 			},
 		});

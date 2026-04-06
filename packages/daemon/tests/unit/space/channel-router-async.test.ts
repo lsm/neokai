@@ -574,7 +574,10 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [];
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'slow-script-a' },
+				{ id: 'ch-2', from: 'coder', to: 'reviewer', gateId: 'slow-script-b' },
+			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -640,7 +643,9 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [];
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'conc-script-a' },
+			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -737,7 +742,11 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			}));
 
-			const channels: WorkflowChannel[] = [];
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'sem-ov-a' },
+				{ id: 'ch-2', from: 'coder', to: 'reviewer-a', gateId: 'sem-ov-b' },
+				{ id: 'ch-3', from: 'coder', to: 'reviewer-b', gateId: 'sem-ov-c' },
+			];
 
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -847,6 +856,7 @@ describe('ChannelRouter async gate evaluation', () => {
 					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
 				],
+				[{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'field-sem-bypass' }],
 				[gate]
 			);
 			const run = createActiveRun(workflow);
@@ -1049,7 +1059,9 @@ describe('ChannelRouter async gate evaluation', () => {
 			const AGENT_REVIEWER = 'agent-async-reviewer';
 			seedAgent(db, AGENT_REVIEWER, SPACE_ID, 'planner');
 
-			const channels: WorkflowChannel[] = [];
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'script-gate-a' },
+			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -1118,7 +1130,10 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [];
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'sem-ok-gate' },
+				{ id: 'ch-2', from: 'coder', to: 'reviewer', gateId: 'sem-fail-gate' },
+			];
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
 				workflowManager,
@@ -1224,7 +1239,9 @@ describe('ChannelRouter async gate evaluation', () => {
 				resetOnCycle: false,
 			};
 
-			const channels: WorkflowChannel[] = [];
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'indep-gate-a' },
+			];
 
 			const workflow = buildWorkflowWithGates(
 				SPACE_ID,
@@ -1270,6 +1287,7 @@ describe('ChannelRouter async gate evaluation', () => {
 					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
 				],
+				[{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'shared-script-gate' }],
 				[gate]
 			);
 
@@ -1304,6 +1322,7 @@ describe('ChannelRouter async gate evaluation', () => {
 					{ id: NODE_A, name: 'Coder', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
 					{ id: NODE_B, name: 'Planner', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
 				],
+				[{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'iso-gate' }],
 				[gate]
 			);
 

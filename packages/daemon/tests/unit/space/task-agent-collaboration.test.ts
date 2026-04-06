@@ -480,17 +480,29 @@ describe('Task Agent — multi-agent node collaboration', () => {
 	});
 
 	test('collaboration workflow with channels: channel map in workflow is persisted and accessible', async () => {
-		const wf = buildTwoNodeWorkflow(ctx);
+		// Create a workflow WITH explicit channels (node names)
+		const node1Id = `node-code-${Math.random().toString(36).slice(2)}`;
+		const node2Id = `node-review-${Math.random().toString(36).slice(2)}`;
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Channeled WF',
+			nodes: [
+				{ id: node1Id, name: 'Code', agentId: ctx.coderAgentId },
+				{ id: node2Id, name: 'Review', agentId: ctx.reviewerAgentId },
+			],
+			startNodeId: node1Id,
+			channels: [{ id: 'ch-1', from: 'Code', to: 'Review' }],
+		});
 
-		// Channels should be stored on the workflow
 		const loadedWf = ctx.workflowManager.getWorkflow(wf.id);
 		expect(loadedWf?.channels).toBeDefined();
 		expect(loadedWf?.channels?.length).toBeGreaterThan(0);
 
 		const channel = loadedWf?.channels?.[0];
-		expect(channel?.from).toBe('coder');
-		expect(channel?.to).toBe('reviewer');
-		expect(channel?.direction).toBe('one-way');
+		expect(channel?.from).toBe('Code');
+		expect(channel?.to).toBe('Review');
+		// No direction field — channels are always one-way by definition
+		expect('direction' in (channel ?? {})).toBe(false);
 	});
 
 	test('no-channel workflow: channelTopologyDeclared is false in list_group_members', async () => {

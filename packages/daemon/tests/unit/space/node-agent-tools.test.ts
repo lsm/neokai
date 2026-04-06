@@ -26,7 +26,7 @@ import {
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel, SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
+import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -146,18 +146,15 @@ function seedSpaceTask(
 // ---------------------------------------------------------------------------
 
 function makeResolvedChannel(
-	fromRole: string,
-	toRole: string,
-	isHubSpoke = false,
-	overrides: Partial<ResolvedChannel> = {}
-): ResolvedChannel {
+	from: string,
+	to: string,
+	_isHubSpoke = false,
+	_overrides: Record<string, unknown> = {}
+): WorkflowChannel {
 	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		isHubSpoke,
-		...overrides,
+		id: `ch-${from}-${to}`,
+		from,
+		to,
 	};
 }
 
@@ -269,7 +266,7 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
 		new AgentMessageRouter({
 			nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels: channelResolver.getResolvedChannels(),
+			workflowChannels: channelResolver.getChannels(),
 			messageInjector: injector,
 		});
 
@@ -293,7 +290,7 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
  * Build a ChannelResolver directly from resolved channel entries.
  * Replaces the old seedWorkflowRunWithChannels + DB approach.
  */
-function makeResolver(channels: ResolvedChannel[]): ChannelResolver {
+function makeResolver(channels: WorkflowChannel[]): ChannelResolver {
 	return new ChannelResolver(channels);
 }
 
@@ -1676,8 +1673,8 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.success).toBe(true);
 		expect(data.reachabilityDeclared).toBe(true);
 		expect(data.crossNodeTargets).toHaveLength(1);
-		expect(data.crossNodeTargets[0].agentName).toBe('tester');
-		expect(data.crossNodeTargets[0].isFanOut).toBe(false);
+		expect(data.crossNodeTargets[0].nodeName).toBe('tester');
+		// isFanOut removed from cross-node targets (fan-out is determined by array 'to')
 	});
 
 	test('within-node peer with a channel does not appear in cross-node targets', async () => {
@@ -1726,7 +1723,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			],
 		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'approval-gate' },
+			]),
 			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1762,7 +1761,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			],
 		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'vote-gate' },
+			]),
 			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1816,7 +1817,9 @@ describe('node-agent-tools: list_reachable_agents', () => {
 			],
 		};
 		const config = makeConfig(ctx, {
-			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'lead-gate' },
+			]),
 			workflow,
 		});
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1837,8 +1840,8 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.crossNodeTargets).toHaveLength(1);
-		expect(data.crossNodeTargets[0].agentName).toBe('qa-node');
-		expect(data.crossNodeTargets[0].isFanOut).toBe(true);
+		expect(data.crossNodeTargets[0].nodeName).toBe('qa-node');
+		// isFanOut removed - channel to[] array already indicates fan-out
 	});
 
 	test('deduplicates cross-node targets from multiple channels to same role', async () => {

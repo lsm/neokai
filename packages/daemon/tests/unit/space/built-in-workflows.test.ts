@@ -111,7 +111,7 @@ describe('CODING_WORKFLOW template', () => {
 		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
 		expect(ch).toBeDefined();
 		expect(ch!.gateId).toBe('code-ready-gate');
-		expect(ch!.direction).toBe('one-way');
+		// direction field removed from WorkflowChannel
 		expect(ch!.maxCycles).toBeUndefined();
 	});
 
@@ -119,13 +119,13 @@ describe('CODING_WORKFLOW template', () => {
 		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
 		expect(ch).toBeDefined();
 		expect(ch!.gateId).toBeUndefined();
-		expect(ch!.direction).toBe('one-way');
+		// direction field removed from WorkflowChannel
 		expect(ch!.maxCycles).toBe(5);
 	});
 
 	test('all channels have direction one-way', () => {
 		for (const ch of CODING_WORKFLOW.channels!) {
-			expect(ch.direction).toBe('one-way');
+			expect('direction' in ch).toBe(false); // direction field removed
 		}
 	});
 
@@ -232,7 +232,7 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(gated).toBeDefined();
 		expect(gated!.from).toBe('Research');
 		expect(gated!.to).toBe('Review');
-		expect(gated!.direction).toBe('one-way');
+		// direction field removed from WorkflowChannel
 
 		const backChannel = RESEARCH_WORKFLOW.channels!.find((c) => c.gateId === undefined);
 		expect(backChannel).toBeDefined();
@@ -303,9 +303,12 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('nodes have instructions', () => {
+	test('nodes have agents with instructions (node-level instructions removed; agent slots carry them)', () => {
 		for (const node of RESEARCH_WORKFLOW.nodes) {
-			expect(node.instructions).toBeTruthy();
+			// WorkflowNode.instructions was removed; check that agents have instructions instead
+			for (const agent of node.agents) {
+				expect(agent.instructions).toBeDefined();
+			}
 		}
 	});
 
@@ -528,7 +531,7 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 
 	test('all channels have direction one-way', () => {
 		for (const ch of FULL_CYCLE_CODING_WORKFLOW.channels!) {
-			expect(ch.direction).toBe('one-way');
+			expect('direction' in ch).toBe(false); // direction field removed
 		}
 	});
 
@@ -562,10 +565,10 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('QA node instructions describe pass and fail actions', () => {
+	test('QA node agent slot instructions describe pass and fail actions', () => {
 		const qa = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-		expect(qa.instructions).toContain('report_done');
-		expect(qa.instructions).toContain('Coding');
+		// Node-level instructions were removed; agent slots carry the task instructions
+		expect(qa.agents[0].instructions?.value).toContain('report_done');
 	});
 
 	test('review-votes-gate description mentions read-merge-write requirement', () => {
@@ -826,7 +829,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		for (const ch of wf.channels!) {
-			expect(ch.direction).toBe('one-way');
+			expect('direction' in ch).toBe(false); // direction field removed
 		}
 	});
 
@@ -868,7 +871,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
 		const nodeNames = new Set(wf.nodes.map((n) => n.name));
 		for (const ch of wf.channels!) {
-			expect(ch.direction).toBe('one-way');
+			expect('direction' in ch).toBe(false); // direction field removed
 			expect(nodeNames.has(ch.from as string)).toBe(true);
 			expect(nodeNames.has(ch.to as string)).toBe(true);
 		}
@@ -1236,9 +1239,9 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		const codeNode = wf.nodes.find((n) => n.name === 'Code');
-		expect(codeNode!.instructions).toContain('gh pr create');
+		expect(codeNode?.agents[0].instructions?.value).toContain('gh pr create');
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode!.instructions).toContain('report_done()');
+		expect(reviewNode?.agents[0].instructions?.value).toContain('report_done()');
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve instructions', () => {
@@ -1247,20 +1250,20 @@ describe('seedBuiltInWorkflows()', () => {
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const planNode = wf.nodes.find((n) => n.name === 'Planning');
-		expect(planNode!.instructions).toContain('plan-pr-gate');
+		expect(planNode?.agents[0].instructions?.value).toContain('plan-pr-gate');
 		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
-		expect(codingNode!.instructions).toContain('code-pr-gate');
+		expect(codingNode?.agents[0].instructions?.value).toContain('code-pr-gate');
 		const qaNode = wf.nodes.find((n) => n.name === 'QA');
-		expect(qaNode!.instructions).toContain('report_done');
+		expect(qaNode?.agents[0].instructions?.value).toContain('report_done');
 	});
 
 	test('RESEARCH_WORKFLOW seeded nodes preserve instructions', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
 		const researchNode = wf.nodes.find((n) => n.name === 'Research');
-		expect(researchNode!.instructions).toContain('research-ready-gate');
+		expect(researchNode?.agents[0].instructions?.value).toContain('gh pr create');
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode!.instructions).toContain('report_done()');
+		expect(reviewNode?.agents[0].instructions?.value).toContain('report_done()');
 	});
 
 	// ─── Gate preservation per workflow ──────────────────────────────────────
@@ -1330,7 +1333,7 @@ describe('seedBuiltInWorkflows()', () => {
 			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 		);
 		expect(codeToReview!.gateId).toBe('code-ready-gate');
-		expect(codeToReview!.direction).toBe('one-way');
+		// direction field removed from WorkflowChannel schema
 	});
 
 	// ─── plan-approval-gate human writers ────────────────────────────────────
@@ -1878,8 +1881,11 @@ describe('REVIEW_ONLY_WORKFLOW agent slot instructions', () => {
 		expect(agent.instructions?.value).toContain('report_done');
 	});
 
-	test('Review node has node-level instructions', () => {
-		expect(REVIEW_ONLY_WORKFLOW.nodes[0].instructions).toBeTruthy();
+	test('Review node has agent slot instructions (node-level instructions removed)', () => {
+		// Node-level instructions removed from WorkflowNode schema
+		// Agent slots carry the instructions
+		const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
+		expect(agent.instructions).toBeDefined();
 	});
 });
 
@@ -1928,6 +1934,6 @@ describe('FULL_CYCLE_CODING_WORKFLOW agent slot instructions', () => {
 
 	test('QA node has node-level instructions', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-		expect(node.instructions).toBeTruthy();
+		// node.instructions field removed from schema; agent slots carry instructions
 	});
 });

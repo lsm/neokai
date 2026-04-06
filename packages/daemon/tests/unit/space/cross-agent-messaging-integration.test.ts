@@ -53,7 +53,7 @@ import {
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -124,7 +124,7 @@ function seedTask(
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
-	channels: ResolvedChannel[]
+	channels: WorkflowChannel[]
 ): { runId: string; resolver: ChannelResolver } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
@@ -143,18 +143,8 @@ function seedWorkflowRunWithChannels(
 	return { runId: run.id, resolver: new ChannelResolver(channels) };
 }
 
-function makeResolvedChannel(
-	fromRole: string,
-	toRole: string,
-	isHubSpoke = false
-): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		isHubSpoke,
-	};
+function makeResolvedChannel(from: string, to: string | string[]): WorkflowChannel {
+	return { id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`, from, to };
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +222,7 @@ function makeStepConfig(
 	const agentMessageRouter = new AgentMessageRouter({
 		nodeExecutionRepo: tdb.nodeExecutionRepo,
 		workflowRunId: tdb.workflowRunId,
-		resolvedChannels: channelResolver.getResolvedChannels(),
+		workflowChannels: channelResolver.getChannels(),
 		messageInjector: injector,
 	});
 	return {
@@ -944,7 +934,7 @@ describe('data reload and DB-based validation', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: freshNodeExecutionRepo,
 			workflowRunId: tdb.workflowRunId,
-			resolvedChannels: channelResolver.getResolvedChannels(),
+			workflowChannels: channelResolver.getChannels(),
 			messageInjector: injector,
 		});
 		const config: NodeAgentToolsConfig = {
@@ -1014,7 +1004,7 @@ describe('error paths — missing workflowRunId', () => {
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: tdb.nodeExecutionRepo,
 			workflowRunId: '',
-			resolvedChannels: channelResolver.getResolvedChannels(),
+			workflowChannels: channelResolver.getChannels(),
 			messageInjector: injector,
 		});
 
@@ -1055,7 +1045,7 @@ describe('error paths — missing workflowRunId', () => {
 			agentMessageRouter: new AgentMessageRouter({
 				nodeExecutionRepo: tdb.nodeExecutionRepo,
 				workflowRunId: '',
-				resolvedChannels: channelResolver.getResolvedChannels(),
+				workflowChannels: channelResolver.getChannels(),
 				messageInjector: async () => {},
 			}),
 		};
