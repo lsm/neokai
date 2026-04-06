@@ -33,19 +33,21 @@ All changes are in `packages/web/src/lib/router.ts` and its test file `packages/
 
 4. Update `getRoomIdFromPath` to also match the four new tab patterns (add checks before the legacy chat compat check, after the mission pattern check).
 
-5. Add a `navigateToRoomTab(roomId: string, tab: string, replace = true): void` function:
+5. Add a `navigateToRoomTab(roomId: string, tab: string, replace = false): void` function:
    - If `tab === 'chat'`, delegate to `navigateToRoomAgent(roomId, replace)` and return.
-   - If `tab === 'overview'`, delegate to `navigateToRoom(roomId, replace)` and return (overview has no sub-path).
+   - If `tab === 'overview'`, delegate to `navigateToRoom(roomId, replace)` and return (overview has no sub-path). **Important:** `navigateToRoom` does NOT set `currentRoomActiveTabSignal` (this is an intentional design choice documented in `navigate-to-room-tab-reset.test.ts`). After delegating, explicitly set `currentRoomActiveTabSignal.value = 'overview'`.
    - For other tabs, compute the target path using the appropriate path creator.
    - Follow the same guard/signal-clearing pattern as `navigateToRoomAgent`:
      - Guard `routerState.isNavigating`
      - Check same-path early return (still update signals)
-     - `replaceState` or `pushState` based on `replace` parameter (default `true` since tab changes should not pollute history)
+     - `pushState` or `replaceState` based on `replace` parameter (default `false` to match `navigateToRoomAgent` behavior and enable proper browser back/forward between tabs)
      - Set `currentRoomIdSignal.value = roomId`
-     - Clear `currentRoomSessionIdSignal`, `currentRoomTaskIdSignal`, `currentRoomGoalIdSignal`, `currentRoomAgentActiveSignal`, `currentSessionIdSignal`, `currentSpaceIdSignal`, `currentSpaceSessionIdSignal`, `currentSpaceTaskIdSignal`
+     - Clear `currentRoomSessionIdSignal`, `currentRoomTaskIdSignal`, `currentRoomGoalIdSignal`, `currentSessionIdSignal`, `currentSpaceIdSignal`, `currentSpaceSessionIdSignal`, `currentSpaceTaskIdSignal`
+     - Explicitly set `currentRoomAgentActiveSignal.value = false` (the agent route is not active when viewing a tab)
      - Set `currentRoomActiveTabSignal.value = tab`
      - Set `navSectionSignal.value = 'rooms'`
    - Use the same `setTimeout(() => { routerState.isNavigating = false }, 0)` pattern in `finally`.
+   - **Design note:** `replace` defaults to `false` (pushState) to match `navigateToRoomAgent` behavior. This means navigating Overview → Tasks → Goals allows the back button to go Goals → Tasks → Overview. This is consistent with the chat tab navigation.
 
 6. Export `navigateToRoomTab`, `getRoomTabFromPath`, and all four path creators.
 
@@ -55,9 +57,10 @@ All changes are in `packages/web/src/lib/router.ts` and its test file `packages/
 - `getRoomTabFromPath('/room/abc-123/agent')` returns `{ roomId: 'abc-123', tab: 'chat' }`
 - `getRoomTabFromPath('/room/abc-123')` returns `null` (overview has no sub-path, handled by existing `getRoomIdFromPath`)
 - `getRoomIdFromPath` returns the roomId for all four new tab paths
-- `navigateToRoomTab(id, 'tasks')` updates the URL to `/room/<id>/tasks` and sets `currentRoomActiveTabSignal.value` to `'tasks'`
-- `navigateToRoomTab(id, 'overview')` delegates to `navigateToRoom`
+- `navigateToRoomTab(id, 'tasks')` updates the URL to `/room/<id>/tasks`, sets `currentRoomActiveTabSignal.value` to `'tasks'`, and sets `currentRoomAgentActiveSignal.value` to `false`
+- `navigateToRoomTab(id, 'overview')` delegates to `navigateToRoom` and explicitly sets `currentRoomActiveTabSignal.value = 'overview'`
 - `navigateToRoomTab(id, 'chat')` delegates to `navigateToRoomAgent`
+- `navigateToRoomTab` defaults `replace` to `false` (consistent with `navigateToRoomAgent`)
 - All new functions have unit tests in `router.test.ts`
 
 **Dependencies:** None
@@ -76,20 +79,28 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 1. In `handlePopState`, add a new variable: `const roomTab = getRoomTabFromPath(path)`.
 
-2. Insert a new `else if (roomTab)` branch **after** `roomAgent` and **before** `roomMission` in the if/else chain. This is critical -- tab routes must be matched before the plain `roomId` catch-all but after the agent route (which has its own special handling). The branch should:
+2. Insert a new `else if (roomTab)` branch in the if/else chain. **Exact position matters.** The current `handlePopState` branch order is: `roomAgent → roomMission → roomTask → roomSession → roomId`. The new `roomTab` branch must be inserted **after `roomAgent` and before `roomMission`**, giving: `roomAgent → roomTab → roomMission → roomTask → roomSession → roomId`. This ensures tab routes (e.g., `/room/:id/tasks`) are matched before the plain `roomId` catch-all, and before `roomMission`/`roomTask`/`roomSession` (whose regexes include an additional ID segment and won't collide). The branch should:
    - Set `currentRoomIdSignal.value = roomTab.roomId`
    - Set `currentRoomActiveTabSignal.value = roomTab.tab`
-   - Clear all other signals (`currentRoomSessionIdSignal`, `currentRoomTaskIdSignal`, `currentRoomGoalIdSignal`, `currentRoomAgentActiveSignal`, `currentSessionIdSignal`, `currentSpaceIdSignal`, `currentSpaceSessionIdSignal`, `currentSpaceTaskIdSignal`, `currentSpaceViewModeSignal`)
+   - Set `currentRoomAgentActiveSignal.value = false`
+   - Clear all other signals (`currentRoomSessionIdSignal`, `currentRoomTaskIdSignal`, `currentRoomGoalIdSignal`, `currentSessionIdSignal`, `currentSpaceIdSignal`, `currentSpaceSessionIdSignal`, `currentSpaceTaskIdSignal`, `currentSpaceViewModeSignal`)
    - Set `navSectionSignal.value = 'rooms'`
 
 3. In the existing `roomId` (plain room) branch of `handlePopState`, add: `currentRoomActiveTabSignal.value = 'overview'` so that navigating back to `/room/:id` resets the tab.
 
-4. Mirror the exact same changes in `initializeRouter`:
+4. **Reset `currentRoomActiveTabSignal` in non-tab room sub-route branches.** When the user navigates from `/room/:id/goals` to `/room/:id/task/:taskId` via browser back, the `roomTask` branch fires (not the `roomTab` branch). If `currentRoomActiveTabSignal` is not reset, it will retain the stale value `'goals'`, causing incorrect tab rendering or unnecessary LiveQuery subscriptions. Add `currentRoomActiveTabSignal.value = null` to the following `handlePopState` branches:
+   - `roomMission` branch
+   - `roomTask` branch
+   - `roomSession` branch
+   - `sessionId` branch (non-room session)
+
+5. Mirror the exact same changes in `initializeRouter`:
    - Add `const initialRoomTab = getRoomTabFromPath(initialPath)`
    - Insert `else if (initialRoomTab)` branch in the same position (after `initialRoomAgent`, before `initialRoomMission`)
    - In the `initialRoomId` branch, add `currentRoomActiveTabSignal.value = 'overview'`
+   - In the `initialRoomMission`, `initialRoomTask`, `initialRoomSession`, and `initialSessionId` branches, add `currentRoomActiveTabSignal.value = null`
 
-5. Add unit tests verifying:
+6. Add unit tests verifying:
    - `handlePopState` correctly sets `currentRoomActiveTabSignal` when URL is `/room/:id/goals`
    - `initializeRouter` correctly sets `currentRoomActiveTabSignal` when page loads at `/room/:id/settings`
    - Browser back from `/room/:id/tasks` to `/room/:id` resets `currentRoomActiveTabSignal` to `'overview'`

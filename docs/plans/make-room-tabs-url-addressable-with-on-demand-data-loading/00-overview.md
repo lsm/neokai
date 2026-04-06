@@ -20,6 +20,13 @@ Make all room tabs addressable via URL (`/room/:id/tasks`, `/room/:id/goals`, et
 3. **Conditional LiveQuery subscriptions** -- Split `subscribeRoom` into per-query methods, make goals/skills subscriptions conditional on active tab
 4. **Code-splitting with lazy/Suspense** -- Lazy-load GoalsEditor, RoomAgents, RoomSettings behind `Suspense` boundaries
 
+## Design Notes
+
+- **Overview tab has no URL sub-path.** `/room/:id` maps to the overview tab. There is no `/room/:id/overview` route. This means `navigateToRoomTab(id, 'overview')` delegates to `navigateToRoom` and does not add an `/overview` segment. Bookmarking the overview tab and bookmarking the root room URL are identical.
+- **Chat tab uses the existing `/room/:id/agent` route.** `navigateToRoomTab(id, 'chat')` delegates to `navigateToRoomAgent`. No new `/room/:id/chat` route is added.
+- **Tab navigation uses `pushState` (not `replaceState`)** to match `navigateToRoomAgent` behavior. This means browser back/forward navigates between tabs.
+- **`navigateToRoom` does not set `currentRoomActiveTabSignal`** (intentional existing invariant). `navigateToRoomTab` handles setting the signal explicitly after delegation.
+
 ## Cross-Milestone Dependencies
 
 - Milestone 2 depends on Milestone 1 (needs `navigateToRoomTab` and tab route patterns)

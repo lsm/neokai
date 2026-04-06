@@ -70,7 +70,7 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 2. **RoomDashboard.tsx** (`packages/web/src/components/room/RoomDashboard.tsx`):
    - Import `navigateToRoomTab` from router.
    - Need the roomId -- check if it's available via props or `currentRoomIdSignal`. Currently RoomDashboard reads from `roomStore.room.value`, so `roomStore.room.value?.id` can provide the roomId.
-   - Replace `currentRoomTabSignal.value = 'tasks'` (line ~277, ~283, ~289) with `navigateToRoomTab(roomStore.room.value!.id, 'tasks')`.
+   - Replace `currentRoomTabSignal.value = 'tasks'` (line ~277, ~283, ~289) with `navigateToRoomTab(roomStore.room.value!.id, 'tasks')`. **Safety note:** The non-null assertion (`!`) is safe here because `RoomDashboard` only renders when a room is loaded (the parent component guards this). However, if the implementer prefers defensive coding, use `const roomId = roomStore.room.value?.id; if (roomId) navigateToRoomTab(roomId, 'tasks');`.
    - Remove `currentRoomTabSignal` import.
    - Update `packages/web/src/components/room/RoomDashboard.test.tsx`.
 
@@ -88,7 +88,12 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
    - Remove `currentRoomTabSignal` import.
    - Update `packages/web/src/islands/__tests__/RoomContextPanel.test.tsx`.
 
-5. Search for any remaining references to `currentRoomTabSignal` (excluding signal definition and test mocks). If all consumers are migrated, add a deprecation comment on the signal definition in `signals.ts` or remove it entirely if safe.
+5. **Concrete `currentRoomTabSignal` cleanup.** After migrating all callers:
+   - Run `grep -r 'currentRoomTabSignal' packages/web/src/ --include='*.ts' --include='*.tsx' -l` to find all remaining references.
+   - Remove the `currentRoomTabSignal` export from `packages/web/src/lib/signals.ts`.
+   - Update any test files that mock or reference `currentRoomTabSignal` to use `currentRoomActiveTabSignal` instead.
+   - Remove the `navigate-to-room-tab-reset.test.ts` test file (tests the old pending-tab mechanism which no longer applies) or rewrite it to test the new `navigateToRoomTab` behavior.
+   - **Acceptance criterion:** No non-test file imports `currentRoomTabSignal`. The signal definition is removed from `signals.ts`.
 
 6. Run full web test suite to confirm no regressions: `cd packages/web && bunx vitest run`.
 

@@ -4,6 +4,21 @@
 
 Make goals and skills LiveQuery subscriptions conditional on the active tab, so data is only fetched and kept in sync when the user is actually viewing it. Tasks LiveQuery remains always-on (needed by overview dashboard, tasks tab, and goals editor).
 
+## Pre-Implementation: Goals Data Consumer Audit
+
+**Before implementing conditional subscriptions, the implementer must audit all consumers of goals data across the room UI.** Specifically:
+
+1. Search for all reads of `goalStore` / `roomStore.goalStore` / `goals.value` across `packages/web/src/`.
+2. Identify any component that reads goals data and renders **outside** the goals tab.
+3. Known consumers to check:
+   - `RoomDashboard.tsx` — currently shows a "Create a mission to get started" prompt. Verify whether it reads goals data to conditionally show this, or whether it's a static prompt.
+   - `TaskHeader.tsx` — has a goal badge click handler. Check if it reads goal data to render badges, or just navigates.
+   - `RoomContextPanel.tsx` — may show goal summaries or counts.
+4. **If any non-goals-tab component reads goals data for rendering:** either (a) keep goals always-on (remove it from conditional subscriptions), or (b) extract the specific data need into a lightweight separate query.
+5. **If the audit confirms goals data is only consumed on the goals tab:** proceed with conditional subscription as planned.
+
+This audit is a **prerequisite** for Task 6 and must be documented in the PR description.
+
 ## Scope
 
 Primary files: `packages/web/src/lib/room-store.ts`, `packages/web/src/hooks/useRoomLiveQuery.ts`, and their test files.
@@ -68,17 +83,19 @@ Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 1. Import `currentRoomActiveTabSignal` in `useRoomLiveQuery.ts`.
 
-2. Change the hook to accept the active tab as a parameter or read it from the signal directly. Reading from the signal is simpler since Preact signals auto-subscribe in render context, but inside `useEffect` we need to read `currentRoomActiveTabSignal.value` explicitly. The cleanest approach: pass `activeTab` as a second parameter so the hook can react to it as a dependency.
+2. Change the hook to accept the active tab as a **parameter** (not read from signal inside the hook). This is important for Preact Signals reactivity: reading `currentRoomActiveTabSignal.value` inside a `useEffect` dependency array will NOT automatically re-run when the signal changes — Preact signals only trigger re-renders in component render functions or `useSignalEffect`. By passing `activeTab` as a prop from Room.tsx (which reads the signal in render context and thus re-renders on signal change), the `useEffect` dependency array correctly triggers on tab changes.
 
    Recommended signature change:
    ```ts
    export function useRoomLiveQuery(roomId: string, activeTab: string | null): void
    ```
 
+   **Alternative approach:** Use `useSignalEffect` from `@preact/signals` instead of `useEffect` for the tab-dependent subscription effects. This would allow reading `currentRoomActiveTabSignal.value` directly inside the effect. However, the parameter approach is simpler and keeps the hook framework-agnostic.
+
 3. In the hook body, manage three separate `useEffect` blocks:
    - **Tasks** (`[roomId]` dependency): always subscribe/unsubscribe via `roomStore.subscribeRoomTasks(roomId)` / `roomStore.unsubscribeRoomTasks(roomId)`.
    - **Goals** (`[roomId, activeTab]` dependency): subscribe via `roomStore.subscribeRoomGoals(roomId)` only when `activeTab === 'goals'`. Unsubscribe when tab changes away or on unmount.
-   - **Skills** (`[roomId, activeTab]` dependency): subscribe via `roomStore.subscribeRoomSkills(roomId)` only when `activeTab === 'agents' || activeTab === 'settings'`. Unsubscribe when tab changes away or on unmount.
+   - **Skills** (`[roomId, activeTab]` dependency): subscribe via `roomStore.subscribeRoomSkills(roomId)` only when `activeTab === 'agents' || activeTab === 'settings'`. Unsubscribe when tab changes away or on unmount. **Scope note:** `RoomAgents` renders agent configurations (needs skills data), and `RoomSettings` contains `RoomSkillsSettings` as a sub-section. Both tabs need skills data, so subscribing on both `'agents'` and `'settings'` is correct. While settings has sub-sections that don't need skills, the simpler approach of subscribing for the entire settings tab is acceptable — the data payload is small.
 
 4. Update the call site in Room.tsx to pass the active tab:
    ```ts
