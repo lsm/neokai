@@ -119,17 +119,11 @@ describe('Fix 2: Planner HTTP 400 treated as recoverable (bounce)', () => {
 	});
 
 	it('does NOT bounce non-planner workers on HTTP 400 (general/coder still fail)', async () => {
-		// Create a non-planning task for a general worker
-		const goal = await (async () => {
-			const tmpCtx = createRuntimeTestContext({
-				getWorkerMessages: () => [
-					makeWorkerMessage('API Error: 400 {"error":{"message":"bad request"}}'),
-				],
-			});
-			ctx = tmpCtx;
-			return null;
-		})();
-		void goal; // appease linter
+		ctx = createRuntimeTestContext({
+			getWorkerMessages: () => [
+				makeWorkerMessage('API Error: 400 {"error":{"message":"bad request"}}'),
+			],
+		});
 
 		const g = await ctx.goalManager.createGoal({ title: 'G', description: 'D' });
 		const task = await ctx.taskManager.createTask({
@@ -492,6 +486,8 @@ describe('Fix 5: Auto-detect plan PR merge for stuck planning groups', () => {
 		// Group should now be approved
 		const updatedGroup = ctx.groupRepo.getGroup(group.id);
 		expect(updatedGroup?.approved).toBe(true);
+		// approvalSource should be 'github_merge_detected' (not 'human') for audit trail
+		expect(updatedGroup?.approvalSource).toBe('github_merge_detected');
 
 		// The leader should have received a resume message
 		const injectToLeader = ctx.sessionFactory.calls.find(
