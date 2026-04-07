@@ -109,7 +109,6 @@ vi.mock('../../lib/router.ts', () => ({
 }));
 
 vi.mock('../../lib/signals.ts', () => ({
-	currentRoomTabSignal: { value: 'chat' },
 	currentSessionIdSignal: { value: null },
 	slashCommandsSignal: { value: [] },
 }));

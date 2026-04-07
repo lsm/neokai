@@ -12,8 +12,8 @@
 import { useState } from 'preact/hooks';
 import type { RuntimeState, TaskSummary } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
-import { navigateToRoomTask } from '../../lib/router';
-import { currentRoomTabSignal } from '../../lib/signals';
+import { navigateToRoomTask, navigateToRoomTab } from '../../lib/router';
+import { currentRoomIdSignal } from '../../lib/signals';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { cn } from '../../lib/utils';
 
@@ -274,19 +274,28 @@ export function RoomDashboard() {
 					label="Active"
 					count={activeTasks.length}
 					color="border-blue-800/30 text-blue-400"
-					onClick={() => (currentRoomTabSignal.value = 'tasks')}
+					onClick={() => {
+						const rid = currentRoomIdSignal.value;
+						if (rid) navigateToRoomTab(rid, 'tasks');
+					}}
 				/>
 				<StatCard
 					label="Review"
 					count={reviewTasks.length}
 					color="border-purple-800/30 text-purple-400"
-					onClick={() => (currentRoomTabSignal.value = 'tasks')}
+					onClick={() => {
+						const rid = currentRoomIdSignal.value;
+						if (rid) navigateToRoomTab(rid, 'tasks');
+					}}
 				/>
 				<StatCard
 					label="Done"
 					count={doneTasks.length}
 					color="border-green-800/30 text-green-400"
-					onClick={() => (currentRoomTabSignal.value = 'tasks')}
+					onClick={() => {
+						const rid = currentRoomIdSignal.value;
+						if (rid) navigateToRoomTab(rid, 'tasks');
+					}}
 				/>
 			</div>
 

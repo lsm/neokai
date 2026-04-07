@@ -23,13 +23,10 @@ import type { NeoTask, RoomGoal } from '@neokai/shared';
 // Mocks
 // ---------------------------------------------------------------------------
 
-const { mockNavigateToRoom, mockNavigateToRoomMission, mockCurrentRoomTabSignal } = vi.hoisted(
-	() => ({
-		mockNavigateToRoom: vi.fn(),
-		mockNavigateToRoomMission: vi.fn(),
-		mockCurrentRoomTabSignal: { value: 'chat' },
-	})
-);
+const { mockNavigateToRoom, mockNavigateToRoomMission } = vi.hoisted(() => ({
+	mockNavigateToRoom: vi.fn(),
+	mockNavigateToRoomMission: vi.fn(),
+}));
 
 vi.mock('../../../../lib/router.ts', () => ({
 	get navigateToRoom() {
@@ -41,10 +38,6 @@ vi.mock('../../../../lib/router.ts', () => ({
 	get navigateToRoomMission() {
 		return mockNavigateToRoomMission;
 	},
-}));
-
-vi.mock('../../../../lib/signals.ts', () => ({
-	currentRoomTabSignal: mockCurrentRoomTabSignal,
 }));
 
 vi.mock('../../../ui/CircularProgressIndicator.tsx', () => ({

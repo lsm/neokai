@@ -14,15 +14,10 @@ import { roomStore } from '../lib/room-store';
 import {
 	navigateToHome,
 	navigateToRoomTask,
-	navigateToRoom,
-	navigateToRoomAgent,
+	navigateToRoomTab,
 	navigateToRoomMission,
 } from '../lib/router';
-import {
-	currentRoomTabSignal,
-	currentRoomActiveTabSignal,
-	currentRoomAgentActiveSignal,
-} from '../lib/signals';
+import { currentRoomActiveTabSignal, currentRoomAgentActiveSignal } from '../lib/signals';
 import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import { RoomTasks } from '../components/room/RoomTasks';
@@ -49,9 +44,7 @@ interface RoomProps {
 
 export default function Room({ roomId, sessionViewId, taskViewId, missionViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const [activeTab, setActiveTab] = useState<RoomTab>(
-		currentRoomAgentActiveSignal.value ? 'chat' : 'overview'
-	);
+	const activeTab: RoomTab = (currentRoomActiveTabSignal.value as RoomTab) ?? 'overview';
 
 	// Manage LiveQuery subscriptions for tasks and goals.
 	// Intentionally declared before the select() effect so that LiveQuery
@@ -65,49 +58,17 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 		});
 		return () => {
 			roomStore.select(null);
-			// Clear any pending tab signal when leaving a room to prevent cross-room contamination.
-			// Note: do NOT clear currentRoomAgentActiveSignal here — navigation functions
-			// (navigateToRoom, navigateToRoomAgent) manage it explicitly. Clearing it during
+			// Clear active tab signal when leaving a room to prevent cross-room contamination.
+			// Note: do NOT clear currentRoomAgentActiveSignal here — router navigation
+			// functions manage it explicitly. Clearing it during
 			// room-to-room navigation would race with the incoming room's agent URL sync and
 			// cause the Coordinator view to be lost.
-			currentRoomTabSignal.value = null;
 			currentRoomActiveTabSignal.value = null;
 		};
 	}, [roomId]);
 
-	// Watch for pending tab navigation from goal badges in task list / task view
-	const pendingTab = currentRoomTabSignal.value;
-	useEffect(() => {
-		if (pendingTab && !taskViewId) {
-			const validTabs: RoomTab[] = ['chat', 'overview', 'tasks', 'agents', 'goals', 'settings'];
-			if (validTabs.includes(pendingTab as RoomTab)) {
-				setActiveTab(pendingTab as RoomTab);
-				currentRoomActiveTabSignal.value = pendingTab;
-			}
-			currentRoomTabSignal.value = null;
-		}
-	}, [pendingTab, taskViewId, roomId]);
-
-	// Watch for Room Agent activation (e.g., sidebar click, popstate)
-	const agentActive = currentRoomAgentActiveSignal.value;
-	useEffect(() => {
-		if (agentActive) {
-			setActiveTab('chat');
-		}
-	}, [agentActive]);
-
-	// Update URL when tab changes — uses the pending-tab mechanism
-	// (currentRoomTabSignal) so the Room effect and BottomTabBar stay in sync.
 	const handleTabChange = (tab: RoomTab) => {
-		setActiveTab(tab);
-		currentRoomActiveTabSignal.value = tab;
-		if (tab === 'chat') {
-			navigateToRoomAgent(roomId);
-		} else {
-			currentRoomAgentActiveSignal.value = false;
-			currentRoomTabSignal.value = tab;
-			navigateToRoom(roomId);
-		}
+		navigateToRoomTab(roomId, tab);
 	};
 
 	const loading = roomStore.loading.value;

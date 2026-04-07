@@ -6,12 +6,15 @@
  * - taskViewId present → TaskViewToggle overlay (tabs still visible behind it)
  * - sessionViewId present (including synthetic room:chat:<roomId>) → ChatContainer
  * - neither → tabbed dashboard
+ *
+ * Tab state is driven by currentRoomActiveTabSignal (single source of truth).
+ * Tab clicks delegate to navigateToRoomTab which updates both the URL and the signal.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, fireEvent, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import { currentRoomAgentActiveSignal } from '../../lib/signals';
+import { currentRoomAgentActiveSignal, currentRoomActiveTabSignal } from '../../lib/signals';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -20,15 +23,15 @@ import { currentRoomAgentActiveSignal } from '../../lib/signals';
 const {
 	mockNavigateToHome,
 	mockNavigateToRoomTask,
-	mockNavigateToRoom,
-	mockNavigateToRoomAgent,
+	mockNavigateToRoomTab,
+	mockNavigateToRoomMission,
 	mockToastSuccess,
 	mockRoomStoreSelect,
 } = vi.hoisted(() => ({
 	mockNavigateToHome: vi.fn(),
 	mockNavigateToRoomTask: vi.fn(),
-	mockNavigateToRoom: vi.fn(),
-	mockNavigateToRoomAgent: vi.fn(),
+	mockNavigateToRoomTab: vi.fn(),
+	mockNavigateToRoomMission: vi.fn(),
 	mockToastSuccess: vi.fn(),
 	// Hoisted so it stays the same reference across all mock accesses
 	mockRoomStoreSelect: vi.fn().mockResolvedValue(undefined),
@@ -37,8 +40,8 @@ const {
 vi.mock('../../lib/router', () => ({
 	navigateToHome: mockNavigateToHome,
 	navigateToRoomTask: mockNavigateToRoomTask,
-	navigateToRoom: mockNavigateToRoom,
-	navigateToRoomAgent: mockNavigateToRoomAgent,
+	navigateToRoomTab: mockNavigateToRoomTab,
+	navigateToRoomMission: mockNavigateToRoomMission,
 }));
 
 vi.mock('../../lib/toast', () => ({
@@ -219,6 +222,7 @@ describe('Room', () => {
 		mockRoomStoreSelect.mockResolvedValue(undefined);
 		initRoomStoreSignals();
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 	});
 
 	afterEach(() => {
@@ -237,8 +241,8 @@ describe('Room', () => {
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders Chat tab with ChatContainer when agent signal is active', () => {
-			currentRoomAgentActiveSignal.value = true;
+		it('renders Chat tab with ChatContainer when currentRoomActiveTabSignal is "chat"', () => {
+			currentRoomActiveTabSignal.value = 'chat';
 			render(<Room roomId={roomId} />);
 
 			// Chat tab is rendered (always mounted), and dashboard is not visible
@@ -310,29 +314,83 @@ describe('Room', () => {
 	});
 
 	describe('Tab navigation', () => {
-		it('renders Tasks tab content when Tasks tab is clicked', () => {
+		it('renders Tasks tab content when currentRoomActiveTabSignal is "tasks"', () => {
+			currentRoomActiveTabSignal.value = 'tasks';
 			render(<Room roomId={roomId} />);
 
-			// Default is overview (dashboard)
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-
-			fireEvent.click(screen.getByText('Tasks'));
 			expect(screen.getByTestId('room-tasks')).toBeTruthy();
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders Missions tab content when Missions tab is clicked', () => {
+		it('renders Missions tab content when currentRoomActiveTabSignal is "goals"', () => {
+			currentRoomActiveTabSignal.value = 'goals';
 			render(<Room roomId={roomId} />);
 
-			fireEvent.click(screen.getByText('Missions'));
 			expect(screen.getByTestId('goals-editor')).toBeTruthy();
 		});
 
-		it('renders Settings tab content when Settings tab is clicked', () => {
+		it('renders Settings tab content when currentRoomActiveTabSignal is "settings"', () => {
+			currentRoomActiveTabSignal.value = 'settings';
+			render(<Room roomId={roomId} />);
+
+			expect(screen.getByTestId('room-settings')).toBeTruthy();
+		});
+
+		it('renders Agents tab content when currentRoomActiveTabSignal is "agents"', () => {
+			currentRoomActiveTabSignal.value = 'agents';
+			render(<Room roomId={roomId} />);
+
+			expect(screen.getByTestId('room-agents')).toBeTruthy();
+		});
+
+		it('calls navigateToRoomTab when a tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Tasks'));
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'tasks');
+		});
+
+		it('calls navigateToRoomTab with "chat" when Coordinator tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Coordinator'));
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'chat');
+		});
+
+		it('calls navigateToRoomTab with "goals" when Missions tab is clicked', () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Missions'));
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'goals');
+		});
+
+		it('calls navigateToRoomTab with "settings" when Settings tab is clicked', () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Settings'));
-			expect(screen.getByTestId('room-settings')).toBeTruthy();
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'settings');
+		});
+
+		it('defaults to overview tab when currentRoomActiveTabSignal is null', () => {
+			currentRoomActiveTabSignal.value = null;
+			render(<Room roomId={roomId} />);
+
+			// Overview is the default tab
+			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+		});
+
+		it('clears currentRoomActiveTabSignal on unmount', async () => {
+			currentRoomActiveTabSignal.value = 'tasks';
+			const { unmount } = render(<Room roomId={roomId} />);
+			await act(async () => {
+				unmount();
+			});
+
+			expect(currentRoomActiveTabSignal.value).toBeNull();
 		});
 	});
 

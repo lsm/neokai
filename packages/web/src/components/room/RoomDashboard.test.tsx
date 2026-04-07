@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { TaskSummary, RuntimeState } from '@neokai/shared';
+import { currentRoomIdSignal } from '../../lib/signals';
 
 // Define signals for store mock
 let mockTasks: ReturnType<typeof signal<TaskSummary[]>>;
@@ -45,15 +46,15 @@ vi.mock('../../lib/room-store.ts', () => ({
 	},
 }));
 
-vi.mock('../../lib/signals.ts', () => ({
-	currentRoomTabSignal: { value: null },
-}));
-
 const mockNavigateToRoomTask = vi.fn();
+const mockNavigateToRoomTab = vi.fn();
 
 vi.mock('../../lib/router.ts', () => ({
 	get navigateToRoomTask() {
 		return mockNavigateToRoomTask;
+	},
+	get navigateToRoomTab() {
+		return mockNavigateToRoomTab;
 	},
 }));
 
@@ -81,6 +82,7 @@ describe('RoomDashboard', () => {
 		mockGoalByTaskId.value = new Map();
 		mockSessions.value = [];
 		mockRoomId.value = 'room-1';
+		currentRoomIdSignal.value = 'room-1';
 		mockRuntimeState.value = null;
 		mockRuntimeModels.value = { leaderModel: null, workerModel: null };
 		mockPauseRuntime.mockClear();
@@ -88,6 +90,7 @@ describe('RoomDashboard', () => {
 		mockStopRuntime.mockClear();
 		mockStartRuntime.mockClear();
 		mockNavigateToRoomTask.mockClear();
+		mockNavigateToRoomTab.mockClear();
 	});
 
 	afterEach(() => {
@@ -109,14 +112,43 @@ describe('RoomDashboard', () => {
 		...overrides,
 	});
 
-	const selectReviewTab = async (container: Element) => {
-		const reviewTab = Array.from(container.querySelectorAll('button')).find((b) =>
-			b.textContent?.includes('Review')
-		);
-		if (reviewTab) {
-			await fireEvent.click(reviewTab);
-		}
-	};
+	describe('Stat Card Navigation', () => {
+		it('should call navigateToRoomTab with tasks when Active stat is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'in_progress')];
+			const { container } = render(<RoomDashboard />);
+
+			const activeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Active')
+			);
+			await fireEvent.click(activeBtn!);
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
+		});
+
+		it('should call navigateToRoomTab with tasks when Review stat is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'in_review')];
+			const { container } = render(<RoomDashboard />);
+
+			const reviewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Review')
+			);
+			await fireEvent.click(reviewBtn!);
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
+		});
+
+		it('should call navigateToRoomTab with tasks when Done stat is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'completed')];
+			const { container } = render(<RoomDashboard />);
+
+			const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Done')
+			);
+			await fireEvent.click(doneBtn!);
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
+		});
+	});
 
 	describe('Runtime State Indicator', () => {
 		it('should not show runtime controls when state is null', () => {
