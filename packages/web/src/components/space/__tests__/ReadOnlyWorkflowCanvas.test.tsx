@@ -169,25 +169,21 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		expect(onNodeClick).toHaveBeenCalledWith('n1', 'Planner', []);
 	});
 
-	it('shows ChannelInfoPanel when a channel is selected', () => {
+	it('does not show ChannelInfoPanel before a channel is selected', () => {
 		mockWorkflows.value = [makeWorkflow()];
 		const { queryByTestId } = render(<ReadOnlyWorkflowCanvas workflowId="wf-1" />);
-		// Panel not shown before channel selection
 		expect(queryByTestId('channel-info-panel')).toBeNull();
-		// Simulate a channel click via the captured callback
-		capturedOnChannelSelect?.('ch-0');
-		// Panel should now appear
-		expect(queryByTestId('channel-info-panel')).toBeNull(); // channels list is empty in this test
 	});
 
-	it('hides ChannelInfoPanel when close button is clicked', () => {
-		// Wire up a workflow whose useRuntimeCanvasData returns a channel
-		// Since we can't easily inject channelEdges, we test by calling onChannelSelect
-		// and then verifying null deselects
+	it('does not crash when onChannelSelect fires with unknown or null channel id', () => {
 		mockWorkflows.value = [makeWorkflow()];
-		render(<ReadOnlyWorkflowCanvas workflowId="wf-1" />);
-		// Selecting null should not crash
+		const { queryByTestId } = render(<ReadOnlyWorkflowCanvas workflowId="wf-1" />);
+		// Fire with an ID that doesn't match any channel — panel should stay hidden
+		capturedOnChannelSelect?.('no-such-channel');
+		expect(queryByTestId('channel-info-panel')).toBeNull();
+		// Fire with null — deselect, panel stays hidden
 		capturedOnChannelSelect?.(null);
+		expect(queryByTestId('channel-info-panel')).toBeNull();
 	});
 
 	it('passes readOnly=true to WorkflowCanvas so WorkflowNode gets draggable={false}', () => {

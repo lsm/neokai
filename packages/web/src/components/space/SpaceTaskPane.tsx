@@ -468,7 +468,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
 							runId={task.workflowRunId}
-							spaceId={runtimeSpaceId ?? task.spaceId}
 							onNodeClick={handleNodeClick}
 							class="h-full"
 						/>

@@ -474,6 +474,7 @@ export function WorkflowCanvas({
 			dragState,
 			selectedChannelId,
 			onChannelSelect,
+			readOnly,
 		]
 	);
 

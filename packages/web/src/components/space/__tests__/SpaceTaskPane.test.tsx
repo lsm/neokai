@@ -478,7 +478,6 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		const canvas = getByTestId('workflow-canvas');
 		expect(canvas.getAttribute('data-workflow-id')).toBe('wf-abc');
 		expect(canvas.getAttribute('data-run-id')).toBe('run-1');
-		expect(canvas.getAttribute('data-space-id')).toBe('space-1');
 	});
 
 	it('switching to artifacts view closes canvas view', () => {

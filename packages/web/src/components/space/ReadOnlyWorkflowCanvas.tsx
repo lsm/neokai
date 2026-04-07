@@ -17,7 +17,6 @@ import { cn } from '../../lib/utils';
 interface ReadOnlyWorkflowCanvasProps {
 	workflowId: string;
 	runId?: string | null;
-	spaceId?: string | null;
 	onNodeClick?: (nodeId: string, nodeName: string, agentNames: string[]) => void;
 	class?: string;
 }
