@@ -730,19 +730,6 @@ describe('RoomStore — per-query subscribeRoomGoals error paths', () => {
 	it('resets goalStore.loading when liveQuery.subscribe RPC fails', async () => {
 		await roomStore.select(ROOM_ID);
 
-		// Hub connects fine, but the subscribe RPC rejects
-		hub.request.mockImplementation((method: string) => {
-			if (method === 'liveQuery.subscribe' && method === 'liveQuery.subscribe') {
-				// Reject the first liveQuery.subscribe (goals)
-				if (!hub.request.mock.calls.some(([m]) => m === 'liveQuery.subscribe')) {
-					return Promise.reject(new Error('subscribe failed'));
-				}
-			}
-			if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });
-			if (method === 'room.runtime.state') return Promise.reject(new Error('no runtime'));
-			return Promise.resolve({ ok: true });
-		});
-		// Simpler: reject ALL liveQuery.subscribe calls
 		hub.request.mockImplementation((method: string) => {
 			if (method === 'liveQuery.subscribe') return Promise.reject(new Error('subscribe failed'));
 			if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });

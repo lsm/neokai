@@ -35,7 +35,9 @@ import {
 
 async function setupPage(page: import('@playwright/test').Page): Promise<void> {
 	await page.goto('/');
-	// Clear persisted task filter tab so draft tasks are always visible
+	// Clear persisted task filter tab so draft tasks are always visible.
+	// Must run before the app JS bundle hydrates (which reads this key on mount).
+	// page.goto('/') resolves at DOMContentLoaded, before the Preact app mounts.
 	await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 	await page.getByRole('button', { name: 'New Session', exact: true }).waitFor({ timeout: 10000 });
 }
