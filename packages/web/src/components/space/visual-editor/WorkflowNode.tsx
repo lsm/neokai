@@ -18,7 +18,7 @@ import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
-import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
+import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 import { getVisualNodeDimensions } from './nodeMetrics';
@@ -185,7 +185,6 @@ export function WorkflowNode({
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(
 		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
 	);
-	const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
 
 	// ---- Drag state ----
 	const dragState = useRef<{
@@ -340,9 +339,7 @@ export function WorkflowNode({
 			? 'border-green-500'
 			: isSelected
 				? 'border-blue-500'
-				: allDone
-					? 'border-green-600'
-					: 'border-gray-700';
+				: 'border-gray-700';
 
 	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
 

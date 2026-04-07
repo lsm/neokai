@@ -153,7 +153,7 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		expect(canvas.getAttribute('data-node-count')).toBe('0');
 	});
 
-	it('calls onNodeClick when a node is selected, passing just the persisted node ID', () => {
+	it('calls onNodeClick when a node is selected, passing persisted ID and node name', () => {
 		mockWorkflows.value = [makeWorkflow()];
 		const onNodeClick = vi.fn();
 		const { getByTestId } = render(
@@ -165,8 +165,8 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		expect(nodeBtn).not.toBeNull();
 		nodeBtn.click();
 		expect(onNodeClick).toHaveBeenCalledTimes(1);
-		// Called with only the persisted node ID (no tasks array)
-		expect(onNodeClick).toHaveBeenCalledWith('n1');
+		// Called with persisted node ID and node name
+		expect(onNodeClick).toHaveBeenCalledWith('n1', 'Planner');
 	});
 
 	it('shows ChannelInfoPanel when a channel is selected', () => {

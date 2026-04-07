@@ -526,7 +526,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
 		// Simulate a node click — no node execution exists, falls back to task session
-		mockWorkflowCanvasOnNodeClick('node-1');
+		mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node');
 
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-task');
 	});
@@ -585,7 +585,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
 		// Simulate a node click — activity member exists with sessionId
-		mockWorkflowCanvasOnNodeClick('node-1');
+		mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node');
 
 		// Should use the activity member's session, NOT the parent task's session
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-node-agent');

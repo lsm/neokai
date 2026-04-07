@@ -282,13 +282,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					? 'View Agent Session'
 					: 'Open Space Agent';
 
-	const handleNodeClick = (nodeId: string) => {
-		// Match against activityMembers — the same data source used by the "Agents" buttons.
-		// activityMembers are SpaceTaskActivityMember[] keyed by task ID from spaceStore.taskActivity.
-		// node_agent members carry nodeExecution.nodeId which is the persisted workflow node UUID.
-		const nodeMember = activityMembers.find(
-			(m) => m.kind === 'node_agent' && m.nodeExecution?.nodeId === nodeId
-		);
+	const handleNodeClick = (nodeId: string, nodeName: string) => {
+		// Match against activityMembers by label (node name) — same data as the "Agents" buttons.
+		// nodeExecution.nodeId is unreliable (often undefined), so we match by label instead.
+		const nodeMember = activityMembers.find((m) => m.kind === 'node_agent' && m.label === nodeName);
 		if (nodeMember) {
 			spaceOverlayAgentNameSignal.value = nodeMember.label;
 			spaceOverlaySessionIdSignal.value = nodeMember.sessionId;
