@@ -27,6 +27,8 @@ import {
 	navigateToHome,
 	navigateToRoomMission,
 	navigateToRoomTab,
+	navigateToRoomTask,
+	createRoomTaskPath,
 	initializeRouter,
 	cleanupRouter,
 	getRouterState,
@@ -1499,6 +1501,104 @@ describe('Router Utility', () => {
 				expect(currentRoomAgentActiveSignal.value).toBe(true);
 				expect(currentRoomIdSignal.value).toBe('abc-123');
 			});
+		});
+	});
+
+	// ─── navigateToRoomTask ─────────────────────────────────────────────────────
+
+	describe('navigateToRoomTask', () => {
+		const ROOM_ID = '550e8400-e29b-41d4-a716-446655440000';
+		const TASK_ID = '770e8400-e29b-41d4-a716-446655440002';
+
+		it('should push the correct task URL', () => {
+			navigateToRoomTask(ROOM_ID, TASK_ID);
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{ roomId: ROOM_ID, taskId: TASK_ID, path: createRoomTaskPath(ROOM_ID, TASK_ID) },
+				'',
+				createRoomTaskPath(ROOM_ID, TASK_ID)
+			);
+		});
+
+		it('should set currentRoomTaskIdSignal and currentRoomIdSignal', () => {
+			navigateToRoomTask(ROOM_ID, TASK_ID);
+
+			expect(currentRoomTaskIdSignal.value).toBe(TASK_ID);
+			expect(currentRoomIdSignal.value).toBe(ROOM_ID);
+		});
+
+		it('should clear currentRoomGoalIdSignal when navigating to task', () => {
+			// Pre-set a goal ID (as if the user was viewing a mission)
+			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
+
+			navigateToRoomTask(ROOM_ID, TASK_ID);
+
+			// Goal signal must be cleared and task signal must be set
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+			expect(currentRoomTaskIdSignal.value).toBe(TASK_ID);
+		});
+
+		it('should clear currentSessionIdSignal when navigating to task', () => {
+			currentSessionIdSignal.value = 'some-session-id';
+
+			navigateToRoomTask(ROOM_ID, TASK_ID);
+
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should use replaceState when replace is true', () => {
+			navigateToRoomTask(ROOM_ID, TASK_ID, true);
+
+			expect(mockHistory.replaceState).toHaveBeenCalled();
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+		});
+
+		it('should only update signals when already on the target path (idempotent)', () => {
+			const targetPath = createRoomTaskPath(ROOM_ID, TASK_ID);
+			mockLocation.pathname = targetPath;
+			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
+
+			navigateToRoomTask(ROOM_ID, TASK_ID);
+
+			// No history entry pushed
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+			expect(mockHistory.replaceState).not.toHaveBeenCalled();
+			// Signals still updated
+			expect(currentRoomTaskIdSignal.value).toBe(TASK_ID);
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+	});
+
+	// ─── Concurrent state transitions (mission ↔ task) ─────────────────────────
+	// These tests specifically cover inconsistent-state recovery: when both
+	// currentRoomGoalIdSignal and currentRoomTaskIdSignal are set simultaneously
+	// (which shouldn't happen normally), navigation must leave only one active.
+
+	describe('Concurrent state transitions — inconsistent-state recovery', () => {
+		const ROOM_ID = '550e8400-e29b-41d4-a716-446655440000';
+		const TASK_ID = '770e8400-e29b-41d4-a716-446655440002';
+		const GOAL_ID = '660e8400-e29b-41d4-a716-446655440001';
+
+		it('both set→mission: only goal signal remains, task signal cleared', () => {
+			// Both signals set — simulates inconsistent state
+			currentRoomTaskIdSignal.value = TASK_ID;
+			currentRoomGoalIdSignal.value = GOAL_ID;
+
+			navigateToRoomMission(ROOM_ID, '770e8400-e29b-41d4-a716-000000000099');
+
+			expect(currentRoomTaskIdSignal.value).toBeNull();
+			expect(currentRoomGoalIdSignal.value).toBe('770e8400-e29b-41d4-a716-000000000099');
+		});
+
+		it('both set→task: only task signal remains, goal signal cleared', () => {
+			// Both signals set — simulates inconsistent state
+			currentRoomTaskIdSignal.value = TASK_ID;
+			currentRoomGoalIdSignal.value = GOAL_ID;
+
+			navigateToRoomTask(ROOM_ID, '880e8400-e29b-41d4-a716-000000000088');
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+			expect(currentRoomTaskIdSignal.value).toBe('880e8400-e29b-41d4-a716-000000000088');
 		});
 	});
 });
