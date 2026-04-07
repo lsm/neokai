@@ -963,7 +963,7 @@ describe('Task Agent Session Lifecycle', () => {
 			).handleSubSessionError(subSessionId, error);
 		}
 
-		test('injects [STEP_FAILED] notification into Task Agent session', async () => {
+		test('injects [NODE_FAILED] notification into Task Agent session', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const taskSessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 			const taskAgentSession = ctx.createdSessions.get(taskSessionId)!;
@@ -980,7 +980,7 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
 			const lastMsg =
 				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
-			expect(lastMsg.msg).toContain('[STEP_FAILED]');
+			expect(lastMsg.msg).toContain('[NODE_FAILED]');
 			expect(lastMsg.msg).toContain('Agent crashed: OOM');
 		});
 
@@ -1195,7 +1195,7 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
 		});
 
-		test('end-to-end: sub-session completion triggers [STEP_COMPLETE] notification with workflow run', async () => {
+		test('end-to-end: sub-session completion triggers [NODE_COMPLETE] notification with workflow run', async () => {
 			// Seed a workflow run so handleSubSessionComplete can find the step task
 			const wfRunId = 'wf-run-e2e-complete';
 			const wfId = 'wf-id-e2e-complete';
@@ -1246,7 +1246,7 @@ describe('Task Agent Session Lifecycle', () => {
 				ctx.manager as unknown as {
 					handleSubSessionComplete: (
 						taskId: string,
-						stepId: string,
+						nodeId: string,
 						subSessionId: string
 					) => Promise<void>;
 				}
@@ -1255,10 +1255,10 @@ describe('Task Agent Session Lifecycle', () => {
 			// Step completion notifications are session-context only; step task status is runtime-driven.
 			expect(ctx.taskRepo.getTask(stepTask.id)?.status).toBe('in_progress');
 
-			// Task agent should receive [STEP_COMPLETE] notification
+			// Task agent should receive [NODE_COMPLETE] notification
 			const taskAgentSession = ctx.createdSessions.get(taskSessionId)!;
 			const hasStepComplete = taskAgentSession._enqueuedMessages.some((m) =>
-				m.msg.includes('[STEP_COMPLETE]')
+				m.msg.includes('[NODE_COMPLETE]')
 			);
 			expect(hasStepComplete).toBe(true);
 

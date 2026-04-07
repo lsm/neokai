@@ -36,14 +36,14 @@
 
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 
-/** Minimal workflow summary for prompt embedding (avoids exposing full step graph). */
+/** Minimal workflow summary for prompt embedding (avoids exposing full node graph). */
 export interface WorkflowSummary {
 	id: string;
 	name: string;
 	description?: string;
 	tags: string[];
-	/** Number of steps in the workflow — gives the agent a complexity signal. */
-	stepCount: number;
+	/** Number of nodes in the workflow — gives the agent a complexity signal. */
+	nodeCount: number;
 }
 
 /** Minimal agent summary for prompt embedding. */
@@ -75,8 +75,8 @@ export interface SpaceChatAgentContext {
  *
  * The prompt includes:
  *   1. Role and purpose statement
- *   2. Available workflows (names, descriptions, tags, step count)
- *   3. Available agents (names, roles, descriptions)
+ *   2. Available workflows (names, descriptions, tags, node count)
+ *   3. Available agents (names, descriptions)
  *   4. Task-first guidance for workflow-aware execution
  *   5. Operator-supplied background and instructions
  *
@@ -107,13 +107,13 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 		sections.push(`\n## Available Workflows\n`);
 		sections.push(
 			`These workflows are configured in this Space. Each workflow defines a ` +
-				`multi-step process with one or more agents working in sequence.`
+				`multi-node process with one or more agents working in sequence.`
 		);
 		sections.push('');
 		for (const wf of context.workflows) {
 			const tagStr = wf.tags.length > 0 ? ` [${wf.tags.join(', ')}]` : '';
 			const desc = wf.description ? ` — ${wf.description}` : '';
-			sections.push(`- **${wf.name}** (id: \`${wf.id}\`, ${wf.stepCount} step(s))${tagStr}${desc}`);
+			sections.push(`- **${wf.name}** (id: \`${wf.id}\`, ${wf.nodeCount} node(s))${tagStr}${desc}`);
 		}
 	} else {
 		sections.push(

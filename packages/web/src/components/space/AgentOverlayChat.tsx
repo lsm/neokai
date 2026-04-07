@@ -63,7 +63,7 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 				<div
 					ref={panelRef}
 					class={cn(
-						'relative flex flex-col w-full max-w-2xl bg-dark-900 shadow-2xl',
+						'relative flex flex-col h-full w-full max-w-2xl bg-dark-900 shadow-2xl',
 						'border-l border-dark-700',
 						'animate-slideInRight'
 					)}
@@ -99,7 +99,7 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 					</div>
 
 					{/* Chat content */}
-					<div class="flex-1 min-h-0 overflow-hidden">
+					<div class="flex-1 min-h-0 overflow-hidden flex flex-col">
 						<ChatContainer key={sessionId} sessionId={sessionId} />
 					</div>
 				</div>

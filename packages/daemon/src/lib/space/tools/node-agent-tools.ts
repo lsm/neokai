@@ -2,11 +2,11 @@
  * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
  *
  * These handlers implement peer communication tools for node agents within
- * the same workflow step group:
+ * the same workflow node group:
  *
- *   list_peers   — discover other group members with roles and permitted channels
+ *   list_peers   — discover other group members with agent names and permitted channels
  *   send_message — primary channel-validated direct messaging tool
- *   report_done  — signal that this agent has completed its step task
+ *   report_done  — signal that this agent has completed its node task
  *
  * Communication model:
  * - Node agents communicate via declared channel topology (`send_message`).
@@ -66,7 +66,7 @@ export type { ToolResult };
 
 const log = new Logger('node-agent-tools');
 
-function normalizeRoleToken(value: string): string {
+function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
 }
 
@@ -81,13 +81,13 @@ function normalizeRoleToken(value: string): string {
 export interface NodeAgentToolsConfig {
 	/** Session ID of this node agent (used to exclude self from list_peers). */
 	mySessionId: string;
-	/** Role of this node agent (e.g., 'coder', 'reviewer'). */
-	myRole: string;
+	/** Agent name of this node agent (e.g., 'coder', 'reviewer'). */
+	myAgentName: string;
 	/**
-	 * Optional role aliases that should be treated as equivalent to myRole for
-	 * writer authorization checks (e.g., slot role + underlying agent name).
+	 * Optional agent name aliases that should be treated as equivalent to myAgentName for
+	 * writer authorization checks (e.g., slot name + underlying agent name).
 	 */
-	myRoleAliases?: string[];
+	myAgentNameAliases?: string[];
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
 	/** Space ID — used for event emission in report_done. */
@@ -162,8 +162,8 @@ export interface NodeAgentToolsConfig {
 export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 	const {
 		mySessionId,
-		myRole,
-		myRoleAliases,
+		myAgentName,
+		myAgentNameAliases,
 		spaceId,
 		channelResolver,
 		workflowRunId,
@@ -178,21 +178,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		scriptContext,
 	} = config;
 
-	const roleAliases = new Set(
-		[myRole, ...(myRoleAliases ?? [])]
-			.map((value) => normalizeRoleToken(value))
+	const agentNameAliases = new Set(
+		[myAgentName, ...(myAgentNameAliases ?? [])]
+			.map((value) => normalizeAgentNameToken(value))
 			.filter((value) => value.length > 0)
 	);
 
 	return {
 		/**
-		 * List all peers (other group members) with their roles, statuses, session IDs,
+		 * List all peers (other group members) with their agent names, statuses, session IDs,
 		 * permitted channel connections, and completion state.
 		 *
 		 * Does NOT include self (filtered by `mySessionId`).
-		 * Does NOT include the Task Agent (filtered by role 'task-agent').
+		 * Does NOT include the Task Agent (filtered by agent name 'task-agent').
 		 *
-		 * Returns permittedTargets: roles this agent can directly send to via send_message.
+		 * Returns permittedTargets: agent names this agent can directly send to via send_message.
 		 * Returns completionState per peer: execution status, completion summary, and completedAt.
 		 * Returns nodeCompletionState: all executions on this workflow node with their completion state.
 		 */
@@ -218,7 +218,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 								: ('active' as const);
 					return {
 						sessionId: ne.agentSessionId ?? null,
-						role: ne.agentName,
+						agentName: ne.agentName,
 						agentId: ne.agentId ?? null,
 						status: memberStatus,
 						completionState: {
@@ -237,12 +237,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				completedAt: ne.completedAt ?? null,
 			}));
 
-			const permittedTargets = resolver.getPermittedTargets(myRole);
+			const permittedTargets = resolver.getPermittedTargets(myAgentName);
 			const channelTopologyDeclared = !resolver.isEmpty();
 
 			return jsonResult({
 				success: true,
-				myRole,
+				myAgentName,
 				peers,
 				nodeCompletionState,
 				permittedTargets,
@@ -266,7 +266,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const { target, message, data } = args;
 
 			const result = await agentMessageRouter.deliverMessage({
-				fromRole: myRole,
+				fromAgentName: myAgentName,
 				fromSessionId: mySessionId,
 				target,
 				message,
@@ -279,9 +279,9 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					error: result.reason ?? 'Message delivery failed.',
 					delivered: result.delivered.length > 0 ? result.delivered : undefined,
 					failed: result.failed.length > 0 ? result.failed : undefined,
-					unauthorizedRoles: result.unauthorizedRoles,
+					unauthorizedAgentNames: result.unauthorizedAgentNames,
 					permittedTargets: result.permittedTargets,
-					notFoundRoles: result.notFoundRoles,
+					notFoundAgentNames: result.notFoundAgentNames,
 				});
 			}
 
@@ -290,7 +290,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					success: 'partial',
 					delivered: result.delivered,
 					failed: result.failed,
-					notFoundRoles: result.notFoundRoles,
+					notFoundAgentNames: result.notFoundAgentNames,
 					message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
 				});
 			}
@@ -298,10 +298,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			return jsonResult({
 				success: true,
 				delivered: result.delivered,
-				notFoundRoles: result.notFoundRoles,
+				notFoundAgentNames: result.notFoundAgentNames,
 				message:
 					`Message delivered to ${result.delivered.length} peer(s): ` +
-					result.delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
+					result.delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ') +
 					'.',
 			});
 		},
@@ -319,10 +319,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 */
 		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
 			// Determine this agent's node name from the workflow definition.
-			// Falls back to myRole (agent slot name) for backward compatibility
+			// Falls back to myAgentName (agent slot name) for backward compatibility
 			// when no workflow is available (e.g. direct MCP calls without a workflow).
 			const myNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
-			const myNodeName = myNode?.name ?? myRole;
+			const myNodeName = myNode?.name ?? myAgentName;
 
 			// Within-node peers: other agents in the same node
 			const nodeExecs = workflowRunId
@@ -364,15 +364,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				const seen = new Set<string>();
 
 				// Track within-node agent names to exclude them from cross-node targets
-				const withinNodeAgentNames = new Set([myRole, ...nodeExecs.map((e) => e.agentName)]);
+				const withinNodeAgentNames = new Set([myAgentName, ...nodeExecs.map((e) => e.agentName)]);
 
 				for (const ch of channels) {
 					// Match channels where FROM is this agent's node name, slot name, or wildcard
-					if (ch.from !== myNodeName && ch.from !== myRole && ch.from !== '*') continue;
+					if (ch.from !== myNodeName && ch.from !== myAgentName && ch.from !== '*') continue;
 					const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
 					for (const toNode of tos) {
 						// Skip: same as source, already seen, or is a within-node agent
-						if (toNode === myNodeName || toNode === myRole) continue;
+						if (toNode === myNodeName || toNode === myAgentName) continue;
 						if (seen.has(toNode)) continue;
 						if (withinNodeAgentNames.has(toNode)) continue; // within-node agent → not cross-node
 						seen.add(toNode);
@@ -400,7 +400,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
 			return jsonResult({
 				success: true,
-				myAgentName: myRole,
+				myAgentName,
 				myNodeName,
 				withinNodePeers,
 				crossNodeTargets,
@@ -526,7 +526,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		/**
 		 * Write data to a gate's runtime data store (merge semantics).
 		 *
-		 * Authorization: your role must be in the gate's allowedWriterRoles,
+		 * Authorization: your agent name must be in the gate's allowed writers,
 		 * or the list must contain '*' (allow all).
 		 *
 		 * Merge semantics: top-level keys in `data` overwrite existing entries.
@@ -569,18 +569,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				}
 				const writers = fieldDef.writers;
 				const isAuthorized = writers.some((writer) => {
-					const normalizedWriter = normalizeRoleToken(writer);
-					return normalizedWriter === '*' || roleAliases.has(normalizedWriter);
+					const normalizedWriter = normalizeAgentNameToken(writer);
+					return normalizedWriter === '*' || agentNameAliases.has(normalizedWriter);
 				});
 				if (!isAuthorized) {
 					return jsonResult({
 						success: false,
 						error:
-							`Role "${myRole}" is not authorized to write field "${key}" on gate "${gateId}". ` +
+							`Agent "${myAgentName}" is not authorized to write field "${key}" on gate "${gateId}". ` +
 							`Allowed writers: ${writers.length > 0 ? writers.join(', ') : '(none)'}.`,
 						allowedWriters: writers,
-						myRole,
-						myRoleAliases: [...roleAliases],
+						myAgentName,
+						myAgentNameAliases: [...agentNameAliases],
 					});
 				}
 			}
@@ -659,7 +659,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Signal that this node agent has completed its work.
 		 *
 		 * Updates the NodeExecution record for this agent (identified by
-		 * workflowNodeId + myRole) to status 'done' and
+		 * workflowNodeId + myAgentName) to status 'done' and
 		 * persists the optional summary. SpaceRuntime detects the state change and
 		 * triggers workflow completion checks (end-node short-circuit or
 		 * CompletionDetector safety net).
@@ -675,13 +675,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				const nodeExecs = workflowRunId
 					? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
 					: [];
-				const myExec = nodeExecs.find((e) => e.agentName === myRole);
+				const myExec = nodeExecs.find((e) => e.agentName === myAgentName);
 
 				if (!myExec) {
 					return jsonResult({
 						success: false,
 						error:
-							`NodeExecution not found for agent "${myRole}" in node "${workflowNodeId}" ` +
+							`NodeExecution not found for agent "${myAgentName}" in node "${workflowNodeId}" ` +
 							`(run: ${workflowRunId}). Cannot mark as done.`,
 					});
 				}
@@ -694,7 +694,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				return jsonResult({
 					success: true,
 					executionId: myExec.id,
-					agentName: myRole,
+					agentName: myAgentName,
 					summary,
 					message:
 						'Step execution has been marked as completed. ' +
@@ -722,7 +722,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 	const tools = [
 		tool(
 			'list_peers',
-			'List all other agents in this workflow step group with their roles, statuses, session IDs, ' +
+			'List all other agents in this workflow node group with their agent names, statuses, session IDs, ' +
 				'permitted channel connections, and completion state from node executions. ' +
 				'Use this to discover which peers are active, what direct messaging channels are available, ' +
 				'and whether peer executions have completed (including their completion summaries).',
@@ -768,7 +768,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		tool(
 			'write_gate',
 			"Write (merge) data into a gate's runtime data store. " +
-				'Each field you write must exist in the gate schema and your role must be in the field writers list. ' +
+				'Each field you write must exist in the gate schema and your agent name must be in the field writers list. ' +
 				'For map-type (vote) fields, use your nodeId as the map key so each node votes once. ' +
 				'After writing, gate re-evaluation is triggered — the response tells you if the gate is now open. ' +
 				'When the gate opens, blocked target nodes are automatically activated by the workflow runtime.',
@@ -778,7 +778,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		tool(
 			'send_message',
 			'Send a message to a peer agent by name (DM), a node by name (fan-out), or broadcast to all permitted targets. ' +
-				"Use agent role name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
+				"Use agent name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
 				'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
 				'Include structured data in the optional `data` field for gate writes or machine-readable payloads.',
 			SendMessageSchema.shape,

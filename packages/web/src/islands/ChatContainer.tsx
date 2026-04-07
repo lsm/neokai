@@ -950,7 +950,7 @@ export default function ChatContainer({
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
-					class="absolute inset-0 overflow-y-auto overscroll-contain touch-pan-y"
+					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{
 						WebkitOverflowScrolling: 'touch',
 						paddingBottom: `${messagesBottomPadding}px`,
@@ -1068,22 +1068,23 @@ export default function ChatContainer({
 				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
 			</div>
 
-			{/* Error Banner */}
-			{error && (
-				<ErrorBanner
-					error={error}
-					hasDetails={!!storeError?.details}
-					onViewDetails={errorDialog.open}
-					onDismiss={() => {
-						setLocalError(null);
-						sessionStore.clearError();
-					}}
-					actions={errorActions.length > 0 ? errorActions : undefined}
-				/>
-			)}
-
 			{/* Footer - Floating Status Bar */}
-			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
+			<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
+				{/* Error Banner */}
+				{error && (
+					<div class="pointer-events-auto">
+						<ErrorBanner
+							error={error}
+							hasDetails={!!storeError?.details}
+							onViewDetails={errorDialog.open}
+							onDismiss={() => {
+								setLocalError(null);
+								sessionStore.clearError();
+							}}
+							actions={errorActions.length > 0 ? errorActions : undefined}
+						/>
+					</div>
+				)}
 				<div
 					ref={footerContainerRef}
 					class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"

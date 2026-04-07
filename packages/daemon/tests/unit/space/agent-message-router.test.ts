@@ -86,11 +86,11 @@ function makeChannel(from: string, to: string | string[]): WorkflowChannel {
 	};
 }
 function makeResolvedChannel(
-	fromRole: string,
+	fromAgentName: string,
 	toRole: string,
 	_isHubSpoke = false
 ): WorkflowChannel {
-	return makeChannel(fromRole, toRole);
+	return makeChannel(fromAgentName, toRole);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
 		const router = makeRouter(ctx, workflowRunId, injected, runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'LGTM!',
@@ -220,7 +220,7 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
 		expect(result.success).toBe(true);
 		expect(result.delivered).toHaveLength(1);
 		expect(result.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(result.delivered[0].role).toBe('reviewer');
+		expect(result.delivered[0].agentName).toBe('reviewer');
 		expect(injected).toHaveLength(1);
 		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
 	});
@@ -254,7 +254,7 @@ describe('AgentMessageRouter: single agent per role (task-centric model)', () =>
 		const router = makeRouter(ctx, workflowRunId, injected, runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'hello!',
@@ -297,7 +297,7 @@ describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 		});
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: '*',
 			message: 'broadcast!',
@@ -321,14 +321,14 @@ describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: '*',
 			message: 'broadcast',
 		});
 
 		expect(result.success).toBe(false);
-		expect(result.reason).toContain("No permitted targets for role 'coder'");
+		expect(result.reason).toContain("No permitted targets for agent 'coder'");
 	});
 });
 
@@ -355,7 +355,7 @@ describe('AgentMessageRouter: unknown target → clear error', () => {
 		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'nonexistent-agent',
 			message: 'hello',
@@ -377,7 +377,7 @@ describe('AgentMessageRouter: unknown target → clear error', () => {
 		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'ghost',
 			message: 'ping',
@@ -412,7 +412,7 @@ describe('AgentMessageRouter: unauthorized target → error with permitted targe
 		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'unauthorized!',
@@ -436,7 +436,7 @@ describe('AgentMessageRouter: unauthorized target → error with structured fiel
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('populates unauthorizedRoles and permittedTargets structured fields on auth failure', async () => {
+	test('populates unauthorizedAgentNames and permittedTargets structured fields on auth failure', async () => {
 		// reviewer → coder channel only (coder cannot send to reviewer)
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,
@@ -448,15 +448,15 @@ describe('AgentMessageRouter: unauthorized target → error with structured fiel
 		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'unauthorized!',
 		});
 
 		expect(result.success).toBe(false);
-		expect(result.unauthorizedRoles).toBeDefined();
-		expect(result.unauthorizedRoles).toContain('reviewer');
+		expect(result.unauthorizedAgentNames).toBeDefined();
+		expect(result.unauthorizedAgentNames).toContain('reviewer');
 		expect(result.permittedTargets).toBeDefined();
 		// coder has no permitted targets in this topology
 		expect(result.permittedTargets).toHaveLength(0);
@@ -486,7 +486,7 @@ describe('AgentMessageRouter: empty topology → error', () => {
 		const router = makeRouter(ctx, workflowRunId, [], runChannels);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'test',
@@ -500,7 +500,7 @@ describe('AgentMessageRouter: empty topology → error', () => {
 		const router = makeRouter(ctx, '', []);
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'test',
@@ -541,7 +541,7 @@ describe('AgentMessageRouter: partial delivery failure → partial success', () 
 		});
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'hello',
@@ -580,7 +580,7 @@ describe('AgentMessageRouter: all deliveries fail → false success', () => {
 		});
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'reviewer',
 			message: 'test',
@@ -627,7 +627,7 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 		});
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'review-node',
 			message: 'fan-out to node!',
@@ -664,7 +664,7 @@ describe('AgentMessageRouter: node name target without nodeGroups → unknown ta
 		// No nodeGroups configured
 
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: 'review-node',
 			message: 'fan-out attempt',
@@ -676,7 +676,7 @@ describe('AgentMessageRouter: node name target without nodeGroups → unknown ta
 	});
 });
 
-describe('AgentMessageRouter: notFoundRoles structured field', () => {
+describe('AgentMessageRouter: notFoundAgentNames structured field', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -688,7 +688,7 @@ describe('AgentMessageRouter: notFoundRoles structured field', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('populates notFoundRoles on broadcast when some permitted roles have no active sessions', async () => {
+	test('populates notFoundAgentNames on broadcast when some permitted roles have no active sessions', async () => {
 		// topology permits coder → reviewer and coder → ghost-role
 		// but ghost-role has no active sessions
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
@@ -705,7 +705,7 @@ describe('AgentMessageRouter: notFoundRoles structured field', () => {
 
 		// Broadcast to all permitted targets — reviewer exists, ghost-role does not
 		const result = await router.deliverMessage({
-			fromRole: 'coder',
+			fromAgentName: 'coder',
 			fromSessionId: ctx.coderSessionId,
 			target: '*',
 			message: 'broadcast to available',
@@ -714,8 +714,8 @@ describe('AgentMessageRouter: notFoundRoles structured field', () => {
 		// reviewer was delivered, ghost-role was not found
 		expect(result.success).toBe(true);
 		expect(result.delivered).toHaveLength(1);
-		expect(result.delivered[0].role).toBe('reviewer');
-		expect(result.notFoundRoles).toBeDefined();
-		expect(result.notFoundRoles).toContain('ghost-role');
+		expect(result.delivered[0].agentName).toBe('reviewer');
+		expect(result.notFoundAgentNames).toBeDefined();
+		expect(result.notFoundAgentNames).toContain('ghost-role');
 	});
 });

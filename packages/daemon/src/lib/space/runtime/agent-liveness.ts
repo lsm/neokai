@@ -45,14 +45,14 @@ export interface AutoCompletedAgent {
 // ---------------------------------------------------------------------------
 
 /**
- * Scans `stepTasks` for alive agents that have not called `report_done` within
+ * Scans `nodeTasks` for alive agents that have not called `report_done` within
  * their configured timeout and auto-completes them.
  *
  * For each stuck agent found:
  *   - Sets task status to `'done'` with a system-generated result.
  *   - Emits an `agent_auto_completed` notification event.
  *
- * @param stepTasks      Tasks belonging to the current workflow step.
+ * @param nodeTasks      Tasks belonging to the current workflow node.
  * @param spaceId        Space ID (used in notification events).
  * @param taskRepo       Repository for persisting task status updates.
  * @param tam            Task Agent Manager for liveness checks.
@@ -65,7 +65,7 @@ export interface AutoCompletedAgent {
  * @returns              List of tasks that were auto-completed.
  */
 export async function autoCompleteStuckAgents(
-	stepTasks: SpaceTask[],
+	nodeTasks: SpaceTask[],
 	spaceId: string,
 	taskRepo: SpaceTaskRepository,
 	tam: TaskAgentManager,
@@ -76,7 +76,7 @@ export async function autoCompleteStuckAgents(
 	const now = Date.now();
 	const autoCompleted: AutoCompletedAgent[] = [];
 
-	for (const task of stepTasks) {
+	for (const task of nodeTasks) {
 		// Only check in_progress tasks that have a Task Agent session assigned.
 		if (task.status !== 'in_progress' || !task.taskAgentSessionId) {
 			continue;

@@ -87,6 +87,42 @@ export interface AgentCrashEvent {
 	timestamp: string;
 }
 
+/** A blocked execution is being automatically retried by the runtime. */
+export interface TaskRetryEvent {
+	kind: 'task_retry';
+	/** Space the task belongs to. */
+	spaceId: string;
+	/** Task being retried. */
+	taskId: string;
+	/** The workflow run ID containing the retried execution. */
+	runId: string;
+	/** Human-readable reason the execution was originally blocked. */
+	originalReason: string;
+	/** Which retry attempt this is (1-based). */
+	attemptNumber: number;
+	/** Maximum retry attempts before final escalation. */
+	maxAttempts: number;
+	/** ISO-8601 timestamp when the retry was initiated. */
+	timestamp: string;
+}
+
+/** A blocked workflow run has exhausted automatic retries and needs human/Space Agent attention. */
+export interface WorkflowRunNeedsAttentionEvent {
+	kind: 'workflow_run_needs_attention';
+	/** Space the workflow run belongs to. */
+	spaceId: string;
+	/** Workflow run that needs attention. */
+	runId: string;
+	/** Task associated with the blocked run. */
+	taskId: string;
+	/** Human-readable reason the run is blocked. */
+	reason: string;
+	/** Number of automatic retries that were attempted. */
+	retriesExhausted: number;
+	/** ISO-8601 timestamp when the event was emitted. */
+	timestamp: string;
+}
+
 /** A workflow run has reached a terminal state (done, cancelled, or blocked). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
@@ -136,7 +172,9 @@ export type SpaceNotificationEvent =
 	| TaskTimeoutEvent
 	| WorkflowRunCompletedEvent
 	| AgentAutoCompletedEvent
-	| AgentCrashEvent;
+	| AgentCrashEvent
+	| TaskRetryEvent
+	| WorkflowRunNeedsAttentionEvent;
 
 // ---------------------------------------------------------------------------
 // NotificationSink interface

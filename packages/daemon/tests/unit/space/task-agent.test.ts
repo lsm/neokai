@@ -454,7 +454,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 			workflow: makeWorkflow({ nodes: [], startNodeId: 'none' }),
 		});
 		const msg = buildTaskAgentInitialMessage(ctx);
-		expect(msg).toContain('no steps defined');
+		expect(msg).toContain('no nodes defined');
 	});
 
 	test('handles workflow with no steps — remains in runtime helper mode', () => {
@@ -469,7 +469,7 @@ describe('buildTaskAgentInitialMessage — workflow structure', () => {
 		expect(msg).toContain('Space Runtime has already started workflow execution');
 		expect(msg).toContain('list_group_members');
 		expect(msg).toContain('Empty Workflow');
-		expect(msg).toContain('no steps');
+		expect(msg).toContain('no nodes');
 	});
 
 	test('step with unresolvable agentId falls back to raw agent id', () => {

@@ -303,7 +303,7 @@ export class SpaceRuntimeService {
 					name: w.name,
 					description: w.description,
 					tags: w.tags ?? [],
-					stepCount: w.nodes?.length ?? 0,
+					nodeCount: w.nodes?.length ?? 0,
 				})),
 				agents: agents.map((a) => ({
 					id: a.id,

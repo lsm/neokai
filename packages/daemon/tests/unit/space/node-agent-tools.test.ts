@@ -272,7 +272,7 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
 
 	return {
 		mySessionId: ctx.coderSessionId,
-		myRole: 'coder',
+		myAgentName: 'coder',
 		taskId: ctx.parentTaskId,
 		spaceId: ctx.spaceId,
 		channelResolver,
@@ -318,9 +318,9 @@ describe('node-agent-tools: list_peers', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.peers).toHaveLength(1); // only reviewer (coder=self, task-agent=excluded)
-		expect(data.peers[0].role).toBe('reviewer');
+		expect(data.peers[0].agentName).toBe('reviewer');
 		expect(data.peers[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(data.myRole).toBe('coder');
+		expect(data.myAgentName).toBe('coder');
 	});
 
 	test('reports no channel topology when none declared', async () => {
@@ -418,7 +418,7 @@ describe('node-agent-tools: list_peers', () => {
 
 		expect(data.success).toBe(true);
 		expect(data.peers).toHaveLength(1);
-		expect(data.peers[0].role).toBe('tester');
+		expect(data.peers[0].agentName).toBe('tester');
 		expect(data.peers[0].sessionId).toBeNull();
 		expect(data.peers[0].status).toBe('completed');
 		expect(data.peers[0].completionState.completionSummary).toBe('Done');
@@ -456,7 +456,7 @@ describe('node-agent-tools: send_message', () => {
 		expect(data.success).toBe(true);
 		expect(data.delivered).toHaveLength(1);
 		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
-		expect(data.delivered[0].role).toBe('reviewer');
+		expect(data.delivered[0].agentName).toBe('reviewer');
 		expect(injected).toHaveLength(1);
 		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
 	});
@@ -471,7 +471,7 @@ describe('node-agent-tools: send_message', () => {
 
 		expect(data.success).toBe(false);
 		expect(data.error).toContain("does not permit 'coder' to send to: reviewer");
-		expect(data.unauthorizedRoles).toContain('reviewer');
+		expect(data.unauthorizedAgentNames).toContain('reviewer');
 	});
 
 	test('returns error when no channels declared at all (empty topology blocks send_message)', async () => {
@@ -511,7 +511,7 @@ describe('node-agent-tools: send_message', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.error).toContain("No permitted targets for role 'coder'");
+		expect(data.error).toContain("No permitted targets for agent 'coder'");
 	});
 
 	test('broadcast (*) with empty topology returns error', async () => {
@@ -587,7 +587,7 @@ describe('node-agent-tools: send_message', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.unauthorizedRoles).toContain('security');
+		expect(data.unauthorizedAgentNames).toContain('security');
 	});
 
 	test('hub-spoke: spoke cannot send to other spokes', async () => {
@@ -599,7 +599,7 @@ describe('node-agent-tools: send_message', () => {
 				makeResolvedChannel('hub', 'reviewer', true),
 				makeResolvedChannel('reviewer', 'hub', true),
 			]),
-		}); // myRole='coder'
+		}); // myAgentName='coder'
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
 		const data = JSON.parse(result.content[0].text);
@@ -661,7 +661,7 @@ describe('node-agent-tools: send_message', () => {
 		const configAsReviewer = makeConfig(ctx, {
 			channelResolver: biResolver,
 			mySessionId: ctx.reviewerSessionId,
-			myRole: 'reviewer',
+			myAgentName: 'reviewer',
 			messageInjector: async (sid) => {
 				injectedToReviewer.push(sid);
 			},
@@ -869,8 +869,8 @@ describe('node-agent-tools: report_done', () => {
 		expect(myExec?.result).toBe('second');
 	});
 
-	test('returns error when node execution for myRole is missing', async () => {
-		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { myRole: 'ghost-agent' }));
+	test('returns error when node execution for myAgentName is missing', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { myAgentName: 'ghost-agent' }));
 		const result = await handlers.report_done({});
 		const data = JSON.parse(result.content[0].text);
 
@@ -908,7 +908,7 @@ describe('node-agent-tools: report_done', () => {
 
 		const handlers = createNodeAgentToolHandlers(
 			makeConfig(ctx, {
-				myRole: 'ghost-agent',
+				myAgentName: 'ghost-agent',
 				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
 			})
 		);
@@ -1323,7 +1323,7 @@ describe('node-agent-tools: write_gate', () => {
 			channels: [],
 			gates: [gate],
 		};
-		// makeConfig uses myRole: 'coder' by default
+		// makeConfig uses myAgentName: 'coder' by default
 		const config = makeConfig(ctx, { workflow });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.write_gate({ gateId: 'gate-restricted', data: { x: 1 } });
@@ -1332,7 +1332,7 @@ describe('node-agent-tools: write_gate', () => {
 		expect(data.success).toBe(false);
 		expect(data.error).toContain('not authorized');
 		expect(data.allowedWriters).toEqual(['reviewer']);
-		expect(data.myRole).toBe('coder');
+		expect(data.myAgentName).toBe('coder');
 	});
 
 	test('succeeds when writer matches a role alias (case-insensitive)', async () => {
@@ -1355,8 +1355,8 @@ describe('node-agent-tools: write_gate', () => {
 		};
 		const config = makeConfig(ctx, {
 			workflow,
-			myRole: '3de067fc-82f3-4f8c-a3fc-c2c3205648dd',
-			myRoleAliases: ['Reviewer'],
+			myAgentName: '3de067fc-82f3-4f8c-a3fc-c2c3205648dd',
+			myAgentNameAliases: ['Reviewer'],
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.write_gate({ gateId: 'gate-alias-writable', data: { x: 'ok' } });
@@ -1459,7 +1459,7 @@ describe('node-agent-tools: write_gate', () => {
 			channels: [],
 			gates: [gate],
 		};
-		// myRole is 'coder' but '*' should authorize any role
+		// myAgentName is 'coder' but '*' should authorize any role
 		const config = makeConfig(ctx, { workflow });
 		const handlers = createNodeAgentToolHandlers(config);
 		const result = await handlers.write_gate({ gateId: 'gate-open', data: { voted: true } });
@@ -1859,7 +1859,7 @@ describe('node-agent-tools: list_reachable_agents', () => {
 		expect(data.crossNodeTargets).toHaveLength(1);
 	});
 
-	test('only includes outgoing channels (fromRole matches myRole)', async () => {
+	test('only includes outgoing channels (fromRole matches myAgentName)', async () => {
 		// Channel from 'tester' → 'coder' should NOT appear as a cross-node target for coder
 		const config = makeConfig(ctx, {
 			channelResolver: makeResolver([makeResolvedChannel('tester', 'coder')]),
@@ -1962,7 +1962,7 @@ describe('list_peers — completion state', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
+		const reviewerPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'reviewer');
 		expect(reviewerPeer).toBeDefined();
 		expect(reviewerPeer.completionState).not.toBeNull();
 		expect(reviewerPeer.completionState.taskStatus).toBe('done');

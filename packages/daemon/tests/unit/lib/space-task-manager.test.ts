@@ -564,9 +564,10 @@ describe('SpaceTaskManager', () => {
 			]);
 		});
 
-		it('in_progress allows open, done, blocked, and cancelled', () => {
+		it('in_progress allows open, review, done, blocked, and cancelled', () => {
 			expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
 				'open',
+				'review',
 				'done',
 				'blocked',
 				'cancelled',
@@ -645,6 +646,7 @@ describe('SpaceTaskManager', () => {
 			const allStatuses = [
 				'open',
 				'in_progress',
+				'review',
 				'done',
 				'blocked',
 				'cancelled',

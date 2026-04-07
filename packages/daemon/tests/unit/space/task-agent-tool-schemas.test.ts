@@ -22,18 +22,18 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('SpawnNodeAgentSchema', () => {
-	test('accepts valid input with step_id only', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ step_id: 'step-abc' });
+	test('accepts valid input with node_id only', () => {
+		const result = SpawnNodeAgentSchema.safeParse({ node_id: 'step-abc' });
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.step_id).toBe('step-abc');
+			expect(result.data.node_id).toBe('step-abc');
 			expect(result.data.instructions).toBeUndefined();
 		}
 	});
 
-	test('accepts valid input with step_id and instructions', () => {
+	test('accepts valid input with node_id and instructions', () => {
 		const result = SpawnNodeAgentSchema.safeParse({
-			step_id: 'step-abc',
+			node_id: 'step-abc',
 			instructions: 'Focus on unit tests only',
 		});
 		expect(result.success).toBe(true);
@@ -42,18 +42,18 @@ describe('SpawnNodeAgentSchema', () => {
 		}
 	});
 
-	test('rejects missing step_id', () => {
+	test('rejects missing node_id', () => {
 		const result = SpawnNodeAgentSchema.safeParse({ instructions: 'some instructions' });
 		expect(result.success).toBe(false);
 	});
 
-	test('rejects non-string step_id', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ step_id: 42 });
+	test('rejects non-string node_id', () => {
+		const result = SpawnNodeAgentSchema.safeParse({ node_id: 42 });
 		expect(result.success).toBe(false);
 	});
 
 	test('rejects non-string instructions', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ step_id: 'step-1', instructions: 123 });
+		const result = SpawnNodeAgentSchema.safeParse({ node_id: 'step-1', instructions: 123 });
 		expect(result.success).toBe(false);
 	});
 
@@ -72,25 +72,25 @@ describe('CheckNodeStatusSchema', () => {
 		const result = CheckNodeStatusSchema.safeParse({});
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.step_id).toBeUndefined();
+			expect(result.data.node_id).toBeUndefined();
 		}
 	});
 
-	test('accepts valid input with step_id', () => {
-		const result = CheckNodeStatusSchema.safeParse({ step_id: 'step-xyz' });
+	test('accepts valid input with node_id', () => {
+		const result = CheckNodeStatusSchema.safeParse({ node_id: 'step-xyz' });
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.step_id).toBe('step-xyz');
+			expect(result.data.node_id).toBe('step-xyz');
 		}
 	});
 
-	test('rejects non-string step_id', () => {
-		const result = CheckNodeStatusSchema.safeParse({ step_id: true });
+	test('rejects non-string node_id', () => {
+		const result = CheckNodeStatusSchema.safeParse({ node_id: true });
 		expect(result.success).toBe(false);
 	});
 
-	test('rejects null step_id', () => {
-		const result = CheckNodeStatusSchema.safeParse({ step_id: null });
+	test('rejects null node_id', () => {
+		const result = CheckNodeStatusSchema.safeParse({ node_id: null });
 		expect(result.success).toBe(false);
 	});
 });

@@ -113,6 +113,10 @@ export function formatEventMessage(
 			return formatAgentAutoCompleted(event, autonomyLevel);
 		case 'agent_crash':
 			return formatAgentCrash(event, autonomyLevel);
+		case 'task_retry':
+			return formatTaskRetry(event, autonomyLevel);
+		case 'workflow_run_needs_attention':
+			return formatWorkflowRunNeedsAttention(event, autonomyLevel);
 	}
 }
 
@@ -262,6 +266,65 @@ function formatAgentCrash(
 		autonomyLevel,
 	};
 	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatTaskRetry(
+	event: {
+		kind: 'task_retry';
+		spaceId: string;
+		taskId: string;
+		runId: string;
+		originalReason: string;
+		attemptNumber: number;
+		maxAttempts: number;
+		timestamp: string;
+	},
+	autonomyLevel: AutonomyLevel
+): string {
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} was blocked (reason: ${event.originalReason}). ` +
+		`The runtime is automatically retrying (attempt ${event.attemptNumber}/${event.maxAttempts}). ` +
+		`The blocked node execution has been reset to pending and will be re-spawned.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		runId: event.runId,
+		originalReason: event.originalReason,
+		attemptNumber: event.attemptNumber,
+		maxAttempts: event.maxAttempts,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
+}
+
+function formatWorkflowRunNeedsAttention(
+	event: {
+		kind: 'workflow_run_needs_attention';
+		spaceId: string;
+		runId: string;
+		taskId: string;
+		reason: string;
+		retriesExhausted: number;
+		timestamp: string;
+	},
+	autonomyLevel: AutonomyLevel
+): string {
+	const humanReadable =
+		`Workflow run ${event.runId} in space ${event.spaceId} needs attention. ` +
+		`The runtime exhausted ${event.retriesExhausted} automatic retry attempt(s). ` +
+		`Reason: ${event.reason}. ` +
+		`Please investigate and take action: retry with updated instructions, reassign, cancel, or escalate to the human.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		runId: event.runId,
+		taskId: event.taskId,
+		reason: event.reason,
+		retriesExhausted: event.retriesExhausted,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
 }
 
 function buildMessage(

@@ -258,7 +258,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const channelResolver = overrides.channelResolver ?? new ChannelResolver([]);
 		return {
 			mySessionId: coderSessionId,
-			myRole: 'coder',
+			myAgentName: 'coder',
 			taskId: 'lp-cs-task',
 			spaceId,
 			channelResolver,
@@ -357,7 +357,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		const reviewerPeer = data.peers.find((p: { role: string }) => p.role === 'reviewer');
+		const reviewerPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'reviewer');
 		expect(reviewerPeer).toBeDefined();
 		expect(reviewerPeer.completionState.taskStatus).toBe('done');
 		expect(reviewerPeer.completionState.completionSummary).toBe('Review passed');

@@ -357,7 +357,7 @@ function makeConfig(
 	sessionFactory: SubSessionFactory,
 	options?: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
-		onSubSessionComplete?: (stepId: string, sessionId: string) => Promise<void>;
+		onSubSessionComplete?: (nodeId: string, sessionId: string) => Promise<void>;
 	}
 ): TaskAgentToolsConfig {
 	return {
@@ -466,12 +466,12 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.sessionId).toBeString();
-		expect(parsed.stepId).toBe(wf.startNodeId);
+		expect(parsed.nodeId).toBe(wf.startNodeId);
 		expect(parsed.taskId).toBe(stepTask.id);
 	});
 
@@ -486,7 +486,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		const before = ctx.taskRepo.getTask(mainTask.id);
 		expect(before?.status).toBe('open');
 
-		await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 
 		const after = ctx.taskRepo.getTask(mainTask.id);
 		expect(after?.status).toBe('in_progress');
@@ -499,7 +499,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		const updatedStepTask = ctx.taskRepo.getTask(stepTask.id);
@@ -514,8 +514,8 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (stepId) => {
-					completedSteps.push(stepId);
+				onSubSessionComplete: async (nodeId) => {
+					completedSteps.push(nodeId);
 					// Actually mark the step task as completed (as TaskAgentManager would do)
 					ctx.taskRepo.updateTask(stepTask.id, {
 						status: 'done',
@@ -525,7 +525,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 			})
 		);
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		// Trigger sub-session completion
@@ -550,7 +550,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 			})
 		);
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(injections).toHaveLength(1);
@@ -574,7 +574,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		);
 
 		await handlers.spawn_node_agent({
-			step_id: wf.startNodeId,
+			node_id: wf.startNodeId,
 			instructions: 'Custom override instructions here',
 		});
 
@@ -583,14 +583,14 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		expect(injections[0].message).toContain('Custom override instructions here');
 	});
 
-	test('returns error when step_id not found in workflow', async () => {
+	test('returns error when node_id not found in workflow', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: 'step-does-not-exist' });
+		const result = await handlers.spawn_node_agent({ node_id: 'step-does-not-exist' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -606,7 +606,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 
 		// The second step has no task yet because the workflow has not advanced to it
 		const step2Id = wf.nodes[1].id;
-		const result = await handlers.spawn_node_agent({ step_id: step2Id });
+		const result = await handlers.spawn_node_agent({ node_id: step2Id });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -627,7 +627,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 			makeConfig(ctx, mainTask.id, 'run-does-not-exist', factory)
 		);
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -646,7 +646,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
@@ -662,7 +662,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -670,14 +670,14 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		expect(after?.status).toBe('in_progress');
 	});
 
-	test('double-spawn for same step_id succeeds on second call in standalone handler tests', async () => {
+	test('double-spawn for same node_id succeeds on second call in standalone handler tests', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// First spawn
-		const first = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const first = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const firstParsed = JSON.parse(first.content[0].text);
 		expect(firstParsed.success).toBe(true);
 		const firstSessionId = firstParsed.sessionId;
@@ -685,7 +685,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		// Second spawn for the same step should still succeed.
 		// In isolated handler tests, node_execution session persistence is not performed
 		// by TaskAgentManager, so a new session may be created.
-		const second = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const second = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const secondParsed = JSON.parse(second.content[0].text);
 
 		expect(secondParsed.success).toBe(true);
@@ -699,19 +699,19 @@ describe('createTaskAgentToolHandlers — spawn_node_agent', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
 		const sessionId = parsed.sessionId;
 		const memberInfo = factory._capturedMemberInfos.get(sessionId);
 
-		// memberInfo must carry the agent's ID and slot name (role)
+		// memberInfo must carry the agent's ID and slot name (agentName)
 		expect(memberInfo).toBeDefined();
 		expect(memberInfo?.agentId).toBe(ctx.agentId);
 		// For explicit agents[] nodes, the slot name is 'only-step' (set in buildSingleStepWorkflow).
-		// The slot name is used for group membership (not the base SpaceAgent.role or agentId).
-		expect(memberInfo?.role).toBe('only-step');
+		// The slot name is used for group membership (not the base SpaceAgent name or agentId).
+		expect(memberInfo?.agentName).toBe('only-step');
 	});
 });
 
@@ -736,7 +736,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -751,11 +751,11 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// Spawn the node agent first
-		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const spawnResult = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 
 		// Factory returns isProcessing: true by default
-		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -773,7 +773,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		// Mark the step task as completed directly (simulating completion callback)
 		ctx.taskRepo.updateTask(stepTask.id, { status: 'done', completedAt: Date.now() });
 
-		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -794,26 +794,26 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		// Manually set taskAgentSessionId without spawning (simulate orphaned session)
 		ctx.taskRepo.updateTask(stepTask.id, { taskAgentSessionId: 'orphaned-session-id' });
 
-		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.sessionStatus).toBe('unknown');
 	});
 
-	test('returns error when step_id is omitted', async () => {
+	test('returns error when node_id is omitted', async () => {
 		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 		const factory = makeMockSessionFactory();
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		// Call without step_id — step_id is required (currentNodeId removed in migration 59)
+		// Call without node_id — node_id is required (currentNodeId removed in migration 59)
 		const result = await handlers.check_node_status({});
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('step_id is required');
+		expect(parsed.error).toContain('node_id is required');
 	});
 
 	test('returns not_found when step has no task yet', async () => {
@@ -825,7 +825,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 
 		// Check step 2 which has no task (step not yet started)
 		const step2Id = wf.nodes[1].id;
-		const result = await handlers.check_node_status({ step_id: step2Id });
+		const result = await handlers.check_node_status({ node_id: step2Id });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -833,7 +833,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		expect(parsed.sessionStatus).toBe('not_started');
 	});
 
-	test('returns error when workflow run not found for the given step_id', async () => {
+	test('returns error when workflow run not found for the given node_id', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Main task',
@@ -842,12 +842,12 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		});
 		const factory = makeMockSessionFactory();
 
-		// step_id provided but run-missing does not exist
+		// node_id provided but run-missing does not exist
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, 'run-missing', factory)
 		);
 
-		const result = await handlers.check_node_status({ step_id: 'some-step-id' });
+		const result = await handlers.check_node_status({ node_id: 'some-step-id' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -863,7 +863,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// Spawn and then trigger complete (but don't update DB task status yet)
-		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const spawnResult = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 
 		// Simulate session completing without the completion callback updating DB
@@ -872,7 +872,7 @@ describe('createTaskAgentToolHandlers — check_node_status', () => {
 			factory as unknown as { getProcessingState: (id: string) => SubSessionState }
 		).getProcessingState = (_id: string) => ({ isProcessing: false, isComplete: true });
 
-		const result = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const result = await handlers.check_node_status({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
@@ -1319,19 +1319,19 @@ describe('createTaskAgentToolHandlers — end-to-end lifecycle', () => {
 		);
 
 		// 1. Spawn node agent
-		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const spawnResult = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 		expect(sessionId).toBeString();
 
 		// 2. Check status — running
-		const checkRunning = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const checkRunning = await handlers.check_node_status({ node_id: wf.startNodeId });
 		expect(JSON.parse(checkRunning.content[0].text).sessionStatus).toBe('running');
 
 		// 3. Trigger sub-session completion (fires onSubSessionComplete callback)
 		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(sessionId);
 
 		// 4. Check status — completed
-		const checkDone = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const checkDone = await handlers.check_node_status({ node_id: wf.startNodeId });
 		expect(JSON.parse(checkDone.content[0].text).taskStatus).toBe('done');
 
 		// 5. Report result (mainTask is already in_progress after spawn_node_agent)
@@ -1671,7 +1671,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ node_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1680,7 +1680,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
 		)._capturedMemberInfos.get(sessionId);
-		expect(capturedInfo?.role).toBe('strict-reviewer'); // slot role, not 'coder' (base agent role)
+		expect(capturedInfo?.agentName).toBe('strict-reviewer'); // slot role, not 'coder' (base agent role)
 	});
 
 	test('uses slot name as role for group membership in explicit agents[] format', async () => {
@@ -1691,7 +1691,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const result = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1700,7 +1700,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
 		)._capturedMemberInfos.get(sessionId);
-		expect(capturedInfo?.role).toBe('only-step');
+		expect(capturedInfo?.agentName).toBe('only-step');
 	});
 
 	test('spawned session uses the base agent model (WorkflowNodeAgent has no model field)', async () => {
@@ -1734,7 +1734,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		});
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ node_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1779,7 +1779,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		});
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
-		const result = await handlers.spawn_node_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ node_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1827,7 +1827,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		// spawn_node_agent picks the last matching task
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-		const result = await handlers.spawn_node_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ node_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
@@ -1836,9 +1836,9 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		const capturedInfo = (
 			factory as ReturnType<typeof makeMockSessionFactory>
 		)._capturedMemberInfos.get(sessionId);
-		expect(capturedInfo?.role).toBeString();
+		expect(capturedInfo?.agentName).toBeString();
 		// Role should be one of the defined slot names, not the base SpaceAgent role ('coder')
-		expect(capturedInfo?.role).not.toBe('coder');
+		expect(capturedInfo?.agentName).not.toBe('coder');
 	});
 
 	test('spawn_node_agent succeeds even when slot uses systemPrompt override', async () => {
@@ -1879,7 +1879,7 @@ describe('createTaskAgentToolHandlers — spawn_node_agent slot role and overrid
 		});
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-		const result = await handlers.spawn_node_agent({ step_id: stepId });
+		const result = await handlers.spawn_node_agent({ node_id: stepId });
 		const parsed = JSON.parse(result.content[0].text);
 
 		// Spawn must succeed
