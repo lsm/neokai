@@ -451,7 +451,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							workflowId={canvasWorkflowId}
 							runId={task.workflowRunId}
 							spaceId={runtimeSpaceId ?? task.spaceId}
-							onNodeClick={agentSessionId ? handleNodeClick : undefined}
+							onNodeClick={handleNodeClick}
 							class="h-full"
 						/>
 					</div>
