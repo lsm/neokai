@@ -1256,7 +1256,7 @@ describe('Router Utility', () => {
 			expect(currentRoomIdSignal.value).toBe(ROOM_ID);
 		});
 
-		it('should clear currentRoomGoalIdSignal — vice versa of mission→task concurrent transition', () => {
+		it('should clear currentRoomGoalIdSignal when navigating to task', () => {
 			// Pre-set a goal ID (as if the user was viewing a mission)
 			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
 
@@ -1265,6 +1265,14 @@ describe('Router Utility', () => {
 			// Goal signal must be cleared and task signal must be set
 			expect(currentRoomGoalIdSignal.value).toBeNull();
 			expect(currentRoomTaskIdSignal.value).toBe(TASK_ID);
+		});
+
+		it('should clear currentSessionIdSignal when navigating to task', () => {
+			currentSessionIdSignal.value = 'some-session-id';
+
+			navigateToRoomTask(ROOM_ID, TASK_ID);
+
+			expect(currentSessionIdSignal.value).toBeNull();
 		});
 
 		it('should use replaceState when replace is true', () => {
@@ -1291,34 +1299,17 @@ describe('Router Utility', () => {
 	});
 
 	// ─── Concurrent state transitions (mission ↔ task) ─────────────────────────
+	// These tests specifically cover inconsistent-state recovery: when both
+	// currentRoomGoalIdSignal and currentRoomTaskIdSignal are set simultaneously
+	// (which shouldn't happen normally), navigation must leave only one active.
 
-	describe('Concurrent state transitions between mission and task views', () => {
+	describe('Concurrent state transitions — inconsistent-state recovery', () => {
 		const ROOM_ID = '550e8400-e29b-41d4-a716-446655440000';
 		const TASK_ID = '770e8400-e29b-41d4-a716-446655440002';
 		const GOAL_ID = '660e8400-e29b-41d4-a716-446655440001';
 
-		it('task→mission: task signal cleared, goal signal set', () => {
-			currentRoomTaskIdSignal.value = TASK_ID;
-			currentRoomGoalIdSignal.value = null;
-
-			navigateToRoomMission(ROOM_ID, GOAL_ID);
-
-			expect(currentRoomTaskIdSignal.value).toBeNull();
-			expect(currentRoomGoalIdSignal.value).toBe(GOAL_ID);
-		});
-
-		it('mission→task: goal signal cleared, task signal set', () => {
-			currentRoomGoalIdSignal.value = GOAL_ID;
-			currentRoomTaskIdSignal.value = null;
-
-			navigateToRoomTask(ROOM_ID, TASK_ID);
-
-			expect(currentRoomGoalIdSignal.value).toBeNull();
-			expect(currentRoomTaskIdSignal.value).toBe(TASK_ID);
-		});
-
-		it('both set→mission: only goal signal remains after mission navigation', () => {
-			// Simulate an inconsistent state where both are set
+		it('both set→mission: only goal signal remains, task signal cleared', () => {
+			// Both signals set — simulates inconsistent state
 			currentRoomTaskIdSignal.value = TASK_ID;
 			currentRoomGoalIdSignal.value = GOAL_ID;
 
@@ -1328,8 +1319,8 @@ describe('Router Utility', () => {
 			expect(currentRoomGoalIdSignal.value).toBe('770e8400-e29b-41d4-a716-000000000099');
 		});
 
-		it('both set→task: only task signal remains after task navigation', () => {
-			// Simulate an inconsistent state where both are set
+		it('both set→task: only task signal remains, goal signal cleared', () => {
+			// Both signals set — simulates inconsistent state
 			currentRoomTaskIdSignal.value = TASK_ID;
 			currentRoomGoalIdSignal.value = GOAL_ID;
 
