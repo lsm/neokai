@@ -46,7 +46,7 @@ async function makeGitRepo(label: string): Promise<string> {
 
 	execSync('git -c init.defaultBranch=main init', { cwd: dir, stdio: 'pipe' });
 	execSync('git config user.name "Test User"', { cwd: dir });
-	execSync('git config user.email "test@example.com"');
+	execSync('git config user.email "test@example.com"', { cwd: dir });
 
 	// Create an initial commit so HEAD exists and worktrees can be based on it
 	writeFileSync(join(dir, 'README.md'), '# test\n');
