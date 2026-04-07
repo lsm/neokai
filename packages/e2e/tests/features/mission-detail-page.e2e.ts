@@ -249,6 +249,12 @@ test.describe('MissionDetail Page — Navigation', () => {
 			timeout: 8000,
 		});
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}`), { timeout: 5000 });
+
+		// The Missions tab should still be the active tab.
+		// The Room component keeps its activeTab local state ('goals') across in-app navigation;
+		// handlePopState for a plain /room/:id URL does not change currentRoomTabSignal, so the
+		// tab that was active before navigating to mission detail is preserved.
+		await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('back button returns to Missions tab', async ({ page }) => {
@@ -305,8 +311,14 @@ test.describe('MissionDetail Page — Navigation', () => {
 		// so it remains accessible even when the overlay is shown.
 		// This confirms the overlay is scoped to the tab content area (absolute inset-0 within
 		// the relative content div) and does not cover the room's tab navigation bar.
-		await expect(page.getByRole('button', { name: 'Missions' })).toBeVisible({ timeout: 5000 });
-		await expect(page.getByRole('button', { name: 'Tasks' })).toBeVisible({ timeout: 5000 });
+		// Use exact: true to avoid matching sidebar CollapsibleSection buttons whose accessible
+		// names contain "Missions" as a substring (e.g. "Missions section").
+		await expect(page.getByRole('button', { name: 'Missions', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.getByRole('button', { name: 'Tasks', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 });
 
