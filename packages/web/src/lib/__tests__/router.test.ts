@@ -39,6 +39,7 @@ import {
 	currentRoomGoalIdSignal,
 	currentRoomAgentActiveSignal,
 	currentRoomActiveTabSignal,
+	currentRoomSessionIdSignal,
 } from '../signals';
 
 // Store original values (use unknown to avoid type errors at module load time)
@@ -1228,6 +1229,276 @@ describe('Router Utility', () => {
 			// App can initialize router and restore session
 			const restoredSession = initializeRouter();
 			expect(restoredSession).toBe('550e8400e29b41d4a716446655440003');
+		});
+
+		// ──────────────────────────────────────────────────────────────────────────
+		// Room tab route — handlePopState tests
+		// ──────────────────────────────────────────────────────────────────────────
+
+		describe('handlePopState with room tab routes', () => {
+			it('should set currentRoomActiveTabSignal to "goals" when popstate navigates to /room/:id/goals', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/goals';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				expect(currentRoomActiveTabSignal.value).toBe('goals');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+				expect(currentSessionIdSignal.value).toBeNull();
+				expect(currentRoomTaskIdSignal.value).toBeNull();
+				expect(currentRoomGoalIdSignal.value).toBeNull();
+				expect(currentRoomAgentActiveSignal.value).toBe(false);
+			});
+
+			it('should set currentRoomActiveTabSignal to "tasks" when popstate navigates to /room/:id/tasks', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				expect(currentRoomActiveTabSignal.value).toBe('tasks');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should set currentRoomActiveTabSignal to "agents" when popstate navigates to /room/:id/agents', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/agents';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				expect(currentRoomActiveTabSignal.value).toBe('agents');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should set currentRoomActiveTabSignal to "settings" when popstate navigates to /room/:id/settings', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/settings';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				expect(currentRoomActiveTabSignal.value).toBe('settings');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should reset currentRoomActiveTabSignal to "overview" when popstate navigates back to /room/:id', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				// First navigate to tasks
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBe('tasks');
+
+				// Then navigate back to plain room
+				mockLocation.pathname = '/room/abc-123';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBe('overview');
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates to a mission sub-route', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				// First on a tab route
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBe('tasks');
+
+				// Then navigate to mission
+				mockLocation.pathname = '/room/abc-123/mission/aaa-111';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomGoalIdSignal.value).toBe('aaa-111');
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates to a task sub-route', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/room/abc-123/task/def-456';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomTaskIdSignal.value).toBe('def-456');
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates to a session sub-route', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/goals';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/room/abc-123/session/caf-000';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomSessionIdSignal.value).toBe('caf-000');
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates to a standalone session', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/session/def-456';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates to home', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/goals';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to /sessions', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBe('tasks');
+
+				mockLocation.pathname = '/sessions';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to /inbox', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/goals';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/inbox';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to /spaces', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/agents';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/spaces';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to a space', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/settings';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/space/def-456';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+		});
+
+		// ──────────────────────────────────────────────────────────────────────────
+		// Room tab route — initializeRouter tests
+		// ──────────────────────────────────────────────────────────────────────────
+
+		describe('initializeRouter with room tab routes', () => {
+			it('should set currentRoomActiveTabSignal to "goals" when page loads at /room/:id/goals', () => {
+				mockLocation.pathname = '/room/abc-123/goals';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBe('goals');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+				expect(currentSessionIdSignal.value).toBeNull();
+			});
+
+			it('should set currentRoomActiveTabSignal to "settings" when page loads at /room/:id/settings', () => {
+				mockLocation.pathname = '/room/abc-123/settings';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBe('settings');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should set currentRoomActiveTabSignal to "tasks" when page loads at /room/:id/tasks', () => {
+				mockLocation.pathname = '/room/abc-123/tasks';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBe('tasks');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should set currentRoomActiveTabSignal to "agents" when page loads at /room/:id/agents', () => {
+				mockLocation.pathname = '/room/abc-123/agents';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBe('agents');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should set currentRoomActiveTabSignal to "overview" when page loads at plain /room/:id', () => {
+				mockLocation.pathname = '/room/abc-123';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBe('overview');
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
+
+			it('should clear currentRoomActiveTabSignal when page loads at a mission sub-route', () => {
+				mockLocation.pathname = '/room/abc-123/mission/aaa-111';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomGoalIdSignal.value).toBe('aaa-111');
+			});
+
+			it('should clear currentRoomActiveTabSignal when page loads at a task sub-route', () => {
+				mockLocation.pathname = '/room/abc-123/task/def-456';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomTaskIdSignal.value).toBe('def-456');
+			});
+
+			it('should clear currentRoomActiveTabSignal when page loads at a session sub-route', () => {
+				mockLocation.pathname = '/room/abc-123/session/caf-000';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomSessionIdSignal.value).toBe('caf-000');
+			});
+
+			it('should not interfere with room agent route (/room/:id/agent)', () => {
+				mockLocation.pathname = '/room/abc-123/agent';
+				initializeRouter();
+
+				expect(currentRoomActiveTabSignal.value).toBe('chat');
+				expect(currentRoomAgentActiveSignal.value).toBe(true);
+				expect(currentRoomIdSignal.value).toBe('abc-123');
+			});
 		});
 	});
 });
