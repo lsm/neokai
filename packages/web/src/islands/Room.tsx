@@ -16,6 +16,7 @@ import {
 	navigateToRoomTask,
 	navigateToRoom,
 	navigateToRoomAgent,
+	navigateToRoomMission,
 } from '../lib/router';
 import {
 	currentRoomTabSignal,
@@ -317,9 +318,7 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 										onTaskClick={
 											roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
 										}
-										onGoalClick={() => {
-											currentRoomTabSignal.value = 'goals';
-										}}
+										onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
 										onReactivate={async (taskId) => {
 											await roomStore.setTaskStatus(taskId, 'in_progress');
 										}}
@@ -338,6 +337,7 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 										goals={roomStore.goals.value}
 										tasks={roomStore.tasks.value}
 										onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
+										onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
 										onCreateGoal={handleCreateGoal}
 										onUpdateGoal={handleUpdateGoal}
 										onDeleteGoal={handleDeleteGoal}

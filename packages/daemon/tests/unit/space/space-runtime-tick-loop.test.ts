@@ -768,7 +768,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	// -------------------------------------------------------------------------
 
 	describe('start() / stop() lifecycle', () => {
-		test('start() is idempotent — calling twice does not create duplicate timers', () => {
+		test('start() is idempotent — calling twice does not create duplicate timers', async () => {
 			// Intercept setInterval to count how many timers are created
 			const origSetInterval = globalThis.setInterval;
 			let intervalCount = 0;
@@ -784,13 +784,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 				// Only one interval should have been created
 				expect(intervalCount).toBe(1);
-				rt.stop();
+				await rt.stop();
 			} finally {
 				globalThis.setInterval = origSetInterval;
 			}
 		});
 
-		test('stop() clears the timer — clearInterval is called', () => {
+		test('stop() clears the timer — clearInterval is called', async () => {
 			// Use a deterministic approach: intercept clearInterval to verify it's called
 			const origClearInterval = globalThis.clearInterval;
 			let clearCalled = false;
@@ -804,21 +804,21 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				rt.start();
 				expect(clearCalled).toBe(false);
 
-				rt.stop();
+				await rt.stop();
 				expect(clearCalled).toBe(true);
 			} finally {
 				globalThis.clearInterval = origClearInterval;
 			}
 		});
 
-		test('stop() when not started is a no-op', () => {
+		test('stop() when not started is a no-op', async () => {
 			const rt = new SpaceRuntime(buildConfig());
 
 			// Should not throw
-			expect(() => rt.stop()).not.toThrow();
+			await expect(rt.stop()).resolves.toBeUndefined();
 		});
 
-		test('start() can be called again after stop() — creates a new timer', () => {
+		test('start() can be called again after stop() — creates a new timer', async () => {
 			const origSetInterval = globalThis.setInterval;
 			let intervalCount = 0;
 			globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
@@ -832,13 +832,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				rt.start();
 				expect(intervalCount).toBe(1);
 
-				rt.stop();
+				await rt.stop();
 
 				// Restart — should create a new interval
 				rt.start();
 				expect(intervalCount).toBe(2);
 
-				rt.stop();
+				await rt.stop();
 			} finally {
 				globalThis.setInterval = origSetInterval;
 			}

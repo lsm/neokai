@@ -343,17 +343,21 @@ export class QueryRunner {
 					logger.error('Error handling SDK message:', error);
 					logger.error('Message type:', (message as SDKMessage).type);
 
-					const processingState = stateManager.getState();
-					await stateManager.setIdle();
+					// During cleanup the database may already be closed — skip
+					// state persistence to avoid cascading "closed database" errors.
+					if (!this.ctx.isCleaningUp()) {
+						const processingState = stateManager.getState();
+						await stateManager.setIdle();
 
-					await errorManager.handleError(
-						session.id,
-						error as Error,
-						ErrorCategory.MESSAGE,
-						'Error processing SDK message. The session has been reset.',
-						processingState,
-						{ messageType: (message as SDKMessage).type }
-					);
+						await errorManager.handleError(
+							session.id,
+							error as Error,
+							ErrorCategory.MESSAGE,
+							'Error processing SDK message. The session has been reset.',
+							processingState,
+							{ messageType: (message as SDKMessage).type }
+						);
+					}
 				}
 			}
 
@@ -373,6 +377,13 @@ export class QueryRunner {
 			}
 		} catch (error) {
 			logger.error('Streaming query error:', error);
+
+			// During cleanup the database may already be closed. Skip all
+			// error-recovery DB writes to avoid cascading "closed database"
+			// errors that escape as unhandled rejections.
+			if (this.ctx.isCleaningUp()) {
+				return;
+			}
 
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';

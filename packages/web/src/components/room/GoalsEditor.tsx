@@ -85,6 +85,8 @@ export interface GoalsEditorProps {
 	onTriggerNow?: (goalId: string) => Promise<void>;
 	/** Set nextRunAt to a specific datetime for a recurring mission (optional) */
 	onScheduleNext?: (goalId: string, nextRunAt: number) => Promise<void>;
+	/** Handler for clicking a goal title to navigate to mission detail */
+	onGoalClick?: (goalId: string) => void;
 }
 
 // ─── Common Schedule Presets ──────────────────────────────────────────────────
@@ -1168,6 +1170,7 @@ interface GoalItemProps {
 	onLinkTask: (taskId: string) => Promise<void>;
 	isExpanded: boolean;
 	onToggleExpand: () => void;
+	onGoalClick?: (goalId: string) => void;
 	onListExecutions?: (goalId: string) => Promise<MissionExecution[]>;
 	onTriggerNow?: (goalId: string) => Promise<void>;
 	onScheduleNext?: (goalId: string, nextRunAt: number) => Promise<void>;
@@ -1182,6 +1185,7 @@ function GoalItem({
 	onLinkTask,
 	isExpanded,
 	onToggleExpand,
+	onGoalClick,
 	onListExecutions,
 	onTriggerNow,
 	onScheduleNext,
@@ -1332,7 +1336,19 @@ function GoalItem({
 					{/* Row 1: Title + actions */}
 					<div class="flex items-start justify-between gap-2 mb-1.5">
 						<div class="flex items-center gap-2 min-w-0">
-							<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							{onGoalClick ? (
+								<button
+									class="text-sm font-semibold text-gray-100 leading-snug hover:text-emerald-400 transition-colors text-left"
+									onClick={(e) => {
+										e.stopPropagation();
+										onGoalClick(goal.id);
+									}}
+								>
+									{goal.title}
+								</button>
+							) : (
+								<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							)}
 							{goal.shortId && <GoalShortIdBadge shortId={goal.shortId} />}
 						</div>
 						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -1951,6 +1967,7 @@ export function GoalsEditor({
 	onListExecutions,
 	onTriggerNow,
 	onScheduleNext,
+	onGoalClick,
 }: GoalsEditorProps) {
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
@@ -2044,6 +2061,7 @@ export function GoalsEditor({
 							onLinkTask={(taskId) => onLinkTask(goal.id, taskId)}
 							isExpanded={expandedGoalId === goal.id}
 							onToggleExpand={() => toggleExpand(goal.id)}
+							onGoalClick={onGoalClick}
 							onListExecutions={onListExecutions}
 							onTriggerNow={onTriggerNow}
 							onScheduleNext={onScheduleNext}

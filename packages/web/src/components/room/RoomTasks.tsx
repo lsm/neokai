@@ -46,7 +46,7 @@ interface RoomTasksProps {
 	/** Pre-built reverse lookup from roomStore.goalByTaskId.value */
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }
 
@@ -297,7 +297,7 @@ function TaskList({
 	tab: TaskFilterTab;
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }) {
 	if (tab === 'active') {
@@ -455,7 +455,7 @@ function TaskGroup({
 	allTasks: TaskSummary[];
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 	showAlert?: boolean;
 	showClock?: boolean;
@@ -595,7 +595,7 @@ function TaskItem({
 	allTasks: TaskSummary[];
 	goal?: RoomGoal;
 	onClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
@@ -653,7 +653,7 @@ function TaskItem({
 								data-testid={`task-goal-badge-${task.id}`}
 								onClick={(e) => {
 									e.stopPropagation();
-									onGoalClick?.();
+									onGoalClick?.(goal.id);
 								}}
 								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full hover:bg-emerald-900/40 transition-colors"
 								title={`Mission: ${goal.title}`}
