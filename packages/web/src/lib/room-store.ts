@@ -266,7 +266,7 @@ class RoomStore {
 
 	/**
 	 * Stale-event guard: set of currently active subscriptionIds.
-	 * Cleared immediately in unsubscribeRoom before handler teardown so that
+	 * Cleared immediately in unsubscribeQuery before handler teardown so that
 	 * any in-flight events (queued in the JS event loop between room switch and
 	 * handler removal) are discarded rather than applied to the wrong room's state.
 	 */
@@ -372,6 +372,8 @@ class RoomStore {
 	 * @param queryName - The named query (e.g., 'tasks.byRoom')
 	 * @param onSubscribe - Called after hub is obtained, before subscribe request.
 	 *                       Used to set loading state (e.g., goalStore.loading).
+	 * @param onError - Called when subscription fails or is race-cancelled.
+	 *                   Used to reset loading state (e.g., goalStore.loading).
 	 * @param setupHandlers - Registers snapshot/delta event handlers on the hub.
 	 *                         Must return an array of cleanup functions.
 	 */
@@ -380,6 +382,7 @@ class RoomStore {
 		roomId: string,
 		queryName: string,
 		onSubscribe: () => void,
+		onError: () => void,
 		setupHandlers: (
 			hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
 			subId: string
@@ -428,6 +431,7 @@ class RoomStore {
 				}
 				// Clean up on failure
 				this.liveQueryActive.delete(key);
+				onError();
 				for (const fn of cleanups) {
 					try {
 						fn();
@@ -441,6 +445,7 @@ class RoomStore {
 
 			// Guard: abort if unsubscribed while awaiting the subscribe request
 			if (!this.liveQueryActive.has(key)) {
+				onError();
 				for (const fn of cleanups) {
 					try {
 						fn();
@@ -464,6 +469,7 @@ class RoomStore {
 					})
 					.catch((err) => {
 						logger.warn(`${queryName} LiveQuery re-subscribe failed:`, err);
+						onError();
 					});
 			});
 			cleanups.push(unsubReconnect);
@@ -477,6 +483,7 @@ class RoomStore {
 			});
 		} catch (err) {
 			this.liveQueryActive.delete(key);
+			onError();
 			const failedCleanups = this.liveQueryCleanups.get(key);
 			if (failedCleanups) {
 				for (const fn of failedCleanups) {
@@ -531,6 +538,7 @@ class RoomStore {
 			roomId,
 			'tasks.byRoom',
 			() => {}, // no loading state for tasks
+			() => {}, // no loading state to reset on error
 			(hub, tasksSubId) => {
 				const cleanups: Array<() => void> = [];
 
@@ -589,6 +597,9 @@ class RoomStore {
 			() => {
 				this.goalStore.loading.value = true;
 			},
+			() => {
+				this.goalStore.loading.value = false;
+			},
 			(hub, goalsSubId) => {
 				const cleanups: Array<() => void> = [];
 
@@ -627,6 +638,7 @@ class RoomStore {
 			roomId,
 			'skills.byRoom',
 			() => {}, // no loading state for skills
+			() => {}, // no loading state to reset on error
 			(hub, skillsSubId) => {
 				const cleanups: Array<() => void> = [];
 

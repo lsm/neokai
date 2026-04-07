@@ -657,7 +657,7 @@ describe('RoomStore — subscribeRoom/unsubscribeRoom backward compatibility', (
 		expect(roomStore.goalsLoading.value).toBe(false);
 	});
 
-	it('reconnect re-subscribes all three after subscribeRoom', async () => {
+	it('reconnect re-subscribes all three and sets goalStore.loading', async () => {
 		await roomStore.subscribeRoom(ROOM_ID);
 
 		// Clear initial loading
@@ -676,9 +676,13 @@ describe('RoomStore — subscribeRoom/unsubscribeRoom backward compatibility', (
 			rows: [],
 			version: 1,
 		});
+		expect(roomStore.goalsLoading.value).toBe(false);
 
 		hub.request.mockClear();
 		hub.fireConnection('connected');
+
+		// Reconnect sets goalsLoading back to true via onSubscribe
+		expect(roomStore.goalsLoading.value).toBe(true);
 
 		const calls = hub.request.mock.calls as [string, unknown][];
 		const subscribeCalls = calls.filter(([method]) => method === 'liveQuery.subscribe');
@@ -689,5 +693,149 @@ describe('RoomStore — subscribeRoom/unsubscribeRoom backward compatibility', (
 		expect(queryNames).toContain('tasks.byRoom');
 		expect(queryNames).toContain('goals.byRoom');
 		expect(queryNames).toContain('skills.byRoom');
+	});
+});
+
+describe('RoomStore — per-query subscribeRoomGoals error paths', () => {
+	let hub: MockHub;
+
+	beforeEach(async () => {
+		hub = createMockHub();
+		setupHubRequests(hub);
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(hub as never);
+		roomStore.unsubscribeRoom(ROOM_ID);
+		if (roomStore.roomId.value !== null) {
+			await roomStore.select(null);
+		}
+	});
+
+	afterEach(async () => {
+		roomStore.unsubscribeRoom(ROOM_ID);
+		await roomStore.select(null);
+		vi.clearAllMocks();
+	});
+
+	it('resets goalStore.loading when getHub() rejects', async () => {
+		await roomStore.select(ROOM_ID);
+
+		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('connection failed'));
+
+		await roomStore.subscribeRoomGoals(ROOM_ID);
+
+		// goalStore.loading should be reset even though subscribe failed
+		expect(roomStore.goalsLoading.value).toBe(false);
+	});
+
+	it('resets goalStore.loading when liveQuery.subscribe RPC fails', async () => {
+		await roomStore.select(ROOM_ID);
+
+		// Hub connects fine, but the subscribe RPC rejects
+		hub.request.mockImplementation((method: string) => {
+			if (method === 'liveQuery.subscribe' && method === 'liveQuery.subscribe') {
+				// Reject the first liveQuery.subscribe (goals)
+				if (!hub.request.mock.calls.some(([m]) => m === 'liveQuery.subscribe')) {
+					return Promise.reject(new Error('subscribe failed'));
+				}
+			}
+			if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });
+			if (method === 'room.runtime.state') return Promise.reject(new Error('no runtime'));
+			return Promise.resolve({ ok: true });
+		});
+		// Simpler: reject ALL liveQuery.subscribe calls
+		hub.request.mockImplementation((method: string) => {
+			if (method === 'liveQuery.subscribe') return Promise.reject(new Error('subscribe failed'));
+			if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });
+			if (method === 'room.runtime.state') return Promise.reject(new Error('no runtime'));
+			return Promise.resolve({ ok: true });
+		});
+
+		await roomStore.subscribeRoomGoals(ROOM_ID);
+
+		expect(roomStore.goalsLoading.value).toBe(false);
+	});
+
+	it('resets goalStore.loading on reconnect subscribe failure', async () => {
+		await roomStore.select(ROOM_ID);
+		await roomStore.subscribeRoomGoals(ROOM_ID);
+
+		// Clear loading with snapshot
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: GOALS_SUB_ID,
+			rows: [],
+			version: 1,
+		});
+		expect(roomStore.goalsLoading.value).toBe(false);
+
+		// Make subscribe fail on reconnect
+		hub.request.mockImplementation((method: string) => {
+			if (method === 'liveQuery.subscribe') return Promise.reject(new Error('reconnect failed'));
+			return Promise.resolve({ ok: true });
+		});
+
+		// Reconnect triggers re-subscribe, sets loading=true, then subscribe fails
+		hub.fireConnection('connected');
+
+		// The reconnect handler sets loading=true synchronously, then the async
+		// subscribe rejection calls onError which resets loading.
+		// Wait for the microtask to process.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(roomStore.goalsLoading.value).toBe(false);
+	});
+
+	it('clears liveQueryActive on getHub() rejection so re-subscribe is possible', async () => {
+		await roomStore.select(ROOM_ID);
+
+		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('connection failed'));
+
+		await roomStore.subscribeRoomGoals(ROOM_ID);
+
+		expect(hub._handlers.get('liveQuery.snapshot') ?? []).toHaveLength(0);
+
+		// Restore hub for the second call
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+
+		// Second subscribeRoomGoals should succeed
+		await roomStore.subscribeRoomGoals(ROOM_ID);
+
+		expect((hub._handlers.get('liveQuery.snapshot') ?? []).length).toBeGreaterThan(0);
+	});
+});
+
+describe('RoomStore — per-query subscribeRoomSkills error paths', () => {
+	let hub: MockHub;
+
+	beforeEach(async () => {
+		hub = createMockHub();
+		setupHubRequests(hub);
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(hub as never);
+		roomStore.unsubscribeRoom(ROOM_ID);
+		if (roomStore.roomId.value !== null) {
+			await roomStore.select(null);
+		}
+	});
+
+	afterEach(async () => {
+		roomStore.unsubscribeRoom(ROOM_ID);
+		await roomStore.select(null);
+		vi.clearAllMocks();
+	});
+
+	it('clears liveQueryActive on getHub() rejection so re-subscribe is possible', async () => {
+		await roomStore.select(ROOM_ID);
+
+		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('connection failed'));
+
+		await roomStore.subscribeRoomSkills(ROOM_ID);
+
+		expect(hub._handlers.get('liveQuery.snapshot') ?? []).toHaveLength(0);
+
+		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
+
+		await roomStore.subscribeRoomSkills(ROOM_ID);
+
+		expect((hub._handlers.get('liveQuery.snapshot') ?? []).length).toBeGreaterThan(0);
 	});
 });
