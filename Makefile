@@ -80,14 +80,7 @@ test: test-daemon test-web
 
 test-daemon:
 	@echo "Running daemon tests..."
-	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage; \
-	EXIT=$$?; \
-	if [ $$EXIT -ne 0 ]; then \
-		echo ""; \
-		echo "===== FAILING TESTS ====="; \
-		NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --only-failures packages/daemon/tests/unit packages/shared/tests 2>&1; \
-	fi; \
-	exit $$EXIT
+	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --only-failures packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
 test-web:
 	@echo "Running web tests..."
