@@ -337,6 +337,33 @@ describe('useMissionDetailData — execution loading', () => {
 
 		expect(result.current.executions).toBeNull();
 	});
+
+	it('re-fetches executions when goal updatedAt changes (new execution completed)', async () => {
+		const initialExecs = [makeExecution()];
+		const updatedExecs = [makeExecution(), { ...makeExecution(), executionNumber: 2 }];
+		mockListExecutions.mockResolvedValueOnce(initialExecs).mockResolvedValueOnce(updatedExecs);
+
+		const baseTime = Date.now();
+		mockGoalsSignal.value = [makeGoal({ missionType: 'recurring', updatedAt: baseTime })];
+		mockTasksSignal.value = [];
+
+		const { result } = renderHook(() => useMissionDetailData('room-1', 'goal-1'));
+
+		await waitFor(() => {
+			expect(result.current.executions).toEqual(initialExecs);
+		});
+		expect(mockListExecutions).toHaveBeenCalledTimes(1);
+
+		// Simulate execution completion: daemon updates goal (nextRunAt, updatedAt, etc.)
+		act(() => {
+			mockGoalsSignal.value = [makeGoal({ missionType: 'recurring', updatedAt: baseTime + 5000 })];
+		});
+
+		await waitFor(() => {
+			expect(result.current.executions).toEqual(updatedExecs);
+		});
+		expect(mockListExecutions).toHaveBeenCalledTimes(2);
+	});
 });
 
 describe('useMissionDetailData — availableStatusActions', () => {

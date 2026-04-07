@@ -68,8 +68,13 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 	// (URL change) and goal.value?.missionType so the effect re-runs when:
 	//   1. The goal arrives asynchronously after mount (null → RoomGoal).
 	//   2. The goal's missionType changes to/from 'recurring'.
+	// We also depend on goal.value?.updatedAt so new executions (which update
+	// the goal's nextRunAt/consecutiveFailures/updatedAt via the daemon) cause
+	// a re-fetch of the execution history, satisfying the LiveQuery reactivity
+	// requirement for execution completion events.
 	const goalMissionType = goal.value?.missionType;
 	const resolvedGoalId = goal.value?.id;
+	const goalUpdatedAt = goal.value?.updatedAt;
 	useEffect(() => {
 		const g = goal.value;
 		if (!g || g.missionType !== 'recurring') return;
@@ -96,8 +101,10 @@ export function useMissionDetailData(roomId: string, goalId: string): UseMission
 		};
 		// goalId covers URL changes; resolvedGoalId+goalMissionType cover async goal arrival
 		// and missionType changes (e.g. goal arriving from null → recurring).
+		// goalUpdatedAt triggers a re-fetch when the daemon updates the goal after
+		// an execution completes (changing nextRunAt, consecutiveFailures, etc.).
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [goalId, resolvedGoalId, goalMissionType]);
+	}, [goalId, resolvedGoalId, goalMissionType, goalUpdatedAt]);
 
 	// Derived available status actions based on current goal status.
 	const availableStatusActions = useComputed<AvailableStatusAction[]>(() => {
