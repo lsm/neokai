@@ -13,12 +13,12 @@
  *   - Suite 7: Fresh repository instances over the same DB — verifies channel resolution
  *              survives daemon restart (the only suite that cannot be replaced by unit tests).
  *   - Suite 8: Missing workflowRunId edge case: when no workflowRunId is set, list_peers
- *              returns empty peers and send_message fails with no-active-sessions.
+ *              returns empty peers and send_message returns an unknown-target error
+ *              (no reachable targets can be resolved).
  *   - Suite 9: Task Agent participation in channel topology — via list_peers and
- *              send_message to 'task-agent' target. By design, send_message to task-agent
- *              fails with "no active sessions" even when channel is declared (task-agent is
- *              filtered from delivery targets). list_peers correctly shows the
- *              channel in permittedTargets for both the sender and Task Agent.
+ *              send_message to 'task-agent' target. Without an injected taskAgentRouter,
+ *              send_message to task-agent returns unknown-target even when the channel is
+ *              declared. list_peers includes seeded task-agent executions.
  *
  * Suites 2–6 provide complementary coverage for the direction-enforcement and topology
  * patterns that also exist in node-agent-tools.test.ts, exercised here end-to-end through
@@ -31,9 +31,9 @@
  *   5. Hub-spoke A↔[B,C,D]       — hub broadcasts, spokes reply to hub only, spoke isolation
  *   6. Concurrent injection       — both messages delivered when two agents inject simultaneously
  *   7. Data reload                — channel resolution survives DB re-fetch
- *   8. Error paths                — missing workflowRunId returns empty peers / no active sessions
- *   9. Task Agent in topology     — channel to/from task-agent is reflected in permittedTargets
- *                                  but send_message to task-agent fails (delivery target filtered)
+ *   8. Error paths                — missing workflowRunId returns empty peers / unknown-target
+ *   9. Task Agent in topology     — channel to/from task-agent is reflected in permittedTargets;
+ *                                  send_message needs taskAgentRouter for explicit task-agent routing
  *
  * All tests pass with:
  *   cd packages/daemon && bun test tests/unit/space/cross-agent-messaging-integration.test.ts
@@ -44,16 +44,16 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import {
 	createNodeAgentToolHandlers,
 	type NodeAgentToolsConfig,
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
+import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -95,21 +95,25 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
  */
 function seedTask(
 	db: BunDatabase,
-	spaceId: string,
+	_spaceId: string,
 	workflowRunId: string,
 	agentName: string,
 	sessionId: string | null,
-	_nodeId: string = STEP_NODE_ID,
-	status: string = 'in_progress'
+	nodeId: string = STEP_NODE_ID,
+	status: 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' = 'in_progress'
 ): void {
-	const now = Date.now();
-	const id = `task-int-${Math.random().toString(36).slice(2)}`;
-	db.prepare(
-		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, labels,
-        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', '[]', ?, '[]', ?, ?, ?)`
-	).run(id, spaceId, spaceId, agentName, status, workflowRunId, sessionId, now, now);
+	const repo = new NodeExecutionRepository(db);
+	const execution = repo.create({
+		workflowRunId,
+		workflowNodeId: nodeId,
+		agentName,
+		agentSessionId: sessionId,
+		status,
+	});
+	repo.update(execution.id, {
+		agentSessionId: sessionId,
+		status,
+	});
 }
 
 /**
@@ -120,7 +124,7 @@ function seedTask(
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
-	channels: ResolvedChannel[]
+	channels: WorkflowChannel[]
 ): { runId: string; resolver: ChannelResolver } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
@@ -139,19 +143,8 @@ function seedWorkflowRunWithChannels(
 	return { runId: run.id, resolver: new ChannelResolver(channels) };
 }
 
-function makeResolvedChannel(
-	fromRole: string,
-	toRole: string,
-	isHubSpoke = false
-): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
-		isHubSpoke,
-	};
+function makeResolvedChannel(from: string, to: string | string[]): WorkflowChannel {
+	return { id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`, from, to };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,19 +155,17 @@ interface TestDb {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	spaceTaskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	workflowRunId: string;
-	taskManager: SpaceTaskManager;
 }
 
 function makeTestDb(): TestDb {
 	const { db, dir } = makeDb();
 	const spaceId = `space-${Math.random().toString(36).slice(2)}`;
 	seedSpaceRow(db, spaceId);
-	const spaceTaskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
-	const taskManager = new SpaceTaskManager(db, spaceId);
 
 	// Create a workflow run for this test DB
 	const workflowRepo = new SpaceWorkflowRepository(db);
@@ -193,10 +184,9 @@ function makeTestDb(): TestDb {
 		db,
 		dir,
 		spaceId,
-		spaceTaskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		workflowRunId: run.id,
-		taskManager,
 	};
 }
 
@@ -229,18 +219,22 @@ function makeStepConfig(
 	channelResolver: ChannelResolver,
 	injector: (sessionId: string, message: string) => Promise<void>
 ): NodeAgentToolsConfig {
+	const agentMessageRouter = new AgentMessageRouter({
+		nodeExecutionRepo: tdb.nodeExecutionRepo,
+		workflowRunId: tdb.workflowRunId,
+		workflowChannels: channelResolver.getChannels(),
+		messageInjector: injector,
+	});
 	return {
 		mySessionId: sessionId,
 		myRole: role,
 		taskId: 'task-integration-test',
-		stepTaskId: '',
 		spaceId: tdb.spaceId,
 		channelResolver,
 		workflowRunId: tdb.workflowRunId,
-		spaceTaskRepo: tdb.spaceTaskRepo,
+		nodeExecutionRepo: tdb.nodeExecutionRepo,
 		workflowNodeId: STEP_NODE_ID,
-		messageInjector: injector,
-		taskManager: tdb.taskManager,
+		agentMessageRouter,
 	};
 }
 
@@ -925,7 +919,7 @@ describe('data reload and DB-based validation', () => {
 	});
 
 	test('send_message works correctly with a resolver built from workflow channel data', async () => {
-		// Seed tasks for this test's workflowRunId
+		// Seed executions for this test's workflowRunId
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-rs');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-rs');
 
@@ -935,20 +929,24 @@ describe('data reload and DB-based validation', () => {
 
 		const { messages, injector } = makeMessageCapture();
 
-		// Simulate post-restart: fresh repo instances over same DB
-		const freshTaskRepo = new SpaceTaskRepository(tdb.db);
+		// Simulate post-restart: fresh node execution repository over same DB
+		const freshNodeExecutionRepo = new NodeExecutionRepository(tdb.db);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: freshNodeExecutionRepo,
+			workflowRunId: tdb.workflowRunId,
+			workflowChannels: channelResolver.getChannels(),
+			messageInjector: injector,
+		});
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-rs',
 			myRole: 'coder',
 			taskId: 'task-reload-send',
-			stepTaskId: '',
 			spaceId: tdb.spaceId,
 			channelResolver,
 			workflowRunId: tdb.workflowRunId,
-			spaceTaskRepo: freshTaskRepo,
+			nodeExecutionRepo: freshNodeExecutionRepo,
 			workflowNodeId: STEP_NODE_ID,
-			messageInjector: injector,
-			taskManager: tdb.taskManager,
+			agentMessageRouter,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -964,20 +962,19 @@ describe('data reload and DB-based validation', () => {
 		expect(messages[0].message).toContain('post-reload check');
 	});
 
-	test('tasks are still accessible after fresh SpaceTaskRepository over same DB', async () => {
-		// Seed a task, then query via a fresh repository instance
+	test('node executions are still accessible after fresh repository over same DB', async () => {
+		// Seed executions, then query via a fresh repository instance
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder-reload');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'reviewer', 'session-reviewer-reload');
 
-		// Simulate post-restart: fresh repo over same DB
-		// After M71, workflowNodeId is no longer on SpaceTask — filter by taskAgentSessionId only.
-		const freshRepo = new SpaceTaskRepository(tdb.db);
-		const tasks = freshRepo
+		// Simulate post-restart: fresh node execution repo over same DB.
+		const freshRepo = new NodeExecutionRepository(tdb.db);
+		const executions = freshRepo
 			.listByWorkflowRun(tdb.workflowRunId)
-			.filter((t) => t.taskAgentSessionId);
+			.filter((e) => e.agentSessionId);
 
-		expect(tasks.length).toBe(2);
-		const sessionIds = tasks.map((t) => t.taskAgentSessionId);
+		expect(executions.length).toBe(2);
+		const sessionIds = executions.map((e) => e.agentSessionId);
 		expect(sessionIds).toContain('session-coder-reload');
 		expect(sessionIds).toContain('session-reviewer-reload');
 	});
@@ -987,7 +984,7 @@ describe('data reload and DB-based validation', () => {
 // Test Suite 8: Error Paths — Missing workflowRunId
 // ===========================================================================
 // Covers the edge case where workflowRunId is empty — list_peers returns empty
-// peers and send_message fails with no-active-sessions.
+// peers and send_message fails with unknown-target (no reachable peers).
 
 describe('error paths — missing workflowRunId', () => {
 	let tdb: TestDb;
@@ -1001,22 +998,27 @@ describe('error paths — missing workflowRunId', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	test('send_message returns no-active-sessions when workflowRunId is empty', async () => {
+	test('send_message returns unknown-target when workflowRunId is empty', async () => {
 		const { messages, injector } = makeMessageCapture();
+		const channelResolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
+		const agentMessageRouter = new AgentMessageRouter({
+			nodeExecutionRepo: tdb.nodeExecutionRepo,
+			workflowRunId: '',
+			workflowChannels: channelResolver.getChannels(),
+			messageInjector: injector,
+		});
 
 		// workflowRunId is empty — no peers can be found
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-norun',
 			myRole: 'coder',
 			taskId: 'task-norun',
-			stepTaskId: '',
 			spaceId: tdb.spaceId,
-			channelResolver: new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]),
+			channelResolver,
 			workflowRunId: '',
-			spaceTaskRepo: tdb.spaceTaskRepo,
+			nodeExecutionRepo: tdb.nodeExecutionRepo,
 			workflowNodeId: STEP_NODE_ID,
-			messageInjector: injector,
-			taskManager: tdb.taskManager,
+			agentMessageRouter,
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1024,23 +1026,28 @@ describe('error paths — missing workflowRunId', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions');
+		expect((data.error as string).toLowerCase()).toContain("unknown target 'reviewer'");
+		expect((data.error as string).toLowerCase()).toContain('no reachable targets available');
 		expect(messages).toHaveLength(0);
 	});
 
 	test('list_peers returns empty peers when workflowRunId is empty', async () => {
+		const channelResolver = new ChannelResolver([]);
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-norun',
 			myRole: 'coder',
 			taskId: 'task-norun',
-			stepTaskId: '',
 			spaceId: tdb.spaceId,
-			channelResolver: new ChannelResolver([]),
+			channelResolver,
 			workflowRunId: '',
-			spaceTaskRepo: tdb.spaceTaskRepo,
+			nodeExecutionRepo: tdb.nodeExecutionRepo,
 			workflowNodeId: STEP_NODE_ID,
-			messageInjector: async () => {},
-			taskManager: tdb.taskManager,
+			agentMessageRouter: new AgentMessageRouter({
+				nodeExecutionRepo: tdb.nodeExecutionRepo,
+				workflowRunId: '',
+				workflowChannels: channelResolver.getChannels(),
+				messageInjector: async () => {},
+			}),
 		};
 
 		const handlers = createNodeAgentToolHandlers(config);
@@ -1058,9 +1065,8 @@ describe('error paths — missing workflowRunId', () => {
 // Verifies that:
 //   - ChannelResolver.canSend correctly handles task-agent as fromRole/toRole
 //   - ChannelResolver.getPermittedTargets correctly returns task-agent when channel declared
-//   - send_message to 'task-agent' fails with "no active sessions" even when channel declared
-//     (task-agent is filtered from delivery targets — this is the known gap)
-//   - list_peers correctly shows the channel in permittedTargets involving task-agent
+//   - send_message to 'task-agent' returns unknown-target when no taskAgentRouter is injected
+//   - list_peers includes task-agent when a task-agent execution exists on the node
 
 describe('Task Agent channel participation', () => {
 	let tdb: TestDb;
@@ -1110,8 +1116,10 @@ describe('Task Agent channel participation', () => {
 		expect(permitted).toContain('coder');
 	});
 
-	test('send_message to task-agent fails with "no active sessions" even when channel declared', async () => {
-		// Seed coder task (no task-agent task — send_message filters task-agent anyway)
+	test('send_message to task-agent returns unknown-target when no taskAgentRouter is injected', async () => {
+		// Seed coder task only.
+		// A declared coder→task-agent channel does not make task-agent targetable unless
+		// AgentMessageRouter is configured with taskAgentRouter.
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
 
 		// Channel coder→task-agent is declared
@@ -1124,17 +1132,13 @@ describe('Task Agent channel participation', () => {
 		const result = await handlers.send_message({ target: 'task-agent', message: 'Hello TA' });
 		const data = JSON.parse(result.content[0].text);
 
-		// send_message to task-agent fails with "No active sessions" because task-agent
-		// is filtered from the delivery targets list, even though the channel resolver
-		// check would pass
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain('no active sessions');
+		expect((data.error as string).toLowerCase()).toContain("unknown target 'task-agent'");
 		expect(messages).toHaveLength(0);
 	});
 
-	test('list_peers excludes task-agent even when task-agent task is seeded', async () => {
-		// list_peers explicitly filters task-agent from the peers list.
-		// send_message in the legacy path does NOT filter task-agent from delivery.
+	test('list_peers includes task-agent when task-agent task is seeded', async () => {
+		// list_peers reflects node executions and includes task-agent when present.
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'task-agent', 'session-task-agent');
 
@@ -1146,11 +1150,10 @@ describe('Task Agent channel participation', () => {
 		const result = await handlers.list_peers({});
 		const data = JSON.parse(result.content[0].text);
 
-		// list_peers filters out task-agent
 		expect(data.success).toBe(true);
 		const peers = data.peers as Array<{ sessionId: string; role: string }>;
 		const peerIds = peers.map((p: { sessionId: string }) => p.sessionId);
-		expect(peerIds).not.toContain('session-task-agent');
+		expect(peerIds).toContain('session-task-agent');
 		expect(peerIds).not.toContain('session-coder'); // self excluded
 	});
 

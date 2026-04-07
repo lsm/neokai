@@ -33,7 +33,7 @@ import type {
 // Zod schemas
 // ============================================================================
 
-const workflowConditionSchema = z
+const _workflowConditionSchema = z
 	.object({
 		type: z.enum(['always', 'human', 'condition', 'task_result']),
 		expression: z.string().optional(),
@@ -74,6 +74,7 @@ const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.strin
 const exportedWorkflowNodeAgentSchema = z.object({
 	agentRef: z.string().min(1),
 	name: z.string().min(1),
+	model: z.string().min(1).optional(),
 	systemPrompt: overrideOrStringSchema.optional(),
 	instructions: overrideOrStringSchema.optional(),
 });
@@ -86,16 +87,14 @@ const exportedWorkflowNodeAgentSchema = z.object({
 const exportedWorkflowChannelSchema = z.object({
 	from: z.string().min(1),
 	to: z.union([z.string().min(1), z.array(z.string().min(1))]),
-	direction: z.enum(['one-way', 'bidirectional']),
-	isCyclic: z.boolean().optional(),
+	maxCycles: z.number().int().positive().optional(),
 	label: z.string().optional(),
-	gate: workflowConditionSchema.optional(),
+	gateId: z.string().optional(),
 });
 
 const exportedWorkflowNodeSchema = z.object({
 	agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
 	name: z.string().min(1),
-	instructions: z.string().optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -233,6 +232,7 @@ export function exportWorkflow(
 				agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
 				name: a.name,
 			};
+			if (a.model !== undefined) entry.model = a.model;
 			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
 			if (a.instructions !== undefined) entry.instructions = a.instructions;
 			return entry;
@@ -242,8 +242,6 @@ export function exportWorkflow(
 			name: node.name,
 			agents: exportedAgents,
 		};
-
-		if (node.instructions !== undefined) exported.instructions = node.instructions;
 
 		return exported;
 	});
@@ -271,10 +269,10 @@ export function exportWorkflow(
 			const exported: ExportedWorkflowChannel = {
 				from: ch.from,
 				to: ch.to,
-				direction: ch.direction,
 			};
 			if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
 			if (ch.label !== undefined) exported.label = ch.label;
+			if (ch.gateId !== undefined) exported.gateId = ch.gateId;
 			return exported;
 		});
 		result.channels = exportedChannels;

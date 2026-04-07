@@ -17,19 +17,14 @@ import type { WorkflowChannel, WorkflowNode } from '../types/space.ts';
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a map from channel endpoint names (agent IDs, agent slot names, node
- * names) to node IDs. This is the shared equivalent of the visual editor's
- * `endpointNodeIdLookup`.
+ * Builds a map from channel endpoint names (node names and node IDs) to node IDs.
+ * Channels use node names as addresses, so only node names are indexed here.
  */
 export function buildEndpointNodeIdLookup(nodes: WorkflowNode[]): Map<string, string> {
 	const map = new Map<string, string>();
 	for (const node of nodes) {
 		if (node.id) map.set(node.id, node.id);
 		if (node.name) map.set(node.name, node.id);
-		for (const agent of node.agents ?? []) {
-			if (agent.name) map.set(agent.name, node.id);
-			if (agent.agentId) map.set(agent.agentId, node.id);
-		}
 	}
 	return map;
 }

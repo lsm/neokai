@@ -718,10 +718,48 @@ export class RoomRuntime {
 		{
 			const errorClass = classifyError(workerOutputText);
 			if (errorClass?.class === 'terminal') {
+				// Fix 2: For planner workers, HTTP 400 errors are often transient
+				// (context too large, temporary validation issue from a sub-agent spawning
+				// with a large prompt). Bounce the worker back with a retry instruction
+				// instead of failing immediately. The dead-loop guard prevents infinite bounces.
+				if (group.workerRole === 'planner' && errorClass.statusCode === 400) {
+					log.info(`Planner HTTP 400 error for group ${groupId} — bouncing worker for retry`);
+					if (
+						await this.recordAndCheckDeadLoop(
+							groupId,
+							group.taskId,
+							'planner_api_400',
+							errorClass.reason
+						)
+					) {
+						// Dead loop detected — recordAndCheckDeadLoop already called fail/cleanup/
+						// scheduleTick internally. Return immediately to avoid double-fail.
+						return;
+					}
+					// Not a dead loop yet — bounce the worker back with a retry instruction.
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Transient API error (HTTP 400) — retrying with simplified approach`,
+					});
+					await this.sessionFactory.injectMessage(
+						group.workerSessionId,
+						'You encountered a temporary API error (HTTP 400). ' +
+							'This may be due to context size or a transient validation issue.\n\n' +
+							'Please retry your current phase with a more concise approach. ' +
+							'Break your work into smaller steps if needed, and summarize previous ' +
+							'findings rather than including full outputs in your sub-agent prompts.'
+					);
+					return; // Keep worker turn active for retry
+				}
 				log.info(`Terminal API error in worker output for group ${groupId}: ${errorClass.reason}`);
 				this.appendGroupEvent(groupId, 'status', {
 					text: `Terminal error: ${errorClass.reason}`,
 				});
+				// Fix 3: Promote any existing draft tasks before failing a planning task.
+				// This preserves partial progress — even if the planner crashed during Phase 2,
+				// the tasks it already created are not lost.
+				if (group.workerRole === 'planner') {
+					await this.promoteDraftTasksIfPlanning(group.taskId);
+				}
 				await this.taskGroupManager.fail(groupId, errorClass.reason);
 				this.cleanupMirroring(groupId, `Terminal API error: ${errorClass.reason}`);
 				await this.emitTaskUpdateById(group.taskId);
@@ -3208,6 +3246,11 @@ export class RoomRuntime {
 		// Note: synchronous scan, only fires async work as fire-and-forget if stuck leaders are found.
 		this.recoverStuckLeaders();
 
+		// Fix 5: Auto-detect plan PR merges for planning groups stuck in submitted_for_review.
+		// When a human merges the plan PR on GitHub without clicking "Approve" in NeoKai,
+		// the group stays blocked. This check auto-approves when the PR is confirmed merged.
+		await this.recoverMergedPlanGroups();
+
 		// Recurring mission scheduler: check for due missions and trigger new executions.
 		// Also checks for completed executions to advance next_run_at.
 		// Runs only when runtime is in 'running' state (enforced by tick() guard above).
@@ -3769,6 +3812,58 @@ export class RoomRuntime {
 			}
 
 			return { goal, replanContext };
+		}
+
+		// Fix 4: Also consider needs_human goals where ALL linked tasks are planning tasks
+		// in terminal states. These were likely escalated due to transient API errors rather
+		// than genuine planning failures requiring human intervention. Auto-recover them by
+		// resetting to active so the normal replanning path can retry (subject to effectiveMax).
+		//
+		// Note: At most one goal is recovered per tick (this function returns as soon as the
+		// first recoverable goal is found). Multiple stuck goals recover across successive ticks,
+		// which is intentional — processing one goal at a time keeps tick latency bounded.
+		const needsHumanGoals = await this.goalManager.listGoals('needs_human');
+		for (const goal of needsHumanGoals) {
+			if (goal.missionType === 'recurring') continue;
+			const linkedTaskIds = goal.linkedTaskIds ?? [];
+			if (linkedTaskIds.length === 0) continue;
+
+			const linkedTasks = await Promise.all(
+				linkedTaskIds.map((id) => this.taskManager.getTask(id))
+			);
+			const validTasks = linkedTasks.filter(Boolean) as NonNullable<(typeof linkedTasks)[number]>[];
+			if (validTasks.length === 0) continue;
+
+			// Note: 'cancelled' and 'archived' are included so that manually-cancelled
+			// planning tasks also qualify for auto-recovery. Trade-off: if a user manually
+			// cancels a planning task while the goal is in needs_human, the next tick will
+			// auto-recover it. This is an acceptable edge-case because the goal can be
+			// archived manually if truly abandoned; the alternative (needs_attention only)
+			// would leave goals stuck when planning tasks are legitimately cancelled.
+			const isTerminal = (status: string) =>
+				status === 'needs_attention' || status === 'cancelled' || status === 'archived';
+
+			// Only recover if ALL linked tasks are planning tasks in terminal states.
+			// If any execution tasks failed, those require genuine human attention.
+			// Use the project-standard null-safe pattern: taskType ?? 'coding'
+			// (older task records may have taskType as null/undefined).
+			const allArePlanningTasks = validTasks.every((t) => (t.taskType ?? 'coding') === 'planning');
+			const allAreTerminal = validTasks.every((t) => isTerminal(t.status));
+
+			if (!allArePlanningTasks || !allAreTerminal) continue;
+
+			const effectiveMax = getEffectiveMaxPlanningAttempts(goal, roomConfig);
+			const attempts = goal.planning_attempts ?? 0;
+
+			if (attempts >= effectiveMax) continue; // Exhausted retries — leave as needs_human
+
+			// Auto-recover: reset to active so the standard planning path retries
+			log.info(
+				`Auto-recovering goal ${goal.id} (${goal.title}) from needs_human — ` +
+					`only planning tasks failed (attempts=${attempts}/${effectiveMax}), resetting to active`
+			);
+			await this.goalManager.updateGoalStatus(goal.id, 'active');
+			return { goal: { ...goal, status: 'active' } };
 		}
 
 		return null;
@@ -4572,6 +4667,126 @@ export class RoomRuntime {
 		} catch {
 			// If git status fails (e.g., not a git repo), treat as clean
 			return false;
+		}
+	}
+
+	/**
+	 * Check whether a GitHub PR URL points to a merged PR.
+	 * Returns true if the PR is merged, false if open/closed/unknown.
+	 * Fails open (returns false) so callers do not get stuck on gh failures.
+	 * Applies a 10-second timeout to prevent the tick from blocking on slow/hung gh calls.
+	 */
+	private async isPrMergedOnGitHub(prUrl: string, workspacePath: string): Promise<boolean> {
+		const TIMEOUT_MS = 10_000;
+		try {
+			if (this.hookOptions?.runCommand) {
+				// runCommand is injected by tests — apply timeout via Promise.race
+				const result = await Promise.race([
+					this.hookOptions.runCommand(
+						['gh', 'pr', 'view', prUrl, '--json', 'state', '--jq', '.state'],
+						workspacePath
+					),
+					new Promise<never>((_, reject) =>
+						setTimeout(() => reject(new Error('gh pr view timed out')), TIMEOUT_MS)
+					),
+				]);
+				return result.exitCode === 0 && result.stdout.trim() === 'MERGED';
+			}
+			const proc = Bun.spawn(['gh', 'pr', 'view', prUrl, '--json', 'state', '--jq', '.state'], {
+				cwd: workspacePath,
+				stdout: 'pipe',
+				stderr: 'pipe',
+			});
+			// Race the process exit against a timeout so a hung gh call never blocks the tick.
+			const [stdout] = await Promise.all([
+				new Response(proc.stdout).text(),
+				Promise.race([
+					proc.exited,
+					new Promise<never>((_, reject) =>
+						setTimeout(() => {
+							proc.kill();
+							reject(new Error('gh pr view timed out'));
+						}, TIMEOUT_MS)
+					),
+				]),
+			]);
+			const exitCode = await proc.exited.catch(() => 1);
+			if (exitCode !== 0) return false;
+			return stdout.trim() === 'MERGED';
+		} catch {
+			// Timeout, network error, or gh not installed — fail open.
+			return false;
+		}
+	}
+
+	/**
+	 * Per-group last-checked timestamp for recoverMergedPlanGroups.
+	 * Prevents issuing a `gh pr view` call on every tick for each stuck planner group.
+	 * Groups are checked at most once per GH_CHECK_INTERVAL_MS.
+	 */
+	private readonly mergedPlanGroupLastChecked = new Map<string, number>();
+	private static readonly GH_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+	/**
+	 * Fix 5: Auto-detect plan PR merge for planning groups stuck in submitted_for_review.
+	 *
+	 * When a human merges the plan PR directly on GitHub (without clicking "Approve" in NeoKai),
+	 * the planning group stays in submitted_for_review indefinitely because resumeWorkerFromHuman
+	 * is never called. This method scans for such groups and auto-approves them.
+	 *
+	 * Each group is checked at most once per GH_CHECK_INTERVAL_MS to avoid hammering the
+	 * GitHub API on every tick.
+	 *
+	 * Called on each tick (async, awaited in executeTick).
+	 */
+	private async recoverMergedPlanGroups(): Promise<void> {
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
+		const plannerGroups = allActiveGroups.filter(
+			(g) => g.submittedForReview && g.workerRole === 'planner' && !g.approved
+		);
+		if (plannerGroups.length === 0) return;
+
+		const workspacePath = this.taskGroupManager.workspacePath;
+		const now = Date.now();
+
+		for (const group of plannerGroups) {
+			// Per-group cooldown: avoid checking the same group on every tick
+			const lastChecked = this.mergedPlanGroupLastChecked.get(group.id) ?? 0;
+			if (now - lastChecked < RoomRuntime.GH_CHECK_INTERVAL_MS) continue;
+			this.mergedPlanGroupLastChecked.set(group.id, now);
+
+			const task = await this.taskManager.getTask(group.taskId);
+			if (!task?.prUrl) continue;
+
+			const merged = await this.isPrMergedOnGitHub(task.prUrl, workspacePath);
+			if (!merged) continue;
+
+			log.info(
+				`[recoverMergedPlanGroups] Plan PR ${task.prUrl} is merged on GitHub — ` +
+					`auto-approving planning group ${group.id} for task ${group.taskId}`
+			);
+			this.appendGroupEvent(group.id, 'status', {
+				text: `Plan PR merged on GitHub — auto-approving and resuming task creation phase`,
+			});
+
+			// Set approvalSource BEFORE resumeWorkerFromHuman so the idempotency guard
+			// in that method preserves 'github_merge_detected' instead of overwriting with 'human'.
+			this.groupRepo.setApprovalSource(group.id, 'github_merge_detected');
+
+			// Resume the leader with an approval message.
+			// resumeWorkerFromHuman sets group.approved = true for planner groups
+			// (see the isApproval logic: workerRole === 'planner' && opts?.approved !== false).
+			const resumed = await this.resumeWorkerFromHuman(
+				group.taskId,
+				'The plan PR has been merged on GitHub. Please proceed with Phase 2: ' +
+					'create the tasks from the approved plan using the create_task tool.',
+				{ approved: true }
+			);
+			if (!resumed) {
+				// Roll back approvalSource so future ticks can retry
+				this.groupRepo.setApprovalSource(group.id, null);
+				log.warn(`[recoverMergedPlanGroups] resumeWorkerFromHuman failed for task ${group.taskId}`);
+			}
 		}
 	}
 }

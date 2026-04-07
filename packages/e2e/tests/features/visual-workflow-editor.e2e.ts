@@ -345,8 +345,9 @@ test.describe('Visual Workflow Editor', () => {
 	test('Create workflow opens visual editor directly', async ({ page }) => {
 		await navigateToSpace(page, spaceId);
 
-		// Navigate to the Workflows tab
-		await page.getByTestId('space-tab-bar').getByRole('button', { name: 'Workflows' }).click();
+		// Navigate to Configure → Workflows
+		await page.getByRole('button', { name: 'Configure space' }).click();
+		await page.getByTestId('space-configure-tab-workflows').click();
 
 		// The "Create Workflow" button must be visible
 		const createBtn = page.getByRole('button', { name: 'Create Workflow' });
@@ -660,13 +661,11 @@ test.describe('Visual Workflow Editor', () => {
 							id: step1,
 							name: 'Start',
 							agentId: aId,
-							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
 						{
 							id: step2,
 							name: 'End',
 							agentId: aId,
-							channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' }],
 						},
 					],
 					startNodeId: step1,

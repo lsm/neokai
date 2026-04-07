@@ -76,8 +76,8 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		name: 'My Space',
 		workspacePath: '/projects/my-space',
 		description: 'Original description',
+		instructions: 'Use TypeScript strict mode',
 		backgroundContext: '',
-		instructions: '',
 		sessionIds: [],
 		status: 'active',
 		createdAt: Date.now(),
@@ -148,7 +148,7 @@ describe('SpaceSettings', () => {
 				id: 'space-1',
 				name: 'Updated Name',
 				description: 'Original description',
-				instructions: undefined,
+				instructions: 'Use TypeScript strict mode',
 				backgroundContext: undefined,
 			});
 		});
@@ -299,7 +299,6 @@ describe('SpaceSettings', () => {
 
 	it('renders instructions and backgroundContext textareas', () => {
 		const space = makeSpace({
-			instructions: 'Use TypeScript strict mode',
 			backgroundContext: 'Bun + Hono backend',
 		});
 		const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);

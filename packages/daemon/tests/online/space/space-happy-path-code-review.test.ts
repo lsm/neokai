@@ -115,7 +115,7 @@ async function setupToCodePrGate(
 
 	// Open plan-pr-gate → Plan Review activates
 	await writeGateData(daemon, runId, 'plan-pr-gate', {
-		plan_submitted: 'https://github.com/example/repo/pull/10',
+		pr_url: 'https://github.com/example/repo/pull/10',
 		pr_number: 10,
 		branch: 'plan/test-feature',
 	});
@@ -584,7 +584,7 @@ describe('Space Happy Path — Code Review with Parallel Reviewers', () => {
 
 			// Open plan-pr-gate and approve plan-approval-gate to reach Coding
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/12',
+				pr_url: 'https://github.com/example/repo/pull/12',
 			});
 			await waitForNodeActivated(daemon, space.id, runId, 'Plan Review', NODE_ACTIVATION_TIMEOUT);
 			await approveGate(daemon, runId, 'plan-approval-gate');

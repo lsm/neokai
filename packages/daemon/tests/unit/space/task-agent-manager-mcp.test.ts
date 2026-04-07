@@ -545,7 +545,6 @@ function makeResolvedChannel(
 		toRole,
 		fromAgentId: `agent-${fromRole}`,
 		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
 		isHubSpoke,
 	};
 }
@@ -693,8 +692,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				role: string,
 				spaceId: string,
 				workflowRunId: string,
-				stepTaskId: string,
-				taskManager: SpaceTaskManager
+				workspacePath: string,
+				workflowNodeIdHint?: string
 			): unknown;
 		};
 		// Empty workflowRunId — no run will be found
@@ -704,8 +703,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			'coder',
 			space.id,
 			'',
-			'step-task-1',
-			taskManager
+			space.workspacePath,
+			'step-task-1'
 		);
 
 		expect(capturedConfig).not.toBeNull();
@@ -747,8 +746,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 				role: string,
 				spaceId: string,
 				workflowRunId: string,
-				stepTaskId: string,
-				taskManager: SpaceTaskManager
+				workspacePath: string,
+				workflowNodeIdHint?: string
 			): unknown;
 		};
 		mgr.buildNodeAgentMcpServerForSession(
@@ -757,8 +756,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			'reviewer',
 			space.id,
 			'',
-			stepTask.id,
-			taskManager
+			space.workspacePath,
+			stepTask.id
 		);
 
 		expect(capturedConfig).not.toBeNull();

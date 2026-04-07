@@ -100,7 +100,7 @@ interface TaskGroupMetadata {
 	 * with approved=true. Set to 'leader_semi_auto' when runtime auto-approves in
 	 * semi-autonomous mode. Used as idempotency guard for auto-approve deferred callbacks.
 	 */
-	approvalSource?: 'human' | 'leader_semi_auto' | 'leader_no_pr';
+	approvalSource?: 'human' | 'leader_semi_auto' | 'leader_no_pr' | 'github_merge_detected';
 	/**
 	 * Links this session group to a specific mission_executions row for recurring missions.
 	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
@@ -174,9 +174,13 @@ export interface SessionGroup {
 	 */
 	workerBypassed: boolean;
 	/**
-	 * Who approved this task ('human', 'leader_semi_auto', or 'leader_no_pr'), or null if not yet approved.
+	 * Who approved this task, or null if not yet approved.
+	 * - 'human': approved via NeoKai UI
+	 * - 'leader_semi_auto': auto-approved in semi-autonomous mode
+	 * - 'leader_no_pr': leader completed without a PR
+	 * - 'github_merge_detected': plan PR merged on GitHub directly (Fix 5 auto-detect)
 	 */
-	approvalSource: 'human' | 'leader_semi_auto' | 'leader_no_pr' | null;
+	approvalSource: 'human' | 'leader_semi_auto' | 'leader_no_pr' | 'github_merge_detected' | null;
 	/**
 	 * Links this session group to a specific mission_executions row for recurring missions.
 	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
@@ -671,7 +675,7 @@ export class SessionGroupRepository {
 	 */
 	setApprovalSource(
 		groupId: string,
-		source: 'human' | 'leader_semi_auto' | 'leader_no_pr' | null
+		source: 'human' | 'leader_semi_auto' | 'leader_no_pr' | 'github_merge_detected' | null
 	): void {
 		const raw = (
 			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<

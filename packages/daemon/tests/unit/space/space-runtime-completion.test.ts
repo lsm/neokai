@@ -116,12 +116,26 @@ function seedNodeExec(
 	agentName: string,
 	status: string
 ): string {
+	const repo = new NodeExecutionRepository(db);
+	const existing = repo.listByNode(workflowRunId, workflowNodeId);
+	if (existing.length > 0) {
+		const byAgent = existing.find((exec) => exec.agentName === agentName);
+		const target = byAgent ?? (existing.length === 1 ? existing[0] : null);
+		if (target) {
+			repo.update(target.id, {
+				status: status as 'pending' | 'in_progress' | 'done' | 'cancelled' | 'blocked',
+				result: null,
+			});
+			return target.id;
+		}
+	}
+
 	const id = `exec-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	const now = Date.now();
 	db.prepare(
 		`INSERT OR REPLACE INTO node_executions
-		     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-		      agent_session_id, status, result, created_at, started_at,
+			     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+			      agent_session_id, status, result, created_at, started_at,
 		      completed_at, updated_at)
 		     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
 	).run(id, workflowRunId, workflowNodeId, agentName, status, now, now);
@@ -134,6 +148,7 @@ function seedNodeExec(
 
 class MockTaskAgentManager {
 	readonly cancelledSessions: string[] = [];
+	readonly spawnedExecutionSessions: string[] = [];
 
 	isTaskAgentAlive(_taskId: string): boolean {
 		return false;
@@ -143,13 +158,33 @@ class MockTaskAgentManager {
 		return false;
 	}
 
-	async spawnTaskAgent(
+	isExecutionSpawning(_executionId: string): boolean {
+		return false;
+	}
+
+	isSessionAlive(_sessionId: string): boolean {
+		return false;
+	}
+
+	async spawnWorkflowNodeAgent(
 		_task: SpaceTask,
 		_space: Space,
 		_workflow: SpaceWorkflow | null,
 		_run: SpaceWorkflowRun | null
 	): Promise<string> {
 		return 'mock-session';
+	}
+
+	async spawnWorkflowNodeAgentForExecution(
+		_task: SpaceTask,
+		_space: Space,
+		_workflow: SpaceWorkflow,
+		_run: SpaceWorkflowRun,
+		execution: { id: string }
+	): Promise<string> {
+		const sessionId = `mock-session:${execution.id}`;
+		this.spawnedExecutionSessions.push(sessionId);
+		return sessionId;
 	}
 
 	async rehydrate(): Promise<void> {}
@@ -602,7 +637,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				],
 				startNodeId: 'chan-plan',
 				tags: [],
-				channels: [{ from: 'planner', to: 'coder', direction: 'one-way' }],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -614,13 +648,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			await rt.executeTick();
 
-			// Run DOES complete because all tasks are done (channel guard was removed in M71).
-			// When endNodeId-based completion guard is implemented, this test should be updated.
+			// With explicit endNodeId semantics, completing a non-end node is not enough.
 			const runAfter = workflowRunRepo.getRun(run.id);
-			expect(runAfter?.status).toBe('done');
+			expect(runAfter?.status).toBe('in_progress');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(1);
+			expect(completedEvents).toHaveLength(0);
 		});
 
 		test('all channels satisfied — completion proceeds normally', async () => {
@@ -638,7 +671,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
-				channels: [{ from: 'planner', to: 'coder', direction: 'one-way' }],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -688,13 +720,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			await rt.executeTick();
 
-			// Without channels, CompletionDetector has no guard —
-			// only task statuses matter. Start node is terminal → complete.
+			// Without channels, explicit endNodeId still gates completion.
 			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('done');
+			expect(completedRun?.status).toBe('in_progress');
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
-			expect(completedEvents).toHaveLength(1);
+			expect(completedEvents).toHaveLength(0);
 		});
 
 		test('wildcard channel does not block completion', async () => {
@@ -709,7 +740,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
-				channels: [{ from: 'planner', to: '*', direction: 'one-way' }],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -756,12 +786,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(3);
-
-			// Complete all three tasks with different terminal statuses
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			taskRepo.updateTask(tasks[1].id, { status: 'done' });
-			taskRepo.updateTask(tasks[2].id, { status: 'cancelled' });
+			expect(tasks).toHaveLength(1);
 
 			// Create node_execution records for CompletionDetector
 			seedNodeExec(db, run.id, 'par-node', 'coder', 'done');
@@ -800,10 +825,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				transitions: [],
 			});
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Create node_execution records — one done, one still in_progress
 			seedNodeExec(db, run.id, 'par-partial', 'coder', 'done');
@@ -840,21 +862,19 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				transitions: [],
 			});
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// Create node_execution records for both agents (start non-terminal)
 			const exec1Id = seedNodeExec(db, run.id, 'stag-node', 'coder', 'in_progress');
 			const exec2Id = seedNodeExec(db, run.id, 'stag-node', 'planner', 'in_progress');
 
 			// Tick 1: first agent completes
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			db.prepare('UPDATE node_executions SET status = ? WHERE id = ?').run('done', exec1Id);
 			await rt.executeTick();
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Tick 2: second agent completes
-			taskRepo.updateTask(tasks[1].id, { status: 'done' });
 			db.prepare('UPDATE node_executions SET status = ? WHERE id = ?').run('done', exec2Id);
 			await rt.executeTick();
 
@@ -889,8 +909,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				transitions: [],
 			});
 
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-			expect(tasks).toHaveLength(2);
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
 			// startWorkflowRun() creates per-agent node_execution records.
 			// Both should be 'pending' initially.
@@ -898,13 +917,13 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(execsBefore).toHaveLength(2);
 			expect(execsBefore.every((e) => e.status === 'pending')).toBe(true);
 
-			// Set tasks to heterogeneous statuses: coder done, reviewer still in_progress.
-			taskRepo.updateTask(tasks[0].id, { status: 'done', completedAt: Date.now() });
-			taskRepo.updateTask(tasks[1].id, { status: 'in_progress' });
+			// Set executions to heterogeneous statuses: coder done, reviewer still in_progress.
+			seedNodeExec(db, run.id, 'mix-start', 'coder', 'done');
+			seedNodeExec(db, run.id, 'mix-start', 'reviewer', 'in_progress');
 
 			await rt.executeTick();
 
-			// Tick loop should have synced node_executions from task statuses.
+			// Node executions should reflect the seeded mixed state.
 			const execsAfter = nodeExecutionRepo.listByWorkflowRun(run.id);
 			const coderExec = execsAfter.find((e) => e.agentName === 'coder');
 			const reviewerExec = execsAfter.find((e) => e.agentName === 'reviewer');
@@ -917,7 +936,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
 
 			// Now complete the reviewer task too.
-			taskRepo.updateTask(tasks[1].id, { status: 'done', completedAt: Date.now() });
+			seedNodeExec(db, run.id, 'mix-start', 'reviewer', 'done');
 			await rt.executeTick();
 
 			// Both execs should now be 'done', and the run should be done.
@@ -941,24 +960,27 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			const taskId = tasks[0].id;
-			// M71: dedup key uses 'blocked' (renamed from 'needs_attention')
-			const dedupKey = `${taskId}:blocked`;
+			const dedupKey = `${taskId}:timeout`;
 
 			// Empty dedup set at start
 			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
 
-			// Set task to blocked, tick to add dedup key
-			// M71: 'error' field removed from SpaceTask; task status 'blocked' triggers notification
-			taskRepo.updateTask(taskId, { status: 'blocked' });
+			// Trigger timeout dedup by marking the execution stale.
+			db.prepare(`UPDATE spaces SET config = ? WHERE id = ?`).run(
+				JSON.stringify({ taskTimeoutMs: 1 }),
+				SPACE_ID
+			);
+			seedNodeExec(db, run.id, 'step-dedup-clean', 'agent', 'in_progress');
+			db.prepare(
+				`UPDATE node_executions
+				 SET started_at = ?, updated_at = ?
+				 WHERE workflow_run_id = ? AND workflow_node_id = ?`
+			).run(Date.now() - 10_000, Date.now() - 10_000, run.id, 'step-dedup-clean');
 			await rt.executeTick();
-			// M71: event kind is 'task_blocked' (renamed from 'task_needs_attention')
-			expect(sink.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
-			// Dedup entry was added
 			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(true);
 
-			// Now resolve the task and complete it
+			// Complete the run
 			taskRepo.updateTask(taskId, { status: 'done' });
-			// Create node_execution record in terminal status for CompletionDetector
 			seedNodeExec(db, run.id, 'step-dedup-clean', 'agent', 'done');
 			await rt.executeTick();
 
@@ -1079,6 +1101,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 		test('end node done while sibling exec in_progress → run completes, sibling exec cancelled', async () => {
 			const mockTam = new MockTaskAgentManager();
+			mockTam.isSessionAlive = () => true;
 			const rt = makeRuntimeWithTam({
 				taskAgentManager: mockTam as unknown as TaskAgentManager,
 			});
@@ -1130,7 +1153,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			expect(completedEvents).toHaveLength(1);
 		});
 
-		test('workflow without endNodeId → all-executions-done fallback (backward compat)', async () => {
+		test('workflow without endNodeId is rejected at start', async () => {
 			const rt = makeRuntimeWithTam();
 
 			const workflow = workflowManager.createWorkflow({
@@ -1149,19 +1172,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			db.prepare(`UPDATE space_workflows SET end_node_id = NULL WHERE id = ?`).run(workflow.id);
 			const legacyWorkflow = workflowManager.getWorkflow(workflow.id)!;
 			expect(legacyWorkflow.endNodeId).toBeUndefined();
-
-			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, legacyWorkflow.id, 'Run');
-			taskRepo.updateTask(tasks[0].id, { status: 'done' });
-
-			// Both node execs terminal
-			seedNodeExec(db, run.id, 'no-en-1', 'Step 1', 'done');
-			seedNodeExec(db, run.id, 'no-en-2', 'Step 2', 'done');
-
-			await rt.executeTick();
-
-			const completedRun = workflowRunRepo.getRun(run.id);
-			expect(completedRun?.status).toBe('done');
-			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+			await expect(rt.startWorkflowRun(SPACE_ID, legacyWorkflow.id, 'Run')).rejects.toThrow(
+				'is missing endNodeId'
+			);
 		});
 
 		test('end-node bypass: blocked sibling does not block run when end node is done', async () => {
@@ -1241,7 +1254,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 	// ─────────────────────────────────────────────────────────────────────────────
 
 	describe('orchestration task auto-complete on run completion', () => {
-		test('in_progress orchestration task auto-completed when run completes', async () => {
+		test('legacy in_progress orchestration task is ignored when run completes', async () => {
 			const rt = makeRuntimeWithTam();
 
 			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1269,9 +1282,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Run should be done
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
 
-			// Orchestration task should be auto-completed
+			// Strict one-task-per-run repair archives duplicate helper/orchestration tasks.
 			const orchTaskAfter = taskRepo.getTask(orchTask.id);
-			expect(orchTaskAfter?.status).toBe('done');
+			expect(orchTaskAfter?.status).toBe('archived');
 		});
 
 		test('open orchestration task is skipped on run completion (no throw)', async () => {
@@ -1303,9 +1316,9 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			// Run should be done
 			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
 
-			// Orchestration task should remain 'open' — only 'in_progress' tasks are auto-completed
+			// Strict one-task-per-run repair archives duplicate helper/orchestration tasks.
 			const orchTaskAfter = taskRepo.getTask(orchTask.id);
-			expect(orchTaskAfter?.status).toBe('open');
+			expect(orchTaskAfter?.status).toBe('archived');
 		});
 	});
 });

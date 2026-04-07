@@ -34,6 +34,11 @@ export interface GateScriptContext {
 	gateId: string;
 	/** The current workflow run ID. */
 	runId: string;
+	/**
+	 * Current gate runtime data used for evaluation.
+	 * Exposed to scripts as NEOKAI_GATE_DATA_JSON.
+	 */
+	gateData?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +120,13 @@ export function buildRestrictedEnv(
 	env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
 	env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
 
+	const gateData = context.gateData ?? {};
+	try {
+		env['NEOKAI_GATE_DATA_JSON'] = JSON.stringify(gateData);
+	} catch {
+		env['NEOKAI_GATE_DATA_JSON'] = '{}';
+	}
+
 	// Merge user-specified env (applied after injected vars; cannot override gate-injected vars)
 	if (scriptEnv) {
 		for (const [key, value] of Object.entries(scriptEnv)) {
@@ -122,7 +134,8 @@ export function buildRestrictedEnv(
 			if (
 				key === 'NEOKAI_GATE_ID' ||
 				key === 'NEOKAI_WORKFLOW_RUN_ID' ||
-				key === 'NEOKAI_WORKSPACE_PATH'
+				key === 'NEOKAI_WORKSPACE_PATH' ||
+				key === 'NEOKAI_GATE_DATA_JSON'
 			) {
 				continue;
 			}

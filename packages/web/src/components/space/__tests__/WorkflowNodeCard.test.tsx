@@ -323,6 +323,7 @@ describe('WorkflowNodeCard — collapsed header override indicators', () => {
 					name: 'coder',
 					systemPrompt: { mode: 'override', value: 'Be strict.' },
 				},
+				{ agentId: 'agent-2', name: 'reviewer' },
 			],
 		});
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: false })} />);
@@ -361,7 +362,10 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 	it('does not show slot-overrides section before toggle is clicked', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'planner' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'planner' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
 		const { queryByTestId } = render(<WorkflowNodeCard {...makeProps({ node, expanded: true })} />);
 		expect(queryByTestId('slot-overrides')).toBeNull();
@@ -370,42 +374,55 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 	it('shows slot-overrides section after toggle button is clicked', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'planner' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'planner' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
-		const { getByTestId, queryByTestId } = render(
+		const { getAllByTestId, queryByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
 		);
 		expect(queryByTestId('slot-overrides')).toBeNull();
-		fireEvent.click(getByTestId('toggle-overrides-button'));
+		fireEvent.click(getAllByTestId('toggle-overrides-button')[0]);
 		expect(queryByTestId('slot-overrides')).toBeTruthy();
 	});
 
 	it('hides slot-overrides section after second toggle click', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'planner' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'planner' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
-		const { getByTestId, queryByTestId } = render(
+		const { getAllByTestId, queryByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
 		);
-		fireEvent.click(getByTestId('toggle-overrides-button'));
+		const firstToggle = getAllByTestId('toggle-overrides-button')[0];
+		fireEvent.click(firstToggle);
 		expect(queryByTestId('slot-overrides')).toBeTruthy();
-		fireEvent.click(getByTestId('toggle-overrides-button'));
+		fireEvent.click(firstToggle);
 		expect(queryByTestId('slot-overrides')).toBeNull();
 	});
 
 	it('override section stays expanded after slot role is renamed', async () => {
 		function Wrapper() {
 			const [step, setStep] = useState(
-				makeStep({ agentId: '', agents: [{ agentId: 'agent-1', name: 'planner' }] })
+				makeStep({
+					agentId: '',
+					agents: [
+						{ agentId: 'agent-1', name: 'planner' },
+						{ agentId: 'agent-2', name: 'reviewer' },
+					],
+				})
 			);
 			return <WorkflowNodeCard {...makeProps({ node: step, expanded: true, onUpdate: setStep })} />;
 		}
-		const { getByTestId, queryByTestId } = render(<Wrapper />);
-		fireEvent.click(getByTestId('toggle-overrides-button'));
+		const { getAllByTestId, queryByTestId } = render(<Wrapper />);
+		fireEvent.click(getAllByTestId('toggle-overrides-button')[0]);
 		expect(queryByTestId('slot-overrides')).toBeTruthy();
 		await act(async () => {
-			fireEvent.input(getByTestId('agent-role-input'), {
+			fireEvent.input(getAllByTestId('agent-role-input')[0], {
 				target: { value: 'lead-planner' },
 			});
 		});
@@ -416,12 +433,15 @@ describe('WorkflowNodeCard — expanded view per-slot override section', () => {
 		const onUpdate = vi.fn();
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'coder' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
-		const { getByTestId } = render(
+		const { getAllByTestId, getByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true, onUpdate })} />
 		);
-		fireEvent.click(getByTestId('toggle-overrides-button'));
+		fireEvent.click(getAllByTestId('toggle-overrides-button')[0]);
 		await act(async () => {
 			fireEvent.input(getByTestId('agent-model-input'), {
 				target: { value: 'claude-opus-4-6' },
@@ -446,47 +466,53 @@ describe('WorkflowNodeCard — multi-agent per-agent mode selectors', () => {
 	it('per-agent instructions include OverrideModeSelector', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'coder' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
 		const { getAllByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
 		);
-		// One override-mode-selector for instructions in the always-visible per-agent section
+		// Two slot-level instruction selectors + one node-level system-prompt selector.
 		const selectors = getAllByTestId('override-mode-selector');
-		expect(selectors.length).toBeGreaterThanOrEqual(1);
+		expect(selectors.length).toBeGreaterThanOrEqual(3);
 	});
 
-	it('per-agent system prompt includes OverrideModeSelector (always visible with instructions)', () => {
+	it('per-agent system prompt selector appears after expanding slot overrides', () => {
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'coder' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
 		const { getAllByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true })} />
 		);
-		// Both instructions and system prompt mode selectors are always visible
-		expect(getAllByTestId('override-mode-selector')).toHaveLength(2);
+		const before = getAllByTestId('override-mode-selector').length;
+		fireEvent.click(getAllByTestId('toggle-overrides-button')[0]);
+		const after = getAllByTestId('override-mode-selector').length;
+		expect(after).toBe(before + 1);
 	});
 
 	it('toggling mode selector changes the mode used in override for system prompt', async () => {
 		const onUpdate = vi.fn();
 		const node = makeStep({
 			agentId: '',
-			agents: [{ agentId: 'agent-1', name: 'coder' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		});
-		const { getByTestId } = render(
+		const { getAllByTestId, getByTestId } = render(
 			<WorkflowNodeCard {...makeProps({ node, expanded: true, onUpdate })} />
 		);
-		// Expand slot overrides to see system prompt
-		fireEvent.click(getByTestId('toggle-overrides-button'));
+		// Expand slot overrides to reveal slot-level system prompt controls.
+		fireEvent.click(getAllByTestId('toggle-overrides-button')[0]);
 
-		// Switch to 'expand' mode for system prompt
-		const modeSelectors = document.querySelectorAll('[data-testid="override-mode-selector"]');
-		// The second selector is for system prompt (first is for instructions)
-		const systemPromptSelector = modeSelectors[1];
-		const expandButton = systemPromptSelector.querySelector(
-			'[data-testid="mode-expand"]'
-		) as HTMLElement;
+		const slotOverrides = getByTestId('slot-overrides');
+		const expandButton = slotOverrides.querySelector('[data-testid="mode-expand"]') as HTMLElement;
 		fireEvent.click(expandButton);
 
 		// Now type a system prompt
@@ -497,11 +523,11 @@ describe('WorkflowNodeCard — multi-agent per-agent mode selectors', () => {
 
 		expect(onUpdate).toHaveBeenCalledWith(
 			expect.objectContaining({
-				agents: [
+				agents: expect.arrayContaining([
 					expect.objectContaining({
 						systemPrompt: { mode: 'expand', value: 'Extra context.' },
 					}),
-				],
+				]),
 			})
 		);
 	});
@@ -623,11 +649,11 @@ describe('WorkflowNodeCard — agent completion state', () => {
 describe('OverrideModeSelector', () => {
 	afterEach(() => cleanup());
 
-	it('renders with both Override and Expand buttons', () => {
+	it('renders with both Override and Append buttons', () => {
 		const onChange = vi.fn();
 		const { getByText } = render(<OverrideModeSelector mode="override" onChange={onChange} />);
 		expect(getByText('Override')).toBeTruthy();
-		expect(getByText('Expand')).toBeTruthy();
+		expect(getByText('Append')).toBeTruthy();
 	});
 
 	it('renders correct active state for override mode', () => {

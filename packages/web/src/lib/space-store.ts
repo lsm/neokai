@@ -27,7 +27,6 @@ import type {
 	CreateSpaceAgentParams,
 	CreateSpaceTaskParams,
 	CreateSpaceWorkflowParams,
-	CreateWorkflowRunParams,
 	LiveQueryDeltaEvent,
 	LiveQuerySnapshotEvent,
 	NodeExecution,
@@ -202,6 +201,74 @@ class SpaceStore {
 	/** Stale-event guard for node execution LiveQuery subscriptions */
 	private activeNodeExecSubscriptionIds = new Set<string>();
 
+	private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
+		const withoutSameId = tasks.filter((current) => current.id !== task.id);
+		if (!task.workflowRunId) {
+			return [...withoutSameId, task].sort((a, b) => b.updatedAt - a.updatedAt);
+		}
+
+		const sameRun = withoutSameId.filter((current) => current.workflowRunId === task.workflowRunId);
+		const others = withoutSameId.filter((current) => current.workflowRunId !== task.workflowRunId);
+		const runTitle =
+			this.workflowRuns.value
+				.find((run) => run.id === task.workflowRunId)
+				?.title?.trim()
+				.toLowerCase() ?? null;
+		const merged = [...sameRun, task];
+		const canonical = merged.find((candidate) => {
+			if (!runTitle) return false;
+			return candidate.title.trim().toLowerCase() === runTitle;
+		});
+		const fallback =
+			canonical ??
+			[...merged].sort((a, b) => {
+				if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+				return a.taskNumber - b.taskNumber;
+			})[0];
+		return [...others, fallback].sort((a, b) => b.updatedAt - a.updatedAt);
+	}
+
+	private removeTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
+		return tasks.filter(
+			(current) =>
+				current.id !== task.id &&
+				(!task.workflowRunId || current.workflowRunId !== task.workflowRunId)
+		);
+	}
+
+	private collapseTasksOnePerRun(tasks: SpaceTask[], runs: SpaceWorkflowRun[]): SpaceTask[] {
+		if (tasks.length === 0) return [];
+		const runsById = new Map(runs.map((run) => [run.id, run]));
+		const groupedByRun = new Map<string, SpaceTask[]>();
+		const standalone: SpaceTask[] = [];
+
+		for (const task of tasks) {
+			if (!task.workflowRunId) {
+				standalone.push(task);
+				continue;
+			}
+			const existing = groupedByRun.get(task.workflowRunId) ?? [];
+			existing.push(task);
+			groupedByRun.set(task.workflowRunId, existing);
+		}
+
+		const canonicalWorkflowTasks = Array.from(groupedByRun.entries()).map(([runId, runTasks]) => {
+			const runTitle = runsById.get(runId)?.title?.trim().toLowerCase() ?? null;
+			const byRunTitle = runTitle
+				? runTasks.find((task) => task.title.trim().toLowerCase() === runTitle)
+				: undefined;
+			return (
+				byRunTitle ??
+				[...runTasks].sort((a, b) => {
+					if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+					return a.taskNumber - b.taskNumber;
+				})[0]
+			);
+		});
+
+		return [...standalone, ...canonicalWorkflowTasks].sort((a, b) => b.updatedAt - a.updatedAt);
+	}
+
 	// ========================================
 	// Global Space List
 	// ========================================
@@ -297,9 +364,10 @@ class SpaceStore {
 					if (idx >= 0) {
 						// Only add if not completed/cancelled
 						if (event.task.status !== 'done' && event.task.status !== 'cancelled') {
+							const nextTasks = this.upsertTaskOnePerRun(swt[idx].tasks, event.task);
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
-								{ ...swt[idx], tasks: [...swt[idx].tasks, event.task] },
+								{ ...swt[idx], tasks: nextTasks },
 								...swt.slice(idx + 1),
 							];
 						}
@@ -318,31 +386,19 @@ class SpaceStore {
 					const idx = swt.findIndex((s) => s.id === event.spaceId);
 					if (idx >= 0) {
 						const spaceTasks = swt[idx].tasks;
-						const taskIdx = spaceTasks.findIndex((t) => t.id === event.task.id);
 						// If task was completed/cancelled, remove it
 						if (event.task.status === 'done' || event.task.status === 'cancelled') {
-							if (taskIdx >= 0) {
-								const updated = spaceTasks.filter((t) => t.id !== event.task.id);
-								this.spacesWithTasks.value = [
-									...swt.slice(0, idx),
-									{ ...swt[idx], tasks: updated },
-									...swt.slice(idx + 1),
-								];
-							}
-						} else if (taskIdx >= 0) {
-							// Update in place
-							const updated = [...spaceTasks];
-							updated[taskIdx] = event.task;
+							const updated = this.removeTaskOnePerRun(spaceTasks, event.task);
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
 								{ ...swt[idx], tasks: updated },
 								...swt.slice(idx + 1),
 							];
 						} else {
-							// Task wasn't tracked but is now active — add it
+							const updated = this.upsertTaskOnePerRun(spaceTasks, event.task);
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
-								{ ...swt[idx], tasks: [...spaceTasks, event.task] },
+								{ ...swt[idx], tasks: updated },
 								...swt.slice(idx + 1),
 							];
 						}
@@ -513,10 +569,7 @@ class SpaceStore {
 			task: SpaceTask;
 		}>('space.task.created', (event) => {
 			if (event.spaceId === spaceId) {
-				const exists = this.tasks.value.some((t) => t.id === event.task.id);
-				if (!exists) {
-					this.tasks.value = [...this.tasks.value, event.task];
-				}
+				this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, event.task);
 			}
 		});
 		this.cleanupFunctions.push(unsubTaskCreated);
@@ -529,16 +582,7 @@ class SpaceStore {
 			task: SpaceTask;
 		}>('space.task.updated', (event) => {
 			if (event.spaceId === spaceId) {
-				const idx = this.tasks.value.findIndex((t) => t.id === event.task.id);
-				if (idx >= 0) {
-					this.tasks.value = [
-						...this.tasks.value.slice(0, idx),
-						event.task,
-						...this.tasks.value.slice(idx + 1),
-					];
-				} else {
-					this.tasks.value = [...this.tasks.value, event.task];
-				}
+				this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, event.task);
 			}
 		});
 		this.cleanupFunctions.push(unsubTaskUpdated);
@@ -698,8 +742,9 @@ class SpaceStore {
 		}
 
 		this.space.value = overview.space;
-		this.tasks.value = overview.tasks ?? [];
-		this.workflowRuns.value = overview.workflowRuns ?? [];
+		const runs = overview.workflowRuns ?? [];
+		this.workflowRuns.value = runs;
+		this.tasks.value = this.collapseTasksOnePerRun(overview.tasks ?? [], runs);
 
 		const resolvedId = overview.space.id;
 
@@ -1220,16 +1265,7 @@ class SpaceStore {
 		if (!response?.task) throw new Error('Task session response missing task payload');
 
 		const nextTask = response.task;
-		const idx = this.tasks.value.findIndex((t) => t.id === nextTask.id);
-		if (idx >= 0) {
-			this.tasks.value = [
-				...this.tasks.value.slice(0, idx),
-				nextTask,
-				...this.tasks.value.slice(idx + 1),
-			];
-		} else {
-			this.tasks.value = [...this.tasks.value, nextTask];
-		}
+		this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, nextTask);
 
 		return nextTask;
 	}
@@ -1279,30 +1315,6 @@ class SpaceStore {
 			hasMore: result?.hasMore ?? false,
 			sessionId: result?.sessionId ?? '',
 		};
-	}
-
-	// ========================================
-	// Workflow Run Methods
-	// ========================================
-
-	/**
-	 * Start a new workflow run.
-	 */
-	async startWorkflowRun(
-		params: Omit<CreateWorkflowRunParams, 'spaceId'>
-	): Promise<SpaceWorkflowRun> {
-		const spaceId = this.spaceId.value;
-		if (!spaceId) throw new Error('No space selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		const { run } = await hub.request<{ run: SpaceWorkflowRun }>('spaceWorkflowRun.start', {
-			...params,
-			spaceId,
-		});
-		if (!run) throw new Error('Server returned no run data');
-		return run;
 	}
 
 	// ========================================

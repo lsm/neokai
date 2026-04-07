@@ -708,7 +708,7 @@ export class GoalRepository {
  * Priority order:
  * 1. goal.maxPlanningAttempts (per-goal override, stored in DB)
  * 2. roomConfig.maxPlanningRetries + 1 (room-level config, legacy key)
- * 3. Default: 1 (no retries)
+ * 3. Default: 2 (1 retry after first failure)
  */
 export function getEffectiveMaxPlanningAttempts(
 	goal: RoomGoal,
@@ -732,6 +732,9 @@ export function getEffectiveMaxPlanningAttempts(
 		}
 	}
 
-	// Global default: 1 total attempt (no retries)
-	return 1;
+	// Global default: 2 total attempts (1 retry after first failure).
+	// Planning is the most failure-prone phase (large context, multiple API calls,
+	// sub-agent spawning) so a single transient error should not permanently escalate
+	// the goal to needs_human.
+	return 2;
 }

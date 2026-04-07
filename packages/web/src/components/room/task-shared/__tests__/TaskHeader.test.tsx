@@ -23,10 +23,13 @@ import type { NeoTask, RoomGoal } from '@neokai/shared';
 // Mocks
 // ---------------------------------------------------------------------------
 
-const { mockNavigateToRoom, mockCurrentRoomTabSignal } = vi.hoisted(() => ({
-	mockNavigateToRoom: vi.fn(),
-	mockCurrentRoomTabSignal: { value: 'chat' },
-}));
+const { mockNavigateToRoom, mockNavigateToRoomMission, mockCurrentRoomTabSignal } = vi.hoisted(
+	() => ({
+		mockNavigateToRoom: vi.fn(),
+		mockNavigateToRoomMission: vi.fn(),
+		mockCurrentRoomTabSignal: { value: 'chat' },
+	})
+);
 
 vi.mock('../../../../lib/router.ts', () => ({
 	get navigateToRoom() {
@@ -34,6 +37,9 @@ vi.mock('../../../../lib/router.ts', () => ({
 	},
 	get navigateToRoomTask() {
 		return vi.fn();
+	},
+	get navigateToRoomMission() {
+		return mockNavigateToRoomMission;
 	},
 }));
 
@@ -176,11 +182,12 @@ describe('TaskHeader', () => {
 		expect(container.textContent).toContain('Build feature X');
 	});
 
-	it('navigates to room when mission badge is clicked', () => {
+	it('navigates to mission detail when mission badge is clicked', () => {
 		const goal = makeGoal();
 		const { getByTestId } = render(<TaskHeader {...defaultProps({ associatedGoal: goal })} />);
 		fireEvent.click(getByTestId('task-view-goal-badge'));
-		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+		expect(mockNavigateToRoomMission).toHaveBeenCalledWith('room-1', goal.id);
+		expect(mockNavigateToRoom).not.toHaveBeenCalled();
 	});
 
 	// --- Progress indicator removed from header (shown in task list / info panel instead) ---

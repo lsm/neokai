@@ -8,7 +8,7 @@
  *
  * ## Workflow gates under test
  *
- *   plan-pr-gate       (planner writes `plan_submitted`)
+ *   plan-pr-gate       (planner writes `pr_url`)
  *     └─► Plan Review node activates when gate opens
  *   plan-approval-gate (reviewer writes `approved:true`, or human calls approveGate)
  *     └─► Coding node activates when gate opens
@@ -117,7 +117,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 	// Test 2: plan-pr-gate → Plan Review activates
 	// -------------------------------------------------------------------------
 	test(
-		'Writing plan_submitted to plan-pr-gate activates the Plan Review node',
+		'Writing pr_url to plan-pr-gate activates the Plan Review node',
 		async () => {
 			const { space, workflow } = await createTestSpace(daemon);
 			const { runId } = await startWorkflowRun(
@@ -127,18 +127,18 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 				'Test run — plan-pr-gate'
 			);
 
-			// Simulate the Planner agent calling write_gate("plan-pr-gate", { plan_submitted: ... })
+			// Simulate the Planner agent calling write_gate("plan-pr-gate", { pr_url: ... })
 			const gateRecord = await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/1',
+				pr_url: 'https://github.com/example/repo/pull/1',
 				pr_number: 1,
 				branch: 'plan/test-branch',
 			});
 
 			expect(gateRecord.gateId).toBe('plan-pr-gate');
-			expect(gateRecord.data.plan_submitted).toBeDefined();
+			expect(gateRecord.data.pr_url).toBeDefined();
 
 			// After writing, the channel router should have re-evaluated plan-pr-gate
-			// and activated the Plan Review node (condition: plan_submitted exists)
+			// and activated the Plan Review node (condition: pr_url exists)
 			const planReviewTask = await waitForNodeActivated(
 				daemon,
 				space.id,
@@ -173,7 +173,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			expect(beforeWrite).toBeNull();
 
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/42',
+				pr_url: 'https://github.com/example/repo/pull/42',
 				pr_number: 42,
 				branch: 'plan/feature-x',
 			});
@@ -181,7 +181,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			const afterWrite = await readGateData(daemon, runId, 'plan-pr-gate');
 			expect(afterWrite).not.toBeNull();
 			expect(afterWrite!.gateId).toBe('plan-pr-gate');
-			expect(afterWrite!.data.plan_submitted).toBe('https://github.com/example/repo/pull/42');
+			expect(afterWrite!.data.pr_url).toBe('https://github.com/example/repo/pull/42');
 			expect(afterWrite!.data.pr_number).toBe(42);
 			expect(afterWrite!.data.branch).toBe('plan/feature-x');
 		},
@@ -204,7 +204,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			// Open plan-pr-gate to activate Plan Review
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/2',
+				pr_url: 'https://github.com/example/repo/pull/2',
 			});
 
 			// Wait for Plan Review to activate (plan-pr-gate opened)
@@ -237,7 +237,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			// Step 1: Open plan-pr-gate (simulate planner done)
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/3',
+				pr_url: 'https://github.com/example/repo/pull/3',
 			});
 
 			// Step 2: Wait for Plan Review to activate
@@ -283,7 +283,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			// Open plan-pr-gate so the run has something to reject
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/4',
+				pr_url: 'https://github.com/example/repo/pull/4',
 			});
 
 			await waitForNodeActivated(daemon, space.id, runId, 'Plan Review', NODE_ACTIVATION_TIMEOUT);
@@ -332,7 +332,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 
 			// Open plan-pr-gate
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/5',
+				pr_url: 'https://github.com/example/repo/pull/5',
 			});
 			await waitForNodeActivated(daemon, space.id, runId, 'Plan Review', NODE_ACTIVATION_TIMEOUT);
 
@@ -382,7 +382,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			);
 
 			await writeGateData(daemon, runId, 'plan-pr-gate', {
-				plan_submitted: 'https://github.com/example/repo/pull/6',
+				pr_url: 'https://github.com/example/repo/pull/6',
 			});
 			await waitForNodeActivated(daemon, space.id, runId, 'Plan Review', NODE_ACTIVATION_TIMEOUT);
 

@@ -324,10 +324,10 @@ describe('CompletionDetector', () => {
 				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
 			});
 
-			test('26. no execution for end node → falls through to all-agents-done', () => {
+			test('26. no execution for end node → not complete', () => {
 				// Only a start-node execution exists; end node has none.
 				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true); // Falls through: all executions are terminal
+				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
 			});
 
 			test('27. endNodeId not provided → all-agents-done fallback', () => {

@@ -5,7 +5,7 @@
  * - workflowToVisualState: position restoration from layout, auto-layout fallback,
  *   empty edge initialization, startNodeId pass-through, endNodeId pass-through
  * - visualStateToCreateParams / visualStateToUpdateParams: round-trip,
- *   layout output, rules remapping, endNodeId pass-through
+ *   layout output, endNodeId pass-through
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,7 +16,6 @@ import {
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
 import type { SpaceWorkflow, WorkflowNode } from '@neokai/shared';
-import type { WorkflowRule } from '../../WorkflowRulesEditor';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 // Stable UUID counter so tests are deterministic
@@ -41,10 +40,6 @@ afterEach(() => {
 
 function makeStep(id: string, name?: string, agentId?: string): WorkflowNode {
 	return { id, name: name ?? id, agents: [{ agentId: agentId ?? 'agent-1', name: 'coder' }] };
-}
-
-function makeRule(id: string, name: string, content: string, appliesTo?: string[]): WorkflowRule {
-	return { id, name, content, appliesTo };
 }
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
@@ -166,15 +161,6 @@ describe('workflowToVisualState', () => {
 		expect(state.edges).toHaveLength(0);
 	});
 
-	it('returns empty rules array (rules removed from SpaceWorkflow)', () => {
-		const wf = makeWorkflow({
-			nodes: [makeStep('s1')],
-			startNodeId: 's1',
-		});
-		const state = workflowToVisualState(wf);
-		expect(state.rules).toHaveLength(0);
-	});
-
 	it('passes tags through', () => {
 		const wf = makeWorkflow({
 			nodes: [makeStep('s1')],
@@ -287,7 +273,6 @@ describe('visualStateToCreateParams', () => {
 				},
 			],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -307,6 +292,12 @@ describe('visualStateToCreateParams', () => {
 			instructions: 'do work',
 		});
 		expect(params.nodes![1].agents[0].agentId).toBe('a2');
+	});
+
+	it('single-agent shorthand derives role name from node name (not raw agentId)', () => {
+		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
+		expect(params.nodes![0].agents[0].name).toBe('step-1');
+		expect(params.nodes![1].agents[0].name).toBe('step-2');
 	});
 
 	it('produces agents array (model/systemPrompt removed from WorkflowNodeInput)', () => {
@@ -333,9 +324,10 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes![0].agents[0].agentId).toBe('a1');
 	});
 
-	it('omits empty instructions', () => {
+	it('nodes have no instructions field (removed from schema)', () => {
 		const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-		expect(params.nodes![0].instructions).toBeUndefined();
+		// WorkflowNodeInput no longer has an instructions field
+		expect('instructions' in params.nodes![0]).toBe(false);
 	});
 
 	it('passes startNodeId through', () => {
@@ -371,35 +363,6 @@ describe('visualStateToCreateParams', () => {
 		expect(params.tags).toEqual(['coding']);
 	});
 
-	it('rules are not included in create params (rules removed from SpaceWorkflow)', () => {
-		const state = makeState({
-			rules: [
-				{
-					localId: 'lr1',
-					id: undefined,
-					name: 'My Rule',
-					content: 'Content',
-					appliesTo: ['s1'],
-				},
-			],
-		});
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		// rules no longer part of CreateSpaceWorkflowParams
-		expect((params as unknown as Record<string, unknown>)['rules']).toBeUndefined();
-	});
-
-	it('blank rules do not affect create params (rules removed from SpaceWorkflow)', () => {
-		const state = makeState({
-			rules: [
-				{ localId: 'lr1', name: '', content: '', appliesTo: [] },
-				{ localId: 'lr2', name: 'Real Rule', content: 'Content', appliesTo: [] },
-			],
-		});
-		const params = visualStateToCreateParams(state, 'space-1', 'WF');
-		// rules no longer part of CreateSpaceWorkflowParams
-		expect((params as unknown as Record<string, unknown>)['rules']).toBeUndefined();
-	});
-
 	it('generates a new UUID for steps without id', () => {
 		const state: VisualEditorState = {
 			nodes: [
@@ -410,7 +373,6 @@ describe('visualStateToCreateParams', () => {
 			],
 			edges: [],
 			startNodeId: 'local-new',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -425,7 +387,6 @@ describe('visualStateToCreateParams', () => {
 			nodes: [],
 			edges: [],
 			startNodeId: '',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -515,16 +476,6 @@ describe('round-trip serialization', () => {
 		expect(params.tags).toEqual(['research', 'review']);
 	});
 
-	it('rules not present in update params (rules removed from SpaceWorkflow)', () => {
-		const original = makeWorkflow({
-			nodes: [makeStep('s1'), makeStep('s2')],
-			startNodeId: 's1',
-		});
-		const params = visualStateToUpdateParams(workflowToVisualState(original));
-		// rules no longer part of UpdateSpaceWorkflowParams
-		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
-	});
-
 	it('edges are empty after round-trip (transitions removed from backend)', () => {
 		const original = makeWorkflow({
 			nodes: [makeStep('s1'), makeStep('s2')],
@@ -606,7 +557,6 @@ describe('visualStateToUpdateParams', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -617,28 +567,6 @@ describe('visualStateToUpdateParams', () => {
 		});
 		expect(params.name).toBe('Updated Name');
 		expect(params.description).toBe('New desc');
-	});
-
-	it('rules are not included in update params (rules removed from SpaceWorkflow)', () => {
-		const state: VisualEditorState = {
-			nodes: [
-				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
-					position: { x: 0, y: 0 },
-				},
-			],
-			edges: [],
-			startNodeId: 's1',
-			rules: [
-				{ localId: 'lr1', id: undefined, name: 'New Rule', content: 'Content', appliesTo: [] },
-			],
-			tags: [],
-			channels: [],
-			gates: [],
-		};
-		const params = visualStateToUpdateParams(state);
-		// rules no longer part of UpdateSpaceWorkflowParams
-		expect((params as Record<string, unknown>)['rules']).toBeUndefined();
 	});
 
 	it('passes endNodeId through to update params', () => {
@@ -656,7 +584,6 @@ describe('visualStateToUpdateParams', () => {
 			edges: [],
 			startNodeId: 's1',
 			endNodeId: 's2',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -675,7 +602,6 @@ describe('visualStateToUpdateParams', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -720,10 +646,7 @@ describe('multi-agent step serialization', () => {
 
 	it('workflowToVisualState preserves channels array at workflow level', () => {
 		const workflow = makeWorkflow({
-			channels: [
-				{ from: 'coder', to: 'reviewer', direction: 'one-way', label: 'PR' },
-				{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' },
-			],
+			channels: [],
 			nodes: [
 				{
 					id: 's1',
@@ -766,7 +689,6 @@ describe('multi-agent step serialization', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -797,7 +719,6 @@ describe('multi-agent step serialization', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [],
 			gates: [],
@@ -835,13 +756,11 @@ describe('multi-agent step serialization', () => {
 			],
 			edges: [],
 			startNodeId: 's1',
-			rules: [],
 			tags: [],
 			channels: [
 				{
 					from: 'Plan',
 					to: 'Code',
-					direction: 'one-way',
 					gateId: 'review-votes-gate',
 				},
 			],
@@ -892,8 +811,8 @@ describe('multi-agent step serialization', () => {
 	it('full round-trip workflowToVisualState -> visualStateToUpdateParams preserves multi-agent data', () => {
 		const workflow = makeWorkflow({
 			channels: [
-				{ from: 'coder', to: 'reviewer', direction: 'one-way' as const },
-				{ from: 'reviewer', to: ['coder', 'qa'], direction: 'bidirectional' as const },
+				{ from: 'coder', to: 'reviewer' },
+				{ from: 'reviewer', to: ['coder', 'qa'] },
 			],
 			nodes: [
 				{
@@ -928,12 +847,10 @@ describe('multi-agent step serialization', () => {
 		expect(params.channels![0]).toMatchObject({
 			from: 'coder',
 			to: 'reviewer',
-			direction: 'one-way',
 		});
 		expect(params.channels![1]).toMatchObject({
 			from: 'reviewer',
 			to: ['coder', 'qa'],
-			direction: 'bidirectional',
 		});
 	});
 });
@@ -1202,7 +1119,6 @@ describe('per-slot agent overrides round-trip', () => {
 		// Simulates the user renaming a slot role via the role input field and then saving.
 		// Workflow-level channels are preserved through serialization (user must update them manually).
 		const wf = makeWorkflow({
-			channels: [{ from: 'task-agent', to: 'coder', direction: 'bidirectional' as const }],
 			nodes: [
 				{
 					id: 's1',
@@ -1210,6 +1126,7 @@ describe('per-slot agent overrides round-trip', () => {
 					agents: [{ agentId: 'a1', name: 'coder' }],
 				},
 			],
+			channels: [{ from: 'task-agent', to: 'coder' }],
 			startNodeId: 's1',
 		});
 		const state = workflowToVisualState(wf);
@@ -1228,7 +1145,6 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(params.channels![0]).toMatchObject({
 			from: 'task-agent',
 			to: 'coder',
-			direction: 'bidirectional',
 		});
 	});
 });

@@ -22,14 +22,12 @@
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	SpaceTask,
+	UpdateSpaceTaskParams,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
-	ResolvedChannel,
-	WorkflowNode,
 	WorkflowChannel,
-	NodeExecutionStatus,
 } from '@neokai/shared';
-import { resolveNodeAgents, resolveNodeChannels } from '@neokai/shared';
+import { resolveNodeAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -43,36 +41,52 @@ import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
-import { autoCompleteStuckAgents, resolveNodeTimeout } from './agent-liveness';
 import { CompletionDetector } from './completion-detector';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import { MAX_TASK_AGENT_CRASH_RETRIES } from './constants';
+import { MAX_TASK_AGENT_CRASH_RETRIES, resolveNodeTimeout } from './constants';
 
 const log = new Logger('space-runtime');
 
-/**
- * Map a SpaceTaskStatus to the equivalent NodeExecutionStatus.
- *
- * Returns undefined for statuses that have no NodeExecution equivalent ('archived').
- */
-function taskStatusToNodeExecutionStatus(
-	taskStatus: SpaceTask['status']
-): NodeExecutionStatus | undefined {
-	switch (taskStatus) {
-		case 'open':
-			return 'pending';
-		case 'in_progress':
-			return 'in_progress';
-		case 'done':
-			return 'done';
-		case 'blocked':
-			return 'blocked';
-		case 'cancelled':
-			return 'cancelled';
-		case 'archived':
-			return undefined;
-	}
-}
+const WORKFLOW_SELECTION_STOP_WORDS = new Set([
+	'the',
+	'and',
+	'for',
+	'are',
+	'but',
+	'not',
+	'you',
+	'all',
+	'can',
+	'was',
+	'one',
+	'our',
+	'out',
+	'day',
+	'get',
+	'has',
+	'him',
+	'his',
+	'how',
+	'its',
+	'may',
+	'new',
+	'now',
+	'old',
+	'see',
+	'two',
+	'use',
+	'way',
+	'who',
+	'did',
+	'let',
+	'put',
+	'say',
+	'she',
+	'too',
+	'had',
+	'any',
+	'via',
+]);
 
 // ---------------------------------------------------------------------------
 // Config
@@ -98,10 +112,8 @@ export interface SpaceRuntimeConfig {
 	/**
 	 * Optional TaskAgentManager for Task Agent mode.
 	 *
-	 * When provided, SpaceRuntime spawns Task Agent sessions for pending tasks
-	 * instead of calling advance() directly. Task Agents drive the workflow
-	 * via their MCP tools. When absent, the original direct-advance behavior
-	 * is preserved for backward compatibility.
+	 * SpaceRuntime uses TaskAgentManager for node-agent session lifecycle
+	 * (spawn/liveness/cancel) and optional Task Agent messaging sessions.
 	 */
 	taskAgentManager?: TaskAgentManager;
 	/**
@@ -125,6 +137,36 @@ export interface SpaceRuntimeConfig {
 	 * Defaults to `new CompletionDetector(nodeExecutionRepo)` if not provided.
 	 */
 	completionDetector?: CompletionDetector;
+	/**
+	 * Optional callback emitted when runtime mutates a SpaceTask internally.
+	 * Used to fan out `space.task.updated` events for UI synchronization.
+	 */
+	onTaskUpdated?: (payload: { spaceId: string; task: SpaceTask }) => Promise<void> | void;
+	/**
+	 * Optional callback emitted when runtime creates a workflow run internally.
+	 * Used to fan out `space.workflowRun.created` events for UI synchronization.
+	 */
+	onWorkflowRunCreated?: (payload: {
+		spaceId: string;
+		run: SpaceWorkflowRun;
+	}) => Promise<void> | void;
+	/**
+	 * Optional callback emitted when runtime updates workflow run status internally.
+	 * Used to fan out `space.workflowRun.updated` events for UI synchronization.
+	 */
+	onWorkflowRunUpdated?: (payload: {
+		spaceId: string;
+		run: SpaceWorkflowRun;
+	}) => Promise<void> | void;
+}
+
+interface StartWorkflowRunOptions {
+	/**
+	 * Optional canonical parent task for this workflow run.
+	 * When provided, runtime-created node tasks are marked with this parent
+	 * so user-facing views can keep a one-task-per-run list.
+	 */
+	parentTaskId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +205,8 @@ export class SpaceRuntime {
 
 	/** Handle returned by setInterval when the tick loop is running */
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
+	/** Single-flight guard to prevent overlapping executeTick() runs. */
+	private tickInFlight = false;
 
 	/** Active notification sink — replaced at runtime via setNotificationSink() */
 	private notificationSink: NotificationSink;
@@ -186,22 +230,19 @@ export class SpaceRuntime {
 	private notifiedTaskSet = new Set<string>();
 
 	/**
-	 * In-memory crash counter per task ID.
+	 * In-memory crash counter per execution key (`${runId}:${nodeExecutionId}`).
 	 *
-	 * Tracks how many times a task's agent session has been detected as dead.
-	 * When the count reaches MAX_TASK_AGENT_CRASH_RETRIES, the task is escalated
-	 * to `blocked` so a human can investigate. Below the limit, the task
-	 * is reset to `pending` for re-spawn to tolerate transient startup failures.
+	 * Tracks how many times a workflow node agent session has been detected dead.
+	 * When the count reaches MAX_TASK_AGENT_CRASH_RETRIES, the node execution is
+	 * escalated to `blocked`. Below the limit, execution is reset to `pending` for
+	 * re-spawn to tolerate transient startup failures.
 	 *
-	 * Reset contract: this map is in-memory only and starts empty on every daemon
-	 * restart. On restart, if a task is still `in_progress` with a dead session,
-	 * the crash counter begins from 0 again — giving the task a fresh set of
-	 * retries before escalation.
+	 * Reset contract: this map is in-memory only and starts empty on every daemon restart.
 	 */
 	private taskCrashCounts = new Map<string, number>();
 
 	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
-	private resolvedChannelsMap = new Map<string, ResolvedChannel[]>();
+	private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
@@ -267,6 +308,204 @@ export class SpaceRuntime {
 		}
 	}
 
+	private async safeOnTaskUpdated(spaceId: string, task: SpaceTask): Promise<void> {
+		const handler = this.config.onTaskUpdated;
+		if (!handler) return;
+		try {
+			await handler({ spaceId, task });
+		} catch (err) {
+			log.warn(
+				`[SpaceRuntime] onTaskUpdated threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	}
+
+	private async safeOnWorkflowRunCreated(spaceId: string, run: SpaceWorkflowRun): Promise<void> {
+		const handler = this.config.onWorkflowRunCreated;
+		if (!handler) return;
+		try {
+			await handler({ spaceId, run });
+		} catch (err) {
+			log.warn(
+				`[SpaceRuntime] onWorkflowRunCreated threw for run "${run.id}": ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	}
+
+	private async safeOnWorkflowRunUpdated(spaceId: string, run: SpaceWorkflowRun): Promise<void> {
+		const handler = this.config.onWorkflowRunUpdated;
+		if (!handler) return;
+		try {
+			await handler({ spaceId, run });
+		} catch (err) {
+			log.warn(
+				`[SpaceRuntime] onWorkflowRunUpdated threw for run "${run.id}": ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+	}
+
+	private async updateTaskAndEmit(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask | null> {
+		const updated = this.config.taskRepo.updateTask(taskId, params);
+		if (updated) {
+			await this.safeOnTaskUpdated(spaceId, updated);
+		}
+		return updated;
+	}
+
+	private async transitionRunStatusAndEmit(
+		runId: string,
+		nextStatus: SpaceWorkflowRun['status']
+	): Promise<SpaceWorkflowRun> {
+		const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
+		await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
+		return updated;
+	}
+
+	/**
+	 * Choose the canonical task for a workflow run in one-task-per-run mode.
+	 *
+	 * Preference:
+	 * 1. Title exactly matches run title (case-insensitive, trimmed)
+	 * 2. Lowest task number
+	 * 3. Earliest created_at
+	 */
+	private pickCanonicalTaskForRun(run: SpaceWorkflowRun, runTasks: SpaceTask[]): SpaceTask | null {
+		if (runTasks.length === 0) return null;
+
+		const normalize = (value: string | null | undefined): string =>
+			(value ?? '').trim().toLowerCase();
+		const runTitle = normalize(run.title);
+		const titleMatches = runTasks.filter((task) => normalize(task.title) === runTitle);
+		const pool = titleMatches.length > 0 ? titleMatches : runTasks;
+
+		const sorted = [...pool].sort((a, b) => {
+			if (a.taskNumber !== b.taskNumber) return a.taskNumber - b.taskNumber;
+			if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+			return a.id.localeCompare(b.id);
+		});
+
+		return sorted[0] ?? null;
+	}
+
+	/**
+	 * Archive non-canonical run tasks and detach them from the run.
+	 *
+	 * This is a strict one-task-per-run repair path that removes legacy/duplicate
+	 * per-node tasks from active workflow state.
+	 */
+	private async archiveDuplicateRunTasks(
+		spaceId: string,
+		run: SpaceWorkflowRun,
+		canonicalTask: SpaceTask,
+		runTasks: SpaceTask[],
+		reason: 'active_run' | 'terminal_reconcile'
+	): Promise<void> {
+		const duplicates = runTasks.filter((task) => task.id !== canonicalTask.id);
+		if (duplicates.length === 0) return;
+
+		log.warn(
+			`SpaceRuntime: run ${run.id} has ${runTasks.length} tasks; archiving ${duplicates.length} duplicate task(s) in ${reason} repair`
+		);
+
+		const now = Date.now();
+		for (const duplicate of duplicates) {
+			if (duplicate.taskAgentSessionId && this.config.taskAgentManager) {
+				this.config.taskAgentManager.cancelBySessionId(duplicate.taskAgentSessionId);
+			}
+
+			await this.updateTaskAndEmit(spaceId, duplicate.id, {
+				status: 'archived',
+				archivedAt: duplicate.archivedAt ?? now,
+				completedAt: duplicate.completedAt ?? now,
+				workflowRunId: null,
+				taskAgentSessionId: null,
+			});
+
+			this.notifiedTaskSet.delete(`${duplicate.id}:blocked`);
+			this.notifiedTaskSet.delete(`${duplicate.id}:timeout`);
+		}
+	}
+
+	/**
+	 * Reconcile task state for a terminal workflow run.
+	 *
+	 * Ensures:
+	 * - exactly one canonical task remains attached to the run
+	 * - canonical task status mirrors run status
+	 */
+	private async reconcileTerminalRunTasks(run: SpaceWorkflowRun): Promise<void> {
+		const runTasks = this.config.taskRepo.listByWorkflowRun(run.id);
+		if (runTasks.length === 0) return;
+
+		const canonicalTask = this.pickCanonicalTaskForRun(run, runTasks);
+		if (!canonicalTask) return;
+
+		if (runTasks.length > 1) {
+			await this.archiveDuplicateRunTasks(
+				run.spaceId,
+				run,
+				canonicalTask,
+				runTasks,
+				'terminal_reconcile'
+			);
+		}
+
+		if (run.status === 'done') {
+			const workflow =
+				this.executorMeta.get(run.id)?.workflow ??
+				this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
+				null;
+			const summaryFromWorkflow = workflow
+				? this.resolveCompletionSummary(run.id, workflow)
+				: undefined;
+			const summaryFromSibling = runTasks
+				.filter((task) => task.id !== canonicalTask.id)
+				.find((task) => !!task.result)?.result;
+			const nextResult = summaryFromWorkflow ?? canonicalTask.result ?? summaryFromSibling ?? null;
+
+			if (canonicalTask.status !== 'done') {
+				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
+					status: 'done',
+					result: nextResult,
+					completedAt: canonicalTask.completedAt ?? run.completedAt ?? Date.now(),
+				});
+			} else if (nextResult && canonicalTask.result !== nextResult) {
+				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
+			}
+			return;
+		}
+
+		if (run.status === 'cancelled' && canonicalTask.status !== 'cancelled') {
+			await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
+				status: 'cancelled',
+				completedAt: canonicalTask.completedAt ?? run.completedAt ?? Date.now(),
+			});
+		}
+	}
+
+	/**
+	 * Reconcile terminal runs that are not in the executor map (already cleaned up).
+	 *
+	 * This keeps task state consistent after daemon restarts and repairs legacy runs
+	 * where external paths marked the run terminal but left task state inconsistent.
+	 */
+	private async reconcileTerminalRunsWithoutExecutors(): Promise<void> {
+		const spaces = await this.config.spaceManager.listSpaces(false);
+		for (const space of spaces) {
+			const terminalRuns = this.config.workflowRunRepo
+				.listBySpace(space.id)
+				.filter((run) => run.status === 'done' || run.status === 'cancelled');
+			for (const run of terminalRuns) {
+				if (this.executors.has(run.id)) continue;
+				await this.reconcileTerminalRunTasks(run);
+			}
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Lifecycle — start / stop
 	// -------------------------------------------------------------------------
@@ -294,14 +533,42 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Stops the periodic tick loop.
+	 * Stops the periodic tick loop and waits for any in-flight tick to complete.
+	 *
+	 * This prevents race conditions during shutdown where an in-flight tick
+	 * continues to perform DB operations after the database has been closed.
+	 *
 	 * Does not affect in-progress executors — they remain in the map and can
 	 * be resumed by calling start() again.
 	 */
-	stop(): void {
+	async stop(): Promise<void> {
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
+		}
+		// Wait for any in-flight executeTick() to finish so that all DB
+		// reads/writes and DaemonHub event emissions complete before the
+		// caller proceeds to close the database.
+		if (this.tickInFlight) {
+			const MAX_TICK_DRAIN_MS = 30_000;
+			const start = Date.now();
+			await new Promise<void>((resolve) => {
+				const check = () => {
+					if (!this.tickInFlight) {
+						resolve();
+					} else if (Date.now() - start > MAX_TICK_DRAIN_MS) {
+						log.warn(
+							`SpaceRuntime: timed out waiting for in-flight tick after ${MAX_TICK_DRAIN_MS}ms — proceeding with shutdown`
+						);
+						resolve();
+					} else {
+						// 10 ms balances low latency (fast shutdown) against
+						// CPU churn (no busy-spin) during the drain window.
+						setTimeout(check, 10);
+					}
+				};
+				check();
+			});
 		}
 	}
 
@@ -321,14 +588,22 @@ export class SpaceRuntime {
 	 * 3. Checks standalone tasks (no workflowRunId) for blocked and timeout
 	 */
 	async executeTick(): Promise<void> {
-		if (!this.rehydrated) {
-			await this.rehydrateExecutors();
-			this.rehydrated = true;
-		}
+		if (this.tickInFlight) return;
+		this.tickInFlight = true;
+		try {
+			if (!this.rehydrated) {
+				await this.rehydrateExecutors();
+				this.rehydrated = true;
+			}
 
-		await this.processCompletedTasks();
-		await this.cleanupTerminalExecutors();
-		await this.checkStandaloneTasks();
+			await this.attachStandaloneTasksToWorkflows();
+			await this.processCompletedTasks();
+			await this.cleanupTerminalExecutors();
+			await this.reconcileTerminalRunsWithoutExecutors();
+			await this.checkStandaloneTasks();
+		} finally {
+			this.tickInFlight = false;
+		}
 	}
 
 	/**
@@ -338,20 +613,25 @@ export class SpaceRuntime {
 	 * 1. Load the workflow definition
 	 * 2. Create a SpaceWorkflowRun record (status: in_progress)
 	 * 3. Create a WorkflowExecutor and register it in the executors map
-	 * 4. Create a pending SpaceTask for the workflow's start step
+	 * 4. Ensure one canonical SpaceTask exists for the run
+	 * 5. Create pending node_execution rows for the start node
 	 *
-	 * Returns the created run and the initial task(s).
-	 * Cleans up maps if task creation fails to prevent orphaned executor entries.
+	 * Returns the created run and its canonical task.
+	 * Cleans up maps if task/execution creation fails to prevent orphaned executor entries.
 	 */
 	async startWorkflowRun(
 		spaceId: string,
 		workflowId: string,
 		title: string,
-		description?: string
+		description?: string,
+		options: StartWorkflowRunOptions = {}
 	): Promise<{ run: SpaceWorkflowRun; tasks: SpaceTask[] }> {
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
 		if (!workflow) {
 			throw new Error(`Workflow not found: ${workflowId}`);
+		}
+		if (!workflow.endNodeId) {
+			throw new Error(`Workflow "${workflowId}" is missing endNodeId and cannot be executed.`);
 		}
 
 		const space = await this.config.spaceManager.getSpace(spaceId);
@@ -368,6 +648,7 @@ export class SpaceRuntime {
 		});
 
 		const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+		await this.safeOnWorkflowRunCreated(spaceId, run);
 
 		// Register executor and meta. If a later step fails, we must clean these up.
 		const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
@@ -375,37 +656,56 @@ export class SpaceRuntime {
 		const executor = this.buildExecutor(workflow, run, spaceId, space.workspacePath);
 		this.executors.set(run.id, executor);
 
-		// Find the start node and create the initial task. Roll back map entries if this fails.
+		// Find start node and ensure canonical run task. Roll back map entries if this fails.
 		const startStep = workflow.nodes.find((s) => s.id === workflow.startNodeId);
 		if (!startStep) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
-			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
+			await this.transitionRunStatusAndEmit(run.id, 'cancelled');
 			throw new Error(`Start node "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
 		}
 
 		const taskManager = this.getOrCreateTaskManager(spaceId);
-		// Multi-agent start nodes: create one SpaceTask per agent.
-		// resolveNodeAgents() normalises agentId vs agents[] for backward compatibility.
-		// Keep resolveNodeAgents() + task creation inside the try block so a
-		// malformed node (neither agentId nor agents) triggers the rollback path
-		// and does not leave the executor/run orphaned.
-		const tasks: SpaceTask[] = [];
+		let canonicalTask: SpaceTask | null = null;
 		let startAgents: ReturnType<typeof resolveNodeAgents>;
 		try {
-			startAgents = resolveNodeAgents(startStep);
-			const isMultiAgentStart = startAgents.length > 1;
-			for (const agentEntry of startAgents) {
-				const task = await taskManager.createTask({
-					title: isMultiAgentStart ? agentEntry.name : startStep.name,
-					// Use only the agent-slot instructions for the task description.
-					// Node-level instructions are not carried into task descriptions —
-					// they belong to the workflow definition, not the task card UI.
-					description: agentEntry.instructions?.value ?? '',
+			// One run == one task. Reuse a provided parent task when available,
+			// otherwise create a new canonical task for this run.
+			if (options.parentTaskId) {
+				const parent = this.config.taskRepo.getTask(options.parentTaskId);
+				if (!parent) {
+					throw new Error(`Parent task not found: ${options.parentTaskId}`);
+				}
+				if (parent.spaceId !== spaceId) {
+					throw new Error(
+						`Parent task ${options.parentTaskId} belongs to a different space (${parent.spaceId})`
+					);
+				}
+				canonicalTask = await this.updateTaskAndEmit(spaceId, parent.id, {
+					workflowRunId: run.id,
+				});
+			} else {
+				canonicalTask = await taskManager.createTask({
+					title,
+					description: description ?? '',
 					workflowRunId: run.id,
 					status: 'open',
 				});
-				tasks.push(task);
+			}
+			if (!canonicalTask) {
+				throw new Error(`Failed to initialize canonical task for run ${run.id}`);
+			}
+			await this.safeOnTaskUpdated(spaceId, canonicalTask);
+
+			startAgents = resolveNodeAgents(startStep);
+			for (const agentEntry of startAgents) {
+				this.config.nodeExecutionRepo.createOrIgnore({
+					workflowRunId: run.id,
+					workflowNodeId: startStep.id,
+					agentName: agentEntry.name,
+					agentId: agentEntry.agentId ?? null,
+					status: 'pending',
+				});
 			}
 		} catch (err) {
 			// Clean up the executor/meta entries so the run is not orphaned in the map.
@@ -414,35 +714,16 @@ export class SpaceRuntime {
 			// Cancel the DB run record so rehydrateExecutors() does not silently loop
 			// over it on next server restart (an in_progress run with no tasks would
 			// sit in the executor map indefinitely, never advancing and never erroring).
-			this.config.workflowRunRepo.transitionStatus(run.id, 'cancelled');
+			await this.transitionRunStatusAndEmit(run.id, 'cancelled');
 			throw err;
 		}
 
 		// Resolve channel topology for the start node and store in run config.
 		// TODO: Milestone 6: pass resolvedChannels to session group creation in
 		// TaskAgentManager.spawnTaskAgent() rather than storing in run config.
-		this.resolveAndStoreChannels(run.id, space.id, startStep, workflow.channels ?? []);
+		this.storeWorkflowChannels(run.id, workflow.channels ?? []);
 
-		// Create node_execution records for the start node's tasks.
-		// startWorkflowRun() creates tasks directly (not via ChannelRouter.activateNode()),
-		// so we must create the corresponding node_execution records here.
-		//
-		// Task titles and node_execution agentNames are aligned:
-		// - Single-agent: title = agentName = node.name
-		// - Multi-agent: title = agentName = agentEntry.name (per-agent)
-		// The tick loop syncs status via agentName === task.title.
-		const isMultiAgentStart = startAgents.length > 1;
-		for (let i = 0; i < tasks.length; i++) {
-			this.config.nodeExecutionRepo.createOrIgnore({
-				workflowRunId: run.id,
-				workflowNodeId: startStep.id,
-				agentName: isMultiAgentStart ? startAgents[i].name : startStep.name,
-				agentId: startAgents[i].agentId ?? null,
-				status: 'pending',
-			});
-		}
-
-		return { run, tasks };
+		return { run, tasks: canonicalTask ? [canonicalTask] : [] };
 	}
 
 	/**
@@ -579,56 +860,61 @@ export class SpaceRuntime {
 		}
 
 		// In the agent-centric model, agents activate nodes themselves via activateNode().
-		// The tick loop processes ALL active tasks across all nodes — not just one "current node".
+		// The tick loop processes node_executions for the run while keeping exactly
+		// one canonical task as the user-facing envelope.
 		const meta = this.executorMeta.get(runId);
 		if (!meta) return;
 
-		// Get ALL tasks for this run. Each task may belong to a different workflow node.
+		// One run should have exactly one canonical task.
 		const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
 		if (allRunTasks.length === 0) return;
 
-		// Sync node_execution status from SpaceTask status.
-		// node_execution records are created by ChannelRouter.activateNode()
-		// and SpaceRuntime.startWorkflowRun(). The mapping key is
-		// node_execution.agentName === task.title.
-		//
-		// When multiple tasks share a title (edge case), worst-status logic
-		// ensures completion requires ALL matching tasks to be terminal.
-		const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-		if (nodeExecutions.length > 0) {
-			const tasksByTitle = new Map<string, SpaceTask[]>();
-			for (const task of allRunTasks) {
-				const group = tasksByTitle.get(task.title);
-				if (group) {
-					group.push(task);
-				} else {
-					tasksByTitle.set(task.title, [task]);
-				}
-			}
-			for (const exec of nodeExecutions) {
-				const group = tasksByTitle.get(exec.agentName);
-				if (!group || group.length === 0) continue;
-				const mappedStatuses = group
-					.map((t) => taskStatusToNodeExecutionStatus(t.status))
-					.filter((s): s is NodeExecutionStatus => s !== undefined);
-				if (mappedStatuses.length === 0) continue;
-				// Prefer the least-terminal status so completion requires ALL agents to finish.
-				const nonTerminal = mappedStatuses.find((s) => !TERMINAL_NODE_EXECUTION_STATUSES.has(s));
-				const effectiveStatus = nonTerminal ?? mappedStatuses[0];
-				if (exec.status !== effectiveStatus) {
-					this.config.nodeExecutionRepo.updateStatus(exec.id, effectiveStatus);
-				}
-			}
+		let canonicalTask = this.pickCanonicalTaskForRun(run, allRunTasks);
+		if (!canonicalTask) return;
+		if (allRunTasks.length > 1) {
+			await this.archiveDuplicateRunTasks(
+				meta.spaceId,
+				run,
+				canonicalTask,
+				allRunTasks,
+				'active_run'
+			);
+		}
+		if (canonicalTask.workflowRunId !== runId) {
+			const refreshed = await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+				workflowRunId: runId,
+			});
+			canonicalTask = refreshed ?? canonicalTask;
 		}
 
-		// Refresh dedup entries: clear keys for tasks that have left their flagged state.
-		for (const task of allRunTasks) {
-			if (task.status !== 'blocked') {
-				this.notifiedTaskSet.delete(`${task.id}:blocked`);
+		if (!meta.workflow.endNodeId) {
+			await this.transitionRunStatusAndEmit(runId, 'blocked');
+			if (canonicalTask.status !== 'blocked') {
+				await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+					status: 'blocked',
+					result: 'Workflow is missing endNodeId and cannot be executed safely.',
+					completedAt: null,
+				});
 			}
-			if (task.status !== 'in_progress') {
-				this.notifiedTaskSet.delete(`${task.id}:timeout`);
-			}
+			await this.safeNotify({
+				kind: 'workflow_run_blocked',
+				spaceId: meta.spaceId,
+				runId,
+				reason: 'Workflow is missing endNodeId',
+				timestamp: new Date().toISOString(),
+			});
+			return;
+		}
+
+		let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+		if (nodeExecutions.length === 0) return;
+
+		// Refresh dedup entries for this run's canonical task.
+		if (canonicalTask.status !== 'blocked') {
+			this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
+		}
+		if (canonicalTask.status !== 'in_progress') {
+			this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
 		}
 
 		// ─── End-node bypass ─────────────────────────────────────────────────
@@ -649,38 +935,40 @@ export class SpaceRuntime {
 			}
 		}
 
-		// Detect task-level blocked BEFORE the all-completed guard.
+		// Detect execution-level blocked BEFORE the all-completed guard.
 		// When end-node bypass fires, skip blocked notifications for siblings
 		// — the run will be completed imminently.
-		// This is an explicit check — not inferred from WorkflowTransitionError.
-		if (!endNodeBypass && allRunTasks.some((t) => t.status === 'blocked')) {
-			for (const task of allRunTasks) {
-				if (task.status !== 'blocked') continue;
-				const dedupKey = `${task.id}:blocked`;
-				if (!this.notifiedTaskSet.has(dedupKey)) {
-					this.notifiedTaskSet.add(dedupKey);
-					await this.safeNotify({
-						kind: 'task_blocked',
-						spaceId: meta.spaceId,
-						taskId: task.id,
-						reason: 'Task requires attention',
-						timestamp: new Date().toISOString(),
-					});
-				}
-			}
-
-			// Escalate the run to blocked for multi-agent steps when ALL tasks are terminal.
-			// Single-task steps: only task_blocked is emitted (backward compat).
-			if (allRunTasks.length > 1 && this.areAllNodeTasksTerminal(allRunTasks)) {
-				this.config.workflowRunRepo.transitionStatus(runId, 'blocked');
+		if (!endNodeBypass && nodeExecutions.some((execution) => execution.status === 'blocked')) {
+			const blockedReason =
+				nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
+				'One or more workflow agents are blocked';
+			const dedupKey = `${canonicalTask.id}:blocked`;
+			if (!this.notifiedTaskSet.has(dedupKey)) {
+				this.notifiedTaskSet.add(dedupKey);
 				await this.safeNotify({
-					kind: 'workflow_run_blocked',
+					kind: 'task_blocked',
 					spaceId: meta.spaceId,
-					runId,
-					reason: 'One or more tasks require attention',
+					taskId: canonicalTask.id,
+					reason: blockedReason,
 					timestamp: new Date().toISOString(),
 				});
 			}
+
+			await this.transitionRunStatusAndEmit(runId, 'blocked');
+			if (canonicalTask.status !== 'blocked') {
+				await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+					status: 'blocked',
+					result: blockedReason,
+					completedAt: null,
+				});
+			}
+			await this.safeNotify({
+				kind: 'workflow_run_blocked',
+				spaceId: meta.spaceId,
+				runId,
+				reason: 'One or more tasks require attention',
+				timestamp: new Date().toISOString(),
+			});
 
 			return;
 		}
@@ -692,22 +980,25 @@ export class SpaceRuntime {
 			const taskTimeoutMs = space?.config?.taskTimeoutMs;
 			if (taskTimeoutMs !== undefined) {
 				const now = Date.now();
-				for (const task of allRunTasks) {
-					if (task.status !== 'in_progress' || !task.startedAt) continue;
-					const elapsedMs = now - task.startedAt;
-					if (elapsedMs > taskTimeoutMs) {
-						const dedupKey = `${task.id}:timeout`;
-						if (!this.notifiedTaskSet.has(dedupKey)) {
-							this.notifiedTaskSet.add(dedupKey);
-							await this.safeNotify({
-								kind: 'task_timeout',
-								spaceId: meta.spaceId,
-								taskId: task.id,
-								elapsedMs,
-								timestamp: new Date().toISOString(),
-							});
-						}
-					}
+				const timedOutExecutions = nodeExecutions.filter((execution) => {
+					if (execution.status !== 'in_progress' || !execution.startedAt) return false;
+					return now - execution.startedAt > taskTimeoutMs;
+				});
+				const dedupKey = `${canonicalTask.id}:timeout`;
+				if (timedOutExecutions.length === 0) {
+					this.notifiedTaskSet.delete(dedupKey);
+				} else if (!this.notifiedTaskSet.has(dedupKey)) {
+					const elapsedMs = Math.max(
+						...timedOutExecutions.map((execution) => now - (execution.startedAt ?? now))
+					);
+					this.notifiedTaskSet.add(dedupKey);
+					await this.safeNotify({
+						kind: 'task_timeout',
+						spaceId: meta.spaceId,
+						taskId: canonicalTask.id,
+						elapsedMs,
+						timestamp: new Date().toISOString(),
+					});
 				}
 			}
 		}
@@ -719,109 +1010,143 @@ export class SpaceRuntime {
 		// themselves via send_message and report_done — SpaceRuntime never calls advance().
 		if (this.config.taskAgentManager) {
 			const tam = this.config.taskAgentManager;
+			let blockedByCrash = false;
 
-			// Step 1: Check tasks that already have a Task Agent session (in_progress).
-			// Full loop always completes so that crashed-agent handling is applied to ALL
-			// tasks before deciding whether to skip.
-			//
-			// NOTE: we intentionally do NOT return early when alive agents are found.
-			// Some tasks may have alive agents while siblings are still pending (e.g. a
-			// spawn failure on a prior tick). An early return here would permanently skip
-			// spawning those unspawned tasks.
-			for (const task of allRunTasks) {
-				if (!task.taskAgentSessionId) continue;
-
-				if (tam.isTaskAgentAlive(task.id)) {
-					continue; // still check remaining tasks for dead agents
+			// Step 1: Check workflow-node agent liveness by NodeExecution.sessionId.
+			for (const execution of nodeExecutions) {
+				if (
+					!execution.agentSessionId ||
+					(execution.status !== 'in_progress' && execution.status !== 'pending')
+				) {
+					continue;
 				}
 
-				// Task Agent session is dead. Apply crash-retry logic:
-				//   - Below MAX_TASK_AGENT_CRASH_RETRIES: reset to open for re-spawn
-				//     (tolerates transient startup failures, e.g. dev-proxy timing in CI).
-				//   - At or above limit: escalate to blocked so a human can
-				//     investigate before further retries are attempted.
-				const crashCount = (this.taskCrashCounts.get(task.id) ?? 0) + 1;
-				this.taskCrashCounts.set(task.id, crashCount);
+				if (tam.isSessionAlive(execution.agentSessionId)) {
+					continue;
+				}
+
+				const crashKey = `${runId}:${execution.id}`;
+				const crashCount = (this.taskCrashCounts.get(crashKey) ?? 0) + 1;
+				this.taskCrashCounts.set(crashKey, crashCount);
 
 				if (crashCount <= MAX_TASK_AGENT_CRASH_RETRIES) {
 					log.warn(
-						`SpaceRuntime: task agent for task ${task.id} crashed ` +
-							`(session ${task.taskAgentSessionId}); resetting to open for re-spawn ` +
+						`SpaceRuntime: workflow node agent crashed for execution ${execution.id} ` +
+							`(session ${execution.agentSessionId}); resetting execution to pending ` +
 							`(crash ${crashCount}/${MAX_TASK_AGENT_CRASH_RETRIES})`
 					);
-					this.config.taskRepo.updateTask(task.id, {
-						taskAgentSessionId: null,
-						status: 'open',
+					this.config.nodeExecutionRepo.update(execution.id, {
+						agentSessionId: null,
+						status: 'pending',
 					});
 				} else {
 					log.warn(
-						`SpaceRuntime: task agent for task ${task.id} crashed ` +
-							`(session ${task.taskAgentSessionId}); marking blocked ` +
+						`SpaceRuntime: workflow node agent crashed for execution ${execution.id} ` +
+							`(session ${execution.agentSessionId}); marking blocked ` +
 							`after ${crashCount} crashes (limit: ${MAX_TASK_AGENT_CRASH_RETRIES})`
 					);
-					this.config.taskRepo.updateTask(task.id, {
-						taskAgentSessionId: null,
+					this.config.nodeExecutionRepo.update(execution.id, {
+						agentSessionId: null,
 						status: 'blocked',
 						result: `Agent session crashed ${crashCount} times consecutively`,
 					});
+					blockedByCrash = true;
 					await this.safeNotify({
 						kind: 'agent_crash',
 						spaceId: meta.spaceId,
-						taskId: task.id,
+						taskId: canonicalTask.id,
 						timestamp: new Date().toISOString(),
 					});
 				}
 			}
 
-			// Step 1.5: Auto-complete stuck agents — alive but never called report_done.
-			// Must run after dead-agent resets (Step 1) so we only process truly alive agents.
-			// Re-reads tasks from DB to pick up any status resets from Step 1.
-			const freshRunTasksForLiveness = this.config.taskRepo.listByWorkflowRun(runId);
-			const autoCompleted = await autoCompleteStuckAgents(
-				freshRunTasksForLiveness,
-				meta.spaceId,
-				this.config.taskRepo,
-				tam,
-				this.safeNotify.bind(this),
-				undefined,
-				(task) => resolveNodeTimeout(task.title ?? 'general')
-			);
-			if (autoCompleted.length > 0) {
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
+			if (blockedByCrash) {
+				const blockedReason =
+					nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
+					'One or more workflow agents are blocked';
+				const dedupKey = `${canonicalTask.id}:blocked`;
+				if (!this.notifiedTaskSet.has(dedupKey)) {
+					this.notifiedTaskSet.add(dedupKey);
+					await this.safeNotify({
+						kind: 'task_blocked',
+						spaceId: meta.spaceId,
+						taskId: canonicalTask.id,
+						reason: blockedReason,
+						timestamp: new Date().toISOString(),
+					});
+				}
+				await this.transitionRunStatusAndEmit(runId, 'blocked');
+				if (canonicalTask.status !== 'blocked') {
+					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+						status: 'blocked',
+						result: blockedReason,
+						completedAt: null,
+					});
+				}
+				await this.safeNotify({
+					kind: 'workflow_run_blocked',
+					spaceId: meta.spaceId,
+					runId,
+					reason: 'One or more tasks require attention',
+					timestamp: new Date().toISOString(),
+				});
+				return;
+			}
+
+			// Step 1.5: Auto-complete alive agents that never call report_done.
+			let autoCompleted = 0;
+			const now = Date.now();
+			for (const execution of nodeExecutions) {
+				if (execution.status !== 'in_progress' || !execution.agentSessionId) continue;
+				if (!tam.isSessionAlive(execution.agentSessionId)) continue;
+
+				const timeoutMs = resolveNodeTimeout(execution.agentName ?? 'general');
+				const referenceTime = execution.startedAt ?? execution.createdAt;
+				const elapsedMs = now - referenceTime;
+				if (elapsedMs <= timeoutMs) continue;
+
+				const timeoutMinutes = Math.round(timeoutMs / 60_000);
+				this.config.nodeExecutionRepo.update(execution.id, {
+					status: 'done',
+					result: `Auto-completed: agent did not call report_done within ${timeoutMinutes} minutes`,
+				});
+				await this.safeNotify({
+					kind: 'agent_auto_completed',
+					spaceId: meta.spaceId,
+					taskId: canonicalTask.id,
+					elapsedMs,
+					timestamp: new Date().toISOString(),
+				});
+				autoCompleted++;
+			}
+			if (autoCompleted > 0) {
 				log.warn(
-					`SpaceRuntime: auto-completed ${autoCompleted.length} stuck agent(s) for run ${runId}`
+					`SpaceRuntime: auto-completed ${autoCompleted} stuck node agent(s) for run ${runId}`
 				);
 			}
 
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+
 			// Step 1.6: Completion detection.
-			// After liveness checks and auto-completion, inspect whether the
-			// workflow run is complete:
-			//   - End-node short-circuit: if the workflow has an endNodeId and the
-			//     end node's execution is terminal, the run is complete.
-			//   - All-agents-done fallback: every node execution is terminal.
-			// cleanupTerminalExecutors() will emit the notification and remove the
-			// executor on the same tick.
 			if (
 				this.completionDetector.isComplete({
 					workflowRunId: runId,
 					endNodeId: meta.workflow.endNodeId,
 				})
 			) {
-				this.config.workflowRunRepo.transitionStatus(runId, 'done');
-
-				// Auto-complete the orchestration task (Task Agent's own task)
-				// when the run transitions to done. Guard: only if status is in_progress.
-				// The orchestration task is the one whose taskAgentSessionId follows
-				// the Task Agent pattern (space:${spaceId}:task:${taskId}) — node agent
-				// sub-sessions use UUID-style IDs and are NOT orchestration tasks.
-				for (const t of allRunTasks) {
-					if (t.taskAgentSessionId && t.status === 'in_progress') {
-						// Task Agent sessions follow the pattern "space:UUID:task:UUID"
-						if (t.taskAgentSessionId.startsWith('space:')) {
-							this.config.taskRepo.updateTask(t.id, { status: 'done' });
-							log.info(`SpaceRuntime: auto-completed orchestration task ${t.id} for run ${runId}`);
-							break;
-						}
-					}
+				await this.transitionRunStatusAndEmit(runId, 'done');
+				const summary = this.resolveCompletionSummary(runId, meta.workflow);
+				const nextTaskResult = summary ?? canonicalTask.result ?? null;
+				if (canonicalTask.status !== 'done') {
+					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+						status: 'done',
+						result: nextTaskResult,
+						completedAt: Date.now(),
+					});
+				} else if (summary && canonicalTask.result !== summary) {
+					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
 				}
 
 				// Sibling NodeExecution cleanup: cancel siblings still in_progress
@@ -851,32 +1176,58 @@ export class SpaceRuntime {
 				return;
 			}
 
-			// Step 2: Spawn Task Agents for pending tasks without an agent session.
-			// Re-read from DB to pick up status resets applied in Step 1.
-			const pendingTasksNeedingAgent = this.config.taskRepo
-				.listByWorkflowRun(runId)
-				.filter((t) => t.status === 'open' && !t.taskAgentSessionId);
+			// Step 2: Spawn workflow node agents for pending executions without sessions.
+			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+			const pendingExecutions = nodeExecutions.filter(
+				(execution) => execution.status === 'pending' && !execution.agentSessionId
+			);
 
-			if (pendingTasksNeedingAgent.length > 0) {
+			if (pendingExecutions.length > 0) {
 				if (!space) {
-					// Space was deleted while the run was in progress — log and wait.
-					// The run will remain stuck until the space is restored or cancelled.
 					log.warn(
-						`SpaceRuntime: cannot spawn task agents for run ${runId} — space ${meta.spaceId} not found`
+						`SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
 					);
 				} else {
-					for (const task of pendingTasksNeedingAgent) {
-						if (tam.isSpawning(task.id)) continue; // spawn already in progress
+					for (const execution of pendingExecutions) {
+						if (tam.isExecutionSpawning(execution.id)) continue;
 						try {
-							// spawnTaskAgent writes taskAgentSessionId to the DB as a side effect.
-							// SpaceRuntime owns the status transition to 'in_progress' after spawn.
-							await tam.spawnTaskAgent(task, space, meta.workflow, run, {
-								kickoff: false,
+							const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
+								canonicalTask,
+								space,
+								meta.workflow,
+								run,
+								execution,
+								{
+									kickoff: true,
+								}
+							);
+							this.config.nodeExecutionRepo.update(execution.id, {
+								status: 'in_progress',
+								agentSessionId: sessionId,
 							});
-							this.config.taskRepo.updateTask(task.id, { status: 'in_progress' });
 						} catch (err) {
-							log.error(`SpaceRuntime: failed to spawn task agent for task ${task.id}:`, err);
+							const stale = this.config.nodeExecutionRepo.getById(execution.id);
+							if (stale?.agentSessionId) {
+								tam.cancelBySessionId(stale.agentSessionId);
+								this.config.nodeExecutionRepo.update(execution.id, {
+									agentSessionId: null,
+									status: 'pending',
+									result: null,
+								});
+							}
+							log.error(
+								`SpaceRuntime: failed to spawn workflow node agent for execution ${execution.id}:`,
+								err
+							);
 						}
+					}
+					if (canonicalTask.status === 'open') {
+						const nowTs = Date.now();
+						await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+							status: 'in_progress',
+							startedAt: canonicalTask.startedAt ?? nowTs,
+							completedAt: null,
+						});
 					}
 				}
 			}
@@ -887,22 +1238,12 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Finds the result summary from the terminal (Done) node agent task for a
-	 * completed workflow run. Used to populate the `workflow_run_completed`
-	 * notification summary so the Space Chat Agent can surface it to the human.
+	 * Finds a completion summary from terminal node executions in a completed run.
 	 *
 	 * Strategy:
-	 * 1. Find terminal node IDs — workflow nodes that do not appear as the
-	 *    `from` source in any channel (no outbound channels).
-	 * 2. Look up completed tasks for those node IDs.
-	 * 3. Return the first non-empty result string found.
-	 *
-	 * Channel `from`/`to` values are agent slot names or node names (NOT node UUIDs).
-	 * Cross-node format `"nodeId/agentName"` encodes the node UUID before the slash.
-	 * We resolve all references to node UUIDs before comparing against `node.id`.
-	 *
-	 * Falls back to `undefined` when no terminal task result is available
-	 * (e.g. the Done node hasn't run yet, or the result field was not set).
+	 * 1. Find terminal node IDs — workflow nodes with no outbound channel.
+	 * 2. Scan node_executions for those nodes.
+	 * 3. Return the first non-empty execution result.
 	 */
 	private resolveCompletionSummary(runId: string, workflow: SpaceWorkflow): string | undefined {
 		const channels = workflow.channels ?? [];
@@ -933,18 +1274,11 @@ export class SpaceRuntime {
 		};
 
 		// Collect node IDs that appear as channel sources (have outbound channels).
-		// Bidirectional channels flow both ways, so both endpoints are non-terminal.
+		// Each channel is one-way; a node has outbound if it appears in channel.from.
 		const nodesWithOutbound = new Set<string>();
 		for (const ch of channels) {
 			const fromId = resolveRef(ch.from);
 			if (fromId) nodesWithOutbound.add(fromId);
-			if (ch.direction === 'bidirectional') {
-				const targets = Array.isArray(ch.to) ? ch.to : [ch.to];
-				for (const target of targets) {
-					const toId = resolveRef(target);
-					if (toId) nodesWithOutbound.add(toId);
-				}
-			}
 		}
 
 		// Terminal nodes are those with no outbound channels
@@ -957,11 +1291,15 @@ export class SpaceRuntime {
 
 		if (terminalNodeIds.size === 0) return undefined;
 
-		// Look up completed tasks for terminal nodes and return the first result
-		const runTasks = this.config.taskRepo.listByWorkflowRun(runId);
-		for (const task of runTasks) {
-			if (task.status === 'done' && task.result) {
-				return task.result;
+		// Look up completed node executions for terminal nodes and return the first result
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+		for (const execution of executions) {
+			if (
+				terminalNodeIds.has(execution.workflowNodeId) &&
+				execution.status === 'done' &&
+				execution.result
+			) {
+				return execution.result;
 			}
 		}
 
@@ -998,6 +1336,9 @@ export class SpaceRuntime {
 							timestamp: new Date().toISOString(),
 						});
 					}
+				}
+				if (run) {
+					await this.reconcileTerminalRunTasks(run);
 				}
 				// Prune dedup entries for all tasks in this run so the set doesn't
 				// grow unboundedly. Once a run is terminal its tasks will never
@@ -1107,6 +1448,106 @@ export class SpaceRuntime {
 	}
 
 	/**
+	 * Attach a workflow run to open standalone tasks so workflow execution is driven
+	 * by the runtime tick (not by Task Agent session creation).
+	 *
+	 * For each open standalone task:
+	 * 1. Select a fallback workflow for the task
+	 * 2. Start a workflow run
+	 * 3. Attach the original task to the run and mark it in_progress
+	 */
+	private async attachStandaloneTasksToWorkflows(): Promise<void> {
+		const spaces = await this.config.spaceManager.listSpaces(false);
+
+		for (const space of spaces) {
+			const workflows = this.config.spaceWorkflowManager.listWorkflows(space.id);
+			if (workflows.length === 0) continue;
+
+			const standaloneOpenTasks = this.config.taskRepo
+				.listStandaloneBySpace(space.id, false)
+				.filter((task) => task.status === 'open');
+
+			for (const task of standaloneOpenTasks) {
+				// Re-read to avoid racing with external updates between list and attach.
+				const fresh = this.config.taskRepo.getTask(task.id);
+				if (!fresh || fresh.workflowRunId) continue;
+				if (fresh.status !== 'open') continue;
+
+				const selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
+				if (!selectedWorkflow) continue;
+
+				try {
+					const { run } = await this.startWorkflowRun(
+						space.id,
+						selectedWorkflow.id,
+						fresh.title,
+						fresh.description,
+						{ parentTaskId: fresh.id }
+					);
+
+					await this.updateTaskAndEmit(space.id, fresh.id, {
+						workflowRunId: run.id,
+						status: 'in_progress',
+						startedAt: fresh.startedAt ?? Date.now(),
+						completedAt: null,
+					});
+				} catch (err) {
+					log.warn(
+						`SpaceRuntime: failed to attach standalone task ${fresh.id} to workflow ${selectedWorkflow.id}:`,
+						err
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Deterministically select a fallback workflow for a standalone task.
+	 *
+	 * Preference order:
+	 * 1. Highest keyword overlap with task title/description
+	 * 2. `default` tag
+	 * 3. `v2` tag
+	 * 4. Most recently updated workflow
+	 */
+	private selectFallbackWorkflowForStandaloneTask(
+		task: SpaceTask,
+		workflows: SpaceWorkflow[]
+	): SpaceWorkflow | null {
+		if (workflows.length === 0) return null;
+		if (workflows.length === 1) return workflows[0];
+
+		const keywords = `${task.title} ${task.description}`
+			.toLowerCase()
+			.split(/\W+/)
+			.filter((word) => word.length >= 3 && !WORKFLOW_SELECTION_STOP_WORDS.has(word));
+
+		const scored = workflows.map((workflow) => {
+			const haystack = [workflow.name, workflow.description ?? '', ...(workflow.tags ?? [])]
+				.join(' ')
+				.toLowerCase();
+			const hits =
+				keywords.length === 0 ? 0 : keywords.filter((keyword) => haystack.includes(keyword)).length;
+			const tags = workflow.tags ?? [];
+			return {
+				workflow,
+				hits,
+				isDefault: tags.includes('default') ? 1 : 0,
+				isV2: tags.includes('v2') ? 1 : 0,
+			};
+		});
+
+		scored.sort((a, b) => {
+			if (b.hits !== a.hits) return b.hits - a.hits;
+			if (b.isDefault !== a.isDefault) return b.isDefault - a.isDefault;
+			if (b.isV2 !== a.isV2) return b.isV2 - a.isV2;
+			return b.workflow.updatedAt - a.workflow.updatedAt;
+		});
+
+		return scored[0]?.workflow ?? null;
+	}
+
+	/**
 	 * Returns the cached SpaceTaskManager for a space, creating it if needed.
 	 * Caching avoids creating a new manager + repository on every executor build.
 	 */
@@ -1133,23 +1574,6 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Returns true when every task in the node has reached a terminal state.
-	 *
-	 * Terminal statuses: completed, blocked, cancelled, archived.
-	 *
-	 * Used to implement the partial-failure gate: for multi-agent nodes, the run
-	 * must not be escalated to blocked until every sibling task has settled.
-	 * The caller is already inside `if (nodeTasks.some(blocked))`, so
-	 * "any failed" is guaranteed true at the call site — no need to return it.
-	 *
-	 * @param nodeTasks - Pre-fetched tasks for the current node.
-	 */
-	private areAllNodeTasksTerminal(nodeTasks: SpaceTask[]): boolean {
-		const TERMINAL = new Set<string>(['done', 'blocked', 'cancelled', 'archived']);
-		return nodeTasks.every((t) => TERMINAL.has(t.status));
-	}
-
-	/**
 	 * Resolves the channel topology for a workflow node and stores it in the run's
 	 * config for use by session group creation (Milestone 6).
 	 *
@@ -1164,28 +1588,23 @@ export class SpaceRuntime {
 	 * workflow channels array. This function only resolves and stores user-declared
 	 * channels — no runtime auto-generation.
 	 */
-	resolveAndStoreChannels(
-		runId: string,
-		_spaceId: string,
-		step: WorkflowNode,
-		channels: WorkflowChannel[]
-	): void {
-		// Resolve user-declared channels from workflow-level channels array
-		const resolved = resolveNodeChannels(step, channels);
-		this.resolvedChannelsMap.set(runId, resolved);
+	/**
+	 * Stores the workflow channels for a run in memory.
+	 * Channels are node-to-node (WorkflowNode.name) and need no slot-level resolution.
+	 */
+	storeWorkflowChannels(runId: string, channels: WorkflowChannel[]): void {
+		this.workflowChannelsMap.set(runId, channels);
 	}
 
 	/**
-	 * Returns the resolved channels for the given run ID.
-	 * Used by consumers that replaced ChannelResolver.fromRunConfig(run.config).
+	 * Returns the channels for the given run ID.
 	 */
-	getRunResolvedChannels(runId: string): ResolvedChannel[] {
-		return this.resolvedChannelsMap.get(runId) ?? [];
+	getRunWorkflowChannels(runId: string): WorkflowChannel[] {
+		return this.workflowChannelsMap.get(runId) ?? [];
 	}
 
 	/**
 	 * Returns the channels array for the workflow associated with the given run.
-	 * Used by task-agent-tools.ts to pass channels to resolveAndStoreChannels.
 	 */
 	getWorkflowChannels(runId: string): WorkflowChannel[] {
 		const run = this.config.workflowRunRepo.getRun(runId);

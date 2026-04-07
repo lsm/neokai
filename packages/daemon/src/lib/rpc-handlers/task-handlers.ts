@@ -1083,6 +1083,22 @@ export function setupTaskHandlers(
 			await runtime.clearGroupRateLimit(taskId);
 		}
 
+		const groupRepo = makeGroupRepo();
+
+		// in_progress tasks with no active group: this can happen when task.setStatus() transitions
+		// a task back to in_progress (e.g., after a phase transition) without creating a new group.
+		// Revive the task so a fresh execution group is created and the message can be delivered.
+		if (task.status === 'in_progress' && groupRepo.getActiveGroupsForTask(taskId).length === 0) {
+			const revived = await runtime.reviveTaskForMessage(taskId, params.message.trim(), target);
+			if (!revived) {
+				throw new Error(
+					`Failed to revive task ${taskId}: no active group and revival failed. ` +
+						`Use task.setStatus to restart the task explicitly.`
+				);
+			}
+			return { success: true };
+		}
+
 		// When the task was in review, prepend a context note so the leader knows to
 		// re-submit for review after addressing the human's feedback.
 		const reviewReminder = wasInReview
@@ -1090,11 +1106,9 @@ export function setupTaskHandlers(
 			: '';
 		const messageToRoute = reviewReminder + params.message.trim();
 
-		const groupRepo = makeGroupRepo();
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
-			taskManager,
 			taskId,
 			messageToRoute,
 			target

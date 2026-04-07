@@ -185,12 +185,14 @@ export function buildWorkflowCreateParams(
 			const entry: {
 				agentId: string;
 				name: string;
+				model?: string;
 				systemPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
 				instructions?: import('@neokai/shared').WorkflowNodeAgentOverride;
 			} = {
 				agentId: agentId ?? '',
 				name: a.name,
 			};
+			if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
 			// Normalize overrides: plain strings (legacy) → { mode: 'override', value }
 			const normalizedSP = normalizeOverride(a.systemPrompt);
 			if (normalizedSP !== undefined) entry.systemPrompt = normalizedSP;
@@ -205,7 +207,7 @@ export function buildWorkflowCreateParams(
 			agents,
 		};
 
-		if (exportedNode.instructions !== undefined) node.instructions = exportedNode.instructions;
+		// node-level instructions have been removed from the schema
 		return node;
 	});
 
@@ -264,17 +266,11 @@ function validateWorkflowForPreview(
 
 	// ── 2. Workflow-level channel validation ──────────────────────────────────
 	if (exported.channels && exported.channels.length > 0) {
-		const validDirections = new Set(['one-way', 'bidirectional']);
 		for (let ci = 0; ci < exported.channels.length; ci++) {
 			const ch = exported.channels[ci];
 			const loc = `channels[${ci}]`;
-			if (!validDirections.has(ch.direction)) {
-				errors.push(
-					`${loc}: direction must be 'one-way' or 'bidirectional', got "${ch.direction}"`
-				);
-			}
 			if (!ch.from || !ch.from.trim()) {
-				errors.push(`${loc}: 'from' must be a non-empty agent name string`);
+				errors.push(`${loc}: 'from' must be a non-empty node name string`);
 			}
 			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
 			if (toList.length === 0) {

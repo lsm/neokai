@@ -17,8 +17,7 @@
 
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { TASK_STATUS_COLORS } from '../../../lib/task-constants';
-import { navigateToRoom } from '../../../lib/router';
-import { currentRoomTabSignal } from '../../../lib/signals';
+import { navigateToRoom, navigateToRoomMission } from '../../../lib/router';
 import { TaskHeaderActions } from './TaskHeaderActions';
 
 export interface TaskHeaderProps {
@@ -107,10 +106,7 @@ export function TaskHeader({
 					{associatedGoal && (
 						<button
 							data-testid="task-view-goal-badge"
-							onClick={() => {
-								navigateToRoom(roomId);
-								currentRoomTabSignal.value = 'goals';
-							}}
+							onClick={() => navigateToRoomMission(roomId, associatedGoal.id)}
 							class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 hover:bg-emerald-900/40 rounded transition-colors flex-shrink-0"
 							title={`Mission: ${associatedGoal.title}`}
 						>

@@ -27,7 +27,6 @@ function makeChannel(overrides: Partial<WorkflowChannel> = {}): WorkflowChannel 
 	return {
 		from: 'agent-a',
 		to: 'agent-b',
-		direction: 'one-way',
 		...overrides,
 	};
 }

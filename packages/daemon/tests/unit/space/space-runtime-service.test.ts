@@ -222,26 +222,26 @@ describe('SpaceRuntimeService', () => {
 			expect((service as unknown as { started: boolean }).started).toBe(true);
 		});
 
-		test('stop() sets started to false', () => {
+		test('stop() sets started to false', async () => {
 			service.start();
-			service.stop();
+			await service.stop();
 			expect((service as unknown as { started: boolean }).started).toBe(false);
 		});
 
-		test('stop() is idempotent — calling twice is safe', () => {
+		test('stop() is idempotent — calling twice is safe', async () => {
 			service.start();
-			service.stop();
-			service.stop(); // should not throw
+			await service.stop();
+			await service.stop(); // should not throw
 			expect((service as unknown as { started: boolean }).started).toBe(false);
 		});
 
-		test('stop() on a never-started service is safe', () => {
-			expect(() => service.stop()).not.toThrow();
+		test('stop() on a never-started service is safe', async () => {
+			await expect(service.stop()).resolves.toBeUndefined();
 		});
 
 		test('can restart after stop', async () => {
 			service.start();
-			service.stop();
+			await service.stop();
 			service.start();
 			expect((service as unknown as { started: boolean }).started).toBe(true);
 
@@ -350,10 +350,10 @@ describe('SpaceRuntimeService', () => {
 			// getSessionAsync was called for the existing space
 			expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(`space:chat:${mockSpace.id}`);
 
-			svc.stop();
+			await svc.stop();
 		});
 
-		test('start() subscribes to space.created events when daemonHub provided', () => {
+		test('start() subscribes to space.created events when daemonHub provided', async () => {
 			const session = makeSession();
 			const sessionManager = makeSessionManager(session);
 			const daemonHub: DaemonHub = {
@@ -373,10 +373,10 @@ describe('SpaceRuntimeService', () => {
 			const spaceCreatedCall = onCalls.find(([event]) => event === 'space.created');
 			expect(spaceCreatedCall).toBeDefined();
 
-			svc.stop();
+			await svc.stop();
 		});
 
-		test('stop() unsubscribes from space.created events', () => {
+		test('stop() unsubscribes from space.created events', async () => {
 			const unsubFn = mock(() => {});
 			const session = makeSession();
 			const sessionManager = makeSessionManager(session);
@@ -391,7 +391,7 @@ describe('SpaceRuntimeService', () => {
 			const svc = new SpaceRuntimeService(config);
 
 			svc.start();
-			svc.stop();
+			await svc.stop();
 
 			expect(unsubFn).toHaveBeenCalledTimes(1);
 		});

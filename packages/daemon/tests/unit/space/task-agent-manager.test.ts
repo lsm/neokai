@@ -218,6 +218,7 @@ interface TestCtx {
 	agentId: string;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	workflowManager: SpaceWorkflowManager;
@@ -254,6 +255,7 @@ function makeCtx(): TestCtx {
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
 	const taskRepo = new SpaceTaskRepository(bunDb);
+	const nodeExecutionRepo = new NodeExecutionRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
 	const runtime = new SpaceRuntime({
@@ -263,7 +265,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
-		nodeExecutionRepo: new NodeExecutionRepository(bunDb),
+		nodeExecutionRepo,
 	});
 	const daemonHub = new TestDaemonHub();
 	const space = makeSpace(spaceId, workspacePath);
@@ -339,6 +341,7 @@ function makeCtx(): TestCtx {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
+		nodeExecutionRepo,
 	});
 
 	return {
@@ -349,6 +352,7 @@ function makeCtx(): TestCtx {
 		agentId,
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		workflowManager,
@@ -435,9 +439,17 @@ describe('TaskAgentManager', () => {
 	// -----------------------------------------------------------------------
 
 	describe('ensureTaskAgentSession', () => {
-		test('auto-attaches a fallback workflow run for standalone tasks', async () => {
+		test('keeps standalone behavior when space has no workflows', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const ensured = await ctx.manager.ensureTaskAgentSession(task.id);
+
+			expect(ensured.workflowRunId).toBeUndefined();
+			expect(ensured.taskAgentSessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
+		});
+
+		test('does not auto-attach workflow when workflows exist', async () => {
 			const fallbackStepId = 'step-fallback';
-			const fallbackWorkflow = ctx.workflowManager.createWorkflow({
+			ctx.workflowManager.createWorkflow({
 				spaceId: ctx.spaceId,
 				name: 'Fallback Coding Workflow',
 				description: 'Default coding path',
@@ -446,36 +458,12 @@ describe('TaskAgentManager', () => {
 						id: fallbackStepId,
 						name: 'Coding',
 						agentId: ctx.agentId,
-						instructions: 'Implement the requested change.',
 					},
 				],
 				startNodeId: fallbackStepId,
 				tags: ['default'],
 			});
 
-			const task = await makeTask(ctx.taskManager);
-			const ensured = await ctx.manager.ensureTaskAgentSession(task.id);
-
-			expect(ensured.workflowRunId).toBeDefined();
-			expect(ensured.workflowNodeId).toBeUndefined();
-			expect(ensured.taskAgentSessionId).toBe(`space:${ctx.spaceId}:task:${task.id}`);
-
-			const run = ctx.workflowRunRepo.getRun(ensured.workflowRunId!);
-			expect(run).not.toBeNull();
-			expect(run!.workflowId).toBe(fallbackWorkflow.id);
-
-			const runTasks = ctx.taskRepo.listByWorkflowRun(run!.id);
-			const orchestratorTask = runTasks.find((t) => t.id === task.id);
-			// workflowNodeId was removed in M71 — verify there's at least one other task in the run
-			const startStepTask = runTasks.find((t) => t.id !== task.id);
-
-			expect(orchestratorTask).toBeDefined();
-			// workflowNodeId was removed in M71
-			expect(startStepTask).toBeDefined();
-			expect(startStepTask?.taskAgentSessionId ?? null).toBeNull();
-		});
-
-		test('keeps standalone behavior when space has no workflows', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const ensured = await ctx.manager.ensureTaskAgentSession(task.id);
 
@@ -701,6 +689,44 @@ describe('TaskAgentManager', () => {
 
 			expect(returnedId).toBe(subSessionId);
 		});
+
+		test('preserves init mcpServers when app MCP registry servers are injected', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const configRef = ctx.manager as unknown as {
+				config: {
+					appMcpManager?: {
+						getEnabledMcpConfigs: () => Record<string, unknown>;
+					};
+				};
+			};
+			configRef.config.appMcpManager = {
+				getEnabledMcpConfigs: () => ({
+					'registry-mcp': {
+						type: 'stdio',
+						command: 'echo',
+						args: ['ok'],
+					},
+				}),
+			};
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:step-merge-mcp`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+				mcpServers: {
+					'node-agent': {
+						type: 'local',
+						path: '/tmp/node-agent-mcp',
+					},
+				},
+			} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			expect(subSession._mcpServers['node-agent']).toBeDefined();
+			expect(subSession._mcpServers['registry-mcp']).toBeDefined();
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -915,7 +941,7 @@ describe('TaskAgentManager', () => {
 			).handleSubSessionComplete(taskId, stepId, subSessionId);
 		}
 
-		test('marks matching step task as completed', async () => {
+		test('does not mutate step task status directly (runtime owns progression)', async () => {
 			// Seed a workflow, workflow step, and workflow run (needed to satisfy FK constraints)
 			const wfRunId = 'wf-run-complete-test';
 			const wfId = 'wf-id-complete-test';
@@ -971,9 +997,9 @@ describe('TaskAgentManager', () => {
 
 			await callHandleSubSessionComplete(ctx.manager, parentTask.id, stepId, subSessionId);
 
-			// Step task should now be 'completed'
+			// Step status remains runtime-driven; handleSubSessionComplete only notifies.
 			const updated = ctx.taskRepo.getTask(stepTask.id);
-			expect(updated?.status).toBe('done');
+			expect(updated?.status).toBe('in_progress');
 		});
 
 		test('injects [STEP_COMPLETE] notification into Task Agent session', async () => {
@@ -1022,6 +1048,178 @@ describe('TaskAgentManager', () => {
 			await expect(
 				callHandleSubSessionComplete(ctx.manager, parentTask.id, 'nonexistent-step', 'session-xyz')
 			).resolves.toBeUndefined();
+		});
+
+		test('sends runtime reminder with gate requirements when execution idles without report_done', async () => {
+			const workflow = ctx.workflowManager.createWorkflow({
+				spaceId: ctx.spaceId,
+				name: 'Reminder Workflow',
+				description: '',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coding',
+						agents: [{ agentId: ctx.agentId, name: 'coder' }],
+					},
+					{
+						id: 'review-node',
+						name: 'Review',
+						agents: [{ agentId: ctx.agentId, name: 'reviewer' }],
+					},
+				],
+				startNodeId: 'coding-node',
+				endNodeId: 'review-node',
+				gates: [
+					{
+						id: 'code-pr-gate',
+						description: 'PR URL required before review',
+						fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+						resetOnCycle: false,
+					},
+				],
+				channels: [
+					{
+						from: 'Coding',
+						to: 'Review',
+						gateId: 'code-pr-gate',
+					},
+				],
+			});
+
+			const pendingRun = ctx.workflowRunRepo.createRun({
+				spaceId: ctx.spaceId,
+				workflowId: workflow.id,
+				title: 'Reminder run',
+			});
+			const run = ctx.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Workflow task',
+				description: 'Drive coding -> review',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: run.id,
+			});
+
+			const execution = ctx.nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'coding-node',
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'in_progress',
+			});
+
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execution.id}`;
+			await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId,
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{
+					agentId: ctx.agentId,
+					role: 'coder',
+					stepId: 'coding-node',
+				}
+			);
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			const beforeMessages = subSession._enqueuedMessages.length;
+
+			await callHandleSubSessionComplete(ctx.manager, parentTask.id, 'coding-node', subSessionId);
+
+			const after = ctx.nodeExecutionRepo.getById(execution.id);
+			expect(after?.status).toBe('in_progress');
+			expect(subSession._enqueuedMessages.length).toBeGreaterThan(beforeMessages);
+			const reminder = subSession._enqueuedMessages.at(-1)?.msg ?? '';
+			expect(reminder).toContain('[RUNTIME_REMINDER');
+			expect(reminder).toContain('code-pr-gate');
+			expect(reminder).toContain('pr_url');
+			expect(reminder).toContain('report_done');
+		});
+
+		test('escalates execution to blocked after repeated missing-report_done reminders', async () => {
+			const workflow = ctx.workflowManager.createWorkflow({
+				spaceId: ctx.spaceId,
+				name: 'Reminder Escalation Workflow',
+				description: '',
+				nodes: [
+					{
+						id: 'coding-node',
+						name: 'Coding',
+						agents: [{ agentId: ctx.agentId, name: 'coder' }],
+					},
+					{
+						id: 'review-node',
+						name: 'Review',
+						agents: [{ agentId: ctx.agentId, name: 'reviewer' }],
+					},
+				],
+				startNodeId: 'coding-node',
+				endNodeId: 'review-node',
+				gates: [
+					{
+						id: 'code-pr-gate',
+						description: 'PR URL required before review',
+						fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+						resetOnCycle: false,
+					},
+				],
+				channels: [
+					{
+						from: 'Coding',
+						to: 'Review',
+						gateId: 'code-pr-gate',
+					},
+				],
+			});
+
+			const pendingRun = ctx.workflowRunRepo.createRun({
+				spaceId: ctx.spaceId,
+				workflowId: workflow.id,
+				title: 'Reminder escalation run',
+			});
+			const run = ctx.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Workflow task',
+				description: 'Drive coding -> review',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: run.id,
+			});
+
+			const execution = ctx.nodeExecutionRepo.create({
+				workflowRunId: run.id,
+				workflowNodeId: 'coding-node',
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'in_progress',
+			});
+
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execution.id}`;
+			await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId,
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{
+					agentId: ctx.agentId,
+					role: 'coder',
+					stepId: 'coding-node',
+				}
+			);
+
+			for (let i = 0; i < 4; i++) {
+				await callHandleSubSessionComplete(ctx.manager, parentTask.id, 'coding-node', subSessionId);
+			}
+
+			const after = ctx.nodeExecutionRepo.getById(execution.id);
+			expect(after?.status).toBe('blocked');
+			expect(after?.result).toContain('without calling report_done');
 		});
 	});
 
@@ -1678,73 +1876,6 @@ describe('TaskAgentManager', () => {
 
 			expect(ctx.manager.getTaskAgent(task1.id)).toBeDefined();
 			expect(ctx.manager.getTaskAgent(task2.id)).toBeDefined();
-		});
-
-		test('rebuilds subSessions map from workflow run step tasks', async () => {
-			// Seed a workflow run so we can test sub-session map rebuild
-			const wfId = 'wf-rehydrate-sub';
-			const now = Date.now();
-			ctx.bunDb
-				.prepare(
-					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
-           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
-				)
-				.run(wfId, ctx.spaceId, 'WF Rehydrate Sub', now, now);
-			const stepId = 'step-rehydrate-1';
-			ctx.bunDb
-				.prepare(
-					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
-           VALUES (?, ?, ?, '', null, ?, ?)`
-				)
-				.run(stepId, wfId, 'Step 1', now, now);
-			const wfRunId = 'run-rehydrate-sub';
-			ctx.bunDb
-				.prepare(
-					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
-           VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
-				)
-				.run(wfRunId, ctx.spaceId, wfId, now, now);
-
-			// Create main task for the run
-			const mainTask = await ctx.taskManager.createTask({
-				title: 'Main task',
-				description: '',
-				taskType: 'coding',
-				status: 'in_progress',
-				workflowRunId: wfRunId,
-			});
-			const mainSessionId = `space:${ctx.spaceId}:task:${mainTask.id}`;
-			ctx.taskRepo.updateTask(mainTask.id, { taskAgentSessionId: mainSessionId });
-			ctx.mockDb.createSession({ id: mainSessionId, type: 'space_task_agent' });
-
-			// Create a step task with a UUID sub-session
-			const subSessionId = '550e8400-e29b-41d4-a716-sub-session-01';
-			const stepTask = await ctx.taskManager.createTask({
-				title: 'Step task',
-				description: '',
-				taskType: 'coding',
-				status: 'in_progress',
-				workflowRunId: wfRunId,
-				workflowNodeId: stepId,
-				taskAgentSessionId: subSessionId,
-			});
-			ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
-
-			// Mock AgentSession.restore to return a session for the sub-session
-			const restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
-				const session = makeMockSession(sessionId);
-				ctx.createdSessions.set(sessionId, session);
-				return session as unknown as AgentSession;
-			});
-
-			await ctx.manager.rehydrate();
-
-			// Sub-session should be in the subSessions map for the main task
-			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
-
-			restoreSpy.mockRestore();
-			// avoid unused var warning
-			void stepTask;
 		});
 
 		test('does not restart streaming for sub-sessions during rehydration', async () => {

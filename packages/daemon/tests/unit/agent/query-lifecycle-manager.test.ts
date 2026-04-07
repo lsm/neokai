@@ -106,6 +106,7 @@ describe('QueryLifecycleManager', () => {
 			startStreamingQuery: async () => {
 				startStreamingCalled = true;
 			},
+			processExitedPromise: null,
 			// Cleanup support methods
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
@@ -328,6 +329,138 @@ describe('QueryLifecycleManager', () => {
 			expect(closeIdx).not.toBe(-1);
 			expect(interruptIdx).toBeLessThan(promiseIdx);
 			expect(promiseIdx).toBeLessThan(closeIdx);
+		});
+
+		test('awaits processExitedPromise after close() before clearing references', async () => {
+			const callOrder: string[] = [];
+			let resolveExit: () => void;
+			const exitPromise = new Promise<void>((resolve) => {
+				resolveExit = resolve;
+			});
+
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					callOrder.push('close');
+					// Simulate subprocess exit after a short delay (as it would in reality)
+					setTimeout(() => {
+						callOrder.push('process-exited');
+						resolveExit!();
+					}, 20);
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			mockContext.processExitedPromise = exitPromise;
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			// Process should have exited before stop() returned
+			expect(callOrder).toContain('close');
+			expect(callOrder).toContain('process-exited');
+			expect(mockContext.processExitedPromise).toBeNull();
+		});
+
+		test('stop() times out waiting for processExitedPromise', async () => {
+			const closeMock = mock(() => {});
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: closeMock,
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			// A promise that never resolves — simulates a stuck subprocess
+			mockContext.processExitedPromise = new Promise<void>(() => {});
+			manager = new QueryLifecycleManager(mockContext);
+
+			const start = Date.now();
+			await manager.stop({ timeoutMs: 100 });
+			const elapsed = Date.now() - start;
+
+			// Should have timed out at the specified timeout
+			expect(elapsed).toBeGreaterThanOrEqual(90);
+			expect(elapsed).toBeLessThan(300);
+			// close() must be called so the subprocess is not silently leaked
+			expect(closeMock).toHaveBeenCalled();
+			// All three context references are cleared even after a timeout
+			expect(mockContext.queryObject).toBeNull();
+			expect(mockContext.queryPromise).toBeNull();
+			expect(mockContext.processExitedPromise).toBeNull();
+		});
+
+		test('stop() works when processExitedPromise is null', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			mockContext.processExitedPromise = null;
+			manager = new QueryLifecycleManager(mockContext);
+
+			// Should not throw or hang
+			await manager.stop();
+
+			expect(mockContext.queryObject).toBeNull();
+		});
+
+		test('stop() awaits already-resolved processExitedPromise without delay', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = Promise.resolve();
+			// Process already exited
+			mockContext.processExitedPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			const start = Date.now();
+			await manager.stop();
+			const elapsed = Date.now() - start;
+
+			// Should complete near-instantly
+			expect(elapsed).toBeLessThan(100);
+			expect(mockContext.processExitedPromise).toBeNull();
+		});
+
+		test('snapshots processExitedPromise before queryPromise settles (regression for race condition)', async () => {
+			// Simulate the race: runQuery's finally block clears ctx.processExitedPromise during settlement.
+			// The old code read this.ctx.processExitedPromise AFTER awaiting queryPromise,
+			// so by then the finally block had already nulled it — making the exit wait a no-op.
+			// The fix snapshots it at the top of stop(), before any awaits.
+			let resolveQueryPromise!: () => void;
+			let resolveProcessExited!: () => void;
+			const processExitedPromise = new Promise<void>((r) => (resolveProcessExited = r));
+
+			// When queryPromise resolves, its finally block clears ctx.processExitedPromise
+			// (mirrors what runQuery() does in production)
+			const queryPromise = new Promise<void>((r) => (resolveQueryPromise = r)).then(() => {
+				mockContext.processExitedPromise = null; // mirrors runQuery()'s finally block
+			});
+
+			mockContext.queryPromise = queryPromise;
+			mockContext.processExitedPromise = processExitedPromise;
+			manager = new QueryLifecycleManager(mockContext);
+
+			// Start stop() but don't await yet
+			const stopPromise = manager.stop();
+
+			// Let queryPromise resolve (clears ctx.processExitedPromise as in production)
+			resolveQueryPromise();
+			await Promise.resolve(); // yield to let .then() run
+
+			// stop() should still be waiting for process exit (via the snapshot)
+			let stopResolved = false;
+			stopPromise.then(() => (stopResolved = true));
+			await Promise.resolve();
+			expect(stopResolved).toBe(false); // not done yet — waiting for process exit
+
+			// Now resolve process exit — stop() should complete
+			resolveProcessExited();
+			await stopPromise;
+			expect(stopResolved).toBe(true);
 		});
 	});
 

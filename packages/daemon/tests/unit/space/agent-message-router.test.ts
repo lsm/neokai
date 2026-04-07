@@ -18,12 +18,12 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
-import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import type { AgentMessageRouterConfig } from '../../../src/lib/space/runtime/agent-message-router.ts';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -54,8 +54,8 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 function seedWorkflowRunWithChannels(
 	db: BunDatabase,
 	spaceId: string,
-	channels: ResolvedChannel[]
-): { runId: string; channels: ResolvedChannel[] } {
+	channels: WorkflowChannel[]
+): { runId: string; channels: WorkflowChannel[] } {
 	const workflowRepo = new SpaceWorkflowRepository(db);
 	const workflow = workflowRepo.createWorkflow({
 		spaceId,
@@ -78,19 +78,19 @@ function seedWorkflowRunWithChannels(
 	return { runId: run.id, channels };
 }
 
+function makeChannel(from: string, to: string | string[]): WorkflowChannel {
+	return {
+		id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`,
+		from,
+		to,
+	};
+}
 function makeResolvedChannel(
 	fromRole: string,
 	toRole: string,
-	isHubSpoke = false
-): ResolvedChannel {
-	return {
-		fromRole,
-		toRole,
-		fromAgentId: `agent-${fromRole}`,
-		toAgentId: `agent-${toRole}`,
-		direction: 'one-way',
-		isHubSpoke,
-	};
+	_isHubSpoke = false
+): WorkflowChannel {
+	return makeChannel(fromRole, toRole);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ interface TestCtx {
 	db: BunDatabase;
 	dir: string;
 	spaceId: string;
-	spaceTaskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	nodeId: string;
 	coderSessionId: string;
@@ -109,25 +109,33 @@ interface TestCtx {
 	taskAgentSessionId: string;
 }
 
-/** Seeds a task with the given agentName and taskAgentSessionId for routing purposes. */
+/** Seeds a node execution with the given role and session for routing purposes. */
 function seedPeerTask(
-	db: BunDatabase,
-	spaceId: string,
-	workflowRunId: string,
-	nodeId: string,
-	agentName: string,
-	sessionId: string
+	repoOrDb: NodeExecutionRepository | BunDatabase,
+	arg2: string,
+	arg3: string,
+	arg4: string,
+	arg5: string,
+	arg6?: string
 ): void {
-	db.exec('PRAGMA foreign_keys = OFF');
-	const now = Date.now();
-	const id = `task-${Math.random().toString(36).slice(2)}`;
-	db.prepare(
-		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority,
-        workflow_run_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', 'in_progress', 'normal', ?, '[]', ?, ?, ?)`
-	).run(id, spaceId, spaceId, agentName, workflowRunId, sessionId, now, now);
-	db.exec('PRAGMA foreign_keys = ON');
+	const nodeExecutionRepo =
+		repoOrDb instanceof NodeExecutionRepository ? repoOrDb : new NodeExecutionRepository(repoOrDb);
+	const workflowRunId = repoOrDb instanceof NodeExecutionRepository ? arg2 : arg3;
+	const nodeId = repoOrDb instanceof NodeExecutionRepository ? arg3 : arg4;
+	const agentName = repoOrDb instanceof NodeExecutionRepository ? arg4 : arg5;
+	const sessionId = repoOrDb instanceof NodeExecutionRepository ? arg5 : (arg6 ?? '');
+
+	const execution = nodeExecutionRepo.createOrIgnore({
+		workflowRunId,
+		workflowNodeId: nodeId,
+		agentName,
+		agentSessionId: sessionId,
+		status: 'in_progress',
+	});
+	nodeExecutionRepo.update(execution.id, {
+		agentSessionId: sessionId,
+		status: 'in_progress',
+	});
 }
 
 function makeCtx(): TestCtx {
@@ -136,7 +144,7 @@ function makeCtx(): TestCtx {
 
 	seedSpaceRow(db, spaceId);
 
-	const spaceTaskRepo = new SpaceTaskRepository(db);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 
 	const nodeId = 'node-test-router';
@@ -148,7 +156,7 @@ function makeCtx(): TestCtx {
 		db,
 		dir,
 		spaceId,
-		spaceTaskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		nodeId,
 		coderSessionId,
@@ -161,13 +169,13 @@ function makeRouter(
 	ctx: TestCtx,
 	workflowRunId: string,
 	injected: Array<{ sessionId: string; message: string }>,
-	channels: ResolvedChannel[] = [],
+	channels: WorkflowChannel[] = [],
 	overrides: Partial<AgentMessageRouterConfig> = {}
 ): AgentMessageRouter {
 	return new AgentMessageRouter({
-		spaceTaskRepo: ctx.spaceTaskRepo,
+		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		workflowRunId,
-		resolvedChannels: channels,
+		workflowChannels: channels,
 		messageInjector: async (sessionId, message) => {
 			injected.push({ sessionId, message });
 		},
@@ -597,14 +605,14 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 	});
 
 	test('delivers to all roles mapped to a node name', async () => {
+		// Use node names in channels (coder-node → review-node), matching nodeGroups
 		const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
 			ctx.db,
 			ctx.spaceId,
-			[makeResolvedChannel('coder', 'reviewer'), makeResolvedChannel('coder', 'security')]
+			[makeChannel('coder-node', 'review-node')]
 		);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-		// Add security member
 		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'security', 'session-security');
 
 		const injected: string[] = [];
@@ -613,6 +621,7 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 				injected.push(sid);
 			},
 			nodeGroups: {
+				'coder-node': ['coder'],
 				'review-node': ['reviewer', 'security'],
 			},
 		});

@@ -37,22 +37,35 @@ const V2_PLAN_REVIEW_STEP = 'tpl-v2-plan-review';
 const V2_CODING_STEP = 'tpl-v2-coding';
 const V2_REVIEW_STEP = 'tpl-v2-review';
 const V2_QA_STEP = 'tpl-v2-qa';
-const V2_DONE_STEP = 'tpl-v2-done';
+
+const FULLSTACK_CODING_STEP = 'tpl-fullstack-coding';
+const FULLSTACK_REVIEW_STEP = 'tpl-fullstack-review';
+const FULLSTACK_QA_STEP = 'tpl-fullstack-qa';
 
 const PR_READY_BASH_SCRIPT = [
-	'# Single atomic call to avoid state changing between checks',
-	'if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
-	'  echo "Failed to retrieve PR info (not authenticated, no PR, or network error)" >&2',
-	'  exit 1',
+	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
+	'PR_TARGET=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -n "$PR_TARGET" ]; then',
+	'  PR_VIEW_SCOPE="$PR_TARGET"',
+	'  if ! PR_JSON=$(gh pr view "$PR_TARGET" --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'    echo "Failed to retrieve PR info for target ${PR_TARGET} (not authenticated, invalid PR URL, or network error)" >&2',
+	'    exit 1',
+	'  fi',
+	'else',
+	'  PR_VIEW_SCOPE="current branch"',
+	'  if ! PR_JSON=$(gh pr view --json url,state,mergeable,mergeStateStatus) || [ -z "$PR_JSON" ]; then',
+	'    echo "Failed to retrieve PR info for current branch (not authenticated, no PR, or network error)" >&2',
+	'    exit 1',
+	'  fi',
 	'fi',
 	'PR_URL=$(jq -r \'.url\' <<< "$PR_JSON")',
 	'if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then',
-	'  echo "No PR URL found for current branch" >&2',
+	'  echo "No PR URL found for ${PR_VIEW_SCOPE}" >&2',
 	'  exit 1',
 	'fi',
 	'PR_STATE=$(jq -r \'.state\' <<< "$PR_JSON")',
 	'if [ "$PR_STATE" != "OPEN" ]; then',
-	'  echo "No open PR found for current branch (state: ${PR_STATE:-none})" >&2',
+	'  echo "No open PR found for ${PR_VIEW_SCOPE} (state: ${PR_STATE:-none})" >&2',
 	'  exit 1',
 	'fi',
 	'PR_MERGEABLE=$(jq -r \'.mergeable\' <<< "$PR_JSON")',
@@ -81,8 +94,8 @@ const V2_PLANNING_PROMPT =
 	'- Testing strategy: what tests to write, what to verify\n' +
 	'- Risk areas: edge cases, backward compatibility, performance concerns\n' +
 	'- Open questions: anything you cannot resolve from the codebase alone\n\n' +
-	'Write the plan to a file (e.g. `plan.md`) and commit it. When the plan is ready, ' +
-	'write to the plan-pr-gate (field: plan_submitted) so the Plan Reviewer can evaluate it.';
+	'Write the plan to a file (e.g. `plan.md`), commit it, and open/update a PR. ' +
+	'The plan-pr-gate will automatically verify the PR before Plan Review starts.';
 
 const V2_PLAN_REVIEW_PROMPT =
 	'You are the Plan Review node in a Full-Cycle Coding Workflow. You receive a plan from the ' +
@@ -135,18 +148,30 @@ const V2_QA_PROMPT =
 	'- Verify the PR is mergeable (no conflicts, required checks passing)\n' +
 	'- Confirm the changes match what was planned and reviewed\n' +
 	'- Spot-check critical paths manually if possible\n\n' +
-	'Write "result: passed" to qa-result-gate if everything is green, or ' +
-	'"result: failed" to qa-fail-gate with a summary of issues found. ' +
-	'If QA fails, the workflow cycles back to Coding — reviewers must re-vote.';
+	'If QA passes, call report_done() with a concise final validation summary. ' +
+	'If QA fails, send detailed feedback to Coding so fixes can be made and re-tested.';
 
-const V2_DONE_PROMPT =
-	'You are the Done node in a Full-Cycle Coding Workflow. You are activated after QA has passed, ' +
-	'meaning the implementation was planned, coded, reviewed by 3 reviewers, and verified by QA.\n\n' +
-	'Your responsibilities:\n' +
-	'- Confirm the workflow has reached a completed state\n' +
-	'- Produce a concise final outcome summary: what was done, what PR was opened, key decisions\n' +
-	'- Do NOT reopen work unless you discover a blocking issue that was missed\n' +
-	'- Call report_done() to signal workflow completion';
+const FULLSTACK_CODING_PROMPT =
+	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
+	'write tests, and keep one PR updated across review and QA cycles.\n\n' +
+	'Workflow context:\n' +
+	'- Coding → Review is guarded by code-pr-gate (scripted PR readiness check).\n' +
+	'- Review may send you back for fixes.\n' +
+	'- QA may also send you back after deep verification (including browser tests).\n\n' +
+	'When implementation is ready, ensure the PR is open and mergeable, write code-pr-gate with ' +
+	'field pr_url, then call report_done() to mark Coding complete.';
+
+const FULLSTACK_REVIEW_PROMPT =
+	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
+	'maintainability, and coverage before QA.\n\n' +
+	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
+	'If changes are needed, send actionable feedback to Coding via the Review → Coding channel.';
+
+const FULLSTACK_QA_PROMPT =
+	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
+	'frontend tests, and browser-based checks for critical flows.\n\n' +
+	'If everything passes, call report_done() with the QA evidence summary. ' +
+	'If issues are found, send a detailed fix list to Coding via the QA → Coding channel.';
 
 const RESEARCH_STEP = 'tpl-research-research';
 const RESEARCH_REVIEW_STEP = 'tpl-research-review';
@@ -209,10 +234,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Implement the task. When done, create a pull request with `gh pr create` ' +
-				'and ensure the PR URL is available from `gh pr view`. The code-ready-gate ' +
-				'will verify this automatically before advancing to Review.',
 		},
 		{
 			id: CODING_REVIEW_STEP,
@@ -246,9 +267,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the pull request for correctness and quality. If changes are needed, send feedback to Code. ' +
-				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
 	startNodeId: CODING_CODE_STEP,
@@ -280,14 +298,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Code',
 			to: 'Review',
-			direction: 'one-way',
 			gateId: 'code-ready-gate',
 			label: 'Code → Review',
 		},
 		{
 			from: 'Review',
 			to: 'Code',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Review → Code (changes requested)',
 		},
@@ -346,9 +362,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Research the topic thoroughly. When done, commit all findings and open a pull request with `gh pr create`. ' +
-				'The research-ready-gate will verify the PR automatically before advancing to Review.',
 		},
 		{
 			id: RESEARCH_REVIEW_STEP,
@@ -383,9 +396,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the research pull request for completeness and quality. If more research is needed, send feedback to Research. ' +
-				'When satisfied, call report_done() to complete the workflow.',
 		},
 	],
 	startNodeId: RESEARCH_STEP,
@@ -417,14 +427,12 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Research',
 			to: 'Review',
-			direction: 'one-way',
 			gateId: 'research-ready-gate',
 			label: 'Research → Review',
 		},
 		{
 			from: 'Review',
 			to: 'Research',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Review → Research (more research needed)',
 		},
@@ -477,9 +485,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the code or PR specified in the task. Provide a thorough review ' +
-				'and call report_done() when complete.',
 		},
 	],
 	startNodeId: REVIEW_REVIEW_STEP,
@@ -492,31 +497,30 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 /**
  * Full-Cycle Coding Workflow
  *
- * Six-node graph with a single code-review node that runs three reviewers
- * in parallel (via `node.agents[]`) and a QA verification gate.
+ * Five-node graph with planning, plan review, coding, parallel code review, and QA.
+ * QA is the terminal node and calls report_done() on success.
  *
  * Main progression:
- *   Planning → Plan Review (plan-pr-gate: planner submits plan)
+ *   Planning → Plan Review (plan-pr-gate: script verifies plan PR is open/mergeable)
  *   Plan Review → Coding (plan-approval-gate: reviewer approves)
- *   Coding → Code Review (code-pr-gate: PR opened; node contains Reviewer 1/2/3 slots)
+ *   Coding → Code Review (code-pr-gate: coder publishes PR URL)
  *   Code Review → QA (review-votes-gate: all 3 approve)
- *   QA → Done (qa-result-gate: QA passes)
  *
- * Cyclic paths:
- *   Code Review → Coding (review-reject-gate: any reviewer rejects)
- *   QA → Coding (qa-fail-gate: QA finds issues)
+ * Cyclic feedback paths (ungated):
+ *   Code Review → Coding (review feedback)
+ *   QA → Coding (QA feedback)
  *
- * Ungated feedback channels:
- *   Plan Review → Planning (reviewer requests plan changes)
- *   Coding → Planning (coder asks planner for clarification)
+ * Additional feedback channels:
+ *   Plan Review → Planning (plan revision requests)
+ *   Coding → Planning (clarification requests)
  */
 export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Full-Cycle Coding Workflow',
 	description:
-		'Full-cycle coding workflow with plan review, parallel code reviewers, and QA gate. ' +
-		'Supports rejection cycles at both review and QA stages.',
+		'Full-cycle coding workflow with planning, plan review, parallel code review, and QA. ' +
+		'QA is the terminal step; feedback from review or QA loops back to Coding.',
 	nodes: [
 		{
 			id: V2_PLANNING_STEP,
@@ -530,21 +534,18 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 						mode: 'override',
 						value:
 							'Expected inputs: Task description from the workflow trigger.\n' +
-							'Expected outputs: A committed plan file and plan_submitted gate signal.\n\n' +
+							'Expected outputs: A committed plan file in an open, mergeable PR.\n\n' +
 							'Steps:\n' +
 							'1. Analyze the task requirements and explore the relevant codebase\n' +
 							'2. Identify affected files, dependencies, and potential risks\n' +
 							'3. Write a structured plan (scope, steps, testing strategy, risks)\n' +
 							'4. Commit the plan file to the branch\n' +
-							'5. Write to plan-pr-gate (field: plan_submitted = true) to advance\n\n' +
-							'If re-activated after Plan Review feedback: revise the plan based on ' +
-							"the reviewer's comments, commit updates, and re-signal the gate.",
+							'5. Open or update the PR so plan-pr-gate can verify it\n\n' +
+							'If re-activated after Plan Review feedback: revise the plan based on the reviewer comments, ' +
+							'commit updates, and push to the same PR branch.',
 					},
 				},
 			],
-			instructions:
-				'Break down the task into an actionable implementation plan. ' +
-				'When the plan is ready, write it to the plan-pr-gate (field: plan_submitted) to notify reviewers.',
 		},
 		{
 			id: V2_PLAN_REVIEW_STEP,
@@ -568,9 +569,6 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
-			instructions:
-				'Review the implementation plan for feasibility and completeness. ' +
-				'Write to plan-approval-gate with field "approved: true" to approve, or send feedback to Planning.',
 		},
 		{
 			id: V2_CODING_STEP,
@@ -591,15 +589,11 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							"3. Write tests as specified in the plan's testing strategy\n" +
 							'4. Run the test suite and fix any failures\n' +
 							'5. Open a PR with `gh pr create` — clear title and description\n' +
-							'6. Write the PR URL to code-pr-gate (field: pr_url) to advance\n\n' +
-							'If re-activated after Code Review rejection or QA failure: read the feedback, ' +
-							'address each issue, push fixes, and the gate re-checks automatically.',
+							'6. Write the PR URL to code-pr-gate (field: pr_url) to start Code Review\n\n' +
+							'If re-activated after review or QA feedback: address each issue, push fixes, and re-run tests.',
 					},
 				},
 			],
-			instructions:
-				'Implement the approved plan. Open a pull request when done. ' +
-				'Write the PR URL to code-pr-gate (field: pr_url) to notify reviewers.',
 		},
 		{
 			id: V2_REVIEW_STEP,
@@ -615,8 +609,9 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'Review the pull request for correctness, style, and test coverage. ' +
 							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
 							'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
-							'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-							'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+							'(3) write the complete updated map back via write_gate on review-votes-gate (field: votes). ' +
+							'Never write only your own entry — always include all existing votes to avoid overwriting peers. ' +
+							'If you reject, send actionable feedback to Coding.',
 					},
 				},
 				{
@@ -629,8 +624,9 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'Review the pull request for correctness, style, and test coverage. ' +
 							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
 							'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
-							'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-							'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+							'(3) write the complete updated map back via write_gate on review-votes-gate (field: votes). ' +
+							'Never write only your own entry — always include all existing votes to avoid overwriting peers. ' +
+							'If you reject, send actionable feedback to Coding.',
 					},
 				},
 				{
@@ -643,8 +639,9 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'Review the pull request for correctness, style, and test coverage. ' +
 							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
 							'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
-							'(3) write the complete updated map back via write_gate on both review-votes-gate and review-reject-gate ' +
-							'(field: votes). Never write only your own entry — always include all existing votes to avoid overwriting peers.',
+							'(3) write the complete updated map back via write_gate on review-votes-gate (field: votes). ' +
+							'Never write only your own entry — always include all existing votes to avoid overwriting peers. ' +
+							'If you reject, send actionable feedback to Coding.',
 					},
 				},
 			],
@@ -661,63 +658,35 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 						mode: 'override',
 						value:
 							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
-							'Expected outputs: QA result written to qa-result-gate or qa-fail-gate.\n\n' +
+							'Expected outputs: report_done() on pass, or detailed feedback to Coding on fail.\n\n' +
 							'Steps:\n' +
 							'1. Run the full test suite and record results\n' +
 							'2. Check CI pipeline status on the PR\n' +
 							'3. Verify the PR is mergeable (no conflicts)\n' +
 							'4. Confirm changes match the approved plan\n' +
-							'5. If all green: write "result: passed" to qa-result-gate\n' +
-							'6. If issues found: write "result: failed" to qa-fail-gate with details\n\n' +
-							'On failure, the workflow cycles back to Coding — all review votes are reset.',
+							'5. If all green: call report_done() with validation summary\n' +
+							'6. If issues found: send detailed feedback to Coding via QA → Coding channel\n\n' +
+							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
 					},
 				},
 			],
-			instructions:
-				'Verify test coverage, run the CI pipeline, and confirm the PR is mergeable. ' +
-				'Write "result: passed" to qa-result-gate if everything is green, or ' +
-				'"result: failed" with a summary to qa-fail-gate if issues are found. ' +
-				'If QA fails, the coder will fix the issues and all reviewers must re-vote before QA runs again.',
-		},
-		{
-			id: V2_DONE_STEP,
-			name: 'Done',
-			agents: [
-				{
-					agentId: 'General',
-					name: 'general',
-					systemPrompt: { mode: 'override', value: V2_DONE_PROMPT },
-					instructions: {
-						mode: 'override',
-						value:
-							'Expected inputs: QA passed (qa-result-gate satisfied).\n' +
-							'Expected outputs: Final summary and report_done() call.\n\n' +
-							'Steps:\n' +
-							'1. Confirm the workflow reached completion (QA passed)\n' +
-							'2. Summarize the outcome: what was built, PR URL, key decisions made\n' +
-							'3. Call report_done() to signal workflow completion\n\n' +
-							'Do NOT reopen or revisit work unless a critical blocking issue is discovered.',
-					},
-				},
-			],
-			instructions:
-				'Confirm the workflow has completed successfully. Produce a final outcome summary ' +
-				'and call report_done() to signal workflow completion.',
 		},
 	],
 	startNodeId: V2_PLANNING_STEP,
-	endNodeId: V2_DONE_STEP,
+	endNodeId: V2_QA_STEP,
 	tags: ['coding', 'v2', 'parallel-review', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
-	// Gates — independent entities referenced by channels via gateId
 	gates: [
 		{
 			id: 'plan-pr-gate',
-			description: 'Planning agent has submitted a plan for review',
-			fields: [
-				{ name: 'plan_submitted', type: 'boolean', writers: ['planner'], check: { op: 'exists' } },
-			],
+			description: 'Planning PR is open and mergeable so plan review can start.',
+			fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: PR_READY_BASH_SCRIPT,
+				timeoutMs: 30000,
+			},
 			resetOnCycle: false,
 		},
 		{
@@ -762,115 +731,207 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 			],
 			resetOnCycle: true,
 		},
-		{
-			id: 'review-reject-gate',
-			description:
-				'At least one reviewer has rejected the code changes. ' +
-				'Agents must read the current votes map first, add their entry, then write the full map back ' +
-				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
-				"would overwrite all other reviewers' votes.",
-			fields: [
-				{
-					name: 'votes',
-					type: 'map',
-					writers: ['reviewer'],
-					check: { op: 'count', match: 'rejected', min: 1 },
-				},
-			],
-			resetOnCycle: true,
-		},
-		{
-			id: 'qa-result-gate',
-			description:
-				'QA verification has passed — tests, CI, and PR are green. ' +
-				'Resets on each QA→Coding cycle so QA always starts from a clean state.',
-			fields: [
-				{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'passed' } },
-			],
-			resetOnCycle: true,
-		},
-		{
-			id: 'qa-fail-gate',
-			description: 'QA found issues — needs another coding and review cycle',
-			fields: [
-				{ name: 'result', type: 'string', writers: ['qa'], check: { op: '==', value: 'failed' } },
-			],
-			resetOnCycle: true,
-		},
 	],
-	// Channels — simple unidirectional pipes, gated via gateId references
 	channels: [
-		// Main progression: Planning → Plan Review → Coding
 		{
 			from: 'Planning',
 			to: 'Plan Review',
-			direction: 'one-way',
 			gateId: 'plan-pr-gate',
 			label: 'Planning → Plan Review',
 		},
 		{
 			from: 'Plan Review',
 			to: 'Coding',
-			direction: 'one-way',
 			gateId: 'plan-approval-gate',
 			label: 'Plan Review → Coding',
 		},
-		// Coding → Code Review (fan-out to the 3 reviewer slots in the node)
 		{
 			from: 'Coding',
 			to: 'Code Review',
-			direction: 'one-way',
 			gateId: 'code-pr-gate',
 			label: 'Coding → Code Review',
 		},
-		// Code Review → QA (fan-in, shared review-votes-gate: all 3 must approve)
 		{
 			from: 'Code Review',
 			to: 'QA',
-			direction: 'one-way',
 			gateId: 'review-votes-gate',
 			label: 'Code Review → QA',
 		},
-		// QA → Done (success path)
-		{
-			from: 'QA',
-			to: 'Done',
-			direction: 'one-way',
-			gateId: 'qa-result-gate',
-			label: 'QA → Done',
-		},
-		// Cyclic: QA → Coding (QA found issues)
-		{
-			from: 'QA',
-			to: 'Coding',
-			direction: 'one-way',
-			gateId: 'qa-fail-gate',
-			maxCycles: 5,
-			label: 'QA → Coding (on fail)',
-		},
-		// Cyclic: Code Review → Coding (reviewer rejected changes)
 		{
 			from: 'Code Review',
 			to: 'Coding',
-			direction: 'one-way',
-			gateId: 'review-reject-gate',
 			maxCycles: 5,
-			label: 'Code Review → Coding (on reject)',
+			label: 'Code Review → Coding (feedback)',
 		},
-		// Ungated feedback: Plan Review ↔ Planning, Coding → Planning
+		{
+			from: 'QA',
+			to: 'Coding',
+			maxCycles: 5,
+			label: 'QA → Coding (issues found)',
+		},
 		{
 			from: 'Plan Review',
 			to: 'Planning',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Plan Review → Planning (feedback)',
 		},
 		{
 			from: 'Coding',
 			to: 'Planning',
-			direction: 'one-way',
 			maxCycles: 5,
 			label: 'Coding → Planning (feedback)',
+		},
+	],
+};
+
+/**
+ * Coding with QA Workflow
+ *
+ * Three-node workflow for backend+frontend tasks that need explicit code review
+ * and deeper QA validation (including browser-based checks).
+ *
+ * Main progression:
+ *   Coding → Review (code-pr-gate: script verifies PR is open/mergeable)
+ *   Review → QA (review-approval-gate: reviewer approves)
+ *
+ * Feedback cycles:
+ *   Review → Coding (changes requested)
+ *   QA → Coding (test failures/regressions)
+ *
+ * QA is the end node. QA calls report_done() on success.
+ */
+export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
+	id: '',
+	spaceId: '',
+	name: 'Coding with QA Workflow',
+	description:
+		'Coder ↔ Reviewer loop with explicit QA validation before completion. ' +
+		'Designed for backend+frontend changes that require thorough test coverage, including browser tests.',
+	nodes: [
+		{
+			id: FULLSTACK_CODING_STEP,
+			name: 'Coding',
+			agents: [
+				{
+					agentId: 'Coder',
+					name: 'coder',
+					systemPrompt: { mode: 'override', value: FULLSTACK_CODING_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: Task description and review/QA feedback from prior loops.\n' +
+							'Expected outputs: Updated implementation in an open, mergeable PR.\n\n' +
+							'Steps:\n' +
+							'1. Implement backend and frontend changes with focused commits\n' +
+							'2. Add/update unit, integration, and UI tests as needed\n' +
+							'3. Open or update the PR and ensure it remains mergeable\n' +
+							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
+							'5. Call report_done() with a concise coding handoff summary\n' +
+							'6. Share blockers clearly with Reviewer/QA when needed',
+					},
+				},
+			],
+		},
+		{
+			id: FULLSTACK_REVIEW_STEP,
+			name: 'Review',
+			agents: [
+				{
+					agentId: 'Reviewer',
+					name: 'reviewer',
+					systemPrompt: { mode: 'override', value: FULLSTACK_REVIEW_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: Open PR from Coding.\n' +
+							'Expected outputs: Approval gate write or actionable feedback.\n\n' +
+							'Steps:\n' +
+							'1. Review diff quality, correctness, and test coverage\n' +
+							'2. If approved: write to review-approval-gate (field: approved = true)\n' +
+							'3. If changes needed: send clear feedback to Coding',
+					},
+				},
+			],
+		},
+		{
+			id: FULLSTACK_QA_STEP,
+			name: 'QA',
+			agents: [
+				{
+					agentId: 'QA',
+					name: 'qa',
+					systemPrompt: { mode: 'override', value: FULLSTACK_QA_PROMPT },
+					instructions: {
+						mode: 'override',
+						value:
+							'Expected inputs: Reviewer-approved PR.\n' +
+							'Expected outputs: report_done() on pass or QA feedback to Coding.\n\n' +
+							'Steps:\n' +
+							'1. Run backend and frontend test suites\n' +
+							'2. Run browser-based critical-path validation\n' +
+							'3. Validate CI and mergeability\n' +
+							'4. If pass: call report_done() with QA summary\n' +
+							'5. If fail: send detailed failures and repro steps to Coding',
+					},
+				},
+			],
+		},
+	],
+	startNodeId: FULLSTACK_CODING_STEP,
+	endNodeId: FULLSTACK_QA_STEP,
+	tags: ['fullstack', 'qa', 'browser-testing'],
+	createdAt: 0,
+	updatedAt: 0,
+	gates: [
+		{
+			id: 'code-pr-gate',
+			description: 'Coding PR is open and mergeable for review.',
+			fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: PR_READY_BASH_SCRIPT,
+				timeoutMs: 30000,
+			},
+			resetOnCycle: true,
+		},
+		{
+			id: 'review-approval-gate',
+			description: 'Reviewer approved the PR for QA.',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			resetOnCycle: true,
+		},
+	],
+	channels: [
+		{
+			from: 'Coding',
+			to: 'Review',
+			gateId: 'code-pr-gate',
+			label: 'Coding → Review',
+		},
+		{
+			from: 'Review',
+			to: 'QA',
+			gateId: 'review-approval-gate',
+			label: 'Review → QA',
+		},
+		{
+			from: 'Review',
+			to: 'Coding',
+			maxCycles: 6,
+			label: 'Review → Coding (feedback)',
+		},
+		{
+			from: 'QA',
+			to: 'Coding',
+			maxCycles: 6,
+			label: 'QA → Coding (issues found)',
 		},
 	],
 };
@@ -890,13 +951,19 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
 	// FULL_CYCLE_CODING_WORKFLOW is first so it becomes the default workflow selected by
 	// spaceWorkflowRun.start (which picks workflows[0] ordered by created_at ASC).
-	// The full-cycle workflow is the primary/comprehensive default; the simpler CODING_WORKFLOW
-	// is an alternative for teams that want a two-node Code↔Review loop.
+	// The full-cycle workflow is the primary/comprehensive default. Additional templates
+	// provide lighter loops or specialized flows (research, review-only, fullstack QA loop).
 	//
 	// Note: this ordering only affects *newly created* spaces. seedBuiltInWorkflows is
 	// insert-only (it skips if any workflows already exist), so existing spaces keep
 	// whatever ordering was seeded when they were first created.
-	return [FULL_CYCLE_CODING_WORKFLOW, CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
+	return [
+		FULL_CYCLE_CODING_WORKFLOW,
+		CODING_WORKFLOW,
+		FULLSTACK_QA_LOOP_WORKFLOW,
+		RESEARCH_WORKFLOW,
+		REVIEW_ONLY_WORKFLOW,
+	];
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -909,7 +976,7 @@ export interface SeedBuiltInWorkflowsResult {
 }
 
 /**
- * Seeds all four built-in workflow templates into the given space.
+ * Seeds all built-in workflow templates into the given space.
  *
  * Each template node agent's `agentId` placeholder (e.g., `'Planner'`, `'Coder'`,
  * `'General'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.
@@ -986,7 +1053,6 @@ export function seedBuiltInWorkflows(
 					...a,
 					agentId: resolvedIds.get(a.agentId)!,
 				})),
-				instructions: s.instructions,
 			}));
 
 			const startNodeId = nodeIdMap.get(template.startNodeId);

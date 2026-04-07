@@ -10,7 +10,7 @@
  *   space_workflow_nodes        — id, workflow_id, name, description, config (JSON),
  *                                  created_at, updated_at
  *
- * The `config` column on space_workflow_nodes stores: { instructions?, agents? }
+ * The `config` column on space_workflow_nodes stores: { agents? }
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -57,7 +57,6 @@ interface NodeRow {
 
 // JSON stored inside space_workflow_nodes.config
 interface NodeConfigJson {
-	instructions?: string;
 	/** Multi-agent array */
 	agents?: WorkflowNodeAgent[];
 }
@@ -87,15 +86,11 @@ function rowToNode(row: NodeRow): WorkflowNode {
 				}))
 			: [];
 
-	const node: WorkflowNode = {
+	return {
 		id: row.id,
 		name: row.name,
 		agents,
 	};
-	if (cfg.instructions) {
-		node.instructions = cfg.instructions;
-	}
-	return node;
 }
 
 function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
@@ -336,7 +331,6 @@ export class SpaceWorkflowRepository {
 		now: number
 	): void {
 		const nodeCfg: NodeConfigJson = {};
-		if (input.instructions) nodeCfg.instructions = input.instructions;
 
 		// Normalize agents: use `agents` array if present, otherwise fall back to legacy
 		// `agentId` shorthand (still used in tests and older call-sites).

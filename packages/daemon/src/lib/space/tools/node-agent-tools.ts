@@ -21,15 +21,12 @@
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
  * - Dependencies are injected via `NodeAgentToolsConfig`.
- * - `messageInjector` is backed by `injectSubSessionMessage` → `injectMessageIntoSession`
- *   → `session.messageQueue.enqueueWithId()`, which provides per-session write ordering.
+ * - Message delivery is delegated to AgentMessageRouter for topology/gate validation.
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
-import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
 import {
@@ -69,6 +66,10 @@ export type { ToolResult };
 
 const log = new Logger('node-agent-tools');
 
+function normalizeRoleToken(value: string): string {
+	return value.trim().toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -82,10 +83,13 @@ export interface NodeAgentToolsConfig {
 	mySessionId: string;
 	/** Role of this node agent (e.g., 'coder', 'reviewer'). */
 	myRole: string;
+	/**
+	 * Optional role aliases that should be treated as equivalent to myRole for
+	 * writer authorization checks (e.g., slot role + underlying agent name).
+	 */
+	myRoleAliases?: string[];
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
-	/** ID of the step-level SpaceTask this agent is executing. Used by report_done. */
-	stepTaskId: string;
 	/** Space ID — used for event emission in report_done. */
 	spaceId: string;
 	/**
@@ -96,23 +100,12 @@ export interface NodeAgentToolsConfig {
 	channelResolver: ChannelResolver;
 	/** Workflow run ID — used to query node execution state. */
 	workflowRunId: string;
-	/** Space task repository for querying completion state (fallback when nodeExecutionRepo unavailable). */
-	spaceTaskRepo: SpaceTaskRepository;
 	/** Workflow node ID — used to query peer executions on the same node. */
 	workflowNodeId: string;
 	/**
 	 * Node execution repository for report_done, list_peers, and send_message peer resolution.
-	 * When provided, these tools use NodeExecution records instead of SpaceTask records.
-	 * Optional — falls back to SpaceTask-based lookups when absent.
 	 */
-	nodeExecutionRepo?: NodeExecutionRepository;
-	/**
-	 * Injects a message into a peer sub-session as a user turn.
-	 * Used by `send_message` to deliver messages to target sessions.
-	 */
-	messageInjector: (sessionId: string, message: string) => Promise<void>;
-	/** Task manager for validated status transitions. Used by report_done fallback. */
-	taskManager: SpaceTaskManager;
+	nodeExecutionRepo: NodeExecutionRepository;
 	/**
 	 * DaemonHub instance for emitting task update events.
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
@@ -120,11 +113,9 @@ export interface NodeAgentToolsConfig {
 	daemonHub?: DaemonHub;
 	/**
 	 * Optional AgentMessageRouter for unified message delivery.
-	 * When provided, send_message delegates all routing to AgentMessageRouter.
-	 * When absent, legacy topology-based routing is used directly.
-	 * TODO: Remove legacy path once TaskAgentManager injects AgentMessageRouter for all sub-sessions.
+	 * send_message delegates all routing to AgentMessageRouter.
 	 */
-	agentMessageRouter?: AgentMessageRouter;
+	agentMessageRouter: AgentMessageRouter;
 	/**
 	 * Workflow definition for this task.
 	 * Used by list_channels, list_gates, read_gate, write_gate to access channel and
@@ -172,16 +163,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 	const {
 		mySessionId,
 		myRole,
-		taskId,
-		stepTaskId,
+		myRoleAliases,
 		spaceId,
 		channelResolver,
 		workflowRunId,
-		spaceTaskRepo,
 		workflowNodeId,
 		nodeExecutionRepo,
-		messageInjector,
-		taskManager,
 		daemonHub,
 		agentMessageRouter,
 		workflow,
@@ -190,6 +177,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		scriptExecutor,
 		scriptContext,
 	} = config;
+
+	const roleAliases = new Set(
+		[myRole, ...(myRoleAliases ?? [])]
+			.map((value) => normalizeRoleToken(value))
+			.filter((value) => value.length > 0)
+	);
 
 	return {
 		/**
@@ -202,113 +195,46 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Returns permittedTargets: roles this agent can directly send to via send_message.
 		 * Returns completionState per peer: execution status, completion summary, and completedAt.
 		 * Returns nodeCompletionState: all executions on this workflow node with their completion state.
-		 *
-		 * Queries NodeExecutionRepository when available; falls back to SpaceTask-based lookup.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
 			const resolver = channelResolver;
+			const nodeExecs = workflowRunId
+				? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
+				: [];
 
-			if (nodeExecutionRepo) {
-				// Preferred path: query NodeExecution records for this node
-				const nodeExecs = workflowRunId
-					? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
-					: [];
-
-				// Exclude self (by agentSessionId) and include peers with a session or completed state
-				const peers = nodeExecs
-					.filter(
-						(ne) =>
-							ne.agentSessionId !== mySessionId &&
-							(ne.agentSessionId != null || ne.status === 'done')
-					)
-					.map((ne) => {
-						const execStatus = ne.status;
-						const memberStatus =
-							execStatus === 'done'
-								? ('completed' as const)
-								: execStatus === 'blocked' || execStatus === 'cancelled'
-									? ('failed' as const)
-									: ('active' as const);
-						return {
-							sessionId: ne.agentSessionId ?? null,
-							role: ne.agentName,
-							agentId: ne.agentId ?? null,
-							status: memberStatus,
-							completionState: {
-								agentName: ne.agentName,
-								taskStatus: ne.status,
-								completionSummary: ne.result ?? null,
-								completedAt: ne.completedAt ?? null,
-							},
-						};
-					});
-
-				const nodeCompletionState = nodeExecs.map((ne) => ({
-					agentName: ne.agentName,
-					taskStatus: ne.status,
-					completionSummary: ne.result ?? null,
-					completedAt: ne.completedAt ?? null,
-				}));
-
-				const permittedTargets = resolver.getPermittedTargets(myRole);
-				const channelTopologyDeclared = !resolver.isEmpty();
-
-				return jsonResult({
-					success: true,
-					myRole,
-					peers,
-					nodeCompletionState,
-					permittedTargets,
-					channelTopologyDeclared,
-					message:
-						`Found ${peers.length} peer(s). ` +
-						(channelTopologyDeclared
-							? `Permitted direct targets via send_message: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`
-							: 'No channel topology declared.'),
-				});
-			}
-
-			// Fallback path: query SpaceTask records
-			const nodeTasks = workflowRunId ? spaceTaskRepo.listByWorkflowRun(workflowRunId) : [];
-
-			// Build peers from all node tasks, excluding self and task-agent.
-			// Includes completed tasks (taskAgentSessionId may be null) so callers
-			// can see completion state even after the peer session has ended.
-			// Tasks with no session are excluded unless they are completed (post-session completion).
-			const peers = nodeTasks
+			// Exclude self (by agentSessionId) and include peers with a session or completed state
+			const peers = nodeExecs
 				.filter(
-					(t) =>
-						t.title !== 'task-agent' &&
-						t.taskAgentSessionId !== mySessionId &&
-						(t.taskAgentSessionId != null || t.status === 'done')
+					(ne) =>
+						ne.agentSessionId !== mySessionId && (ne.agentSessionId != null || ne.status === 'done')
 				)
-				.map((t) => {
-					const taskStatus = t.status;
+				.map((ne) => {
+					const execStatus = ne.status;
 					const memberStatus =
-						taskStatus === 'done'
+						execStatus === 'done'
 							? ('completed' as const)
-							: taskStatus === 'blocked' || taskStatus === 'cancelled'
+							: execStatus === 'blocked' || execStatus === 'cancelled'
 								? ('failed' as const)
 								: ('active' as const);
 					return {
-						sessionId: t.taskAgentSessionId ?? null,
-						role: t.title ?? 'agent',
-						agentId: null,
+						sessionId: ne.agentSessionId ?? null,
+						role: ne.agentName,
+						agentId: ne.agentId ?? null,
 						status: memberStatus,
 						completionState: {
-							agentName: t.title ?? null,
-							taskStatus: t.status,
-							completionSummary: t.result ?? null,
-							completedAt: t.completedAt ?? null,
+							agentName: ne.agentName,
+							taskStatus: ne.status,
+							completionSummary: ne.result ?? null,
+							completedAt: ne.completedAt ?? null,
 						},
 					};
 				});
 
-			const nodeCompletionState = nodeTasks.map((t) => ({
-				agentName: t.title ?? null,
-				taskStatus: t.status,
-				completionSummary: t.result ?? null,
-				completedAt: t.completedAt ?? null,
+			const nodeCompletionState = nodeExecs.map((ne) => ({
+				agentName: ne.agentName,
+				taskStatus: ne.status,
+				completionSummary: ne.result ?? null,
+				completedAt: ne.completedAt ?? null,
 			}));
 
 			const permittedTargets = resolver.getPermittedTargets(myRole);
@@ -333,173 +259,49 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Send a message to a peer agent by name (DM), a node by name (fan-out),
 		 * or broadcast to all permitted targets.
 		 *
-		 * When a AgentMessageRouter is configured, delegates all routing to it.
-		 * Otherwise uses legacy topology-based routing directly.
-		 *
 		 * Validates against declared channel topology — returns an error with
 		 * available targets if not permitted.
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message, data } = args;
 
-			// --- New path: delegate to AgentMessageRouter when available ---
-			if (agentMessageRouter) {
-				const result = await agentMessageRouter.deliverMessage({
-					fromRole: myRole,
-					fromSessionId: mySessionId,
-					target,
-					message,
-					data,
-				});
+			const result = await agentMessageRouter.deliverMessage({
+				fromRole: myRole,
+				fromSessionId: mySessionId,
+				target,
+				message,
+				data,
+			});
 
-				if (!result.success) {
-					return jsonResult({
-						success: false,
-						error: result.reason ?? 'Message delivery failed.',
-						delivered: result.delivered.length > 0 ? result.delivered : undefined,
-						failed: result.failed.length > 0 ? result.failed : undefined,
-						unauthorizedRoles: result.unauthorizedRoles,
-						permittedTargets: result.permittedTargets,
-						notFoundRoles: result.notFoundRoles,
-					});
-				}
-
-				if (result.success === 'partial') {
-					return jsonResult({
-						success: 'partial',
-						delivered: result.delivered,
-						failed: result.failed,
-						notFoundRoles: result.notFoundRoles,
-						message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
-					});
-				}
-
+			if (!result.success) {
 				return jsonResult({
-					success: true,
-					delivered: result.delivered,
+					success: false,
+					error: result.reason ?? 'Message delivery failed.',
+					delivered: result.delivered.length > 0 ? result.delivered : undefined,
+					failed: result.failed.length > 0 ? result.failed : undefined,
+					unauthorizedRoles: result.unauthorizedRoles,
+					permittedTargets: result.permittedTargets,
 					notFoundRoles: result.notFoundRoles,
-					message:
-						`Message delivered to ${result.delivered.length} peer(s): ` +
-						result.delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
-						'.',
 				});
 			}
 
-			// --- Legacy path: direct topology-based routing (no ChannelRouter injected) ---
-			const resolver = channelResolver;
-
-			if (resolver.isEmpty()) {
+			if (result.success === 'partial') {
 				return jsonResult({
-					success: false,
-					error:
-						'No channel topology declared for this step. ' +
-						'Direct messaging via send_message is not available.',
-				});
-			}
-
-			// Resolve target roles
-			let targetRoles: string[];
-
-			if (target === '*') {
-				const permitted = resolver.getPermittedTargets(myRole);
-				if (permitted.length === 0) {
-					return jsonResult({
-						success: false,
-						error:
-							`No permitted targets for role '${myRole}' in the declared channel topology. ` +
-							`Broadcast ('*') requires at least one permitted outgoing channel.`,
-						availableTargets: [],
-					});
-				}
-				targetRoles = permitted;
-			} else if (Array.isArray(target)) {
-				targetRoles = target;
-			} else {
-				targetRoles = [target];
-			}
-
-			// Validate authorization
-			const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend(myRole, role));
-			if (unauthorizedRoles.length > 0) {
-				const permittedTargets = resolver.getPermittedTargets(myRole);
-				return jsonResult({
-					success: false,
-					error:
-						`Channel topology does not permit '${myRole}' to send to: ${unauthorizedRoles.join(', ')}. ` +
-						`Permitted targets: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`,
-					unauthorizedRoles,
-					permittedTargets,
-				});
-			}
-
-			// Find peer sessions — prefer NodeExecution, fall back to SpaceTask
-			const peers: Array<{ sessionId: string; role: string }> = nodeExecutionRepo
-				? (workflowRunId ? nodeExecutionRepo.listByWorkflowRun(workflowRunId) : [])
-						.filter((ne) => ne.agentSessionId && ne.agentSessionId !== mySessionId)
-						.map((ne) => ({ sessionId: ne.agentSessionId!, role: ne.agentName }))
-				: (workflowRunId
-						? spaceTaskRepo.listByWorkflowRun(workflowRunId).filter((t) => t.taskAgentSessionId)
-						: []
-					)
-						.filter((t) => t.taskAgentSessionId !== mySessionId)
-						.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
-			const delivered: Array<{ role: string; sessionId: string }> = [];
-			const notFound: string[] = [];
-			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
-
-			for (const targetRole of targetRoles) {
-				const targetSessions = peers.filter((m) => m.role === targetRole);
-				if (targetSessions.length === 0) {
-					notFound.push(targetRole);
-					continue;
-				}
-				for (const targetMember of targetSessions) {
-					// Include structured data as a JSON appendix when present
-					const dataAppendix =
-						data && Object.keys(data).length > 0
-							? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
-							: '';
-					const prefixedMessage = `[Message from ${myRole}]: ${message}${dataAppendix}`;
-					try {
-						await messageInjector(targetMember.sessionId, prefixedMessage);
-						delivered.push({ role: targetRole, sessionId: targetMember.sessionId });
-					} catch (err) {
-						const errMsg = err instanceof Error ? err.message : String(err);
-						failed.push({ role: targetRole, sessionId: targetMember.sessionId, error: errMsg });
-					}
-				}
-			}
-
-			if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
-				return jsonResult({
-					success: false,
-					error:
-						`No active sessions found for target role(s): ${notFound.join(', ')}. ` +
-						`Use list_peers to check which peers are currently active.`,
-					notFoundRoles: notFound,
-				});
-			}
-
-			if (failed.length > 0) {
-				return jsonResult({
-					success: delivered.length > 0 ? 'partial' : false,
-					delivered,
-					failed,
-					notFoundRoles: notFound.length > 0 ? notFound : undefined,
-					message:
-						delivered.length > 0
-							? `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`
-							: `Message delivery failed for all ${failed.length} target(s).`,
+					success: 'partial',
+					delivered: result.delivered,
+					failed: result.failed,
+					notFoundRoles: result.notFoundRoles,
+					message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
 				});
 			}
 
 			return jsonResult({
 				success: true,
-				delivered,
-				notFoundRoles: notFound.length > 0 ? notFound : undefined,
+				delivered: result.delivered,
+				notFoundRoles: result.notFoundRoles,
 				message:
-					`Message delivered to ${delivered.length} peer(s): ` +
-					delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
+					`Message delivered to ${result.delivered.length} peer(s): ` +
+					result.delivered.map((t) => `${t.role} (${t.sessionId})`).join(', ') +
 					'.',
 			});
 		},
@@ -516,20 +318,22 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Does NOT include self or the task-agent coordinator.
 		 */
 		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
-			const resolver = channelResolver;
+			// Determine this agent's node name from the workflow definition.
+			// Falls back to myRole (agent slot name) for backward compatibility
+			// when no workflow is available (e.g. direct MCP calls without a workflow).
+			const myNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
+			const myNodeName = myNode?.name ?? myRole;
 
-			// Load peer tasks from DB
-			const reachableNodeTasks = workflowRunId
-				? spaceTaskRepo.listByWorkflowRun(workflowRunId).filter((t) => t.taskAgentSessionId)
+			// Within-node peers: other agents in the same node
+			const nodeExecs = workflowRunId
+				? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
 				: [];
-
-			// Within-node peers: tasks in this run excluding self
-			const withinNodePeers = reachableNodeTasks
-				.filter((t) => t.taskAgentSessionId !== mySessionId)
-				.map((t) => {
-					const ts = t.status;
+			const withinNodePeers = nodeExecs
+				.filter((e) => e.agentSessionId !== mySessionId)
+				.map((e) => {
+					const ts = e.status;
 					return {
-						agentName: t.title ?? 'agent',
+						agentName: e.agentName,
 						status:
 							ts === 'done'
 								? ('completed' as const)
@@ -539,74 +343,70 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					};
 				});
 
-			const reachabilityDeclared = !resolver.isEmpty();
+			// Use channels from the resolver (which was built from the workflow channels at spawn time)
+			// or fall back to workflow.channels directly. This ensures the handler works both
+			// when a full workflow is available and when only a channel resolver is provided.
+			const channels =
+				channelResolver.getChannels().length > 0
+					? channelResolver.getChannels()
+					: (workflow?.channels ?? []);
+			const reachabilityDeclared = channels.length > 0;
 
-			// Cross-node targets: outgoing channel entries where the target role is NOT
-			// already in the current node tasks (i.e., it lives on a different node).
-			const withinNodeRoles = new Set(reachableNodeTasks.map((t) => t.title ?? 'agent'));
-
+			// Cross-node targets: channels where FROM node is this agent's node
 			type CrossNodeTarget = {
-				agentName: string;
-				isFanOut: boolean;
+				nodeName: string;
 				gate: { type: string; isGated: boolean; description?: string };
 			};
 			const crossNodeTargets: CrossNodeTarget[] = [];
 
-			if (reachabilityDeclared) {
-				const seen = new Set<string>();
-				// Build a lookup from (from, to) → gateId from original workflow channels
-				const channelGateMap = new Map<string, string>();
-				for (const wCh of workflow?.channels ?? []) {
-					if (wCh.gateId) {
-						const tos = Array.isArray(wCh.to) ? wCh.to : [wCh.to];
-						for (const t of tos) {
-							channelGateMap.set(`${wCh.from}→${t}`, wCh.gateId);
-						}
-					}
-				}
+			if (reachabilityDeclared && myNodeName) {
 				const gatesById = new Map((workflow?.gates ?? []).map((g) => [g.id, g]));
+				const seen = new Set<string>();
 
-				for (const ch of resolver.getResolvedChannels()) {
-					if (ch.fromRole !== myRole) continue;
-					if (withinNodeRoles.has(ch.toRole)) continue; // within-node — already listed above
-					if (seen.has(ch.toRole)) continue; // deduplicate (e.g. bidirectional split)
-					seen.add(ch.toRole);
+				// Track within-node agent names to exclude them from cross-node targets
+				const withinNodeAgentNames = new Set([myRole, ...nodeExecs.map((e) => e.agentName)]);
 
-					// Look up gate from the original workflow channels via gateId
-					const gateId = channelGateMap.get(`${ch.fromRole}→${ch.toRole}`);
-					const gateEntity = gateId ? gatesById.get(gateId) : undefined;
-					const gateType = gateEntity
-						? (gateEntity.fields ?? []).some((f) => f.type === 'map' && f.check.op === 'count')
-							? 'count'
-							: 'check'
-						: 'none';
-					const isGated = gateEntity !== undefined;
-					const entry: CrossNodeTarget = {
-						agentName: ch.toRole,
-						isFanOut: ch.isFanOut ?? false,
-						gate: { type: gateType, isGated },
-					};
-					if (gateEntity?.description) {
-						entry.gate.description = gateEntity.description;
+				for (const ch of channels) {
+					// Match channels where FROM is this agent's node name, slot name, or wildcard
+					if (ch.from !== myNodeName && ch.from !== myRole && ch.from !== '*') continue;
+					const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+					for (const toNode of tos) {
+						// Skip: same as source, already seen, or is a within-node agent
+						if (toNode === myNodeName || toNode === myRole) continue;
+						if (seen.has(toNode)) continue;
+						if (withinNodeAgentNames.has(toNode)) continue; // within-node agent → not cross-node
+						seen.add(toNode);
+						const gateEntity = ch.gateId ? gatesById.get(ch.gateId) : undefined;
+						const gateType = gateEntity
+							? (gateEntity.fields ?? []).some((f) => f.type === 'map' && f.check.op === 'count')
+								? 'count'
+								: 'check'
+							: 'none';
+						const entry: CrossNodeTarget = {
+							nodeName: toNode,
+							gate: { type: gateType, isGated: gateEntity !== undefined },
+						};
+						if (gateEntity?.description) entry.gate.description = gateEntity.description;
+						crossNodeTargets.push(entry);
 					}
-					crossNodeTargets.push(entry);
 				}
 			}
 
 			const totalReachable = withinNodePeers.length + crossNodeTargets.length;
 			const crossNodeSummary =
 				crossNodeTargets.length > 0
-					? ` Cross-node targets: ${crossNodeTargets.map((t) => t.agentName).join(', ')}.`
+					? ` Cross-node targets: ${crossNodeTargets.map((t) => t.nodeName).join(', ')}.`
 					: '';
 
 			return jsonResult({
 				success: true,
 				myAgentName: myRole,
+				myNodeName,
 				withinNodePeers,
 				crossNodeTargets,
 				reachabilityDeclared,
 				message:
-					`You can reach ${totalReachable} agent(s) in total. ` +
+					`You can reach ${totalReachable} target(s) in total. ` +
 					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
 					crossNodeSummary,
 			});
@@ -630,7 +430,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				channelId: ch.id ?? null,
 				from: ch.from,
 				to: ch.to,
-				direction: ch.direction,
 				maxCycles: ch.maxCycles ?? null,
 				label: ch.label ?? null,
 				hasGate: ch.gateId !== undefined,
@@ -707,7 +506,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				gateDef,
 				currentData,
 				scriptExecutor,
-				scriptContext ? { ...scriptContext, gateId } : undefined
+				scriptContext ? { ...scriptContext, gateId, gateData: currentData } : undefined
 			);
 
 			return jsonResult({
@@ -769,7 +568,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					});
 				}
 				const writers = fieldDef.writers;
-				const isAuthorized = writers.includes('*') || writers.includes(myRole);
+				const isAuthorized = writers.some((writer) => {
+					const normalizedWriter = normalizeRoleToken(writer);
+					return normalizedWriter === '*' || roleAliases.has(normalizedWriter);
+				});
 				if (!isAuthorized) {
 					return jsonResult({
 						success: false,
@@ -778,6 +580,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							`Allowed writers: ${writers.length > 0 ? writers.join(', ') : '(none)'}.`,
 						allowedWriters: writers,
 						myRole,
+						myRoleAliases: [...roleAliases],
 					});
 				}
 			}
@@ -791,7 +594,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				gateDef,
 				updated.data,
 				scriptExecutor,
-				scriptContext ? { ...scriptContext, gateId } : undefined
+				scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
 			);
 
 			// Persist script evaluation result to gate data for frontend transport.
@@ -855,14 +658,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		/**
 		 * Signal that this node agent has completed its work.
 		 *
-		 * When nodeExecutionRepo is available: updates the NodeExecution record for
-		 * this agent (identified by workflowNodeId + myRole) to status 'done' and
+		 * Updates the NodeExecution record for this agent (identified by
+		 * workflowNodeId + myRole) to status 'done' and
 		 * persists the optional summary. SpaceRuntime detects the state change and
 		 * triggers workflow completion checks (end-node short-circuit or
 		 * CompletionDetector safety net).
-		 *
-		 * When nodeExecutionRepo is absent (test/compat fallback): updates the step's
-		 * SpaceTask via taskManager.setTaskStatus().
 		 *
 		 * After calling this tool, the node agent should stop and not perform
 		 * further work — the task lifecycle is closed.
@@ -871,66 +671,33 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const { summary } = args;
 
 			try {
-				if (nodeExecutionRepo) {
-					// Preferred path: update NodeExecution status to 'done'
-					const nodeExecs = workflowRunId
-						? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
-						: [];
-					const myExec = nodeExecs.find((e) => e.agentName === myRole);
+				// Preferred path: update NodeExecution status to 'done'
+				const nodeExecs = workflowRunId
+					? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
+					: [];
+				const myExec = nodeExecs.find((e) => e.agentName === myRole);
 
-					if (!myExec) {
-						return jsonResult({
-							success: false,
-							error:
-								`NodeExecution not found for agent "${myRole}" in node "${workflowNodeId}" ` +
-								`(run: ${workflowRunId}). Cannot mark as done.`,
-						});
-					}
-
-					nodeExecutionRepo.update(myExec.id, {
-						status: 'done',
-						result: summary ?? null,
-					});
-
+				if (!myExec) {
 					return jsonResult({
-						success: true,
-						executionId: myExec.id,
-						agentName: myRole,
-						summary,
-						message:
-							'Step execution has been marked as completed. ' +
-							'Your work is done — stop here and do not continue.',
+						success: false,
+						error:
+							`NodeExecution not found for agent "${myRole}" in node "${workflowNodeId}" ` +
+							`(run: ${workflowRunId}). Cannot mark as done.`,
 					});
 				}
 
-				// Fallback path: update SpaceTask via taskManager
-				const updatedTask = await taskManager.setTaskStatus(stepTaskId, 'done', {
-					result: summary,
+				nodeExecutionRepo.update(myExec.id, {
+					status: 'done',
+					result: summary ?? null,
 				});
-
-				// Emit DaemonHub event so the UI is notified of the step task completion.
-				if (daemonHub) {
-					void daemonHub
-						.emit('space.task.updated', {
-							sessionId: 'global',
-							spaceId,
-							taskId: stepTaskId,
-							task: updatedTask,
-						})
-						.catch((err) => {
-							log.warn(
-								`Failed to emit space.task.updated for step task ${stepTaskId} (parent ${taskId}): ` +
-									`${err instanceof Error ? err.message : String(err)}`
-							);
-						});
-				}
 
 				return jsonResult({
 					success: true,
-					stepTaskId,
+					executionId: myExec.id,
+					agentName: myRole,
 					summary,
 					message:
-						'Step task has been marked as completed. ' +
+						'Step execution has been marked as completed. ' +
 						'Your work is done — stop here and do not continue.',
 				});
 			} catch (err) {
@@ -956,9 +723,9 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		tool(
 			'list_peers',
 			'List all other agents in this workflow step group with their roles, statuses, session IDs, ' +
-				'permitted channel connections, and completion state from space_tasks. ' +
+				'permitted channel connections, and completion state from node executions. ' +
 				'Use this to discover which peers are active, what direct messaging channels are available, ' +
-				'and whether peer tasks have completed (including their completion summaries).',
+				'and whether peer executions have completed (including their completion summaries).',
 			ListPeersSchema.shape,
 			(args) => handlers.list_peers(args)
 		),
@@ -1020,7 +787,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		tool(
 			'report_done',
 			'Signal that this node agent has completed its work. ' +
-				'Marks the step task as completed and persists an optional summary as the result. ' +
+				'Marks the node execution as completed and persists an optional summary as the result. ' +
 				'Call this when you have finished all assigned work. ' +
 				'After calling this tool, stop — do not continue with further actions.',
 			ReportDoneSchema.shape,

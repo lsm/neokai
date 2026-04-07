@@ -100,23 +100,69 @@ function makeMockTaskAgentManager(
 	overrides: {
 		isSpawning?: (taskId: string) => boolean;
 		isTaskAgentAlive?: (taskId: string) => boolean;
-		spawnTaskAgent?: (task: unknown) => Promise<string>;
+		spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
+		isExecutionSpawning?: (executionId: string) => boolean;
+		isSessionAlive?: (sessionId: string) => boolean;
+		spawnWorkflowNodeAgentForExecution?: (
+			task: unknown,
+			space: unknown,
+			workflow: unknown,
+			run: unknown,
+			execution: unknown
+		) => Promise<string>;
 		rehydrate?: () => Promise<void>;
 		cancelBySessionId?: (sessionId: string) => void;
 	} = {}
 ) {
 	const spawned: string[] = [];
+	const sessionToTask = new Map<string, string>();
+	const spawnExecutionImpl =
+		overrides.spawnWorkflowNodeAgentForExecution ??
+		(async (
+			task: unknown,
+			_space: unknown,
+			_workflow: unknown,
+			_run: unknown,
+			execution: unknown
+		) => {
+			if (overrides.spawnWorkflowNodeAgent) {
+				const legacySessionId = await overrides.spawnWorkflowNodeAgent(task);
+				const t = task as { id?: string };
+				if (t.id && legacySessionId) sessionToTask.set(legacySessionId, t.id);
+				if (t.id) spawned.push(t.id);
+				return legacySessionId;
+			}
+			const e = execution as { id?: string };
+			const t = task as { id?: string };
+			const executionId = e.id ?? t.id ?? `exec-${Math.random().toString(36).slice(2)}`;
+			const taskId = t.id ?? executionId;
+			const sessionId = `session:${executionId}`;
+			sessionToTask.set(sessionId, taskId);
+			spawned.push(taskId);
+			return sessionId;
+		});
+	const spawnImpl =
+		overrides.spawnWorkflowNodeAgent ??
+		(async (task: unknown) => {
+			const t = task as { id: string };
+			spawned.push(t.id);
+			taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
+			sessionToTask.set(`session:${t.id}`, t.id);
+			return `session:${t.id}`;
+		});
 	return {
 		isSpawning: overrides.isSpawning ?? (() => false),
 		isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
-		spawnTaskAgent:
-			overrides.spawnTaskAgent ??
-			(async (task: unknown) => {
-				const t = task as { id: string };
-				spawned.push(t.id);
-				taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
-				return `session:${t.id}`;
+		spawnWorkflowNodeAgent: spawnImpl,
+		isExecutionSpawning: overrides.isExecutionSpawning ?? (() => false),
+		isSessionAlive:
+			overrides.isSessionAlive ??
+			((sessionId: string) => {
+				if (!overrides.isTaskAgentAlive) return false;
+				const taskId = sessionToTask.get(sessionId);
+				return taskId ? overrides.isTaskAgentAlive(taskId) : false;
 			}),
+		spawnWorkflowNodeAgentForExecution: spawnExecutionImpl,
 		rehydrate: overrides.rehydrate ?? (async () => {}),
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
 		_spawned: spawned,
@@ -266,6 +312,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			// First tick spawns agent for first task
 			await rt.executeTick();
 			expect(tam._spawned).toContain(tasks[0].id);
+			const firstSpawnCount = tam._spawned.length;
 
 			// Simulate a new task being added to the same run (e.g., by channel activation)
 			const newTask = taskRepo.createTask({
@@ -275,11 +322,19 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				workflowRunId: run.id,
 				status: 'open',
 			});
+			nodeExecutionRepo.createOrIgnore({
+				workflowRunId: run.id,
+				workflowNodeId: STEP_B,
+				agentName: newTask.title,
+				agentId: AGENT_CODER,
+				status: 'pending',
+			});
 
 			// Second tick picks up the new task
 			await rt.executeTick();
-			expect(tam._spawned).toContain(newTask.id);
-			expect(taskRepo.getTask(newTask.id)!.status).toBe('in_progress');
+			expect(tam._spawned.length).toBeGreaterThan(firstSpawnCount);
+			expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
+			expect(taskRepo.getTask(newTask.id)!.status).toBe('archived');
 		});
 	});
 
@@ -344,7 +399,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			let spawnCount = 0;
 			const tam = makeMockTaskAgentManager(taskRepo, {
 				isTaskAgentAlive: () => true,
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawnCount++;
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -386,7 +441,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					spawned.push(t.id);
 					taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
@@ -602,6 +657,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			]);
 			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(rt.executorCount).toBe(1);
+			for (const task of taskRepo.listByWorkflowRun(run.id)) {
+				taskRepo.updateTask(task.id, { status: 'done' });
+			}
 
 			// Delete the run record entirely
 			db.prepare('DELETE FROM space_workflow_runs WHERE id = ?').run(run.id);
@@ -710,7 +768,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 	// -------------------------------------------------------------------------
 
 	describe('start() / stop() lifecycle', () => {
-		test('start() is idempotent — calling twice does not create duplicate timers', () => {
+		test('start() is idempotent — calling twice does not create duplicate timers', async () => {
 			// Intercept setInterval to count how many timers are created
 			const origSetInterval = globalThis.setInterval;
 			let intervalCount = 0;
@@ -726,13 +784,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
 				// Only one interval should have been created
 				expect(intervalCount).toBe(1);
-				rt.stop();
+				await rt.stop();
 			} finally {
 				globalThis.setInterval = origSetInterval;
 			}
 		});
 
-		test('stop() clears the timer — clearInterval is called', () => {
+		test('stop() clears the timer — clearInterval is called', async () => {
 			// Use a deterministic approach: intercept clearInterval to verify it's called
 			const origClearInterval = globalThis.clearInterval;
 			let clearCalled = false;
@@ -746,21 +804,21 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				rt.start();
 				expect(clearCalled).toBe(false);
 
-				rt.stop();
+				await rt.stop();
 				expect(clearCalled).toBe(true);
 			} finally {
 				globalThis.clearInterval = origClearInterval;
 			}
 		});
 
-		test('stop() when not started is a no-op', () => {
+		test('stop() when not started is a no-op', async () => {
 			const rt = new SpaceRuntime(buildConfig());
 
 			// Should not throw
-			expect(() => rt.stop()).not.toThrow();
+			await expect(rt.stop()).resolves.toBeUndefined();
 		});
 
-		test('start() can be called again after stop() — creates a new timer', () => {
+		test('start() can be called again after stop() — creates a new timer', async () => {
 			const origSetInterval = globalThis.setInterval;
 			let intervalCount = 0;
 			globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
@@ -774,13 +832,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
 				rt.start();
 				expect(intervalCount).toBe(1);
 
-				rt.stop();
+				await rt.stop();
 
 				// Restart — should create a new interval
 				rt.start();
 				expect(intervalCount).toBe(2);
 
-				rt.stop();
+				await rt.stop();
 			} finally {
 				globalThis.setInterval = origSetInterval;
 			}
@@ -800,7 +858,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					callCount++;
 					if (callCount === 1) {
@@ -828,8 +886,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			await rt.executeTick();
 
 			expect(callCount).toBe(2);
-			// First task failed to spawn — remains open
-			expect(taskRepo.getTask(tasks1[0].id)!.status).toBe('open');
+			// First task failed to spawn — run task remains in_progress while execution retries stay pending
+			expect(taskRepo.getTask(tasks1[0].id)!.status).toBe('in_progress');
 			// Second task should have been spawned successfully
 			expect(spawned).toContain(tasks2[0].id);
 			expect(taskRepo.getTask(tasks2[0].id)!.status).toBe('in_progress');
@@ -842,7 +900,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 					const task = taskRepo.getTask(taskId);
 					return !!task?.taskAgentSessionId;
 				},
-				spawnTaskAgent: async (task: unknown) => {
+				spawnWorkflowNodeAgent: async (task: unknown) => {
 					const t = task as { id: string };
 					if (failOnce) {
 						failOnce = false;
@@ -862,7 +920,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
 			// First tick — spawn fails, task stays open
 			await rt.executeTick();
 			const tasks = taskRepo.listByWorkflowRun(workflowRunRepo.listBySpace(SPACE_ID)[0].id);
-			expect(tasks[0].status).toBe('open');
+			expect(tasks[0].status).toBe('in_progress');
+			const runExecsAfterFail = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
+			expect(runExecsAfterFail.some((exec) => exec.status === 'pending')).toBe(true);
 
 			// Second tick — spawn succeeds (failOnce is now false)
 			await rt.executeTick();

@@ -33,13 +33,10 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { resolveAgentInit, buildCustomAgentTaskMessage } from '../agents/custom-agent';
-import { ChannelResolver } from '../runtime/channel-resolver';
 import type { ChannelRouter } from '../runtime/channel-router';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
-	SpawnNodeAgentSchema,
-	CheckNodeStatusSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
@@ -150,7 +147,7 @@ export interface TaskAgentToolsConfig {
 	 * querying execution state in list_group_members.
 	 * Optional — if omitted, falls back to SpaceTask-based lookups.
 	 */
-	nodeExecutionRepo?: NodeExecutionRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Agent manager for resolving node agents. */
 	agentManager: SpaceAgentManager;
 	/** Task manager for validated status transitions. */
@@ -336,9 +333,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			// Build effectiveTask with optional instruction override
 			const effectiveTask = instructions ? { ...stepTask, description: instructions } : stepTask;
 
-			// Extract slot-level overrides (systemPrompt) if present.
-			// model is no longer on WorkflowNodeAgent; systemPrompt is now WorkflowNodeAgentOverride.
+			// Extract slot-level overrides when present.
 			const slotOverrides: import('../agents/custom-agent').SlotOverrides = {
+				model: agentSlot?.model,
 				systemPrompt: agentSlot?.systemPrompt,
 				instructions: agentSlot?.instructions,
 			};
@@ -656,106 +653,48 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 *   - completionState: execution status and result summary
 		 *
 		 * Also returns nodeCompletionState — all executions in the run with their completion state.
-		 *
-		 * Queries NodeExecutionRepository when available; falls back to SpaceTask-based lookup.
 		 */
 		async list_group_members(_args: ListGroupMembersInput): Promise<ToolResult> {
-			// Build ChannelResolver — run.config is no longer stored on SpaceWorkflowRun,
-			// so channel topology is not available here; resolver will be empty.
-			const resolver = ChannelResolver.fromRunConfig(undefined);
+			const allExecs = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+			const activeExecs = allExecs.filter((ne) => ne.agentSessionId);
+			const knownRoles = [...new Set(allExecs.map((ne) => ne.agentName))];
 
-			if (nodeExecutionRepo) {
-				// Preferred path: query NodeExecution records
-				const allExecs = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-				const activeExecs = allExecs.filter((ne) => ne.agentSessionId);
-
-				const members = activeExecs.map((ne) => {
-					const execStatus = ne.status;
-					const memberStatus =
-						execStatus === 'done'
-							? 'completed'
-							: execStatus === 'blocked' || execStatus === 'cancelled'
-								? 'failed'
-								: 'active';
-					return {
-						sessionId: ne.agentSessionId!,
-						role: ne.agentName,
-						agentId: ne.agentId ?? (null as string | null),
-						status: memberStatus,
-						permittedTargets: resolver.getPermittedTargets(ne.agentName),
-						completionState: {
-							agentName: ne.agentName,
-							taskStatus: ne.status,
-							completionSummary: ne.result ?? null,
-							completedAt: ne.completedAt ?? null,
-						},
-					};
-				});
-
-				const nodeCompletionState = allExecs.map((ne) => ({
-					agentName: ne.agentName,
-					taskStatus: ne.status,
-					completionSummary: ne.result ?? null,
-					completedAt: ne.completedAt ?? null,
-				}));
-
-				return jsonResult({
-					success: true,
-					members,
-					nodeCompletionState,
-					channelTopologyDeclared: !resolver.isEmpty(),
-					message:
-						`Run has ${members.length} active member(s). ` +
-						(resolver.isEmpty()
-							? 'No channel topology declared.'
-							: `Channel topology is active and enforced.`),
-				});
-			}
-
-			// Fallback path: query SpaceTask records (when nodeExecutionRepo is unavailable)
-			const allRunTasks = taskRepo.listByWorkflowRun(workflowRunId);
-			const activeTasks = allRunTasks.filter((t) => t.taskAgentSessionId);
-
-			const members = activeTasks.map((t) => {
-				const ts = t.status;
+			const members = activeExecs.map((ne) => {
+				const execStatus = ne.status;
 				const memberStatus =
-					ts === 'done'
+					execStatus === 'done'
 						? 'completed'
-						: ts === 'blocked' || ts === 'cancelled'
+						: execStatus === 'blocked' || execStatus === 'cancelled'
 							? 'failed'
 							: 'active';
 				return {
-					sessionId: t.taskAgentSessionId!,
-					role: t.title ?? 'agent',
-					agentId: null as string | null,
+					sessionId: ne.agentSessionId!,
+					role: ne.agentName,
+					agentId: ne.agentId ?? (null as string | null),
 					status: memberStatus,
-					permittedTargets: resolver.getPermittedTargets(t.title ?? 'agent'),
+					permittedTargets: knownRoles.filter((role) => role !== ne.agentName),
 					completionState: {
-						agentName: t.title ?? null,
-						taskStatus: t.status,
-						completionSummary: t.result ?? null,
-						completedAt: t.completedAt ?? null,
+						agentName: ne.agentName,
+						taskStatus: ne.status,
+						completionSummary: ne.result ?? null,
+						completedAt: ne.completedAt ?? null,
 					},
 				};
 			});
 
-			const nodeCompletionState = allRunTasks.map((t) => ({
-				agentName: t.title ?? null,
-				taskStatus: t.status,
-				completionSummary: t.result ?? null,
-				completedAt: t.completedAt ?? null,
+			const nodeCompletionState = allExecs.map((ne) => ({
+				agentName: ne.agentName,
+				taskStatus: ne.status,
+				completionSummary: ne.result ?? null,
+				completedAt: ne.completedAt ?? null,
 			}));
 
 			return jsonResult({
 				success: true,
 				members,
 				nodeCompletionState,
-				channelTopologyDeclared: !resolver.isEmpty(),
-				message:
-					`Run has ${members.length} active member(s). ` +
-					(resolver.isEmpty()
-						? 'No channel topology declared.'
-						: `Channel topology is active and enforced.`),
+				channelTopologyDeclared: false,
+				message: `Run has ${members.length} active member(s).`,
 			});
 		},
 
@@ -777,63 +716,36 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message } = args;
-
-			// run.config is no longer stored on SpaceWorkflowRun; channel topology uses empty resolver.
-			const resolver = ChannelResolver.fromRunConfig(undefined);
-
-			// When no channel topology is declared, all send_message calls fail.
-			if (resolver.isEmpty()) {
-				return jsonResult({
-					success: false,
-					error:
-						`No channel topology declared for this step. ` +
-						`Direct messaging via send_message is not available.`,
-				});
-			}
-
-			// Resolve target roles from the target argument
 			let targetRoles: string[];
+			const activeExecutions = nodeExecutionRepo
+				.listByWorkflowRun(workflowRunId)
+				.filter(
+					(execution) =>
+						execution.agentSessionId &&
+						(execution.status === 'in_progress' || execution.status === 'pending')
+				);
+			const knownRoles = [...new Set(activeExecutions.map((execution) => execution.agentName))];
 
 			if (target === '*') {
-				// Broadcast: expand to all permitted targets
-				const permitted = resolver.getPermittedTargets('task-agent');
-				if (permitted.length === 0) {
+				if (knownRoles.length === 0) {
 					return jsonResult({
 						success: false,
 						error:
-							`No permitted targets for role 'task-agent' in the declared channel topology. ` +
-							`Broadcast ('*') requires at least one permitted outgoing channel.`,
-						availableTargets: [],
+							`No active workflow agent sessions found for this run. ` +
+							`Broadcast ('*') requires at least one active target.`,
+						availableTargets: knownRoles,
 					});
 				}
-				targetRoles = permitted;
+				targetRoles = knownRoles;
 			} else if (Array.isArray(target)) {
-				// Multicast: validate each requested role
 				targetRoles = target;
 			} else {
-				// Point-to-point: single role
 				targetRoles = [target];
 			}
-
-			// Validate all requested target roles against channel topology
-			const unauthorizedRoles = targetRoles.filter((role) => !resolver.canSend('task-agent', role));
-			if (unauthorizedRoles.length > 0) {
-				const permittedTargets = resolver.getPermittedTargets('task-agent');
-				return jsonResult({
-					success: false,
-					error:
-						`Channel topology does not permit 'task-agent' to send to: ${unauthorizedRoles.join(', ')}. ` +
-						`Permitted targets: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`,
-					unauthorizedRoles,
-					permittedTargets,
-				});
-			}
-
-			// Find peer sessions via task repo (exclude tasks without sessions)
-			const sendPeers = taskRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.taskAgentSessionId)
-				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: 'agent' }));
+			const sendPeers = activeExecutions.map((execution) => ({
+				sessionId: execution.agentSessionId!,
+				role: execution.agentName,
+			}));
 			const delivered: Array<{ role: string; sessionId: string }> = [];
 			const notFound: string[] = [];
 			const failed: Array<{ role: string; sessionId: string; error: string }> = [];
@@ -960,21 +872,6 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 	const handlers = createTaskAgentToolHandlers(config);
 
 	const tools = [
-		tool(
-			'spawn_node_agent',
-			"Start a sub-session for a workflow node's assigned agent. " +
-				'Call this to execute each workflow step. ' +
-				'Returns the session ID of the spawned sub-session.',
-			SpawnNodeAgentSchema.shape,
-			(args) => handlers.spawn_node_agent(args)
-		),
-		tool(
-			'check_node_status',
-			'Inspect the status of a node agent sub-session on demand. ' +
-				'Use this for reconciliation/recovery of a specific step instead of continuous polling.',
-			CheckNodeStatusSchema.shape,
-			(args) => handlers.check_node_status(args)
-		),
 		tool(
 			'report_result',
 			'Mark the task as completed, failed, or cancelled and record the result summary. ' +

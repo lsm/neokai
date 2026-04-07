@@ -191,8 +191,8 @@ describe('RoomRuntime', () => {
 			expect(goalAfter!.planning_attempts).toBeGreaterThan(attemptsBefore);
 		});
 
-		it('should escalate to needs_human immediately when maxPlanningRetries=0 (default) and execution tasks all failed', async () => {
-			// Default room config: maxPlanningRetries = 0 (no retries)
+		it('should escalate to needs_human after exhausting default planning attempts (2) and execution tasks all failed', async () => {
+			// Default effectiveMax = 2 (allows 1 retry). Two failed attempts → escalate.
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build API',
 				description: 'Build the REST API',
@@ -213,8 +213,9 @@ describe('RoomRuntime', () => {
 			await ctx.goalManager.linkTaskToGoal(goal.id, execTask.id);
 			await ctx.taskManager.failTask(execTask.id, 'Compilation error');
 
-			// planning_attempts = 1 (initial planning done), maxPlanningAttempts = 0+1 = 1
-			// So attempts >= maxPlanningAttempts → escalate immediately
+			// planning_attempts = 2 (both attempts exhausted), effectiveMax = 2
+			// So attempts >= effectiveMax → escalate immediately
+			await ctx.goalManager.incrementPlanningAttempts(goal.id);
 			await ctx.goalManager.incrementPlanningAttempts(goal.id);
 
 			ctx.runtime.start();

@@ -1,9 +1,9 @@
 import simpleGit, { SimpleGit } from 'simple-git';
-import { basename, dirname, join, normalize } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { dirname, join, normalize } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
 import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@neokai/shared';
 import { Logger } from './logger';
+import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
 
 export interface WorktreeInfo {
 	path: string;
@@ -143,101 +143,23 @@ export class WorktreeManager {
 	}
 
 	/**
-	 * Encode an absolute path to a filesystem-safe directory name
-	 * Uses the same approach as Claude Code (~/.claude/projects/)
-	 *
-	 * Examples:
-	 * - /Users/alice/project → -Users-alice-project
-	 * - /home/john_doe/my_project → -home-john_doe-my_project
-	 * - C:\Users\alice\project → -C--Users-alice-project
-	 */
-	private encodeRepoPath(repoPath: string): string {
-		// Normalize path separators (handle both Unix and Windows)
-		const normalizedPath = repoPath.replace(/\\/g, '/');
-
-		// Strip leading slash (if any) and replace remaining slashes with dashes
-		// Then prepend a dash to indicate it was an absolute path
-		const encoded = normalizedPath.startsWith('/')
-			? '-' + normalizedPath.slice(1).replace(/\//g, '-')
-			: '-' + normalizedPath.replace(/\//g, '-');
-
-		return encoded;
-	}
-
-	/**
 	 * Produce a short, deterministic, human-readable directory name for a repo path.
 	 *
-	 * Format: `{sanitized-basename}-{8-char-hex-hash}`
-	 * Example: `dev-neokai-a3b2c1d4`
-	 *
-	 * The 8-char hex hash is derived from the lower 32 bits of `Bun.hash()` applied
-	 * to the full normalized path, using BigInt arithmetic to avoid truncation above
-	 * 2^53 that `Number(bigint).toString(16)` would silently produce.
+	 * Delegates to the standalone {@link getProjectShortKey} utility.
+	 * Kept as a public instance method for backward compatibility.
 	 */
 	public getProjectShortKey(repoPath: string): string {
-		const normalizedPath = normalize(repoPath).replace(/\\/g, '/');
-		const lastComponent = basename(normalizedPath);
-		// Keep alphanumeric, hyphens, underscores; replace anything else with '-'
-		const sanitized = lastComponent.replace(/[^a-zA-Z0-9_-]/g, '-') || 'project';
-		// Lower 32 bits of Bun.hash as an 8-char zero-padded hex string
-		const hash8 = (BigInt(Bun.hash(normalizedPath)) & 0xffff_ffffn).toString(16).padStart(8, '0');
-		return `${sanitized}-${hash8}`;
+		return getProjectShortKey(repoPath);
 	}
 
 	/**
 	 * Get the worktree base directory for a repository.
 	 *
-	 * Uses a short human-readable key (`{basename}-{hash8}`) instead of the full
-	 * encoded path, with a `.neokai-repo-root` sentinel file for collision detection.
-	 *
-	 * Collision handling:
-	 * - First use   → create `~/.neokai/projects/{shortKey}/` and write sentinel.
-	 * - Same repo   → sentinel matches; proceed normally.
-	 * - Collision   → sentinel belongs to a different repo; log a warning and fall
-	 *                 back to `encodeRepoPath` so both repos use distinct directories.
-	 * - No sentinel → dir was created by an older NeoKai version; write sentinel and
-	 *                 proceed normally.
-	 *
-	 * All I/O is synchronous to keep the method signature synchronous and avoid
-	 * cascading `async` changes to `createWorktree` and its callers.
-	 *
-	 * For testing, set TEST_WORKTREE_BASE_DIR to override the `~/.neokai` prefix.
+	 * Delegates to the standalone {@link getWorktreeBaseDir} utility.
+	 * Kept as a private instance method to avoid cascading async changes.
 	 */
 	private getWorktreeBaseDir(gitRoot: string): string {
-		const normalizedGitRoot = normalize(gitRoot).replace(/\\/g, '/');
-		const shortKey = this.getProjectShortKey(normalizedGitRoot);
-
-		const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
-		const projectDir = testBaseDir
-			? join(testBaseDir, shortKey)
-			: join(homedir(), '.neokai', 'projects', shortKey);
-
-		const sentinelFile = join(projectDir, '.neokai-repo-root');
-
-		if (!existsSync(projectDir)) {
-			// First use: create the project directory and record the repo path
-			mkdirSync(projectDir, { recursive: true });
-			writeFileSync(sentinelFile, normalizedGitRoot);
-		} else if (existsSync(sentinelFile)) {
-			const storedPath = readFileSync(sentinelFile, 'utf-8').trim();
-			if (storedPath !== normalizedGitRoot) {
-				// Hash collision: a different repo already owns this short key
-				this.logger.warn(
-					`Short key collision detected for "${shortKey}": expected "${storedPath}", got "${normalizedGitRoot}". Falling back to full encoding.`
-				);
-				const encodedPath = this.encodeRepoPath(normalizedGitRoot);
-				const fallbackProjectDir = testBaseDir
-					? join(testBaseDir, encodedPath)
-					: join(homedir(), '.neokai', 'projects', encodedPath);
-				return join(fallbackProjectDir, 'worktrees');
-			}
-			// Same repo — proceed normally
-		} else {
-			// Directory exists but no sentinel (created by an older NeoKai version)
-			writeFileSync(sentinelFile, normalizedGitRoot);
-		}
-
-		return join(projectDir, 'worktrees');
+		return getWorktreeBaseDir(gitRoot, (msg) => this.logger.warn(msg));
 	}
 
 	/**

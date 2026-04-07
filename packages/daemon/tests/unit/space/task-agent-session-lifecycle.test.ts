@@ -214,6 +214,7 @@ interface TestCtx {
 	agentId: string;
 	taskRepo: SpaceTaskRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	agentManager: SpaceAgentManager;
 	workflowManager: SpaceWorkflowManager;
@@ -250,6 +251,7 @@ function makeCtx(): TestCtx {
 	const workflowManager = new SpaceWorkflowManager(workflowRepo);
 	const workflowRunRepo = new SpaceWorkflowRunRepository(bunDb);
 	const taskRepo = new SpaceTaskRepository(bunDb);
+	const nodeExecutionRepo = new NodeExecutionRepository(bunDb);
 	const spaceManager = new SpaceManager(bunDb);
 	const taskManager = new SpaceTaskManager(bunDb, spaceId);
 	const runtime = new SpaceRuntime({
@@ -259,7 +261,7 @@ function makeCtx(): TestCtx {
 		spaceWorkflowManager: workflowManager,
 		workflowRunRepo,
 		taskRepo,
-		nodeExecutionRepo: new NodeExecutionRepository(bunDb),
+		nodeExecutionRepo,
 	});
 	const daemonHub = new TestDaemonHub();
 	const space = makeSpace(spaceId, workspacePath);
@@ -329,7 +331,7 @@ function makeCtx(): TestCtx {
 		messageHub: {} as unknown as import('@neokai/shared').MessageHub,
 		getApiKey: async () => 'test-key',
 		defaultModel: 'claude-sonnet-4-5-20250929',
-		nodeExecutionRepo: new NodeExecutionRepository(bunDb),
+		nodeExecutionRepo,
 		gateDataRepo: {
 			getFields: () => [],
 			getData: () => ({}),
@@ -355,6 +357,7 @@ function makeCtx(): TestCtx {
 		agentId,
 		taskRepo,
 		workflowRunRepo,
+		nodeExecutionRepo,
 		taskManager,
 		agentManager,
 		workflowManager,
@@ -1036,11 +1039,24 @@ describe('Task Agent Session Lifecycle', () => {
 				workspacePath: '/tmp/ws',
 			} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
+			const nodeExecution = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: 'error-step-2',
+				agentName: 'coder',
+				agentSessionId: subSessionId,
+				status: 'in_progress',
+			});
+			ctx.nodeExecutionRepo.update(nodeExecution.id, {
+				agentSessionId: subSessionId,
+				status: 'in_progress',
+			});
+
 			await callHandleSubSessionError(ctx.manager, subSessionId, 'Crashed');
 
-			// The step task should be marked as blocked
-			const updatedStep = ctx.taskRepo.getTask(stepTask.id);
-			expect(updatedStep?.status).toBe('blocked');
+			// Sub-session errors now mark node_execution as blocked (space_tasks are not mutated here).
+			const updatedExecution = ctx.nodeExecutionRepo.getById(nodeExecution.id);
+			expect(updatedExecution?.status).toBe('blocked');
+			expect(updatedExecution?.result).toBe('Crashed');
 
 			void stepTask;
 		});
@@ -1083,23 +1099,22 @@ describe('Task Agent Session Lifecycle', () => {
 	});
 
 	// =======================================================================
-	// 8. selectFallbackWorkflow — keyword ranking
+	// 8. ensureTaskAgentSession — does not auto-attach workflows
 	// =======================================================================
 
-	describe('selectFallbackWorkflow — keyword ranking', () => {
-		test('returns null when no workflows exist', async () => {
+	describe('ensureTaskAgentSession — no workflow auto-attach', () => {
+		test('keeps standalone task detached when no workflows exist', async () => {
 			const task = await makeTask(ctx.taskManager, {
 				title: 'Fix login bug',
 				description: 'Fix the authentication bug',
 			});
 			const result = await ctx.manager.ensureTaskAgentSession(task.id);
 
-			// No workflows in space — should remain without workflowRunId
 			expect(result.workflowRunId).toBeUndefined();
 		});
 
-		test('selects the only workflow when only one exists', async () => {
-			const wfId = ctx.workflowManager.createWorkflow({
+		test('keeps standalone task detached even when workflows exist', async () => {
+			ctx.workflowManager.createWorkflow({
 				spaceId: ctx.spaceId,
 				name: 'Coding Workflow',
 				description: 'A coding workflow',
@@ -1119,89 +1134,7 @@ describe('Task Agent Session Lifecycle', () => {
 			});
 			const result = await ctx.manager.ensureTaskAgentSession(task.id);
 
-			expect(result.workflowRunId).toBeDefined();
-			const run = ctx.workflowRunRepo.getRun(result.workflowRunId!);
-			expect(run?.workflowId).toBe(wfId.id);
-		});
-
-		test('prefers workflow tagged default when multiple exist', async () => {
-			ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'General Workflow',
-				description: 'A general purpose workflow',
-				nodes: [
-					{
-						id: 'step-general',
-						name: 'General',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-general',
-			});
-
-			const defaultWfId = ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Default Coding Workflow',
-				description: 'Default coding path',
-				nodes: [
-					{
-						id: 'step-default',
-						name: 'Code',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-default',
-				tags: ['default'],
-			});
-
-			const task = await makeTask(ctx.taskManager, {
-				title: 'Fix bug',
-				description: 'Fix something',
-			});
-			const result = await ctx.manager.ensureTaskAgentSession(task.id);
-
-			const run = ctx.workflowRunRepo.getRun(result.workflowRunId!);
-			expect(run?.workflowId).toBe(defaultWfId.id);
-		});
-
-		test('prefers workflow with keyword overlap over untagged', async () => {
-			ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Testing Workflow',
-				description: 'A testing workflow',
-				nodes: [
-					{
-						id: 'step-test',
-						name: 'Test',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-test',
-			});
-
-			const codingWfId = ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Coding Workflow',
-				description: 'A coding workflow for bug fixes',
-				nodes: [
-					{
-						id: 'step-code',
-						name: 'Code',
-						agentId: ctx.agentId,
-					},
-				],
-				startNodeId: 'step-code',
-			});
-
-			// Task title has keyword overlap with "Coding Workflow" ("coding")
-			const task = await makeTask(ctx.taskManager, {
-				title: 'Fix coding bug',
-				description: 'Fix the coding issue',
-			});
-			const result = await ctx.manager.ensureTaskAgentSession(task.id);
-
-			const run = ctx.workflowRunRepo.getRun(result.workflowRunId!);
-			expect(run?.workflowId).toBe(codingWfId.id);
+			expect(result.workflowRunId).toBeUndefined();
 		});
 	});
 
@@ -1319,8 +1252,8 @@ describe('Task Agent Session Lifecycle', () => {
 				}
 			).handleSubSessionComplete(parentTask.id, stepId, subSessionId);
 
-			// Step task should be marked done
-			expect(ctx.taskRepo.getTask(stepTask.id)?.status).toBe('done');
+			// Step completion notifications are session-context only; step task status is runtime-driven.
+			expect(ctx.taskRepo.getTask(stepTask.id)?.status).toBe('in_progress');
 
 			// Task agent should receive [STEP_COMPLETE] notification
 			const taskAgentSession = ctx.createdSessions.get(taskSessionId)!;

@@ -72,6 +72,7 @@ const HITBOX_STROKE_WIDTH = 12;
 export interface ResolvedWorkflowChannel {
 	fromStepId: string;
 	toStepId: string;
+	/** Visual direction derived from channel topology: 'bidirectional' means arrows in both directions. */
 	direction: 'one-way' | 'bidirectional';
 	isCyclic?: boolean;
 	/**
@@ -961,7 +962,7 @@ export function EdgeRenderer({
 										fill={isSelected ? 'white' : gateColor}
 										opacity={0.7}
 									>
-										⚡
+										{'\u26A1'}
 									</text>
 								)}
 							</g>

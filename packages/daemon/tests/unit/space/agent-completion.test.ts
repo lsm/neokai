@@ -3,8 +3,8 @@
  *
  * Covers:
  *   - Migration 71 schema: open/done/blocked/cancelled/archived statuses, labels column
- *   - list_peers: completionState per peer from space_tasks
- *   - list_group_members: completionState per member from space_tasks
+ *   - list_peers: completionState per peer from node_executions
+ *   - list_group_members: completionState per member from node_executions
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -13,12 +13,14 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
 import {
 	createNodeAgentToolHandlers,
 	type NodeAgentToolsConfig,
 } from '../../../src/lib/space/tools/node-agent-tools.ts';
+import { AgentMessageRouter } from '../../../src/lib/space/runtime/agent-message-router.ts';
 import {
 	createTaskAgentToolHandlers,
 	type SubSessionFactory,
@@ -30,7 +32,6 @@ import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-m
 import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../src/lib/space/managers/space-manager.ts';
-import { SpaceRuntime } from '../../../src/lib/space/runtime/space-runtime.ts';
 import { ChannelResolver } from '../../../src/lib/space/runtime/channel-resolver.ts';
 import type { Space } from '@neokai/shared';
 
@@ -81,6 +82,30 @@ function seedSpaceTask(
 	).run(id, spaceId, spaceId, agentName, status, workflowRunId, result, now, now);
 	db.exec('PRAGMA foreign_keys = ON');
 	return id;
+}
+
+function seedNodeExecution(
+	nodeExecutionRepo: NodeExecutionRepository,
+	workflowRunId: string,
+	workflowNodeId: string,
+	agentName: string,
+	status: 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' = 'in_progress',
+	result: string | null = null,
+	agentSessionId: string | null = null
+): string {
+	const execution = nodeExecutionRepo.create({
+		workflowRunId,
+		workflowNodeId,
+		agentName,
+		agentSessionId,
+		status,
+	});
+	nodeExecutionRepo.update(execution.id, {
+		status,
+		result,
+		agentSessionId,
+	});
+	return execution.id;
 }
 
 function seedWorkflowRun(db: BunDatabase, spaceId: string): string {
@@ -207,6 +232,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	let dir: string;
 	let spaceId: string;
 	let spaceTaskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	const coderSessionId = 'session-coder-cs';
 
@@ -218,6 +244,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 		seedSpaceRow(db, spaceId);
 
 		spaceTaskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	});
 
@@ -227,18 +254,25 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	});
 
 	function makeConfig(overrides: Partial<NodeAgentToolsConfig> = {}): NodeAgentToolsConfig {
+		const workflowRunId = overrides.workflowRunId ?? '';
+		const channelResolver = overrides.channelResolver ?? new ChannelResolver([]);
 		return {
 			mySessionId: coderSessionId,
 			myRole: 'coder',
 			taskId: 'lp-cs-task',
-			stepTaskId: '',
 			spaceId,
-			channelResolver: new ChannelResolver([]),
-			workflowRunId: '',
+			channelResolver,
+			workflowRunId,
 			workflowNodeId: '',
-			spaceTaskRepo,
-			messageInjector: async () => {},
-			taskManager: new SpaceTaskManager(db, spaceId),
+			nodeExecutionRepo,
+			agentMessageRouter:
+				overrides.agentMessageRouter ??
+				new AgentMessageRouter({
+					nodeExecutionRepo,
+					workflowRunId,
+					workflowChannels: channelResolver.getChannels(),
+					messageInjector: async () => {},
+				}),
 			...overrides,
 		};
 	}
@@ -246,8 +280,24 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	test('list_peers shows nodeCompletionState for all tasks on the node', async () => {
 		const nodeId = 'node-ncs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'done', 'Done');
+		seedNodeExecution(
+			nodeExecutionRepo,
+			workflowRunId,
+			nodeId,
+			'coder',
+			'in_progress',
+			null,
+			coderSessionId
+		);
+		seedNodeExecution(
+			nodeExecutionRepo,
+			workflowRunId,
+			nodeId,
+			'reviewer',
+			'done',
+			'Done',
+			'session-reviewer-cs'
+		);
 
 		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
@@ -281,22 +331,24 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	test('list_peers includes peers from tasks with active sub-sessions', async () => {
 		const nodeId = 'node-lp-cs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
-		// Seed a task with a taskAgentSessionId so it appears as a peer
-		const taskId = seedSpaceTask(
-			db,
-			spaceId,
+		seedNodeExecution(
+			nodeExecutionRepo,
+			workflowRunId,
+			nodeId,
+			'coder',
+			'in_progress',
+			null,
+			coderSessionId
+		);
+		seedNodeExecution(
+			nodeExecutionRepo,
 			workflowRunId,
 			nodeId,
 			'reviewer',
 			'done',
-			'Review passed'
+			'Review passed',
+			'session-reviewer-cs'
 		);
-		db.exec('PRAGMA foreign_keys = OFF');
-		db.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`).run(
-			'session-reviewer-cs',
-			taskId
-		);
-		db.exec('PRAGMA foreign_keys = ON');
 
 		const handlers = createNodeAgentToolHandlers(
 			makeConfig({ workflowRunId, workflowNodeId: nodeId })
@@ -322,6 +374,7 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 	let dir: string;
 	let spaceId: string;
 	let taskRepo: SpaceTaskRepository;
+	let nodeExecutionRepo: NodeExecutionRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	const mainTaskId = 'main-task-lgm';
 
@@ -333,6 +386,7 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		seedSpaceRow(db, spaceId);
 
 		taskRepo = new SpaceTaskRepository(db);
+		nodeExecutionRepo = new NodeExecutionRepository(db);
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	});
 
@@ -351,24 +405,16 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 		const workflowManager = new SpaceWorkflowManager(workflowRepo);
 		const spaceManager = new SpaceManager(db);
 		const taskManager = new SpaceTaskManager(db, spaceId);
-		const runtime = new SpaceRuntime({
-			db,
-			spaceManager,
-			spaceAgentManager: agentManager,
-			spaceWorkflowManager: workflowManager,
-			workflowRunRepo,
-			taskRepo,
-		});
 
 		return {
 			taskId: mainTaskId,
 			space: makeSpace(spaceId),
 			workflowRunId,
 			workspacePath: '/tmp/test-workspace',
-			runtime,
 			workflowManager,
 			taskRepo,
 			workflowRunRepo,
+			nodeExecutionRepo,
 			agentManager,
 			taskManager,
 			sessionFactory: makeMockSessionFactory(),
@@ -381,8 +427,24 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 	test('list_group_members includes nodeCompletionState for all tasks in run', async () => {
 		const nodeId = 'node-lgm-ncs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null);
-		seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'reviewer', 'done', 'Done');
+		seedNodeExecution(
+			nodeExecutionRepo,
+			workflowRunId,
+			nodeId,
+			'coder',
+			'in_progress',
+			null,
+			'session-coder-lgm'
+		);
+		seedNodeExecution(
+			nodeExecutionRepo,
+			workflowRunId,
+			nodeId,
+			'reviewer',
+			'done',
+			'Done',
+			'session-reviewer-lgm'
+		);
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(workflowRunId));
 		const result = await handlers.list_group_members({});
@@ -407,22 +469,15 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 	test('list_group_members includes completionState for tasks with active sub-sessions', async () => {
 		const nodeId = 'node-lgm-cs';
 		const workflowRunId = seedWorkflowRun(db, spaceId);
-		const taskId = seedSpaceTask(
-			db,
-			spaceId,
+		seedNodeExecution(
+			nodeExecutionRepo,
 			workflowRunId,
 			nodeId,
 			'reviewer',
 			'done',
-			'Approved'
+			'Approved',
+			'session-reviewer-lgm'
 		);
-		// Give the task a sub-session so it shows up as a member
-		db.exec('PRAGMA foreign_keys = OFF');
-		db.prepare(`UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?`).run(
-			'session-reviewer-lgm',
-			taskId
-		);
-		db.exec('PRAGMA foreign_keys = ON');
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(workflowRunId));
 		const result = await handlers.list_group_members({});

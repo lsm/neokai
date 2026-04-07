@@ -257,7 +257,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 								<div class="min-w-0 flex-1">
 									<span class="block text-sm text-gray-400 truncate">{task.title}</span>
 									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
-										{task.workflowRunId ? 'Workflow task' : 'Standalone task'}
+										Task
 										{selectedTask?.id === task.id &&
 											task.status !== 'open' &&
 											task.status !== 'in_progress' &&

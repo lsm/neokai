@@ -53,10 +53,6 @@
  * - Removing a tag via × button
  * - Adding tag via keyboard Enter
  *
- * Rules section
- * - Renders toggle button
- * - Shows WorkflowRulesEditor when toggled
- * - Hides WorkflowRulesEditor after second toggle
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -147,6 +143,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 			{ id: STEP_2_ID, name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
 		],
 		startNodeId: STEP_1_ID,
+		channels: [{ from: 'Plan', to: 'Code' }],
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,
@@ -974,7 +971,7 @@ describe('VisualWorkflowEditor', () => {
 			expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
 		});
 
-		it('shows Full-Cycle Coding Workflow template and creates 6 workflow nodes', () => {
+		it('shows Full-Cycle Coding Workflow template and creates 5 workflow nodes', () => {
 			const { getByTestId, getAllByTestId, container } = render(
 				<VisualWorkflowEditor {...makeProps()} />
 			);
@@ -986,8 +983,8 @@ describe('VisualWorkflowEditor', () => {
 			expect(v2Option).toBeTruthy();
 			fireEvent.click(v2Option!);
 
-			expect(getAllByTestId(/^workflow-node-/).length).toBe(6);
-			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(7);
+			expect(getAllByTestId(/^workflow-node-/).length).toBe(5);
+			expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(6);
 			expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
 		});
 
@@ -1013,9 +1010,7 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('one-way channel relation shows convert button and expands to explicit reverse link', async () => {
-			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
-			});
+			const workflow = makeWorkflow({});
 			const { container, getByTestId, getAllByTestId, getByText, queryByText } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
 			);
@@ -1044,9 +1039,7 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('converting to bidirectional shows cyclic info on the reverse link', async () => {
-			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
-			});
+			const workflow = makeWorkflow({});
 			const { container, getByTestId, getAllByTestId } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
 			);
@@ -1063,9 +1056,7 @@ describe('VisualWorkflowEditor', () => {
 		});
 
 		it('deleting the reverse link downgrades a converted relation back to one-way', async () => {
-			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way' }],
-			});
+			const workflow = makeWorkflow({});
 			const { container, getByTestId, getAllByTestId, queryByText } = render(
 				<VisualWorkflowEditor {...makeProps({ workflow })} />
 			);
@@ -1096,8 +1087,8 @@ describe('VisualWorkflowEditor', () => {
 		it('shows cyclic info for backward links that close a loop', async () => {
 			const workflow = makeWorkflow({
 				channels: [
-					{ from: 'Plan', to: 'Code', direction: 'one-way' },
-					{ from: 'Code', to: 'Plan', direction: 'one-way' },
+					{ from: 'Plan', to: 'Code' },
+					{ from: 'Code', to: 'Plan' },
 				],
 			});
 			const { container, getAllByTestId } = render(
@@ -1117,7 +1108,7 @@ describe('VisualWorkflowEditor', () => {
 
 		it('edits a vote-count gate backed by workflow.gates', async () => {
 			const workflow = makeWorkflow({
-				channels: [{ from: 'Plan', to: 'Code', direction: 'one-way', gateId: 'review-votes-gate' }],
+				channels: [{ from: 'Plan', to: 'Code', gateId: 'review-votes-gate' }],
 				gates: [
 					{
 						id: 'review-votes-gate',
@@ -1189,30 +1180,6 @@ describe('VisualWorkflowEditor', () => {
 				<VisualWorkflowEditor {...makeProps({ workflow: makeWorkflow() })} />
 			);
 			expect(getByTestId('task-agent-overlay')).toBeTruthy();
-		});
-	});
-
-	// -------------------------------------------------------------------------
-	// Rules section
-	// -------------------------------------------------------------------------
-
-	describe('Rules section', () => {
-		it('renders the toggle rules button', () => {
-			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
-			expect(getByTestId('toggle-rules-button')).toBeTruthy();
-		});
-
-		it('shows WorkflowRulesEditor when toggled', () => {
-			const { getByTestId, getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			fireEvent.click(getByTestId('toggle-rules-button'));
-			expect(getByText('Add Rule')).toBeTruthy();
-		});
-
-		it('hides WorkflowRulesEditor after second toggle click', () => {
-			const { getByTestId, queryByText } = render(<VisualWorkflowEditor {...makeProps()} />);
-			fireEvent.click(getByTestId('toggle-rules-button'));
-			fireEvent.click(getByTestId('toggle-rules-button'));
-			expect(queryByText('Add Rule')).toBeNull();
 		});
 	});
 });

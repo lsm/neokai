@@ -16,31 +16,36 @@
  * is used by node-agent-tools to deliver messages between live sessions at runtime.
  */
 
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { ResolvedChannel } from '@neokai/shared';
+import type { WorkflowChannel } from '@neokai/shared';
 import { ChannelResolver } from './channel-resolver';
+import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';
 
 export interface AgentMessageRouterConfig {
-	/** Task repository for looking up peer sessions by workflow run and node. */
-	spaceTaskRepo: SpaceTaskRepository;
-	/**
-	 * Node execution repository for looking up agent sessions by workflow run.
-	 * When provided, peer resolution uses NodeExecution.agentSessionId instead
-	 * of SpaceTask.taskAgentSessionId for node agent sessions.
-	 */
-	nodeExecutionRepo?: NodeExecutionRepository;
+	/** Node execution repository for looking up agent sessions by workflow run. */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Workflow run ID for looking up peer tasks. */
 	workflowRunId: string;
-	/** Pre-resolved channel topology for this step. */
-	resolvedChannels: ResolvedChannel[];
+	/** Workflow channel definitions for this run. */
+	workflowChannels: WorkflowChannel[];
 	/** Injects a message into a target session as a user turn. */
 	messageInjector: (sessionId: string, message: string) => Promise<void>;
+	/**
+	 * Optional channel router for workflow-level delivery checks and lazy node activation.
+	 * When provided, send_message activates target nodes (and enforces gate/cycle checks)
+	 * even before target agent sessions are spawned.
+	 */
+	channelRouter?: ChannelRouter;
 	/**
 	 * Optional map of node name → array of agent roles in that node.
 	 * When provided, enables fan-out delivery by node name.
 	 */
 	nodeGroups?: Record<string, string[]>;
+	/**
+	 * Optional injector for routing messages to the Task Agent helper session.
+	 * Used when a node agent explicitly targets `task-agent`.
+	 */
+	taskAgentRouter?: (message: string) => Promise<{ sessionId: string }>;
 }
 
 export interface AgentMessageParams {
@@ -109,19 +114,35 @@ export class AgentMessageRouter {
 	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
 		const { fromRole, fromSessionId, target, message, data } = params;
 		const {
-			spaceTaskRepo,
 			nodeExecutionRepo,
 			workflowRunId,
-			resolvedChannels,
+			workflowChannels,
 			messageInjector,
+			channelRouter,
 			nodeGroups,
+			taskAgentRouter,
 		} = this.config;
 
-		// --- Build channel resolver ---
-		const resolver = new ChannelResolver(resolvedChannels);
+		// --- Build channel resolver + slot-to-node translation map ---
+		const resolver = new ChannelResolver(workflowChannels);
+		// Channels use node names as addresses. Build a reverse map from agent slot name
+		// → node name so the router can translate 'coder' → 'Code' before calling canSend.
+		const slotToNode = new Map<string, string>();
+		if (nodeGroups) {
+			for (const [nodeName, slots] of Object.entries(nodeGroups)) {
+				for (const slot of slots) {
+					slotToNode.set(slot, nodeName);
+				}
+			}
+		}
+		const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
+		const fromNodeName = resolveNodeName(fromRole);
+		const requestedTargets =
+			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
+		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
 
 		// Channel topology required
-		if (resolver.isEmpty()) {
+		if (resolver.isEmpty() && !(wantsTaskAgent && taskAgentRouter)) {
 			return {
 				success: false,
 				delivered: [],
@@ -133,38 +154,27 @@ export class AgentMessageRouter {
 		}
 
 		// --- Load peers from node_executions (workflow-internal state) ---
-		// When nodeExecutionRepo is available, use it as the primary source for
-		// node agent sessions. Fall back to space_tasks for backward compat.
-		let peers: Array<{ sessionId: string; role: string }>;
-		if (nodeExecutionRepo) {
-			const executions = nodeExecutionRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter((e) => e.agentSessionId);
-			if (executions.length === 0) {
-				log.warn(
-					`[AgentMessageRouter] nodeExecutionRepo returned no sessions with agentSessionId for run ${workflowRunId} — ` +
-						`peers will be empty. Check that NodeExecution.agentSessionId is being written at spawn time.`
-				);
-			}
-			peers = executions
-				.filter((e) => e.agentSessionId !== fromSessionId)
-				.map((e) => ({ sessionId: e.agentSessionId!, role: e.agentName }));
-		} else {
-			const allRunTasks = spaceTaskRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter((t) => t.taskAgentSessionId);
-			peers = allRunTasks
-				.filter((t) => t.taskAgentSessionId !== fromSessionId)
-				.map((t) => ({ sessionId: t.taskAgentSessionId!, role: t.title ?? 'agent' }));
+		const executions = nodeExecutionRepo
+			.listByWorkflowRun(workflowRunId)
+			.filter((e) => e.agentSessionId);
+		if (executions.length === 0) {
+			log.warn(
+				`[AgentMessageRouter] nodeExecutionRepo returned no sessions with agentSessionId for run ${workflowRunId} — ` +
+					`peers will be empty. Check that NodeExecution.agentSessionId is being written at spawn time.`
+			);
 		}
+		const peers: Array<{ sessionId: string; role: string }> = executions
+			.filter((e) => e.agentSessionId !== fromSessionId)
+			.map((e) => ({ sessionId: e.agentSessionId!, role: e.agentName }));
 
 		// --- Resolve target roles ---
 		let targetRoles: string[];
 
 		if (target === '*') {
 			// Broadcast: expand to all topology-permitted targets
-			const permitted = resolver.getPermittedTargets(fromRole);
-			if (permitted.length === 0) {
+			// getPermittedTargets returns node names; translate back to slot names for delivery
+			const permittedNodes = resolver.getPermittedTargets(fromNodeName);
+			if (permittedNodes.length === 0) {
 				return {
 					success: false,
 					delivered: [],
@@ -172,10 +182,13 @@ export class AgentMessageRouter {
 					reason: `No permitted targets for role '${fromRole}' in the declared channel topology.`,
 				};
 			}
-			targetRoles = permitted;
+			// Map node names back to slot names for delivery (or keep node name for fan-out)
+			targetRoles = permittedNodes;
 		} else if (Array.isArray(target)) {
 			// Multicast: explicit list of role names
 			targetRoles = target;
+		} else if (target === 'task-agent' && taskAgentRouter) {
+			targetRoles = ['task-agent'];
 		} else {
 			// Try agent name match first (role string within the node peers)
 			const agentMatchRoles = peers.filter((m) => m.role === target).map((m) => m.role);
@@ -191,6 +204,7 @@ export class AgentMessageRouter {
 				const knownRoles = [...new Set(peers.map((m) => m.role))].sort();
 				const nodeNames = nodeGroups ? Object.keys(nodeGroups) : [];
 				const allTargets = [...knownRoles, ...nodeNames];
+				if (taskAgentRouter) allTargets.push('task-agent');
 				return {
 					success: false,
 					delivered: [],
@@ -204,20 +218,62 @@ export class AgentMessageRouter {
 			}
 		}
 
-		// --- Authorization check ---
-		const unauthorized = targetRoles.filter((r) => !resolver.canSend(fromRole, r));
+		// --- Authorization check (translate slot names → node names for canSend) ---
+		const topologyTargets = targetRoles.filter((r) => r !== 'task-agent');
+		const unauthorized = topologyTargets.filter(
+			(r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
+		);
 		if (unauthorized.length > 0) {
-			const permitted = resolver.getPermittedTargets(fromRole);
+			const permittedNodes = resolver.getPermittedTargets(fromNodeName);
 			return {
 				success: false,
 				delivered: [],
 				failed: [],
 				reason:
 					`Channel topology does not permit '${fromRole}' to send to: ${unauthorized.join(', ')}. ` +
-					`Permitted targets: ${permitted.length > 0 ? permitted.join(', ') : 'none'}.`,
+					`Permitted targets: ${permittedNodes.length > 0 ? permittedNodes.join(', ') : 'none'}.`,
 				unauthorizedRoles: unauthorized,
-				permittedTargets: permitted,
+				permittedTargets: permittedNodes,
 			};
+		}
+
+		// --- Workflow-level delivery checks + lazy node activation ---
+		// This ensures cross-node messages can activate downstream nodes even when
+		// target sessions do not exist yet.
+		const activatedTargets = new Set<string>();
+		if (channelRouter) {
+			for (const role of targetRoles) {
+				if (role === 'task-agent') continue;
+				try {
+					const routed = await channelRouter.deliverMessage(workflowRunId, fromRole, role, message);
+					if (routed.activatedTasks && routed.activatedTasks.length > 0) {
+						activatedTargets.add(role);
+					}
+				} catch (err) {
+					if (err instanceof ChannelGateBlockedError) {
+						return {
+							success: false,
+							delivered: [],
+							failed: [],
+							reason: err.message,
+						};
+					}
+					if (err instanceof ActivationError) {
+						return {
+							success: false,
+							delivered: [],
+							failed: [],
+							reason: err.message,
+						};
+					}
+					return {
+						success: false,
+						delivered: [],
+						failed: [],
+						reason: err instanceof Error ? err.message : String(err),
+					};
+				}
+			}
 		}
 
 		// --- Deliver to all resolved sessions (best-effort) ---
@@ -226,8 +282,32 @@ export class AgentMessageRouter {
 		const failed: Array<{ role: string; sessionId: string; error: string }> = [];
 
 		for (const role of targetRoles) {
+			if (role === 'task-agent') {
+				if (!taskAgentRouter) {
+					notFound.push(role);
+					continue;
+				}
+				const dataAppendix =
+					data && Object.keys(data).length > 0
+						? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+						: '';
+				const prefixedMessage = `[Message from ${fromRole}]: ${message}${dataAppendix}`;
+				try {
+					const routed = await taskAgentRouter(prefixedMessage);
+					delivered.push({ role, sessionId: routed.sessionId });
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					failed.push({ role, sessionId: 'task-agent', error: errMsg });
+				}
+				continue;
+			}
 			const roleSessions = peers.filter((m) => m.role === role);
 			if (roleSessions.length === 0) {
+				// No active session yet, but the channel router successfully activated
+				// the target node in this call. Treat as accepted delivery initiation.
+				if (activatedTargets.has(role)) {
+					continue;
+				}
 				notFound.push(role);
 				continue;
 			}
