@@ -361,11 +361,11 @@ describe('RoomStore — subscribeRoom error path', () => {
 	it('clears liveQueryActive on getHub() rejection so re-subscribe is possible', async () => {
 		await roomStore.select(ROOM_ID);
 
-		// Make getHub reject for the next call (which will be subscribeRoom)
+		// Make getHub reject for the next call (which will be subscribeRoomTasks)
 		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('connection failed'));
 
-		// First subscribeRoom — hub rejects, should clean up liveQueryActive
-		await roomStore.subscribeRoom(ROOM_ID);
+		// First subscribeRoomTasks — hub rejects, should clean up liveQueryActive
+		await roomStore.subscribeRoomTasks(ROOM_ID);
 
 		// No snapshot/delta handlers should have been registered (hub was unavailable)
 		expect(hub._handlers.get('liveQuery.snapshot') ?? []).toHaveLength(0);
@@ -373,8 +373,8 @@ describe('RoomStore — subscribeRoom error path', () => {
 		// Restore hub for the second call
 		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
 
-		// Second subscribeRoom should succeed (liveQueryActive was cleared by error path)
-		await roomStore.subscribeRoom(ROOM_ID);
+		// Second subscribeRoomTasks should succeed (liveQueryActive was cleared by error path)
+		await roomStore.subscribeRoomTasks(ROOM_ID);
 
 		// Handlers should now be registered
 		expect((hub._handlers.get('liveQuery.snapshot') ?? []).length).toBeGreaterThan(0);
