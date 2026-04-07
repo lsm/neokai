@@ -17,6 +17,10 @@ export const currentRoomSessionIdSignal = signal<string | null>(null);
 // When set, shows the TaskView (Craft + Lead sessions) for the selected task
 export const currentRoomTaskIdSignal = signal<string | null>(null);
 
+// Shared signal for the current room's mission (goal) detail view
+// When set, shows the MissionDetail page for the selected mission
+export const currentRoomGoalIdSignal = signal<string | null>(null);
+
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 

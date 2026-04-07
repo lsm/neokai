@@ -64,6 +64,7 @@ vi.mock('../../hooks/useTaskInputDraft.ts', () => ({
 
 const mockNavigateToRoom = vi.fn();
 const mockNavigateToRoomTask = vi.fn();
+const mockNavigateToRoomMission = vi.fn();
 
 vi.mock('../../lib/router.ts', () => ({
 	get navigateToRoom() {
@@ -71,6 +72,9 @@ vi.mock('../../lib/router.ts', () => ({
 	},
 	get navigateToRoomTask() {
 		return mockNavigateToRoomTask;
+	},
+	get navigateToRoomMission() {
+		return mockNavigateToRoomMission;
 	},
 }));
 
@@ -2732,7 +2736,7 @@ describe('TaskView — goal badge', () => {
 		expect(badge).toBeNull();
 	});
 
-	it('sets currentRoomTabSignal to "goals" and navigates to room when goal badge clicked', async () => {
+	it('navigates to mission detail when goal badge clicked', async () => {
 		roomStore.taskStore.applySnapshot([makeTask('task-1', 'in_progress') as unknown as NeoTask]);
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.getGroup') return { group: null };
@@ -2765,8 +2769,8 @@ describe('TaskView — goal badge', () => {
 		) as HTMLButtonElement;
 		fireEvent.click(badge);
 
-		expect(currentRoomTabSignal.value).toBe('goals');
-		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+		expect(mockNavigateToRoomMission).toHaveBeenCalledWith('room-1', 'goal-1');
+		expect(mockNavigateToRoom).not.toHaveBeenCalled();
 	});
 
 	it('shows goal title as tooltip on badge', async () => {
