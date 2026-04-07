@@ -22,13 +22,15 @@ import { MissionDetail } from '../MissionDetail';
 // ---------------------------------------------------------------------------
 
 // Use vi.hoisted so these values are available when vi.mock factories are hoisted
-const { mockNavigateToRoom, mockCurrentRoomTabSignal } = vi.hoisted(() => ({
+const { mockNavigateToRoom, mockNavigateToRoomTask, mockCurrentRoomTabSignal } = vi.hoisted(() => ({
 	mockNavigateToRoom: vi.fn(),
+	mockNavigateToRoomTask: vi.fn(),
 	mockCurrentRoomTabSignal: { value: null as string | null },
 }));
 
 vi.mock('../../../lib/router', () => ({
 	navigateToRoom: (...args: unknown[]) => mockNavigateToRoom(...args),
+	navigateToRoomTask: (...args: unknown[]) => mockNavigateToRoomTask(...args),
 }));
 
 vi.mock('../../../lib/signals', () => ({
@@ -86,6 +88,17 @@ vi.mock('../GoalsEditor', () => ({
 				Cancel
 			</button>
 		</form>
+	),
+	ProgressBar: ({ progress }: { progress: number }) => (
+		<div data-testid="progress-bar">{progress}%</div>
+	),
+	MetricProgress: ({ metrics }: { metrics: unknown[] }) => (
+		<div data-testid="metric-progress">{metrics.length} metrics</div>
+	),
+	RecurringScheduleInfo: ({ goal }: { goal: { schedule?: unknown } }) => (
+		<div data-testid="recurring-schedule-info">
+			{goal.schedule ? 'has-schedule' : 'no-schedule'}
+		</div>
 	),
 }));
 
@@ -526,5 +539,374 @@ describe('MissionDetail', () => {
 	it('renders main content area', () => {
 		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
 		expect(getByTestId('mission-detail-main-content')).toBeTruthy();
+	});
+
+	// ── Description section ───────────────────────────────────────────────────
+
+	it('shows description text when goal.description is present', () => {
+		const { getByTestId, getByText } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+		expect(getByTestId('mission-description-section')).toBeTruthy();
+		expect(getByText('A test mission')).toBeTruthy();
+	});
+
+	it('shows "No description provided" when description is falsy', () => {
+		const goal = { ...BASE_GOAL, description: '' };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId, getByText } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+		expect(getByTestId('mission-description-section')).toBeTruthy();
+		expect(getByText('No description provided')).toBeTruthy();
+	});
+
+	it('shows "No description provided" when description is undefined', () => {
+		const goal = { ...BASE_GOAL, description: undefined };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByText } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByText('No description provided')).toBeTruthy();
+	});
+
+	// ── Progress section (one_shot only) ─────────────────────────────────────
+
+	it('shows progress section for one_shot missions', () => {
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-progress-section')).toBeTruthy();
+		expect(getByTestId('progress-bar')).toBeTruthy();
+	});
+
+	it('renders ProgressBar with correct progress value', () => {
+		const goal = { ...BASE_GOAL, progress: 42 };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('progress-bar').textContent).toBe('42%');
+	});
+
+	it('does NOT show progress section for measurable missions', () => {
+		const goal = { ...BASE_GOAL, missionType: 'measurable' as const };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-progress-section')).toBeNull();
+	});
+
+	it('does NOT show progress section for recurring missions', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-progress-section')).toBeNull();
+	});
+
+	// ── Metrics section (measurable only) ────────────────────────────────────
+
+	it('shows metrics section for measurable missions', () => {
+		const goal = {
+			...BASE_GOAL,
+			missionType: 'measurable' as const,
+			structuredMetrics: [{ name: 'Revenue', target: 100, current: 50 }],
+		};
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-metrics-section')).toBeTruthy();
+		expect(getByTestId('metric-progress')).toBeTruthy();
+	});
+
+	it('renders MetricProgress with correct metric count', () => {
+		const goal = {
+			...BASE_GOAL,
+			missionType: 'measurable' as const,
+			structuredMetrics: [
+				{ name: 'Revenue', target: 100, current: 50 },
+				{ name: 'Users', target: 200, current: 75 },
+			],
+		};
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('metric-progress').textContent).toBe('2 metrics');
+	});
+
+	it('shows "No metrics configured" when structuredMetrics is empty', () => {
+		const goal = { ...BASE_GOAL, missionType: 'measurable' as const, structuredMetrics: [] };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId, getByText } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+		expect(getByTestId('mission-metrics-section')).toBeTruthy();
+		expect(getByText('No metrics configured')).toBeTruthy();
+	});
+
+	it('does NOT show metrics section for one_shot missions', () => {
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-metrics-section')).toBeNull();
+	});
+
+	it('does NOT show metrics section for recurring missions', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-metrics-section')).toBeNull();
+	});
+
+	// ── Linked Tasks section ──────────────────────────────────────────────────
+
+	it('shows linked tasks section', () => {
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-linked-tasks-section')).toBeTruthy();
+	});
+
+	it('shows "No tasks linked" when linkedTasks is empty', () => {
+		const { getByText, queryByTestId } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+		expect(getByText('No tasks linked')).toBeTruthy();
+		expect(queryByTestId('linked-tasks-list')).toBeNull();
+	});
+
+	it('shows task cards when linkedTasks is non-empty', () => {
+		const linkedTasks = [
+			{
+				id: 'task-1',
+				roomId: 'room-1',
+				title: 'First task',
+				status: 'pending' as const,
+				shortId: 't-001',
+				createdAt: 1700000000000,
+				updatedAt: 1700000001000,
+			},
+		];
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ linkedTasks }));
+		const { getByTestId, getByText } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+		expect(getByTestId('linked-tasks-list')).toBeTruthy();
+		expect(getByTestId('linked-task-task-1')).toBeTruthy();
+		expect(getByText('First task')).toBeTruthy();
+	});
+
+	it('clicking a linked task card calls navigateToRoomTask with correct ids', () => {
+		const linkedTasks = [
+			{
+				id: 'task-42',
+				roomId: 'room-1',
+				title: 'Some task',
+				status: 'in_progress' as const,
+				shortId: 't-042',
+				createdAt: 1700000000000,
+				updatedAt: 1700000001000,
+			},
+		];
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ linkedTasks }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		fireEvent.click(getByTestId('linked-task-task-42'));
+		expect(mockNavigateToRoomTask).toHaveBeenCalledWith('room-1', 'task-42');
+	});
+
+	it('renders link task input and button', () => {
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('link-task-input')).toBeTruthy();
+		expect(getByTestId('link-task-button')).toBeTruthy();
+	});
+
+	it('link task button is disabled when input is empty', () => {
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('link-task-button').hasAttribute('disabled')).toBe(true);
+	});
+
+	it('clicking link task button with non-empty input calls linkTask', async () => {
+		const linkTask = vi.fn().mockResolvedValue(undefined);
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ linkTask }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		const input = getByTestId('link-task-input');
+		fireEvent.input(input, { target: { value: 'task-99' } });
+		await act(async () => {
+			fireEvent.click(getByTestId('link-task-button'));
+		});
+		expect(linkTask).toHaveBeenCalledWith('task-99');
+	});
+
+	it('pressing Enter in link task input calls linkTask', async () => {
+		const linkTask = vi.fn().mockResolvedValue(undefined);
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ linkTask }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		const input = getByTestId('link-task-input');
+		fireEvent.input(input, { target: { value: 'task-88' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		expect(linkTask).toHaveBeenCalledWith('task-88');
+	});
+
+	it('link task input is cleared after successful link', async () => {
+		const linkTask = vi.fn().mockResolvedValue(undefined);
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ linkTask }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		const input = getByTestId('link-task-input') as HTMLInputElement;
+		fireEvent.input(input, { target: { value: 'task-77' } });
+		await act(async () => {
+			fireEvent.click(getByTestId('link-task-button'));
+		});
+		expect(input.value).toBe('');
+	});
+
+	// ── Schedule section (recurring only) ────────────────────────────────────
+
+	it('shows schedule section for recurring missions', () => {
+		const goal = {
+			...BASE_GOAL,
+			missionType: 'recurring' as const,
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		};
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-schedule-section')).toBeTruthy();
+		expect(getByTestId('recurring-schedule-info')).toBeTruthy();
+	});
+
+	it('passes goal with schedule to RecurringScheduleInfo', () => {
+		const goal = {
+			...BASE_GOAL,
+			missionType: 'recurring' as const,
+			schedule: { expression: '@weekly', timezone: 'UTC' },
+		};
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('recurring-schedule-info').textContent).toBe('has-schedule');
+	});
+
+	it('does NOT show schedule section for one_shot missions', () => {
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-schedule-section')).toBeNull();
+	});
+
+	it('does NOT show schedule section for measurable missions', () => {
+		const goal = { ...BASE_GOAL, missionType: 'measurable' as const };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-schedule-section')).toBeNull();
+	});
+
+	// ── Execution History section (recurring only) ────────────────────────────
+
+	it('shows execution history section for recurring missions', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('mission-execution-history-section')).toBeTruthy();
+	});
+
+	it('shows execution history skeleton when isLoadingExecutions is true', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal, isLoadingExecutions: true })
+		);
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('execution-history-skeleton')).toBeTruthy();
+	});
+
+	it('shows "No executions yet" when executions is null', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal, executions: null, isLoadingExecutions: false })
+		);
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('no-executions-message')).toBeTruthy();
+	});
+
+	it('shows "No executions yet" when executions is empty array', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal, executions: [], isLoadingExecutions: false })
+		);
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('no-executions-message')).toBeTruthy();
+	});
+
+	it('shows execution history list when executions exist', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		const executions = [
+			{
+				id: 'exec-1',
+				goalId: 'goal-uuid-1',
+				executionNumber: 1,
+				status: 'completed' as const,
+				startedAt: 1700000000,
+				completedAt: 1700003600,
+				resultSummary: 'Done',
+				taskIds: [],
+			},
+		];
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal, executions, isLoadingExecutions: false })
+		);
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('execution-history-list')).toBeTruthy();
+		expect(getByTestId('execution-item-1')).toBeTruthy();
+	});
+
+	it('renders each execution item with correct test id', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		const executions = [
+			{
+				id: 'exec-1',
+				goalId: 'goal-uuid-1',
+				executionNumber: 3,
+				status: 'failed' as const,
+				startedAt: 1700000000,
+				completedAt: null,
+				resultSummary: null,
+				taskIds: [],
+			},
+			{
+				id: 'exec-2',
+				goalId: 'goal-uuid-1',
+				executionNumber: 4,
+				status: 'running' as const,
+				startedAt: 1700010000,
+				completedAt: null,
+				resultSummary: null,
+				taskIds: [],
+			},
+		];
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal, executions, isLoadingExecutions: false })
+		);
+		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(getByTestId('execution-item-3')).toBeTruthy();
+		expect(getByTestId('execution-item-4')).toBeTruthy();
+	});
+
+	it('does NOT show execution history section for one_shot missions', () => {
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-execution-history-section')).toBeNull();
+	});
+
+	it('does NOT show execution history section for measurable missions', () => {
+		const goal = { ...BASE_GOAL, missionType: 'measurable' as const };
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({ goal }));
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('mission-execution-history-section')).toBeNull();
+	});
+
+	it('does not show skeleton or list when isLoadingExecutions is false and executions are loaded', () => {
+		const goal = { ...BASE_GOAL, missionType: 'recurring' as const };
+		const executions = [
+			{
+				id: 'exec-1',
+				goalId: 'goal-uuid-1',
+				executionNumber: 1,
+				status: 'completed' as const,
+				startedAt: 1700000000,
+				completedAt: 1700003600,
+				resultSummary: null,
+				taskIds: [],
+			},
+		];
+		mockUseMissionDetailData.mockReturnValue(
+			makeDefaultHookResult({ goal, executions, isLoadingExecutions: false })
+		);
+		const { queryByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+		expect(queryByTestId('execution-history-skeleton')).toBeNull();
+		expect(queryByTestId('no-executions-message')).toBeNull();
+		expect(queryByTestId('execution-history-list')).toBeTruthy();
 	});
 });
