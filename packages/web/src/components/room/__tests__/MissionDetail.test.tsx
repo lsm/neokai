@@ -917,3 +917,38 @@ describe('MissionDetail', () => {
 		expect(queryByTestId('execution-history-list')).toBeTruthy();
 	});
 });
+
+// ─── Responsive layout ──────────────────────────────────────────────────────
+
+describe('MissionDetail responsive layout', () => {
+	beforeEach(() => {
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({}));
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('applies two-column responsive grid class to the body layout', () => {
+		const { container } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+
+		// The body grid must use a single-column base with md breakpoint for two columns
+		// grid-cols-1 on mobile, md:grid-cols-[1fr_320px] on desktop
+		const gridEl = container.querySelector('.grid.grid-cols-1');
+		expect(gridEl).toBeTruthy();
+	});
+
+	it('two-column grid contains both main content section and status sidebar', () => {
+		const { queryByTestId, container } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+
+		// Main content area is present
+		const mainContent = queryByTestId('mission-detail-main-content');
+		expect(mainContent).toBeTruthy();
+
+		// Status sidebar renders as <aside> element inside the grid
+		const aside = container.querySelector('aside');
+		expect(aside).toBeTruthy();
+	});
+});
