@@ -80,6 +80,13 @@ export interface WorkflowCanvasProps {
 	onChannelSelect?: (channelId: string | null) => void;
 	/** Currently selected channel ID for highlighting. */
 	selectedChannelId?: string | null;
+	/**
+	 * When true, disables all editing affordances:
+	 * - No keyboard Delete/Backspace handler for node deletion
+	 * - No port drag-to-connect handlers
+	 * Node selection (onNodeSelect) still works in read-only mode.
+	 */
+	readOnly?: boolean;
 }
 
 // ---- Ghost edge rendering ----
@@ -268,6 +275,7 @@ export function WorkflowCanvas({
 	onDeleteEdge,
 	onChannelSelect,
 	selectedChannelId,
+	readOnly = false,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -413,7 +421,10 @@ export function WorkflowCanvas({
 	// ---- Keyboard: Delete / Backspace removes the selected node ----
 	// (Edge deletion is handled by EdgeRenderer's own listener. Selections are mutually
 	// exclusive so at most one handler fires per keystroke.)
+	// Skipped in readOnly mode — no destructive editing affordances.
 	useEffect(() => {
+		if (readOnly) return;
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 			const target = e.target as HTMLElement;
@@ -431,7 +442,7 @@ export function WorkflowCanvas({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []);
+	}, [readOnly]);
 
 	// ---- Edge layer: committed edges (EdgeRenderer) + ghost edge during drag + channel edges ----
 	const edgeLayer = useCallback(
@@ -489,9 +500,9 @@ export function WorkflowCanvas({
 						isSelected={selectedNodeId === stepId}
 						isDropTarget={isDropTarget}
 						onClick={handleNodeSelect}
-						onPortMouseDown={handlePortMouseDown}
-						onPortMouseEnter={handlePortMouseEnter}
-						onPortMouseLeave={handlePortMouseLeave}
+						onPortMouseDown={readOnly ? undefined : handlePortMouseDown}
+						onPortMouseEnter={readOnly ? undefined : handlePortMouseEnter}
+						onPortMouseLeave={readOnly ? undefined : handlePortMouseLeave}
 					/>
 				);
 			})}

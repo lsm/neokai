@@ -14,7 +14,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskStatusActions } from './TaskStatusActions';
 import MentionAutocomplete from './MentionAutocomplete';
-import { WorkflowCanvas } from './WorkflowCanvas';
+import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -443,7 +443,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			<div class="flex-1 min-h-0 overflow-hidden px-4">
 				{showCanvas && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
-						<WorkflowCanvas
+						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
 							runId={task.workflowRunId}
 							spaceId={runtimeSpaceId ?? task.spaceId}

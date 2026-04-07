@@ -104,6 +104,10 @@ export interface ResolvedWorkflowChannel {
 	label?: string;
 	sourceSide?: AnchorSide;
 	targetSide?: AnchorSide;
+	/** Runtime gate status for the forward direction (from→to). Only set in runtime/read-only view mode. */
+	runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
+	/** Runtime gate status for the reverse direction (to→from). Only set for bidirectional channels. */
+	reverseRuntimeStatus?: 'open' | 'blocked' | 'waiting_human';
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -1006,6 +1010,31 @@ export function EdgeRenderer({
 									Loop
 								</text>
 							</g>
+						)}
+						{/* Runtime gate status dot — only rendered in read-only/runtime view mode */}
+						{channel.runtimeStatus && gateBadgePosition && (
+							<circle
+								cx={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
+								cy={gateBadgePosition.y}
+								r={5}
+								fill={
+									channel.runtimeStatus === 'open'
+										? '#16a34a'
+										: channel.runtimeStatus === 'waiting_human'
+											? '#f59e0b'
+											: '#ef4444'
+								}
+								data-testid={`channel-runtime-status-${channel.id ?? ''}`}
+							>
+								{channel.runtimeStatus === 'waiting_human' && (
+									<animate
+										attributeName="opacity"
+										values="1;0.4;1"
+										dur="1.5s"
+										repeatCount="indefinite"
+									/>
+								)}
+							</circle>
 						)}
 					</g>
 				);
