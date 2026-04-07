@@ -12,9 +12,9 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { RoomGoal } from '@neokai/shared';
+import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { cn } from '../../lib/utils';
-import { navigateToRoom } from '../../lib/router';
+import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { currentRoomTabSignal } from '../../lib/signals';
 import { useMissionDetailData } from '../../hooks/useMissionDetailData';
 import type { AvailableStatusAction } from '../../hooks/useMissionDetailData';
@@ -30,8 +30,235 @@ import {
 	AutonomyBadge,
 	GoalShortIdBadge,
 	GoalForm,
+	ProgressBar,
+	MetricProgress,
+	RecurringScheduleInfo,
+	TaskStatusBadge,
 } from './GoalsEditor';
 import type { CreateGoalFormData } from './GoalsEditor';
+
+// ─── Main Content ──────────────────────────────────────────────────────────────
+
+interface MainContentProps {
+	goal: RoomGoal;
+	roomId: string;
+	linkedTasks: NeoTask[];
+	executions: import('@neokai/shared').MissionExecution[] | null;
+	isLoadingExecutions: boolean;
+	onLinkTask: (taskId: string) => Promise<void>;
+}
+
+function MainContent({
+	goal,
+	roomId,
+	linkedTasks,
+	executions,
+	isLoadingExecutions,
+	onLinkTask,
+}: MainContentProps) {
+	const [linkTaskInput, setLinkTaskInput] = useState('');
+	const [isLinking, setIsLinking] = useState(false);
+
+	const missionType = goal.missionType ?? 'one_shot';
+
+	const handleLinkTask = async () => {
+		const trimmed = linkTaskInput.trim();
+		if (!trimmed) return;
+		setIsLinking(true);
+		try {
+			await onLinkTask(trimmed);
+			setLinkTaskInput('');
+		} finally {
+			setIsLinking(false);
+		}
+	};
+
+	const handleLinkKeyDown = (e: KeyboardEvent) => {
+		if (e.key === 'Enter') {
+			handleLinkTask().catch(() => {
+				/* errors toasted by onLinkTask caller */
+			});
+		}
+	};
+
+	return (
+		<div class="space-y-5" data-testid="mission-detail-main-content">
+			{/* ── Description ── */}
+			<section
+				class="bg-dark-850 border border-dark-700 rounded-lg p-4"
+				data-testid="mission-description-section"
+			>
+				<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+					Description
+				</h3>
+				{goal.description ? (
+					<p class="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+						{goal.description}
+					</p>
+				) : (
+					<p class="text-sm text-gray-500 italic">No description provided</p>
+				)}
+			</section>
+
+			{/* ── Progress (one-shot) ── */}
+			{missionType === 'one_shot' && (
+				<section
+					class="bg-dark-850 border border-dark-700 rounded-lg p-4"
+					data-testid="mission-progress-section"
+				>
+					<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+						Progress
+					</h3>
+					<ProgressBar progress={goal.progress} />
+				</section>
+			)}
+
+			{/* ── Metrics (measurable) ── */}
+			{missionType === 'measurable' && (
+				<section
+					class="bg-dark-850 border border-dark-700 rounded-lg p-4"
+					data-testid="mission-metrics-section"
+				>
+					<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Metrics</h3>
+					{goal.structuredMetrics && goal.structuredMetrics.length > 0 ? (
+						<MetricProgress metrics={goal.structuredMetrics} />
+					) : (
+						<p class="text-sm text-gray-500 italic">No metrics configured</p>
+					)}
+				</section>
+			)}
+
+			{/* ── Linked Tasks ── */}
+			<section
+				class="bg-dark-850 border border-dark-700 rounded-lg p-4"
+				data-testid="mission-linked-tasks-section"
+			>
+				<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+					Linked Tasks
+				</h3>
+				{linkedTasks.length === 0 ? (
+					<p class="text-sm text-gray-500 italic mb-3">No tasks linked</p>
+				) : (
+					<div class="space-y-1.5 mb-3" data-testid="linked-tasks-list">
+						{linkedTasks.map((task) => (
+							<button
+								key={task.id}
+								type="button"
+								class="w-full flex items-center gap-2 px-3 py-2 bg-dark-700 hover:bg-dark-600 border border-dark-600 hover:border-dark-500 rounded-lg transition-colors text-left"
+								onClick={() => navigateToRoomTask(roomId, task.id)}
+								data-testid={`linked-task-${task.id}`}
+							>
+								<span class="flex-1 min-w-0 text-sm text-gray-200 truncate">{task.title}</span>
+								<TaskStatusBadge status={task.status} />
+								{task.shortId && (
+									<span class="text-xs font-mono text-gray-500 flex-shrink-0">#{task.shortId}</span>
+								)}
+							</button>
+						))}
+					</div>
+				)}
+				{/* Link Task input */}
+				<div class="flex gap-2" data-testid="link-task-input-row">
+					<input
+						type="text"
+						value={linkTaskInput}
+						onInput={(e) => setLinkTaskInput((e.target as HTMLInputElement).value)}
+						onKeyDown={handleLinkKeyDown}
+						placeholder="Task ID or short ID…"
+						class="flex-1 min-w-0 px-3 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+						data-testid="link-task-input"
+					/>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={handleLinkTask}
+						disabled={isLinking || !linkTaskInput.trim()}
+						data-testid="link-task-button"
+					>
+						{isLinking ? 'Linking…' : 'Link Task'}
+					</Button>
+				</div>
+			</section>
+
+			{/*
+			 * ── Schedule + Execution History (recurring only) ──
+			 *
+			 * Design note: The execution history list serves as the activity
+			 * timeline for recurring missions. We intentionally do NOT call
+			 * goal.getMetricHistory (which does not exist as an RPC) — metric
+			 * snapshots are tracked server-side and are not surfaced here.
+			 * One-shot and measurable missions have no timeline section because
+			 * they don't produce a series of discrete execution runs.
+			 */}
+			{missionType === 'recurring' && (
+				<>
+					<section
+						class="bg-dark-850 border border-dark-700 rounded-lg p-4"
+						data-testid="mission-schedule-section"
+					>
+						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+							Schedule
+						</h3>
+						<RecurringScheduleInfo goal={goal} />
+					</section>
+
+					<section
+						class="bg-dark-850 border border-dark-700 rounded-lg p-4"
+						data-testid="mission-execution-history-section"
+					>
+						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+							Execution History
+						</h3>
+						{isLoadingExecutions ? (
+							<div class="space-y-1.5" data-testid="execution-history-skeleton">
+								<Skeleton class="h-8 w-full" />
+								<Skeleton class="h-8 w-full" />
+								<Skeleton class="h-8 w-4/5" />
+							</div>
+						) : !executions || executions.length === 0 ? (
+							<p class="text-sm text-gray-500 italic" data-testid="no-executions-message">
+								No executions yet
+							</p>
+						) : (
+							<div class="space-y-1.5" data-testid="execution-history-list">
+								{executions.map((ex) => (
+									<div
+										key={ex.id}
+										class="flex items-center gap-3 text-xs bg-dark-700 rounded-lg px-3 py-2"
+										data-testid={`execution-item-${ex.executionNumber}`}
+									>
+										<span
+											class={cn(
+												'w-2 h-2 rounded-full flex-shrink-0',
+												ex.status === 'completed'
+													? 'bg-green-500'
+													: ex.status === 'failed'
+														? 'bg-red-500'
+														: 'bg-yellow-500'
+											)}
+										/>
+										<span class="text-gray-400 font-mono">#{ex.executionNumber}</span>
+										<span class="text-gray-300 capitalize">{ex.status}</span>
+										{ex.startedAt && (
+											<span class="text-gray-500 ml-auto flex-shrink-0">
+												{new Date(ex.startedAt * 1000).toLocaleDateString()}
+											</span>
+										)}
+										{ex.resultSummary && (
+											<span class="text-gray-400 truncate max-w-[200px]" title={ex.resultSummary}>
+												{ex.resultSummary}
+											</span>
+										)}
+									</div>
+								))}
+							</div>
+						)}
+					</section>
+				</>
+			)}
+		</div>
+	);
+}
 
 // ─── Props ─────────────────────────────────────────────────────────────────────
 
@@ -256,6 +483,9 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 	const {
 		goal,
 		goalsLoading,
+		linkedTasks,
+		executions,
+		isLoadingExecutions,
 		availableStatusActions,
 		isUpdating,
 		isTriggering,
@@ -263,6 +493,7 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 		updateGoal,
 		deleteGoal,
 		triggerNow,
+		linkTask,
 		changeStatus,
 	} = useMissionDetailData(roomId, goalId);
 
@@ -436,13 +667,15 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 			{/* ── Body: two-column layout ── */}
 			<div class="flex-1 overflow-auto p-4 sm:p-6">
 				<div class="grid grid-cols-1 md:grid-cols-[1fr_320px] gap-6 items-start">
-					{/* Main content — placeholder for next task */}
-					<div
-						class="bg-dark-850 border border-dark-700 rounded-lg p-4 min-h-[200px] flex items-center justify-center text-gray-500 text-sm"
-						data-testid="mission-detail-main-content"
-					>
-						<span>Mission content coming soon…</span>
-					</div>
+					{/* Main content */}
+					<MainContent
+						goal={goal}
+						roomId={roomId}
+						linkedTasks={linkedTasks}
+						executions={executions}
+						isLoadingExecutions={isLoadingExecutions}
+						onLinkTask={linkTask}
+					/>
 
 					{/* Status sidebar */}
 					<StatusSidebar
