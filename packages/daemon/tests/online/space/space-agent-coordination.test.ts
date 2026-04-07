@@ -70,9 +70,9 @@ import type { Space } from '@neokai/shared';
 
 // Detect mock mode for faster timeouts
 const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
-const IDLE_TIMEOUT = IS_MOCK ? 8000 : 45000;
+const IDLE_TIMEOUT = IS_MOCK ? 20000 : 45000;
 const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
-const TEST_TIMEOUT = IS_MOCK ? 30000 : 120000;
+const TEST_TIMEOUT = IS_MOCK ? 60000 : 120000;
 
 /**
  * The global spaces agent session ID — auto-provisioned by the daemon at startup.

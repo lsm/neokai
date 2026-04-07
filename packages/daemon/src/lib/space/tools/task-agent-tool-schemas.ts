@@ -4,8 +4,8 @@
  * from node-agent-tool-schemas.ts, making 6 tools total in the MCP server).
  *
  * Tools (defined in this file):
- *   spawn_node_agent      — spawn a sub-session for a specific workflow node
- *   check_node_status     — check the status of the current or a specific node's sub-session
+ *   spawn_node_agent      — spawn a sub-session for a specific workflow node (node_id)
+ *   check_node_status     — check the status of the current or a specific node's sub-session (node_id)
  *   report_result         — report the final task result (terminal tool)
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
@@ -27,15 +27,15 @@ import { z } from 'zod';
 
 /**
  * Schema for `spawn_node_agent` input.
- * Spawns a sub-session for the given workflow node.
+ * Spawns a sub-session for the given workflow node (identified by node_id).
  */
 export const SpawnNodeAgentSchema = z.object({
-	/** ID of the workflow step to execute. */
-	step_id: z.string().describe('ID of the workflow step to spawn a sub-session for'),
+	/** ID of the workflow node to execute. */
+	node_id: z.string().describe('ID of the workflow node to spawn a sub-session for'),
 	/** Optional override instructions to pass to the node agent. */
 	instructions: z
 		.string()
-		.describe('Optional instructions to pass to the node agent, overriding the default step prompt')
+		.describe('Optional instructions to pass to the node agent, overriding the default node prompt')
 		.optional(),
 });
 
@@ -51,10 +51,10 @@ export type SpawnNodeAgentInput = z.infer<typeof SpawnNodeAgentSchema>;
  * a specific node's sub-session.
  */
 export const CheckNodeStatusSchema = z.object({
-	/** Optional step ID to check. Omit to check the current active step. */
-	step_id: z
+	/** Optional node ID to check. Omit to check the current active node. */
+	node_id: z
 		.string()
-		.describe('ID of the workflow step to check. Omit to check the currently active step.')
+		.describe('ID of the workflow node to check. Omit to check the currently active node.')
 		.optional(),
 });
 

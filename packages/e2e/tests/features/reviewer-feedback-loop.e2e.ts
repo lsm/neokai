@@ -218,7 +218,7 @@ function gateIcon(
 	status: 'open' | 'blocked' | 'waiting_human'
 ) {
 	return page
-		.getByTestId('canvas-panel')
+		.getByTestId('canvas-view')
 		.locator(`[data-testid="gate-icon-${status}"][data-gate-id="${gateId}"]`);
 }
 
@@ -229,7 +229,7 @@ function voteBadge(
 	text: string
 ) {
 	return page
-		.getByTestId('canvas-panel')
+		.getByTestId('canvas-view')
 		.locator(`[data-gate-id="${gateId}"] [data-testid="gate-vote-count"]:has-text("${text}")`)
 		.first();
 }
@@ -272,7 +272,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// review-reject-gate condition: count 'rejected' votes >= 1
@@ -288,7 +288,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// The review-reject-gate (min: 1) should show "1/1" vote count badge
@@ -327,11 +327,11 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// The Coding node with in_progress execution renders the g element with animate-pulse class
-				const codingNodeEl = page.getByTestId('canvas-panel').getByTestId(`node-${codingNodeId}`);
+				const codingNodeEl = page.getByTestId('canvas-view').getByTestId(`node-${codingNodeId}`);
 				await expect(codingNodeEl).toBeVisible({ timeout: 30000 });
 
 				// Active nodes have animate-pulse CSS class.
@@ -371,7 +371,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// 2 approvals < 3 required → review-votes-gate stays blocked (gray lock)
@@ -384,7 +384,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// review-votes-gate has 3 channels sharing it (Reviewer 1/2/3 → QA)
@@ -429,7 +429,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// 3 approvals >= 3 required → review-votes-gate opens
@@ -440,7 +440,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				await expect(voteBadge(page, 'review-votes-gate', '3/3')).toBeVisible({ timeout: 30000 });
@@ -485,7 +485,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// qa-result-gate condition: { type: 'check', field: 'result', op: '==', value: 'passed' }
@@ -499,7 +499,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// All key nodes in the reviewer→QA→Done pipeline must be visible
@@ -541,7 +541,7 @@ test.describe
 				await gotoSpaceAndWait(page, spaceId);
 
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// With no votes written, the review-votes-gate shows 0/3
@@ -575,7 +575,7 @@ test.describe
 			test('canvas updates from rejection to full approval in sequence', async ({ page }) => {
 				await gotoSpaceAndWait(page, spaceId);
 				await expect(
-					page.getByTestId('canvas-panel').getByTestId('workflow-canvas-svg')
+					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
 				).toBeVisible({ timeout: 30000 });
 
 				// Step 1: Reviewer 1 rejects — review-reject-gate opens

@@ -132,13 +132,27 @@ test.describe('Task Lifecycle — Reactivate', () => {
 	test('reactivates completed task via Reactivate button in Done tab list', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
+		// Clear persisted task filter tab so RoomTasks defaults to "Active"
+		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
+
 		// Navigate to the room dashboard (not individual task)
 		await page.goto(`/room/${roomId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Click the Done tab to see completed tasks
+		// Click the Done stat card to switch from overview to the Tasks room-level tab.
+		// Note: the stat card only switches the room tab — it does NOT set the internal
+		// Done sub-filter within RoomTasks, so we must click the Done sub-tab separately.
+		// Scope the locator to the stats grid (grid-cols-3) which only exists in the
+		// overview dashboard, so waitFor('detached') doesn't match the RoomTasks sub-tab.
+		const doneStatCard = page.locator('.grid-cols-3').getByRole('button', { name: /Done/ });
+		await doneStatCard.click();
+
+		// Wait for the overview to unmount (stat card detaches) before clicking the
+		// Done sub-tab within RoomTasks, to avoid a race where both buttons exist
+		// momentarily and the second click hits the stat card again (a no-op).
+		await doneStatCard.waitFor({ state: 'detached', timeout: 5000 });
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Wait for the task to appear in the list
@@ -153,7 +167,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await expect(reactivateBtn).toBeVisible({ timeout: 5000 });
 		await reactivateBtn.click();
 
-		// Task should move from Done tab — click Active tab to confirm it's there
+		// Task should move from Done tab — click Active sub-tab to confirm it's there
 		await page.getByRole('button', { name: /Active/ }).click();
 		await expect(
 			page.getByRole('heading', { name: 'E2E Lifecycle Test Task' }).first()
@@ -176,7 +190,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		});
 
 		// The message input should be enabled — completed tasks can send messages to reactivate
-		const textarea = page.locator('textarea').first();
+		const textarea = page.locator('textarea:visible').first();
 		await expect(textarea).toBeEnabled({ timeout: 5000 });
 
 		// Placeholder should mention reactivation

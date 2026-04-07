@@ -43,7 +43,11 @@ import { Logger } from '../../logger';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { CompletionDetector } from './completion-detector';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import { MAX_TASK_AGENT_CRASH_RETRIES, resolveNodeTimeout } from './constants';
+import {
+	MAX_BLOCKED_RUN_RETRIES,
+	MAX_TASK_AGENT_CRASH_RETRIES,
+	resolveNodeTimeout,
+} from './constants';
 
 const log = new Logger('space-runtime');
 
@@ -240,6 +244,18 @@ export class SpaceRuntime {
 	 * Reset contract: this map is in-memory only and starts empty on every daemon restart.
 	 */
 	private taskCrashCounts = new Map<string, number>();
+
+	/**
+	 * In-memory retry counter per workflow run ID.
+	 *
+	 * Tracks how many times a blocked run has been automatically recovered by
+	 * resetting its blocked executions to `pending`. When the count reaches
+	 * MAX_BLOCKED_RUN_RETRIES, the run stays blocked and a
+	 * `workflow_run_needs_attention` event is emitted instead.
+	 *
+	 * Reset contract: in-memory only, starts empty on every daemon restart.
+	 */
+	private blockedRetryCounts = new Map<string, number>();
 
 	/** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
 	private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
@@ -467,11 +483,19 @@ export class SpaceRuntime {
 				.find((task) => !!task.result)?.result;
 			const nextResult = summaryFromWorkflow ?? canonicalTask.result ?? summaryFromSibling ?? null;
 
-			if (canonicalTask.status !== 'done') {
+			// In supervised mode, the task should land in 'review' (not 'done')
+			// so a human can approve. Skip if already in 'review' or 'done'.
+			const space = await this.config.spaceManager.getSpace(run.spaceId);
+			const isSupervised = !space?.autonomyLevel || space.autonomyLevel === 'supervised';
+			const completionStatus = isSupervised ? 'review' : 'done';
+
+			if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
-					status: 'done',
+					status: completionStatus,
 					result: nextResult,
-					completedAt: canonicalTask.completedAt ?? run.completedAt ?? Date.now(),
+					completedAt: isSupervised
+						? null
+						: (canonicalTask.completedAt ?? run.completedAt ?? Date.now()),
 				});
 			} else if (nextResult && canonicalTask.result !== nextResult) {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
@@ -533,14 +557,42 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Stops the periodic tick loop.
+	 * Stops the periodic tick loop and waits for any in-flight tick to complete.
+	 *
+	 * This prevents race conditions during shutdown where an in-flight tick
+	 * continues to perform DB operations after the database has been closed.
+	 *
 	 * Does not affect in-progress executors — they remain in the map and can
 	 * be resumed by calling start() again.
 	 */
-	stop(): void {
+	async stop(): Promise<void> {
 		if (this.tickTimer !== null) {
 			clearInterval(this.tickTimer);
 			this.tickTimer = null;
+		}
+		// Wait for any in-flight executeTick() to finish so that all DB
+		// reads/writes and DaemonHub event emissions complete before the
+		// caller proceeds to close the database.
+		if (this.tickInFlight) {
+			const MAX_TICK_DRAIN_MS = 30_000;
+			const start = Date.now();
+			await new Promise<void>((resolve) => {
+				const check = () => {
+					if (!this.tickInFlight) {
+						resolve();
+					} else if (Date.now() - start > MAX_TICK_DRAIN_MS) {
+						log.warn(
+							`SpaceRuntime: timed out waiting for in-flight tick after ${MAX_TICK_DRAIN_MS}ms — proceeding with shutdown`
+						);
+						resolve();
+					} else {
+						// 10 ms balances low latency (fast shutdown) against
+						// CPU churn (no busy-spin) during the drain window.
+						setTimeout(check, 10);
+					}
+				};
+				check();
+			});
 		}
 	}
 
@@ -629,8 +681,8 @@ export class SpaceRuntime {
 		this.executors.set(run.id, executor);
 
 		// Find start node and ensure canonical run task. Roll back map entries if this fails.
-		const startStep = workflow.nodes.find((s) => s.id === workflow.startNodeId);
-		if (!startStep) {
+		const startNode = workflow.nodes.find((s) => s.id === workflow.startNodeId);
+		if (!startNode) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
 			await this.transitionRunStatusAndEmit(run.id, 'cancelled');
@@ -669,11 +721,11 @@ export class SpaceRuntime {
 			}
 			await this.safeOnTaskUpdated(spaceId, canonicalTask);
 
-			startAgents = resolveNodeAgents(startStep);
+			startAgents = resolveNodeAgents(startNode);
 			for (const agentEntry of startAgents) {
 				this.config.nodeExecutionRepo.createOrIgnore({
 					workflowRunId: run.id,
-					workflowNodeId: startStep.id,
+					workflowNodeId: startNode.id,
 					agentName: agentEntry.name,
 					agentId: agentEntry.agentId ?? null,
 					status: 'pending',
@@ -827,7 +879,13 @@ export class SpaceRuntime {
 		// approval reset, external cancellation).
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) return;
-		if (run.status === 'blocked' || run.status === 'cancelled' || run.status === 'done') {
+		if (run.status === 'cancelled' || run.status === 'done') {
+			return;
+		}
+
+		// Blocked run recovery: attempt bounded automatic retry before giving up.
+		if (run.status === 'blocked') {
+			await this.attemptBlockedRunRecovery(runId, run);
 			return;
 		}
 
@@ -1111,11 +1169,18 @@ export class SpaceRuntime {
 				await this.transitionRunStatusAndEmit(runId, 'done');
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
 				const nextTaskResult = summary ?? canonicalTask.result ?? null;
-				if (canonicalTask.status !== 'done') {
+
+				// In supervised mode, transition the task to 'review' so a human
+				// can approve the output before it's marked done. In
+				// semi_autonomous mode, go directly to 'done'.
+				const isSupervised = !space?.autonomyLevel || space.autonomyLevel === 'supervised';
+				const completionStatus = isSupervised ? 'review' : 'done';
+
+				if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-						status: 'done',
+						status: completionStatus,
 						result: nextTaskResult,
-						completedAt: Date.now(),
+						completedAt: isSupervised ? null : Date.now(),
 					});
 				} else if (summary && canonicalTask.result !== summary) {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
@@ -1206,6 +1271,90 @@ export class SpaceRuntime {
 
 			// Agents drive workflow progression via send_message and report_done.
 			return;
+		}
+	}
+
+	/**
+	 * Attempt automatic recovery for a blocked workflow run.
+	 *
+	 * Tier 1 — Re-trigger: Reset blocked node executions to `pending` and
+	 * transition the run back to `in_progress` so the runtime re-spawns
+	 * agents on the next tick.
+	 *
+	 * Tier 2 — Escalate: When retries are exhausted, emit a
+	 * `workflow_run_needs_attention` event to the Space Agent for
+	 * human/agent escalation.
+	 */
+	private async attemptBlockedRunRecovery(runId: string, run: SpaceWorkflowRun): Promise<void> {
+		const meta = this.executorMeta.get(runId);
+		if (!meta) return;
+
+		const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
+		if (allRunTasks.length === 0) return;
+		const canonicalTask = this.pickCanonicalTaskForRun(run, allRunTasks);
+		if (!canonicalTask) return;
+
+		const retryCount = this.blockedRetryCounts.get(runId) ?? 0;
+		const blockedExecutions = this.config.nodeExecutionRepo
+			.listByWorkflowRun(runId)
+			.filter((e) => e.status === 'blocked');
+
+		if (blockedExecutions.length === 0) return;
+
+		const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
+
+		if (retryCount < MAX_BLOCKED_RUN_RETRIES) {
+			// Tier 1: Reset blocked executions and resume the run.
+			for (const execution of blockedExecutions) {
+				this.config.nodeExecutionRepo.update(execution.id, {
+					agentSessionId: null,
+					status: 'pending',
+					result: null,
+				});
+			}
+			this.blockedRetryCounts.set(runId, retryCount + 1);
+
+			// Transition run back to in_progress for the next tick to pick up.
+			await this.transitionRunStatusAndEmit(runId, 'in_progress');
+			if (canonicalTask.status === 'blocked') {
+				await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+					status: 'in_progress',
+					completedAt: null,
+				});
+			}
+
+			// Clear dedup so a re-block can be notified again.
+			this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
+
+			await this.safeNotify({
+				kind: 'task_retry',
+				spaceId: meta.spaceId,
+				taskId: canonicalTask.id,
+				runId,
+				originalReason: blockedReason,
+				attemptNumber: retryCount + 1,
+				maxAttempts: MAX_BLOCKED_RUN_RETRIES,
+				timestamp: new Date().toISOString(),
+			});
+			log.info(
+				`SpaceRuntime: auto-retrying blocked run ${runId} ` +
+					`(attempt ${retryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
+			);
+		} else {
+			// Tier 2: Retries exhausted — escalate to Space Agent.
+			await this.safeNotify({
+				kind: 'workflow_run_needs_attention',
+				spaceId: meta.spaceId,
+				runId,
+				taskId: canonicalTask.id,
+				reason: blockedReason,
+				retriesExhausted: retryCount,
+				timestamp: new Date().toISOString(),
+			});
+			log.warn(
+				`SpaceRuntime: blocked run ${runId} exhausted ${retryCount} retries, ` +
+					`emitted workflow_run_needs_attention`
+			);
 		}
 	}
 

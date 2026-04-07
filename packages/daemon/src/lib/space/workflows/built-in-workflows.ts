@@ -25,22 +25,22 @@ import type { SpaceWorkflow } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 
 // ---------------------------------------------------------------------------
-// Template node ID constants (used as stable IDs for nodes and startNodeId)
+// Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
 
-const CODING_CODE_STEP = 'tpl-coding-code';
-const CODING_REVIEW_STEP = 'tpl-coding-review';
+const CODING_CODE_NODE = 'tpl-coding-code';
+const CODING_REVIEW_NODE = 'tpl-coding-review';
 
 // V2 node IDs
-const V2_PLANNING_STEP = 'tpl-v2-planning';
-const V2_PLAN_REVIEW_STEP = 'tpl-v2-plan-review';
-const V2_CODING_STEP = 'tpl-v2-coding';
-const V2_REVIEW_STEP = 'tpl-v2-review';
-const V2_QA_STEP = 'tpl-v2-qa';
+const V2_PLANNING_NODE = 'tpl-v2-planning';
+const V2_PLAN_REVIEW_NODE = 'tpl-v2-plan-review';
+const V2_CODING_NODE = 'tpl-v2-coding';
+const V2_REVIEW_NODE = 'tpl-v2-review';
+const V2_QA_NODE = 'tpl-v2-qa';
 
-const FULLSTACK_CODING_STEP = 'tpl-fullstack-coding';
-const FULLSTACK_REVIEW_STEP = 'tpl-fullstack-review';
-const FULLSTACK_QA_STEP = 'tpl-fullstack-qa';
+const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
+const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
+const FULLSTACK_QA_NODE = 'tpl-fullstack-qa';
 
 const PR_READY_BASH_SCRIPT = [
 	'# Prefer explicit PR URL from gate data JSON when available; fallback to current branch.',
@@ -173,10 +173,10 @@ const FULLSTACK_QA_PROMPT =
 	'If everything passes, call report_done() with the QA evidence summary. ' +
 	'If issues are found, send a detailed fix list to Coding via the QA → Coding channel.';
 
-const RESEARCH_STEP = 'tpl-research-research';
-const RESEARCH_REVIEW_STEP = 'tpl-research-review';
+const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
+const RESEARCH_REVIEW_NODE = 'tpl-research-review';
 
-const REVIEW_REVIEW_STEP = 'tpl-review-review';
+const REVIEW_REVIEW_NODE = 'tpl-review-review';
 
 // ---------------------------------------------------------------------------
 // Built-in templates
@@ -200,7 +200,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		'Iterative coding workflow with Code ↔ Review loop. Coder implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
 	nodes: [
 		{
-			id: CODING_CODE_STEP,
+			id: CODING_CODE_NODE,
 			name: 'Code',
 			agents: [
 				{
@@ -236,7 +236,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: CODING_REVIEW_STEP,
+			id: CODING_REVIEW_NODE,
 			name: 'Review',
 			agents: [
 				{
@@ -269,8 +269,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 	],
-	startNodeId: CODING_CODE_STEP,
-	endNodeId: CODING_REVIEW_STEP,
+	startNodeId: CODING_CODE_NODE,
+	endNodeId: CODING_REVIEW_NODE,
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -329,7 +329,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		'Iterative research workflow with gated PR verification. Research agent investigates and opens a PR; Reviewer evaluates findings and requests revisions if needed.',
 	nodes: [
 		{
-			id: RESEARCH_STEP,
+			id: RESEARCH_RESEARCH_NODE,
 			name: 'Research',
 			agents: [
 				{
@@ -364,7 +364,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: RESEARCH_REVIEW_STEP,
+			id: RESEARCH_REVIEW_NODE,
 			name: 'Review',
 			agents: [
 				{
@@ -398,8 +398,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 	],
-	startNodeId: RESEARCH_STEP,
-	endNodeId: RESEARCH_REVIEW_STEP,
+	startNodeId: RESEARCH_RESEARCH_NODE,
+	endNodeId: RESEARCH_REVIEW_NODE,
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -441,10 +441,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 /**
  * Review-Only Workflow
  *
- * Single-node graph: Reviewer only (terminal step).
+ * Single-node graph: Reviewer only (terminal node).
  * No planning phase — used when the task is well-defined and only
  * review is needed. The run completes immediately when advance()
- * is called from the Review step.
+ * is called from the Review node.
  *
  * startNodeId and endNodeId point to the same node (single-node workflow).
  */
@@ -453,10 +453,10 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	spaceId: '',
 	name: 'Review-Only Workflow',
 	description:
-		'Single-step review workflow with no planning phase. Reviewer evaluates directly; the run completes when done.',
+		'Single-node review workflow with no planning phase. Reviewer evaluates directly; the run completes when done.',
 	nodes: [
 		{
-			id: REVIEW_REVIEW_STEP,
+			id: REVIEW_REVIEW_NODE,
 			name: 'Review',
 			agents: [
 				{
@@ -469,7 +469,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
 							'Workflow context:\n' +
 							'- This is both the start and end node — the workflow completes when you call report_done().\n' +
-							'- There are no other agents in this workflow; your review is the only step.',
+							'- There are no other agents in this workflow; your review is the only node.',
 					},
 					instructions: {
 						mode: 'expand',
@@ -487,8 +487,8 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 	],
-	startNodeId: REVIEW_REVIEW_STEP,
-	endNodeId: REVIEW_REVIEW_STEP,
+	startNodeId: REVIEW_REVIEW_NODE,
+	endNodeId: REVIEW_REVIEW_NODE,
 	tags: ['review'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -520,10 +520,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 	name: 'Full-Cycle Coding Workflow',
 	description:
 		'Full-cycle coding workflow with planning, plan review, parallel code review, and QA. ' +
-		'QA is the terminal step; feedback from review or QA loops back to Coding.',
+		'QA is the terminal node; feedback from review or QA loops back to Coding.',
 	nodes: [
 		{
-			id: V2_PLANNING_STEP,
+			id: V2_PLANNING_NODE,
 			name: 'Planning',
 			agents: [
 				{
@@ -548,7 +548,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: V2_PLAN_REVIEW_STEP,
+			id: V2_PLAN_REVIEW_NODE,
 			name: 'Plan Review',
 			agents: [
 				{
@@ -571,7 +571,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: V2_CODING_STEP,
+			id: V2_CODING_NODE,
 			name: 'Coding',
 			agents: [
 				{
@@ -596,7 +596,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: V2_REVIEW_STEP,
+			id: V2_REVIEW_NODE,
 			name: 'Code Review',
 			agents: [
 				{
@@ -647,7 +647,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: V2_QA_STEP,
+			id: V2_QA_NODE,
 			name: 'QA',
 			agents: [
 				{
@@ -672,8 +672,8 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 	],
-	startNodeId: V2_PLANNING_STEP,
-	endNodeId: V2_QA_STEP,
+	startNodeId: V2_PLANNING_NODE,
+	endNodeId: V2_QA_NODE,
 	tags: ['coding', 'v2', 'parallel-review', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -809,7 +809,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 		'Designed for backend+frontend changes that require thorough test coverage, including browser tests.',
 	nodes: [
 		{
-			id: FULLSTACK_CODING_STEP,
+			id: FULLSTACK_CODING_NODE,
 			name: 'Coding',
 			agents: [
 				{
@@ -833,7 +833,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: FULLSTACK_REVIEW_STEP,
+			id: FULLSTACK_REVIEW_NODE,
 			name: 'Review',
 			agents: [
 				{
@@ -854,7 +854,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 		{
-			id: FULLSTACK_QA_STEP,
+			id: FULLSTACK_QA_NODE,
 			name: 'QA',
 			agents: [
 				{
@@ -877,8 +877,8 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 			],
 		},
 	],
-	startNodeId: FULLSTACK_CODING_STEP,
-	endNodeId: FULLSTACK_QA_STEP,
+	startNodeId: FULLSTACK_CODING_NODE,
+	endNodeId: FULLSTACK_QA_NODE,
 	tags: ['fullstack', 'qa', 'browser-testing'],
 	createdAt: 0,
 	updatedAt: 0,

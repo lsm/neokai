@@ -6,7 +6,8 @@ import type { SpaceTaskStatus } from '@neokai/shared';
  */
 export const VALID_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
-	in_progress: ['open', 'done', 'blocked', 'cancelled'],
+	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
+	review: ['done', 'in_progress', 'cancelled', 'archived'],
 	done: ['in_progress', 'archived'],
 	blocked: ['open', 'in_progress', 'archived'],
 	cancelled: ['open', 'in_progress', 'done', 'archived'],
@@ -22,9 +23,14 @@ export const TRANSITION_LABELS: Record<string, string> = {
 	'open->done': 'Mark Done',
 	'open->cancelled': 'Cancel',
 	'in_progress->open': 'Pause',
+	'in_progress->review': 'Submit for Review',
 	'in_progress->done': 'Mark Done',
 	'in_progress->blocked': 'Block',
 	'in_progress->cancelled': 'Cancel',
+	'review->done': 'Approve',
+	'review->in_progress': 'Reopen',
+	'review->cancelled': 'Cancel',
+	'review->archived': 'Archive',
 	'done->in_progress': 'Reopen',
 	'done->archived': 'Archive',
 	'blocked->open': 'Reopen',
@@ -41,6 +47,7 @@ export const TRANSITION_LABELS: Record<string, string> = {
  */
 const TRANSITION_STYLES: Record<string, string> = {
 	in_progress: 'text-blue-300 hover:text-blue-200',
+	review: 'text-purple-300 hover:text-purple-200',
 	done: 'text-green-300 hover:text-green-200',
 	blocked: 'text-amber-300 hover:text-amber-200',
 	cancelled: 'text-red-300 hover:text-red-200',

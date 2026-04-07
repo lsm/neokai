@@ -47,7 +47,7 @@ export interface ConditionContext {
 	 */
 	humanApproved?: boolean;
 	/**
-	 * Result string from the most recently completed task on the current step.
+	 * Result string from the most recently completed task on the current node.
 	 * Used by `task_result` conditions for prefix matching.
 	 */
 	taskResult?: string;

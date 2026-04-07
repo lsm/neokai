@@ -3,7 +3,7 @@
  *
  * Handles all message delivery within a workflow run:
  * - Within-node DMs (same node, agent-to-agent)
- * - Cross-node DMs (target resolved by agent role)
+ * - Cross-node DMs (target resolved by agent name)
  * - Fan-out (target resolved by node name → all agents in that node)
  *
  * Gate enforcement:
@@ -82,11 +82,11 @@ export class ChannelGateBlockedError extends Error {
 export interface DeliveredMessage {
 	/** Workflow run ID */
 	runId: string;
-	/** Role of the sending agent */
+	/** Agent name of the sending agent */
 	fromRole: string;
 	/**
-	 * Role of the receiving agent, or node name for fan-out deliveries.
-	 * When isFanOut is true this is the node name, not an individual agent role.
+	 * Agent name of the receiving agent, or node name for fan-out deliveries.
+	 * When isFanOut is true this is the node name, not an individual agent name.
 	 */
 	toRole: string;
 	/** The message content */
@@ -95,7 +95,7 @@ export interface DeliveredMessage {
 	targetNodeId: string;
 	/**
 	 * True when the delivery targeted a node name (fan-out to all agents in the
-	 * node) rather than a specific agent role (point-to-point DM).
+	 * node) rather than a specific agent name (point-to-point DM).
 	 */
 	isFanOut: boolean;
 	/**
@@ -305,8 +305,8 @@ export class ChannelRouter {
 	 * 3. **Gate condition** — evaluates the channel's gate via `evaluateGateById()`.
 	 *
 	 * @param runId     - Workflow run ID
-	 * @param fromRole  - Sending agent role name
-	 * @param toTarget  - Receiving agent role name, or node name for fan-out
+	 * @param fromRole  - Sending agent name
+	 * @param toTarget  - Receiving agent name, or node name for fan-out
 	 * @returns GateResult — `{ allowed: true }` or `{ allowed: false, reason }` when blocked
 	 * @throws ActivationError when the run or workflow is not found
 	 */
@@ -362,11 +362,11 @@ export class ChannelRouter {
 	}
 
 	/**
-	 * Deliver a message from one agent role to another (or to a node for fan-out)
+	 * Deliver a message from one agent to another (or to a node for fan-out)
 	 * within a workflow run.
 	 *
 	 * **Target resolution:**
-	 * - `toTarget` is an agent role name → DM to the agent's node (lazy-activated
+	 * - `toTarget` is an agent name → DM to the agent's node (lazy-activated
 	 *   if not already active)
 	 * - `toTarget` is a node name → fan-out to the node; all agent slots are
 	 *   activated (lazy-activated if not already active)
@@ -383,12 +383,12 @@ export class ChannelRouter {
 	 * - If the cycle cap has been reached, throws `ActivationError`.
 	 *
 	 * @param runId    - Workflow run ID
-	 * @param fromRole - Role name of the sending agent (WorkflowNodeAgent.name)
-	 * @param toTarget - Role name of the receiving agent, or node name for fan-out
+	 * @param fromRole - Agent name of the sending agent (WorkflowNodeAgent.name)
+	 * @param toTarget - Agent name of the receiving agent, or node name for fan-out
 	 * @param message  - Message content to deliver
 	 * @returns DeliveredMessage descriptor; `activatedTasks` is set when the
 	 *   target node was lazily activated, undefined when it was already active
-	 * @throws ActivationError when the run, workflow, or target role/node is not
+	 * @throws ActivationError when the run, workflow, or target agent/node is not
 	 *   found, or the cyclic cap is exceeded
 	 * @throws ChannelGateBlockedError when a gate condition blocks delivery
 	 */
@@ -439,8 +439,8 @@ export class ChannelRouter {
 			}
 		}
 
-		// ── 3. Target resolution: agent role → DM, node name → fan-out ────────
-		let targetNode = this.findNodeByAgentRole(workflow, toTarget);
+		// ── 3. Target resolution: agent name → DM, node name → fan-out ────────
+		let targetNode = this.findNodeByAgentName(workflow, toTarget);
 		let isFanOut = false;
 
 		if (!targetNode) {
@@ -451,7 +451,7 @@ export class ChannelRouter {
 				isFanOut = true;
 			} else {
 				throw new ActivationError(
-					`No node found with agent role or node name "${toTarget}" in workflow "${run.workflowId}"`
+					`No node found with agent name or node name "${toTarget}" in workflow "${run.workflowId}"`
 				);
 			}
 		}
@@ -542,8 +542,8 @@ export class ChannelRouter {
 		for (const channel of channels) {
 			const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
 			for (const target of targets) {
-				// Resolve target: first by agent role, then by node name (fan-out)
-				let targetNode = this.findNodeByAgentRole(workflow, target);
+				// Resolve target: first by agent name, then by node name (fan-out)
+				let targetNode = this.findNodeByAgentName(workflow, target);
 				if (!targetNode) {
 					targetNode = workflow.nodes.find((n) => n.name === target);
 				}
@@ -762,9 +762,9 @@ export class ChannelRouter {
 
 	/**
 	 * Searches workflow nodes for the first node that has an agent slot with the
-	 * given role name. Returns undefined when no node matches.
+	 * given agent name. Returns undefined when no node matches.
 	 */
-	private findNodeByAgentRole(workflow: SpaceWorkflow, role: string): WorkflowNode | undefined {
+	private findNodeByAgentName(workflow: SpaceWorkflow, role: string): WorkflowNode | undefined {
 		for (const node of workflow.nodes) {
 			try {
 				const agents = resolveNodeAgents(node);
@@ -781,12 +781,12 @@ export class ChannelRouter {
 	 * fromRole → toTarget pair.
 	 *
 	 * Matching rules:
-	 * - `channel.from` may equal either the sender agent role/name or the sender
+	 * - `channel.from` may equal either the sender agent name or the sender
 	 *   node name (wildcard `'*'` matches any sender)
 	 * - `channel.to` may equal either the explicit target string or the target
 	 *   node name, or contain either in an array (wildcard `'*'` matches any target)
 	 *
-	 * `toTarget` may be either an agent role name or a node name — the raw
+	 * `toTarget` may be either an agent name or a node name — the raw
 	 * WorkflowChannel declaration is not resolved; the caller is responsible for
 	 * knowing the target type.
 	 *
@@ -797,9 +797,9 @@ export class ChannelRouter {
 		fromRole: string,
 		toTarget: string
 	): { channel: WorkflowChannel; index: number } | undefined {
-		const fromNodeName = this.findNodeByAgentRole(workflow, fromRole)?.name;
+		const fromNodeName = this.findNodeByAgentName(workflow, fromRole)?.name;
 		const toNodeName =
-			this.findNodeByAgentRole(workflow, toTarget)?.name ??
+			this.findNodeByAgentName(workflow, toTarget)?.name ??
 			workflow.nodes.find((node) => node.name === toTarget)?.name;
 		const channels = workflow.channels ?? [];
 		const index = channels.findIndex((ch) => {

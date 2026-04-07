@@ -25,6 +25,7 @@ interface SpaceTaskPaneProps {
 const STATUS_LABELS: Record<SpaceTaskStatus, string> = {
 	open: 'Open',
 	in_progress: 'In Progress',
+	review: 'Awaiting Review',
 	done: 'Done',
 	blocked: 'Blocked',
 	cancelled: 'Cancelled',
@@ -150,12 +151,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const lastCursorRef = useRef(0);
 
-	const allAgents = spaceStore.agents.value;
-	const mentionAgents =
-		mentionQuery !== null
-			? allAgents.filter((a) => a.name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
-			: [];
-
 	const handleThreadDraftInput = useCallback((e: Event) => {
 		const target = e.target as HTMLTextAreaElement;
 		const value = target.value;
@@ -255,13 +250,28 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		: null;
 	const canvasWorkflowId = workflowRun?.workflowId ?? null;
 
+	// Scope @mention autocomplete to workflow agents only (no agents for non-workflow tasks)
+	const workflow = canvasWorkflowId
+		? (spaceStore.workflows.value.find((w) => w.id === canvasWorkflowId) ?? null)
+		: null;
+	const workflowAgentIds = workflow
+		? new Set(workflow.nodes.flatMap((n) => n.agents.map((a) => a.agentId)))
+		: null;
+	const mentionAgents =
+		mentionQuery !== null && workflowAgentIds !== null
+			? spaceStore.agents.value.filter(
+					(a) =>
+						workflowAgentIds.has(a.id) &&
+						a.name.toLowerCase().startsWith(mentionQuery.toLowerCase())
+				)
+			: [];
+
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
 	const hasUnifiedWorkflowThread =
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
-	const showInlineComposer = !!agentSessionId && !isTerminalTask;
-	const canSendThreadMessage =
-		!!agentSessionId && !isTerminalTask && !ensuringThread && !sendingThread;
+	const showInlineComposer = !isTerminalTask;
+	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
 	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
 	const activitySummary = STATUS_LABELS[task.status];
 	const agentActionLabel =
@@ -519,7 +529,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 												}
 											}}
 											rows={3}
-											placeholder="Message the task agent (Enter to send, Shift+Enter for newline)"
+											placeholder={
+												agentSessionId
+													? 'Message the task agent (Enter to send, Shift+Enter for newline)'
+													: 'Type a message — a task agent session will be created on send'
+											}
 											disabled={sendingThread}
 											class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
 										/>
@@ -537,12 +551,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 										</button>
 									</div>
 								</form>
-							)}
-
-							{!agentSessionId && (
-								<p class="text-xs text-gray-500">
-									Waiting for task thread before messages can be sent.
-								</p>
 							)}
 
 							<TaskStatusActions

@@ -56,6 +56,7 @@ test.describe('Short ID Display and Copy', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
 		// Clear persisted tab selection so tasks (pending status → Active tab) are always visible
 		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 		await page
@@ -82,6 +83,10 @@ test.describe('Short ID Display and Copy', () => {
 			timeout: 10000,
 		});
 
+		// Navigate to the Tasks tab — ShortIdBadge is only rendered in RoomTasks,
+		// not in the overview dashboard's RecentActivityItem.
+		await page.getByRole('button', { name: 'Tasks' }).click();
+
 		// The short ID badge should be visible in the task card
 		const badge = page.locator(`[data-testid="short-id-badge-${shortId}"]`);
 		await expect(badge).toBeVisible({ timeout: 10000 });
@@ -104,6 +109,9 @@ test.describe('Short ID Display and Copy', () => {
 		await expect(page.locator('text=E2E Short ID Display Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
+
+		// Navigate to the Tasks tab — ShortIdBadge is only rendered in RoomTasks
+		await page.getByRole('button', { name: 'Tasks' }).click();
 
 		// Wait for the short ID badge to appear
 		const badge = page.locator(`[data-testid="short-id-badge-${shortId}"]`);

@@ -93,6 +93,7 @@ test.describe('Mission Detail Views', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
 		roomId = await createRoom(page, 'E2E Mission Detail Test Room');
 	});
 

@@ -3,7 +3,7 @@
  * peer communication tools available to node agent sub-sessions.
  *
  * Tools:
- *   list_peers   — list other group members with their roles, statuses, and permitted channels
+ *   list_peers   — list other group members with their agent names, statuses, and permitted channels
  *   send_message — channel-validated direct messaging tool (string-based target)
  *   report_done  — signal that this agent has completed its work
  *
@@ -22,7 +22,7 @@ import { z } from 'zod';
 
 /**
  * Schema for `list_peers` input.
- * Lists all other members of the current workflow step group.
+ * Lists all other members of the current workflow node group.
  * No arguments — the group and self are inferred from the node agent context.
  */
 export const ListPeersSchema = z.object({});
@@ -38,24 +38,24 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
  *
  * Primary direct messaging tool for node agents. Validates against declared channel
  * topology before routing. Supports four target forms:
- *   - Agent name (role): `target: 'coder'` — DM to the named agent
+ *   - Agent name: `target: 'coder'` — DM to the named agent
  *   - Node name: `target: 'node-name'` — fan-out to all agents in the named node
- *   - Multicast array: `target: ['coder', 'reviewer']` — deliver to multiple roles
+ *   - Multicast array: `target: ['coder', 'reviewer']` — deliver to multiple agents
  *   - Broadcast to all permitted: `target: '*'`
  */
 export const SendMessageSchema = z.object({
 	/**
-	 * Delivery target: an agent role name for DM, a node name for fan-out,
-	 * an array of role names for multicast, or '*' for broadcast to all topology-permitted targets.
-	 * - Agent name: delivers to the specific agent (or all agents sharing the role)
+	 * Delivery target: an agent name for DM, a node name for fan-out,
+	 * an array of agent names for multicast, or '*' for broadcast to all topology-permitted targets.
+	 * - Agent name: delivers to the specific agent (or all agents sharing the name)
 	 * - Node name: fan-out to all agents in the named node
-	 * - Array of role names: multicast to each specified role (all must be permitted)
+	 * - Array of agent names: multicast to each specified agent (all must be permitted)
 	 * - '*': broadcast to all permitted targets
 	 */
 	target: z
 		.union([z.string(), z.array(z.string())])
 		.describe(
-			"Delivery target: agent role name (DM), node name (fan-out), array of role names (multicast), or '*' (broadcast to all permitted targets)"
+			"Delivery target: agent name (DM), node name (fan-out), array of agent names (multicast), or '*' (broadcast to all permitted targets)"
 		),
 	/** The message to send to the target(s). */
 	message: z.string().min(1).describe('The message content to send to the target peer(s)'),
@@ -81,7 +81,7 @@ export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 /**
  * Schema for `report_done` input.
  *
- * Signals that this node agent has completed its work. Marks the step's SpaceTask
+ * Signals that this node agent has completed its work. Marks the node's SpaceTask
  * as 'completed' and persists an optional summary as the task result.
  */
 export const ReportDoneSchema = z.object({
@@ -158,8 +158,8 @@ export type ReadGateInput = z.infer<typeof ReadGateSchema>;
 /**
  * Schema for `write_gate` input.
  *
- * Merges key-value data into a gate's runtime data store. The caller's role must
- * be listed in the gate's `allowedWriterRoles` (or the list contains `'*'`).
+ * Merges key-value data into a gate's runtime data store. The caller's agent name must
+ * be listed in the gate's allowed writers (or the list contains `'*'`).
  *
  * For vote-counting gates (count conditions): use your `nodeId` (returned in the
  * tool response) as the key in the vote map so each node's vote counts only once

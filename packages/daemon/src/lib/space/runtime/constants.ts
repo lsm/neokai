@@ -17,36 +17,36 @@
 export const AGENT_REPORT_DONE_TIMEOUT_MS = 10 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Per-node role timeout constants (M9.4)
+// Per-node agent name timeout constants (M9.4)
 // ---------------------------------------------------------------------------
 
-/** Timeout for coder-role node agents (30 minutes). */
+/** Timeout for coder agent node agents (30 minutes). */
 export const CODER_NODE_TIMEOUT_MS = 30 * 60 * 1000;
 
-/** Timeout for reviewer-role node agents (15 minutes). */
+/** Timeout for reviewer agent node agents (15 minutes). */
 export const REVIEWER_NODE_TIMEOUT_MS = 15 * 60 * 1000;
 
-/** Timeout for QA-role node agents (15 minutes). */
+/** Timeout for QA agent node agents (15 minutes). */
 export const QA_NODE_TIMEOUT_MS = 15 * 60 * 1000;
 
-/** Timeout for planner-role node agents (20 minutes). */
+/** Timeout for planner agent node agents (20 minutes). */
 export const PLANNER_NODE_TIMEOUT_MS = 20 * 60 * 1000;
 
-/** Default timeout for node agents whose role does not match a known preset (30 minutes). */
+/** Default timeout for node agents whose agent name does not match a known preset (30 minutes). */
 export const DEFAULT_NODE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * Resolve the per-node timeout in milliseconds based on the agent role.
+ * Resolve the per-node timeout in milliseconds based on the agent name.
  *
- * Role matching is case-insensitive. Known roles:
+ * Matching is case-insensitive. Known agent names:
  *   - `coder` / `general` → 30 minutes
  *   - `reviewer`          → 15 minutes
  *   - `qa`                → 15 minutes
  *   - `planner`           → 20 minutes
  *   - (anything else)     → 30 minutes (DEFAULT_NODE_TIMEOUT_MS)
  */
-export function resolveNodeTimeout(role: string): number {
-	const r = role.toLowerCase();
+export function resolveNodeTimeout(agentName: string): number {
+	const r = agentName.toLowerCase();
 	if (r === 'coder' || r === 'general') return CODER_NODE_TIMEOUT_MS;
 	if (r === 'reviewer') return REVIEWER_NODE_TIMEOUT_MS;
 	if (r === 'qa') return QA_NODE_TIMEOUT_MS;
@@ -72,6 +72,21 @@ export function resolveNodeTimeout(role: string): number {
  * transient startup failures common in CI and cold-start environments.
  */
 export const MAX_TASK_AGENT_CRASH_RETRIES = 2;
+
+/**
+ * Maximum number of automatic recovery attempts for a blocked workflow run.
+ *
+ * When a workflow run enters `blocked` status (e.g. a node agent failed after
+ * exhausting its reminder attempts), the runtime will automatically:
+ *   1. Reset the blocked node execution to `pending` for re-spawn.
+ *   2. Transition the run back to `in_progress`.
+ *   3. Emit a `task_retry` notification to the Space Agent.
+ *
+ * Once this limit is reached, the run stays blocked and a
+ * `workflow_run_needs_attention` event is emitted for human/Space Agent
+ * escalation.
+ */
+export const MAX_BLOCKED_RUN_RETRIES = 1;
 
 /**
  * Maximum number of retry attempts for transient network errors

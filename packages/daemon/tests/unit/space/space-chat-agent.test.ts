@@ -31,7 +31,7 @@ function makeWorkflow(overrides?: Partial<WorkflowSummary>): WorkflowSummary {
 		name: 'Coding Workflow',
 		description: 'Plan, code, and review',
 		tags: ['coding', 'review'],
-		stepCount: 3,
+		nodeCount: 3,
 		...overrides,
 	};
 }
@@ -40,7 +40,6 @@ function makeAgent(overrides?: Partial<AgentSummary>): AgentSummary {
 	return {
 		id: 'agent-1',
 		name: 'Coder',
-		role: 'coder',
 		description: 'Implementation specialist',
 		...overrides,
 	};
@@ -104,7 +103,7 @@ describe('buildSpaceChatSystemPrompt — workflow information', () => {
 
 	test('includes step count', () => {
 		const prompt = buildSpaceChatSystemPrompt(makeContext());
-		expect(prompt).toContain('3 step');
+		expect(prompt).toContain('3 node');
 	});
 
 	test('includes multiple workflows', () => {

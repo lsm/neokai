@@ -134,6 +134,7 @@ export interface UpdateSpaceParams {
  *
  * - `open`       — task is queued and waiting to be picked up
  * - `in_progress` — a Task Agent session is actively working on this task
+ * - `review`     — workflow agents completed; awaiting human review/approval (supervised mode)
  * - `done`       — task completed successfully
  * - `blocked`    — task requires human attention or intervention
  * - `cancelled`  — task was cancelled and will not be completed
@@ -142,6 +143,7 @@ export interface UpdateSpaceParams {
 export type SpaceTaskStatus =
 	| 'open'
 	| 'in_progress'
+	| 'review'
 	| 'done'
 	| 'blocked'
 	| 'cancelled'
@@ -240,7 +242,7 @@ export interface SpaceTaskActivityMember {
 	kind: 'task_agent' | 'node_agent';
 	/** Human-readable label for the activity row */
 	label: string;
-	/** Role or slot name (e.g. task-agent, reviewer, strict-reviewer) */
+	/** Agent name or slot name (e.g. task-agent, reviewer, strict-reviewer). DB column: `role`. */
 	role: string;
 	/** Derived user-facing activity state */
 	state: SpaceTaskActivityState;
@@ -588,7 +590,7 @@ export interface GateField {
 	name: string;
 	/** Field type. */
 	type: GateFieldType;
-	/** Who can write this field — agent role/slot names, node names, 'human', or '*'. */
+	/** Who can write this field — agent names/slot names, node names, 'human', or '*'. */
 	writers: string[];
 	/** Check that must pass for this field to be satisfied. */
 	check: GateFieldCheck;

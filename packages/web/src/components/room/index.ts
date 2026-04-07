@@ -9,6 +9,16 @@ export { CollapsibleSection } from './CollapsibleSection';
 export type { CollapsibleSectionProps } from './CollapsibleSection';
 // @public - Library export
 export { GoalsEditor } from './GoalsEditor';
+// @public - GoalsEditor sub-components for reuse in MissionDetail and other views
+export { StatusIndicator } from './GoalsEditor';
+export { PriorityBadge } from './GoalsEditor';
+export { MissionTypeBadge } from './GoalsEditor';
+export { AutonomyBadge } from './GoalsEditor';
+export { ProgressBar } from './GoalsEditor';
+export { MetricProgress } from './GoalsEditor';
+export { RecurringScheduleInfo } from './GoalsEditor';
+export { GoalShortIdBadge } from './GoalsEditor';
+export { GoalForm, type GoalFormProps } from './GoalsEditor';
 // @public - Library export
 export { RoomContext } from './RoomContext';
 export type { RoomContextProps } from './RoomContext';

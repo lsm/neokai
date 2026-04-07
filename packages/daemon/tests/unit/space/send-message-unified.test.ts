@@ -159,7 +159,7 @@ function makeBaseConfig(
 	};
 	return {
 		mySessionId: ctx.coderSessionId,
-		myRole: 'coder',
+		myAgentName: 'coder',
 		taskId: 'test-task-unified',
 		spaceId: ctx.spaceId,
 		channelResolver,

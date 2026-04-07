@@ -23,7 +23,8 @@ import type {
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
 	open: ['in_progress', 'blocked', 'done', 'cancelled'],
-	in_progress: ['open', 'done', 'blocked', 'cancelled'],
+	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
+	review: ['done', 'in_progress', 'cancelled', 'archived'], // Approve, reopen, cancel, or archive
 	done: ['in_progress', 'archived'], // Reactivate or archive
 	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
 	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive

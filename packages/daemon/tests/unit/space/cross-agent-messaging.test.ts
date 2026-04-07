@@ -205,7 +205,7 @@ function seedStepTask(
 }
 
 function makeStepCtx(
-	members: Array<{ sessionId: string; role: string; status?: string }>
+	members: Array<{ sessionId: string; agentName: string; status?: string }>
 ): StepCtx {
 	const { db, dir } = makeDb();
 	// Each DB is isolated; using a fixed spaceId within the DB is safe.
@@ -233,7 +233,7 @@ function makeStepCtx(
 	const nodeExecutionRepo = new NodeExecutionRepository(db);
 
 	for (const m of members) {
-		seedStepTask(db, spaceId, run.id, m.role, m.sessionId, m.status ?? 'in_progress');
+		seedStepTask(db, spaceId, run.id, m.agentName, m.sessionId, m.status ?? 'in_progress');
 	}
 
 	return {
@@ -253,7 +253,7 @@ type StepConfigOverrides = Partial<NodeAgentToolsConfig> & {
 function makeStepConfig(
 	ctx: StepCtx,
 	mySessionId: string,
-	myRole: string,
+	myAgentName: string,
 	overrides: StepConfigOverrides = {}
 ): NodeAgentToolsConfig & {
 	injectedMessages: Array<{ sessionId: string; message: string }>;
@@ -279,7 +279,7 @@ function makeStepConfig(
 
 	const config: NodeAgentToolsConfig = {
 		mySessionId,
-		myRole,
+		myAgentName,
 		taskId: 'cam-task-1',
 		spaceId: ctx.spaceId,
 		channelResolver,
@@ -467,8 +467,8 @@ describe('send_message — point-to-point (target: role)', () => {
 
 	test('succeeds when channel is declared', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
@@ -485,8 +485,8 @@ describe('send_message — point-to-point (target: role)', () => {
 
 	test('denied when channel is not declared', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		// Only reviewer→coder declared; coder→reviewer not present
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
@@ -496,7 +496,7 @@ describe('send_message — point-to-point (target: role)', () => {
 
 		const result = parse(await handlers.send_message({ target: 'reviewer', message: 'Hello' }));
 		expect(result.success).toBe(false);
-		expect(result.unauthorizedRoles).toEqual(['reviewer']);
+		expect(result.unauthorizedAgentNames).toEqual(['reviewer']);
 		expect(cfg.injectedMessages).toHaveLength(0);
 	});
 });
@@ -510,9 +510,9 @@ describe('send_message — broadcast (target: "*")', () => {
 
 	test('delivers to all permitted targets', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-hub', role: 'hub' },
-			{ sessionId: 'sess-B', role: 'B' },
-			{ sessionId: 'sess-C', role: 'C' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
+			{ sessionId: 'sess-B', agentName: 'B' },
+			{ sessionId: 'sess-C', agentName: 'C' },
 		]);
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
 			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
@@ -527,8 +527,8 @@ describe('send_message — broadcast (target: "*")', () => {
 
 	test('fails when sender has no permitted targets', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-spoke', role: 'spoke' },
-			{ sessionId: 'sess-hub', role: 'hub' },
+			{ sessionId: 'sess-spoke', agentName: 'spoke' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
 		]);
 		// Only hub→spoke; spoke has no outgoing channels
 		const cfg = makeStepConfig(ctx, 'sess-spoke', 'spoke', {
@@ -538,7 +538,7 @@ describe('send_message — broadcast (target: "*")', () => {
 
 		const result = parse(await handlers.send_message({ target: '*', message: 'Hi' }));
 		expect(result.success).toBe(false);
-		expect(result.error).toContain("No permitted targets for role 'spoke'");
+		expect(result.error).toContain("No permitted targets for agent 'spoke'");
 	});
 });
 
@@ -551,9 +551,9 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 
 	test('delivers to all listed roles when all are permitted', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-hub', role: 'hub' },
-			{ sessionId: 'sess-B', role: 'B' },
-			{ sessionId: 'sess-C', role: 'C' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
+			{ sessionId: 'sess-B', agentName: 'B' },
+			{ sessionId: 'sess-C', agentName: 'C' },
 		]);
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
 			channelResolver: new ChannelResolver([ch('hub', 'B'), ch('hub', 'C')]),
@@ -568,9 +568,9 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 
 	test('fails when any listed role is not in permitted targets', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-hub', role: 'hub' },
-			{ sessionId: 'sess-B', role: 'B' },
-			{ sessionId: 'sess-C', role: 'C' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
+			{ sessionId: 'sess-B', agentName: 'B' },
+			{ sessionId: 'sess-C', agentName: 'C' },
 		]);
 		// Only hub→B; hub→C not declared
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
@@ -580,15 +580,15 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 
 		const result = parse(await handlers.send_message({ target: ['B', 'C'], message: 'Multicast' }));
 		expect(result.success).toBe(false);
-		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
+		expect((result.unauthorizedAgentNames as string[]).includes('C')).toBe(true);
 	});
 
 	test('partial delivery: success reported for injected sessions, failures listed separately', async () => {
 		// hub→B succeeds, hub→C injection throws — partialFailures field populated
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-hub', role: 'hub' },
-			{ sessionId: 'sess-B', role: 'B' },
-			{ sessionId: 'sess-C', role: 'C' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
+			{ sessionId: 'sess-B', agentName: 'B' },
+			{ sessionId: 'sess-C', agentName: 'C' },
 		]);
 		let callCount = 0;
 		const cfg = makeStepConfig(ctx, 'sess-hub', 'hub', {
@@ -630,8 +630,8 @@ describe('send_message — no channels declared', () => {
 
 	test('all send_message calls fail when no channels declared', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		// No channels declared — empty topology (default empty resolver)
 
@@ -657,10 +657,10 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 
 	beforeEach(() => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-hub', role: 'hub' },
-			{ sessionId: 'sess-B', role: 'B' },
-			{ sessionId: 'sess-C', role: 'C' },
-			{ sessionId: 'sess-D', role: 'D' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
+			{ sessionId: 'sess-B', agentName: 'B' },
+			{ sessionId: 'sess-C', agentName: 'C' },
+			{ sessionId: 'sess-D', agentName: 'D' },
 		]);
 		// Fan-out one-way: hub → B, C, D (no reverse)
 		ctx.channelResolver = new ChannelResolver([ch('hub', 'B'), ch('hub', 'C'), ch('hub', 'D')]);
@@ -687,7 +687,7 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'hub', message: 'Hello hub' }));
 		expect(result.success).toBe(false);
-		expect((result.unauthorizedRoles as string[]).includes('hub')).toBe(true);
+		expect((result.unauthorizedAgentNames as string[]).includes('hub')).toBe(true);
 	});
 
 	test('spoke B cannot send to spoke C (spoke isolation)', async () => {
@@ -695,7 +695,7 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
-		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
+		expect((result.unauthorizedAgentNames as string[]).includes('C')).toBe(true);
 	});
 });
 
@@ -712,9 +712,9 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 
 	beforeEach(() => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-hub', role: 'hub' },
-			{ sessionId: 'sess-B', role: 'B' },
-			{ sessionId: 'sess-C', role: 'C' },
+			{ sessionId: 'sess-hub', agentName: 'hub' },
+			{ sessionId: 'sess-B', agentName: 'B' },
+			{ sessionId: 'sess-C', agentName: 'C' },
 		]);
 		// Hub-spoke bidirectional: hub↔B, hub↔C (no B↔C)
 		ctx.channelResolver = new ChannelResolver([
@@ -755,7 +755,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'C', message: 'Hi C' }));
 		expect(result.success).toBe(false);
-		expect((result.unauthorizedRoles as string[]).includes('C')).toBe(true);
+		expect((result.unauthorizedAgentNames as string[]).includes('C')).toBe(true);
 	});
 
 	test('spoke C cannot send to spoke B (spoke isolation, other direction)', async () => {
@@ -763,7 +763,7 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 		const handlers = createNodeAgentToolHandlers(cfg);
 		const result = parse(await handlers.send_message({ target: 'B', message: 'Hi B' }));
 		expect(result.success).toBe(false);
-		expect((result.unauthorizedRoles as string[]).includes('B')).toBe(true);
+		expect((result.unauthorizedAgentNames as string[]).includes('B')).toBe(true);
 	});
 });
 
@@ -780,9 +780,9 @@ describe('list_peers — peer discovery with channel info', () => {
 
 	test('returns peers excluding self (task-agent is included when active)', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-task-agent', role: 'task-agent' },
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-task-agent', agentName: 'task-agent' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder');
@@ -790,7 +790,7 @@ describe('list_peers — peer discovery with channel info', () => {
 
 		const result = parse(await handlers.list_peers({}));
 		expect(result.success).toBe(true);
-		const peers = result.peers as Array<{ sessionId: string; role: string }>;
+		const peers = result.peers as Array<{ sessionId: string; agentName: string }>;
 		const peerIds = peers.map((p) => p.sessionId);
 		expect(peerIds).not.toContain('sess-coder'); // self excluded
 		expect(peerIds).toContain('sess-task-agent');
@@ -799,8 +799,8 @@ describe('list_peers — peer discovery with channel info', () => {
 
 	test('reports permitted targets based on declared channels', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
@@ -814,8 +814,8 @@ describe('list_peers — peer discovery with channel info', () => {
 
 	test('channelTopologyDeclared is false when no channels set', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		// No channels declared (default empty resolver)
 
@@ -866,14 +866,14 @@ describe('list_group_members — Task Agent group view', () => {
 		expect(result.success).toBe(true);
 		const members = result.members as Array<{
 			sessionId: string;
-			role: string;
+			agentName: string;
 			agentId: string | null;
 			status: string;
 			permittedTargets: string[];
 		}>;
 		expect(members).toHaveLength(3);
 
-		// role is always 'agent' since channel topology config was removed in M71
+		// agentName is always 'agent' since channel topology config was removed in M71
 		const coder = members.find((m) => m.sessionId === 'coder-session');
 		expect(coder?.sessionId).toBe('coder-session');
 		expect(Array.isArray(coder?.permittedTargets)).toBe(true);
@@ -1071,14 +1071,14 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 	test('send_message only delivers within the node agent own group', async () => {
 		// Two independent step contexts (different groups, different DBs)
 		const ctxA = makeStepCtx([
-			{ sessionId: 'sess-hub-A', role: 'hub' },
-			{ sessionId: 'sess-B-A', role: 'B' },
+			{ sessionId: 'sess-hub-A', agentName: 'hub' },
+			{ sessionId: 'sess-B-A', agentName: 'B' },
 		]);
 		ctxA.channelResolver = new ChannelResolver([ch('hub', 'B')]);
 
 		const ctxB = makeStepCtx([
-			{ sessionId: 'sess-hub-B', role: 'hub' },
-			{ sessionId: 'sess-B-B', role: 'B' },
+			{ sessionId: 'sess-hub-B', agentName: 'hub' },
+			{ sessionId: 'sess-B-B', agentName: 'B' },
 		]);
 		ctxB.channelResolver = new ChannelResolver([ch('hub', 'B')]);
 
@@ -1115,7 +1115,7 @@ describe('Error cases — non-existent targets and injection failures', () => {
 	});
 
 	test('send_message to non-existent role returns unknown-target error', async () => {
-		ctx = makeStepCtx([{ sessionId: 'sess-coder', role: 'coder' }]);
+		ctx = makeStepCtx([{ sessionId: 'sess-coder', agentName: 'coder' }]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'ghost')]),
 		});
@@ -1128,8 +1128,8 @@ describe('Error cases — non-existent targets and injection failures', () => {
 
 	test('send_message injection failure returns all-failed error', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
@@ -1159,8 +1159,8 @@ describe('Step with no channels declared', () => {
 
 	test('send_message fails when no channels declared', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-a', role: 'agent-a' },
-			{ sessionId: 'sess-b', role: 'agent-b' },
+			{ sessionId: 'sess-a', agentName: 'agent-a' },
+			{ sessionId: 'sess-b', agentName: 'agent-b' },
 		]);
 		// No channels declared — resolver is empty
 
@@ -1175,8 +1175,8 @@ describe('Step with no channels declared', () => {
 
 	test('list_peers shows no permitted targets when no channels declared', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-a', role: 'agent-a' },
-			{ sessionId: 'sess-b', role: 'agent-b' },
+			{ sessionId: 'sess-a', agentName: 'agent-a' },
+			{ sessionId: 'sess-b', agentName: 'agent-b' },
 		]);
 
 		const cfg = makeStepConfig(ctx, 'sess-a', 'agent-a');
@@ -1201,8 +1201,8 @@ describe('send_message — sender attribution prefix', () => {
 
 	test('injected message includes [Message from <role>] prefix', async () => {
 		ctx = makeStepCtx([
-			{ sessionId: 'sess-coder', role: 'coder' },
-			{ sessionId: 'sess-reviewer', role: 'reviewer' },
+			{ sessionId: 'sess-coder', agentName: 'coder' },
+			{ sessionId: 'sess-reviewer', agentName: 'reviewer' },
 		]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'reviewer')]),
