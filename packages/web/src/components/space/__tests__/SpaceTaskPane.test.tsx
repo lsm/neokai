@@ -556,24 +556,25 @@ describe('SpaceTaskPane — canvas toggle', () => {
 				updatedAt: 1000,
 			},
 		];
-		// node-1 has a NodeExecution with an agentSessionId
-		mockNodeExecutionsByNodeId.value = new Map([
+		// node-1 has an activity member (node_agent) with a sessionId — mirrors the
+		// "Agents" buttons which use taskActivity as their data source.
+		mockTaskActivity.value = new Map([
 			[
-				'node-1',
+				'task-1',
 				[
 					{
-						id: 'ne-1',
-						workflowRunId: 'run-1',
-						workflowNodeId: 'node-1',
-						agentName: 'coder',
-						agentId: 'ag-1',
-						agentSessionId: 'session-node-agent',
-						status: 'in_progress',
-						result: null,
-						createdAt: 1000,
-						startedAt: null,
-						completedAt: null,
-						updatedAt: 1000,
+						id: 'session-node-agent',
+						sessionId: 'session-node-agent',
+						kind: 'node_agent' as const,
+						label: 'Coder Node',
+						role: 'coder',
+						state: 'active' as const,
+						messageCount: 0,
+						nodeExecution: {
+							nodeId: 'node-1',
+							agentName: 'coder',
+							status: 'in_progress' as const,
+						},
 					},
 				],
 			],
@@ -583,10 +584,10 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
-		// Simulate a node click — node execution exists with agentSessionId
+		// Simulate a node click — activity member exists with sessionId
 		mockWorkflowCanvasOnNodeClick('node-1');
 
-		// Should use the node execution's session, NOT the parent task's session
+		// Should use the activity member's session, NOT the parent task's session
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-node-agent');
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Node');
 	});
