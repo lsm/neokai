@@ -85,6 +85,8 @@ export interface GoalsEditorProps {
 	onTriggerNow?: (goalId: string) => Promise<void>;
 	/** Set nextRunAt to a specific datetime for a recurring mission (optional) */
 	onScheduleNext?: (goalId: string, nextRunAt: number) => Promise<void>;
+	/** Handler for clicking a goal title to navigate to mission detail */
+	onGoalClick?: (goalId: string) => void;
 }
 
 // ─── Common Schedule Presets ──────────────────────────────────────────────────
@@ -138,7 +140,7 @@ function goalPriorityBorderClass(priority: GoalPriority): string {
 
 // ─── Status Indicator ─────────────────────────────────────────────────────────
 
-function StatusIndicator({ status }: { status: GoalStatus }) {
+export function StatusIndicator({ status }: { status: GoalStatus }) {
 	const config: Record<GoalStatus, { dot: string; label: string }> = {
 		active: { dot: 'bg-green-400', label: 'Active' },
 		completed: { dot: 'bg-gray-400', label: 'Completed' },
@@ -156,7 +158,7 @@ function StatusIndicator({ status }: { status: GoalStatus }) {
 
 // ─── Priority Badge ───────────────────────────────────────────────────────────
 
-function PriorityBadge({ priority }: { priority: GoalPriority }) {
+export function PriorityBadge({ priority }: { priority: GoalPriority }) {
 	const styles: Record<GoalPriority, string> = {
 		low: 'bg-gray-700 text-gray-300',
 		normal: 'bg-blue-900/50 text-blue-300',
@@ -172,7 +174,7 @@ function PriorityBadge({ priority }: { priority: GoalPriority }) {
 
 // ─── Mission Type Badge ───────────────────────────────────────────────────────
 
-function MissionTypeBadge({ type }: { type: MissionType }) {
+export function MissionTypeBadge({ type }: { type: MissionType }) {
 	const config: Record<MissionType, { label: string; style: string }> = {
 		one_shot: { label: 'One-Shot', style: 'bg-gray-700 text-gray-300' },
 		measurable: { label: 'Measurable', style: 'bg-purple-900/50 text-purple-300' },
@@ -191,7 +193,7 @@ function MissionTypeBadge({ type }: { type: MissionType }) {
 
 // ─── Autonomy Level Badge ─────────────────────────────────────────────────────
 
-function AutonomyBadge({ level }: { level: AutonomyLevel }) {
+export function AutonomyBadge({ level }: { level: AutonomyLevel }) {
 	const config: Record<AutonomyLevel, { label: string; style: string; title: string }> = {
 		supervised: {
 			label: 'Supervised',
@@ -218,7 +220,7 @@ function AutonomyBadge({ level }: { level: AutonomyLevel }) {
 
 // ─── Progress Bar ─────────────────────────────────────────────────────────────
 
-function ProgressBar({ progress }: { progress: number }) {
+export function ProgressBar({ progress }: { progress: number }) {
 	const getColor = (prog: number): string => {
 		if (prog < 30) return 'bg-red-500';
 		if (prog < 70) return 'bg-yellow-500';
@@ -266,7 +268,7 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 
 // ─── Short ID Badge ───────────────────────────────────────────────────────────
 
-function GoalShortIdBadge({ shortId }: { shortId: string }) {
+export function GoalShortIdBadge({ shortId }: { shortId: string }) {
 	const copied = useSignal(false);
 
 	const handleCopy = (e: MouseEvent) => {
@@ -371,7 +373,7 @@ function scheduleToPreset(schedule?: CronSchedule): string {
 		: 'custom';
 }
 
-interface GoalFormProps {
+export interface GoalFormProps {
 	initialTitle?: string;
 	initialDescription?: string;
 	initialPriority?: GoalPriority;
@@ -393,7 +395,7 @@ function newMetricEntry(metric: MissionMetric): MetricEntry {
 	return { id: `m-${++_metricKeyCounter}`, metric };
 }
 
-function GoalForm({
+export function GoalForm({
 	initialTitle = '',
 	initialDescription = '',
 	initialPriority = 'normal',
@@ -1086,7 +1088,7 @@ function CreateGoalWizard({ onSubmit, onCancel, isLoading }: CreateGoalWizardPro
 
 // ─── Metric Progress Display ──────────────────────────────────────────────────
 
-function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
+export function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
 	if (metrics.length === 0) return null;
 	return (
 		<div class="space-y-2">
@@ -1118,7 +1120,7 @@ function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
 
 // ─── Recurring Schedule Display ───────────────────────────────────────────────
 
-function RecurringScheduleInfo({ goal }: { goal: RoomGoal }) {
+export function RecurringScheduleInfo({ goal }: { goal: RoomGoal }) {
 	return (
 		<div class="space-y-2 text-sm">
 			{goal.schedule && (
@@ -1168,6 +1170,7 @@ interface GoalItemProps {
 	onLinkTask: (taskId: string) => Promise<void>;
 	isExpanded: boolean;
 	onToggleExpand: () => void;
+	onGoalClick?: (goalId: string) => void;
 	onListExecutions?: (goalId: string) => Promise<MissionExecution[]>;
 	onTriggerNow?: (goalId: string) => Promise<void>;
 	onScheduleNext?: (goalId: string, nextRunAt: number) => Promise<void>;
@@ -1182,6 +1185,7 @@ function GoalItem({
 	onLinkTask,
 	isExpanded,
 	onToggleExpand,
+	onGoalClick,
 	onListExecutions,
 	onTriggerNow,
 	onScheduleNext,
@@ -1332,7 +1336,19 @@ function GoalItem({
 					{/* Row 1: Title + actions */}
 					<div class="flex items-start justify-between gap-2 mb-1.5">
 						<div class="flex items-center gap-2 min-w-0">
-							<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							{onGoalClick ? (
+								<button
+									class="text-sm font-semibold text-gray-100 leading-snug hover:text-emerald-400 transition-colors text-left"
+									onClick={(e) => {
+										e.stopPropagation();
+										onGoalClick(goal.id);
+									}}
+								>
+									{goal.title}
+								</button>
+							) : (
+								<h4 class="text-sm font-semibold text-gray-100 leading-snug">{goal.title}</h4>
+							)}
 							{goal.shortId && <GoalShortIdBadge shortId={goal.shortId} />}
 						</div>
 						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -1951,6 +1967,7 @@ export function GoalsEditor({
 	onListExecutions,
 	onTriggerNow,
 	onScheduleNext,
+	onGoalClick,
 }: GoalsEditorProps) {
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
@@ -2044,6 +2061,7 @@ export function GoalsEditor({
 							onLinkTask={(taskId) => onLinkTask(goal.id, taskId)}
 							isExpanded={expandedGoalId === goal.id}
 							onToggleExpand={() => toggleExpand(goal.id)}
+							onGoalClick={onGoalClick}
 							onListExecutions={onListExecutions}
 							onTriggerNow={onTriggerNow}
 							onScheduleNext={onScheduleNext}

@@ -151,11 +151,11 @@ export class SpaceRuntimeService {
 		log.info('SpaceRuntimeService started');
 	}
 
-	/** Stop the underlying SpaceRuntime tick loop. */
-	stop(): void {
+	/** Stop the underlying SpaceRuntime tick loop and await in-flight ticks. */
+	async stop(): Promise<void> {
 		if (!this.started) return;
 		this.started = false;
-		this.runtime.stop();
+		await this.runtime.stop();
 		for (const unsub of this.unsubscribers) {
 			unsub();
 		}

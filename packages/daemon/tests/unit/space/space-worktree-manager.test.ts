@@ -5,6 +5,9 @@
  * operations.  Each test suite creates its own isolated git repo and SQLite
  * database so that tests are fully independent.
  *
+ * TEST_WORKTREE_BASE_DIR is set so worktrees are created under the temp
+ * directory instead of ~/.neokai.
+ *
  * Covered scenarios:
  * - createTaskWorktree: creates filesystem worktree + DB record
  * - createTaskWorktree: idempotent (returns existing record on second call)
@@ -25,6 +28,7 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorktreeManager } from '../../../src/lib/space/managers/space-worktree-manager.ts';
 import { worktreeSlug } from '../../../src/lib/space/worktree-slug.ts';
+import { getProjectShortKey } from '../../../src/lib/worktree-path-utils.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,7 +46,7 @@ async function makeGitRepo(label: string): Promise<string> {
 
 	execSync('git -c init.defaultBranch=main init', { cwd: dir, stdio: 'pipe' });
 	execSync('git config user.name "Test User"', { cwd: dir });
-	execSync('git config user.email "test@example.com"', { cwd: dir });
+	execSync('git config user.email "test@example.com"');
 
 	// Create an initial commit so HEAD exists and worktrees can be based on it
 	writeFileSync(join(dir, 'README.md'), '# test\n');
@@ -64,8 +68,8 @@ function makeDb(workspacePath: string): { db: BunDatabase; spaceId: string } {
 	const spaceId = `space-${Math.random().toString(36).slice(2)}`;
 	db.prepare(
 		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-     allowed_models, session_ids, slug, status, created_at, updated_at)
-     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	     allowed_models, session_ids, slug, status, created_at, updated_at)
+	     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
 	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 
 	return { db, spaceId };
@@ -78,19 +82,25 @@ function makeDb(workspacePath: string): { db: BunDatabase; spaceId: string } {
 function seedTask(db: BunDatabase, spaceId: string, taskId: string, taskNumber: number): string {
 	db.prepare(
 		`INSERT INTO space_tasks
-       (id, space_id, task_number, title, description, status, priority, depends_on, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '', 'open', 'normal', '[]', ?, ?)`
+	       (id, space_id, task_number, title, description, status, priority, depends_on, created_at, updated_at)
+	     VALUES (?, ?, ?, ?, '', 'open', 'normal', '[]', ?, ?)`
 	).run(taskId, spaceId, taskNumber, `Task ${taskNumber}`, Date.now(), Date.now());
 	return taskId;
 }
 
 let repoDir: string;
+let testBaseDir: string;
 let db: BunDatabase;
 let spaceId: string;
 let manager: SpaceWorktreeManager;
 
 beforeEach(async () => {
 	repoDir = await makeGitRepo('repo');
+	// Set TEST_WORKTREE_BASE_DIR so worktrees go to a controlled temp location
+	testBaseDir = join(TMP_ROOT, `neokai-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	mkdirSync(testBaseDir, { recursive: true });
+	process.env.TEST_WORKTREE_BASE_DIR = testBaseDir;
+
 	const setup = makeDb(repoDir);
 	db = setup.db;
 	spaceId = setup.spaceId;
@@ -99,8 +109,14 @@ beforeEach(async () => {
 
 afterEach(() => {
 	db.close();
+	delete process.env.TEST_WORKTREE_BASE_DIR;
 	try {
 		rmSync(repoDir, { recursive: true, force: true });
+	} catch {
+		// Ignore cleanup failures in CI
+	}
+	try {
+		rmSync(testBaseDir, { recursive: true, force: true });
 	} catch {
 		// Ignore cleanup failures in CI
 	}
@@ -116,8 +132,18 @@ describe('createTaskWorktree', () => {
 		const result = await manager.createTaskWorktree(spaceId, taskId, 'Add feature', 1);
 
 		expect(result.slug).toBe(worktreeSlug('Add feature', 1));
-		expect(result.path).toContain('.worktrees');
 		expect(result.path).toContain(result.slug);
+		expect(result.path).toContain('worktrees');
+		expect(existsSync(result.path)).toBe(true);
+	});
+
+	test('creates worktree under TEST_WORKTREE_BASE_DIR, not inside source repo', async () => {
+		const taskId = seedTask(db, spaceId, 'task-001b', 1);
+		const result = await manager.createTaskWorktree(spaceId, taskId, 'Feature B', 1);
+
+		// Path should be under testBaseDir, not under repoDir
+		expect(result.path).toContain(testBaseDir);
+		expect(result.path).not.toContain(repoDir);
 		expect(existsSync(result.path)).toBe(true);
 	});
 
@@ -221,7 +247,8 @@ describe('createTaskWorktree', () => {
 	test('recovers from stale directory left by a crashed previous run', async () => {
 		const taskId = seedTask(db, spaceId, 'task-stale-dir', 99);
 		const slug = worktreeSlug('Stale Dir Task', 99);
-		const expectedPath = join(repoDir, '.worktrees', slug);
+		const shortKey = getProjectShortKey(repoDir);
+		const expectedPath = join(testBaseDir, shortKey, 'worktrees', slug);
 
 		// Simulate a partial previous run: directory exists but no DB record
 		mkdirSync(expectedPath, { recursive: true });
@@ -233,12 +260,9 @@ describe('createTaskWorktree', () => {
 	});
 
 	test('recovers stale branch via git worktree prune when branch is in a prunable worktree', async () => {
-		// Simulate a previous crash: create a worktree, then delete its directory
-		// without pruning, leaving git with a stale worktree reference. The branch
-		// `git branch -D` will fail on the first attempt ("used by worktree"), but
-		// after `git worktree prune` the stale reference is removed and the second
-		// attempt should succeed, allowing a fresh worktree to be created.
-		const stalePath = join(repoDir, '.worktrees', 'prune-test-stale');
+		const shortKey = getProjectShortKey(repoDir);
+		const stalePath = join(testBaseDir, shortKey, 'worktrees', 'prune-test-stale');
+		mkdirSync(join(testBaseDir, shortKey, 'worktrees'), { recursive: true });
 		execSync(`git worktree add "${stalePath}" -b space/prune-test HEAD`, { cwd: repoDir });
 		// Verify the branch exists
 		const branchesBeforeRm = execSync('git branch --list', { cwd: repoDir }).toString();
@@ -366,8 +390,8 @@ describe('listWorktrees', () => {
 		const otherSpaceId = `space-other-${Math.random().toString(36).slice(2)}`;
 		db.prepare(
 			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
-       allowed_models, session_ids, slug, status, created_at, updated_at)
-       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
 		).run(
 			otherSpaceId,
 			`/tmp/other-workspace-${Math.random()}`,

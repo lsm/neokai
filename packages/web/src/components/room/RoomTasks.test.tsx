@@ -824,7 +824,7 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(badge);
 
-			expect(onGoalClick).toHaveBeenCalled();
+			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
 		});
 
 		it('should NOT call onTaskClick when goal badge is clicked (stopPropagation)', () => {
@@ -847,7 +847,7 @@ describe('RoomTasks', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(badge);
 
-			expect(onGoalClick).toHaveBeenCalled();
+			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
 			expect(onTaskClick).not.toHaveBeenCalled();
 		});
 

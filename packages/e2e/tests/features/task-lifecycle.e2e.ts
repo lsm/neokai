@@ -176,7 +176,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		});
 
 		// The message input should be enabled — completed tasks can send messages to reactivate
-		const textarea = page.locator('textarea').first();
+		const textarea = page.locator('textarea:visible').first();
 		await expect(textarea).toBeEnabled({ timeout: 5000 });
 
 		// Placeholder should mention reactivation
