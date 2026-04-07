@@ -524,6 +524,42 @@ describe('space-task-handlers', () => {
 			});
 		});
 
+		it('applies non-status fields (e.g. taskAgentSessionId) after status transition', async () => {
+			// setTaskStatus handles the status transition but does not know about
+			// taskAgentSessionId. The handler must follow up with updateTask to
+			// apply the remaining fields.
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...mockTask,
+				status: 'in_progress' as const,
+			});
+			(taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+				async (_taskId: string, params: Record<string, unknown>) => ({
+					...mockTask,
+					status: 'in_progress' as const,
+					...params,
+				})
+			);
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'in_progress',
+				taskAgentSessionId: 'session-abc',
+			});
+
+			// setTaskStatus was called for the transition
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'in_progress', {
+				result: undefined,
+			});
+			// updateTask was called with the non-status fields (no status, no result)
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+				taskAgentSessionId: 'session-abc',
+			});
+			// Final result has both fields
+			expect((result as SpaceTask).status).toBe('in_progress');
+			expect((result as SpaceTask).taskAgentSessionId).toBe('session-abc');
+		});
+
 		it('throws when spaceId is missing', async () => {
 			await expect(call('spaceTask.update', { taskId: 'task-1', title: 'X' })).rejects.toThrow(
 				'spaceId is required'

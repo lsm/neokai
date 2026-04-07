@@ -153,6 +153,15 @@ export function setupSpaceTaskHandlers(
 				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
 					result: updateParams.result ?? undefined,
 				});
+
+				// When a status transition is combined with other field updates
+				// (e.g. taskAgentSessionId), those fields are silently dropped by
+				// setTaskStatus. Apply them in a follow-up updateTask call so
+				// callers can atomically set status + metadata in one RPC.
+				const { status: _s, result: _r, ...otherFields } = updateParams;
+				if (Object.keys(otherFields).length > 0) {
+					task = await taskManager.updateTask(taskId, otherFields);
+				}
 			} else {
 				// Status is the same — treat as a regular field update.
 				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
