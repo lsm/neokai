@@ -80,6 +80,13 @@ export interface WorkflowCanvasProps {
 	onChannelSelect?: (channelId: string | null) => void;
 	/** Currently selected channel ID for highlighting. */
 	selectedChannelId?: string | null;
+	/**
+	 * When true, disables all editing affordances:
+	 * - No keyboard Delete/Backspace handler for node deletion
+	 * - No port drag-to-connect handlers
+	 * Node selection (onNodeSelect) still works in read-only mode.
+	 */
+	readOnly?: boolean;
 }
 
 // ---- Ghost edge rendering ----
@@ -142,7 +149,7 @@ function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null
  *
  * Task Agent channels use 'task-agent' as the special source identifier.
  * Other channels resolve agent roles to their containing node IDs using the
- * SpaceAgent.agents array which has role information.
+ * SpaceAgent.agents array which has slot name information.
  */
 export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflowChannel[] {
 	const result: ResolvedWorkflowChannel[] = [];
@@ -150,14 +157,14 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 	// Track seen (fromStepId, toStepId) pairs to avoid duplicates
 	const seenEdges = new Set<string>();
 
-	// Build a map of agent role -> node localId for quick lookup
-	// This is used to resolve channel endpoints that reference agent roles
-	const agentRoleToNodeId = new Map<string, string>();
+	// Build a map of agent slot name -> node localId for quick lookup
+	// This is used to resolve channel endpoints that reference agent slot names
+	const agentSlotNameToNodeId = new Map<string, string>();
 	for (const node of nodes) {
 		// node.agents is SpaceAgent[] which has .name
 		if (node.agents) {
 			for (const agent of node.agents) {
-				agentRoleToNodeId.set(agent.name, node.step.localId);
+				agentSlotNameToNodeId.set(agent.name, node.step.localId);
 			}
 		}
 	}
@@ -177,15 +184,15 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 				// Wildcard: from the node itself
 				fromNodeId = node.step.localId;
 			} else {
-				// Resolve agent role to node ID
-				fromNodeId = agentRoleToNodeId.get(channel.from) ?? null;
+				// Resolve agent slot name to node ID
+				fromNodeId = agentSlotNameToNodeId.get(channel.from) ?? null;
 			}
 
 			// Resolve 'to' endpoints (can be a string or array of strings)
 			const toTargets: (string | null)[] =
 				typeof channel.to === 'string'
-					? [resolveToTarget(channel.to, node, agentRoleToNodeId)]
-					: channel.to.map((t) => resolveToTarget(t, node, agentRoleToNodeId));
+					? [resolveToTarget(channel.to, node, agentSlotNameToNodeId)]
+					: channel.to.map((t) => resolveToTarget(t, node, agentSlotNameToNodeId));
 
 			// Skip if we couldn't resolve the 'from' endpoint
 			if (!fromNodeId) continue;
@@ -236,7 +243,7 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
 function resolveToTarget(
 	toValue: string,
 	node: WorkflowNodeData,
-	agentRoleToNodeId: Map<string, string>
+	agentSlotNameToNodeId: Map<string, string>
 ): string | null {
 	if (toValue === 'task-agent') {
 		return 'task-agent';
@@ -245,8 +252,8 @@ function resolveToTarget(
 		// Wildcard: to the node itself
 		return node.step.localId;
 	}
-	// Resolve agent role to node ID
-	return agentRoleToNodeId.get(toValue) ?? null;
+	// Resolve agent slot name to node ID
+	return agentSlotNameToNodeId.get(toValue) ?? null;
 }
 
 // ============================================================================
@@ -268,6 +275,7 @@ export function WorkflowCanvas({
 	onDeleteEdge,
 	onChannelSelect,
 	selectedChannelId,
+	readOnly = false,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -413,7 +421,10 @@ export function WorkflowCanvas({
 	// ---- Keyboard: Delete / Backspace removes the selected node ----
 	// (Edge deletion is handled by EdgeRenderer's own listener. Selections are mutually
 	// exclusive so at most one handler fires per keystroke.)
+	// Skipped in readOnly mode — no destructive editing affordances.
 	useEffect(() => {
+		if (readOnly) return;
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 			const target = e.target as HTMLElement;
@@ -431,7 +442,7 @@ export function WorkflowCanvas({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []);
+	}, [readOnly]);
 
 	// ---- Edge layer: committed edges (EdgeRenderer) + ghost edge during drag + channel edges ----
 	const edgeLayer = useCallback(
@@ -446,6 +457,7 @@ export function WorkflowCanvas({
 					channels={effectiveChannels}
 					selectedChannelId={selectedChannelId}
 					onChannelSelect={onChannelSelect ?? undefined}
+					readOnly={readOnly}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
@@ -462,6 +474,7 @@ export function WorkflowCanvas({
 			dragState,
 			selectedChannelId,
 			onChannelSelect,
+			readOnly,
 		]
 	);
 
@@ -489,9 +502,10 @@ export function WorkflowCanvas({
 						isSelected={selectedNodeId === stepId}
 						isDropTarget={isDropTarget}
 						onClick={handleNodeSelect}
-						onPortMouseDown={handlePortMouseDown}
-						onPortMouseEnter={handlePortMouseEnter}
-						onPortMouseLeave={handlePortMouseLeave}
+						onPortMouseDown={readOnly ? undefined : handlePortMouseDown}
+						onPortMouseEnter={readOnly ? undefined : handlePortMouseEnter}
+						onPortMouseLeave={readOnly ? undefined : handlePortMouseLeave}
+						draggable={!readOnly}
 					/>
 				);
 			})}

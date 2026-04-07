@@ -726,7 +726,7 @@ describe('WorkflowNode — agent completion state', () => {
 		expect(getAllByTestId('agent-status-spinner')).toHaveLength(1);
 	});
 
-	it('applies green border when all agents done', () => {
+	it('applies gray border when all agents done (green is start-node only)', () => {
 		const states: AgentTaskState[] = [
 			{ agentName: 'coder', status: 'done' },
 			{ agentName: 'reviewer', status: 'done' },
@@ -735,7 +735,7 @@ describe('WorkflowNode — agent completion state', () => {
 			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
 		);
 		const node = getByTestId('workflow-node-step-multi');
-		expect(node.className).toContain('green');
+		expect(node.className).not.toContain('green');
 	});
 
 	it('does not apply green border when not all done', () => {
