@@ -136,6 +136,9 @@ export function useViewportSafety(): void {
 				savedBottomBarHeight =
 					document.documentElement.style.getPropertyValue('--bottom-bar-height');
 				document.documentElement.style.setProperty('--bottom-bar-height', '0px');
+			} else if (kbVisible && keyboardOpen) {
+				// Keep --safe-height in sync as keyboard height may change
+				document.documentElement.style.setProperty('--safe-height', `${vv.height}px`);
 			} else if (!kbVisible && keyboardOpen) {
 				// Keyboard just closed
 				keyboardOpen = false;

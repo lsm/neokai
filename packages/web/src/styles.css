@@ -138,14 +138,10 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 	/* Prevent page-level scrolling - only message container should scroll */
 	overflow: hidden;
-	/* Fallback for older browsers that don't support svh */
+	/* Use dynamic viewport height for mobile Safari (accounts for address bar) */
+	height: 100dvh;
+	/* Fallback for browsers that don't support dvh */
 	height: 100vh;
-	/* Static small viewport height — dvh causes layout recalculation jank
-	   when the browser toolbar animates in/out. svh is stable; the root
-	   container height is managed via .h-safe-screen on iPad Safari.
-	   Tradeoff: on mobile browsers a small gap may appear when the address
-	   bar collapses — intentional, as .h-safe-screen handles that case. */
-	height: 100svh;
 	/* Prevent overscroll bounce on body - scrollable children handle their own */
 	overscroll-behavior: none;
 	/* Allow touch manipulation (zoom, pan) but let children control scroll */
@@ -669,4 +665,14 @@ a:focus-visible {
 
 html.keyboard-open [data-testid="bottom-tab-bar"] {
 	transform: translateY(100%);
+}
+
+/**
+ * When the keyboard is open, remove safe-area-inset-bottom padding from the
+ * chat footer. The keyboard covers the home indicator area, so the extra
+ * padding pushes content up unnecessarily.
+ */
+html.keyboard-open .chat-footer,
+html.keyboard-open .chat-footer > div {
+	padding-bottom: 0px !important;
 }

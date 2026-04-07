@@ -356,17 +356,14 @@ describe('SpaceTaskPane — composer', () => {
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
 
-	it('does not render composer when task has no session yet', () => {
+	it('renders composer with auto-ensure placeholder when task has no session yet', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
-		const { queryByPlaceholderText, queryByText, getByText } = render(
-			<SpaceTaskPane taskId="task-1" />
-		);
+		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
 
 		expect(
-			queryByPlaceholderText('Message the task agent (Enter to send, Shift+Enter for newline)')
-		).toBeNull();
-		expect(queryByText('Send to Task Agent')).toBeNull();
-		expect(getByText('Waiting for task thread before messages can be sent.')).toBeTruthy();
+			getByPlaceholderText('Type a message — a task agent session will be created on send')
+		).toBeTruthy();
+		expect(getByText('Send to Task Agent')).toBeTruthy();
 		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
 

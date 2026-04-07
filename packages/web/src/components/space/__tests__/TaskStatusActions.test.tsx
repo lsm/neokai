@@ -19,8 +19,14 @@ describe('VALID_TASK_TRANSITIONS', () => {
 		expect(VALID_TASK_TRANSITIONS.open).toEqual(['in_progress', 'blocked', 'done', 'cancelled']);
 	});
 
-	it('in_progress can transition to open, done, blocked, cancelled', () => {
-		expect(VALID_TASK_TRANSITIONS.in_progress).toEqual(['open', 'done', 'blocked', 'cancelled']);
+	it('in_progress can transition to open, review, done, blocked, cancelled', () => {
+		expect(VALID_TASK_TRANSITIONS.in_progress).toEqual([
+			'open',
+			'review',
+			'done',
+			'blocked',
+			'cancelled',
+		]);
 	});
 
 	it('done can transition to in_progress and archived', () => {
@@ -55,6 +61,7 @@ describe('getTransitionActions', () => {
 		const actions = getTransitionActions('in_progress');
 		expect(actions).toEqual([
 			{ target: 'open', label: 'Pause' },
+			{ target: 'review', label: 'Submit for Review' },
 			{ target: 'done', label: 'Mark Done' },
 			{ target: 'blocked', label: 'Block' },
 			{ target: 'cancelled', label: 'Cancel' },
