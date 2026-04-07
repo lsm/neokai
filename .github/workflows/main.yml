@@ -112,14 +112,24 @@ jobs:
         run: bun run typecheck
         continue-on-error: true
 
+      - name: Verify exact version pins
+        id: exact-pins
+        run: |
+          if grep -rn '"[~^][0-9]' packages/*/package.json package.json; then
+            echo "ERROR: Non-exact version pins found. Use exact versions only (no ^ or ~)."
+            exit 1
+          fi
+        continue-on-error: true
+
       - name: Check for failures
-        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure'
+        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.exact-pins.outcome == 'failure'
         run: |
           echo "One or more checks failed:"
           echo "  Lint: ${{ steps.lint.outcome }}"
           echo "  Format: ${{ steps.format.outcome }}"
           echo "  Knip: ${{ steps.knip.outcome }}"
           echo "  Typecheck: ${{ steps.typecheck.outcome }}"
+          echo "  Exact pins: ${{ steps.exact-pins.outcome }}"
           exit 1
 
   # ============================================

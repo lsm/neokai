@@ -27,6 +27,10 @@ import type { DaemonAppContext } from '../../../src/app';
 // Temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
+// MiniMax API can be slow (>60s) in CI; use a generous idle timeout to avoid false failures.
+// Each test has a 90s budget, so 80s leaves 10s for teardown.
+const PROVIDER_IDLE_TIMEOUT = 80000;
+
 /**
  * Hard-fail if credentials are absent — per CLAUDE.md policy.
  * Tests must fail with clear messages when secrets are missing, not silently skip.
@@ -138,7 +142,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Send a message to start the query and establish the SDK session
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId);
+		await waitForIdle(daemon, sessionId, PROVIDER_IDLE_TIMEOUT);
 
 		// Wait for sdkSessionId to be captured from system:init
 		const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
@@ -154,7 +158,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Re-read sdkSessionId — it should be the same
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(sdkIdBefore);
-	}, 90000);
+	}, 120000);
 
 	test('sdkSessionId is preserved after cross-provider model switch (GLM -> MiniMax)', async () => {
 		// Create session with GLM
@@ -172,7 +176,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Send a message to start the query and establish the SDK session
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId);
+		await waitForIdle(daemon, sessionId, PROVIDER_IDLE_TIMEOUT);
 
 		// Wait for sdkSessionId to be captured from system:init
 		const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
@@ -188,7 +192,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// sdkSessionId should be preserved
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(sdkIdBefore);
-	}, 90000);
+	}, 120000);
 
 	test('message count does not reset after model switch', async () => {
 		// Create session with GLM
@@ -206,7 +210,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Send a message and wait for idle
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId);
+		await waitForIdle(daemon, sessionId, PROVIDER_IDLE_TIMEOUT);
 
 		// Get message count before switch — must have messages
 		const countBefore = await getMessageCount(daemon, sessionId);
@@ -222,7 +226,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Get message count after switch — should not reset
 		const countAfter = await getMessageCount(daemon, sessionId);
 		expect(countAfter).toBeGreaterThanOrEqual(countBefore);
-	}, 90000);
+	}, 120000);
 
 	test('sdkSessionId unchanged after post-switch message completes (cross-provider)', async () => {
 		// Create session with MiniMax
@@ -240,7 +244,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Send a message to establish the SDK session and wait for idle
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok".');
-		await waitForIdle(daemon, sessionId);
+		await waitForIdle(daemon, sessionId, PROVIDER_IDLE_TIMEOUT);
 
 		// Read sdkSessionId from DB via session.get before the switch
 		const before = (await daemon.messageHub.request('session.get', {
@@ -270,7 +274,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Same ID proves the SDK session was resumed, not recreated
 		expect(idAfter).toBe(idBefore);
-	}, 90000);
+	}, 120000);
 
 	test('sdkSessionId preserved across multiple rapid switches', async () => {
 		// Create session with GLM
@@ -288,7 +292,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Send a message to establish the SDK session
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId);
+		await waitForIdle(daemon, sessionId, PROVIDER_IDLE_TIMEOUT);
 
 		// Capture the original sdkSessionId
 		const originalSdkId = await waitForSDKSessionEstablished(daemon, sessionId);
@@ -312,7 +316,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// sdkSessionId should still be the same after all switches
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(originalSdkId);
-	}, 90000);
+	}, 120000);
 
 	test('DB persists sdkSessionId correctly after model switch', async () => {
 		// Create session with MiniMax
@@ -330,7 +334,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Send a message to start the query
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId);
+		await waitForIdle(daemon, sessionId, PROVIDER_IDLE_TIMEOUT);
 
 		// Get sdkSessionId from in-memory agent session
 		const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
@@ -349,5 +353,5 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		})) as { session: { sdkSessionId?: string } };
 
 		expect(sessionResult.session.sdkSessionId).toBe(sdkIdBefore);
-	}, 90000);
+	}, 120000);
 });
