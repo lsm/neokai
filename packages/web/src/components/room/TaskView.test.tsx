@@ -2662,8 +2662,6 @@ describe('TaskView — SetStatusModal', () => {
 	});
 });
 
-import { currentRoomTabSignal } from '../../lib/signals.ts';
-
 describe('TaskView — goal badge', () => {
 	beforeEach(() => {
 		mockRequest.mockReset();
@@ -2676,13 +2674,11 @@ describe('TaskView — goal badge', () => {
 		vi.mocked(useAutoScroll).mockClear();
 		// Clear goals between tests
 		roomStore.goalStore.applySnapshot([]);
-		currentRoomTabSignal.value = null;
 	});
 
 	afterEach(() => {
 		cleanup();
 		roomStore.goalStore.applySnapshot([]);
-		currentRoomTabSignal.value = null;
 	});
 
 	it('shows goal badge when task is linked to a goal', async () => {

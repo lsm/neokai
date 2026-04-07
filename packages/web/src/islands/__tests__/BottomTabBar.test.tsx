@@ -16,8 +16,7 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToRooms: vi.fn(),
 	navigateToInbox: vi.fn(),
 	navigateToSpaces: vi.fn(),
-	navigateToRoom: vi.fn(),
-	navigateToRoomAgent: vi.fn(),
+	navigateToRoomTab: vi.fn(),
 }));
 
 // Mock inboxStore
@@ -45,7 +44,6 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
-	currentRoomTabSignal,
 	currentRoomActiveTabSignal,
 	currentRoomAgentActiveSignal,
 } from '../../lib/signals.ts';
@@ -54,8 +52,7 @@ import {
 	navigateToRooms,
 	navigateToSessions,
 	navigateToSettings,
-	navigateToRoom,
-	navigateToRoomAgent,
+	navigateToRoomTab,
 } from '../../lib/router.ts';
 
 describe('BottomTabBar', () => {
@@ -64,7 +61,6 @@ describe('BottomTabBar', () => {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
-		currentRoomTabSignal.value = null;
 		currentRoomActiveTabSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
 		mockItemsSignal.value = [];
@@ -378,52 +374,49 @@ describe('BottomTabBar', () => {
 			expect(agentsTab.getAttribute('aria-selected')).toBe('false');
 		});
 
-		it('should call navigateToRoom when Overview tab is clicked', () => {
+		it('should call navigateToRoomTab with overview when Overview tab is clicked', () => {
 			render(<BottomTabBar />);
 
 			const overviewTab = screen.getByRole('tab', { name: 'Overview' });
 			fireEvent.click(overviewTab);
 
-			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
+			expect(navigateToRoomTab).toHaveBeenCalledWith(ROOM_ID, 'overview');
 		});
 
-		it('should call navigateToRoom and set currentRoomTabSignal to agents when Agents tab is clicked', () => {
+		it('should call navigateToRoomTab with agents when Agents tab is clicked', () => {
 			render(<BottomTabBar />);
 
 			const agentsTab = screen.getByRole('tab', { name: 'Agents' });
 			fireEvent.click(agentsTab);
 
-			expect(currentRoomTabSignal.value).toBe('agents');
-			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
+			expect(navigateToRoomTab).toHaveBeenCalledWith(ROOM_ID, 'agents');
 		});
 
-		it('should call navigateToRoom and set currentRoomTabSignal to tasks when Tasks tab is clicked', () => {
+		it('should call navigateToRoomTab with tasks when Tasks tab is clicked', () => {
 			render(<BottomTabBar />);
 
 			const tasksTab = screen.getByRole('tab', { name: 'Tasks' });
 			fireEvent.click(tasksTab);
 
-			expect(currentRoomTabSignal.value).toBe('tasks');
-			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
+			expect(navigateToRoomTab).toHaveBeenCalledWith(ROOM_ID, 'tasks');
 		});
 
-		it('should call navigateToRoom with roomId and set currentRoomTabSignal to goals when Missions tab is clicked', () => {
+		it('should call navigateToRoomTab with goals when Missions tab is clicked', () => {
 			render(<BottomTabBar />);
 
 			const missionsTab = screen.getByRole('tab', { name: 'Missions' });
 			fireEvent.click(missionsTab);
 
-			expect(currentRoomTabSignal.value).toBe('goals');
-			expect(navigateToRoom).toHaveBeenCalledWith(ROOM_ID);
+			expect(navigateToRoomTab).toHaveBeenCalledWith(ROOM_ID, 'goals');
 		});
 
-		it('should call navigateToRoomAgent when Chat tab is clicked', () => {
+		it('should call navigateToRoomTab with chat when Chat tab is clicked', () => {
 			render(<BottomTabBar />);
 
 			const chatTab = screen.getByRole('tab', { name: 'Coord.' });
 			fireEvent.click(chatTab);
 
-			expect(navigateToRoomAgent).toHaveBeenCalledWith(ROOM_ID);
+			expect(navigateToRoomTab).toHaveBeenCalledWith(ROOM_ID, 'chat');
 		});
 
 		it('should mark Missions tab as active when currentRoomActiveTabSignal is goals', () => {

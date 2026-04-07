@@ -58,12 +58,7 @@ export const contextPanelOpenSignal = signal<boolean>(false);
 // Create Room modal open state - shared between ContextPanel and Lobby
 export const createRoomModalSignal = signal<boolean>(false);
 
-// Room tab navigation signal - set this to navigate to a specific room tab
-// Room.tsx watches this and switches activeTab accordingly, then clears it
-export const currentRoomTabSignal = signal<string | null>(null);
-
 // Persistent signal tracking the current room's active tab
-// This persists across renders unlike currentRoomTabSignal which is transient
 export const currentRoomActiveTabSignal = signal<string | null>(null);
 
 // Whether the room agent chat tab is active (driven by /room/:roomId/agent URL)
