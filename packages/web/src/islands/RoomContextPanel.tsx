@@ -172,6 +172,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			</button>
 
 			<button
+				data-testid="sidebar-coordinator-button"
 				onClick={handleRoomAgentClick}
 				class={cn(
 					'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',

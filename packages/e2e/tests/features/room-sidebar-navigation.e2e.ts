@@ -73,19 +73,19 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		});
 	});
 
-	test('Room Agent URL is /room/:id/agent and survives page refresh', async ({ page }) => {
+	test('Coordinator URL is /room/:id/agent and survives page refresh', async ({ page }) => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
-		// Click "Room Agent" in sidebar
-		const roomAgentButton = page.locator('button', { hasText: 'Room Agent' });
-		await expect(roomAgentButton).toBeVisible({ timeout: 10000 });
-		await roomAgentButton.click();
+		// Click "Coordinator" in sidebar via data-testid (scoped, DOM-order-independent)
+		const coordinatorButton = page.getByTestId('sidebar-coordinator-button');
+		await expect(coordinatorButton).toBeVisible({ timeout: 10000 });
+		await coordinatorButton.click();
 
 		// Verify URL changed to /room/:id/agent
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 5000 });
 
-		// Verify Room Agent chat view is shown (ChatContainer renders a textarea)
+		// Verify Coordinator chat view is shown (ChatContainer renders a textarea)
 		await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 });
 
 		// Reload page
@@ -95,7 +95,7 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		// Verify URL is preserved after reload
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`));
 
-		// Verify Room Agent chat view is still shown
+		// Verify Coordinator chat view is still shown
 		await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 });
 	});
 
