@@ -3,7 +3,6 @@ import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
 import type {
-	SpaceTask,
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
 	SpaceTaskPriority,
@@ -283,12 +282,17 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					? 'View Agent Session'
 					: 'Open Space Agent';
 
-	const handleNodeClick = (nodeId: string, nodeTasks: SpaceTask[]) => {
-		// Find the first task for this node that has an agent session open
-		const nodeTask = nodeTasks.find((t) => t.taskAgentSessionId);
-		if (nodeTask?.taskAgentSessionId) {
-			spaceOverlayAgentNameSignal.value = nodeTask.title ?? `Node ${nodeId}`;
-			spaceOverlaySessionIdSignal.value = nodeTask.taskAgentSessionId;
+	const handleNodeClick = (nodeId: string) => {
+		// Look up node executions for the clicked node (filtered to this run)
+		const nodeExecs = spaceStore.nodeExecutionsByNodeId.value.get(nodeId) ?? [];
+		const runExec = task?.workflowRunId
+			? nodeExecs.find((e) => e.workflowRunId === task.workflowRunId && e.agentSessionId)
+			: null;
+		if (runExec?.agentSessionId) {
+			// Find the workflow node name for the label
+			const nodeName = workflow?.nodes.find((n) => n.id === nodeId)?.name;
+			spaceOverlayAgentNameSignal.value = nodeName ?? `Node ${nodeId}`;
+			spaceOverlaySessionIdSignal.value = runExec.agentSessionId;
 		} else if (agentSessionId) {
 			// Fall back to the task agent session
 			spaceOverlayAgentNameSignal.value = agentActionLabel;

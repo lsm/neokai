@@ -38,6 +38,7 @@ let mockAgents: ReturnType<typeof signal<SpaceAgent[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockWorkflowRuns: ReturnType<typeof signal<SpaceWorkflowRun[]>>;
 let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMember[]>>>;
+let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 const mockEnsureTaskAgentSession = vi.fn();
@@ -53,6 +54,7 @@ vi.mock('../../../lib/space-store', () => ({
 			workflows: mockWorkflows,
 			workflowRuns: mockWorkflowRuns,
 			taskActivity: mockTaskActivity,
+			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
 			updateTask: mockUpdateTask,
 			ensureTaskAgentSession: mockEnsureTaskAgentSession,
 			sendTaskMessage: mockSendTaskMessage,
@@ -98,7 +100,7 @@ vi.mock('../ReadOnlyWorkflowCanvas', () => ({
 		workflowId: string;
 		runId?: string | null;
 		spaceId: string;
-		onNodeClick?: (nodeId: string, tasks: unknown[]) => void;
+		onNodeClick?: (nodeId: string) => void;
 		class?: string;
 	}) => {
 		// Expose the onNodeClick for testing
@@ -124,6 +126,7 @@ mockAgents = signal<SpaceAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockWorkflowRuns = signal<SpaceWorkflowRun[]>([]);
 mockTaskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
+mockNodeExecutionsByNodeId = signal<Map<string, unknown[]>>(new Map());
 
 import { SpaceTaskPane } from '../SpaceTaskPane';
 
@@ -396,6 +399,8 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		cleanup();
 		mockTasks.value = [];
 		mockWorkflowRuns.value = [];
+		mockWorkflows.value = [];
+		mockNodeExecutionsByNodeId.value = new Map();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
 			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
@@ -504,7 +509,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(btn.getAttribute('aria-pressed')).toBe('true');
 	});
 
-	it('canvas node click opens overlay with the task agent session (fallback when no node-level session)', () => {
+	it('canvas node click opens overlay with the task agent session (fallback when no node execution)', () => {
 		mockTasks.value = [
 			makeTask({
 				workflowRunId: 'run-1',
@@ -513,25 +518,20 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			}),
 		];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		// No node executions → falls back to task agent session
+		mockNodeExecutionsByNodeId.value = new Map();
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
-		// Simulate a node click with no node-specific task sessions — falls back to task session
-		mockWorkflowCanvasOnNodeClick('node-1', []);
+		// Simulate a node click — no node execution exists, falls back to task session
+		mockWorkflowCanvasOnNodeClick('node-1');
 
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-task');
 	});
 
 	it('canvas node click opens overlay with the node-specific agent session (primary path)', () => {
-		const nodeTask = makeTask({
-			id: 'node-task-1',
-			title: 'Coder Node',
-			workflowRunId: 'run-1',
-			taskAgentSessionId: 'session-node-agent',
-			activeSession: null,
-		});
 		mockTasks.value = [
 			makeTask({
 				id: 'task-1',
@@ -541,15 +541,52 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			}),
 		];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockWorkflows.value = [
+			{
+				id: 'workflow-1',
+				spaceId: 'space-1',
+				name: 'Wf',
+				description: '',
+				nodes: [{ id: 'node-1', name: 'Coder Node', agents: [] }],
+				startNodeId: 'node-1',
+				channels: [],
+				gates: [],
+				tags: [],
+				createdAt: 1000,
+				updatedAt: 1000,
+			},
+		];
+		// node-1 has a NodeExecution with an agentSessionId
+		mockNodeExecutionsByNodeId.value = new Map([
+			[
+				'node-1',
+				[
+					{
+						id: 'ne-1',
+						workflowRunId: 'run-1',
+						workflowNodeId: 'node-1',
+						agentName: 'coder',
+						agentId: 'ag-1',
+						agentSessionId: 'session-node-agent',
+						status: 'in_progress',
+						result: null,
+						createdAt: 1000,
+						startedAt: null,
+						completedAt: null,
+						updatedAt: 1000,
+					},
+				],
+			],
+		]);
 		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
 
 		fireEvent.click(getByTestId('canvas-toggle'));
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
-		// Simulate a node click with a node-level task that has its own agent session
-		mockWorkflowCanvasOnNodeClick('node-1', [nodeTask]);
+		// Simulate a node click — node execution exists with agentSessionId
+		mockWorkflowCanvasOnNodeClick('node-1');
 
-		// Should use the node task's session, NOT the parent task's session
+		// Should use the node execution's session, NOT the parent task's session
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-node-agent');
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Node');
 	});

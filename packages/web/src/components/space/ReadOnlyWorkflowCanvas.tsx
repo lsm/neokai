@@ -7,19 +7,18 @@
  * Used in SpaceTaskPane to replace the old custom SVG WorkflowCanvas.
  */
 
-import { useRef, useEffect, useState } from 'preact/hooks';
-import type { SpaceTask } from '@neokai/shared';
-import { spaceStore } from '../../lib/space-store';
+import { useRef, useEffect, useState, useCallback } from 'preact/hooks';
 import { WorkflowCanvas } from './visual-editor/WorkflowCanvas';
 import { CanvasToolbar } from './visual-editor/CanvasToolbar';
 import { useRuntimeCanvasData } from './useRuntimeCanvasData';
+import { ChannelInfoPanel } from './ChannelInfoPanel';
 import { cn } from '../../lib/utils';
 
 interface ReadOnlyWorkflowCanvasProps {
 	workflowId: string;
 	runId?: string | null;
 	spaceId?: string | null;
-	onNodeClick?: (nodeId: string, nodeTasks: SpaceTask[]) => void;
+	onNodeClick?: (nodeId: string) => void;
 	class?: string;
 }
 
@@ -31,6 +30,7 @@ export function ReadOnlyWorkflowCanvas({
 }: ReadOnlyWorkflowCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
+	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
 	const {
 		nodeData,
@@ -62,14 +62,31 @@ export function ReadOnlyWorkflowCanvas({
 		return () => observer.disconnect();
 	}, []);
 
-	const handleNodeSelect = (stepId: string | null) => {
-		if (!stepId || !onNodeClick) return;
-		// stepId is localId — find the persisted node ID if available
-		const nodeEntry = nodeData.find((n) => n.step.localId === stepId);
-		const persistedId = nodeEntry?.step.id ?? stepId;
-		// SpaceTask doesn't have workflowNodeId — pass all tasks for this run
-		const tasks = spaceStore.tasks.value.filter((t) => t.workflowRunId === runId);
-		onNodeClick(persistedId, tasks);
+	const handleNodeSelect = useCallback(
+		(stepId: string | null) => {
+			// Clicking a node clears channel selection
+			setSelectedChannelId(null);
+			if (!stepId || !onNodeClick) return;
+			// stepId is localId — find the persisted node ID if available
+			const nodeEntry = nodeData.find((n) => n.step.localId === stepId);
+			const persistedId = nodeEntry?.step.id ?? stepId;
+			onNodeClick(persistedId);
+		},
+		[onNodeClick, nodeData]
+	);
+
+	const handleChannelSelect = useCallback((channelId: string | null) => {
+		setSelectedChannelId(channelId);
+	}, []);
+
+	const selectedChannel = selectedChannelId
+		? (channelEdges.find((c) => c.id === selectedChannelId) ?? null)
+		: null;
+
+	// Resolve node names for the info panel
+	const getNodeName = (stepLocalId: string): string => {
+		const node = nodeData.find((n) => n.step.localId === stepLocalId);
+		return node?.step.name ?? stepLocalId;
 	};
 
 	return (
@@ -87,6 +104,8 @@ export function ReadOnlyWorkflowCanvas({
 					channels={channelEdges}
 					nodePositions={canvasNodePositions}
 					onNodeSelect={handleNodeSelect}
+					onChannelSelect={handleChannelSelect}
+					selectedChannelId={selectedChannelId}
 					readOnly
 				/>
 				<CanvasToolbar
@@ -96,6 +115,14 @@ export function ReadOnlyWorkflowCanvas({
 					viewportHeight={containerSize.height}
 					onViewportChange={setViewportState}
 				/>
+				{selectedChannel && (
+					<ChannelInfoPanel
+						channel={selectedChannel}
+						fromNodeName={getNodeName(selectedChannel.fromStepId)}
+						toNodeName={getNodeName(selectedChannel.toStepId)}
+						onClose={() => setSelectedChannelId(null)}
+					/>
+				)}
 			</div>
 		</div>
 	);
