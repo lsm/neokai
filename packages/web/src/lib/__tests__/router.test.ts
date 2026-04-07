@@ -14,12 +14,19 @@ import {
 	getSessionIdFromPath,
 	getRoomIdFromPath,
 	getRoomMissionIdFromPath,
+	getRoomTabFromPath,
 	createSessionPath,
 	createRoomMissionPath,
+	createRoomTasksPath,
+	createRoomAgentsPath,
+	createRoomGoalsPath,
+	createRoomSettingsPath,
 	navigateToSession,
 	navigateToRoom,
+	navigateToRoomAgent,
 	navigateToHome,
 	navigateToRoomMission,
+	navigateToRoomTab,
 	initializeRouter,
 	cleanupRouter,
 	getRouterState,
@@ -30,6 +37,8 @@ import {
 	currentRoomIdSignal,
 	currentRoomTaskIdSignal,
 	currentRoomGoalIdSignal,
+	currentRoomAgentActiveSignal,
+	currentRoomActiveTabSignal,
 } from '../signals';
 
 // Store original values (use unknown to avoid type errors at module load time)
@@ -75,6 +84,8 @@ describe('Router Utility', () => {
 		currentRoomIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 
 		// Reset mocks
 		vi.clearAllMocks();
@@ -104,6 +115,8 @@ describe('Router Utility', () => {
 		currentRoomIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 	});
 
 	describe('getSessionIdFromPath', () => {
@@ -908,6 +921,267 @@ describe('Router Utility', () => {
 				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
 			navigateToHome();
 			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────────
+	// Room tab route tests
+	// ──────────────────────────────────────────────────────────────────────────
+
+	describe('getRoomTabFromPath', () => {
+		it('should extract roomId and tab from tasks path', () => {
+			const result = getRoomTabFromPath('/room/abc-123/tasks');
+			expect(result).toEqual({ roomId: 'abc-123', tab: 'tasks' });
+		});
+
+		it('should extract roomId and tab from agents path', () => {
+			const result = getRoomTabFromPath('/room/abc-123/agents');
+			expect(result).toEqual({ roomId: 'abc-123', tab: 'agents' });
+		});
+
+		it('should extract roomId and tab from goals path', () => {
+			const result = getRoomTabFromPath('/room/abc-123/goals');
+			expect(result).toEqual({ roomId: 'abc-123', tab: 'goals' });
+		});
+
+		it('should extract roomId and tab from settings path', () => {
+			const result = getRoomTabFromPath('/room/abc-123/settings');
+			expect(result).toEqual({ roomId: 'abc-123', tab: 'settings' });
+		});
+
+		it('should map agent path to chat tab', () => {
+			const result = getRoomTabFromPath('/room/abc-123/agent');
+			expect(result).toEqual({ roomId: 'abc-123', tab: 'chat' });
+		});
+
+		it('should return null for plain room path (no tab)', () => {
+			const result = getRoomTabFromPath('/room/abc-123');
+			expect(result).toBeNull();
+		});
+
+		it('should return null for room task detail path (not tab)', () => {
+			const result = getRoomTabFromPath('/room/abc-123/task/some-task-id');
+			expect(result).toBeNull();
+		});
+
+		it('should return null for room mission detail path (not tab)', () => {
+			const result = getRoomTabFromPath('/room/abc-123/mission/some-goal-id');
+			expect(result).toBeNull();
+		});
+
+		it('should return null for non-room paths', () => {
+			expect(getRoomTabFromPath('/')).toBeNull();
+			expect(getRoomTabFromPath('/session/abc-123')).toBeNull();
+			expect(getRoomTabFromPath('/invalid')).toBeNull();
+		});
+
+		it('should return null for path with extra trailing segments', () => {
+			expect(getRoomTabFromPath('/room/abc-123/tasks/extra')).toBeNull();
+			expect(getRoomTabFromPath('/room/abc-123/agents/extra')).toBeNull();
+		});
+	});
+
+	describe('createRoomTasksPath', () => {
+		it('should create correct tasks path', () => {
+			const path = createRoomTasksPath('550e8400-e29b-41d4-a716-446655440000');
+			expect(path).toBe('/room/550e8400-e29b-41d4-a716-446655440000/tasks');
+		});
+	});
+
+	describe('createRoomAgentsPath', () => {
+		it('should create correct agents path', () => {
+			const path = createRoomAgentsPath('550e8400-e29b-41d4-a716-446655440000');
+			expect(path).toBe('/room/550e8400-e29b-41d4-a716-446655440000/agents');
+		});
+	});
+
+	describe('createRoomGoalsPath', () => {
+		it('should create correct goals path', () => {
+			const path = createRoomGoalsPath('550e8400-e29b-41d4-a716-446655440000');
+			expect(path).toBe('/room/550e8400-e29b-41d4-a716-446655440000/goals');
+		});
+	});
+
+	describe('createRoomSettingsPath', () => {
+		it('should create correct settings path', () => {
+			const path = createRoomSettingsPath('550e8400-e29b-41d4-a716-446655440000');
+			expect(path).toBe('/room/550e8400-e29b-41d4-a716-446655440000/settings');
+		});
+	});
+
+	describe('getRoomIdFromPath with tab routes', () => {
+		it('should extract room ID from tasks path', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/tasks');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should extract room ID from agents path', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/agents');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should extract room ID from goals path', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/goals');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should extract room ID from settings path', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/settings');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+	});
+
+	describe('navigateToRoomTab', () => {
+		it('should navigate to tasks tab with pushState by default', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks');
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					tab: 'tasks',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000/tasks',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000/tasks'
+			);
+			expect(currentRoomActiveTabSignal.value).toBe('tasks');
+			expect(currentRoomAgentActiveSignal.value).toBe(false);
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should navigate to agents tab', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'agents');
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					tab: 'agents',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000/agents',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000/agents'
+			);
+			expect(currentRoomActiveTabSignal.value).toBe('agents');
+		});
+
+		it('should navigate to goals tab', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'goals');
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					tab: 'goals',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000/goals',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000/goals'
+			);
+			expect(currentRoomActiveTabSignal.value).toBe('goals');
+		});
+
+		it('should navigate to settings tab', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'settings');
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					tab: 'settings',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000/settings',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000/settings'
+			);
+			expect(currentRoomActiveTabSignal.value).toBe('settings');
+		});
+
+		it('should delegate to navigateToRoomAgent when tab is chat', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'chat');
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000/agent',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000/agent'
+			);
+			expect(currentRoomActiveTabSignal.value).toBe('chat');
+			expect(currentRoomAgentActiveSignal.value).toBe(true);
+		});
+
+		it('should delegate to navigateToRoom when tab is overview and set currentRoomActiveTabSignal', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'overview');
+
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000'
+			);
+			expect(currentRoomActiveTabSignal.value).toBe('overview');
+		});
+
+		it('should use replaceState when replace is true', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks', true);
+
+			expect(mockHistory.replaceState).toHaveBeenCalled();
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+		});
+
+		it('should default replace to false', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks');
+
+			expect(mockHistory.pushState).toHaveBeenCalled();
+			expect(mockHistory.replaceState).not.toHaveBeenCalled();
+		});
+
+		it('should clear unrelated signals when navigating to a tab', () => {
+			currentSessionIdSignal.value = 'some-session';
+			currentRoomTaskIdSignal.value = 'some-task';
+			currentRoomGoalIdSignal.value = 'some-goal';
+
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks');
+
+			expect(currentSessionIdSignal.value).toBeNull();
+			expect(currentRoomTaskIdSignal.value).toBeNull();
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+
+		it('should not navigate if already on the same tab path', () => {
+			const path = '/room/550e8400-e29b-41d4-a716-446655440000/tasks';
+			mockLocation.pathname = path;
+			currentRoomActiveTabSignal.value = 'tasks';
+
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks');
+
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+			expect(mockHistory.replaceState).not.toHaveBeenCalled();
+			expect(currentRoomActiveTabSignal.value).toBe('tasks');
+		});
+
+		it('should prevent recursive navigation when isNavigating is true', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks');
+			const firstCallCount = mockHistory.pushState.mock.calls.length;
+
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'agents');
+
+			expect(mockHistory.pushState.mock.calls.length).toBe(firstCallCount);
+			expect(currentRoomActiveTabSignal.value).toBe('tasks');
+		});
+
+		it('should do nothing for unknown tab', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'nonexistent');
+
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+			expect(mockHistory.replaceState).not.toHaveBeenCalled();
+		});
+
+		it('should set navSectionSignal to rooms', () => {
+			navigateToRoomTab('550e8400-e29b-41d4-a716-446655440000', 'tasks');
+			// navSectionSignal is set inside navigateToRoomTab
+			expect(currentRoomActiveTabSignal.value).toBe('tasks');
 		});
 	});
 

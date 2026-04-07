@@ -36,6 +36,10 @@ const ROOM_AGENT_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/agent$/;
 const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
 const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
 const ROOM_MISSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/mission\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
+const ROOM_TASKS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/tasks$/;
+const ROOM_AGENTS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/agents$/;
+const ROOM_GOALS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/goals$/;
+const ROOM_SETTINGS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/settings$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 const INBOX_ROUTE_PATTERN = /^\/inbox$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
@@ -93,6 +97,19 @@ export function getRoomIdFromPath(path: string): string | null {
 	// Also check room mission pattern
 	const roomMissionMatch = path.match(ROOM_MISSION_ROUTE_PATTERN);
 	if (roomMissionMatch) return roomMissionMatch[1];
+
+	// Also check room tab patterns (tasks, agents, goals, settings)
+	const roomTasksMatch = path.match(ROOM_TASKS_ROUTE_PATTERN);
+	if (roomTasksMatch) return roomTasksMatch[1];
+
+	const roomAgentsMatch = path.match(ROOM_AGENTS_ROUTE_PATTERN);
+	if (roomAgentsMatch) return roomAgentsMatch[1];
+
+	const roomGoalsMatch = path.match(ROOM_GOALS_ROUTE_PATTERN);
+	if (roomGoalsMatch) return roomGoalsMatch[1];
+
+	const roomSettingsMatch = path.match(ROOM_SETTINGS_ROUTE_PATTERN);
+	if (roomSettingsMatch) return roomSettingsMatch[1];
 
 	// Legacy chat sub-path — the Chat tab was removed; redirect old URLs to the room overview
 	const chatCompatMatch = path.match(ROOM_CHAT_COMPAT_PATTERN);
@@ -248,6 +265,57 @@ export function createRoomTaskPath(roomId: string, taskId: string): string {
  */
 export function createRoomMissionPath(roomId: string, goalId: string): string {
 	return `/room/${roomId}/mission/${goalId}`;
+}
+
+/**
+ * Create room tasks tab URL path
+ */
+export function createRoomTasksPath(roomId: string): string {
+	return `/room/${roomId}/tasks`;
+}
+
+/**
+ * Create room agents tab URL path
+ */
+export function createRoomAgentsPath(roomId: string): string {
+	return `/room/${roomId}/agents`;
+}
+
+/**
+ * Create room goals tab URL path
+ */
+export function createRoomGoalsPath(roomId: string): string {
+	return `/room/${roomId}/goals`;
+}
+
+/**
+ * Create room settings tab URL path
+ */
+export function createRoomSettingsPath(roomId: string): string {
+	return `/room/${roomId}/settings`;
+}
+
+/**
+ * Extract room tab from current URL path
+ * Returns { roomId, tab } if on a room tab route, or null otherwise
+ */
+export function getRoomTabFromPath(path: string): { roomId: string; tab: string } | null {
+	let match = path.match(ROOM_AGENT_ROUTE_PATTERN);
+	if (match) return { roomId: match[1], tab: 'chat' };
+
+	match = path.match(ROOM_TASKS_ROUTE_PATTERN);
+	if (match) return { roomId: match[1], tab: 'tasks' };
+
+	match = path.match(ROOM_AGENTS_ROUTE_PATTERN);
+	if (match) return { roomId: match[1], tab: 'agents' };
+
+	match = path.match(ROOM_GOALS_ROUTE_PATTERN);
+	if (match) return { roomId: match[1], tab: 'goals' };
+
+	match = path.match(ROOM_SETTINGS_ROUTE_PATTERN);
+	if (match) return { roomId: match[1], tab: 'settings' };
+
+	return null;
 }
 
 /**
@@ -655,6 +723,91 @@ export function navigateToRoomMission(roomId: string, goalId: string, replace = 
 		currentRoomTaskIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
+ * Navigate to a room tab
+ * Updates URL to /room/:roomId/:tab and sets signals for tab rendering
+ *
+ * @param roomId - The room ID
+ * @param tab - The tab to navigate to ('chat', 'overview', 'tasks', 'agents', 'goals', 'settings')
+ * @param replace - Whether to replace current history entry (default: false)
+ */
+export function navigateToRoomTab(roomId: string, tab: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	// Delegate to specialized navigators for known tabs
+	if (tab === 'chat') {
+		navigateToRoomAgent(roomId, replace);
+		return;
+	}
+
+	if (tab === 'overview') {
+		navigateToRoom(roomId, replace);
+		// navigateToRoom does NOT set currentRoomActiveTabSignal — set it explicitly
+		currentRoomActiveTabSignal.value = 'overview';
+		return;
+	}
+
+	// Map tab name to path creator
+	let targetPath: string;
+	switch (tab) {
+		case 'tasks':
+			targetPath = createRoomTasksPath(roomId);
+			break;
+		case 'agents':
+			targetPath = createRoomAgentsPath(roomId);
+			break;
+		case 'goals':
+			targetPath = createRoomGoalsPath(roomId);
+			break;
+		case 'settings':
+			targetPath = createRoomSettingsPath(roomId);
+			break;
+		default:
+			return;
+	}
+
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = tab;
+		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ roomId, tab, path: targetPath }, '', targetPath);
+
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = tab;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
