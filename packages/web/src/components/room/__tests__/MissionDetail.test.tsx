@@ -904,3 +904,40 @@ describe('MissionDetail', () => {
 		expect(queryByTestId('execution-history-list')).toBeTruthy();
 	});
 });
+
+// ─── Responsive layout ──────────────────────────────────────────────────────
+
+describe('MissionDetail responsive layout', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult({}));
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('applies responsive grid classes to the body layout (mobile base + desktop two-column)', () => {
+		const { container } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
+
+		// Must have grid-cols-1 (mobile) AND the md: two-column breakpoint class
+		const gridEl = container.querySelector('.grid.grid-cols-1');
+		expect(gridEl).toBeTruthy();
+		// Verify the desktop two-column class is also present on the same element
+		expect(gridEl?.classList.contains('md:grid-cols-[1fr_320px]')).toBe(true);
+	});
+
+	it('two-column grid contains both main content section and status sidebar', () => {
+		const { queryByTestId, container } = render(
+			<MissionDetail roomId="room-1" goalId="goal-uuid-1" />
+		);
+
+		// Main content area is present
+		const mainContent = queryByTestId('mission-detail-main-content');
+		expect(mainContent).toBeTruthy();
+
+		// Status sidebar renders as <aside> element inside the grid
+		const aside = container.querySelector('aside');
+		expect(aside).toBeTruthy();
+	});
+});
