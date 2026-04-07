@@ -24,6 +24,8 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
 import { Logger } from '../logger';
 
@@ -82,6 +84,37 @@ function execGit(args: string[], cwd: string, timeout = 10000): Promise<string> 
 }
 
 /**
+ * Resolve the git worktree path for a workflow run.
+ *
+ * Prefers the task-specific worktree created by the agent (where commits are
+ * actually made) over the space's root `workspacePath`.  Falls back to the
+ * root workspace if no task worktree is found.
+ *
+ * @returns The resolved path, or null if no path can be determined.
+ */
+async function resolveWorktreePath(
+	runId: string,
+	spaceId: string,
+	spaceManager: SpaceManager,
+	spaceTaskRepo: SpaceTaskRepository,
+	spaceWorktreeManager: SpaceWorktreeManager
+): Promise<string | null> {
+	// First: look up the task associated with this run and get its worktree.
+	const tasks = spaceTaskRepo.listByWorkflowRun(runId);
+	if (tasks.length > 0) {
+		const taskId = tasks[0].id;
+		const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
+		if (taskWorktreePath) {
+			return taskWorktreePath;
+		}
+	}
+
+	// Fallback: use the root workspace path from the space.
+	const space = await spaceManager.getSpace(spaceId);
+	return space?.workspacePath ?? null;
+}
+
+/**
  * Get the diff base ref for a worktree.
  * Tries `origin/dev` merge-base first; falls back to empty string (uncommitted only).
  */
@@ -108,7 +141,9 @@ export function setupSpaceWorkflowRunHandlers(
 	gateDataRepo: GateDataRepository,
 	spaceRuntimeService: SpaceRuntimeService,
 	taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	spaceTaskRepo: SpaceTaskRepository,
+	spaceWorktreeManager: SpaceWorktreeManager
 ): void {
 	/**
 	 * Helper: notify the channel router that gate data has changed.
@@ -567,8 +602,15 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		const space = await spaceManager.getSpace(run.spaceId);
-		const worktreePath = space?.workspacePath;
+		// Resolve the worktree path: prefer the task-specific git worktree (where
+		// the agent commits its work) over the root workspace path.
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager
+		);
 		if (!worktreePath) {
 			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
@@ -607,8 +649,15 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		const space = await spaceManager.getSpace(run.spaceId);
-		const worktreePath = space?.workspacePath;
+		// Resolve the worktree path: prefer the task-specific git worktree (where
+		// the agent commits its work) over the root workspace path.
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager
+		);
 		if (!worktreePath) {
 			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
