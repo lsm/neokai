@@ -59,8 +59,8 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 		return () => {
 			roomStore.select(null);
 			// Clear active tab signal when leaving a room to prevent cross-room contamination.
-			// Note: do NOT clear currentRoomAgentActiveSignal here — navigation functions
-			// (navigateToRoom, navigateToRoomAgent) manage it explicitly. Clearing it during
+			// Note: do NOT clear currentRoomAgentActiveSignal here — router navigation
+			// functions manage it explicitly. Clearing it during
 			// room-to-room navigation would race with the incoming room's agent URL sync and
 			// cause the Coordinator view to be lost.
 			currentRoomActiveTabSignal.value = null;

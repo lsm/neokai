@@ -4,8 +4,7 @@
  * and that non-room navigation clears currentRoomAgentActiveSignal.
  *
  * The P0 fix ensures navigateToRoom leaves the tab signal untouched so
- * callers (Room.tsx handleTabChange, BottomTabBar) can set it independently
- * via the pending-tab mechanism (currentRoomTabSignal).
+ * callers (like navigateToRoomTab) can set it independently.
  *
  * The P1 fix ensures navigating away from rooms clears the agent-active
  * signal to prevent stale state from affecting future room visits.

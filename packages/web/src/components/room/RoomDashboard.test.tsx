@@ -45,10 +45,6 @@ vi.mock('../../lib/room-store.ts', () => ({
 	},
 }));
 
-vi.mock('../../lib/signals.ts', () => ({
-	currentRoomTabSignal: { value: null },
-}));
-
 const mockNavigateToRoomTask = vi.fn();
 
 vi.mock('../../lib/router.ts', () => ({

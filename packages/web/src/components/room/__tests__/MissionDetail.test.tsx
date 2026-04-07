@@ -4,7 +4,7 @@
  * Covers:
  * - Loading skeleton shown when goal is null
  * - Renders mission title and badges when goal is loaded
- * - Back button calls navigateToRoom AND sets currentRoomTabSignal to 'goals'
+ * - Back button calls navigateToRoomTab with 'goals'
  * - Edit button opens edit modal
  * - Delete button opens confirm modal
  * - Status sidebar shows priority, type, autonomy badges
@@ -22,19 +22,14 @@ import { MissionDetail } from '../MissionDetail';
 // ---------------------------------------------------------------------------
 
 // Use vi.hoisted so these values are available when vi.mock factories are hoisted
-const { mockNavigateToRoom, mockNavigateToRoomTask, mockCurrentRoomTabSignal } = vi.hoisted(() => ({
-	mockNavigateToRoom: vi.fn(),
+const { mockNavigateToRoomTask, mockNavigateToRoomTab } = vi.hoisted(() => ({
 	mockNavigateToRoomTask: vi.fn(),
-	mockCurrentRoomTabSignal: { value: null as string | null },
+	mockNavigateToRoomTab: vi.fn(),
 }));
 
 vi.mock('../../../lib/router', () => ({
-	navigateToRoom: (...args: unknown[]) => mockNavigateToRoom(...args),
+	navigateToRoomTab: (...args: unknown[]) => mockNavigateToRoomTab(...args),
 	navigateToRoomTask: (...args: unknown[]) => mockNavigateToRoomTask(...args),
-}));
-
-vi.mock('../../../lib/signals', () => ({
-	currentRoomTabSignal: mockCurrentRoomTabSignal,
 }));
 
 // Mock toast
@@ -238,7 +233,6 @@ function makeDefaultHookResult(
 describe('MissionDetail', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mockCurrentRoomTabSignal.value = null;
 		mockUseMissionDetailData.mockReturnValue(makeDefaultHookResult());
 	});
 
@@ -276,14 +270,13 @@ describe('MissionDetail', () => {
 		expect(getByText('Mission not found')).toBeTruthy();
 	});
 
-	it('not-found back button calls navigateToRoom and sets tab signal', () => {
+	it('not-found back button calls navigateToRoomTab with goals tab', () => {
 		mockUseMissionDetailData.mockReturnValue(
 			makeDefaultHookResult({ goal: null, goalsLoading: false })
 		);
 		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="bad-id" />);
 		fireEvent.click(getByTestId('mission-not-found-back-button'));
-		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
-		expect(mockCurrentRoomTabSignal.value).toBe('goals');
+		expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'goals');
 	});
 
 	it('not-found state does not show the skeleton', () => {
@@ -320,21 +313,15 @@ describe('MissionDetail', () => {
 
 	// ── Back button ───────────────────────────────────────────────────────────
 
-	it('back button calls navigateToRoom with correct roomId', () => {
+	it('back button calls navigateToRoomTab with correct roomId and goals tab', () => {
 		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
 		fireEvent.click(getByTestId('mission-detail-back-button'));
-		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+		expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'goals');
 	});
 
-	it('back button sets currentRoomTabSignal to "goals"', () => {
-		const { getByTestId } = render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
-		fireEvent.click(getByTestId('mission-detail-back-button'));
-		expect(mockCurrentRoomTabSignal.value).toBe('goals');
-	});
-
-	it('does not call navigateToRoom on initial render', () => {
+	it('does not call navigateToRoomTab on initial render', () => {
 		render(<MissionDetail roomId="room-1" goalId="goal-uuid-1" />);
-		expect(mockNavigateToRoom).not.toHaveBeenCalled();
+		expect(mockNavigateToRoomTab).not.toHaveBeenCalled();
 	});
 
 	// ── Edit action ───────────────────────────────────────────────────────────
