@@ -484,7 +484,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
+		// Do NOT reset currentRoomActiveTabSignal — callers (Room.tsx, BottomTabBar) manage it
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -509,7 +509,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
+		// Do NOT reset currentRoomActiveTabSignal — callers (Room.tsx, BottomTabBar) manage it
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
