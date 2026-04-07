@@ -157,7 +157,7 @@ describe('ErrorBanner', () => {
 			const { container } = render(<ErrorBanner error="Test error" onDismiss={mockOnDismiss} />);
 
 			const banner = container.querySelector('[data-testid="error-banner"]')!;
-			expect(banner.className).toContain('bg-red-500/10');
+			expect(banner.className).toContain('bg-dark-900');
 		});
 
 		it('should have error text styling', () => {

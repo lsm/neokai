@@ -3,7 +3,7 @@
  *
  * Handles all message routing through a single code path — no separate within-node
  * vs cross-node logic. Target resolution:
- *   - Agent name (role string): delivers as DM to all sessions with that role
+ *   - Agent name: delivers as DM to all sessions with that agent name
  *   - Node name: fan-out to all agents in a named node (via nodeGroups)
  *   - '*': broadcast to all permitted targets
  *   - No match: returns clear error message
@@ -37,7 +37,7 @@ export interface AgentMessageRouterConfig {
 	 */
 	channelRouter?: ChannelRouter;
 	/**
-	 * Optional map of node name → array of agent roles in that node.
+	 * Optional map of node name → array of agent names in that node.
 	 * When provided, enables fan-out delivery by node name.
 	 */
 	nodeGroups?: Record<string, string[]>;
@@ -49,13 +49,13 @@ export interface AgentMessageRouterConfig {
 }
 
 export interface AgentMessageParams {
-	/** Role of the sending agent. */
-	fromRole: string;
+	/** Agent name of the sending agent. */
+	fromAgentName: string;
 	/** Session ID of the sending agent (excluded from delivery). */
 	fromSessionId: string;
 	/**
-	 * Delivery target: an agent role name (DM), a node name (fan-out),
-	 * an array of role names (multicast), or '*' (broadcast to all permitted targets).
+	 * Delivery target: an agent name (DM), a node name (fan-out),
+	 * an array of agent names (multicast), or '*' (broadcast to all permitted targets).
 	 */
 	target: string | string[];
 	/** Message content to deliver. */
@@ -71,25 +71,25 @@ export interface AgentMessageParams {
 
 export interface AgentMessageResult {
 	success: boolean | 'partial';
-	delivered: Array<{ role: string; sessionId: string }>;
-	failed: Array<{ role: string; sessionId: string; error: string }>;
+	delivered: Array<{ agentName: string; sessionId: string }>;
+	failed: Array<{ agentName: string; sessionId: string; error: string }>;
 	/** Set when success is false — human-readable reason for the failure. */
 	reason?: string;
 	/**
-	 * Roles that were requested but not permitted by channel topology.
-	 * Populated on authorization failure — matches legacy path response shape.
+	 * Agent names that were requested but not permitted by channel topology.
+	 * Populated on authorization failure.
 	 */
-	unauthorizedRoles?: string[];
+	unauthorizedAgentNames?: string[];
 	/**
-	 * Roles that are permitted by topology for this sender.
-	 * Populated on authorization failure — matches legacy path response shape.
+	 * Agent names that are permitted by topology for this sender.
+	 * Populated on authorization failure.
 	 */
 	permittedTargets?: string[];
 	/**
-	 * Target roles that had no active sessions.
+	 * Target agent names that had no active sessions.
 	 * Populated when delivery was attempted but no sessions were found.
 	 */
-	notFoundRoles?: string[];
+	notFoundAgentNames?: string[];
 }
 
 import { Logger } from '../../logger';
@@ -104,7 +104,7 @@ export class AgentMessageRouter {
 	 *
 	 * Resolution order:
 	 *   1. '*' → broadcast to all topology-permitted targets
-	 *   2. Agent name match → DM/fan-out to all sessions with that role in the node
+	 *   2. Agent name match → DM/fan-out to all sessions with that agent name in the node
 	 *   3. Node name match → fan-out to all agents mapped to that node (via nodeGroups)
 	 *   4. No match → error with list of known reachable agents
 	 *
@@ -112,7 +112,7 @@ export class AgentMessageRouter {
 	 * Returns a structured result — never throws.
 	 */
 	async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
-		const { fromRole, fromSessionId, target, message, data } = params;
+		const { fromAgentName, fromSessionId, target, message, data } = params;
 		const {
 			nodeExecutionRepo,
 			workflowRunId,
@@ -136,7 +136,7 @@ export class AgentMessageRouter {
 			}
 		}
 		const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
-		const fromNodeName = resolveNodeName(fromRole);
+		const fromNodeName = resolveNodeName(fromAgentName);
 		const requestedTargets =
 			target === '*' ? ['*'] : Array.isArray(target) ? [...target] : [target];
 		const wantsTaskAgent = target !== '*' && requestedTargets.includes('task-agent');
@@ -148,7 +148,7 @@ export class AgentMessageRouter {
 				delivered: [],
 				failed: [],
 				reason:
-					'No channel topology declared for this step. ' +
+					'No channel topology declared for this node. ' +
 					'Direct messaging via send_message is not available.',
 			};
 		}
@@ -163,12 +163,12 @@ export class AgentMessageRouter {
 					`peers will be empty. Check that NodeExecution.agentSessionId is being written at spawn time.`
 			);
 		}
-		const peers: Array<{ sessionId: string; role: string }> = executions
+		const peers: Array<{ sessionId: string; agentName: string }> = executions
 			.filter((e) => e.agentSessionId !== fromSessionId)
-			.map((e) => ({ sessionId: e.agentSessionId!, role: e.agentName }));
+			.map((e) => ({ sessionId: e.agentSessionId!, agentName: e.agentName }));
 
-		// --- Resolve target roles ---
-		let targetRoles: string[];
+		// --- Resolve target agent names ---
+		let targetAgentNames: string[];
 
 		if (target === '*') {
 			// Broadcast: expand to all topology-permitted targets
@@ -179,31 +179,31 @@ export class AgentMessageRouter {
 					success: false,
 					delivered: [],
 					failed: [],
-					reason: `No permitted targets for role '${fromRole}' in the declared channel topology.`,
+					reason: `No permitted targets for agent '${fromAgentName}' in the declared channel topology.`,
 				};
 			}
 			// Map node names back to slot names for delivery (or keep node name for fan-out)
-			targetRoles = permittedNodes;
+			targetAgentNames = permittedNodes;
 		} else if (Array.isArray(target)) {
-			// Multicast: explicit list of role names
-			targetRoles = target;
+			// Multicast: explicit list of agent names
+			targetAgentNames = target;
 		} else if (target === 'task-agent' && taskAgentRouter) {
-			targetRoles = ['task-agent'];
+			targetAgentNames = ['task-agent'];
 		} else {
-			// Try agent name match first (role string within the node peers)
-			const agentMatchRoles = peers.filter((m) => m.role === target).map((m) => m.role);
+			// Try agent name match first (agent name within the node peers)
+			const agentMatches = peers.filter((m) => m.agentName === target).map((m) => m.agentName);
 
-			if (agentMatchRoles.length > 0) {
-				// Agent name → DM (or fan-out if multiple agents share the role)
-				targetRoles = [target];
+			if (agentMatches.length > 0) {
+				// Agent name → DM (or fan-out if multiple agents share the name)
+				targetAgentNames = [target];
 			} else if (nodeGroups && nodeGroups[target]) {
 				// Node name match → fan-out to all agents in that node
-				targetRoles = nodeGroups[target];
+				targetAgentNames = nodeGroups[target];
 			} else {
 				// No match — unknown target
-				const knownRoles = [...new Set(peers.map((m) => m.role))].sort();
+				const knownAgentNames = [...new Set(peers.map((m) => m.agentName))].sort();
 				const nodeNames = nodeGroups ? Object.keys(nodeGroups) : [];
-				const allTargets = [...knownRoles, ...nodeNames];
+				const allTargets = [...knownAgentNames, ...nodeNames];
 				if (taskAgentRouter) allTargets.push('task-agent');
 				return {
 					success: false,
@@ -219,7 +219,7 @@ export class AgentMessageRouter {
 		}
 
 		// --- Authorization check (translate slot names → node names for canSend) ---
-		const topologyTargets = targetRoles.filter((r) => r !== 'task-agent');
+		const topologyTargets = targetAgentNames.filter((r) => r !== 'task-agent');
 		const unauthorized = topologyTargets.filter(
 			(r) => !resolver.canSend(fromNodeName, resolveNodeName(r))
 		);
@@ -230,9 +230,9 @@ export class AgentMessageRouter {
 				delivered: [],
 				failed: [],
 				reason:
-					`Channel topology does not permit '${fromRole}' to send to: ${unauthorized.join(', ')}. ` +
+					`Channel topology does not permit '${fromAgentName}' to send to: ${unauthorized.join(', ')}. ` +
 					`Permitted targets: ${permittedNodes.length > 0 ? permittedNodes.join(', ') : 'none'}.`,
-				unauthorizedRoles: unauthorized,
+				unauthorizedAgentNames: unauthorized,
 				permittedTargets: permittedNodes,
 			};
 		}
@@ -242,12 +242,17 @@ export class AgentMessageRouter {
 		// target sessions do not exist yet.
 		const activatedTargets = new Set<string>();
 		if (channelRouter) {
-			for (const role of targetRoles) {
-				if (role === 'task-agent') continue;
+			for (const agentName of targetAgentNames) {
+				if (agentName === 'task-agent') continue;
 				try {
-					const routed = await channelRouter.deliverMessage(workflowRunId, fromRole, role, message);
+					const routed = await channelRouter.deliverMessage(
+						workflowRunId,
+						fromAgentName,
+						agentName,
+						message
+					);
 					if (routed.activatedTasks && routed.activatedTasks.length > 0) {
-						activatedTargets.add(role);
+						activatedTargets.add(agentName);
 					}
 				} catch (err) {
 					if (err instanceof ChannelGateBlockedError) {
@@ -277,53 +282,53 @@ export class AgentMessageRouter {
 		}
 
 		// --- Deliver to all resolved sessions (best-effort) ---
-		const delivered: Array<{ role: string; sessionId: string }> = [];
+		const delivered: Array<{ agentName: string; sessionId: string }> = [];
 		const notFound: string[] = [];
-		const failed: Array<{ role: string; sessionId: string; error: string }> = [];
+		const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
 
-		for (const role of targetRoles) {
-			if (role === 'task-agent') {
+		for (const agentName of targetAgentNames) {
+			if (agentName === 'task-agent') {
 				if (!taskAgentRouter) {
-					notFound.push(role);
+					notFound.push(agentName);
 					continue;
 				}
 				const dataAppendix =
 					data && Object.keys(data).length > 0
 						? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
 						: '';
-				const prefixedMessage = `[Message from ${fromRole}]: ${message}${dataAppendix}`;
+				const prefixedMessage = `[Message from ${fromAgentName}]: ${message}${dataAppendix}`;
 				try {
 					const routed = await taskAgentRouter(prefixedMessage);
-					delivered.push({ role, sessionId: routed.sessionId });
+					delivered.push({ agentName, sessionId: routed.sessionId });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);
-					failed.push({ role, sessionId: 'task-agent', error: errMsg });
+					failed.push({ agentName, sessionId: 'task-agent', error: errMsg });
 				}
 				continue;
 			}
-			const roleSessions = peers.filter((m) => m.role === role);
-			if (roleSessions.length === 0) {
+			const agentSessions = peers.filter((m) => m.agentName === agentName);
+			if (agentSessions.length === 0) {
 				// No active session yet, but the channel router successfully activated
 				// the target node in this call. Treat as accepted delivery initiation.
-				if (activatedTargets.has(role)) {
+				if (activatedTargets.has(agentName)) {
 					continue;
 				}
-				notFound.push(role);
+				notFound.push(agentName);
 				continue;
 			}
-			for (const member of roleSessions) {
+			for (const member of agentSessions) {
 				// Include structured data as a JSON appendix when present
 				const dataAppendix =
 					data && Object.keys(data).length > 0
 						? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
 						: '';
-				const prefixedMessage = `[Message from ${fromRole}]: ${message}${dataAppendix}`;
+				const prefixedMessage = `[Message from ${fromAgentName}]: ${message}${dataAppendix}`;
 				try {
 					await messageInjector(member.sessionId, prefixedMessage);
-					delivered.push({ role, sessionId: member.sessionId });
+					delivered.push({ agentName, sessionId: member.sessionId });
 				} catch (err) {
 					const errMsg = err instanceof Error ? err.message : String(err);
-					failed.push({ role, sessionId: member.sessionId, error: errMsg });
+					failed.push({ agentName, sessionId: member.sessionId, error: errMsg });
 				}
 			}
 		}
@@ -334,9 +339,9 @@ export class AgentMessageRouter {
 				delivered: [],
 				failed: [],
 				reason:
-					`No active sessions found for target role(s): ${notFound.join(', ')}. ` +
+					`No active sessions found for target agent(s): ${notFound.join(', ')}. ` +
 					`Use list_peers to check which peers are currently active.`,
-				notFoundRoles: notFound,
+				notFoundAgentNames: notFound,
 			};
 		}
 
@@ -345,7 +350,7 @@ export class AgentMessageRouter {
 				success: false,
 				delivered,
 				failed,
-				notFoundRoles: notFound.length > 0 ? notFound : undefined,
+				notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 			};
 		}
 		if (failed.length > 0) {
@@ -353,14 +358,14 @@ export class AgentMessageRouter {
 				success: 'partial',
 				delivered,
 				failed,
-				notFoundRoles: notFound.length > 0 ? notFound : undefined,
+				notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 			};
 		}
 		return {
 			success: true,
 			delivered,
 			failed,
-			notFoundRoles: notFound.length > 0 ? notFound : undefined,
+			notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 		};
 	}
 }

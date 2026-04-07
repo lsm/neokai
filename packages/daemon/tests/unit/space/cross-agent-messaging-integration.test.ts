@@ -215,7 +215,7 @@ function makeMessageCapture() {
 function makeStepConfig(
 	tdb: TestDb,
 	sessionId: string,
-	role: string,
+	agentName: string,
 	channelResolver: ChannelResolver,
 	injector: (sessionId: string, message: string) => Promise<void>
 ): NodeAgentToolsConfig {
@@ -227,7 +227,7 @@ function makeStepConfig(
 	});
 	return {
 		mySessionId: sessionId,
-		myRole: role,
+		myAgentName: agentName,
 		taskId: 'task-integration-test',
 		spaceId: tdb.spaceId,
 		channelResolver,
@@ -939,7 +939,7 @@ describe('data reload and DB-based validation', () => {
 		});
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-rs',
-			myRole: 'coder',
+			myAgentName: 'coder',
 			taskId: 'task-reload-send',
 			spaceId: tdb.spaceId,
 			channelResolver,
@@ -1011,7 +1011,7 @@ describe('error paths — missing workflowRunId', () => {
 		// workflowRunId is empty — no peers can be found
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-norun',
-			myRole: 'coder',
+			myAgentName: 'coder',
 			taskId: 'task-norun',
 			spaceId: tdb.spaceId,
 			channelResolver,
@@ -1035,7 +1035,7 @@ describe('error paths — missing workflowRunId', () => {
 		const channelResolver = new ChannelResolver([]);
 		const config: NodeAgentToolsConfig = {
 			mySessionId: 'session-coder-norun',
-			myRole: 'coder',
+			myAgentName: 'coder',
 			taskId: 'task-norun',
 			spaceId: tdb.spaceId,
 			channelResolver,
@@ -1151,7 +1151,7 @@ describe('Task Agent channel participation', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		const peers = data.peers as Array<{ sessionId: string; role: string }>;
+		const peers = data.peers as Array<{ sessionId: string; agentName: string }>;
 		const peerIds = peers.map((p: { sessionId: string }) => p.sessionId);
 		expect(peerIds).toContain('session-task-agent');
 		expect(peerIds).not.toContain('session-coder'); // self excluded

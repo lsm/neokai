@@ -927,18 +927,18 @@ describe('TaskAgentManager', () => {
 		function callHandleSubSessionComplete(
 			manager: TaskAgentManager,
 			taskId: string,
-			stepId: string,
+			nodeId: string,
 			subSessionId: string
 		): Promise<void> {
 			return (
 				manager as unknown as {
 					handleSubSessionComplete: (
 						taskId: string,
-						stepId: string,
+						nodeId: string,
 						subSessionId: string
 					) => Promise<void>;
 				}
-			).handleSubSessionComplete(taskId, stepId, subSessionId);
+			).handleSubSessionComplete(taskId, nodeId, subSessionId);
 		}
 
 		test('does not mutate step task status directly (runtime owns progression)', async () => {
@@ -1002,7 +1002,7 @@ describe('TaskAgentManager', () => {
 			expect(updated?.status).toBe('in_progress');
 		});
 
-		test('injects [STEP_COMPLETE] notification into Task Agent session', async () => {
+		test('injects [NODE_COMPLETE] notification into Task Agent session', async () => {
 			const stepId = 'step-notify-1';
 			const parentTask = await ctx.taskManager.createTask({
 				title: 'Parent task',
@@ -1027,11 +1027,11 @@ describe('TaskAgentManager', () => {
 				`space:${ctx.spaceId}:task:${parentTask.id}:step:${stepId}`
 			);
 
-			// Task Agent should have received a [STEP_COMPLETE] message
+			// Task Agent should have received a [NODE_COMPLETE] message
 			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
 			const lastMsg =
 				taskAgentSession._enqueuedMessages[taskAgentSession._enqueuedMessages.length - 1];
-			expect(lastMsg.msg).toContain('[STEP_COMPLETE]');
+			expect(lastMsg.msg).toContain('[NODE_COMPLETE]');
 			expect(lastMsg.msg).toContain(stepId);
 		});
 
@@ -1119,8 +1119,8 @@ describe('TaskAgentManager', () => {
 				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
 				{
 					agentId: ctx.agentId,
-					role: 'coder',
-					stepId: 'coding-node',
+					agentName: 'coder',
+					nodeId: 'coding-node',
 				}
 			);
 
@@ -1208,8 +1208,8 @@ describe('TaskAgentManager', () => {
 				} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
 				{
 					agentId: ctx.agentId,
-					role: 'coder',
-					stepId: 'coding-node',
+					agentName: 'coder',
+					nodeId: 'coding-node',
 				}
 			);
 
@@ -1257,7 +1257,7 @@ describe('TaskAgentManager', () => {
 						sessionId: subSessionId,
 						workspacePath: '/tmp/ws',
 					} as unknown as import('../../../src/lib/agent/agent-session.ts').AgentSessionInit,
-					{ agentId: ctx.agentId, role: 'coder' }
+					{ agentId: ctx.agentId, agentName: 'coder' }
 				)
 			).resolves.toBe(subSessionId);
 		});

@@ -29,7 +29,7 @@
  *
  * ## Content interpolation
  * All operator-supplied content (space.backgroundContext, space.instructions,
- * task.description, agent names/descriptions, step instructions, workflow rules,
+ * task.description, agent names/descriptions, node instructions, workflow rules,
  * and previousTaskSummaries) is interpolated directly into the prompt without
  * sanitization. These are operator-controlled fields on a self-hosted tool, so
  * no sanitization is needed — consistent with the approach in space-chat-agent.ts.
@@ -89,8 +89,8 @@ export interface TaskAgentContext {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
-	const nodeAgents = resolveNodeAgents(step);
+function formatNode(node: WorkflowNode, agents: SpaceAgent[]): string {
+	const nodeAgents = resolveNodeAgents(node);
 	let agentLabel: string;
 	if (nodeAgents.length === 1) {
 		const a = agents.find((ag) => ag.id === nodeAgents[0].agentId);
@@ -102,7 +102,7 @@ function formatStep(step: WorkflowNode, agents: SpaceAgent[]): string {
 		});
 		agentLabel = labels.join(', ');
 	}
-	return `- **${step.name}** (id: \`${step.id}\`, assigned to: ${agentLabel})`;
+	return `- **${node.name}** (id: \`${node.id}\`, assigned to: ${agentLabel})`;
 }
 
 function formatChannelGateLabel(ch: WorkflowChannel, gates: Gate[]): string {
@@ -235,7 +235,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(`Follow this event-driven loop until all agents have completed:\n`);
 	sections.push(
 		`1. **Wait for events** — Stop polling and wait for inbound messages ` +
-			`(for example \`[STEP_COMPLETE]\` or \`[STEP_FAILED]\`) from node-agent activity.\n` +
+			`(for example \`[NODE_COMPLETE]\` or \`[NODE_FAILED]\`) from node-agent activity.\n` +
 			`2. **React to events** — When an inbound event arrives, call \`list_group_members\` to refresh state.\n` +
 			`3. **Agents drive their own progression** — When a node agent sends a message to another ` +
 			`agent via \`send_message\` (using an agent name for DM or a node name for fan-out), ` +
@@ -246,7 +246,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
 			`5. **Automatic workflow completion** — When the end node agent calls \`report_done\`, the ` +
 			`system automatically marks the workflow run and main task as completed. You do not need to ` +
-			`call any completion tool — just wait for the \`[STEP_COMPLETE]\` event from the end node. ` +
+			`call any completion tool — just wait for the \`[NODE_COMPLETE]\` event from the end node. ` +
 			`Use \`list_group_members\` to verify all agents have finished if needed. ` +
 			`Only call \`report_result\` if you need to cancel or signal an unrecoverable error.\n` +
 			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
@@ -282,7 +282,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push(
 		`3. **Do not make architectural decisions.** The workflow defines the process. ` +
-			`If you disagree with a step or transition, surface the concern to the human via ` +
+			`If you disagree with a node or transition, surface the concern to the human via ` +
 			`\`request_human_input\` — do not silently deviate from the workflow.\n`
 	);
 	sections.push(
@@ -316,7 +316,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`- No gate (or \`always\`): message is delivered immediately\n`
 	);
 	sections.push(
-		`The Task Agent has default bidirectional channels to all node agent roles. ` +
+		`The Task Agent has default bidirectional channels to all node agents. ` +
 			`Node agents use \`list_reachable_agents\` to discover their full reachability graph.`
 	);
 
@@ -344,8 +344,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
  *
  * This message provides the agent with:
  *   1. The task assignment details
- *   2. The full workflow structure (steps, transitions, conditions, rules)
- *   3. Available agents and their roles
+ *   2. The full workflow structure (nodes, transitions, conditions, rules)
+ *   3. Available agents and their capabilities
  *   4. Previous task results for context continuity
  */
 export function buildTaskAgentInitialMessage(context: TaskAgentContext): string {
@@ -381,13 +381,13 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 		}
 
 		if (wf.nodes.length > 0) {
-			parts.push(`\n### Steps (execution order defined by transitions)\n`);
-			parts.push(`**Start step:** \`${wf.startNodeId}\`\n`);
-			for (const step of wf.nodes) {
-				parts.push(formatStep(step, context.availableAgents));
+			parts.push(`\n### Nodes (execution order defined by transitions)\n`);
+			parts.push(`**Start node:** \`${wf.startNodeId}\`\n`);
+			for (const node of wf.nodes) {
+				parts.push(formatNode(node, context.availableAgents));
 			}
 		} else {
-			parts.push(`\n_This workflow has no steps defined._`);
+			parts.push(`\n_This workflow has no nodes defined._`);
 		}
 
 		if (context.workflowRun) {

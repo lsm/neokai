@@ -222,7 +222,7 @@ function makeConfig(
 	sessionFactory: SubSessionFactory,
 	options?: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
-		onSubSessionComplete?: (stepId: string, sessionId: string) => Promise<void>;
+		onSubSessionComplete?: (nodeId: string, sessionId: string) => Promise<void>;
 		daemonHub?: DaemonHub;
 	}
 ): TaskAgentToolsConfig {
@@ -360,7 +360,7 @@ describe('Task Agent — full collaboration flow', () => {
 		const factory = makeMockSessionFactory();
 		const handlers = createTaskAgentToolHandlers(
 			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (_stepId) => {
+				onSubSessionComplete: async (_nodeId) => {
 					// workflowNodeId was removed in M71; use stepTask directly
 					ctx.taskRepo.updateTask(stepTask.id, {
 						status: 'done',
@@ -371,18 +371,18 @@ describe('Task Agent — full collaboration flow', () => {
 		);
 
 		// Spawn
-		const spawnResult = await handlers.spawn_node_agent({ step_id: 'code-node' });
+		const spawnResult = await handlers.spawn_node_agent({ node_id: 'code-node' });
 		const { sessionId } = JSON.parse(spawnResult.content[0].text);
 
 		// Check status — running
-		const running = await handlers.check_node_status({ step_id: 'code-node' });
+		const running = await handlers.check_node_status({ node_id: 'code-node' });
 		expect(JSON.parse(running.content[0].text).sessionStatus).toBe('running');
 
 		// Complete the sub-session
 		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(sessionId);
 
 		// Check status — completed
-		const done = await handlers.check_node_status({ step_id: 'code-node' });
+		const done = await handlers.check_node_status({ node_id: 'code-node' });
 		const doneParsed = JSON.parse(done.content[0].text);
 		expect(doneParsed.taskStatus).toBe('done');
 		expect(doneParsed.sessionStatus).toBe('completed');
@@ -413,7 +413,7 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
 
 		// Spawn the code node agent
-		const spawnResult = await handlers.spawn_node_agent({ step_id: wf.startNodeId });
+		const spawnResult = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
 		const spawnParsed = JSON.parse(spawnResult.content[0].text);
 		expect(spawnParsed.success).toBe(true);
 
@@ -423,7 +423,7 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		ctx.taskRepo.updateTask(spawnParsed.taskId, { status: 'blocked' });
 
 		// check_node_status should report blocked
-		const checkResult = await handlers.check_node_status({ step_id: wf.startNodeId });
+		const checkResult = await handlers.check_node_status({ node_id: wf.startNodeId });
 		const checkParsed = JSON.parse(checkResult.content[0].text);
 		expect(checkParsed.success).toBe(true);
 		expect(checkParsed.taskStatus).toBe('blocked');

@@ -681,8 +681,8 @@ export class SpaceRuntime {
 		this.executors.set(run.id, executor);
 
 		// Find start node and ensure canonical run task. Roll back map entries if this fails.
-		const startStep = workflow.nodes.find((s) => s.id === workflow.startNodeId);
-		if (!startStep) {
+		const startNode = workflow.nodes.find((s) => s.id === workflow.startNodeId);
+		if (!startNode) {
 			this.executors.delete(run.id);
 			this.executorMeta.delete(run.id);
 			await this.transitionRunStatusAndEmit(run.id, 'cancelled');
@@ -721,11 +721,11 @@ export class SpaceRuntime {
 			}
 			await this.safeOnTaskUpdated(spaceId, canonicalTask);
 
-			startAgents = resolveNodeAgents(startStep);
+			startAgents = resolveNodeAgents(startNode);
 			for (const agentEntry of startAgents) {
 				this.config.nodeExecutionRepo.createOrIgnore({
 					workflowRunId: run.id,
-					workflowNodeId: startStep.id,
+					workflowNodeId: startNode.id,
 					agentName: agentEntry.name,
 					agentId: agentEntry.agentId ?? null,
 					status: 'pending',

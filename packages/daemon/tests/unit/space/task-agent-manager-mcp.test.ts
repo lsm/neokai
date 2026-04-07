@@ -596,7 +596,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
-				role: string,
+				agentName: string,
 				spaceId: string,
 				workflowRunId: string,
 				stepTaskId: string,
@@ -645,7 +645,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
-				role: string,
+				agentName: string,
 				spaceId: string,
 				workflowRunId: string,
 				stepTaskId: string,
@@ -689,7 +689,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
-				role: string,
+				agentName: string,
 				spaceId: string,
 				workflowRunId: string,
 				workspacePath: string,
@@ -714,7 +714,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		expect(resolver.isEmpty()).toBe(true);
 	});
 
-	test('buildNodeAgentMcpServerForSession passes correct mySessionId, myRole, and taskId', () => {
+	test('buildNodeAgentMcpServerForSession passes correct mySessionId, myAgentName, and taskId', () => {
 		const { manager, fromInitSpy, bunDb, dir, space, taskManager, taskRepo } = buildManager({});
 		spies.push(fromInitSpy);
 		dirs.push(dir);
@@ -743,7 +743,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 			buildNodeAgentMcpServerForSession(
 				taskId: string,
 				subSessionId: string,
-				role: string,
+				agentName: string,
 				spaceId: string,
 				workflowRunId: string,
 				workspacePath: string,
@@ -762,7 +762,7 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 
 		expect(capturedConfig).not.toBeNull();
 		expect(capturedConfig!['mySessionId']).toBe('my-sub-session-id');
-		expect(capturedConfig!['myRole']).toBe('reviewer');
+		expect(capturedConfig!['myAgentName']).toBe('reviewer');
 		expect(capturedConfig!['taskId']).toBe('my-task-id');
 		// workflowNodeId is now derived from stepTask.id (workflowNodeId column removed in M71)
 		expect(capturedConfig!['workflowNodeId']).toBe(stepTask.id);
