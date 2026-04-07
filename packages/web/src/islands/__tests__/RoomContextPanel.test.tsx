@@ -19,12 +19,14 @@ const {
 	mockNavigateToRoomSession,
 	mockNavigateToRoom,
 	mockNavigateToRoomAgent,
+	mockNavigateToRoomTab,
 	mockToast,
 } = vi.hoisted(() => ({
 	mockCreateSession: vi.fn().mockResolvedValue('new-session-id'),
 	mockNavigateToRoomSession: vi.fn(),
 	mockNavigateToRoom: vi.fn(),
 	mockNavigateToRoomAgent: vi.fn(),
+	mockNavigateToRoomTab: vi.fn(),
 	mockToast: vi.fn(),
 }));
 
@@ -42,7 +44,6 @@ let mockGoalsSignal!: Signal<RoomGoal[]>;
 let mockCurrentRoomSessionIdSignal!: Signal<string | null>;
 let mockCurrentRoomTaskIdSignal!: Signal<string | null>;
 let mockCurrentRoomAgentActiveSignal!: Signal<boolean>;
-let mockCurrentRoomTabSignal!: Signal<string | null>;
 
 let mockActiveGoals!: ReadonlySignal<RoomGoal[]>;
 
@@ -53,7 +54,6 @@ function initSignals() {
 	mockCurrentRoomSessionIdSignal = signal(null);
 	mockCurrentRoomTaskIdSignal = signal(null);
 	mockCurrentRoomAgentActiveSignal = signal(false);
-	mockCurrentRoomTabSignal = signal(null);
 
 	mockActiveGoals = computed(() => mockGoalsSignal.value.filter((g) => g.status === 'active'));
 }
@@ -75,6 +75,7 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToRoom: mockNavigateToRoom,
 	navigateToRoomAgent: mockNavigateToRoomAgent,
 	navigateToRoomSession: mockNavigateToRoomSession,
+	navigateToRoomTab: (...args: unknown[]) => mockNavigateToRoomTab(...args),
 }));
 
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
@@ -90,12 +91,10 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
 		get currentRoomAgentActiveSignal() {
 			return mockCurrentRoomAgentActiveSignal;
 		},
-		get currentRoomTabSignal() {
-			return mockCurrentRoomTabSignal;
-		},
 	};
 });
 
+import { navigateToRoomTab } from '../../lib/router.ts';
 import { RoomContextPanel } from '../RoomContextPanel';
 
 // -------------------------------------------------------
@@ -171,8 +170,7 @@ describe('RoomContextPanel', () => {
 
 		const statsBtn = screen.getByText('1 active').closest('button');
 		fireEvent.click(statsBtn!);
-		expect(mockCurrentRoomTabSignal.value).toBe('tasks');
-		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+		expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
 	});
 
 	// -- Pinned items --
@@ -264,8 +262,7 @@ describe('RoomContextPanel', () => {
 		render(<RoomContextPanel roomId="room-1" onNavigate={onNavigate} />);
 
 		fireEvent.click(screen.getByText('My Mission'));
-		expect(mockCurrentRoomTabSignal.value).toBe('goals');
-		expect(mockNavigateToRoom).toHaveBeenCalledWith('room-1');
+		expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'goals');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 

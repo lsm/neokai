@@ -5,7 +5,6 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
-	currentRoomTabSignal,
 	currentRoomActiveTabSignal,
 	currentRoomAgentActiveSignal,
 	type NavSection,
@@ -15,8 +14,7 @@ import {
 	navigateToSettings,
 	navigateToRooms,
 	navigateToInbox,
-	navigateToRoom,
-	navigateToRoomAgent,
+	navigateToRoomTab,
 } from '../lib/router.ts';
 import { inboxStore } from '../lib/inbox-store.ts';
 import { InboxBadge } from '../components/ui/InboxBadge.tsx';
@@ -214,31 +212,19 @@ export function BottomTabBar() {
 				navigateToSettings();
 				break;
 			case 'room-overview':
-				if (roomId) {
-					currentRoomTabSignal.value = 'overview';
-					navigateToRoom(roomId);
-				}
+				if (roomId) navigateToRoomTab(roomId, 'overview');
 				break;
 			case 'room-tasks':
-				if (roomId) {
-					currentRoomTabSignal.value = 'tasks';
-					navigateToRoom(roomId);
-				}
+				if (roomId) navigateToRoomTab(roomId, 'tasks');
 				break;
 			case 'room-agent':
-				if (roomId) navigateToRoomAgent(roomId);
+				if (roomId) navigateToRoomTab(roomId, 'chat');
 				break;
 			case 'room-agents':
-				if (roomId) {
-					currentRoomTabSignal.value = 'agents';
-					navigateToRoom(roomId);
-				}
+				if (roomId) navigateToRoomTab(roomId, 'agents');
 				break;
 			case 'room-missions':
-				if (roomId) {
-					currentRoomTabSignal.value = 'goals';
-					navigateToRoom(roomId);
-				}
+				if (roomId) navigateToRoomTab(roomId, 'goals');
 				break;
 		}
 	};

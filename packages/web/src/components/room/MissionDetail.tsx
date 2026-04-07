@@ -14,8 +14,7 @@
 import { useState } from 'preact/hooks';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { cn } from '../../lib/utils';
-import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
-import { currentRoomTabSignal } from '../../lib/signals';
+import { navigateToRoomTab, navigateToRoomTask } from '../../lib/router';
 import { useMissionDetailData } from '../../hooks/useMissionDetailData';
 import type { AvailableStatusAction } from '../../hooks/useMissionDetailData';
 import { Button } from '../ui/Button';
@@ -501,8 +500,7 @@ export function MissionDetail({ roomId, goalId }: MissionDetailProps) {
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
 	function handleBack() {
-		navigateToRoom(roomId);
-		currentRoomTabSignal.value = 'goals';
+		navigateToRoomTab(roomId, 'goals');
 	}
 
 	const handleEditSubmit = async (data: CreateGoalFormData) => {

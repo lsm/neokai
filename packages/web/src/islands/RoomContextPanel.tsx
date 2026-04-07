@@ -11,12 +11,16 @@
 import { useCallback } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
 import { roomStore } from '../lib/room-store';
-import { navigateToRoom, navigateToRoomAgent, navigateToRoomSession } from '../lib/router';
+import {
+	navigateToRoom,
+	navigateToRoomAgent,
+	navigateToRoomSession,
+	navigateToRoomTab,
+} from '../lib/router';
 import {
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
 	currentRoomAgentActiveSignal,
-	currentRoomTabSignal,
 } from '../lib/signals';
 import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
@@ -92,14 +96,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	};
 
 	const handleMissionsClick = () => {
-		currentRoomTabSignal.value = 'goals';
-		navigateToRoom(roomId);
+		navigateToRoomTab(roomId, 'goals');
 		onNavigate?.();
 	};
 
 	const handleTasksClick = () => {
-		currentRoomTabSignal.value = 'tasks';
-		navigateToRoom(roomId);
+		navigateToRoomTab(roomId, 'tasks');
 		onNavigate?.();
 	};
 
