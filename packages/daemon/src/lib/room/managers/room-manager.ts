@@ -97,6 +97,17 @@ export class RoomManager {
 				this.sessionRepo.deleteSession(sessionId);
 			}
 
+			// Clean up orphaned session_groups that reference tasks in this room.
+			// session_groups.ref_id has no FK to tasks, so CASCADE won't clean them up.
+			// Deleting them before the room prevents FK errors if the runtime
+			// concurrently tries to join session_groups with tasks.
+			this.db
+				.prepare(
+					`DELETE FROM session_groups
+					 WHERE ref_id IN (SELECT id FROM tasks WHERE room_id = ?)`
+				)
+				.run(id);
+
 			// Delete the room — CASCADE handles tasks, goals, etc.
 			return this.roomRepo.deleteRoom(id);
 		});

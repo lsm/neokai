@@ -90,6 +90,15 @@ async function insertAndSend(page: Page, text: string, waitFor?: string): Promis
 	}
 }
 
+/** Trigger an immediate FileIndex rescan via RPC. */
+async function rescanFileIndex(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub?.request) throw new Error('MessageHub not available');
+		await hub.request('fileindex.rescan', {});
+	});
+}
+
 // ─── Selectors (Task 5.4) ─────────────────────────────────────────────────────
 
 const MENTION_TOKEN_SELECTOR = '[data-testid="mention-token"]';
@@ -138,7 +147,7 @@ test.describe('Reference Autocomplete — Dropdown Appearance', () => {
 
 	test('hides autocomplete when Escape is pressed', async ({ page }) => {
 		await typeInChatInput(page, '@');
-		const dropdown = await waitForReferenceAutocomplete(page);
+		const dropdown = await waitForReferenceAutocomplete(page, 15000);
 		await expect(dropdown).toBeVisible();
 		await getChatInput(page).press('Escape');
 		await expect(dropdown).toBeHidden({ timeout: 3000 });
@@ -162,7 +171,6 @@ test.describe('Reference Autocomplete — Dropdown Appearance', () => {
 
 test.describe('Reference Selection — Input Insertion', () => {
 	let roomId = '';
-	const fixtureFilePath = 'e2e-ref-fixtures/pack-fixture.ts';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -172,7 +180,6 @@ test.describe('Reference Selection — Input Insertion', () => {
 	});
 
 	test.afterEach(async ({ page }) => {
-		await deleteTestFile(page, fixtureFilePath);
 		await deleteRoom(page, roomId);
 		roomId = '';
 	});
@@ -229,19 +236,24 @@ test.describe('Reference Selection — Input Insertion', () => {
 	});
 
 	test('selecting a file result inserts @ref{file:…} or @ref{folder:…}', async ({ page }) => {
-		// Create deterministic fixture file so file autocomplete always has a match in CI.
-		await createTestFile(page, fixtureFilePath, 'export const fixture = true;\n');
-		await typeInChatInput(page, '@pack-fixture');
-		// Wait longer for file search results to load
+		// Create a test file in the workspace and trigger FileIndex rescan.
+		// In CI the workspace is an empty temp dir, so seed files from test-env.ts
+		// are not available. We create a file and use fileindex.rescan RPC to
+		// index it immediately instead of waiting for the 10s polling interval.
+		await createTestFile(page, 'src/utils/helpers.ts', 'export const helpers = true;\n');
+		await rescanFileIndex(page);
+
+		await typeInChatInput(page, '@helpers');
+		// Wait for file search results to load
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
-		await dropdown.waitFor({ state: 'visible', timeout: 15000 });
+		await dropdown.waitFor({ state: 'visible', timeout: 10000 });
 
 		// Look for any file/folder result
 		const item = page
 			.locator('[role="listbox"] [role="option"]')
-			.filter({ hasText: /pack/i })
+			.filter({ hasText: /helpers/i })
 			.first();
-		await expect(item).toBeVisible({ timeout: 8000 });
+		await expect(item).toBeVisible({ timeout: 5000 });
 		await item.click();
 
 		const value = await getChatInput(page).inputValue();
@@ -404,18 +416,15 @@ test.describe('Reference Token — Entity-Specific Title Rendering', () => {
 
 test.describe('Reference Autocomplete — Standalone Session', () => {
 	let sessionId: string | null = null;
-	const fixtureFilePath = 'e2e-ref-fixtures/plain-session-file.ts';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
-		await createTestFile(page, fixtureFilePath, 'export const standalone = true;\n');
 		// createSessionViaUI may fail in some environments - let it throw so CI catches issues
 		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
-		await deleteTestFile(page, fixtureFilePath);
 		if (sessionId) {
 			await cleanupTestSession(page, sessionId);
 			sessionId = null;
@@ -423,12 +432,15 @@ test.describe('Reference Autocomplete — Standalone Session', () => {
 	});
 
 	test('typing @ shows only file/folder results (no tasks or goals)', async ({ page }) => {
-		// Query deterministic fixture file created in beforeEach.
-		// For standalone sessions, tasks and goals are not available.
-		await typeInChatInput(page, '@plain-session-file');
+		// Create a test file in the workspace and trigger FileIndex rescan.
+		// In CI the workspace is an empty temp dir, so we create a file and
+		// use fileindex.rescan RPC to index it immediately.
+		await createTestFile(page, 'README.md', '# Test README\n');
+		await rescanFileIndex(page);
+
+		await typeInChatInput(page, '@README');
 		const dropdown = page.locator('[data-testid="reference-autocomplete"]');
-		// Wait longer for file search results
-		await dropdown.waitFor({ state: 'visible', timeout: 15000 });
+		await dropdown.waitFor({ state: 'visible', timeout: 10000 });
 		await expect(dropdown).toBeVisible();
 
 		// Header must read "Files & Folders" — not "References"

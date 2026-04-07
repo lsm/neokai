@@ -317,6 +317,24 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 
 		return { results: allResults };
 	});
+
+	// ------------------------------------------------------------------
+	// fileindex.rescan
+	// ------------------------------------------------------------------
+
+	/**
+	 * fileindex.rescan — trigger an immediate incremental refresh of the FileIndex.
+	 *
+	 * This is primarily useful for E2E tests that create workspace files and need
+	 * them indexed before searching. In normal operation, FileIndex polls automatically.
+	 *
+	 * Parameters: none
+	 * Returns: { size: number } — number of entries in the cache after refresh
+	 */
+	messageHub.onRequest('fileindex.rescan', async () => {
+		await fileIndex.refresh();
+		return { size: fileIndex.size() };
+	});
 }
 
 // ============================================================================

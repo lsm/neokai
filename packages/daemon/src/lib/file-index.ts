@@ -442,6 +442,17 @@ export class FileIndex {
 		return this.ready;
 	}
 
+	/**
+	 * Trigger an immediate incremental refresh scan.
+	 * Useful when files are created/deleted and the caller cannot wait
+	 * for the next polling cycle (e.g. E2E test setup).
+	 *
+	 * No-op if a scan is already in progress or no workspace is configured.
+	 */
+	async refresh(): Promise<void> {
+		await this.runRefresh();
+	}
+
 	/** Number of entries currently in the cache (useful for testing). */
 	size(): number {
 		return this.cache.size;
