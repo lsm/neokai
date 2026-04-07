@@ -377,6 +377,7 @@ export function navigateToSession(sessionId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -401,6 +402,7 @@ export function navigateToSession(sessionId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -429,6 +431,7 @@ export function navigateToHome(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -447,6 +450,7 @@ export function navigateToHome(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -480,6 +484,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -504,6 +509,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -594,6 +600,7 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -618,6 +625,7 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -653,6 +661,7 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		currentRoomGoalIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -671,6 +680,7 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		currentRoomGoalIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -705,6 +715,7 @@ export function navigateToRoomMission(roomId: string, goalId: string, replace = 
 		currentRoomTaskIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -723,6 +734,7 @@ export function navigateToRoomMission(roomId: string, goalId: string, replace = 
 		currentRoomTaskIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
@@ -838,6 +850,7 @@ export function navigateToSessions(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -856,6 +869,7 @@ export function navigateToSessions(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -907,6 +921,7 @@ export function navigateToInbox(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -925,6 +940,7 @@ export function navigateToInbox(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -978,6 +994,7 @@ export function navigateToSpacesPage(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -996,6 +1013,7 @@ export function navigateToSpacesPage(replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
@@ -1030,6 +1048,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -1050,6 +1069,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -1081,6 +1101,7 @@ export function navigateToSpaceConfigure(spaceId: string, replace = false): void
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -1101,6 +1122,7 @@ export function navigateToSpaceConfigure(spaceId: string, replace = false): void
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -1131,6 +1153,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -1151,6 +1174,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -1181,6 +1205,7 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -1201,6 +1226,7 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -1235,6 +1261,7 @@ export function navigateToSpaceAgent(spaceId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 		return;
 	}
@@ -1255,6 +1282,7 @@ export function navigateToSpaceAgent(spaceId: string, replace = false): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} finally {
 		setTimeout(() => {
@@ -1300,6 +1328,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (spaceSession) {
@@ -1312,6 +1341,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (spaceAgent) {
@@ -1324,6 +1354,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (spaceConfigure) {
@@ -1336,6 +1367,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (spaceId) {
@@ -1348,6 +1380,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (roomAgent) {
@@ -1443,6 +1476,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} else if (INBOX_ROUTE_PATTERN.test(path)) {
@@ -1455,6 +1489,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'inbox';
 	} else if (SPACES_ROUTE_PATTERN.test(path)) {
@@ -1467,6 +1502,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else {
@@ -1480,6 +1516,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
 		if (!sessionId) {
 			navSectionSignal.value = 'home';
@@ -1527,6 +1564,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (initialSpaceSession) {
@@ -1539,6 +1577,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (initialSpaceAgent) {
@@ -1551,6 +1590,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (initialSpaceConfigure) {
@@ -1563,6 +1603,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (initialSpaceId) {
@@ -1575,6 +1616,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else if (initialRoomAgent) {
@@ -1662,6 +1704,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} else if (INBOX_ROUTE_PATTERN.test(initialPath)) {
@@ -1674,6 +1717,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'inbox';
 	} else if (SPACES_ROUTE_PATTERN.test(initialPath)) {
@@ -1686,6 +1730,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
 	} else {
@@ -1699,6 +1744,7 @@ export function initializeRouter(): string | null {
 		currentRoomTaskIdSignal.value = null;
 		currentRoomGoalIdSignal.value = null;
 		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = initialSessionId;
 		if (initialSessionId) {
 			navSectionSignal.value = 'chats';

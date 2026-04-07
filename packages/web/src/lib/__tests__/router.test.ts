@@ -1366,6 +1366,59 @@ describe('Router Utility', () => {
 				expect(currentRoomActiveTabSignal.value).toBeNull();
 				expect(currentRoomIdSignal.value).toBeNull();
 			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to /sessions', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/tasks';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBe('tasks');
+
+				mockLocation.pathname = '/sessions';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to /inbox', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/goals';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/inbox';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to /spaces', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/agents';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/spaces';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
+
+			it('should clear currentRoomActiveTabSignal when popstate navigates from tab to a space', () => {
+				mockLocation.pathname = '/';
+				initializeRouter();
+
+				mockLocation.pathname = '/room/abc-123/settings';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+				mockLocation.pathname = '/space/def-456';
+				window.dispatchEvent(new PopStateEvent('popstate', {}));
+				expect(currentRoomActiveTabSignal.value).toBeNull();
+				expect(currentRoomIdSignal.value).toBeNull();
+			});
 		});
 
 		// ──────────────────────────────────────────────────────────────────────────
