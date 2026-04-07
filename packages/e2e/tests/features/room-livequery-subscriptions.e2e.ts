@@ -35,127 +35,98 @@ import {
 
 async function setupPage(page: import('@playwright/test').Page): Promise<void> {
 	await page.goto('/');
-	// Clear persisted task filter tab so draft tasks are always visible.
-	// Must run before the app JS bundle hydrates (which reads this key on mount).
-	// page.goto('/') resolves at DOMContentLoaded, before the Preact app mounts.
+	// Defensive: each test gets a fresh browser context (empty localStorage),
+	// so this removeItem is a no-op in normal conditions. It guards against
+	// future test-ordering issues if context isolation ever changes.
 	await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 	await page.getByRole('button', { name: 'New Session', exact: true }).waitFor({ timeout: 10000 });
 }
 
 /**
- * Create a task via a raw WebSocket RPC — for use when the main
+ * Create an entity via a raw WebSocket RPC — for use when the main
  * ConnectionManager's WebSocket is disconnected.
  *
- * Opens an independent WebSocket to the server, sends a task.create
- * request, and returns the task ID from the response.
+ * Opens an independent WebSocket to the server, sends the given RPC,
+ * and returns the entity ID extracted from the response.
  */
+async function createEntityViaRawWs(
+	page: import('@playwright/test').Page,
+	method: string,
+	data: Record<string, unknown>,
+	responseKey: string
+): Promise<string> {
+	return page.evaluate(
+		async ({ m, d, k }) => {
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const wsUrl = `${protocol}//${window.location.host}/ws`;
+			const requestId = crypto.randomUUID();
+
+			return new Promise<string>((resolve, reject) => {
+				const ws = new WebSocket(wsUrl);
+				const timeout = setTimeout(() => {
+					ws.close();
+					reject(new Error('Raw WS RPC timed out'));
+				}, 10000);
+
+				ws.addEventListener('message', (event) => {
+					const msg = JSON.parse(event.data);
+					if (msg.type === 'RSP' && msg.requestId === requestId) {
+						clearTimeout(timeout);
+						ws.close();
+						if (msg.error) reject(new Error(msg.error));
+						else resolve((msg.data as Record<string, { id: string }>)[k].id);
+					}
+				});
+
+				ws.addEventListener('open', () => {
+					ws.send(
+						JSON.stringify({
+							id: requestId,
+							type: 'REQ',
+							sessionId: 'global',
+							method: m,
+							data: d,
+							timestamp: new Date().toISOString(),
+							version: '1.0.0',
+						})
+					);
+				});
+
+				ws.addEventListener('error', () => {
+					clearTimeout(timeout);
+					reject(new Error('Raw WS connection failed'));
+				});
+			});
+		},
+		{ m: method, d: data, k: responseKey }
+	);
+}
+
 async function createTaskViaRawWs(
 	page: import('@playwright/test').Page,
 	roomId: string,
 	title: string,
 	description = ''
 ): Promise<string> {
-	return page.evaluate(
-		async ({ rId, t, d }) => {
-			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-			const wsUrl = `${protocol}//${window.location.host}/ws`;
-			const requestId = crypto.randomUUID();
-
-			return new Promise<string>((resolve, reject) => {
-				const ws = new WebSocket(wsUrl);
-				const timeout = setTimeout(() => {
-					ws.close();
-					reject(new Error('Raw WS RPC timed out'));
-				}, 10000);
-
-				ws.addEventListener('message', (event) => {
-					const msg = JSON.parse(event.data);
-					if (msg.type === 'RSP' && msg.requestId === requestId) {
-						clearTimeout(timeout);
-						ws.close();
-						if (msg.error) reject(new Error(msg.error));
-						else resolve((msg.data as { task: { id: string } }).task.id);
-					}
-				});
-
-				ws.addEventListener('open', () => {
-					ws.send(
-						JSON.stringify({
-							id: requestId,
-							type: 'REQ',
-							sessionId: 'global',
-							method: 'task.create',
-							data: { roomId: rId, title: t, description: d, status: 'draft' },
-							timestamp: new Date().toISOString(),
-							version: '1.0.0',
-						})
-					);
-				});
-
-				ws.addEventListener('error', () => {
-					clearTimeout(timeout);
-					reject(new Error('Raw WS connection failed'));
-				});
-			});
-		},
-		{ rId: roomId, t: title, d: description }
+	return createEntityViaRawWs(
+		page,
+		'task.create',
+		{ roomId, title, description, status: 'draft' },
+		'task'
 	);
 }
 
-/**
- * Create a goal via a raw WebSocket RPC — for use when the main
- * ConnectionManager's WebSocket is disconnected.
- */
 async function createGoalViaRawWs(
 	page: import('@playwright/test').Page,
 	roomId: string,
 	title: string,
 	description = ''
 ): Promise<string> {
-	return page.evaluate(
-		async ({ rId, t, d }) => {
-			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-			const wsUrl = `${protocol}//${window.location.host}/ws`;
-			const requestId = crypto.randomUUID();
-
-			return new Promise<string>((resolve, reject) => {
-				const ws = new WebSocket(wsUrl);
-				const timeout = setTimeout(() => {
-					ws.close();
-					reject(new Error('Raw WS RPC timed out'));
-				}, 10000);
-
-				ws.addEventListener('message', (event) => {
-					const msg = JSON.parse(event.data);
-					if (msg.type === 'RSP' && msg.requestId === requestId) {
-						clearTimeout(timeout);
-						ws.close();
-						if (msg.error) reject(new Error(msg.error));
-						else resolve((msg.data as { goal: { id: string } }).goal.id);
-					}
-				});
-
-				ws.addEventListener('open', () => {
-					ws.send(
-						JSON.stringify({
-							id: requestId,
-							type: 'REQ',
-							sessionId: 'global',
-							method: 'goal.create',
-							data: { roomId: rId, title: t, description: d, priority: 'normal' },
-							timestamp: new Date().toISOString(),
-							version: '1.0.0',
-						})
-					);
-				});
-
-				ws.addEventListener('error', () => {
-					clearTimeout(timeout);
-					reject(new Error('Raw WS connection failed'));
-				});
-			});
-		},
-		{ rId: roomId, t: title, d: description }
+	return createEntityViaRawWs(
+		page,
+		'goal.create',
+		{ roomId, title, description, priority: 'normal' },
+		'goal'
 	);
 }
 
