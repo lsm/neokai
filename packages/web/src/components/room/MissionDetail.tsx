@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { NeoTask, RoomGoal, TaskStatus } from '@neokai/shared';
+import type { NeoTask, RoomGoal } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { currentRoomTabSignal } from '../../lib/signals';
@@ -33,45 +33,9 @@ import {
 	ProgressBar,
 	MetricProgress,
 	RecurringScheduleInfo,
+	TaskStatusBadge,
 } from './GoalsEditor';
 import type { CreateGoalFormData } from './GoalsEditor';
-
-// ─── Task Status Badge (local copy — not exported from GoalsEditor) ────────────
-
-function TaskStatusBadge({ status }: { status: TaskStatus }) {
-	const styles: Record<string, string> = {
-		pending: 'bg-gray-700 text-gray-300',
-		in_progress: 'bg-yellow-900/50 text-yellow-300',
-		completed: 'bg-green-900/50 text-green-300',
-		needs_attention: 'bg-red-900/50 text-red-300',
-		draft: 'bg-dark-600 text-gray-400',
-		review: 'bg-purple-900/50 text-purple-300',
-		cancelled: 'bg-gray-800 text-gray-400',
-		archived: 'bg-gray-900 text-gray-600',
-		rate_limited: 'bg-orange-900/50 text-orange-300',
-		usage_limited: 'bg-orange-900/50 text-orange-300',
-	};
-	const label =
-		status === 'in_progress'
-			? 'active'
-			: status === 'needs_attention'
-				? 'needs attention'
-				: status === 'rate_limited'
-					? 'rate limited'
-					: status === 'usage_limited'
-						? 'usage limited'
-						: status;
-	return (
-		<span
-			class={cn(
-				'px-1.5 py-0.5 text-[10px] font-medium rounded capitalize',
-				styles[status] ?? styles.pending
-			)}
-		>
-			{label}
-		</span>
-	);
-}
 
 // ─── Main Content ──────────────────────────────────────────────────────────────
 
@@ -111,7 +75,9 @@ function MainContent({
 
 	const handleLinkKeyDown = (e: KeyboardEvent) => {
 		if (e.key === 'Enter') {
-			handleLinkTask();
+			handleLinkTask().catch(() => {
+				/* errors toasted by onLinkTask caller */
+			});
 		}
 	};
 
@@ -214,7 +180,16 @@ function MainContent({
 				</div>
 			</section>
 
-			{/* ── Schedule + Execution History (recurring only) ── */}
+			{/*
+			 * ── Schedule + Execution History (recurring only) ──
+			 *
+			 * Design note: The execution history list serves as the activity
+			 * timeline for recurring missions. We intentionally do NOT call
+			 * goal.getMetricHistory (which does not exist as an RPC) — metric
+			 * snapshots are tracked server-side and are not surfaced here.
+			 * One-shot and measurable missions have no timeline section because
+			 * they don't produce a series of discrete execution runs.
+			 */}
 			{missionType === 'recurring' && (
 				<>
 					<section

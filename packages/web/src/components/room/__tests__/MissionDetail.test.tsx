@@ -100,6 +100,9 @@ vi.mock('../GoalsEditor', () => ({
 			{goal.schedule ? 'has-schedule' : 'no-schedule'}
 		</div>
 	),
+	TaskStatusBadge: ({ status }: { status: string }) => (
+		<span data-testid={`task-status-badge-${status}`}>{status}</span>
+	),
 }));
 
 // Mock UI components — paths are relative to the test file location (room/__tests__/)
@@ -833,6 +836,7 @@ describe('MissionDetail', () => {
 				completedAt: 1700003600,
 				resultSummary: 'Done',
 				taskIds: [],
+				planningAttempts: 0,
 			},
 		];
 		mockUseMissionDetailData.mockReturnValue(
@@ -855,6 +859,7 @@ describe('MissionDetail', () => {
 				completedAt: null,
 				resultSummary: null,
 				taskIds: [],
+				planningAttempts: 0,
 			},
 			{
 				id: 'exec-2',
@@ -865,6 +870,7 @@ describe('MissionDetail', () => {
 				completedAt: null,
 				resultSummary: null,
 				taskIds: [],
+				planningAttempts: 0,
 			},
 		];
 		mockUseMissionDetailData.mockReturnValue(
@@ -899,6 +905,7 @@ describe('MissionDetail', () => {
 				completedAt: 1700003600,
 				resultSummary: null,
 				taskIds: [],
+				planningAttempts: 0,
 			},
 		];
 		mockUseMissionDetailData.mockReturnValue(
