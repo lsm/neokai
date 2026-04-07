@@ -9,6 +9,7 @@
  * - Real-time updates via state channels
  */
 
+import { lazy, Suspense } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import {
@@ -23,7 +24,6 @@ import { RoomDashboard } from '../components/room/RoomDashboard';
 import { RoomTasks } from '../components/room/RoomTasks';
 import { RoomAgentContextStrip } from '../components/room/RoomAgentContextStrip';
 import ChatContainer from './ChatContainer';
-import { GoalsEditor, RoomSettings, RoomAgents } from '../components/room';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
 import { TaskViewToggle } from '../components/room/TaskViewToggle';
 import { MissionDetail } from '../components/room/MissionDetail';
@@ -32,6 +32,17 @@ import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
+
+// Lazy-loaded tab components (code-split into separate chunks)
+const GoalsEditor = lazy(() =>
+	import('../components/room/GoalsEditor').then((m) => ({ default: m.GoalsEditor }))
+);
+const RoomAgents = lazy(() =>
+	import('../components/room/RoomAgents').then((m) => ({ default: m.RoomAgents }))
+);
+const RoomSettings = lazy(() =>
+	import('../components/room/RoomSettings').then((m) => ({ default: m.RoomSettings }))
+);
 
 type RoomTab = 'chat' | 'overview' | 'tasks' | 'agents' | 'goals' | 'settings';
 
@@ -288,43 +299,67 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 							)}
 							{activeTab === 'agents' && (
 								<div class="h-full overflow-y-auto">
-									<RoomAgents room={room} />
+									<Suspense
+										fallback={
+											<div class="flex items-center justify-center h-32">
+												<Skeleton width="200px" height={24} />
+											</div>
+										}
+									>
+										<RoomAgents room={room} />
+									</Suspense>
 								</div>
 							)}
 							{activeTab === 'goals' && (
 								<div class="h-full overflow-y-auto">
-									<GoalsEditor
-										roomId={roomId}
-										goals={roomStore.goals.value}
-										tasks={roomStore.tasks.value}
-										onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
-										onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
-										onCreateGoal={handleCreateGoal}
-										onUpdateGoal={handleUpdateGoal}
-										onDeleteGoal={handleDeleteGoal}
-										onLinkTask={handleLinkTaskToGoal}
-										isLoading={roomStore.goalsLoading.value}
-										autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
-										onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
-										onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
-										onTriggerNow={async (goalId) => {
-											await roomStore.triggerNow(goalId);
-										}}
-										onScheduleNext={async (goalId, nextRunAt) => {
-											await roomStore.scheduleNext(goalId, nextRunAt);
-										}}
-									/>
+									<Suspense
+										fallback={
+											<div class="flex items-center justify-center h-32">
+												<Skeleton width="200px" height={24} />
+											</div>
+										}
+									>
+										<GoalsEditor
+											roomId={roomId}
+											goals={roomStore.goals.value}
+											tasks={roomStore.tasks.value}
+											onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
+											onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
+											onCreateGoal={handleCreateGoal}
+											onUpdateGoal={handleUpdateGoal}
+											onDeleteGoal={handleDeleteGoal}
+											onLinkTask={handleLinkTaskToGoal}
+											isLoading={roomStore.goalsLoading.value}
+											autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
+											onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
+											onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
+											onTriggerNow={async (goalId) => {
+												await roomStore.triggerNow(goalId);
+											}}
+											onScheduleNext={async (goalId, nextRunAt) => {
+												await roomStore.scheduleNext(goalId, nextRunAt);
+											}}
+										/>
+									</Suspense>
 								</div>
 							)}
 							{activeTab === 'settings' && (
 								<div class="h-full overflow-y-auto">
-									<RoomSettings
-										room={room}
-										onSave={(params) => roomStore.updateSettings(params)}
-										onArchive={handleArchiveRoom}
-										onDelete={handleDeleteRoom}
-										isLoading={roomStore.loading.value}
-									/>
+									<Suspense
+										fallback={
+											<div class="flex items-center justify-center h-32">
+												<Skeleton width="200px" height={24} />
+											</div>
+										}
+									>
+										<RoomSettings
+											room={room}
+											onSave={(params) => roomStore.updateSettings(params)}
+											onArchive={handleArchiveRoom}
+											onDelete={handleDeleteRoom}
+											isLoading={roomStore.loading.value}
+										/>
+									</Suspense>
 								</div>
 							)}
 							{/* Task slide-over: overlays tab content, keeps header/tabs accessible */}

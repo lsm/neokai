@@ -7,8 +7,6 @@
 // @public - Library export
 export { CollapsibleSection } from './CollapsibleSection';
 export type { CollapsibleSectionProps } from './CollapsibleSection';
-// @public - Library export
-export { GoalsEditor } from './GoalsEditor';
 // @public - GoalsEditor sub-components for reuse in MissionDetail and other views
 export { StatusIndicator } from './GoalsEditor';
 export { PriorityBadge } from './GoalsEditor';
@@ -22,12 +20,6 @@ export { GoalForm, type GoalFormProps } from './GoalsEditor';
 // @public - Library export
 export { RoomContext } from './RoomContext';
 export type { RoomContextProps } from './RoomContext';
-// @public - Library export
-export { RoomSettings } from './RoomSettings';
-export type { RoomSettingsProps } from './RoomSettings';
-// @public - Library export
-export { RoomAgents } from './RoomAgents';
-export type { RoomAgentsProps } from './RoomAgents';
 // @public - Library export
 export { RoomAgentContextStrip } from './RoomAgentContextStrip';
 // @public - Library export
