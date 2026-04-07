@@ -509,6 +509,10 @@ describe('reference.resolve handler', () => {
 				};
 			};
 
+			// eslint-disable-next-line no-console
+			(globalThis as unknown as Record<string, unknown>).__originalConsole.log(
+				`DEBUG result: ${JSON.stringify(result)}`
+			);
 			expect(result.resolved).not.toBeNull();
 			expect(result.resolved!.type).toBe('file');
 			expect(result.resolved!.id).toBe('hello.txt');
