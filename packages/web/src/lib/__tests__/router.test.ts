@@ -13,15 +13,24 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	getSessionIdFromPath,
 	getRoomIdFromPath,
+	getRoomMissionIdFromPath,
 	createSessionPath,
+	createRoomMissionPath,
 	navigateToSession,
+	navigateToRoom,
 	navigateToHome,
+	navigateToRoomMission,
 	initializeRouter,
 	cleanupRouter,
 	getRouterState,
 	isRouterInitialized,
 } from '../router';
-import { currentSessionIdSignal, currentRoomIdSignal } from '../signals';
+import {
+	currentSessionIdSignal,
+	currentRoomIdSignal,
+	currentRoomTaskIdSignal,
+	currentRoomGoalIdSignal,
+} from '../signals';
 
 // Store original values (use unknown to avoid type errors at module load time)
 let originalHistory: unknown;
@@ -64,6 +73,8 @@ describe('Router Utility', () => {
 		// Reset signals
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
 
 		// Reset mocks
 		vi.clearAllMocks();
@@ -91,6 +102,8 @@ describe('Router Utility', () => {
 		// Reset signals
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
 	});
 
 	describe('getSessionIdFromPath', () => {
@@ -545,6 +558,356 @@ describe('Router Utility', () => {
 				'',
 				'/room/550e8400-e29b-41d4-a716-446655440000'
 			);
+		});
+	});
+
+	// ──────────────────────────────────────────────────────────────────────────
+	// Mission route tests
+	// ──────────────────────────────────────────────────────────────────────────
+
+	describe('getRoomMissionIdFromPath', () => {
+		it('should extract roomId and goalId from UUID mission path', () => {
+			const result = getRoomMissionIdFromPath(
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001'
+			);
+			expect(result).toEqual({
+				roomId: '550e8400-e29b-41d4-a716-446655440000',
+				goalId: '660e8400-e29b-41d4-a716-446655440001',
+			});
+		});
+
+		it('should extract roomId and goalId from short ID mission path', () => {
+			const result = getRoomMissionIdFromPath(
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/a-1'
+			);
+			expect(result).toEqual({
+				roomId: '550e8400-e29b-41d4-a716-446655440000',
+				goalId: 'a-1',
+			});
+		});
+
+		it('should extract roomId and goalId from multi-digit short ID mission path', () => {
+			const result = getRoomMissionIdFromPath(
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/z-123'
+			);
+			expect(result).toEqual({
+				roomId: '550e8400-e29b-41d4-a716-446655440000',
+				goalId: 'z-123',
+			});
+		});
+
+		it('should return null for non-mission paths', () => {
+			expect(getRoomMissionIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000')).toBeNull();
+			expect(
+				getRoomMissionIdFromPath(
+					'/room/550e8400-e29b-41d4-a716-446655440000/task/660e8400-e29b-41d4-a716-446655440001'
+				)
+			).toBeNull();
+			expect(getRoomMissionIdFromPath('/session/550e8400-e29b-41d4-a716-446655440000')).toBeNull();
+			expect(getRoomMissionIdFromPath('/')).toBeNull();
+			expect(getRoomMissionIdFromPath('/invalid/path')).toBeNull();
+		});
+
+		it('should return null for path with extra trailing segments', () => {
+			const result = getRoomMissionIdFromPath(
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001/extra'
+			);
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('createRoomMissionPath', () => {
+		it('should create correct mission path with UUID goal ID', () => {
+			const path = createRoomMissionPath(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+			expect(path).toBe(
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001'
+			);
+		});
+
+		it('should create correct mission path with short goal ID', () => {
+			const path = createRoomMissionPath('550e8400-e29b-41d4-a716-446655440000', 'a-1');
+			expect(path).toBe('/room/550e8400-e29b-41d4-a716-446655440000/mission/a-1');
+		});
+	});
+
+	describe('getRoomIdFromPath with mission route', () => {
+		it('should extract room ID from mission path', () => {
+			const roomId = getRoomIdFromPath(
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001'
+			);
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should extract room ID from mission path with short ID', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/mission/a-1');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+	});
+
+	describe('navigateToRoomMission', () => {
+		it('should update URL and set currentRoomGoalIdSignal when navigating to mission', () => {
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+
+			const expectedPath =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+			expect(mockHistory.pushState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					goalId: '660e8400-e29b-41d4-a716-446655440001',
+					path: expectedPath,
+				},
+				'',
+				expectedPath
+			);
+
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should clear currentRoomTaskIdSignal when navigating to mission', () => {
+			// Pre-set a task ID
+			currentRoomTaskIdSignal.value = 'some-task-id';
+
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+
+			expect(currentRoomTaskIdSignal.value).toBeNull();
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+		});
+
+		it('should clear currentSessionIdSignal when navigating to mission', () => {
+			currentSessionIdSignal.value = 'some-session-id';
+
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should use replaceState when replace is true', () => {
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001',
+				true
+			);
+
+			expect(mockHistory.replaceState).toHaveBeenCalled();
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+		});
+
+		it('should not navigate if already on the same mission path', () => {
+			const path =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+			mockLocation.pathname = path;
+			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
+
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+
+			expect(mockHistory.pushState).not.toHaveBeenCalled();
+			expect(mockHistory.replaceState).not.toHaveBeenCalled();
+			// Signal remains set idempotently
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+		});
+
+		it('should prevent recursive navigation when isNavigating is true', () => {
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+			const firstCallCount = mockHistory.pushState.mock.calls.length;
+
+			// isNavigating still true — second call is a no-op
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'770e8400-e29b-41d4-a716-446655440002'
+			);
+
+			expect(mockHistory.pushState.mock.calls.length).toBe(firstCallCount);
+			// Signal stays from the first navigation
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+		});
+	});
+
+	describe('navigateToRoom clears currentRoomGoalIdSignal', () => {
+		it('should clear currentRoomGoalIdSignal when navigating to a plain room', () => {
+			currentRoomGoalIdSignal.value = 'some-goal-id';
+
+			navigateToRoom('550e8400-e29b-41d4-a716-446655440000');
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+	});
+
+	describe('navigateToSession clears currentRoomGoalIdSignal', () => {
+		it('should clear currentRoomGoalIdSignal when navigating to a session', () => {
+			currentRoomGoalIdSignal.value = 'some-goal-id';
+
+			navigateToSession('550e8400e29b41d4a716446655440007');
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+	});
+
+	describe('navigateToHome clears currentRoomGoalIdSignal', () => {
+		it('should clear currentRoomGoalIdSignal when navigating home', () => {
+			// Start from a mission page so home navigation actually fires
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
+
+			navigateToHome();
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+	});
+
+	describe('initializeRouter with mission route', () => {
+		it('should set currentRoomGoalIdSignal and currentRoomIdSignal when URL is a mission path', () => {
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+
+			initializeRouter();
+
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentRoomTaskIdSignal.value).toBeNull();
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should set currentRoomGoalIdSignal when URL has a short mission ID', () => {
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/mission/a-1';
+
+			initializeRouter();
+
+			expect(currentRoomGoalIdSignal.value).toBe('a-1');
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should clear currentRoomGoalIdSignal when URL is a plain room path', () => {
+			currentRoomGoalIdSignal.value = 'pre-existing-goal-id';
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000';
+
+			initializeRouter();
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should clear currentRoomGoalIdSignal when URL is a room task path', () => {
+			currentRoomGoalIdSignal.value = 'pre-existing-goal-id';
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/task/660e8400-e29b-41d4-a716-446655440001';
+
+			initializeRouter();
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+	});
+
+	describe('Popstate handling for mission routes', () => {
+		it('should update signals when popstate navigates to a mission path', () => {
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentRoomTaskIdSignal.value).toBeNull();
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should update signals when popstate navigates to a mission path with short ID', () => {
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/mission/a-1';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomGoalIdSignal.value).toBe('a-1');
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should clear currentRoomGoalIdSignal when popstate navigates from mission to room task', () => {
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+			initializeRouter();
+			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
+
+			// Navigate to task
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/task/770e8400-e29b-41d4-a716-446655440002';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+			expect(currentRoomTaskIdSignal.value).toBe('770e8400-e29b-41d4-a716-446655440002');
+		});
+
+		it('should clear currentRoomGoalIdSignal when popstate navigates away from mission to home', () => {
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+			initializeRouter();
+			currentRoomGoalIdSignal.value = '660e8400-e29b-41d4-a716-446655440001';
+
+			mockLocation.pathname = '/';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+			expect(currentRoomIdSignal.value).toBeNull();
+		});
+
+		it('should set goalId signal and clear taskId signal when popstate navigates to mission path', () => {
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+			expect(currentRoomTaskIdSignal.value).toBeNull();
+		});
+	});
+
+	describe('currentRoomGoalIdSignal signal', () => {
+		it('should start as null', () => {
+			expect(currentRoomGoalIdSignal.value).toBeNull();
+		});
+
+		it('should be set after navigateToRoomMission and cleared after navigateToHome', async () => {
+			navigateToRoomMission(
+				'550e8400-e29b-41d4-a716-446655440000',
+				'660e8400-e29b-41d4-a716-446655440001'
+			);
+			expect(currentRoomGoalIdSignal.value).toBe('660e8400-e29b-41d4-a716-446655440001');
+
+			// Wait for isNavigating to clear
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/mission/660e8400-e29b-41d4-a716-446655440001';
+			navigateToHome();
+			expect(currentRoomGoalIdSignal.value).toBeNull();
 		});
 	});
 

@@ -606,7 +606,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 			// Cleanup RPC handlers (disposes live query subscriptions) before
 			// tearing down the engine so handles are disposed against a live engine.
-			rpcHandlerCleanup();
+			await rpcHandlerCleanup();
 
 			// Dispose live query engine after all subscriptions are cleared
 			liveQueries.dispose();

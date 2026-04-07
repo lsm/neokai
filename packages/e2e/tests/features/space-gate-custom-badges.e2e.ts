@@ -298,9 +298,9 @@ test.describe('Gate Custom Badges', () => {
 		// Badge should show heuristic "Check" label
 		await expect(gateBadge).toContainText('Check');
 
-		// ── Step 7: Verify script icon ⚡ appears in the badge ──────────────
-		// The script icon is a separate <text> element containing "⚡"
-		await expect(gateBadge).toContainText('\u26A1');
+		// ── Step 7: Verify script icon "S" appears in the badge ─────────────
+		// The script icon is a separate <text> element containing "S"
+		await expect(gateBadge).toContainText('S');
 
 		// ── Step 8: Verify Lint Check preset works ──────────────────────────
 		await gatePanel.getByTestId('gate-editor-preset-lint').click();
