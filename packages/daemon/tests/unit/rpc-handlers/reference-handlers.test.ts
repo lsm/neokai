@@ -471,7 +471,21 @@ describe('reference.resolve handler', () => {
 
 	describe('file resolution', () => {
 		it('returns file content for an existing file', async () => {
-			await writeFile(join(testWorkspace, 'hello.txt'), 'Hello world');
+			const filePath = join(testWorkspace, 'hello.txt');
+			await writeFile(filePath, 'Hello world');
+
+			// DEBUG: verify file and workspace exist
+			const { stat } = await import('node:fs/promises');
+			expect(testWorkspace).toBeTruthy();
+			expect(testWorkspace.length).toBeGreaterThan(0);
+			const wsStat = await stat(testWorkspace);
+			expect(wsStat.isDirectory()).toBe(true);
+			const fileStat = await stat(filePath);
+			expect(fileStat.size).toBe(11);
+			// eslint-disable-next-line no-console
+			(globalThis as unknown as Record<string, unknown>).__originalConsole.log(
+				`DEBUG file resolution: testWorkspace="${testWorkspace}" filePath="${filePath}" wsOK=true fileOK=true`
+			);
 
 			const { hub, handlers } = createMockMessageHub();
 			const deps: ReferenceHandlerDeps = {
