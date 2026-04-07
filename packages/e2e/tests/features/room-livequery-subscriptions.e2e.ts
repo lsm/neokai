@@ -7,8 +7,8 @@
  * Tests:
  * - Tasks load and display when viewing a room's Tasks tab
  * - Goals load and display when viewing the Missions tab
- * - Subscriptions survive a WebSocket reconnect — data is still visible after
- *   disconnecting and reconnecting
+ * - Re-subscription after WebSocket reconnect delivers fresh snapshots
+ *   (new entities created during disconnect appear after reconnect)
  *
  * Setup: RPC to create room, task, and goal (infrastructure).
  * Test actions and assertions: all through visible UI.
@@ -31,16 +31,139 @@ import {
 	waitForOnlineStatus,
 } from '../helpers/connection-helpers';
 
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+async function setupPage(page: import('@playwright/test').Page): Promise<void> {
+	await page.goto('/');
+	// Clear persisted task filter tab so draft tasks are always visible
+	await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
+	await page.getByRole('button', { name: 'New Session', exact: true }).waitFor({ timeout: 10000 });
+}
+
+/**
+ * Create a task via a raw WebSocket RPC — for use when the main
+ * ConnectionManager's WebSocket is disconnected.
+ *
+ * Opens an independent WebSocket to the server, sends a task.create
+ * request, and returns the task ID from the response.
+ */
+async function createTaskViaRawWs(
+	page: import('@playwright/test').Page,
+	roomId: string,
+	title: string,
+	description = ''
+): Promise<string> {
+	return page.evaluate(
+		async ({ rId, t, d }) => {
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const wsUrl = `${protocol}//${window.location.host}/ws`;
+			const requestId = crypto.randomUUID();
+
+			return new Promise<string>((resolve, reject) => {
+				const ws = new WebSocket(wsUrl);
+				const timeout = setTimeout(() => {
+					ws.close();
+					reject(new Error('Raw WS RPC timed out'));
+				}, 10000);
+
+				ws.addEventListener('message', (event) => {
+					const msg = JSON.parse(event.data);
+					if (msg.type === 'RSP' && msg.requestId === requestId) {
+						clearTimeout(timeout);
+						ws.close();
+						if (msg.error) reject(new Error(msg.error));
+						else resolve((msg.data as { task: { id: string } }).task.id);
+					}
+				});
+
+				ws.addEventListener('open', () => {
+					ws.send(
+						JSON.stringify({
+							id: requestId,
+							type: 'REQ',
+							sessionId: 'global',
+							method: 'task.create',
+							data: { roomId: rId, title: t, description: d, status: 'draft' },
+							timestamp: new Date().toISOString(),
+							version: '1.0.0',
+						})
+					);
+				});
+
+				ws.addEventListener('error', () => {
+					clearTimeout(timeout);
+					reject(new Error('Raw WS connection failed'));
+				});
+			});
+		},
+		{ rId: roomId, t: title, d: description }
+	);
+}
+
+/**
+ * Create a goal via a raw WebSocket RPC — for use when the main
+ * ConnectionManager's WebSocket is disconnected.
+ */
+async function createGoalViaRawWs(
+	page: import('@playwright/test').Page,
+	roomId: string,
+	title: string,
+	description = ''
+): Promise<string> {
+	return page.evaluate(
+		async ({ rId, t, d }) => {
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const wsUrl = `${protocol}//${window.location.host}/ws`;
+			const requestId = crypto.randomUUID();
+
+			return new Promise<string>((resolve, reject) => {
+				const ws = new WebSocket(wsUrl);
+				const timeout = setTimeout(() => {
+					ws.close();
+					reject(new Error('Raw WS RPC timed out'));
+				}, 10000);
+
+				ws.addEventListener('message', (event) => {
+					const msg = JSON.parse(event.data);
+					if (msg.type === 'RSP' && msg.requestId === requestId) {
+						clearTimeout(timeout);
+						ws.close();
+						if (msg.error) reject(new Error(msg.error));
+						else resolve((msg.data as { goal: { id: string } }).goal.id);
+					}
+				});
+
+				ws.addEventListener('open', () => {
+					ws.send(
+						JSON.stringify({
+							id: requestId,
+							type: 'REQ',
+							sessionId: 'global',
+							method: 'goal.create',
+							data: { roomId: rId, title: t, description: d, priority: 'normal' },
+							timestamp: new Date().toISOString(),
+							version: '1.0.0',
+						})
+					);
+				});
+
+				ws.addEventListener('error', () => {
+					clearTimeout(timeout);
+					reject(new Error('Raw WS connection failed'));
+				});
+			});
+		},
+		{ rId: roomId, t: title, d: description }
+	);
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe('Room LiveQuery — Tasks Tab', () => {
 	let roomId = '';
 
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		await page
-			.getByRole('button', { name: 'New Session', exact: true })
-			.waitFor({ timeout: 10000 });
+		await setupPage(page);
 		roomId = '';
 	});
 
@@ -49,7 +172,7 @@ test.describe('Room LiveQuery — Tasks Tab', () => {
 	});
 
 	test('displays tasks in the Tasks tab after room navigation', async ({ page }) => {
-		// Setup: create room with a task via RPC
+		// Setup: create room with tasks via RPC
 		roomId = await createRoom(page, 'E2E Tasks LiveQuery Room');
 		await createTask(page, roomId, 'E2E Task Alpha', 'First test task');
 		await createTask(page, roomId, 'E2E Task Beta', 'Second test task');
@@ -73,10 +196,7 @@ test.describe('Room LiveQuery — Missions Tab', () => {
 	let roomId = '';
 
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		await page
-			.getByRole('button', { name: 'New Session', exact: true })
-			.waitFor({ timeout: 10000 });
+		await setupPage(page);
 		roomId = '';
 	});
 
@@ -107,10 +227,7 @@ test.describe('Room LiveQuery — WebSocket Reconnect Resilience', () => {
 	let roomId = '';
 
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		await page
-			.getByRole('button', { name: 'New Session', exact: true })
-			.waitFor({ timeout: 10000 });
+		await setupPage(page);
 		roomId = '';
 	});
 
@@ -118,11 +235,10 @@ test.describe('Room LiveQuery — WebSocket Reconnect Resilience', () => {
 		await deleteRoom(page, roomId);
 	});
 
-	test('tasks remain visible after WebSocket disconnect and reconnect', async ({ page }) => {
-		// Setup: create room with tasks
+	test('re-subscribes to tasks after WebSocket disconnect and reconnect', async ({ page }) => {
+		// Setup: create room with an initial task
 		roomId = await createRoom(page, 'E2E Reconnect Tasks Room');
 		await createTask(page, roomId, 'Reconnect Task One', 'Survives reconnect');
-		await createTask(page, roomId, 'Reconnect Task Two', 'Also survives');
 
 		// Navigate to room and open Tasks tab
 		await page.goto(`/room/${roomId}`);
@@ -132,25 +248,28 @@ test.describe('Room LiveQuery — WebSocket Reconnect Resilience', () => {
 		await tasksTab.click();
 		await expect(tasksTab).toHaveClass(/border-blue-400/);
 
-		// Verify tasks are loaded before disconnect
+		// Verify initial task is loaded
 		await expect(page.locator('h4:has-text("Reconnect Task One")')).toBeVisible({ timeout: 10000 });
-		await expect(page.locator('h4:has-text("Reconnect Task Two")')).toBeVisible({ timeout: 5000 });
 
 		// Disconnect WebSocket
 		await closeWebSocket(page);
 		await waitForOfflineStatus(page);
 
+		// Create a new task via raw WebSocket while disconnected (infrastructure).
+		// This task was never seen before disconnect, so it can only appear
+		// after reconnect if the LiveQuery re-subscribed and received a fresh snapshot.
+		await createTaskViaRawWs(page, roomId, 'Reconnect Task New', 'Created during disconnect');
+
 		// Reconnect WebSocket
 		await restoreWebSocket(page);
 		await waitForOnlineStatus(page);
 
-		// Verify tasks are still visible after reconnect (LiveQuery re-subscribed)
-		await expect(page.locator('h4:has-text("Reconnect Task One")')).toBeVisible({ timeout: 10000 });
-		await expect(page.locator('h4:has-text("Reconnect Task Two")')).toBeVisible({ timeout: 5000 });
+		// The new task must appear — proving re-subscription delivered a fresh snapshot
+		await expect(page.locator('h4:has-text("Reconnect Task New")')).toBeVisible({ timeout: 10000 });
 	});
 
-	test('goals remain visible after WebSocket disconnect and reconnect', async ({ page }) => {
-		// Setup: create room with a goal
+	test('re-subscribes to goals after WebSocket disconnect and reconnect', async ({ page }) => {
+		// Setup: create room with an initial goal
 		roomId = await createRoom(page, 'E2E Reconnect Goals Room');
 		await createGoal(page, roomId, 'Reconnect Mission', 'Survives reconnect');
 
@@ -160,7 +279,7 @@ test.describe('Room LiveQuery — WebSocket Reconnect Resilience', () => {
 
 		await openMissionsTab(page);
 
-		// Verify goal is loaded before disconnect
+		// Verify initial goal is loaded
 		await expect(page.getByRole('button', { name: 'Reconnect Mission' }).first()).toBeVisible({
 			timeout: 10000,
 		});
@@ -169,12 +288,17 @@ test.describe('Room LiveQuery — WebSocket Reconnect Resilience', () => {
 		await closeWebSocket(page);
 		await waitForOfflineStatus(page);
 
+		// Create a new goal via raw WebSocket while disconnected (infrastructure).
+		// This goal was never seen before disconnect, so it can only appear
+		// after reconnect if the LiveQuery re-subscribed and received a fresh snapshot.
+		await createGoalViaRawWs(page, roomId, 'Reconnect Goal New', 'Created during disconnect');
+
 		// Reconnect WebSocket
 		await restoreWebSocket(page);
 		await waitForOnlineStatus(page);
 
-		// Verify goal is still visible after reconnect (LiveQuery re-subscribed)
-		await expect(page.getByRole('button', { name: 'Reconnect Mission' }).first()).toBeVisible({
+		// The new goal must appear — proving re-subscription delivered a fresh snapshot
+		await expect(page.getByRole('button', { name: 'Reconnect Goal New' }).first()).toBeVisible({
 			timeout: 10000,
 		});
 	});
