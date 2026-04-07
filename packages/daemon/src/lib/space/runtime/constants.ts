@@ -74,6 +74,21 @@ export function resolveNodeTimeout(role: string): number {
 export const MAX_TASK_AGENT_CRASH_RETRIES = 2;
 
 /**
+ * Maximum number of automatic recovery attempts for a blocked workflow run.
+ *
+ * When a workflow run enters `blocked` status (e.g. a node agent failed after
+ * exhausting its reminder attempts), the runtime will automatically:
+ *   1. Reset the blocked node execution to `pending` for re-spawn.
+ *   2. Transition the run back to `in_progress`.
+ *   3. Emit a `task_retry` notification to the Space Agent.
+ *
+ * Once this limit is reached, the run stays blocked and a
+ * `workflow_run_needs_attention` event is emitted for human/Space Agent
+ * escalation.
+ */
+export const MAX_BLOCKED_RUN_RETRIES = 1;
+
+/**
  * Maximum number of retry attempts for transient network errors
  * (e.g. `gh` CLI commands that fail with a network error).
  *

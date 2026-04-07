@@ -134,6 +134,7 @@ export interface UpdateSpaceParams {
  *
  * - `open`       — task is queued and waiting to be picked up
  * - `in_progress` — a Task Agent session is actively working on this task
+ * - `review`     — workflow agents completed; awaiting human review/approval (supervised mode)
  * - `done`       — task completed successfully
  * - `blocked`    — task requires human attention or intervention
  * - `cancelled`  — task was cancelled and will not be completed
@@ -142,6 +143,7 @@ export interface UpdateSpaceParams {
 export type SpaceTaskStatus =
 	| 'open'
 	| 'in_progress'
+	| 'review'
 	| 'done'
 	| 'blocked'
 	| 'cancelled'

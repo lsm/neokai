@@ -317,6 +317,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Adds UNIQUE INDEX on (workflow_run_id, workflow_node_id, agent_name)
 	//   - Deduplicates any existing records before creating the index
 	runMigration75(db);
+
+	// Migration 76: Add 'review' status to space_tasks CHECK constraint.
+	//   - In supervised mode, completed workflow tasks land in 'review' for human approval.
+	runMigration76(db);
 }
 
 /**
@@ -5224,4 +5228,98 @@ function runMigration75(db: BunDatabase): void {
 			ON node_executions(workflow_run_id, workflow_node_id, agent_name)
 		`);
 	})();
+}
+
+/**
+ * Migration 76: Add 'review' status to space_tasks CHECK constraint.
+ *
+ * In supervised mode, completed workflow tasks land in 'review' for human
+ * approval before transitioning to 'done'. This requires the CHECK constraint
+ * on the status column to allow the 'review' value.
+ *
+ * SQLite does not support ALTER CHECK CONSTRAINT, so the table is rebuilt.
+ */
+function runMigration76(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	// Idempotency: try inserting a test row with status='review'.
+	const testId = '__m76_probe__';
+	let needsUpdate = false;
+	try {
+		db.prepare(
+			`INSERT INTO space_tasks (id, space_id, task_number, title, status, priority, depends_on, created_at, updated_at)
+       VALUES (?, '__probe__', 0, '__probe__', 'review', 'normal', '[]', 0, 0)`
+		).run(testId);
+		db.prepare(`DELETE FROM space_tasks WHERE id = ?`).run(testId);
+	} catch {
+		needsUpdate = true;
+	}
+
+	if (!needsUpdate) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec('BEGIN');
+	try {
+		db.exec(`
+			CREATE TABLE space_tasks_m76_new (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'open'
+					CHECK(status IN ('open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				labels TEXT NOT NULL DEFAULT '[]',
+				workflow_run_id TEXT,
+				created_by_task_id TEXT,
+				result TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				active_session TEXT
+					CHECK(active_session IN ('worker', 'leader')),
+				task_agent_session_id TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+			)
+		`);
+
+		db.exec(`
+			INSERT INTO space_tasks_m76_new
+			  (id, space_id, task_number, title, description, status, priority, labels,
+			   workflow_run_id, created_by_task_id, result, depends_on,
+			   active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+			   archived_at, created_at, started_at, completed_at, updated_at)
+			SELECT
+			  id, space_id, task_number, title, description, status, priority, labels,
+			  workflow_run_id, created_by_task_id, result, depends_on,
+			  active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+			  archived_at, created_at, started_at, completed_at, updated_at
+			FROM space_tasks
+		`);
+
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_m76_new RENAME TO space_tasks`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+		);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_task_number ON space_tasks(space_id, task_number)`
+		);
+		db.exec('COMMIT');
+	} catch (err) {
+		db.exec('ROLLBACK');
+		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
 }
