@@ -185,10 +185,8 @@ test.describe('MissionDetail Page — Navigation', () => {
 		await page.goto(`/room/${roomId}/mission/${goalId}`);
 		await waitForWebSocketConnected(page);
 
-		// Wait for either mission-detail or mission-not-found (goals may take time to load via LiveQuery)
-		await expect(
-			page.locator('[data-testid="mission-detail"], [data-testid="mission-not-found"]')
-		).toBeVisible({ timeout: 15000 });
+		// Goals load via LiveQuery which may take time; 15s timeout accommodates CI load.
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 		await expect(page.locator('[data-testid="mission-detail-title"]')).toContainText(
 			'Direct Nav Mission',
 			{ timeout: 5000 }
