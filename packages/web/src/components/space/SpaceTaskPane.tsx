@@ -454,6 +454,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				) : showArtifacts && task.workflowRunId ? (
 					<TaskArtifactsPanel
 						runId={task.workflowRunId}
+						taskId={task.id}
 						onClose={() => setShowArtifacts(false)}
 						class="h-full"
 					/>

@@ -710,6 +710,38 @@ describe('space-workflow-run-handlers', () => {
 			);
 		});
 
+		it('uses taskId directly when provided (skips listByWorkflowRun)', async () => {
+			const mockWorktreeManager = createMockSpaceWorktreeManager('/tmp/specific-task-worktree');
+			const mockTaskRepo = createMockSpaceTaskRepo([mockTask]);
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(mockSpace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				mockTaskRepo,
+				mockWorktreeManager
+			);
+
+			await call('spaceWorkflowRun.getGateArtifacts', {
+				runId: 'run-1',
+				taskId: 'task-1',
+			}).catch(() => {});
+
+			// When taskId is provided, listByWorkflowRun should NOT be called
+			expect(mockTaskRepo.listByWorkflowRun).not.toHaveBeenCalled();
+			// Worktree manager should be called directly with the provided taskId
+			expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
+		});
+
 		it('uses task worktree path when available (not root workspace)', async () => {
 			// The task has a worktree at /tmp/task-worktree, not the root /tmp/test-workspace.
 			// We verify the worktree manager is called with the task's ID.
@@ -803,6 +835,135 @@ describe('space-workflow-run-handlers', () => {
 			expect(mockWorktreeManager.getTaskWorktreePath).not.toHaveBeenCalled();
 			// Space manager should have been called for the fallback
 			expect(mockSpaceMgr.getSpace).toHaveBeenCalled();
+		});
+	});
+
+	// ─── spaceWorkflowRun.getFileDiff — worktree path resolution ─────────────
+
+	describe('spaceWorkflowRun.getFileDiff — worktree resolution', () => {
+		it('throws if runId is missing', async () => {
+			setup();
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', { filePath: 'src/foo.ts' })
+			).rejects.toThrow('runId is required');
+		});
+
+		it('throws if filePath is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflowRun.getFileDiff', { runId: 'run-1' })).rejects.toThrow(
+				'filePath is required'
+			);
+		});
+
+		it('throws if filePath is absolute', async () => {
+			setup();
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', { runId: 'run-1', filePath: '/absolute/path.ts' })
+			).rejects.toThrow('filePath must be a relative path within the worktree');
+		});
+
+		it('throws if filePath contains path traversal', async () => {
+			setup();
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', { runId: 'run-1', filePath: '../outside.ts' })
+			).rejects.toThrow('filePath must be a relative path within the worktree');
+		});
+
+		it('throws if run not found', async () => {
+			setup({ run: null });
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', { runId: 'nonexistent', filePath: 'src/foo.ts' })
+			).rejects.toThrow('WorkflowRun not found: nonexistent');
+		});
+
+		it('uses taskId directly when provided (skips listByWorkflowRun)', async () => {
+			const mockWorktreeManager = createMockSpaceWorktreeManager('/tmp/specific-task-worktree');
+			const mockTaskRepo = createMockSpaceTaskRepo([mockTask]);
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(mockSpace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				mockTaskRepo,
+				mockWorktreeManager
+			);
+
+			await call('spaceWorkflowRun.getFileDiff', {
+				runId: 'run-1',
+				taskId: 'task-1',
+				filePath: 'src/foo.ts',
+			}).catch(() => {});
+
+			// When taskId is provided, listByWorkflowRun should NOT be called
+			expect(mockTaskRepo.listByWorkflowRun).not.toHaveBeenCalled();
+			// Worktree manager should be called with the provided taskId
+			expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
+		});
+
+		it('falls back to tasks[0] worktree when no taskId provided', async () => {
+			const mockWorktreeManager = createMockSpaceWorktreeManager('/tmp/task-worktree');
+			const mockTaskRepo = createMockSpaceTaskRepo([mockTask]);
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(mockSpace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				mockTaskRepo,
+				mockWorktreeManager
+			);
+
+			await call('spaceWorkflowRun.getFileDiff', {
+				runId: 'run-1',
+				filePath: 'src/foo.ts',
+			}).catch(() => {});
+
+			expect(mockTaskRepo.listByWorkflowRun).toHaveBeenCalledWith('run-1');
+			expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
+		});
+
+		it('throws if no workspace path found (no task worktree and no space workspacePath)', async () => {
+			const spaceWithoutWorkspace: Space = { ...mockSpace, workspacePath: '' };
+			const mockWorktreeManager = createMockSpaceWorktreeManager(null);
+			const mockTaskRepo = createMockSpaceTaskRepo([]);
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(spaceWithoutWorkspace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				mockTaskRepo,
+				mockWorktreeManager
+			);
+
+			await expect(
+				call('spaceWorkflowRun.getFileDiff', { runId: 'run-1', filePath: 'src/foo.ts' })
+			).rejects.toThrow('No workspace path found for run: run-1');
 		});
 	});
 });
