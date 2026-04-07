@@ -199,14 +199,15 @@ test.describe('MissionDetail Page — Navigation', () => {
 		await waitForWebSocketConnected(page);
 		await openMissionsTab(page);
 
-		// Click the goal item header — the h4 title inside the header is the clickable part
+		// Find the goal card header containing the mission title
 		const goalHeader = page
-			.locator(`[data-testid="goal-item-header"]:has(h4:has-text("Click Nav Mission"))`)
+			.locator(`[data-testid="goal-item-header"]:has-text("Click Nav Mission")`)
 			.first();
 		await expect(goalHeader).toBeVisible({ timeout: 5000 });
 
-		// Click the h4 title to navigate (onGoalClick fires on title click)
-		const goalTitle = goalHeader.locator('h4:has-text("Click Nav Mission")');
+		// After Task 6, clicking the title button (not h4 — it's now a <button>) navigates to detail.
+		// The title button has stopPropagation so it navigates without expanding the accordion.
+		const goalTitle = goalHeader.getByRole('button', { name: 'Click Nav Mission' });
 		await goalTitle.click();
 
 		// MissionDetail should render
@@ -216,6 +217,44 @@ test.describe('MissionDetail Page — Navigation', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/${goalId}`), {
 			timeout: 5000,
 		});
+	});
+
+	test('browser back from mission detail returns to Missions tab', async ({ page }) => {
+		const { goalId } = await createOneShotGoal(page, roomId, 'Browser Back Mission');
+
+		// Navigate to the room first to establish a history entry
+		await page.goto(`/room/${roomId}`);
+		await waitForWebSocketConnected(page);
+		await openMissionsTab(page);
+
+		// Navigate to mission detail via in-app click (creates a pushState history entry)
+		const goalTitle = page
+			.locator(`[data-testid="goal-item-header"]:has-text("Browser Back Mission")`)
+			.first()
+			.getByRole('button', { name: 'Browser Back Mission' });
+		await expect(goalTitle).toBeVisible({ timeout: 5000 });
+		await goalTitle.click();
+
+		// Verify mission detail is showing
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 8000 });
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/${goalId}`), {
+			timeout: 5000,
+		});
+
+		// Use browser back button to return
+		await page.goBack();
+
+		// Mission detail should be gone and we should be back at the room page
+		await expect(page.locator('[data-testid="mission-detail"]')).not.toBeVisible({
+			timeout: 8000,
+		});
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}`), { timeout: 5000 });
+
+		// The Missions tab should still be the active tab.
+		// The Room component keeps its activeTab local state ('goals') across in-app navigation;
+		// handlePopState for a plain /room/:id URL does not change currentRoomTabSignal, so the
+		// tab that was active before navigating to mission detail is preserved.
+		await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('back button returns to Missions tab', async ({ page }) => {
@@ -244,6 +283,42 @@ test.describe('MissionDetail Page — Navigation', () => {
 			timeout: 10000,
 		});
 		await expect(page.locator('text=Mission not found')).toBeVisible({ timeout: 5000 });
+	});
+
+	test('mission detail overlay renders over tab content — tab navigation remains accessible', async ({
+		page,
+	}) => {
+		const { goalId } = await createOneShotGoal(page, roomId, 'Overlay Test Mission');
+
+		await page.goto(`/room/${roomId}/mission/${goalId}`);
+		await waitForWebSocketConnected(page);
+
+		// MissionDetail should be visible as an absolute overlay inside the tab content area
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+
+		// The back button at the top of the overlay should be interactive
+		await expect(page.locator('[data-testid="mission-detail-back-button"]')).toBeVisible({
+			timeout: 5000,
+		});
+
+		// The mission title in the overlay header should be visible
+		await expect(page.locator('[data-testid="mission-detail-title"]')).toContainText(
+			'Overlay Test Mission',
+			{ timeout: 5000 }
+		);
+
+		// The desktop tab bar (Missions, Tasks, etc.) lives OUTSIDE the overlay's parent,
+		// so it remains accessible even when the overlay is shown.
+		// This confirms the overlay is scoped to the tab content area (absolute inset-0 within
+		// the relative content div) and does not cover the room's tab navigation bar.
+		// Use exact: true to avoid matching sidebar CollapsibleSection buttons whose accessible
+		// names contain "Missions" as a substring (e.g. "Missions section").
+		await expect(page.getByRole('button', { name: 'Missions', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(page.getByRole('button', { name: 'Tasks', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 });
 
@@ -473,6 +548,36 @@ test.describe('MissionDetail Page — Linked Tasks Section', () => {
 
 		// Should navigate to the task detail URL
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/task/${taskId}`), { timeout: 8000 });
+	});
+
+	test('browser back from task detail (via mission detail) returns to mission detail', async ({
+		page,
+	}) => {
+		const { goalId } = await createOneShotGoal(page, roomId, 'Task Back To Mission');
+		const taskId = await createTask(page, roomId, 'Back Link Task', '');
+		await linkTaskToGoal(page, roomId, goalId, taskId);
+
+		// Navigate to mission detail (creates a history entry)
+		await page.goto(`/room/${roomId}/mission/${goalId}`);
+		await waitForWebSocketConnected(page);
+
+		// Click linked task to navigate to task detail (creates another history entry)
+		await expect(page.locator(`[data-testid="linked-task-${taskId}"]`)).toBeVisible({
+			timeout: 10000,
+		});
+		await page.locator(`[data-testid="linked-task-${taskId}"]`).click();
+
+		// Verify we reached task detail
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/task/${taskId}`), { timeout: 8000 });
+
+		// Go back in browser history
+		await page.goBack();
+
+		// Should return to mission detail
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 8000 });
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/${goalId}`), {
+			timeout: 5000,
+		});
 	});
 });
 
