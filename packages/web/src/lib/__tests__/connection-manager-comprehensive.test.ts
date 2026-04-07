@@ -423,15 +423,6 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 			expect(mockTransportObj.initialize).toHaveBeenCalled();
 		});
 
-		it('should reset transport state before reconnecting', async () => {
-			mockTransportObj.initialize.mockResolvedValue(undefined);
-			await manager.getHub();
-
-			await manager.reconnect();
-
-			expect(mockTransportObj.resetReconnectState).toHaveBeenCalled();
-		});
-
 		it('should use forceReconnect if transport is ready', async () => {
 			mockTransportObj.initialize.mockResolvedValue(undefined);
 			mockTransportObj.isReady.mockReturnValue(true);
@@ -442,6 +433,27 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 			expect(mockTransportObj.forceReconnect).toHaveBeenCalled();
 		});
 
+		it('should use forceReconnect when transport exists but is not ready (preserves hub)', async () => {
+			// Regression test: when the transport is closed (e.g. after
+			// simulatePermanentDisconnect()), isReady() returns false. The old
+			// code created a brand new hub, discarding all onConnection handlers
+			// (including LiveQuery re-subscriptions). The fix calls forceReconnect()
+			// on the existing transport, preserving the hub and its handlers.
+			mockTransportObj.initialize.mockResolvedValue(undefined);
+			await manager.getHub();
+
+			const hubBefore = (manager as any).messageHub;
+			expect(hubBefore).toBeDefined();
+
+			// Simulate the transport being closed (ws = null, isReady = false)
+			mockTransportObj.isReady.mockReturnValue(false);
+
+			await manager.reconnect();
+
+			expect(mockTransportObj.forceReconnect).toHaveBeenCalled();
+			// The hub reference must be preserved — not replaced with a new instance
+			expect((manager as any).messageHub).toBe(hubBefore);
+		});
 		it('should handle reconnection failure gracefully', async () => {
 			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 			mockTransportObj.initialize.mockRejectedValue(new Error('Reconnect failed'));

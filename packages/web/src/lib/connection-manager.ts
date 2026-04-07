@@ -598,17 +598,17 @@ export class ConnectionManager {
 	 * Use this when user clicks "Reconnect" button or to recover from permanent failure
 	 */
 	async reconnect(): Promise<void> {
-		// Reset transport state to allow fresh connection
 		if (this.transport) {
-			this.transport.resetReconnectState();
-			// Close existing connection if any
-			if (this.transport.isReady()) {
-				this.transport.forceReconnect();
-				return; // forceReconnect will handle the reconnection
-			}
+			// Use forceReconnect even when the transport is closed (ws=null).
+			// This preserves the existing MessageHub and its onConnection handlers
+			// (e.g. LiveQuery re-subscriptions). The old path created a brand new
+			// hub, discarding all registered handlers and breaking reconnect logic.
+			// Note: forceReconnect() calls resetReconnectState() internally.
+			this.transport.forceReconnect();
+			return;
 		}
 
-		// Clear existing state for fresh connection
+		// No transport yet — create from scratch
 		this.messageHub = null;
 		this.connectionPromise = null;
 
