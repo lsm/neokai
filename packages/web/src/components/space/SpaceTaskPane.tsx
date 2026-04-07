@@ -151,12 +151,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const lastCursorRef = useRef(0);
 
-	const allAgents = spaceStore.agents.value;
-	const mentionAgents =
-		mentionQuery !== null
-			? allAgents.filter((a) => a.name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
-			: [];
-
 	const handleThreadDraftInput = useCallback((e: Event) => {
 		const target = e.target as HTMLTextAreaElement;
 		const value = target.value;
@@ -255,6 +249,22 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		? (spaceStore.workflowRuns.value.find((r) => r.id === task.workflowRunId) ?? null)
 		: null;
 	const canvasWorkflowId = workflowRun?.workflowId ?? null;
+
+	// Scope @mention autocomplete to workflow agents only (no agents for non-workflow tasks)
+	const workflow = canvasWorkflowId
+		? (spaceStore.workflows.value.find((w) => w.id === canvasWorkflowId) ?? null)
+		: null;
+	const workflowAgentIds = workflow
+		? new Set(workflow.nodes.flatMap((n) => n.agents.map((a) => a.agentId)))
+		: null;
+	const mentionAgents =
+		mentionQuery !== null && workflowAgentIds !== null
+			? spaceStore.agents.value.filter(
+					(a) =>
+						workflowAgentIds.has(a.id) &&
+						a.name.toLowerCase().startsWith(mentionQuery.toLowerCase())
+				)
+			: [];
 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';

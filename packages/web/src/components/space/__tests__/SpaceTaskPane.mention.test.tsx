@@ -100,6 +100,11 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 	};
 }
 
+/** A task associated with a workflow run so @mention scoping is active. */
+function makeWorkflowTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+	return makeTask({ workflowRunId: 'run-1', ...overrides });
+}
+
 describe('SpaceTaskPane — @mention autocomplete', () => {
 	beforeEach(() => {
 		cleanup();
@@ -122,12 +127,41 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 				updatedAt: 0,
 			},
 		];
-		mockWorkflows.value = [];
-		mockWorkflowRuns.value = [];
+		// Default workflow that includes both Coder and Reviewer
+		mockWorkflows.value = [
+			{
+				id: 'wf-1',
+				spaceId: 'space-1',
+				name: 'Default Workflow',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Node 1',
+						agents: [
+							{ agentId: '1', name: 'Coder' },
+							{ agentId: '2', name: 'Reviewer' },
+						],
+					},
+				],
+				channels: [],
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
+		mockWorkflowRuns.value = [
+			{
+				id: 'run-1',
+				workflowId: 'wf-1',
+				spaceId: 'space-1',
+				status: 'running',
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
 		mockTaskActivity.value = new Map();
 		mockEnsureTaskAgentSession.mockReset();
 		mockEnsureTaskAgentSession.mockImplementation(async () =>
-			makeTask({ taskAgentSessionId: 'session-ensured' })
+			makeWorkflowTask({ taskAgentSessionId: 'session-ensured' })
 		);
 		mockSendTaskMessage.mockClear();
 		mockSubscribeTaskActivity.mockClear();
@@ -156,7 +190,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	}
 
 	it('shows dropdown when user types @', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -167,8 +201,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 		});
 	});
 
-	it('shows all agents when @ is typed alone', async () => {
-		mockTasks.value = [makeTask()];
+	it('shows all workflow agents when @ is typed alone', async () => {
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -183,7 +217,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('filters agents when @partial is typed', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -197,7 +231,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('shows no dropdown when filter matches nothing', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -208,7 +242,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('hides dropdown when Escape is pressed', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -226,7 +260,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('selects agent on Enter and inserts mention into textarea', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -246,7 +280,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('closes dropdown after clicking an agent name', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -265,7 +299,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('inserts correct mention text when agent is clicked', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -284,7 +318,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('does not show dropdown when no @ is in the text', () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -294,7 +328,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('navigates down in the dropdown list with ArrowDown', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -317,7 +351,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('does not select agent on Shift+Enter (allows newline insertion)', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -337,7 +371,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	it('navigates up in the dropdown list with ArrowUp', async () => {
-		mockTasks.value = [makeTask()];
+		mockTasks.value = [makeWorkflowTask()];
 		const container = render(<SpaceTaskPane taskId="task-1" />);
 		const textarea = getTextarea(container);
 
@@ -362,5 +396,81 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 			const items = container.getAllByTestId('mention-item');
 			expect(items[0].className).toContain('bg-blue-500/20');
 		});
+	});
+
+	it('shows no @mention agents for tasks without a workflowRunId', async () => {
+		// Non-workflow task: no workflowRunId
+		mockTasks.value = [makeTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		// No dropdown because there's no workflow to scope agents from
+		expect(container.queryByTestId('mention-autocomplete')).toBeNull();
+	});
+
+	it('shows only workflow agents when task has a workflowRunId', async () => {
+		// Workflow only includes Coder (agent id '1'), not Reviewer (agent id '2')
+		mockWorkflows.value = [
+			{
+				id: 'wf-1',
+				spaceId: 'space-1',
+				name: 'Scoped Workflow',
+				nodes: [
+					{
+						id: 'node-1',
+						name: 'Node 1',
+						agents: [{ agentId: '1', name: 'Coder' }],
+					},
+				],
+				channels: [],
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
+		mockWorkflowRuns.value = [
+			{
+				id: 'run-1',
+				workflowId: 'wf-1',
+				spaceId: 'space-1',
+				status: 'running',
+				createdAt: 0,
+				updatedAt: 0,
+			},
+		];
+		mockTasks.value = [makeWorkflowTask()];
+
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		typeIntoTextarea(textarea, '@');
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			// Only Coder should appear, not Reviewer
+			expect(items.length).toBe(1);
+			expect(items[0].textContent).toContain('@Coder');
+		});
+	});
+
+	it('shows only matching workflow agents when @partial matches a workflow agent', async () => {
+		// Workflow includes both Coder and Reviewer
+		mockTasks.value = [makeWorkflowTask()];
+		const container = render(<SpaceTaskPane taskId="task-1" />);
+		const textarea = getTextarea(container);
+
+		// Type '@Re' — only Reviewer should match
+		typeIntoTextarea(textarea, '@Re');
+
+		await waitFor(() => {
+			const items = container.getAllByTestId('mention-item');
+			expect(items.length).toBe(1);
+			expect(items[0].textContent).toContain('@Reviewer');
+		});
+
+		// Coder should not appear
+		const allItems = container.getAllByTestId('mention-item');
+		expect(allItems.some((item) => item.textContent?.includes('@Coder'))).toBe(false);
 	});
 });

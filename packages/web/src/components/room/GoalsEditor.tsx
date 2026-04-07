@@ -241,7 +241,7 @@ export function ProgressBar({ progress }: { progress: number }) {
 
 // ─── Task Status Badge ────────────────────────────────────────────────────────
 
-function TaskStatusBadge({ status }: { status: TaskStatus }) {
+export function TaskStatusBadge({ status }: { status: TaskStatus }) {
 	const styles: Record<string, string> = {
 		pending: 'bg-gray-700 text-gray-300',
 		in_progress: 'bg-yellow-900/50 text-yellow-300',
@@ -251,9 +251,19 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		review: 'bg-purple-900/50 text-purple-300',
 		cancelled: 'bg-gray-800 text-gray-400',
 		archived: 'bg-gray-900 text-gray-600',
+		rate_limited: 'bg-orange-900/50 text-orange-300',
+		usage_limited: 'bg-orange-900/50 text-orange-300',
 	};
 	const label =
-		status === 'in_progress' ? 'active' : status === 'needs_attention' ? 'needs attention' : status;
+		status === 'in_progress'
+			? 'active'
+			: status === 'needs_attention'
+				? 'needs attention'
+				: status === 'rate_limited'
+					? 'rate limited'
+					: status === 'usage_limited'
+						? 'usage limited'
+						: status;
 	return (
 		<span
 			class={cn(
