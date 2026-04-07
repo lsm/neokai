@@ -263,8 +263,12 @@ export function WorkflowNode({
 				e.stopPropagation();
 				return;
 			}
-			// Read-only mode: no drag affordances
-			if (!draggable) return;
+			// Read-only mode: no drag affordances, but still stop propagation so
+			// the canvas pan handler cannot capture the mousedown event.
+			if (!draggable) {
+				e.stopPropagation();
+				return;
+			}
 			// Only primary button
 			if (e.button !== 0) return;
 			e.stopPropagation(); // prevent canvas pan from triggering

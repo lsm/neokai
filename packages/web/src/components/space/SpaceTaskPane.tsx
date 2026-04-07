@@ -283,20 +283,37 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					: 'Open Space Agent';
 
 	const handleNodeClick = (nodeId: string) => {
-		// Look up node executions for the clicked node (filtered to this run)
+		// 1. Try to find a session for the specific node that was clicked
 		const nodeExecs = spaceStore.nodeExecutionsByNodeId.value.get(nodeId) ?? [];
 		const runExec = task?.workflowRunId
 			? nodeExecs.find((e) => e.workflowRunId === task.workflowRunId && e.agentSessionId)
 			: null;
 		if (runExec?.agentSessionId) {
-			// Find the workflow node name for the label
 			const nodeName = workflow?.nodes.find((n) => n.id === nodeId)?.name;
 			spaceOverlayAgentNameSignal.value = nodeName ?? `Node ${nodeId}`;
 			spaceOverlaySessionIdSignal.value = runExec.agentSessionId;
-		} else if (agentSessionId) {
-			// Fall back to the task agent session
+			return;
+		}
+
+		// 2. Fall back to the task's own agent session (coordinator/leader)
+		if (agentSessionId) {
 			spaceOverlayAgentNameSignal.value = agentActionLabel;
 			spaceOverlaySessionIdSignal.value = agentSessionId;
+			return;
+		}
+
+		// 3. Last resort: open any currently active node-execution session in this run.
+		//    This handles the case where pending nodes are clicked but the workflow has
+		//    other active agents running (e.g. Coding is active but Review/QA are not yet started).
+		const runId = task?.workflowRunId;
+		if (runId) {
+			const anyExec = spaceStore.nodeExecutions.value.find(
+				(e) => e.workflowRunId === runId && e.agentSessionId
+			);
+			if (anyExec?.agentSessionId) {
+				spaceOverlayAgentNameSignal.value = agentActionLabel;
+				spaceOverlaySessionIdSignal.value = anyExec.agentSessionId;
+			}
 		}
 	};
 
