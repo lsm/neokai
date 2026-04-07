@@ -65,6 +65,11 @@ export interface WorkflowNodeProps {
 	nodeTaskStates?: AgentTaskState[];
 	/** Semantic edge anchor sides currently in use for this node. */
 	activeAnchorSides?: AnchorSide[];
+	/**
+	 * When false, disables drag affordances — no cursor/shadow change on mousedown,
+	 * and drag state is never set. Defaults to true.
+	 */
+	draggable?: boolean;
 }
 
 function renderDock(side: AnchorSide, visible: boolean, highlighted = false) {
@@ -161,6 +166,7 @@ export function WorkflowNode({
 	onClick,
 	nodeTaskStates,
 	activeAnchorSides = [],
+	draggable = true,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
@@ -249,7 +255,7 @@ export function WorkflowNode({
 		};
 	}, [stepId]);
 
-	// ---- Card body mousedown — starts drag (disabled for Task Agent) ----
+	// ---- Card body mousedown — starts drag (disabled for Task Agent or when draggable=false) ----
 	const handleMouseDown = useCallback(
 		(e: MouseEvent) => {
 			// Task Agent is pinned — it cannot be dragged
@@ -257,6 +263,8 @@ export function WorkflowNode({
 				e.stopPropagation();
 				return;
 			}
+			// Read-only mode: no drag affordances
+			if (!draggable) return;
 			// Only primary button
 			if (e.button !== 0) return;
 			e.stopPropagation(); // prevent canvas pan from triggering
@@ -276,7 +284,7 @@ export function WorkflowNode({
 				nodeRef.current.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)';
 			}
 		},
-		[isTaskAgent, position.x, position.y]
+		[isTaskAgent, draggable, position.x, position.y]
 	);
 
 	// ---- Card click — for selection (suppressed after drag) ----
@@ -397,7 +405,7 @@ export function WorkflowNode({
 				top: position.y,
 				width: dimensions.width,
 				minHeight: dimensions.height,
-				cursor: 'grab',
+				cursor: draggable ? 'grab' : 'default',
 				userSelect: 'none',
 			}}
 			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}

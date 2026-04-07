@@ -457,6 +457,7 @@ export function WorkflowCanvas({
 					channels={effectiveChannels}
 					selectedChannelId={selectedChannelId}
 					onChannelSelect={onChannelSelect ?? undefined}
+					readOnly={readOnly}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
@@ -503,6 +504,7 @@ export function WorkflowCanvas({
 						onPortMouseDown={readOnly ? undefined : handlePortMouseDown}
 						onPortMouseEnter={readOnly ? undefined : handlePortMouseEnter}
 						onPortMouseLeave={readOnly ? undefined : handlePortMouseLeave}
+						draggable={!readOnly}
 					/>
 				);
 			})}

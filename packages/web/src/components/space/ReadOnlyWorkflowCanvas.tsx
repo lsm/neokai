@@ -64,9 +64,12 @@ export function ReadOnlyWorkflowCanvas({
 
 	const handleNodeSelect = (stepId: string | null) => {
 		if (!stepId || !onNodeClick) return;
+		// stepId is localId — find the persisted node ID if available
+		const nodeEntry = nodeData.find((n) => n.step.localId === stepId);
+		const persistedId = nodeEntry?.step.id ?? stepId;
 		// SpaceTask doesn't have workflowNodeId — pass all tasks for this run
 		const tasks = spaceStore.tasks.value.filter((t) => t.workflowRunId === runId);
-		onNodeClick(stepId, tasks);
+		onNodeClick(persistedId, tasks);
 	};
 
 	return (

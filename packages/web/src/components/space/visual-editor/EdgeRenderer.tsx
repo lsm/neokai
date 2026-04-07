@@ -106,8 +106,6 @@ export interface ResolvedWorkflowChannel {
 	targetSide?: AnchorSide;
 	/** Runtime gate status for the forward direction (from→to). Only set in runtime/read-only view mode. */
 	runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
-	/** Runtime gate status for the reverse direction (to→from). Only set for bidirectional channels. */
-	reverseRuntimeStatus?: 'open' | 'blocked' | 'waiting_human';
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -170,6 +168,8 @@ export interface EdgeRendererProps {
 	selectedChannelId?: string | null;
 	/** Called when the user clicks a channel edge. Receives the channel's `id` field. */
 	onChannelSelect?: (channelId: string) => void;
+	/** When true, the Delete/Backspace keydown listener is not registered. */
+	readOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +579,7 @@ export function EdgeRenderer({
 	channels = [],
 	selectedChannelId,
 	onChannelSelect,
+	readOnly = false,
 }: EdgeRendererProps) {
 	// Stable per-instance prefix to prevent marker ID collisions across instances
 	const markerPrefixRef = useRef<string | null>(null);
@@ -595,7 +596,10 @@ export function EdgeRenderer({
 	onEdgeDeleteRef.current = onEdgeDelete;
 
 	// ---- Keyboard: Delete / Backspace deletes the selected edge ----
+	// Skipped in readOnly mode — no destructive editing affordances.
 	useEffect(() => {
+		if (readOnly) return;
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 			const target = e.target as HTMLElement;
@@ -611,7 +615,7 @@ export function EdgeRenderer({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []);
+	}, [readOnly]);
 
 	return (
 		<>

@@ -87,8 +87,8 @@ const { mockWorkflowCanvasOnNodeClick } = vi.hoisted(() => ({
 	mockWorkflowCanvasOnNodeClick: vi.fn(),
 }));
 
-vi.mock('../WorkflowCanvas', () => ({
-	WorkflowCanvas: ({
+vi.mock('../ReadOnlyWorkflowCanvas', () => ({
+	ReadOnlyWorkflowCanvas: ({
 		workflowId,
 		runId,
 		spaceId,

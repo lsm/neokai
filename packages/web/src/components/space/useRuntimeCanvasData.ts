@@ -245,9 +245,8 @@ export function useRuntimeCanvasData(
 		const gateLookup = new Map((gates ?? []).map((g) => [g.id, g]));
 
 		return routedSemanticEdges.map((edge) => {
-			// Find the forward and reverse gate IDs from the channels that make up this edge
+			// Find the forward gate ID from the channels that make up this edge
 			let forwardGateId: string | undefined;
-			let reverseGateId: string | undefined;
 
 			for (const channelIndex of edge.channelIndexes) {
 				const ch = channels[channelIndex];
@@ -255,8 +254,6 @@ export function useRuntimeCanvasData(
 				const fromNodeId = endpointNodeIdLookup.get(ch.from);
 				if (fromNodeId === edge.fromStepId) {
 					forwardGateId = forwardGateId ?? ch.gateId;
-				} else if (fromNodeId === edge.toStepId) {
-					reverseGateId = reverseGateId ?? ch.gateId;
 				}
 			}
 
@@ -267,17 +264,6 @@ export function useRuntimeCanvasData(
 				const data = gateDataMap.get(forwardGateId) ?? {};
 				const scriptResult = gate ? parseScriptResult(data) : { failed: false };
 				runtimeStatus = gate ? evaluateGateStatus(gate, data, scriptResult.failed) : undefined;
-			}
-
-			// Compute runtime status for reverse gate
-			let reverseRuntimeStatus: GateStatus | undefined;
-			if (reverseGateId && runId) {
-				const gate = gateLookup.get(reverseGateId);
-				const data = gateDataMap.get(reverseGateId) ?? {};
-				const scriptResult = gate ? parseScriptResult(data) : { failed: false };
-				reverseRuntimeStatus = gate
-					? evaluateGateStatus(gate, data, scriptResult.failed)
-					: undefined;
 			}
 
 			return {
@@ -297,7 +283,6 @@ export function useRuntimeCanvasData(
 				targetSide: edge.targetSide,
 				id: edge.id,
 				runtimeStatus,
-				reverseRuntimeStatus,
 			};
 		});
 	}, [routedSemanticEdges, channels, endpointNodeIdLookup, gates, gateDataMap, runId]);
