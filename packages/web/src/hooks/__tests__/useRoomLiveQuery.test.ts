@@ -248,7 +248,7 @@ describe('useRoomLiveQuery', () => {
 			expect(mockUnsubscribeRoomSkills).toHaveBeenCalledWith('room-1');
 		});
 
-		it('switches skills subscription between agents and settings without unsubscribing', () => {
+		it('resubscribes skills when switching between agents and settings tabs', () => {
 			const { rerender } = renderHook(({ activeTab }) => useRoomLiveQuery('room-1', activeTab), {
 				initialProps: { activeTab: 'agents' },
 			});
@@ -256,10 +256,24 @@ describe('useRoomLiveQuery', () => {
 			expect(mockSubscribeRoomSkills).toHaveBeenCalledTimes(1);
 			mockSubscribeRoomSkills.mockClear();
 
-			// Switch from agents to settings — should resubscribe (effect re-runs)
+			// Switch from agents to settings — cleanup unsubs old, effect resubscribes
 			rerender({ activeTab: 'settings' });
 			expect(mockSubscribeRoomSkills).toHaveBeenCalledTimes(1);
 			expect(mockSubscribeRoomSkills).toHaveBeenCalledWith('room-1');
+		});
+
+		it('resubscribes on roomId change while on agents tab', () => {
+			const { rerender } = renderHook(({ roomId }) => useRoomLiveQuery(roomId, 'agents'), {
+				initialProps: { roomId: 'room-1' },
+			});
+
+			mockUnsubscribeRoomSkills.mockClear();
+			mockSubscribeRoomSkills.mockClear();
+
+			rerender({ roomId: 'room-2' });
+
+			expect(mockUnsubscribeRoomSkills).toHaveBeenCalledWith('room-1');
+			expect(mockSubscribeRoomSkills).toHaveBeenCalledWith('room-2');
 		});
 
 		it('does not subscribe to skills when activeTab is null', () => {
