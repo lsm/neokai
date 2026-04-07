@@ -16,7 +16,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, fireEvent, act } from '@testing-library/preact';
-import { waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { currentRoomAgentActiveSignal, currentRoomActiveTabSignal } from '../../lib/signals';
 
@@ -444,28 +443,28 @@ describe('Room', () => {
 	});
 
 	describe('Lazy loading', () => {
-		it('GoalsEditor, RoomAgents, and RoomSettings are not in the static import graph', async () => {
+		it('lazy-loaded tab components resolve after dynamic import', async () => {
 			// Verify that navigating to each lazy tab resolves the component
-			// via dynamic import (the mock ensures it resolves synchronously)
+			// via dynamic import (the mock ensures it resolves synchronously within act)
 			currentRoomActiveTabSignal.value = 'goals';
 			await act(async () => {
 				render(<Room roomId={roomId} />);
 			});
-			expect(screen.getByTestId('goals-editor')).toBeTruthy();
+			expect(await screen.findByTestId('goals-editor')).toBeTruthy();
 
 			cleanup();
 			currentRoomActiveTabSignal.value = 'agents';
 			await act(async () => {
 				render(<Room roomId={roomId} />);
 			});
-			expect(screen.getByTestId('room-agents')).toBeTruthy();
+			expect(await screen.findByTestId('room-agents')).toBeTruthy();
 
 			cleanup();
 			currentRoomActiveTabSignal.value = 'settings';
 			await act(async () => {
 				render(<Room roomId={roomId} />);
 			});
-			expect(screen.getByTestId('room-settings')).toBeTruthy();
+			expect(await screen.findByTestId('room-settings')).toBeTruthy();
 		});
 
 		it('RoomDashboard and RoomTasks render without Suspense (eagerly loaded)', () => {

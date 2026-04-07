@@ -30,6 +30,7 @@ import { MissionDetail } from '../components/room/MissionDetail';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
@@ -37,11 +38,22 @@ import { cn } from '../lib/utils';
 const GoalsEditor = lazy(() =>
 	import('../components/room/GoalsEditor').then((m) => ({ default: m.GoalsEditor }))
 );
+// NOTE: GoalsEditor's lazy split is ineffective — MissionDetail statically imports
+// sub-components (StatusIndicator, PriorityBadge, etc.) from GoalsEditor.tsx, so
+// the bundler keeps it in the main bundle. A future refactor could extract shared
+// sub-components into a separate module to enable effective code-splitting.
 const RoomAgents = lazy(() =>
 	import('../components/room/RoomAgents').then((m) => ({ default: m.RoomAgents }))
 );
 const RoomSettings = lazy(() =>
 	import('../components/room/RoomSettings').then((m) => ({ default: m.RoomSettings }))
+);
+
+/** Shared Suspense fallback for lazy-loaded tab components. */
+const lazyTabFallback = (
+	<div class="flex items-center justify-center h-32">
+		<Skeleton width="200px" height={24} />
+	</div>
 );
 
 type RoomTab = 'chat' | 'overview' | 'tasks' | 'agents' | 'goals' | 'settings';
@@ -299,67 +311,55 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 							)}
 							{activeTab === 'agents' && (
 								<div class="h-full overflow-y-auto">
-									<Suspense
-										fallback={
-											<div class="flex items-center justify-center h-32">
-												<Skeleton width="200px" height={24} />
-											</div>
-										}
-									>
-										<RoomAgents room={room} />
-									</Suspense>
+									<ErrorBoundary>
+										<Suspense fallback={lazyTabFallback}>
+											<RoomAgents room={room} />
+										</Suspense>
+									</ErrorBoundary>
 								</div>
 							)}
 							{activeTab === 'goals' && (
 								<div class="h-full overflow-y-auto">
-									<Suspense
-										fallback={
-											<div class="flex items-center justify-center h-32">
-												<Skeleton width="200px" height={24} />
-											</div>
-										}
-									>
-										<GoalsEditor
-											roomId={roomId}
-											goals={roomStore.goals.value}
-											tasks={roomStore.tasks.value}
-											onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
-											onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
-											onCreateGoal={handleCreateGoal}
-											onUpdateGoal={handleUpdateGoal}
-											onDeleteGoal={handleDeleteGoal}
-											onLinkTask={handleLinkTaskToGoal}
-											isLoading={roomStore.goalsLoading.value}
-											autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
-											onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
-											onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
-											onTriggerNow={async (goalId) => {
-												await roomStore.triggerNow(goalId);
-											}}
-											onScheduleNext={async (goalId, nextRunAt) => {
-												await roomStore.scheduleNext(goalId, nextRunAt);
-											}}
-										/>
-									</Suspense>
+									<ErrorBoundary>
+										<Suspense fallback={lazyTabFallback}>
+											<GoalsEditor
+												roomId={roomId}
+												goals={roomStore.goals.value}
+												tasks={roomStore.tasks.value}
+												onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
+												onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
+												onCreateGoal={handleCreateGoal}
+												onUpdateGoal={handleUpdateGoal}
+												onDeleteGoal={handleDeleteGoal}
+												onLinkTask={handleLinkTaskToGoal}
+												isLoading={roomStore.goalsLoading.value}
+												autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
+												onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
+												onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
+												onTriggerNow={async (goalId) => {
+													await roomStore.triggerNow(goalId);
+												}}
+												onScheduleNext={async (goalId, nextRunAt) => {
+													await roomStore.scheduleNext(goalId, nextRunAt);
+												}}
+											/>
+										</Suspense>
+									</ErrorBoundary>
 								</div>
 							)}
 							{activeTab === 'settings' && (
 								<div class="h-full overflow-y-auto">
-									<Suspense
-										fallback={
-											<div class="flex items-center justify-center h-32">
-												<Skeleton width="200px" height={24} />
-											</div>
-										}
-									>
-										<RoomSettings
-											room={room}
-											onSave={(params) => roomStore.updateSettings(params)}
-											onArchive={handleArchiveRoom}
-											onDelete={handleDeleteRoom}
-											isLoading={roomStore.loading.value}
-										/>
-									</Suspense>
+									<ErrorBoundary>
+										<Suspense fallback={lazyTabFallback}>
+											<RoomSettings
+												room={room}
+												onSave={(params) => roomStore.updateSettings(params)}
+												onArchive={handleArchiveRoom}
+												onDelete={handleDeleteRoom}
+												isLoading={roomStore.loading.value}
+											/>
+										</Suspense>
+									</ErrorBoundary>
 								</div>
 							)}
 							{/* Task slide-over: overlays tab content, keeps header/tabs accessible */}
