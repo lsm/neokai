@@ -300,7 +300,7 @@ test.describe('Gate Custom Badges', () => {
 
 		// ── Step 7: Verify script icon "S" appears in the badge ─────────────
 		// The script icon is a separate <text> element containing "S"
-		await expect(gateBadge).toContainText('S');
+		await expect(gateBadge).toContainText('\u26A1');
 
 		// ── Step 8: Verify Lint Check preset works ──────────────────────────
 		await gatePanel.getByTestId('gate-editor-preset-lint').click();

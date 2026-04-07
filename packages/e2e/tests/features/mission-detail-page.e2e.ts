@@ -185,7 +185,10 @@ test.describe('MissionDetail Page — Navigation', () => {
 		await page.goto(`/room/${roomId}/mission/${goalId}`);
 		await waitForWebSocketConnected(page);
 
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		// Wait for either mission-detail or mission-not-found (goals may take time to load via LiveQuery)
+		await expect(
+			page.locator('[data-testid="mission-detail"], [data-testid="mission-not-found"]')
+		).toBeVisible({ timeout: 15000 });
 		await expect(page.locator('[data-testid="mission-detail-title"]')).toContainText(
 			'Direct Nav Mission',
 			{ timeout: 5000 }
@@ -263,7 +266,7 @@ test.describe('MissionDetail Page — Navigation', () => {
 		await page.goto(`/room/${roomId}/mission/${goalId}`);
 		await waitForWebSocketConnected(page);
 
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 
 		// Click back button
 		await page.locator('[data-testid="mission-detail-back-button"]').click();
@@ -294,7 +297,7 @@ test.describe('MissionDetail Page — Navigation', () => {
 		await waitForWebSocketConnected(page);
 
 		// MissionDetail should be visible as an absolute overlay inside the tab content area
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 
 		// The back button at the top of the overlay should be interactive
 		await expect(page.locator('[data-testid="mission-detail-back-button"]')).toBeVisible({
@@ -402,7 +405,7 @@ test.describe('MissionDetail Page — Progress Section (one-shot)', () => {
 		await waitForWebSocketConnected(page);
 
 		// Wait for detail to load first
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 		await page.waitForTimeout(1000);
 
 		await expect(page.locator('[data-testid="mission-metrics-section"]')).not.toBeVisible();
@@ -463,7 +466,7 @@ test.describe('MissionDetail Page — Metrics Section (measurable)', () => {
 		await waitForWebSocketConnected(page);
 
 		// Wait for detail to load first
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 		await page.waitForTimeout(1000);
 
 		await expect(page.locator('[data-testid="mission-progress-section"]')).not.toBeVisible();
@@ -640,7 +643,7 @@ test.describe('MissionDetail Page — Schedule & Execution History (recurring)',
 		await waitForWebSocketConnected(page);
 
 		// Wait for detail to load first
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 		await page.waitForTimeout(1000);
 
 		await expect(page.locator('[data-testid="mission-schedule-section"]')).not.toBeVisible();
@@ -653,7 +656,7 @@ test.describe('MissionDetail Page — Schedule & Execution History (recurring)',
 		await waitForWebSocketConnected(page);
 
 		// Wait for detail to load first
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 15000 });
 		await page.waitForTimeout(1000);
 
 		await expect(

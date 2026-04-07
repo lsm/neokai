@@ -12,18 +12,10 @@
  *     The draft clears on a successful send; an error message appears on failure.
  *     Both outcomes are acceptable — the test verifies the submit path was reached.
  *
- *   Scenario 3 — @mention autocomplete dropdown appears:
- *     Typing "@" in the composer triggers the MentionAutocomplete dropdown
- *     (data-testid="mention-autocomplete") with a list of space agents.
- *
- *   Scenario 4 (required) — @mention: agent selection inserts the name:
- *     Clicking an agent in the dropdown inserts "@AgentName " into the textarea.
- *
- *   Scenario 5 — @mention: keyboard navigation (ArrowDown/Up + Enter):
- *     Arrow keys navigate the highlighted item; Enter selects and inserts the name.
- *
- *   Scenario 6 — @mention: Escape closes the dropdown without inserting:
- *     Pressing Escape dismisses the dropdown, leaving the "@" text intact.
+ *   Scenario 3 — @mention autocomplete is scoped to workflow agents:
+ *     For non-workflow tasks, typing "@" does NOT show the autocomplete dropdown.
+ *     The autocomplete only appears for workflow tasks with defined workflow agents.
+ *     (Behavior after PR #1440: scope @mention autocomplete to workflow agents only.)
  *
  * Setup:
  *   - A unique workspace directory is created in beforeEach.
@@ -274,11 +266,12 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 		expect(value).toContain('Line two');
 	});
 
-	// ─── Scenario 4: @mention autocomplete dropdown appears ──────────────────
+	// ─── Scenario 4: @mention autocomplete is scoped to workflow agents ──
+	// After PR #1440, @mention autocomplete only shows agents that belong to
+	// the task's workflow. Non-workflow tasks have no workflow agents, so
+	// the autocomplete dropdown does not appear.
 
-	test('@mention autocomplete dropdown appears when typing "@" in the composer', async ({
-		page,
-	}) => {
+	test('@mention: autocomplete does NOT appear for non-workflow tasks', async ({ page }) => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
@@ -287,136 +280,15 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 		);
 		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
 
-		// Type "@" to trigger the mention autocomplete.
-		// pressSequentially fires real keyboard events that Preact's onInput handles.
+		// Type "@" to attempt to trigger mention autocomplete.
 		await composerTextarea.click();
 		await composerTextarea.pressSequentially('@', { delay: 10 });
 
-		// The MentionAutocomplete dropdown must appear.
-		// data-testid="mention-autocomplete" is the dropdown container.
-		await expect(page.getByTestId('mention-autocomplete')).toBeVisible({ timeout: 5000 });
+		// For non-workflow tasks, no agents are available so the dropdown
+		// should not appear.
+		await expect(page.getByTestId('mention-autocomplete')).not.toBeVisible({ timeout: 3000 });
 
-		// The dropdown must contain at least one agent item.
-		// data-testid="mention-item" is each agent button.
-		const mentionItems = page.getByTestId('mention-item');
-		const itemCount = await mentionItems.count();
-		expect(itemCount).toBeGreaterThan(0);
-
-		// Each item should display "@AgentName" text.
-		const firstItemText = await mentionItems.first().textContent();
-		expect(firstItemText?.trim()).toMatch(/^@\w+/);
-	});
-
-	// ─── Scenario 5 (required): @mention — clicking an agent inserts the name ─
-
-	test('@mention: selecting an agent from the dropdown inserts "@AgentName " into the textarea', async ({
-		page,
-	}) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
-
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
-		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
-
-		// Type prefix text then "@" to open the autocomplete.
-		await composerTextarea.click();
-		await composerTextarea.pressSequentially('Please check: @', { delay: 10 });
-
-		// Wait for the dropdown.
-		const dropdown = page.getByTestId('mention-autocomplete');
-		await expect(dropdown).toBeVisible({ timeout: 5000 });
-
-		// Get the agent name from the first item (e.g. "@Coder" → "Coder").
-		const firstItem = page.getByTestId('mention-item').first();
-		await expect(firstItem).toBeVisible({ timeout: 3000 });
-		const rawText = await firstItem.textContent();
-		const agentName = rawText?.trim().replace(/^@/, '') ?? '';
-		expect(agentName.length).toBeGreaterThan(0);
-
-		// Click the first agent to select it.
-		await firstItem.click();
-
-		// Dropdown must close after selection.
-		await expect(dropdown).toBeHidden({ timeout: 3000 });
-
-		// Textarea must contain "@AgentName " (with trailing space from handleMentionSelect).
-		const currentValue = await composerTextarea.inputValue();
-		expect(currentValue).toContain(`@${agentName} `);
-	});
-
-	// ─── Scenario 6: @mention — keyboard navigation ──────────────────────────
-
-	test('@mention: ArrowDown/Up navigates the dropdown, Enter selects an agent', async ({
-		page,
-	}) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
-
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
-		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
-
-		// Open the autocomplete dropdown.
-		await composerTextarea.click();
-		await composerTextarea.pressSequentially('@', { delay: 10 });
-		await expect(page.getByTestId('mention-autocomplete')).toBeVisible({ timeout: 5000 });
-
-		const mentionItems = page.getByTestId('mention-item');
-		const totalItems = await mentionItems.count();
-
-		if (totalItems >= 2) {
-			// Move selection down to the second item.
-			await composerTextarea.press('ArrowDown');
-
-			// Per MentionAutocomplete.tsx the highlighted item has "bg-blue-500/20 border-l-2 border-blue-500".
-			const secondItem = mentionItems.nth(1);
-			await expect(secondItem).toHaveClass(/bg-blue-500\/20/, { timeout: 3000 });
-
-			// Move selection back up.
-			await composerTextarea.press('ArrowUp');
-			const firstItem = mentionItems.first();
-			await expect(firstItem).toHaveClass(/bg-blue-500\/20/, { timeout: 3000 });
-		}
-
-		// Capture the first agent name.
-		const firstItemText = await mentionItems.first().textContent();
-		const firstAgentName = firstItemText?.trim().replace(/^@/, '') ?? '';
-
-		// Press Enter to select the first agent (Shift+Enter is guarded in the keydown handler).
-		await composerTextarea.press('Enter');
-
-		// Dropdown must close.
-		await expect(page.getByTestId('mention-autocomplete')).toBeHidden({ timeout: 3000 });
-
-		// Textarea must contain "@AgentName ".
-		const value = await composerTextarea.inputValue();
-		expect(value).toContain(`@${firstAgentName} `);
-	});
-
-	// ─── Scenario 7: @mention — Escape closes the dropdown ───────────────────
-
-	test('@mention: pressing Escape closes the dropdown without inserting text', async ({ page }) => {
-		await page.goto(`/space/${spaceId}/task/${taskId}`);
-		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
-
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
-		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
-
-		// Open the autocomplete dropdown.
-		await composerTextarea.click();
-		await composerTextarea.pressSequentially('@', { delay: 10 });
-		await expect(page.getByTestId('mention-autocomplete')).toBeVisible({ timeout: 5000 });
-
-		// Press Escape — dropdown should close.
-		await composerTextarea.press('Escape');
-		await expect(page.getByTestId('mention-autocomplete')).toBeHidden({ timeout: 3000 });
-
-		// The "@" text must still be in the textarea (not cleared by Escape).
+		// The "@" character should still be in the textarea.
 		const value = await composerTextarea.inputValue();
 		expect(value).toBe('@');
 	});
