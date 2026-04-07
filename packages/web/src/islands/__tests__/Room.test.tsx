@@ -9,6 +9,9 @@
  *
  * Tab state is driven by currentRoomActiveTabSignal (single source of truth).
  * Tab clicks delegate to navigateToRoomTab which updates both the URL and the signal.
+ *
+ * GoalsEditor, RoomAgents, and RoomSettings are lazy-loaded via preact/compat lazy().
+ * Tests mock the individual module paths (not the barrel) so that lazy() resolves correctly.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -170,9 +173,16 @@ vi.mock('../../components/room/RoomDashboard', () => ({
 	RoomDashboard: () => <div data-testid="room-dashboard">RoomDashboard</div>,
 }));
 
-vi.mock('../../components/room', () => ({
+// Mock individual component paths (not the barrel) so lazy() resolves correctly
+vi.mock('../../components/room/GoalsEditor', () => ({
 	GoalsEditor: () => <div data-testid="goals-editor">GoalsEditor</div>,
+}));
+
+vi.mock('../../components/room/RoomSettings', () => ({
 	RoomSettings: () => <div data-testid="room-settings">RoomSettings</div>,
+}));
+
+vi.mock('../../components/room/RoomAgents', () => ({
 	RoomAgents: () => <div data-testid="room-agents">RoomAgents</div>,
 }));
 
@@ -322,25 +332,34 @@ describe('Room', () => {
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders Missions tab content when currentRoomActiveTabSignal is "goals"', () => {
+		it('renders Missions tab content when currentRoomActiveTabSignal is "goals"', async () => {
 			currentRoomActiveTabSignal.value = 'goals';
-			render(<Room roomId={roomId} />);
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
 
-			expect(screen.getByTestId('goals-editor')).toBeTruthy();
+			// GoalsEditor is lazy-loaded — wait for the dynamic import to resolve
+			expect(await screen.findByTestId('goals-editor')).toBeTruthy();
 		});
 
-		it('renders Settings tab content when currentRoomActiveTabSignal is "settings"', () => {
+		it('renders Settings tab content when currentRoomActiveTabSignal is "settings"', async () => {
 			currentRoomActiveTabSignal.value = 'settings';
-			render(<Room roomId={roomId} />);
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
 
-			expect(screen.getByTestId('room-settings')).toBeTruthy();
+			// RoomSettings is lazy-loaded — wait for the dynamic import to resolve
+			expect(await screen.findByTestId('room-settings')).toBeTruthy();
 		});
 
-		it('renders Agents tab content when currentRoomActiveTabSignal is "agents"', () => {
+		it('renders Agents tab content when currentRoomActiveTabSignal is "agents"', async () => {
 			currentRoomActiveTabSignal.value = 'agents';
-			render(<Room roomId={roomId} />);
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
 
-			expect(screen.getByTestId('room-agents')).toBeTruthy();
+			// RoomAgents is lazy-loaded — wait for the dynamic import to resolve
+			expect(await screen.findByTestId('room-agents')).toBeTruthy();
 		});
 
 		it('calls navigateToRoomTab when a tab is clicked', () => {
@@ -420,6 +439,45 @@ describe('Room', () => {
 			render(<Room roomId={roomId} />);
 
 			expect(screen.getByText('Room not found')).toBeTruthy();
+		});
+	});
+
+	describe('Lazy loading', () => {
+		it('lazy-loaded tab components resolve after dynamic import', async () => {
+			// Verify that navigating to each lazy tab resolves the component
+			// via dynamic import (the mock ensures it resolves synchronously within act)
+			currentRoomActiveTabSignal.value = 'goals';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+			expect(await screen.findByTestId('goals-editor')).toBeTruthy();
+
+			cleanup();
+			currentRoomActiveTabSignal.value = 'agents';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+			expect(await screen.findByTestId('room-agents')).toBeTruthy();
+
+			cleanup();
+			currentRoomActiveTabSignal.value = 'settings';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+			expect(await screen.findByTestId('room-settings')).toBeTruthy();
+		});
+
+		it('RoomDashboard and RoomTasks render without Suspense (eagerly loaded)', () => {
+			// Overview tab — RoomDashboard is eagerly loaded
+			currentRoomActiveTabSignal.value = 'overview';
+			render(<Room roomId={roomId} />);
+			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+
+			cleanup();
+			// Tasks tab — RoomTasks is eagerly loaded
+			currentRoomActiveTabSignal.value = 'tasks';
+			render(<Room roomId={roomId} />);
+			expect(screen.getByTestId('room-tasks')).toBeTruthy();
 		});
 	});
 });
