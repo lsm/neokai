@@ -26,6 +26,8 @@ import type {
 	GateDataRecord,
 } from '../../../src/storage/repositories/gate-data-repository.ts';
 import type { SpaceRuntimeService } from '../../../src/lib/space/runtime/space-runtime-service.ts';
+import type { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorktreeManager } from '../../../src/lib/space/managers/space-worktree-manager.ts';
 import type { DaemonHub } from '../../../src/lib/daemon-hub.ts';
 
 // ─── Mock module for execFile (async) ─────────────────────────────────────────
@@ -198,6 +200,21 @@ function createMockRuntimeService(): SpaceRuntimeService {
 	} as unknown as SpaceRuntimeService;
 }
 
+/** Returns an empty task list — causes worktree path resolution to fall back to space.workspacePath */
+function createMockSpaceTaskRepo(): SpaceTaskRepository {
+	return {
+		listByWorkflowRun: mock(() => []),
+		getTask: mock(() => null),
+	} as unknown as SpaceTaskRepository;
+}
+
+/** Returns null worktree path — causes resolution to fall back to space.workspacePath */
+function createMockSpaceWorktreeManager(): SpaceWorktreeManager {
+	return {
+		getTaskWorktreePath: mock(async () => null),
+	} as unknown as SpaceWorktreeManager;
+}
+
 // ─── Test Setup ───────────────────────────────────────────────────────────────
 
 describe('space-workflow-run gate handlers', () => {
@@ -242,7 +259,9 @@ describe('space-workflow-run gate handlers', () => {
 			gateDataRepo,
 			createMockRuntimeService(),
 			taskManagerFactory,
-			daemonHub
+			daemonHub,
+			createMockSpaceTaskRepo(),
+			createMockSpaceWorktreeManager()
 		);
 	}
 

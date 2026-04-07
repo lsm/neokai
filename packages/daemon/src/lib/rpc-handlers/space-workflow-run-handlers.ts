@@ -24,6 +24,8 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
 import { Logger } from '../logger';
 
@@ -82,6 +84,65 @@ function execGit(args: string[], cwd: string, timeout = 10000): Promise<string> 
 }
 
 /**
+ * Resolve the git worktree path for a workflow run.
+ *
+ * Resolution order:
+ * 1. If `taskId` is provided, use that task's worktree directly.
+ * 2. Otherwise, look up all tasks for the run and use the first one's worktree.
+ *    (Logs a warning when a run has multiple tasks — only first task is shown.)
+ * 3. Falls back to the space's root `workspacePath` when no task worktree exists.
+ *
+ * @returns The resolved path, or null if no path can be determined.
+ */
+async function resolveWorktreePath(
+	runId: string,
+	spaceId: string,
+	spaceManager: SpaceManager,
+	spaceTaskRepo: SpaceTaskRepository,
+	spaceWorktreeManager: SpaceWorktreeManager,
+	taskId?: string
+): Promise<string | null> {
+	// If the caller provided a specific taskId, use that task's worktree directly.
+	if (taskId) {
+		const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
+		if (taskWorktreePath) {
+			return taskWorktreePath;
+		}
+		log.warn(
+			`resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to root workspace`
+		);
+	} else {
+		// No taskId provided: look up tasks for the run and use the first one's worktree.
+		const tasks = spaceTaskRepo.listByWorkflowRun(runId);
+		if (tasks.length > 0) {
+			if (tasks.length > 1) {
+				log.warn(
+					`resolveWorktreePath: run ${runId} has ${tasks.length} tasks — showing artifacts for task ${tasks[0].id} only. Pass taskId to target a specific task.`
+				);
+			}
+			const firstTaskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(
+				spaceId,
+				tasks[0].id
+			);
+			if (firstTaskWorktreePath) {
+				return firstTaskWorktreePath;
+			}
+			log.warn(
+				`resolveWorktreePath: no worktree found for task ${tasks[0].id} in run ${runId}, falling back to root workspace`
+			);
+		} else {
+			log.warn(
+				`resolveWorktreePath: no tasks found for run ${runId}, falling back to root workspace`
+			);
+		}
+	}
+
+	// Fallback: use the root workspace path from the space.
+	const space = await spaceManager.getSpace(spaceId);
+	return space?.workspacePath ?? null;
+}
+
+/**
  * Get the diff base ref for a worktree.
  * Tries `origin/dev` merge-base first; falls back to empty string (uncommitted only).
  */
@@ -108,7 +169,9 @@ export function setupSpaceWorkflowRunHandlers(
 	gateDataRepo: GateDataRepository,
 	spaceRuntimeService: SpaceRuntimeService,
 	taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	spaceTaskRepo: SpaceTaskRepository,
+	spaceWorktreeManager: SpaceWorktreeManager
 ): void {
 	/**
 	 * Helper: notify the channel router that gate data has changed.
@@ -560,15 +623,23 @@ export function setupSpaceWorkflowRunHandlers(
 	// Returns the list of changed files and diff summary (additions, deletions)
 	// for the workspace associated with a workflow run.
 	messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
-		const params = data as { runId: string };
+		const params = data as { runId: string; taskId?: string };
 
 		if (!params.runId) throw new Error('runId is required');
 
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		const space = await spaceManager.getSpace(run.spaceId);
-		const worktreePath = space?.workspacePath;
+		// Resolve the worktree path: prefer the task-specific git worktree (where
+		// the agent commits its work) over the root workspace path.
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager,
+			params.taskId
+		);
 		if (!worktreePath) {
 			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
@@ -594,7 +665,7 @@ export function setupSpaceWorkflowRunHandlers(
 	// Returns the unified diff for a specific file in the run's worktree.
 	// Uses the same base ref logic as getGateArtifacts.
 	messageHub.onRequest('spaceWorkflowRun.getFileDiff', async (data) => {
-		const params = data as { runId: string; filePath: string };
+		const params = data as { runId: string; filePath: string; taskId?: string };
 
 		if (!params.runId) throw new Error('runId is required');
 		if (!params.filePath || params.filePath.trim() === '') {
@@ -607,8 +678,16 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		const space = await spaceManager.getSpace(run.spaceId);
-		const worktreePath = space?.workspacePath;
+		// Resolve the worktree path: prefer the task-specific git worktree (where
+		// the agent commits its work) over the root workspace path.
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager,
+			params.taskId
+		);
 		if (!worktreePath) {
 			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}

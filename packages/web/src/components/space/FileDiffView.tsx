@@ -19,6 +19,8 @@ import { cn } from '../../lib/utils';
 
 export interface FileDiffViewProps {
 	runId: string;
+	/** Task ID — when provided, diffs this task's worktree specifically */
+	taskId?: string;
 	filePath: string;
 	onBack: () => void;
 	class?: string;
@@ -117,7 +119,13 @@ export function parseDiff(diff: string): ParsedLine[] {
 // Component
 // ============================================================================
 
-export function FileDiffView({ runId, filePath, onBack, class: className }: FileDiffViewProps) {
+export function FileDiffView({
+	runId,
+	taskId,
+	filePath,
+	onBack,
+	class: className,
+}: FileDiffViewProps) {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [diffText, setDiffText] = useState<string | null>(null);
@@ -139,7 +147,7 @@ export function FileDiffView({ runId, filePath, onBack, class: className }: File
 		hub
 			.request<{ diff: string; additions: number; deletions: number; filePath: string }>(
 				'spaceWorkflowRun.getFileDiff',
-				{ runId, filePath }
+				{ runId, filePath, ...(taskId ? { taskId } : {}) }
 			)
 			.then((result) => {
 				setDiffText(result.diff);
@@ -150,7 +158,7 @@ export function FileDiffView({ runId, filePath, onBack, class: className }: File
 				setError(err instanceof Error ? err.message : 'Failed to load diff');
 			})
 			.finally(() => setLoading(false));
-	}, [runId, filePath]);
+	}, [runId, taskId, filePath]);
 
 	const parsedLines = diffText ? parseDiff(diffText) : [];
 

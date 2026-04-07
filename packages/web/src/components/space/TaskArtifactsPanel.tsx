@@ -21,6 +21,8 @@ import { FileDiffView } from './FileDiffView';
 export interface TaskArtifactsPanelProps {
 	/** Workflow run ID (from task.workflowRunId) */
 	runId: string;
+	/** Task ID — when provided, diffs this task's worktree specifically */
+	taskId?: string;
 	/** Called when the panel should close */
 	onClose: () => void;
 	class?: string;
@@ -44,7 +46,12 @@ interface ArtifactsResult {
 // Component
 // ============================================================================
 
-export function TaskArtifactsPanel({ runId, onClose, class: className }: TaskArtifactsPanelProps) {
+export function TaskArtifactsPanel({
+	runId,
+	taskId,
+	onClose,
+	class: className,
+}: TaskArtifactsPanelProps) {
 	const [loading, setLoading] = useState(true);
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const [artifacts, setArtifacts] = useState<ArtifactsResult | null>(null);
@@ -64,19 +71,23 @@ export function TaskArtifactsPanel({ runId, onClose, class: className }: TaskArt
 		}
 
 		hub
-			.request<ArtifactsResult>('spaceWorkflowRun.getGateArtifacts', { runId })
+			.request<ArtifactsResult>('spaceWorkflowRun.getGateArtifacts', {
+				runId,
+				...(taskId ? { taskId } : {}),
+			})
 			.then((result) => setArtifacts(result))
 			.catch((err: unknown) => {
 				setFetchError(err instanceof Error ? err.message : 'Failed to load artifacts');
 			})
 			.finally(() => setLoading(false));
-	}, [runId]);
+	}, [runId, taskId]);
 
 	// If a file is selected, swap to diff view
 	if (selectedFile) {
 		return (
 			<FileDiffView
 				runId={runId}
+				taskId={taskId}
 				filePath={selectedFile}
 				onBack={() => setSelectedFile(null)}
 				class={className}

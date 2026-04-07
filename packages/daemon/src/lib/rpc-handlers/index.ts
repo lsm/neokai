@@ -641,7 +641,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		gateDataRepo,
 		spaceRuntimeService,
 		spaceWorkflowRunTaskManagerFactory,
-		deps.daemonHub
+		deps.daemonHub,
+		spaceTaskRepo,
+		spaceWorktreeManager
 	);
 
 	// Node execution handlers
