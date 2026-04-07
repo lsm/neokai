@@ -46,11 +46,11 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 	const [initialLoad, setInitialLoad] = useState(true);
 	const activeTab: RoomTab = (currentRoomActiveTabSignal.value as RoomTab) ?? 'overview';
 
-	// Manage LiveQuery subscriptions for tasks and goals.
+	// Manage LiveQuery subscriptions for tasks, goals, and skills.
 	// Intentionally declared before the select() effect so that LiveQuery
 	// handlers are registered before the hub request fires — both share
 	// [roomId] as their dependency and run in declaration order.
-	useRoomLiveQuery(roomId);
+	useRoomLiveQuery(roomId, activeTab);
 
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => {
