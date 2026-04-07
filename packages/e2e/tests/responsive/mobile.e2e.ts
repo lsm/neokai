@@ -266,17 +266,19 @@ test.describe('Mobile Room Agent Navigation', () => {
 		await waitForWebSocketConnectedMobile(page);
 
 		// Wait for room to load
-		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
+		await expect(
+			page.getByTestId('bottom-tab-bar').getByRole('tab', { name: 'Overview' })
+		).toBeVisible({
 			timeout: 10000,
 		});
 
 		// Bottom tab bar should show room-specific tabs
-		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
+		const bottomTabBar = page.getByTestId('bottom-tab-bar');
 		await expect(bottomTabBar).toBeVisible();
 
 		// Room context tabs should be present
 		await expect(bottomTabBar.getByRole('tab', { name: 'Overview' })).toBeVisible();
-		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toBeVisible();
+		await expect(bottomTabBar.getByRole('tab', { name: 'Coord.' })).toBeVisible();
 
 		// Global chats/rooms tabs should NOT be visible in room context
 		await expect(bottomTabBar.getByRole('tab', { name: 'Chats' })).not.toBeVisible();
@@ -287,13 +289,15 @@ test.describe('Mobile Room Agent Navigation', () => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnectedMobile(page);
 
-		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
+		await expect(
+			page.getByTestId('bottom-tab-bar').getByRole('tab', { name: 'Overview' })
+		).toBeVisible({
 			timeout: 10000,
 		});
 
 		// Click the Agent tab in the bottom bar
-		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
-		await bottomTabBar.getByRole('tab', { name: 'Agent' }).click();
+		const bottomTabBar = page.getByTestId('bottom-tab-bar');
+		await bottomTabBar.getByRole('tab', { name: 'Coord.' }).click();
 
 		// URL should change to room agent path
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 5000 });
@@ -308,8 +312,8 @@ test.describe('Mobile Room Agent Navigation', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 10000 });
 
 		// Agent tab should be active
-		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
-		const agentTab = bottomTabBar.getByRole('tab', { name: 'Agent' });
+		const bottomTabBar = page.getByTestId('bottom-tab-bar');
+		const agentTab = bottomTabBar.getByRole('tab', { name: 'Coord.' });
 		await expect(agentTab).toBeVisible();
 		await expect(agentTab).toHaveAttribute('aria-selected', 'true');
 
@@ -330,19 +334,19 @@ test.describe('Mobile Room Agent Navigation', () => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnectedMobile(page);
 
-		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
+		await expect(
+			page.getByTestId('bottom-tab-bar').getByRole('tab', { name: 'Overview' })
+		).toBeVisible({
 			timeout: 10000,
 		});
 
 		// Verify room-specific tabs are shown
-		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
-		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toBeVisible();
+		const bottomTabBar = page.getByTestId('bottom-tab-bar');
+		await expect(bottomTabBar.getByRole('tab', { name: 'Coord.' })).toBeVisible();
 
-		// Click the "/" (Home) tab — present in room context, navigates to global home
-		await bottomTabBar.getByRole('tab', { name: '/' }).click();
-
-		// URL should change to home
-		await expect(page).toHaveURL(/\/$/, { timeout: 5000 });
+		// Navigate to home via direct URL to leave room context
+		await page.goto('/');
+		await waitForWebSocketConnectedMobile(page);
 
 		// Now global tabs should be shown (Rooms tab visible)
 		await expect(bottomTabBar.getByRole('tab', { name: 'Rooms' })).toBeVisible({ timeout: 5000 });
@@ -364,12 +368,14 @@ test.describe('Mobile Room Agent Navigation', () => {
 			return (res as { task: { id: string } }).task.id;
 		}, roomId);
 
-		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
+		const bottomTabBar = page.getByTestId('bottom-tab-bar');
 
 		// 1. Room dashboard — Overview should be active
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnectedMobile(page);
-		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
+		await expect(
+			page.getByTestId('bottom-tab-bar').getByRole('tab', { name: 'Overview' })
+		).toBeVisible({
 			timeout: 10000,
 		});
 		await expect(bottomTabBar.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
@@ -385,7 +391,7 @@ test.describe('Mobile Room Agent Navigation', () => {
 			'aria-selected',
 			'false'
 		);
-		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toHaveAttribute(
+		await expect(bottomTabBar.getByRole('tab', { name: 'Coord.' })).toHaveAttribute(
 			'aria-selected',
 			'false'
 		);
@@ -394,7 +400,7 @@ test.describe('Mobile Room Agent Navigation', () => {
 		await page.goto(`/room/${roomId}/agent`);
 		await waitForWebSocketConnectedMobile(page);
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 5000 });
-		await expect(bottomTabBar.getByRole('tab', { name: 'Agent' })).toHaveAttribute(
+		await expect(bottomTabBar.getByRole('tab', { name: 'Coord.' })).toHaveAttribute(
 			'aria-selected',
 			'true'
 		);

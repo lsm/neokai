@@ -257,8 +257,8 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 							</button>
 						)}
 
-						{/* Tab bar */}
-						<div class="flex border-b border-dark-700 bg-dark-850 flex-shrink-0">
+						{/* Tab bar — hidden on mobile where BottomTabBar replaces it */}
+						<div class="hidden md:flex border-b border-dark-700 bg-dark-850 flex-shrink-0">
 							{(
 								[
 									{ id: 'chat' as const, label: 'Coordinator' },
