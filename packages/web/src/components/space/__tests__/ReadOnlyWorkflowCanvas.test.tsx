@@ -166,7 +166,7 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		nodeBtn.click();
 		expect(onNodeClick).toHaveBeenCalledTimes(1);
 		// Called with persisted node ID and node name
-		expect(onNodeClick).toHaveBeenCalledWith('n1', 'Planner');
+		expect(onNodeClick).toHaveBeenCalledWith('n1', 'Planner', []);
 	});
 
 	it('shows ChannelInfoPanel when a channel is selected', () => {

@@ -18,7 +18,7 @@ interface ReadOnlyWorkflowCanvasProps {
 	workflowId: string;
 	runId?: string | null;
 	spaceId?: string | null;
-	onNodeClick?: (nodeId: string, nodeName: string) => void;
+	onNodeClick?: (nodeId: string, nodeName: string, agentNames: string[]) => void;
 	class?: string;
 }
 
@@ -67,11 +67,12 @@ export function ReadOnlyWorkflowCanvas({
 			// Clicking a node clears channel selection
 			setSelectedChannelId(null);
 			if (!stepId || !onNodeClick) return;
-			// stepId is localId — find the persisted node ID and name
+			// stepId is localId — find the persisted node ID, name, and agent names
 			const nodeEntry = nodeData.find((n) => n.step.localId === stepId);
 			const persistedId = nodeEntry?.step.id ?? stepId;
 			const nodeName = nodeEntry?.step.name ?? '';
-			onNodeClick(persistedId, nodeName);
+			const agentNames = nodeEntry?.step.agents?.map((a) => a.name) ?? [];
+			onNodeClick(persistedId, nodeName, agentNames);
 		},
 		[onNodeClick, nodeData]
 	);

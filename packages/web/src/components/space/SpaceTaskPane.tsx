@@ -282,10 +282,21 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					? 'View Agent Session'
 					: 'Open Space Agent';
 
-	const handleNodeClick = (nodeId: string, nodeName: string) => {
-		// Match against activityMembers by label (node name) — same data as the "Agents" buttons.
-		// nodeExecution.nodeId is unreliable (often undefined), so we match by label instead.
-		const nodeMember = activityMembers.find((m) => m.kind === 'node_agent' && m.label === nodeName);
+	const handleNodeClick = (_nodeId: string, _nodeName: string, _agentSlotNames: string[]) => {
+		// Resolve agent display names from the store using the workflow node’s agent IDs.
+		// nodeExecution is often absent; resolve via the agent store instead.
+		const workflowNode = workflow?.nodes.find((n) => n.id === _nodeId);
+		const agentDisplayNames = workflowNode
+			? workflowNode.agents
+					.map((sa) => spaceStore.agents.value.find((a) => a.id === sa.agentId)?.name)
+					.filter((n): n is string => !!n)
+			: [];
+
+		// Exact-match against activity member labels (same data source as the “Agents” buttons).
+		// For multi-agent nodes, returns the first matching member.
+		const nodeMember = activityMembers.find(
+			(m) => m.kind === 'node_agent' && agentDisplayNames.includes(m.label)
+		);
 		if (nodeMember) {
 			spaceOverlayAgentNameSignal.value = nodeMember.label;
 			spaceOverlaySessionIdSignal.value = nodeMember.sessionId;
@@ -300,7 +311,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			return;
 		}
 
-		// Last resort: use the task's own agentSessionId
+		// Last resort: use the task’s own agentSessionId
 		if (agentSessionId) {
 			spaceOverlayAgentNameSignal.value = agentActionLabel;
 			spaceOverlaySessionIdSignal.value = agentSessionId;

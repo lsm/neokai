@@ -66,7 +66,7 @@ const HITBOX_STROKE_WIDTH = 12;
 
 /**
  * A messaging channel between two nodes with resolved node IDs.
- * This is the rendered form of a WorkflowChannel where role strings
+ * This is the rendered form of a WorkflowChannel where slot name strings
  * have been resolved to actual node/step IDs.
  */
 export interface ResolvedWorkflowChannel {

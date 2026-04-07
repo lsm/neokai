@@ -526,7 +526,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
 		// Simulate a node click — no node execution exists, falls back to task session
-		mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node');
+		mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node', ['coder']);
 
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-task');
 	});
@@ -541,13 +541,25 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			}),
 		];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		mockAgents.value = [
+			{
+				id: 'agent-1',
+				spaceId: 'space-1',
+				name: 'Coder Node',
+				instructions: null,
+				createdAt: 1000,
+				updatedAt: 1000,
+			},
+		];
 		mockWorkflows.value = [
 			{
 				id: 'workflow-1',
 				spaceId: 'space-1',
 				name: 'Wf',
 				description: '',
-				nodes: [{ id: 'node-1', name: 'Coder Node', agents: [] }],
+				nodes: [
+					{ id: 'node-1', name: 'Coder Node', agents: [{ agentId: 'agent-1', name: 'coder' }] },
+				],
 				startNodeId: 'node-1',
 				channels: [],
 				gates: [],
@@ -585,7 +597,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(getByTestId('workflow-canvas')).toBeTruthy();
 
 		// Simulate a node click — activity member exists with sessionId
-		mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node');
+		mockWorkflowCanvasOnNodeClick('node-1', 'Coder Node', ['coder']);
 
 		// Should use the activity member's session, NOT the parent task's session
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-node-agent');
