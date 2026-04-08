@@ -225,8 +225,8 @@ test.describe('Script Gate Configuration', () => {
 		// ── Save the workflow ─────────────────────────────────────────────────
 		const editor = page.getByTestId('visual-workflow-editor');
 		await editor.getByTestId('save-button').click();
-		// Verify the editor closed (not just that the name appears somewhere on page)
-		await expect(page.getByTestId('visual-workflow-editor')).not.toBeVisible({ timeout: 5000 });
+		// Editor stays open after save; click Back to close it
+		editor.getByTestId('back-button').click();
 		await expect(page.locator(`text=${workflowName}`)).toBeVisible({ timeout: 5000 });
 
 		// ── Reopen the workflow for editing ────────────────────────────────────

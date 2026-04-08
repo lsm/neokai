@@ -146,7 +146,9 @@ test.describe('Mission Creation', () => {
 		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 		// The mission should appear in the list
-		await expect(page.locator('h4:has-text("Track Test Coverage")')).toBeVisible({ timeout: 8000 });
+		await expect(page.locator('button:has-text("Track Test Coverage")')).toBeVisible({
+			timeout: 8000,
+		});
 
 		// Measurable badge should be visible
 		await expect(
@@ -193,7 +195,9 @@ test.describe('Mission Creation', () => {
 		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 		// The mission should appear in the list
-		await expect(page.locator('h4:has-text("Daily Health Check")')).toBeVisible({ timeout: 8000 });
+		await expect(page.locator('button:has-text("Daily Health Check")')).toBeVisible({
+			timeout: 8000,
+		});
 
 		// Recurring badge should be visible
 		await expect(
@@ -241,7 +245,7 @@ test.describe('Mission Creation', () => {
 		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 		// The mission should appear with semi-autonomous badge
-		await expect(page.locator('h4:has-text("Auto Mission")')).toBeVisible({ timeout: 8000 });
+		await expect(page.locator('button:has-text("Auto Mission")')).toBeVisible({ timeout: 8000 });
 		await expect(
 			page.locator('[data-testid="autonomy-badge"]:has-text("Semi-Autonomous")')
 		).toBeVisible({ timeout: 5000 });
@@ -257,7 +261,9 @@ test.describe('Mission Creation', () => {
 		await page.locator('#wizard-goal-title').fill('Filter Test Mission');
 		await advanceToStep2(page);
 		await page.getByRole('button', { name: 'Create', exact: true }).click();
-		await expect(page.locator('h4:has-text("Filter Test Mission")')).toBeVisible({ timeout: 8000 });
+		await expect(page.locator('button:has-text("Filter Test Mission")')).toBeVisible({
+			timeout: 8000,
+		});
 
 		// Filter buttons should appear
 		await expect(page.locator('[data-testid="filter-all"]')).toBeVisible({ timeout: 5000 });

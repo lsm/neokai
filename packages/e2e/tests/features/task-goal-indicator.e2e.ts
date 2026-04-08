@@ -4,8 +4,8 @@
  * Tests that tasks linked to a goal show the goal name badge:
  * - Goal badge appears in task list (RoomDashboard) when task is linked to a goal
  * - Goal badge appears in TaskView header when task is linked to a goal
- * - Clicking goal badge in task list switches to Missions tab
- * - Clicking goal badge in TaskView navigates back to room and switches to Missions tab
+ * - Clicking goal badge in task list navigates to MissionDetail page
+ * - Clicking goal badge in TaskView navigates to MissionDetail page
  * - Tasks without a goal do NOT show the badge
  *
  * Setup: RPC to create room, task, and goal and link them together (infrastructure).
@@ -152,7 +152,7 @@ test.describe('Task Goal Indicator — Task List', () => {
 		await expect(badge).not.toBeVisible();
 	});
 
-	test('clicking goal badge switches to Missions tab', async ({ page }) => {
+	test('clicking goal badge navigates to MissionDetail page', async ({ page }) => {
 		const result = await createRoomWithLinkedGoalAndTask(page);
 		roomId = result.roomId;
 
@@ -169,8 +169,9 @@ test.describe('Task Goal Indicator — Task List', () => {
 		await expect(badge).toBeVisible({ timeout: 10000 });
 		await badge.click();
 
-		// Should now be on the Missions tab
-		await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
+		// Should navigate to the MissionDetail page (not the Missions tab)
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/`), { timeout: 5000 });
 	});
 });
 
@@ -224,7 +225,7 @@ test.describe('Task Goal Indicator — TaskView', () => {
 		await expect(badge).not.toBeVisible();
 	});
 
-	test('clicking goal badge in TaskView navigates to room Missions tab', async ({ page }) => {
+	test('clicking goal badge in TaskView navigates to MissionDetail page', async ({ page }) => {
 		const result = await createRoomWithLinkedGoalAndTask(page);
 		roomId = result.roomId;
 
@@ -238,10 +239,11 @@ test.describe('Task Goal Indicator — TaskView', () => {
 		const badge = page.locator('[data-testid="task-view-goal-badge"]');
 		await expect(badge).toBeVisible({ timeout: 5000 });
 
-		// Click the badge — should navigate back to room and show Missions tab
+		// Click the badge — should navigate to MissionDetail page
 		await badge.click();
 
-		// Should be back at room overview showing Missions tab
-		await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
+		// Should navigate to the MissionDetail page (not the Missions tab)
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/`), { timeout: 5000 });
 	});
 });
