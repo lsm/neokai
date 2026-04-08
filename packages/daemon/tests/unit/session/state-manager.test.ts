@@ -339,7 +339,7 @@ describe('StateManager', () => {
 
 	describe('event handlers', () => {
 		describe('session.created', () => {
-			it('should cache session and broadcast delta', async () => {
+			it('should cache session and publish event', async () => {
 				const handler = eventHandlers.get('session.created');
 				const mockSession: Session = {
 					id: 'new-session-id',
@@ -350,15 +350,7 @@ describe('StateManager', () => {
 
 				await handler!({ session: mockSession });
 
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SESSIONS + '.delta',
-					expect.objectContaining({
-						added: [mockSession],
-						timestamp: expect.any(Number),
-					}),
-					{ channel: 'global' }
-				);
-
+				// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 				expect(mockMessageHub.event).toHaveBeenCalledWith(
 					'session.created',
 					{ sessionId: 'new-session-id' },
@@ -407,7 +399,7 @@ describe('StateManager', () => {
 		});
 
 		describe('session.deleted', () => {
-			it('should clear caches and broadcast', async () => {
+			it('should clear caches and publish event', async () => {
 				// First create a session to cache
 				const createHandler = eventHandlers.get('session.created');
 				await createHandler!({
@@ -418,14 +410,7 @@ describe('StateManager', () => {
 				const deleteHandler = eventHandlers.get('session.deleted');
 				await deleteHandler!({ sessionId: 'test-id' });
 
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SESSIONS + '.delta',
-					expect.objectContaining({
-						removed: ['test-id'],
-					}),
-					{ channel: 'global' }
-				);
-
+				// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 				expect(mockMessageHub.event).toHaveBeenCalledWith(
 					'session.deleted',
 					{ sessionId: 'test-id' },
@@ -459,19 +444,6 @@ describe('StateManager', () => {
 					expect.objectContaining({
 						settings: expect.any(Object),
 					}),
-					{ channel: 'global' }
-				);
-			});
-		});
-
-		describe('sessions.filterChanged', () => {
-			it('should broadcast sessions change', async () => {
-				const handler = eventHandlers.get('sessions.filterChanged');
-				await handler!();
-
-				expect(mockMessageHub.event).toHaveBeenCalledWith(
-					STATE_CHANNELS.GLOBAL_SESSIONS,
-					expect.any(Object),
 					{ channel: 'global' }
 				);
 			});
@@ -766,55 +738,6 @@ describe('StateManager', () => {
 					});
 				});
 			});
-		});
-	});
-
-	describe('broadcastSessionsChange', () => {
-		it('should broadcast full sessions state', async () => {
-			await stateManager.broadcastSessionsChange();
-
-			expect(mockMessageHub.event).toHaveBeenCalledWith(
-				STATE_CHANNELS.GLOBAL_SESSIONS,
-				expect.objectContaining({
-					sessions: expect.any(Array),
-					version: expect.any(Number),
-				}),
-				{ channel: 'global' }
-			);
-		});
-
-		it('should accept optional sessions parameter', async () => {
-			const customSessions: Session[] = [{ id: '1', status: 'active', metadata: {} } as Session];
-
-			await stateManager.broadcastSessionsChange(customSessions);
-
-			expect(mockMessageHub.event).toHaveBeenCalledWith(
-				STATE_CHANNELS.GLOBAL_SESSIONS,
-				expect.objectContaining({
-					sessions: customSessions,
-				}),
-				{ channel: 'global' }
-			);
-		});
-	});
-
-	describe('broadcastSessionsDelta', () => {
-		it('should broadcast sessions delta', async () => {
-			const mockSession = { id: '1', status: 'active', metadata: {} } as Session;
-
-			await stateManager.broadcastSessionsDelta({
-				added: [mockSession],
-				timestamp: Date.now(),
-			});
-
-			expect(mockMessageHub.event).toHaveBeenCalledWith(
-				STATE_CHANNELS.GLOBAL_SESSIONS + '.delta',
-				expect.objectContaining({
-					added: [mockSession],
-					version: expect.any(Number),
-				}),
-				{ channel: 'global' }
-			);
 		});
 	});
 

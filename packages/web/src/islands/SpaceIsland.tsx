@@ -10,7 +10,7 @@
  * Space navigation is handled by the Context Panel sidebar.
  */
 
-import { useEffect } from 'preact/hooks';
+import { useCallback, useEffect } from 'preact/hooks';
 import type { SpaceViewMode } from '../lib/signals';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
 import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
@@ -38,10 +38,10 @@ export default function SpaceIsland({
 	// Overlay session — shown as a slide-over on top of the current view
 	const overlaySessionId = spaceOverlaySessionIdSignal.value;
 	const overlayAgentName = spaceOverlayAgentNameSignal.value;
-	const handleOverlayClose = () => {
+	const handleOverlayClose = useCallback(() => {
 		spaceOverlaySessionIdSignal.value = null;
 		spaceOverlayAgentNameSignal.value = null;
-	};
+	}, []);
 
 	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
@@ -52,9 +52,9 @@ export default function SpaceIsland({
 		});
 	}, [spaceId]);
 
-	const handleTaskPaneClose = () => {
+	const handleTaskPaneClose = useCallback(() => {
 		navigateToSpace(spaceId);
-	};
+	}, [spaceId]);
 
 	// Session/agent chat view — render immediately, don't block on space data
 	if (sessionViewId) {
@@ -138,23 +138,6 @@ export default function SpaceIsland({
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<SpaceConfigurePage space={space} />
 					</div>
-				</div>
-				{overlaySessionId && (
-					<AgentOverlayChat
-						sessionId={overlaySessionId}
-						agentName={overlayAgentName ?? undefined}
-						onClose={handleOverlayClose}
-					/>
-				)}
-			</>
-		);
-	}
-
-	if (viewMode === 'configure' && !space) {
-		return (
-			<>
-				<div class="flex-1 flex items-center justify-center bg-dark-900">
-					<p class="text-sm text-gray-500">Space not found</p>
 				</div>
 				{overlaySessionId && (
 					<AgentOverlayChat

@@ -36,11 +36,7 @@ export function registerSettingsHandlers(
 				settings: updated,
 			});
 
-			// SPECIAL CASE: If showArchived changed, also broadcast sessions change
-			// because the filtered session list needs to update
-			if ('showArchived' in data.updates) {
-				daemonHub.emit('sessions.filterChanged', { sessionId: 'global' });
-			}
+			// Note: showArchived filter is now handled client-side via LiveQuery (sessions.list)
 
 			return { success: true, settings: updated };
 		}
@@ -173,4 +169,85 @@ export function registerSettingsHandlers(
 			return { success: true, sessionId: data.sessionId };
 		}
 	);
+
+	/**
+	 * Calculate usage analytics from all user sessions.
+	 *
+	 * Aggregates cost, tokens, and messages from the sessions table.
+	 * Filters out internal room/space/agent sessions server-side.
+	 * Called on-demand when the Usage Analytics settings tab is opened.
+	 */
+	messageHub.onRequest('usage.calculate', async () => {
+		const database = db.getDatabase();
+
+		// Aggregate totals
+		const totals = database
+			.prepare(
+				`SELECT
+					COALESCE(SUM(json_extract(metadata, '$.totalCost')), 0) as totalCost,
+					COALESCE(SUM(json_extract(metadata, '$.totalTokens')), 0) as totalTokens,
+					COALESCE(SUM(json_extract(metadata, '$.messageCount')), 0) as totalMessages,
+				COUNT(*) as sessionCount
+				FROM sessions
+				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+					  AND json_extract(session_context, '$.roomId') IS NULL
+					  AND json_extract(session_context, '$.spaceId') IS NULL`
+			)
+			.get() as {
+			totalCost: number;
+			totalTokens: number;
+			totalMessages: number;
+			sessionCount: number;
+		};
+
+		// Top 10 sessions by cost
+		const topSessions = database
+			.prepare(
+				`SELECT
+					id,
+					title,
+					json_extract(metadata, '$.totalCost') as cost,
+					json_extract(metadata, '$.totalTokens') as tokens,
+					json_extract(metadata, '$.messageCount') as messages
+				FROM sessions
+				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				  AND json_extract(session_context, '$.roomId') IS NULL
+				  AND json_extract(session_context, '$.spaceId') IS NULL
+				  AND json_extract(metadata, '$.totalCost') > 0
+				ORDER BY cost DESC
+				LIMIT 10`
+			)
+			.all() as Array<{
+			id: string;
+			title: string;
+			cost: number;
+			tokens: number;
+			messages: number;
+		}>;
+
+		// Daily costs for last 14 days
+		const dailyCosts = database
+			.prepare(
+				`SELECT
+					date(created_at) as date,
+					COALESCE(SUM(json_extract(metadata, '$.totalCost')), 0) as cost
+				FROM sessions
+				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				  AND json_extract(session_context, '$.roomId') IS NULL
+				  AND json_extract(session_context, '$.spaceId') IS NULL
+				  AND created_at >= date('now', '-14 days')
+				GROUP BY date(created_at)
+				ORDER BY date ASC`
+			)
+			.all() as Array<{ date: string; cost: number }>;
+
+		return {
+			totalCost: totals.totalCost,
+			totalTokens: totals.totalTokens,
+			totalMessages: totals.totalMessages,
+			sessionCount: totals.sessionCount,
+			topSessions,
+			dailyCosts,
+		};
+	});
 }

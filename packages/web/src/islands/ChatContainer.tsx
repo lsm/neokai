@@ -861,8 +861,20 @@ export default function ChatContainer({
 			);
 		}
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
-				<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
+				{/* Skeleton header to prevent CLS */}
+				<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700">
+					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
+					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
+				</div>
+				{/* Skeleton messages area */}
+				<div class="flex-1 flex items-center justify-center">
+					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+				</div>
+				{/* Skeleton footer to prevent CLS */}
+				<div class="px-4 pb-4 pt-4">
+					<div class="h-10 rounded-2xl bg-dark-800 animate-pulse" />
+				</div>
 			</div>
 		);
 	}

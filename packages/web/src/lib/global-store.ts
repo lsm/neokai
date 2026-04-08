@@ -2,12 +2,12 @@
  * GlobalStore - Unified global state management
  *
  * Manages application-wide state that's not session-specific:
- * - Sessions list (all sessions)
+ * - Sessions list (all sessions) via LiveQuery
  * - System state (auth, config, health, API connection)
  * - Global settings
  *
  * Signals (reactive state):
- * - sessions: All sessions list
+ * - sessions: All sessions list (reactive via LiveQuery)
  * - systemState: Unified system state
  * - settings: Global settings
  *
@@ -16,18 +16,13 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type {
-	Session,
-	AuthStatus,
-	HealthStatus,
-	SessionsState,
-	SessionsUpdate,
-	SystemState,
-	SettingsState,
-} from '@neokai/shared';
+import type { Session, AuthStatus, HealthStatus, SystemState, SettingsState } from '@neokai/shared';
+import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
 import type { GlobalSettings } from '@neokai/shared/types/settings';
 import { connectionManager } from './connection-manager';
+
+const SESSIONS_SUBSCRIPTION_ID = 'sessions-list';
 
 export class GlobalStore {
 	// ========================================
@@ -38,7 +33,9 @@ export class GlobalStore {
 	readonly sessions = signal<Session[]>([]);
 
 	/** Whether there are any archived sessions in the database */
-	readonly hasArchivedSessions = signal<boolean>(false);
+	readonly hasArchivedSessions = computed<boolean>(() =>
+		this.sessions.value.some((s) => s.status === 'archived')
+	);
 
 	/** Unified system state (auth + config + health + API connection) */
 	readonly systemState = signal<SystemState | null>(null);
@@ -104,35 +101,8 @@ export class GlobalStore {
 		try {
 			const hub = await connectionManager.getHub();
 
-			// Fetch initial state snapshot
-			const snapshot = await hub.request<{
-				sessions: SessionsState;
-				system: SystemState;
-				settings: SettingsState;
-			}>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
-
-			if (snapshot) {
-				this.sessions.value = snapshot.sessions?.sessions || [];
-				this.hasArchivedSessions.value = snapshot.sessions?.hasArchivedSessions || false;
-				this.systemState.value = snapshot.system || null;
-				this.settings.value = snapshot.settings?.settings || null;
-			}
-
-			// Subscribe to sessions changes (full state)
-			const unsubSessions = hub.onEvent<SessionsState>(STATE_CHANNELS.GLOBAL_SESSIONS, (state) => {
-				this.sessions.value = state.sessions || [];
-				this.hasArchivedSessions.value = state.hasArchivedSessions || false;
-			});
-			this.cleanupFunctions.push(unsubSessions);
-
-			// Subscribe to sessions delta updates (added/updated/removed)
-			const unsubSessionsDelta = hub.onEvent<SessionsUpdate>(
-				`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
-				(delta) => {
-					this.applySessionsDelta(delta);
-				}
-			);
-			this.cleanupFunctions.push(unsubSessionsDelta);
+			// Subscribe to sessions via LiveQuery (reactive, replaces state channels)
+			this.subscribeSessions(hub);
 
 			// Subscribe to system state changes
 			const unsubSystem = hub.onEvent<SystemState>(STATE_CHANNELS.GLOBAL_SYSTEM, (state) => {
@@ -153,6 +123,63 @@ export class GlobalStore {
 	}
 
 	/**
+	 * Subscribe to sessions via LiveQuery.
+	 *
+	 * Uses the `sessions.list` named query which filters out internal room/space
+	 * sessions server-side. Deltas are applied incrementally for efficiency.
+	 */
+	private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
+		// Snapshot: full replacement of sessions list
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== SESSIONS_SUBSCRIPTION_ID) return;
+			this.sessions.value = (event.rows as Session[]) ?? [];
+		});
+		this.cleanupFunctions.push(unsubSnapshot);
+
+		// Delta: incremental added/updated/removed
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== SESSIONS_SUBSCRIPTION_ID) return;
+			this.applySessionsDelta(event);
+		});
+		this.cleanupFunctions.push(unsubDelta);
+
+		// Re-subscribe on reconnect
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'sessions.list',
+					params: [],
+					subscriptionId: SESSIONS_SUBSCRIPTION_ID,
+				})
+				.catch(() => {});
+		});
+		this.cleanupFunctions.push(unsubReconnect);
+
+		// Fire initial subscribe
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'sessions.list',
+				params: [],
+				subscriptionId: SESSIONS_SUBSCRIPTION_ID,
+			})
+			.catch(() => {});
+	}
+
+	/**
+	 * Apply LiveQuery delta updates to sessions list.
+	 */
+	private applySessionsDelta(event: LiveQueryDeltaEvent): void {
+		const next = new Map(this.sessions.value.map((s) => [s.id, s]));
+
+		for (const row of (event.removed ?? []) as Session[]) next.delete(row.id);
+		for (const row of (event.updated ?? []) as Session[]) next.set(row.id, row);
+		for (const row of (event.added ?? []) as Session[]) next.set(row.id, row);
+
+		this.sessions.value = [...next.values()];
+	}
+
+	/**
 	 * Refresh all global state from server
 	 * Called after reconnection to sync missed updates
 	 *
@@ -166,16 +193,22 @@ export class GlobalStore {
 
 		const hub = await connectionManager.getHub();
 
-		// Fetch fresh snapshot
+		// Re-subscribe to sessions LiveQuery to get fresh snapshot
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'sessions.list',
+				params: [],
+				subscriptionId: SESSIONS_SUBSCRIPTION_ID,
+			})
+			.catch(() => {});
+
+		// Fetch fresh system + settings state
 		const snapshot = await hub.request<{
-			sessions: SessionsState;
 			system: SystemState;
 			settings: SettingsState;
 		}>(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
 
 		if (snapshot) {
-			this.sessions.value = snapshot.sessions?.sessions || [];
-			this.hasArchivedSessions.value = snapshot.sessions?.hasArchivedSessions || false;
 			this.systemState.value = snapshot.system || null;
 			this.settings.value = snapshot.settings?.settings || null;
 		}
@@ -184,40 +217,19 @@ export class GlobalStore {
 	}
 
 	/**
-	 * Apply delta updates to sessions list
-	 * Called when receiving incremental updates from server
-	 */
-	private applySessionsDelta(delta: SessionsUpdate): void {
-		let sessions = [...this.sessions.value];
-
-		// Remove sessions
-		if (delta.removed && delta.removed.length > 0) {
-			sessions = sessions.filter((s) => !delta.removed!.includes(s.id));
-		}
-
-		// Update existing sessions
-		if (delta.updated && delta.updated.length > 0) {
-			for (const updated of delta.updated) {
-				const index = sessions.findIndex((s) => s.id === updated.id);
-				if (index !== -1) {
-					sessions[index] = updated as Session;
-				}
-			}
-		}
-
-		// Add new sessions (prepend to show newest first)
-		if (delta.added && delta.added.length > 0) {
-			sessions.unshift(...(delta.added as Session[]));
-		}
-
-		this.sessions.value = sessions;
-	}
-
-	/**
 	 * Cleanup subscriptions
 	 * Called on app shutdown
 	 */
 	destroy(): void {
+		const hub = connectionManager.getHubIfConnected();
+		if (hub) {
+			hub
+				.request('liveQuery.unsubscribe', {
+					subscriptionId: SESSIONS_SUBSCRIPTION_ID,
+				})
+				.catch(() => {});
+		}
+
 		for (const cleanup of this.cleanupFunctions) {
 			try {
 				cleanup();

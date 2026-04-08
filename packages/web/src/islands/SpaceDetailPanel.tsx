@@ -103,7 +103,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const [taskTab, setTaskTab] = useState<TaskTab>('review');
 
-	// Auto-switch tab when selectedTaskId changes to match the task's status
+	// Auto-switch tab when selectedTaskId or task status changes
 	useEffect(() => {
 		if (!selectedTaskId) return;
 		const task = tasks.find((t) => t.id === selectedTaskId);
@@ -112,7 +112,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		const isReview = task.status === 'blocked' || task.status === 'review';
 		if (isActive && taskTab !== 'active') setTaskTab('active');
 		else if (isReview && taskTab !== 'review') setTaskTab('review');
-	}, [selectedTaskId]);
+	}, [selectedTaskId, tasks]);
 
 	const isOverviewSelected =
 		selectedSessionId === null &&
@@ -121,12 +121,15 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 
-	const activeCount = tasks.filter(
-		(task) => task.status === 'open' || task.status === 'in_progress'
-	).length;
-	const reviewCount = tasks.filter(
-		(task) => task.status === 'blocked' || task.status === 'review'
-	).length;
+	const { activeCount, reviewCount } = useMemo(() => {
+		let active = 0;
+		let review = 0;
+		for (const task of tasks) {
+			if (task.status === 'open' || task.status === 'in_progress') active++;
+			else if (task.status === 'blocked' || task.status === 'review') review++;
+		}
+		return { activeCount: active, reviewCount: review };
+	}, [tasks]);
 
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -150,30 +153,36 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		return storeSessions.filter((s) => !isSystemSpaceSession(s.id));
 	}, [spaceStore.sessions.value, spaceId]);
 
-	const handleOverviewClick = () => {
+	const handleOverviewClick = useCallback(() => {
 		navigateToSpace(spaceId);
 		onNavigate?.();
-	};
+	}, [spaceId, onNavigate]);
 
-	const handleSpaceAgentClick = () => {
+	const handleSpaceAgentClick = useCallback(() => {
 		navigateToSpaceAgent(spaceId);
 		onNavigate?.();
-	};
+	}, [spaceId, onNavigate]);
 
-	const handleTasksClick = () => {
+	const handleTasksClick = useCallback(() => {
 		navigateToSpaceTasks(spaceId);
 		onNavigate?.();
-	};
+	}, [spaceId, onNavigate]);
 
-	const handleTaskClick = (taskId: string) => {
-		navigateToSpaceTask(spaceId, taskId);
-		onNavigate?.();
-	};
+	const handleTaskClick = useCallback(
+		(taskId: string) => {
+			navigateToSpaceTask(spaceId, taskId);
+			onNavigate?.();
+		},
+		[spaceId, onNavigate]
+	);
 
-	const handleSessionClick = (sessionId: string) => {
-		navigateToSpaceSession(spaceId, sessionId);
-		onNavigate?.();
-	};
+	const handleSessionClick = useCallback(
+		(sessionId: string) => {
+			navigateToSpaceSession(spaceId, sessionId);
+			onNavigate?.();
+		},
+		[spaceId, onNavigate]
+	);
 
 	const handleCreateSession = useCallback(
 		async (e: Event) => {

@@ -778,6 +778,97 @@ ORDER BY createdAt ASC, id ASC
  * and for direct inspection in unit tests.
  */
 
+/**
+ * SQL for `sessions.list` LiveQuery.
+ *
+ * Returns all user-visible sessions (excludes internal room/space/agent sessions).
+ * Filters out room/space sessions by checking session_context for roomId/spaceId.
+ * Includes archived sessions so the client can toggle visibility.
+ */
+const SESSIONS_LIST_SQL = `
+SELECT
+  s.id as id,
+  s.title as title,
+  s.workspace_path as workspacePath,
+  s.created_at as createdAt,
+  s.last_active_at as lastActiveAt,
+  s.status as status,
+  s.config as config,
+  s.metadata as metadata,
+  s.is_worktree as is_worktree,
+  s.worktree_path as worktree_path,
+  s.main_repo_path as main_repo_path,
+  s.worktree_branch as worktree_branch,
+  s.git_branch as gitBranch,
+  s.sdk_session_id as sdkSessionId,
+  s.available_commands as available_commands,
+  s.processing_state as processingState,
+  s.archived_at as archivedAt,
+  s.type as type,
+  s.session_context as session_context
+FROM sessions s
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+  AND json_extract(s.session_context, '$.roomId') IS NULL
+  AND json_extract(s.session_context, '$.spaceId') IS NULL
+ORDER BY s.last_active_at DESC
+`.trim();
+
+/**
+ * Map a raw SQLite sessions row to a SessionInfo object.
+ *
+ * Handles:
+ * - JSON parsing of config, metadata, session_context, available_commands
+ * - Worktree metadata reconstruction from flat columns
+ * - Type coercion for is_worktree (integer → boolean)
+ */
+function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
+	const isWorktree = row.is_worktree === 1;
+	const worktree = isWorktree
+		? {
+				isWorktree: true as const,
+				worktreePath: row.worktree_path as string,
+				mainRepoPath: row.main_repo_path as string,
+				branch: row.worktree_branch as string,
+			}
+		: undefined;
+
+	const availableCommands =
+		row.available_commands && typeof row.available_commands === 'string'
+			? (JSON.parse(row.available_commands) as string[])
+			: undefined;
+
+	const sessionContext =
+		row.session_context && typeof row.session_context === 'string'
+			? parseJsonOptional(row.session_context)
+			: undefined;
+
+	return {
+		id: row.id,
+		title: row.title,
+		workspacePath: row.workspacePath,
+		createdAt: row.createdAt,
+		lastActiveAt: row.lastActiveAt,
+		status: row.status,
+		config: parseJson(row.config as string, {}),
+		metadata: parseJson(row.metadata as string, {
+			messageCount: 0,
+			totalTokens: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalCost: 0,
+			toolCallCount: 0,
+		}),
+		worktree,
+		gitBranch: (row.gitBranch as string | null) ?? undefined,
+		sdkSessionId: (row.sdkSessionId as string | null) ?? undefined,
+		availableCommands,
+		processingState: (row.processingState as string | null) ?? undefined,
+		archivedAt: (row.archivedAt as string | null) ?? undefined,
+		type: (row.type as string | null) ?? 'worker',
+		context: sessionContext,
+	};
+}
+
 const SPACE_SESSIONS_BY_SPACE_SQL = `
 SELECT
   s.id as id,
@@ -899,6 +990,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		{
 			sql: SPACE_SESSIONS_BY_SPACE_SQL,
 			paramCount: 1,
+		},
+	],
+	[
+		'sessions.list',
+		{
+			sql: SESSIONS_LIST_SQL,
+			paramCount: 0,
+			mapRow: mapSessionRow,
 		},
 	],
 ]);
