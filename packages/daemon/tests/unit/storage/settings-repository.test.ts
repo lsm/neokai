@@ -61,12 +61,6 @@ describe('SettingsRepository', () => {
 					allowProjectMcp: false,
 					defaultProjectMcp: false,
 				},
-				kaiTools: {
-					memory: {
-						allowed: true,
-						defaultEnabled: true,
-					},
-				},
 			};
 			repository.saveGlobalToolsConfig(customConfig);
 
@@ -75,7 +69,6 @@ describe('SettingsRepository', () => {
 			expect(config.systemPrompt.claudeCodePreset.defaultEnabled).toBe(false);
 			expect(config.settingSources.project.defaultEnabled).toBe(false);
 			expect(config.mcp.allowProjectMcp).toBe(false);
-			expect(config.kaiTools.memory.defaultEnabled).toBe(true);
 		});
 
 		it('should merge with defaults for partial config', () => {
@@ -181,19 +174,12 @@ describe('SettingsRepository', () => {
 					allowProjectMcp: true,
 					defaultProjectMcp: true,
 				},
-				kaiTools: {
-					memory: {
-						allowed: false,
-						defaultEnabled: false,
-					},
-				},
 			};
 
 			repository.saveGlobalToolsConfig(config);
 
 			const saved = repository.getGlobalToolsConfig();
 			expect(saved.systemPrompt.claudeCodePreset.allowed).toBe(false);
-			expect(saved.kaiTools.memory.allowed).toBe(false);
 		});
 
 		it('should update existing config (upsert)', () => {
@@ -407,10 +393,6 @@ describe('SettingsRepository', () => {
 			// MCP should be allowed but not enabled by default
 			expect(config.mcp.allowProjectMcp).toBe(true);
 			expect(config.mcp.defaultProjectMcp).toBe(false);
-
-			// Memory tool should be allowed but not enabled by default
-			expect(config.kaiTools.memory.allowed).toBe(true);
-			expect(config.kaiTools.memory.defaultEnabled).toBe(false);
 		});
 
 		it('should have correct default global settings', () => {

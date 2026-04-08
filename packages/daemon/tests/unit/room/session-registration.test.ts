@@ -296,7 +296,6 @@ describe('SessionManager — registerSession() / unregisterSession()', () => {
 			getGlobalToolsConfig: mock(() => ({
 				systemPrompt: { claudeCodePreset: { allowed: true, defaultEnabled: true } },
 				mcpServers: {},
-				kaiTools: { memory: { allowed: true, defaultEnabled: true } },
 			})),
 			saveGlobalToolsConfig: mock(() => {}),
 			getMessagesByStatus: mock(() => []),

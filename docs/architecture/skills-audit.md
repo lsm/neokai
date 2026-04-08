@@ -373,16 +373,12 @@ export interface ToolsConfig {
   settingSources?: SettingSource[];
   loadSettingSources?: boolean;
   disabledMcpServers?: string[];
-  kaiTools?: {
-    memory?: boolean;
-  };
 }
 
 export interface GlobalToolsConfig {
   systemPrompt: { claudeCodePreset: { allowed: boolean; defaultEnabled: boolean; } };
   settingSources: { project: { allowed: boolean; defaultEnabled: boolean; } };
   mcp: { allowProjectMcp: boolean; defaultProjectMcp: boolean; };
-  kaiTools: { memory: { allowed: boolean; defaultEnabled: boolean; } };
 }
 
 export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = { ... };

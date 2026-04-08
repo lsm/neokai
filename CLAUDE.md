@@ -140,11 +140,11 @@ At session init, `QueryOptionsBuilder.build()` calls `SkillsManager.getEnabledSk
 - `plugin` sourceType → adds `{ type: 'local', path }` to `SDKConfig.plugins`
 - `mcp_server` sourceType → merges into `Options.mcpServers` (stdio/sse/http variants)
 
-The `builtin` sourceType is defined in the type system but not currently injected by `QueryOptionsBuilder` — only `plugin` and `mcp_server` are actively injected.
+All three sourceTypes are actively injected by `QueryOptionsBuilder`: `plugin` and `builtin` via `buildPluginsFromSkills()` / `buildPluginsFromBuiltinSkills()`, and `mcp_server` via `getMcpServersFromSkills()`.
 
 **Key files:**
 - `packages/shared/src/types/skills.ts` — `AppSkill`, discriminated union configs (`BuiltinSkillConfig` / `PluginSkillConfig` / `McpServerSkillConfig`), `SkillValidationStatus`
-- `packages/daemon/src/lib/skills-manager.ts` — `SkillsManager`: CRUD, validation, built-in initialization (seeds `web-search-mcp` on startup)
+- `packages/daemon/src/lib/skills-manager.ts` — `SkillsManager`: CRUD, validation, built-in initialization (seeds `chrome-devtools-mcp`, `playwright`, `playwright-interactive` on startup)
 - `packages/daemon/src/lib/rpc-handlers/skill-handlers.ts` — RPC handlers: `skill.list`, `skill.get`, `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`
 - `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — `skills.list` and `skills.byRoom` named queries for reactive frontend sync
 - `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()`, `getRoomDisabledSkillIds()` methods; room overrides only disable globally-enabled skills (cannot enable globally-disabled)

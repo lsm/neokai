@@ -725,6 +725,8 @@ export class TaskAgentManager {
 				model: slot.model,
 				systemPrompt: slot.systemPrompt,
 				instructions: slot.instructions,
+				disabledSkillIds: slot.disabledSkillIds,
+				extraMcpServers: slot.extraMcpServers,
 			};
 
 			let init = resolveAgentInit({

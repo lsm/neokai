@@ -6,6 +6,8 @@
  * contexts for orchestrating custom agents and automated pipelines.
  */
 
+import type { McpServerConfig } from './sdk-config';
+
 // ============================================================================
 // Space Types
 // ============================================================================
@@ -741,6 +743,16 @@ export interface WorkflowNodeAgent {
 	 * `mode: 'expand'` appends the value to the agent's `instructions`.
 	 */
 	instructions?: WorkflowNodeAgentOverride;
+	/**
+	 * IDs of globally-enabled skills to disable for this agent slot.
+	 * Allows per-slot skill customization on top of the global skills registry.
+	 */
+	disabledSkillIds?: string[];
+	/**
+	 * Extra MCP servers to add for this agent slot (per-node config).
+	 * Merged with app-level MCP servers when building session options.
+	 */
+	extraMcpServers?: Record<string, McpServerConfig>;
 }
 
 /**
@@ -1028,6 +1040,18 @@ export interface ExportedWorkflowNodeAgent {
 	 * Plain strings are normalized to `{ mode: 'override', value }` during import.
 	 */
 	instructions?: WorkflowNodeAgentOverride | string;
+	/**
+	 * IDs of globally-enabled skills to disable for this agent slot.
+	 * Preserved through export/import round-trip.
+	 */
+	disabledSkillIds?: string[];
+	/**
+	 * Extra MCP servers to add for this agent slot.
+	 * Typed loosely as `Record<string, unknown>` because this is an export/import
+	 * format — the Zod schema validates the shape at parse time for forward-compatibility,
+	 * and the data is cast to `McpServerConfig` only at runtime use.
+	 */
+	extraMcpServers?: Record<string, unknown>;
 }
 
 /**

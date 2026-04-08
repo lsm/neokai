@@ -323,19 +323,6 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 			expect(options.disallowedTools).toContain('Write');
 		});
-
-		it('should disable memory tool by default', async () => {
-			const options = await builder.build();
-			expect(options.disallowedTools).toContain('kai__memory__*');
-		});
-
-		it('should not disable memory tool when enabled', async () => {
-			mockSession.config.tools = { kaiTools: { memory: true } };
-			const options = await builder.build();
-			// When memory is enabled, disallowedTools may be undefined or not contain the memory pattern
-			const disallowed = options.disallowedTools || [];
-			expect(disallowed).not.toContain('kai__memory__*');
-		});
 	});
 
 	describe('MCP servers configuration', () => {
@@ -1170,61 +1157,6 @@ describe('QueryOptionsBuilder', () => {
 				type: 'http',
 				url: 'http://localhost:3002/mcp',
 			});
-		});
-	});
-
-	describe('web-search-mcp built-in skill injection', () => {
-		let db: BunDatabase;
-		let skillsManager: SkillsManager;
-		let appMcpServerRepo: AppMcpServerRepository;
-
-		beforeEach(() => {
-			db = new BunDatabase(':memory:');
-			createTables(db);
-			appMcpServerRepo = new AppMcpServerRepository(db, noOpReactiveDb);
-			const skillRepo = new SkillRepository(db, noOpReactiveDb);
-			skillsManager = new SkillsManager(skillRepo, appMcpServerRepo);
-			skillsManager.initializeBuiltins();
-		});
-
-		afterEach(() => {
-			db.close();
-		});
-
-		it('does not inject web-search-mcp when skill is disabled (default)', async () => {
-			const context: QueryOptionsBuilderContext = {
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-				skillsManager,
-				appMcpServerRepo,
-			};
-			const options = await new QueryOptionsBuilder(context).build();
-
-			expect(options.mcpServers?.['web-search-mcp']).toBeUndefined();
-		});
-
-		it('injects web-search-mcp MCP server into session options when skill and AppMcpServer are both enabled', async () => {
-			const skill = skillsManager.listSkills().find((s) => s.name === 'web-search-mcp')!;
-			skillsManager.setSkillEnabled(skill.id, true);
-			// The backing AppMcpServer is created with enabled=false (opt-in); enable it too
-			const braveServer = appMcpServerRepo.getByName('brave-search')!;
-			appMcpServerRepo.update(braveServer.id, { enabled: true });
-
-			const context: QueryOptionsBuilderContext = {
-				session: mockSession,
-				settingsManager: mockSettingsManager,
-				skillsManager,
-				appMcpServerRepo,
-			};
-			const options = await new QueryOptionsBuilder(context).build();
-
-			expect(options.mcpServers).toBeDefined();
-			const injected = options.mcpServers!['web-search-mcp'];
-			expect(injected).toBeDefined();
-			expect((injected as { command: string }).command).toBe('npx');
-			expect((injected as { args: string[] }).args).toContain(
-				'@modelcontextprotocol/server-brave-search'
-			);
 		});
 	});
 

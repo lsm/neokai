@@ -2,8 +2,8 @@
  * seedDefaultMcpEntries Unit Tests
  *
  * Verifies:
- * - fetch-mcp, brave-search, and chrome-devtools are created on a fresh registry.
- * - fetch-mcp is enabled; brave-search and chrome-devtools are disabled.
+ * - fetch-mcp and chrome-devtools are created on a fresh registry.
+ * - fetch-mcp is enabled; chrome-devtools is disabled.
  * - Calling seedDefaultMcpEntries a second time does not create duplicates.
  * - Pre-existing entries (same name) are not overwritten.
  */
@@ -62,30 +62,11 @@ describe('seedDefaultMcpEntries', () => {
 		expect(entry!.enabled).toBe(true);
 	});
 
-	test('creates brave-search entry on a fresh registry', () => {
-		seedDefaultMcpEntries(db);
-
-		const entry = repo.getByName('brave-search');
-		expect(entry).not.toBeNull();
-		expect(entry!.name).toBe('brave-search');
-		expect(entry!.sourceType).toBe('stdio');
-		expect(entry!.command).toBe('npx');
-		expect(entry!.args).toEqual(['-y', '@modelcontextprotocol/server-brave-search']);
-		expect(entry!.enabled).toBe(false);
-	});
-
 	test('fetch-mcp is enabled by default', () => {
 		seedDefaultMcpEntries(db);
 
 		const entry = repo.getByName('fetch-mcp');
 		expect(entry!.enabled).toBe(true);
-	});
-
-	test('brave-search is disabled by default', () => {
-		seedDefaultMcpEntries(db);
-
-		const entry = repo.getByName('brave-search');
-		expect(entry!.enabled).toBe(false);
 	});
 
 	test('is idempotent — calling twice does not create duplicates', () => {
@@ -94,16 +75,14 @@ describe('seedDefaultMcpEntries', () => {
 
 		const all = repo.list();
 		const fetchEntries = all.filter((e) => e.name === 'fetch-mcp');
-		const braveEntries = all.filter((e) => e.name === 'brave-search');
 
 		expect(fetchEntries).toHaveLength(1);
-		expect(braveEntries).toHaveLength(1);
 	});
 
-	test('total registry size is exactly 3 after seeding', () => {
+	test('total registry size is exactly 2 after seeding', () => {
 		seedDefaultMcpEntries(db);
 
-		expect(repo.list()).toHaveLength(3);
+		expect(repo.list()).toHaveLength(2);
 	});
 
 	test('does not overwrite a pre-existing fetch-mcp entry', () => {
@@ -122,32 +101,10 @@ describe('seedDefaultMcpEntries', () => {
 		expect(entry!.enabled).toBe(false);
 	});
 
-	test('does not overwrite a pre-existing brave-search entry', () => {
-		repo.create({
-			name: 'brave-search',
-			sourceType: 'stdio',
-			command: 'custom-brave',
-			enabled: true,
-		});
-
-		seedDefaultMcpEntries(db);
-
-		const entry = repo.getByName('brave-search');
-		expect(entry!.command).toBe('custom-brave');
-		expect(entry!.enabled).toBe(true);
-	});
-
 	test('fetch-mcp has a non-empty description', () => {
 		seedDefaultMcpEntries(db);
 
 		const entry = repo.getByName('fetch-mcp');
-		expect(entry!.description).toBeTruthy();
-	});
-
-	test('brave-search has a non-empty description', () => {
-		seedDefaultMcpEntries(db);
-
-		const entry = repo.getByName('brave-search');
 		expect(entry!.description).toBeTruthy();
 	});
 

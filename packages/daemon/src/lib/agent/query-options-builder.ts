@@ -541,9 +541,7 @@ CRITICAL RULES:
 	/**
 	 * Get list of disallowed tools based on session config
 	 *
-	 * Combines:
-	 * 1. SDKConfig disallowedTools (explicit tools to disable)
-	 * 2. Legacy kaiTools config (memory tool control)
+	 * Returns SDKConfig disallowedTools (explicit tools to disable)
 	 */
 	private getDisallowedTools(): string[] {
 		const config = this.ctx.session.config;
@@ -552,12 +550,6 @@ CRITICAL RULES:
 		// Add SDKConfig disallowedTools
 		if (config.disallowedTools && config.disallowedTools.length > 0) {
 			disallowedTools.push(...config.disallowedTools);
-		}
-
-		// Legacy: Disable NeoKai memory tool if not enabled
-		const legacyToolsConfig = config.tools;
-		if (!legacyToolsConfig?.kaiTools?.memory) {
-			disallowedTools.push('kai__memory__*');
 		}
 
 		// Deduplicate

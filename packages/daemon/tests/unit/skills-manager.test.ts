@@ -683,108 +683,6 @@ describe('SkillsManager', () => {
 
 	// --- initializeBuiltins ---
 
-	test('initializeBuiltins registers web-search-mcp skill', () => {
-		mgr.initializeBuiltins();
-
-		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp');
-		expect(skill).toBeDefined();
-		expect(skill!.displayName).toBe('Web Search (MCP)');
-		expect(skill!.sourceType).toBe('mcp_server');
-		expect(skill!.builtIn).toBe(true);
-		expect(skill!.enabled).toBe(false);
-		expect(skill!.validationStatus).toBe('valid');
-	});
-
-	test('initializeBuiltins creates backing app_mcp_servers entry brave-search if absent', () => {
-		mgr.initializeBuiltins();
-
-		const server = mcpRepo.getByName('brave-search');
-		expect(server).not.toBeNull();
-		expect(server!.command).toBe('npx');
-		expect(server!.sourceType).toBe('stdio');
-		expect(server!.args).toContain('@modelcontextprotocol/server-brave-search');
-	});
-
-	test('initializeBuiltins skill config references the app_mcp_servers entry', () => {
-		mgr.initializeBuiltins();
-
-		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp');
-		const server = mcpRepo.getByName('brave-search');
-		expect(skill).toBeDefined();
-		expect(server).not.toBeNull();
-		expect(skill!.config.type).toBe('mcp_server');
-		if (skill!.config.type === 'mcp_server') {
-			expect(skill!.config.appMcpServerId).toBe(server!.id);
-		}
-	});
-
-	test('initializeBuiltins is idempotent — does not create duplicates on second call', () => {
-		mgr.initializeBuiltins();
-		mgr.initializeBuiltins();
-
-		const skills = mgr.listSkills().filter((s) => s.name === 'web-search-mcp');
-		expect(skills).toHaveLength(1);
-
-		const servers = mcpRepo.list().filter((s) => s.name === 'brave-search');
-		expect(servers).toHaveLength(1);
-	});
-
-	test('initializeBuiltins web-search-mcp cannot be deleted (builtIn guard)', () => {
-		mgr.initializeBuiltins();
-
-		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp');
-		expect(skill).toBeDefined();
-		expect(mgr.removeSkill(skill!.id)).toBe(false);
-		expect(mgr.getSkill(skill!.id)).not.toBeNull();
-	});
-
-	test('initializeBuiltins web-search-mcp can be enabled via setSkillEnabled', () => {
-		mgr.initializeBuiltins();
-
-		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp')!;
-		expect(skill.enabled).toBe(false);
-
-		const enabled = mgr.setSkillEnabled(skill.id, true);
-		expect(enabled.enabled).toBe(true);
-
-		// Verify getEnabledSkills now includes it
-		const enabledSkills = mgr.getEnabledSkills();
-		expect(enabledSkills.some((s) => s.name === 'web-search-mcp')).toBe(true);
-	});
-
-	test('initializeBuiltins web-search-mcp absent from getEnabledSkills when disabled', () => {
-		mgr.initializeBuiltins();
-
-		const enabledSkills = mgr.getEnabledSkills();
-		expect(enabledSkills.some((s) => s.name === 'web-search-mcp')).toBe(false);
-	});
-
-	test('initializeBuiltins reuses pre-existing brave-search app_mcp_servers entry', () => {
-		// Simulate seed-defaults.ts having already created the brave-search entry
-		const seeded = mcpRepo.create({
-			name: 'brave-search',
-			description: 'Seeded by seed-defaults',
-			sourceType: 'stdio',
-			command: 'npx',
-			args: ['-y', '@modelcontextprotocol/server-brave-search'],
-			env: {},
-			enabled: false,
-		});
-
-		mgr.initializeBuiltins();
-
-		// Should not create a second brave-search entry
-		const servers = mcpRepo.list().filter((s) => s.name === 'brave-search');
-		expect(servers).toHaveLength(1);
-
-		// Skill must reference the pre-existing seeded entry
-		const skill = mgr.listSkills().find((s) => s.name === 'web-search-mcp')!;
-		expect(skill.config.type).toBe('mcp_server');
-		if (skill.config.type === 'mcp_server') {
-			expect(skill.config.appMcpServerId).toBe(seeded.id);
-		}
-	});
-
 	// --- playwright built-in ---
 
 	test('initializeBuiltins registers playwright skill', () => {
@@ -970,13 +868,12 @@ describe('SkillsManager', () => {
 
 	// --- total built-in count ---
 
-	test('initializeBuiltins registers all four built-in skills total', () => {
+	test('initializeBuiltins registers all three built-in skills total', () => {
 		mgr.initializeBuiltins();
 
 		const builtIns = mgr.listSkills().filter((s) => s.builtIn);
-		expect(builtIns).toHaveLength(4);
+		expect(builtIns).toHaveLength(3);
 		const names = builtIns.map((s) => s.name);
-		expect(names).toContain('web-search-mcp');
 		expect(names).toContain('chrome-devtools-mcp');
 		expect(names).toContain('playwright');
 		expect(names).toContain('playwright-interactive');

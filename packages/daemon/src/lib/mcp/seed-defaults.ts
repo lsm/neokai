@@ -1,14 +1,12 @@
 /**
  * seedDefaultMcpEntries
  *
- * Seeds three useful default MCP entries into the application-level registry on
+ * Seeds useful default MCP entries into the application-level registry on
  * daemon startup. The operation is idempotent — entries that already exist
  * (by name) are left untouched.
  *
  * Defaults:
  *   • fetch-mcp      — Fetch web pages and convert to Markdown (enabled).
- *   • brave-search   — Web search via Brave Search API (disabled until the user
- *                      configures BRAVE_API_KEY).
  *   • chrome-devtools — Browser automation via Chrome DevTools MCP (disabled,
  *                      opt-in).
  */
@@ -27,18 +25,6 @@ export function seedDefaultMcpEntries(db: Database): void {
 			args: ['-y', '@tokenizin/mcp-npx-fetch'],
 			env: {},
 			enabled: true,
-		});
-	}
-
-	if (!repo.getByName('brave-search')) {
-		repo.create({
-			name: 'brave-search',
-			description: 'Web search via Brave Search API (requires BRAVE_API_KEY env var)',
-			sourceType: 'stdio',
-			command: 'npx',
-			args: ['-y', '@modelcontextprotocol/server-brave-search'],
-			env: {},
-			enabled: false,
 		});
 	}
 

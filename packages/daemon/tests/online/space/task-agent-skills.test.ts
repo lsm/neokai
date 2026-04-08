@@ -256,9 +256,9 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 	);
 
 	test(
-		'skill.list contains the seeded web-search-mcp skill at daemon startup',
+		'skill.list contains the seeded chrome-devtools-mcp skill at daemon startup',
 		async () => {
-			// The SkillsManager seeds a 'web-search-mcp' skill on startup (disabled by default).
+			// The SkillsManager seeds a 'chrome-devtools-mcp' skill on startup (disabled by default).
 			// This test confirms the skill is available (disabled) for enabling later.
 			const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
 				skills: Array<{
@@ -270,20 +270,20 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 				}>;
 			};
 
-			const webSearchSkill = skills.find((s) => s.name === 'web-search-mcp');
-			expect(webSearchSkill).toBeDefined();
-			expect(webSearchSkill!.sourceType).toBe('mcp_server');
-			expect(webSearchSkill!.builtIn).toBe(true);
-			// It's disabled by default (requires BRAVE_API_KEY config)
-			expect(webSearchSkill!.enabled).toBe(false);
+			const chromeSkill = skills.find((s) => s.name === 'chrome-devtools-mcp');
+			expect(chromeSkill).toBeDefined();
+			expect(chromeSkill!.sourceType).toBe('mcp_server');
+			expect(chromeSkill!.builtIn).toBe(true);
+			// It's disabled by default (opt-in)
+			expect(chromeSkill!.enabled).toBe(false);
 		},
 		TEST_TIMEOUT
 	);
 
 	test(
-		'task agent session is spawned after enabling the web-search-mcp skill globally',
+		'task agent session is spawned after enabling the chrome-devtools-mcp skill globally',
 		async () => {
-			// Get the seeded web-search-mcp skill
+			// Get the seeded chrome-devtools-mcp skill
 			const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
 				skills: Array<{
 					id: string;
@@ -292,12 +292,12 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 					sourceType: string;
 				}>;
 			};
-			const webSearchSkill = skills.find((s) => s.name === 'web-search-mcp');
-			expect(webSearchSkill).toBeDefined();
+			const chromeSkill = skills.find((s) => s.name === 'chrome-devtools-mcp');
+			expect(chromeSkill).toBeDefined();
 
 			// Enable it globally
 			const { skill: updated } = (await daemon.messageHub.request('skill.setEnabled', {
-				id: webSearchSkill!.id,
+				id: chromeSkill!.id,
 				enabled: true,
 			})) as { skill: { id: string; enabled: boolean } };
 			expect(updated.enabled).toBe(true);

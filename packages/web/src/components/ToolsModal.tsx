@@ -2,9 +2,8 @@
  * Tools Modal Component (Redesigned)
  *
  * Unified view of all available MCP servers and tools:
- * - App MCP Servers: from skills registry (global scope – affects all sessions)
+ * - App Skills & MCP Servers: from skills registry (global scope – affects all sessions)
  * - Project MCP Servers: from settings files (session scope – affects this session)
- * - NeoKai Tools: Memory tool (session scope)
  * - Advanced: Claude Code Preset & Settings Sources (hidden by default)
  */
 
@@ -137,15 +136,16 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	// Collapsible group state (open by default)
 	const appMcpGroupOpen = useSignal(true);
 	const fileMcpGroupOpen = useSignal(true);
-	const neoKaiGroupOpen = useSignal(true);
 	const advancedOpen = useSignal(false);
+
+	// Search filter for App Skills section
+	const appSkillSearch = useSignal('');
 
 	// Per-skill loading state for immediate toggles
 	const skillToggling = useSignal<Set<string>>(new Set());
 
 	// Session-local config state
 	const disabledMcpServers = useSignal<string[]>([]);
-	const memoryEnabled = useSignal(false);
 
 	// Advanced settings (hidden by default)
 	const useClaudeCodePreset = useSignal(true);
@@ -178,7 +178,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		useClaudeCodePreset.value = tools?.useClaudeCodePreset ?? true;
 		settingSources.value = resolveSettingSources(tools) as SettingSource[];
 		disabledMcpServers.value = tools?.disabledMcpServers ?? [];
-		memoryEnabled.value = tools?.kaiTools?.memory ?? false;
 		hasChanges.value = false;
 	};
 
@@ -206,15 +205,27 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	};
 
 	const isMcpAllowed = useComputed(() => globalConfig.value?.mcp?.allowProjectMcp ?? true);
-	const isMemoryAllowed = useComputed(() => globalConfig.value?.kaiTools?.memory?.allowed ?? true);
 	const isClaudeCodePresetAllowed = useComputed(
 		() => globalConfig.value?.systemPrompt?.claudeCodePreset?.allowed ?? true
 	);
 
-	// App-level MCP skills
+	// App-level MCP and builtin skills (all)
 	const appMcpSkills = useComputed(() =>
-		skillsStore.skills.value.filter((s) => s.sourceType === 'mcp_server')
+		skillsStore.skills.value.filter(
+			(s) => s.sourceType === 'mcp_server' || s.sourceType === 'builtin'
+		)
 	);
+
+	// Filtered by search query
+	const filteredAppSkills = useComputed(() => {
+		const q = appSkillSearch.value.trim().toLowerCase();
+		if (!q) return appMcpSkills.value;
+		return appMcpSkills.value.filter(
+			(s) =>
+				s.displayName.toLowerCase().includes(q) ||
+				(s.description?.toLowerCase().includes(q) ?? false)
+		);
+	});
 
 	// File-based MCP server helpers
 	const handleToggleServer = (serverName: string) => {
@@ -282,11 +293,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		hasChanges.value = true;
 	};
 
-	const toggleMemory = () => {
-		memoryEnabled.value = !memoryEnabled.value;
-		hasChanges.value = true;
-	};
-
 	const toggleSettingSource = (source: SettingSource, enabled: boolean) => {
 		if (enabled) {
 			if (!settingSources.value.includes(source)) {
@@ -311,7 +317,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 				useClaudeCodePreset: useClaudeCodePreset.value,
 				settingSources: settingSources.value,
 				disabledMcpServers: disabledMcpServers.value,
-				kaiTools: { memory: memoryEnabled.value },
 			};
 			const hub = await connectionManager.getHub();
 			const result = await hub.request<{ success: boolean; error?: string }>('tools.save', {
@@ -352,20 +357,21 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 		allFileMcpServerNames
 	);
 
-	// App MCP counts
+	// App MCP counts (based on all, not filtered)
 	const appSkills = appMcpSkills.value;
+	const visibleAppSkills = filteredAppSkills.value;
 	const { allEnabled: appAllOn, someEnabled: appSomeOn } = computeSkillGroupState(appSkills);
 	const anySkillToggling = appSkills.some((s) => skillToggling.value.has(s.id));
 
 	return (
 		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
 			<div class="space-y-4">
-				{/* App MCP Servers Section */}
+				{/* App Skills & MCP Servers Section */}
 				<div>
 					{appSkills.length > 0 ? (
 						<>
 							<GroupHeader
-								title="App MCP Servers"
+								title="App Skills & MCP Servers"
 								isOpen={appMcpGroupOpen.value}
 								onToggleOpen={() => {
 									appMcpGroupOpen.value = !appMcpGroupOpen.value;
@@ -378,52 +384,84 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 								disabled={anySkillToggling}
 							/>
 							{appMcpGroupOpen.value && (
-								<div class="space-y-1 mt-1 ml-5">
-									{appSkills.map((skill) => {
-										const isToggling = skillToggling.value.has(skill.id);
-										return (
-											<label
-												key={skill.id}
-												class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${
-													isToggling ? 'opacity-60' : 'hover:bg-dark-800 cursor-pointer'
-												}`}
-											>
-												<div class="flex items-center gap-2 flex-1 min-w-0">
-													<svg
-														class="w-4 h-4 text-amber-400 flex-shrink-0"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
+								<div class="mt-2 ml-5 space-y-2">
+									{/* Search filter */}
+									{appSkills.length > 4 && (
+										<input
+											type="search"
+											placeholder="Filter skills…"
+											value={appSkillSearch.value}
+											onInput={(e) => {
+												appSkillSearch.value = (e.target as HTMLInputElement).value;
+											}}
+											class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+										/>
+									)}
+									{/* 2-column grid */}
+									{visibleAppSkills.length === 0 ? (
+										<div class="text-xs text-gray-600 py-1">
+											No skills match &ldquo;{appSkillSearch.value}&rdquo;.
+										</div>
+									) : (
+										<div class="grid grid-cols-2 gap-1">
+											{visibleAppSkills.map((skill) => {
+												const isToggling = skillToggling.value.has(skill.id);
+												return (
+													<label
+														key={skill.id}
+														class={`flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 transition-colors min-w-0 ${
+															isToggling ? 'opacity-60' : 'hover:bg-dark-800 cursor-pointer'
+														}`}
 													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width={2}
-															d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
-														/>
-													</svg>
-													<div class="flex-1 min-w-0">
-														<div class="text-sm text-gray-200 truncate">{skill.displayName}</div>
-														{skill.description && (
-															<div class="text-xs text-gray-500 truncate">{skill.description}</div>
+														{skill.sourceType === 'builtin' ? (
+															<svg
+																class="w-3.5 h-3.5 text-blue-400 flex-shrink-0"
+																fill="none"
+																viewBox="0 0 24 24"
+																stroke="currentColor"
+															>
+																<path
+																	stroke-linecap="round"
+																	stroke-linejoin="round"
+																	stroke-width={2}
+																	d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+																/>
+															</svg>
+														) : (
+															<svg
+																class="w-3.5 h-3.5 text-amber-400 flex-shrink-0"
+																fill="none"
+																viewBox="0 0 24 24"
+																stroke="currentColor"
+															>
+																<path
+																	stroke-linecap="round"
+																	stroke-linejoin="round"
+																	stroke-width={2}
+																	d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"
+																/>
+															</svg>
 														)}
-													</div>
-												</div>
-												<div class="flex items-center gap-2 flex-shrink-0">
-													{isToggling && (
-														<div class="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-													)}
-													<input
-														type="checkbox"
-														checked={skill.enabled}
-														onChange={() => void toggleSkill(skill)}
-														disabled={isToggling}
-														class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-													/>
-												</div>
-											</label>
-										);
-									})}
+														<div class="flex-1 min-w-0">
+															<div class="text-xs text-gray-200 truncate">{skill.displayName}</div>
+														</div>
+														<div class="flex items-center gap-1 flex-shrink-0">
+															{isToggling && (
+																<div class="w-2.5 h-2.5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+															)}
+															<input
+																type="checkbox"
+																checked={skill.enabled}
+																onChange={() => void toggleSkill(skill)}
+																disabled={isToggling}
+																class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+															/>
+														</div>
+													</label>
+												);
+											})}
+										</div>
+									)}
 								</div>
 							)}
 						</>
@@ -442,7 +480,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 									d="M9 5l7 7-7 7"
 								/>
 							</svg>
-							<span class="text-sm font-medium text-gray-500">App MCP Servers</span>
+							<span class="text-sm font-medium text-gray-500">App Skills & MCP Servers</span>
 							<span class="text-xs text-gray-700">(none configured)</span>
 						</div>
 					)}
@@ -556,67 +594,6 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 								</div>
 							)}
 						</>
-					)}
-				</div>
-
-				<div class={`border-t ${borderColors.ui.secondary}`} />
-
-				{/* NeoKai Tools Section */}
-				<div>
-					<GroupHeader
-						title="NeoKai Tools"
-						isOpen={neoKaiGroupOpen.value}
-						onToggleOpen={() => {
-							neoKaiGroupOpen.value = !neoKaiGroupOpen.value;
-						}}
-						allEnabled={memoryEnabled.value}
-						someEnabled={memoryEnabled.value}
-						onToggleAll={() => {
-							if (isMemoryAllowed.value) toggleMemory();
-						}}
-						scope="session"
-						itemCount={1}
-						disabled={!isMemoryAllowed.value}
-					/>
-					{neoKaiGroupOpen.value && (
-						<div class="mt-1 ml-5 space-y-1">
-							<label
-								class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${
-									isMemoryAllowed.value
-										? 'hover:bg-dark-800 cursor-pointer'
-										: 'opacity-50 cursor-not-allowed'
-								}`}
-							>
-								<div class="flex items-center gap-2 flex-1 min-w-0">
-									<svg
-										class="w-4 h-4 text-purple-400 flex-shrink-0"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width={2}
-											d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-										/>
-									</svg>
-									<div class="flex-1 min-w-0">
-										<div class="text-sm text-gray-200">Memory</div>
-										<div class="text-xs text-gray-500">
-											Persistent key-value storage across sessions
-										</div>
-									</div>
-								</div>
-								<input
-									type="checkbox"
-									checked={memoryEnabled.value}
-									onChange={toggleMemory}
-									disabled={!isMemoryAllowed.value}
-									class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
-								/>
-							</label>
-						</div>
 					)}
 				</div>
 
