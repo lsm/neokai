@@ -223,30 +223,19 @@ describe('Settings RPC Handlers', () => {
 			);
 		});
 
-		it('emits sessions.filterChanged when showArchived changes', async () => {
+		it('emits settings.updated when showArchived changes', async () => {
 			const handler = messageHubData.handlers.get('settings.global.update');
 			expect(handler).toBeDefined();
 
 			await handler!({ updates: { showArchived: true } }, {});
 
+			// showArchived filter is handled client-side via LiveQuery — no separate filterChanged event
 			expect(daemonHubData.emitMock).toHaveBeenCalledWith(
-				'sessions.filterChanged',
+				'settings.updated',
 				expect.objectContaining({
 					sessionId: 'global',
 				})
 			);
-		});
-
-		it('does not emit sessions.filterChanged for other updates', async () => {
-			const handler = messageHubData.handlers.get('settings.global.update');
-			expect(handler).toBeDefined();
-
-			await handler!({ updates: { theme: 'light' } }, {});
-
-			const filterChangedCalls = daemonHubData.emitMock.mock.calls.filter(
-				(call) => call[0] === 'sessions.filterChanged'
-			);
-			expect(filterChangedCalls).toHaveLength(0);
 		});
 
 		it('handles multiple updates', async () => {
