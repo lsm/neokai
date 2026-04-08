@@ -18,7 +18,7 @@ import { useEffect, useCallback, useRef } from 'preact/hooks';
 import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
 import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
-import { isMultiAgentNode, isNodeFullyCompleted, AgentStatusIcon } from '../WorkflowNodeCard';
+import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 import { getVisualNodeDimensions } from './nodeMetrics';
@@ -65,6 +65,11 @@ export interface WorkflowNodeProps {
 	nodeTaskStates?: AgentTaskState[];
 	/** Semantic edge anchor sides currently in use for this node. */
 	activeAnchorSides?: AnchorSide[];
+	/**
+	 * When false, disables drag affordances — no cursor/shadow change on mousedown,
+	 * and drag state is never set. Defaults to true.
+	 */
+	draggable?: boolean;
 }
 
 function renderDock(side: AnchorSide, visible: boolean, highlighted = false) {
@@ -161,6 +166,7 @@ export function WorkflowNode({
 	onClick,
 	nodeTaskStates,
 	activeAnchorSides = [],
+	draggable = true,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
@@ -179,7 +185,6 @@ export function WorkflowNode({
 	const taskStateByAgent = new Map<string | null, AgentTaskState>(
 		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
 	);
-	const allDone = isNodeFullyCompleted(nodeTaskStates ?? []);
 
 	// ---- Drag state ----
 	const dragState = useRef<{
@@ -249,11 +254,17 @@ export function WorkflowNode({
 		};
 	}, [stepId]);
 
-	// ---- Card body mousedown — starts drag (disabled for Task Agent) ----
+	// ---- Card body mousedown — starts drag (disabled for Task Agent or when draggable=false) ----
 	const handleMouseDown = useCallback(
 		(e: MouseEvent) => {
 			// Task Agent is pinned — it cannot be dragged
 			if (isTaskAgent) {
+				e.stopPropagation();
+				return;
+			}
+			// Read-only mode: no drag affordances, but still stop propagation so
+			// the canvas pan handler cannot capture the mousedown event.
+			if (!draggable) {
 				e.stopPropagation();
 				return;
 			}
@@ -276,7 +287,7 @@ export function WorkflowNode({
 				nodeRef.current.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)';
 			}
 		},
-		[isTaskAgent, position.x, position.y]
+		[isTaskAgent, draggable, position.x, position.y]
 	);
 
 	// ---- Card click — for selection (suppressed after drag) ----
@@ -328,9 +339,7 @@ export function WorkflowNode({
 			? 'border-green-500'
 			: isSelected
 				? 'border-blue-500'
-				: allDone
-					? 'border-green-600'
-					: 'border-gray-700';
+				: 'border-gray-700';
 
 	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
 
@@ -397,7 +406,7 @@ export function WorkflowNode({
 				top: position.y,
 				width: dimensions.width,
 				minHeight: dimensions.height,
-				cursor: 'grab',
+				cursor: draggable ? 'grab' : 'default',
 				userSelect: 'none',
 			}}
 			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}

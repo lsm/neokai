@@ -3,7 +3,6 @@ import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
 import type {
-	SpaceTask,
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
 	SpaceTaskPriority,
@@ -14,7 +13,7 @@ import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { TaskStatusActions } from './TaskStatusActions';
 import MentionAutocomplete from './MentionAutocomplete';
-import { WorkflowCanvas } from './WorkflowCanvas';
+import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -283,14 +282,37 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					? 'View Agent Session'
 					: 'Open Space Agent';
 
-	const handleNodeClick = (nodeId: string, nodeTasks: SpaceTask[]) => {
-		// Find the first task for this node that has an agent session open
-		const nodeTask = nodeTasks.find((t) => t.taskAgentSessionId);
-		if (nodeTask?.taskAgentSessionId) {
-			spaceOverlayAgentNameSignal.value = nodeTask.title ?? `Node ${nodeId}`;
-			spaceOverlaySessionIdSignal.value = nodeTask.taskAgentSessionId;
-		} else if (agentSessionId) {
-			// Fall back to the task agent session
+	const handleNodeClick = (_nodeId: string, _nodeName: string, _agentSlotNames: string[]) => {
+		// Resolve agent display names from the store using the workflow node’s agent IDs.
+		// nodeExecution is often absent; resolve via the agent store instead.
+		const workflowNode = workflow?.nodes.find((n) => n.id === _nodeId);
+		const agentDisplayNames = workflowNode
+			? workflowNode.agents
+					.map((sa) => spaceStore.agents.value.find((a) => a.id === sa.agentId)?.name)
+					.filter((n): n is string => !!n)
+			: [];
+
+		// Exact-match against activity member labels (same data source as the “Agents” buttons).
+		// For multi-agent nodes, returns the first matching member.
+		const nodeMember = activityMembers.find(
+			(m) => m.kind === 'node_agent' && agentDisplayNames.includes(m.label)
+		);
+		if (nodeMember) {
+			spaceOverlayAgentNameSignal.value = nodeMember.label;
+			spaceOverlaySessionIdSignal.value = nodeMember.sessionId;
+			return;
+		}
+
+		// Fall back to the task agent session (coordinator/leader)
+		const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent');
+		if (taskAgentMember) {
+			spaceOverlayAgentNameSignal.value = taskAgentMember.label;
+			spaceOverlaySessionIdSignal.value = taskAgentMember.sessionId;
+			return;
+		}
+
+		// Last resort: use the task’s own agentSessionId
+		if (agentSessionId) {
 			spaceOverlayAgentNameSignal.value = agentActionLabel;
 			spaceOverlaySessionIdSignal.value = agentSessionId;
 		}
@@ -443,11 +465,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			<div class="flex-1 min-h-0 overflow-hidden px-4">
 				{showCanvas && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
-						<WorkflowCanvas
+						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
 							runId={task.workflowRunId}
-							spaceId={runtimeSpaceId ?? task.spaceId}
-							onNodeClick={agentSessionId ? handleNodeClick : undefined}
+							onNodeClick={handleNodeClick}
 							class="h-full"
 						/>
 					</div>

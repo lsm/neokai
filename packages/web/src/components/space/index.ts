@@ -12,8 +12,7 @@ export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
 export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';
 export { WorkflowList } from './WorkflowList';
-export { WorkflowCanvas } from './WorkflowCanvas';
-export type { WorkflowCanvasProps } from './WorkflowCanvas';
+
 export { GateArtifactsView } from './GateArtifactsView';
 export type { GateArtifactsViewProps } from './GateArtifactsView';
 export { FileDiffView, parseDiff } from './FileDiffView';
