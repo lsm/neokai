@@ -317,6 +317,10 @@ export default function ChatContainer({
 		if (sessionId.startsWith('room:chat:')) {
 			return DEFAULT_ROOM_CHAT_FEATURES;
 		}
+		if (sessionId.startsWith('space:chat:')) {
+			// Space agent sessions — no archive/delete (managed by space lifecycle)
+			return { ...DEFAULT_WORKER_FEATURES, archive: false };
+		}
 		if (sessionId.startsWith('lobby:')) {
 			return DEFAULT_LOBBY_FEATURES;
 		}
