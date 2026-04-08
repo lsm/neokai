@@ -405,7 +405,7 @@ export function ContextPanel() {
 						)}
 					>
 						{isSpaceDetail ? (
-							<div class="flex items-center gap-1 mr-2 overflow-hidden">
+							<div class="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
 								<button
 									onClick={() => navigateToSpaces()}
 									class="p-1 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
@@ -420,7 +420,9 @@ export function ContextPanel() {
 										/>
 									</svg>
 								</button>
-								<h2 class="text-lg font-semibold text-gray-100 truncate">{headerTitle}</h2>
+								<h2 class="min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate">
+									{headerTitle}
+								</h2>
 								<button
 									onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
 									class={cn(
