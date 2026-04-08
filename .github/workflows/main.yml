@@ -450,10 +450,14 @@ jobs:
   # ============================================
 
   test-daemon-shared-unit:
-    name: Daemon + Shared Unit Tests (Coverage)
+    name: Daemon Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1-core, 2-handlers, 3-features, 4-space-storage]
 
     steps:
       - uses: actions/checkout@v6
@@ -487,23 +491,19 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run daemon + shared unit tests from root
-        run: make test-daemon
+      - name: Run daemon + shared unit tests (${{ matrix.shard }})
+        run: make test-daemon-shard SHARD=${{ matrix.shard }}
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
-      - name: Strip test utility coverage
-        run: |
-          # Strip test utility coverage (helpers, fixtures, mocks)
-          awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' coverage/lcov.info > coverage/lcov.clean && mv coverage/lcov.clean coverage/lcov.info || true
-
-      - name: Upload to Coveralls (parallel)
+      - name: Upload coverage (parallel)
+        if: always()
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           file: coverage/lcov.info
-          flag-name: daemon
+          flag-name: daemon-${{ matrix.shard }}
           parallel: true
           fail-on-error: false
 
