@@ -29,7 +29,7 @@ export declare type AccountInfo = {
     /**
      * Active API backend. Anthropic OAuth login only applies when "firstParty"; for 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.).
      */
-    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'anthropicAws';
+    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'anthropicAws' | 'mantle';
 };
 
 /**
@@ -198,6 +198,56 @@ export declare type ConfigChangeHookInput = BaseHookInput & {
  */
 export declare type ConfigScope = 'local' | 'user' | 'project';
 
+/**
+ * Structured failure from connectRemoteControl.
+ * @alpha
+ */
+export declare type ConnectRemoteControlError = {
+    kind: 'conflict' | 'auth' | 'network' | 'unknown';
+    detail: string;
+};
+
+/**
+ * Options for connectRemoteControl.
+ * @alpha
+ */
+export declare type ConnectRemoteControlOptions = {
+    dir: string;
+    /** Override directory sent to backend for env registration. */
+    registrationDir?: string;
+    name?: string;
+    workerType?: string;
+    branch?: string;
+    gitRepoUrl?: string | null;
+    getAccessToken: () => string | undefined;
+    baseUrl: string;
+    orgUUID: string;
+    model: string;
+    /** Reuse env+session across restarts (reads bridge-pointer.json). */
+    perpetual?: boolean;
+    /** SSE high-water mark so reconnect sends from_sequence_num. */
+    initialSSESequenceNum?: number;
+    /** Called on 401; return true after refreshing token to retry. */
+    onAuth401?: (staleAccessToken: string) => Promise<boolean>;
+    /** Called on 409 conflict; return 'takeover' to deregister + retry. */
+    onConflict?: (detail: {
+        machineName: string;
+        message: string;
+    }) => Promise<'takeover' | 'abort'>;
+};
+
+/**
+ * Discriminated result from connectRemoteControl.
+ * @alpha
+ */
+export declare type ConnectRemoteControlResult = {
+    ok: true;
+    handle: RemoteControlHandle;
+} | {
+    ok: false;
+    error: ConnectRemoteControlError;
+};
+
 declare type ControlErrorResponse = {
     subtype: 'error';
     request_id: string;
@@ -307,6 +357,7 @@ declare namespace coreTypes {
         SDKResultSuccess,
         SDKSessionInfo,
         SDKSessionStateChangedMessage,
+        SDKSettingsParseError,
         SDKStatusMessage,
         SDKStatus,
         SDKSystemMessage,
@@ -421,6 +472,12 @@ export declare type ElicitationRequest = {
     elicitationId?: string;
     /** JSON Schema for the requested input (only for 'form' mode) */
     requestedSchema?: Record<string, unknown>;
+    /** Permission-display title from MCP `_meta['anthropic/permissionDisplay']` — header for elicitation-driven permission prompts */
+    title?: string;
+    /** Short tool/server label from MCP `_meta['anthropic/permissionDisplay'].displayName` */
+    displayName?: string;
+    /** Permission-display subtitle from MCP `_meta['anthropic/permissionDisplay'].description` */
+    description?: string;
 };
 
 /**
@@ -608,6 +665,15 @@ export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | Pos
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
 export declare type HookPermissionDecision = 'allow' | 'deny' | 'ask' | 'defer';
+
+/**
+ * A user message typed on claude.ai, extracted from the bridge WS.
+ * @alpha
+ */
+export declare type InboundPrompt = {
+    content: string | unknown[];
+    uuid?: string;
+};
 
 export declare type InferShape<T extends AnyZodRawShape> = {
     [K in keyof T]: T[K] extends {
@@ -1968,6 +2034,18 @@ declare type SDKControlElicitationRequest = {
     url?: string;
     elicitation_id?: string;
     requested_schema?: Record<string, unknown>;
+    /**
+     * Permission-display title from the MCP server's _meta['anthropic/permissionDisplay']. Mirrors can_use_tool.title so SDK consumers can render elicitation-driven permission prompts with structured headers instead of parsing `message`.
+     */
+    title?: string;
+    /**
+     * Short tool/server label from _meta['anthropic/permissionDisplay'].displayName. Mirrors can_use_tool.display_name.
+     */
+    display_name?: string;
+    /**
+     * Permission-display subtitle from _meta['anthropic/permissionDisplay'].description. Mirrors can_use_tool.description.
+     */
+    description?: string;
 };
 
 /**
@@ -2219,7 +2297,7 @@ declare type SDKControlRewindFilesRequest = {
 };
 
 /**
- * Seeds the readFileState cache with a path+mtime entry. Use when a prior Read was removed from context (e.g. by snip) so Edit validation would fail despite the client having observed the Read. The mtime lets the CLI detect if the file changed since the seeded Read — same staleness check as the normal path.
+ * Seeds the readFileState cache with a path+mtime entry. Use when a prior Read was removed from context so Edit validation would fail despite the client having observed the Read. The mtime lets the CLI detect if the file changed since the seeded Read — same staleness check as the normal path.
  */
 declare type SDKControlSeedReadStateRequest = {
     subtype: 'seed_read_state';
@@ -2627,6 +2705,24 @@ export declare type SDKSessionStateChangedMessage = {
     state: 'idle' | 'running' | 'requires_action';
     uuid: UUID;
     session_id: string;
+};
+
+/**
+ * A settings file parse or validation error. When a settings.json file fails to parse (invalid JSON, JSON comments, schema mismatch), the file is skipped and any rules it contained — including permission allow/deny lists — are not applied.
+ */
+export declare type SDKSettingsParseError = {
+    /**
+     * Path to the settings file that failed to parse or validate.
+     */
+    file?: string;
+    /**
+     * Dot-notation path to the field with the error, or empty string for whole-file errors.
+     */
+    path: string;
+    /**
+     * Human-readable error message.
+     */
+    message: string;
 };
 
 export declare type SDKStatus = 'compacting' | null;
@@ -3791,6 +3887,10 @@ export declare interface Settings {
      */
     forceLoginOrgUUID?: string | string[];
     /**
+     * When set in managed settings, the CLI blocks startup until remote managed settings are freshly fetched, and exits if the fetch fails
+     */
+    forceRemoteSettingsRefresh?: boolean;
+    /**
      * Path to a script that outputs OpenTelemetry headers
      */
     otelHeadersHelper?: string;
@@ -3988,6 +4088,16 @@ export declare interface Settings {
      */
     plansDirectory?: string;
     /**
+     * Autonomous background operation configuration
+     */
+    proactive?: {
+        /**
+         * When true, autonomous background operation is activated automatically at launch (if entitled). When false or null, the user must opt in via the /proactive command or --proactive flag. Existing entitlement gates (GrowthBook flag, ZDR, managed-settings) still apply.
+         */
+        autoEnable?: boolean | null;
+    };
+
+    /**
      * Teams/Enterprise opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). Default off. Set true to allow; users then select servers via --channels.
      */
     channelsEnabled?: boolean;
@@ -4176,6 +4286,8 @@ export declare type StopHookInput = BaseHookInput & {
      * Text content of the last assistant message before stopping. Avoids the need to read and parse the transcript file.
      */
     last_assistant_message?: string;
+
+
 };
 
 export declare type SubagentStartHookInput = BaseHookInput & {
@@ -4199,6 +4311,8 @@ export declare type SubagentStopHookInput = BaseHookInput & {
      * Text content of the last assistant message before stopping. Avoids the need to read and parse the transcript file.
      */
     last_assistant_message?: string;
+
+
 };
 
 export declare type SyncHookJSONOutput = {
@@ -4254,6 +4368,7 @@ export declare type TerminalReason = 'blocking_limit' | 'rapid_refill_breaker' |
  */
 export declare type ThinkingAdaptive = {
     type: 'adaptive';
+    display?: 'summarized' | 'omitted';
 };
 
 /**
@@ -4274,6 +4389,7 @@ export declare type ThinkingDisabled = {
 export declare type ThinkingEnabled = {
     type: 'enabled';
     budgetTokens?: number;
+    display?: 'summarized' | 'omitted';
 };
 
 export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>, _extras?: {
@@ -4363,11 +4479,13 @@ export declare function unstable_v2_resumeSession(_sessionId: string, _options: 
 export declare type UserPromptSubmitHookInput = BaseHookInput & {
     hook_event_name: 'UserPromptSubmit';
     prompt: string;
+    session_title?: string;
 };
 
 export declare type UserPromptSubmitHookSpecificOutput = {
     hookEventName: 'UserPromptSubmit';
     additionalContext?: string;
+    sessionTitle?: string;
 };
 
 export declare type WorktreeCreateHookInput = BaseHookInput & {
