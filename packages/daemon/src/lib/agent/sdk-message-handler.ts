@@ -854,12 +854,25 @@ export class SDKMessageHandler {
 	 * Handle compact boundary message (compaction completed)
 	 */
 	private async handleCompactBoundary(message: SDKMessage): Promise<void> {
-		const { stateManager } = this.ctx;
+		const { stateManager, messageQueue } = this.ctx;
 
 		if (!isSDKCompactBoundary(message)) return;
 
 		// Clear isCompacting flag on processing state (flows through state.session)
 		await stateManager.setCompacting(false);
+
+		// Immediately queue /context to refresh context usage after compaction.
+		// Without this, the UI shows stale pre-compact values until the next
+		// regular turn's result message triggers the auto-queue (which may be
+		// skipped for zero-token compact results).
+		if (this.ctx.contextAutoQueueEnabled) {
+			const contextMessageId = generateUUID();
+			this.internalContextCommandIds.add(contextMessageId);
+			messageQueue.enqueueWithId(contextMessageId, '/context', true).catch((error) => {
+				this.internalContextCommandIds.delete(contextMessageId);
+				this.logger.warn('Failed to queue /context after compact:', error);
+			});
+		}
 	}
 
 	/**
