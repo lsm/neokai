@@ -1,0 +1,2521 @@
+/**
+ * Unit tests for createNodeAgentToolHandlers()
+ *
+ * Covers all node agent peer communication tools:
+ *   list_peers   — list peers excluding self and task-agent
+ *   send_message — channel-validated direct messaging
+ *   report_done  — signal agent completion, persist summary, emit event
+ *
+ * Tests use a real SQLite database (via runMigrations) and mock message
+ * injectors so no real agent sessions are created.
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
+import {
+	createNodeAgentToolHandlers,
+	createNodeAgentMcpServer,
+	type NodeAgentToolsConfig,
+} from '../../../../src/lib/space/tools/node-agent-tools.ts';
+import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
+import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// DB helpers
+// ---------------------------------------------------------------------------
+
+function makeDb(): { db: BunDatabase; dir: string } {
+	const dir = join(
+		process.cwd(),
+		'tmp',
+		'test-node-agent-tools',
+		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+	);
+	mkdirSync(dir, { recursive: true });
+	const db = new BunDatabase(join(dir, 'test.db'));
+	db.exec('PRAGMA foreign_keys = ON');
+	runMigrations(db, () => {});
+	return { db, dir };
+}
+
+function seedSpaceRow(db: BunDatabase, spaceId: string): void {
+	db.prepare(
+		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, '/tmp', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+}
+
+function seedSpaceWorkflowRunRow(
+	db: BunDatabase,
+	runId: string,
+	spaceId: string,
+	workflowId: string
+): void {
+	const now = Date.now();
+	db.prepare(
+		`INSERT INTO space_workflow_runs
+     (id, space_id, workflow_id, title, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', 'pending', ?, ?)`
+	).run(runId, spaceId, workflowId, now, now);
+}
+
+/**
+ * Creates a fresh workflow run and returns its ID.
+ * Used by tests that need isolation from the default makeCtx() run.
+ */
+function makeFreshRunId(db: BunDatabase, spaceId: string): string {
+	const runId = `run-${Math.random().toString(36).slice(2)}`;
+	seedSpaceWorkflowRunRow(db, runId, spaceId, 'wf-seed');
+	return runId;
+}
+
+function toNodeExecutionStatus(
+	status: string
+): 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' {
+	switch (status) {
+		case 'pending':
+		case 'open':
+			return 'pending';
+		case 'in_progress':
+			return 'in_progress';
+		case 'done':
+		case 'completed':
+			return 'done';
+		case 'blocked':
+		case 'failed':
+			return 'blocked';
+		case 'cancelled':
+			return 'cancelled';
+		default:
+			return 'in_progress';
+	}
+}
+
+function seedSpaceTask(
+	db: BunDatabase,
+	spaceId: string,
+	workflowRunId: string,
+	workflowNodeId: string,
+	agentName: string,
+	status: string = 'in_progress',
+	result: string | null = null,
+	sessionId: string | null = null
+): string {
+	const id = `task-${Math.random().toString(36).slice(2)}`;
+	const now = Date.now();
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.prepare(
+		`INSERT INTO space_tasks
+         (id, space_id, task_number, title, description, status, priority, result,
+          workflow_run_id, depends_on, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM space_tasks WHERE space_id = ?), ?, '', ?, 'normal', ?, ?, '[]', ?, ?)`
+	).run(id, spaceId, spaceId, agentName, status, result, workflowRunId, now, now);
+	if (sessionId) {
+		db.prepare('UPDATE space_tasks SET task_agent_session_id = ? WHERE id = ?').run(sessionId, id);
+	}
+	db.exec('PRAGMA foreign_keys = ON');
+
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
+	const execution = nodeExecutionRepo.createOrIgnore({
+		workflowRunId,
+		workflowNodeId,
+		agentName,
+		agentSessionId: sessionId,
+		status: toNodeExecutionStatus(status),
+	});
+	nodeExecutionRepo.update(execution.id, {
+		agentSessionId: sessionId,
+		status: toNodeExecutionStatus(status),
+		result,
+	});
+
+	return id;
+}
+
+// ---------------------------------------------------------------------------
+// Test fixtures
+// ---------------------------------------------------------------------------
+
+function makeResolvedChannel(
+	from: string,
+	to: string,
+	_isHubSpoke = false,
+	_overrides: Record<string, unknown> = {}
+): WorkflowChannel {
+	return {
+		id: `ch-${from}-${to}`,
+		from,
+		to,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Test context
+// ---------------------------------------------------------------------------
+
+interface TestCtx {
+	db: BunDatabase;
+	dir: string;
+	spaceId: string;
+	taskRepo: SpaceTaskRepository;
+	taskManager: SpaceTaskManager;
+	spaceTaskRepo: SpaceTaskRepository;
+	nodeExecutionRepo: NodeExecutionRepository;
+	/** Workflow run ID for peer task seeding. */
+	workflowRunId: string;
+	/** Workflow node ID for peer task seeding. */
+	nodeId: string;
+	coderSessionId: string;
+	reviewerSessionId: string;
+	taskAgentSessionId: string;
+	/** ID of the parent (main) task seeded in the DB. */
+	parentTaskId: string;
+	/** ID of the step task seeded in the DB. */
+	stepTaskId: string;
+}
+
+function makeCtx(): TestCtx {
+	const { db, dir } = makeDb();
+	const spaceId = 'space-node-tools-test';
+
+	seedSpaceRow(db, spaceId);
+
+	const taskRepo = new SpaceTaskRepository(db);
+	const spaceTaskRepo = taskRepo;
+	const taskManager = new SpaceTaskManager(db, spaceId);
+	const nodeExecutionRepo = new NodeExecutionRepository(db);
+
+	// Session IDs for peers
+	const taskAgentSessionId = 'session-task-agent';
+	const coderSessionId = 'session-coder';
+	const reviewerSessionId = 'session-reviewer';
+
+	// Workflow run/node IDs for peer task seeding
+	const workflowRunId = 'run-node-tools-default';
+	const nodeId = 'node-node-tools-default';
+
+	// Seed workflow run so gate_data FK constraint is satisfied for write_gate tests
+	seedSpaceWorkflowRunRow(db, workflowRunId, spaceId, 'wf-seed');
+
+	// Seed peer tasks: coder and reviewer on the default node
+	seedSpaceTask(db, spaceId, workflowRunId, nodeId, 'coder', 'in_progress', null, coderSessionId);
+	seedSpaceTask(
+		db,
+		spaceId,
+		workflowRunId,
+		nodeId,
+		'reviewer',
+		'in_progress',
+		null,
+		reviewerSessionId
+	);
+
+	// Seed a parent task and a step task in the DB
+	const parentTask = taskRepo.createTask({
+		spaceId,
+		title: 'Parent Task',
+		description: '',
+		status: 'in_progress',
+	});
+	const stepTask = taskRepo.createTask({
+		spaceId,
+		title: 'Step Task',
+		description: '',
+		status: 'in_progress',
+	});
+
+	return {
+		db,
+		dir,
+		spaceId,
+		taskRepo,
+		taskManager,
+		spaceTaskRepo,
+		nodeExecutionRepo,
+		workflowRunId,
+		nodeId,
+		coderSessionId,
+		reviewerSessionId,
+		taskAgentSessionId,
+		parentTaskId: parentTask.id,
+		stepTaskId: stepTask.id,
+	};
+}
+
+type NodeConfigOverrides = Partial<NodeAgentToolsConfig> & {
+	messageInjector?: (sessionId: string, message: string) => Promise<void>;
+};
+
+function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgentToolsConfig {
+	const { messageInjector, ...configOverrides } = overrides;
+	const workflowRunId = configOverrides.workflowRunId ?? ctx.workflowRunId;
+	const nodeExecutionRepo = configOverrides.nodeExecutionRepo ?? ctx.nodeExecutionRepo;
+	const channelResolver = configOverrides.channelResolver ?? new ChannelResolver([]);
+	const injector = messageInjector ?? (async () => {});
+	const agentMessageRouter =
+		configOverrides.agentMessageRouter ??
+		new AgentMessageRouter({
+			nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: channelResolver.getChannels(),
+			messageInjector: injector,
+		});
+
+	return {
+		mySessionId: ctx.coderSessionId,
+		myAgentName: 'coder',
+		taskId: ctx.parentTaskId,
+		spaceId: ctx.spaceId,
+		channelResolver,
+		workflowRunId,
+		workflowNodeId: ctx.nodeId,
+		nodeExecutionRepo,
+		agentMessageRouter,
+		workflow: null,
+		gateDataRepo: new GateDataRepository(ctx.db),
+		...configOverrides,
+	};
+}
+
+/**
+ * Build a ChannelResolver directly from resolved channel entries.
+ * Replaces the old seedWorkflowRunWithChannels + DB approach.
+ */
+function makeResolver(channels: WorkflowChannel[]): ChannelResolver {
+	return new ChannelResolver(channels);
+}
+
+// ---------------------------------------------------------------------------
+// Tests: list_peers
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_peers', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns peers excluding self and task-agent', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(1); // only reviewer (coder=self, task-agent=excluded)
+		expect(data.peers[0].agentName).toBe('reviewer');
+		expect(data.peers[0].sessionId).toBe(ctx.reviewerSessionId);
+		expect(data.myAgentName).toBe('coder');
+	});
+
+	test('reports no channel topology when none declared', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.channelTopologyDeclared).toBe(false);
+		expect(data.permittedTargets).toEqual([]);
+	});
+
+	test('reports permitted targets when channels declared', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.channelTopologyDeclared).toBe(true);
+		expect(data.permittedTargets).toEqual(['reviewer']);
+	});
+
+	test('returns empty peer list when no peers in the run', async () => {
+		// Use a fresh run that has only the coder task (self) — no reviewer
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			isolatedRunId,
+			ctx.nodeId,
+			'coder',
+			'in_progress',
+			null,
+			ctx.coderSessionId
+		);
+
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(0);
+	});
+
+	test('excludes open task with no session from peers list', async () => {
+		// Seed an open task with no session — should not appear in peers
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
+		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'open', null);
+		// Do NOT set task_agent_session_id — simulates not-yet-spawned task
+
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(0);
+	});
+
+	test('excludes failed task with no session from peers list', async () => {
+		// A blocked task that never got a session should also be excluded
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			isolatedRunId,
+			ctx.nodeId,
+			'tester',
+			'blocked',
+			'Failed before session'
+		);
+
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(0);
+	});
+
+	test('includes done task with no session in peers list', async () => {
+		// A done task whose session was cleared should still appear for visibility
+		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
+		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'done', 'Done');
+		// Do NOT set task_agent_session_id — simulates post-session cleanup
+
+		const config = makeConfig(ctx, { workflowRunId: isolatedRunId });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.peers).toHaveLength(1);
+		expect(data.peers[0].agentName).toBe('tester');
+		expect(data.peers[0].sessionId).toBeNull();
+		expect(data.peers[0].status).toBe('completed');
+		expect(data.peers[0].completionState.completionSummary).toBe('Done');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: send_message
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: send_message', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('point-to-point succeeds when channel declared', async () => {
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+			messageInjector: async (sid, msg) => {
+				injected.push({ sessionId: sid, message: msg });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'reviewer', message: 'LGTM!' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(1);
+		expect(data.delivered[0].sessionId).toBe(ctx.reviewerSessionId);
+		expect(data.delivered[0].agentName).toBe('reviewer');
+		expect(injected).toHaveLength(1);
+		expect(injected[0].message).toBe('[Message from coder]: LGTM!');
+	});
+
+	test('point-to-point fails when channel not declared', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // reverse direction only
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain("does not permit 'coder' to send to: reviewer");
+		expect(data.unauthorizedAgentNames).toContain('reviewer');
+	});
+
+	test('returns error when no channels declared at all (empty topology blocks send_message)', async () => {
+		const config = makeConfig(ctx); // no workflowRunId, no channels
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
+		const data = JSON.parse(result.content[0].text);
+
+		// With no declared channels, send_message is unavailable.
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('No channel topology declared');
+	});
+
+	test('broadcast (*) succeeds and delivers to all permitted targets', async () => {
+		const injected: string[] = [];
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+			messageInjector: async (sid) => {
+				injected.push(sid);
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: '*', message: 'broadcast!' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(1);
+		expect(injected).toContain(ctx.reviewerSessionId);
+	});
+
+	test('broadcast (*) fails when no channels declared', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('reviewer', 'coder')]), // coder has no outgoing channels
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain("No permitted targets for agent 'coder'");
+	});
+
+	test('broadcast (*) with empty topology returns error', async () => {
+		// No channels declared at all
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: '*', message: 'broadcast' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('No channel topology declared');
+	});
+
+	test('multicast delivers to all specified target roles', async () => {
+		// Add a security peer task
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null,
+			'session-security'
+		);
+
+		const injected: string[] = [];
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('coder', 'security'),
+			]),
+			messageInjector: async (sid) => {
+				injected.push(sid);
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'multicast!',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.delivered).toHaveLength(2);
+		expect(injected).toContain(ctx.reviewerSessionId);
+		expect(injected).toContain('session-security');
+	});
+
+	test('multicast partial authorization fails with full error', async () => {
+		// Add security peer task
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null,
+			'session-security'
+		);
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				// no coder → security channel
+			]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'msg',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.unauthorizedAgentNames).toContain('security');
+	});
+
+	test('hub-spoke: spoke cannot send to other spokes', async () => {
+		// Hub-spoke topology: hub ↔ coder, hub ↔ reviewer (coder cannot send to reviewer directly)
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('hub', 'coder', true),
+				makeResolvedChannel('coder', 'hub', true),
+				makeResolvedChannel('hub', 'reviewer', true),
+				makeResolvedChannel('reviewer', 'hub', true),
+			]),
+		}); // myAgentName='coder'
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hello' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain("does not permit 'coder' to send to: reviewer");
+	});
+
+	test('hub-spoke: spoke can reply to hub', async () => {
+		// Add hub peer task
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'hub',
+			'in_progress',
+			null,
+			'session-hub'
+		);
+		const injected: string[] = [];
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('hub', 'coder', true),
+				makeResolvedChannel('coder', 'hub', true),
+			]),
+			messageInjector: async (sid) => {
+				injected.push(sid);
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'hub', message: 'done!' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(injected).toContain('session-hub');
+	});
+
+	test('bidirectional: both directions work', async () => {
+		// coder ↔ reviewer
+		const biResolver = makeResolver([
+			makeResolvedChannel('coder', 'reviewer'),
+			makeResolvedChannel('reviewer', 'coder'),
+		]);
+		const injectedToReviewer: string[] = [];
+		const config = makeConfig(ctx, {
+			channelResolver: biResolver,
+			messageInjector: async (sid) => {
+				injectedToReviewer.push(sid);
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// coder → reviewer
+		const r1 = await handlers.send_message({ target: 'reviewer', message: 'code ready' });
+		expect(JSON.parse(r1.content[0].text).success).toBe(true);
+
+		// reviewer → coder (as reviewer)
+		const configAsReviewer = makeConfig(ctx, {
+			channelResolver: biResolver,
+			mySessionId: ctx.reviewerSessionId,
+			myAgentName: 'reviewer',
+			messageInjector: async (sid) => {
+				injectedToReviewer.push(sid);
+			},
+		});
+		const handlersAsReviewer = createNodeAgentToolHandlers(configAsReviewer);
+		const r2 = await handlersAsReviewer.send_message({ target: 'coder', message: 'approved' });
+		expect(JSON.parse(r2.content[0].text).success).toBe(true);
+	});
+
+	test('returns unknown-target when role is not present in active peers', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]), // tester is permitted by topology but not active
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'tester', message: 'test pls' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain("Unknown target 'tester'");
+	});
+
+	test('handles partial injection failures gracefully (partial success)', async () => {
+		// In the new task-centric model, agent_name is unique per (run, node).
+		// Partial success is tested via multicast to two different roles: reviewer + security.
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null,
+			'session-security'
+		);
+		let callCount = 0;
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('coder', 'security'),
+			]),
+			messageInjector: async (_sid) => {
+				callCount++;
+				if (callCount === 1) throw new Error('injection failed');
+				// second call succeeds
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'hello',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		// Partial success — one delivered, one failed
+		expect(data.success).toBe('partial');
+		expect(data.delivered).toHaveLength(1);
+		expect(data.failed).toHaveLength(1);
+		// Both targets were attempted (best-effort, not stop-on-first-error)
+		expect(callCount).toBe(2);
+	});
+
+	test('fails entirely when all injections fail', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+			messageInjector: async () => {
+				throw new Error('always fails');
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.send_message({ target: 'reviewer', message: 'test' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.failed).toHaveLength(1);
+		expect(data.delivered).toBeUndefined();
+	});
+
+	test('best-effort multicast: first delivery succeeds, second fails — partial success', async () => {
+		// Add security peer task so we can send to two different non-task-agent roles
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.nodeId,
+			'security',
+			'in_progress',
+			null,
+			'session-security'
+		);
+
+		let callCount = 0;
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'reviewer'),
+				makeResolvedChannel('coder', 'security'),
+			]),
+			messageInjector: async (_sid, _msg) => {
+				callCount++;
+				if (callCount === 2) throw new Error('session not available');
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: ['reviewer', 'security'],
+			message: 'Hello',
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		// Should NOT return success: false for total failure — it's partial
+		expect(data.success).toBe('partial');
+		expect(data.delivered).toHaveLength(1);
+		expect(data.failed).toHaveLength(1);
+		expect(data.failed[0].error).toContain('session not available');
+		// Both targets were attempted (best-effort, not stop-on-first-error)
+		expect(callCount).toBe(2);
+	});
+
+	test('best-effort multicast: all deliveries fail — success: false', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+			messageInjector: async () => {
+				throw new Error('all sessions unavailable');
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({ target: 'reviewer', message: 'Hello' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.delivered).toBeUndefined();
+		expect(data.failed).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: report_done
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: report_done', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	function getCoderExecution() {
+		return ctx.nodeExecutionRepo
+			.listByNode(ctx.workflowRunId, ctx.nodeId)
+			.find((e) => e.agentName === 'coder');
+	}
+
+	test('marks node execution as done without summary', async () => {
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const result = await handlers.report_done({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.executionId).toBe(myExec!.id);
+		expect(data.agentName).toBe('coder');
+		expect(data.message).toContain('marked as completed');
+
+		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
+		expect(updated?.status).toBe('done');
+		expect(updated?.result).toBeNull();
+		expect(updated?.completedAt).not.toBeNull();
+	});
+
+	test('persists summary to node execution result', async () => {
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const result = await handlers.report_done({ summary: 'PR #42 merged successfully.' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.summary).toBe('PR #42 merged successfully.');
+
+		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
+		expect(updated?.status).toBe('done');
+		expect(updated?.result).toBe('PR #42 merged successfully.');
+	});
+
+	test('calling report_done twice is idempotent for status done', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const first = JSON.parse((await handlers.report_done({ summary: 'first' })).content[0].text);
+		expect(first.success).toBe(true);
+
+		const second = JSON.parse((await handlers.report_done({ summary: 'second' })).content[0].text);
+		expect(second.success).toBe(true);
+
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+		expect(myExec?.status).toBe('done');
+		expect(myExec?.result).toBe('second');
+	});
+
+	test('returns error when node execution for myAgentName is missing', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { myAgentName: 'ghost-agent' }));
+		const result = await handlers.report_done({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('NodeExecution not found');
+		expect(data.error).toContain('ghost-agent');
+	});
+
+	test('daemonHub is not used by report_done in node_execution path', async () => {
+		const emitted: string[] = [];
+		const fakeDaemonHub = {
+			emit: async (name: string) => {
+				emitted.push(name);
+			},
+		};
+
+		const handlers = createNodeAgentToolHandlers(
+			makeConfig(ctx, {
+				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			})
+		);
+		const data = JSON.parse((await handlers.report_done({ summary: 'done' })).content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(emitted).toHaveLength(0);
+	});
+
+	test('daemonHub is not called when report_done fails', async () => {
+		const emitted: string[] = [];
+		const fakeDaemonHub = {
+			emit: async (name: string) => {
+				emitted.push(name);
+			},
+		};
+
+		const handlers = createNodeAgentToolHandlers(
+			makeConfig(ctx, {
+				myAgentName: 'ghost-agent',
+				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			})
+		);
+		const data = JSON.parse((await handlers.report_done({})).content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(emitted).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_channels
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_channels', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns empty channels when workflow is null', async () => {
+		const config = makeConfig(ctx, { workflow: null });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(0);
+		expect(data.total).toBe(0);
+	});
+
+	test('returns empty channels when workflow has no channels', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(0);
+	});
+
+	test('returns channel with hasGate false when no inline gate', async () => {
+		const channel: WorkflowChannel = {
+			id: 'ch-1',
+			from: 'coder',
+			to: 'reviewer',
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [channel],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(1);
+		expect(data.channels[0].channelId).toBe('ch-1');
+		expect(data.channels[0].from).toBe('coder');
+		expect(data.channels[0].to).toBe('reviewer');
+		expect(data.channels[0].hasGate).toBe(false);
+	});
+
+	test('returns channel with hasGate true when inline gate present', async () => {
+		const channel: WorkflowChannel = {
+			id: 'ch-2',
+			from: 'coder',
+			to: 'reviewer',
+			gateId: 'approval-gate',
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [channel],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_channels({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.channels).toHaveLength(1);
+		expect(data.channels[0].hasGate).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_gates
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_gates', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns empty gates when workflow is null', async () => {
+		const config = makeConfig(ctx, { workflow: null });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(0);
+		expect(data.nodeId).toBe(ctx.nodeId);
+	});
+
+	test('returns empty gates when workflow has no gates', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(0);
+	});
+
+	test('returns gate with default data when no runtime data exists', async () => {
+		const gate: Gate = {
+			id: 'gate-approval',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(1);
+		expect(data.gates[0].gateId).toBe('gate-approval');
+		expect(data.gates[0].currentData).toEqual({});
+		expect(data.gates[0].fields).toHaveLength(1);
+		expect(data.gates[0].fields[0].name).toBe('approved');
+		expect(data.nodeId).toBe(ctx.nodeId);
+	});
+
+	test('returns gate with runtime data overriding defaults', async () => {
+		const gate: Gate = {
+			id: 'gate-vote',
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		// Pre-write some runtime data
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		gateDataRepo.merge(ctx.workflowRunId, 'gate-vote', {
+			votes: { 'node-a': 'approved', 'node-b': 'approved' },
+		});
+
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_gates({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gates).toHaveLength(1);
+		expect(data.gates[0].currentData).toEqual({
+			votes: { 'node-a': 'approved', 'node-b': 'approved' },
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: read_gate
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: read_gate', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error for non-existent gateId', async () => {
+		const gate: Gate = {
+			id: 'gate-real',
+			fields: [{ name: 'x', type: 'number', writers: [], check: { op: '==', value: 1 } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-does-not-exist' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not found');
+		expect(data.availableGateIds).toEqual(['gate-real']);
+	});
+
+	test('returns gate data and open status for existing gate (closed)', async () => {
+		const gate: Gate = {
+			id: 'gate-check',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } },
+			],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		gateDataRepo.set(ctx.workflowRunId, 'gate-check', { ready: false });
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.read_gate({ gateId: 'gate-check' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateId).toBe('gate-check');
+		expect(data.data).toEqual({ ready: false });
+		expect(data.gateOpen).toBe(false);
+	});
+
+	test('returns gate data and open status for existing gate (open)', async () => {
+		const gate: Gate = {
+			id: 'gate-open',
+			fields: [{ name: 'status', type: 'string', writers: [], check: { op: '==', value: 'go' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		gateDataRepo.set(ctx.workflowRunId, 'gate-open', { status: 'go' });
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.read_gate({ gateId: 'gate-open' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: write_gate
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: write_gate', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns error for non-existent gateId', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gateghost', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not found');
+	});
+
+	test('returns error when role is not in field writers', async () => {
+		const gate: Gate = {
+			id: 'gate-restricted',
+			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }], // only reviewer can write
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		// makeConfig uses myAgentName: 'coder' by default
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-restricted', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not authorized');
+		expect(data.allowedWriters).toEqual(['reviewer']);
+		expect(data.myAgentName).toBe('coder');
+	});
+
+	test('succeeds when writer matches a role alias (case-insensitive)', async () => {
+		const gate: Gate = {
+			id: 'gate-alias-writable',
+			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, {
+			workflow,
+			myAgentName: '3de067fc-82f3-4f8c-a3fc-c2c3205648dd',
+			myAgentNameAliases: ['Reviewer'],
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-alias-writable', data: { x: 'ok' } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.updatedData).toEqual({ x: 'ok' });
+	});
+
+	test('succeeds when role is in field writers and merges data', async () => {
+		const gate: Gate = {
+			id: 'gate-writable',
+			fields: [
+				{ name: 'x', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+				{ name: 'y', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+			],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		// First write: creates the record with { x: 42 }
+		const result = await handlers.write_gate({ gateId: 'gate-writable', data: { x: 42 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// Shallow merge: x=42 overwrites existing x, y is not in the partial so it's absent.
+		// Gate defaults are NOT merged in by write_gate — merge is only against stored data.
+		expect(data.updatedData).toEqual({ x: 42 });
+		expect(data.gateOpen).toBe(false); // y field also needs to exist for gate to open
+		expect(data.nodeId).toBe(ctx.nodeId);
+
+		// Second write: merge adds 'y' alongside existing 'x' — now both fields exist, gate opens
+		const result2 = await handlers.write_gate({ gateId: 'gate-writable', data: { y: 'original' } });
+		const data2 = JSON.parse(result2.content[0].text);
+		expect(data2.success).toBe(true);
+		expect(data2.updatedData).toEqual({ x: 42, y: 'original' });
+		expect(data2.gateOpen).toBe(true);
+	});
+
+	test('shallow merge: nested object is replaced wholesale', async () => {
+		const gate: Gate = {
+			id: 'gate-nested',
+			fields: [{ name: 'config', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Write with new nested object
+		const result = await handlers.write_gate({
+			gateId: 'gate-nested',
+			data: { config: { c: 3 } },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// Nested object replaced (not deep-merged)
+		expect(data.updatedData).toEqual({ config: { c: 3 } });
+	});
+
+	test('authorized role with wildcard (*) allows any role to write', async () => {
+		const gate: Gate = {
+			id: 'gate-open',
+			fields: [{ name: 'voted', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		// myAgentName is 'coder' but '*' should authorize any role
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-open', data: { voted: true } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('count condition gate opens after sufficient votes', async () => {
+		const gate: Gate = {
+			id: 'gate-vote',
+			fields: [
+				{
+					name: 'votes',
+					type: 'map',
+					writers: ['*'],
+					check: { op: 'count', match: 'approved', min: 2 },
+				},
+			],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+
+		// First vote (node-a): write only node-a's vote, gate is still closed
+		const configA = makeConfig(ctx, {
+			workflow,
+			workflowNodeId: 'node-a',
+		});
+		const handlersA = createNodeAgentToolHandlers(configA);
+		const resultA = await handlersA.write_gate({
+			gateId: 'gate-vote',
+			data: { votes: { 'node-a': 'approved' } },
+		});
+		const dataA = JSON.parse(resultA.content[0].text);
+		expect(dataA.success).toBe(true);
+		expect(dataA.gateOpen).toBe(false); // only 1 vote, need 2
+
+		// Second vote (node-b): shallow merge replaces the entire votes map,
+		// so node-b must write the accumulated map. In practice, an agent would
+		// read the current state first and then write the updated map.
+		const configB = makeConfig(ctx, {
+			workflow,
+			workflowNodeId: 'node-b',
+		});
+		const handlersB = createNodeAgentToolHandlers(configB);
+		const resultB = await handlersB.write_gate({
+			gateId: 'gate-vote',
+			data: { votes: { 'node-a': 'approved', 'node-b': 'approved' } },
+		});
+		const dataB = JSON.parse(resultB.content[0].text);
+		expect(dataB.success).toBe(true);
+		expect(dataB.gateOpen).toBe(true); // 2 votes, min=2
+	});
+
+	test('write_gate calls onGateDataChanged when provided', async () => {
+		const gate: Gate = {
+			id: 'trigger-gate',
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-trigger',
+			spaceId: ctx.spaceId,
+			name: 'Trigger Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+
+		const calls: Array<{ runId: string; gateId: string }> = [];
+		const config = makeConfig(ctx, {
+			workflow,
+			onGateDataChanged: async (runId, gateId) => {
+				calls.push({ runId, gateId });
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		await handlers.write_gate({ gateId: 'trigger-gate', data: { ready: true } });
+
+		// Allow microtasks to flush the fire-and-forget promise
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].runId).toBe(ctx.workflowRunId);
+		expect(calls[0].gateId).toBe('trigger-gate');
+	});
+
+	test('write_gate does not fail when onGateDataChanged is absent', async () => {
+		const gate: Gate = {
+			id: 'no-callback-gate',
+			fields: [{ name: 'x', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-no-cb',
+			spaceId: ctx.spaceId,
+			name: 'No Callback Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+
+		// No onGateDataChanged provided — should not throw
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'no-callback-gate', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+		expect(data.success).toBe(true);
+	});
+
+	test('rejects write_gate on script-only gate (no declared fields)', async () => {
+		// Script-only gates have no declared fields, so any data write is rejected
+		// at the field authorization layer. This is intentional — script execution
+		// populates gate data internally; agents should not write directly.
+		const gate: Gate = {
+			id: 'gate-script-only',
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-only', data: { x: 1 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not declared');
+	});
+});
+
+describe('node-agent-tools: list_reachable_agents', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns within-node peers excluding self and task-agent', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.myAgentName).toBe('coder');
+		expect(data.withinNodePeers).toHaveLength(1);
+		expect(data.withinNodePeers[0].agentName).toBe('reviewer');
+		expect(data.withinNodePeers[0].status).toBe('active');
+	});
+
+	test('returns empty cross-node targets when no channels declared', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.reachabilityDeclared).toBe(false);
+		expect(data.crossNodeTargets).toHaveLength(0);
+	});
+
+	test('returns cross-node targets for channels to roles not in current group', async () => {
+		// 'tester' is not a member of the session group — cross-node target
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.reachabilityDeclared).toBe(true);
+		expect(data.crossNodeTargets).toHaveLength(1);
+		expect(data.crossNodeTargets[0].nodeName).toBe('tester');
+		// isFanOut removed from cross-node targets (fan-out is determined by array 'to')
+	});
+
+	test('within-node peer with a channel does not appear in cross-node targets', async () => {
+		// 'reviewer' is in the session group — stays in withinNodePeers, not crossNodeTargets
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'reviewer')]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.withinNodePeers).toHaveLength(1);
+		expect(data.withinNodePeers[0].agentName).toBe('reviewer');
+		expect(data.crossNodeTargets).toHaveLength(0);
+	});
+
+	test('gate type none when no gate on cross-node channel', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets[0].gate.type).toBe('none');
+		expect(data.crossNodeTargets[0].gate.isGated).toBe(false);
+	});
+
+	test('gate type check: isGated true', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			gates: [
+				{
+					id: 'approval-gate',
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
+					resetOnCycle: false,
+				},
+			],
+		};
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'approval-gate' },
+			]),
+			workflow,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets[0].gate.type).toBe('check');
+		expect(data.crossNodeTargets[0].gate.isGated).toBe(true);
+	});
+
+	test('gate type count: isGated true', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			gates: [
+				{
+					id: 'vote-gate',
+					fields: [
+						{
+							name: 'votes',
+							type: 'map',
+							writers: ['*'],
+							check: { op: 'count', match: 'approved', min: 2 },
+						},
+					],
+					resetOnCycle: false,
+				},
+			],
+		};
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'vote-gate' },
+			]),
+			workflow,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets[0].gate.type).toBe('count');
+		expect(data.crossNodeTargets[0].gate.isGated).toBe(true);
+	});
+
+	test('no gateId on channel: isGated false', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+		};
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('coder', 'tester')]),
+			workflow,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets[0].gate.type).toBe('none');
+		expect(data.crossNodeTargets[0].gate.isGated).toBe(false);
+	});
+
+	test('gate description propagated when present', async () => {
+		const workflow: SpaceWorkflow = {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			gates: [
+				{
+					id: 'lead-gate',
+					description: 'Needs tech lead approval',
+					fields: [
+						{ name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+					],
+					resetOnCycle: false,
+				},
+			],
+		};
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				{ id: 'ch-1', from: 'coder', to: 'tester', gateId: 'lead-gate' },
+			]),
+			workflow,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets[0].gate.description).toBe('Needs tech lead approval');
+	});
+
+	test('fan-out target marked as isFanOut true', async () => {
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'qa-node', false, { isFanOut: true }),
+			]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets).toHaveLength(1);
+		expect(data.crossNodeTargets[0].nodeName).toBe('qa-node');
+		// isFanOut removed - channel to[] array already indicates fan-out
+	});
+
+	test('deduplicates cross-node targets from multiple channels to same role', async () => {
+		// Two channels to 'tester' (e.g. from bidirectional expansion) — should appear once
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([
+				makeResolvedChannel('coder', 'tester'),
+				makeResolvedChannel('coder', 'tester'), // duplicate
+			]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets).toHaveLength(1);
+	});
+
+	test('only includes outgoing channels (fromRole matches myAgentName)', async () => {
+		// Channel from 'tester' → 'coder' should NOT appear as a cross-node target for coder
+		const config = makeConfig(ctx, {
+			channelResolver: makeResolver([makeResolvedChannel('tester', 'coder')]),
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_reachable_agents({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.crossNodeTargets).toHaveLength(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: createNodeAgentMcpServer (factory)
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: createNodeAgentMcpServer', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('creates an MCP server with expected tools', () => {
+		const config = makeConfig(ctx);
+		const server = createNodeAgentMcpServer(config);
+
+		// Server should be an object with a server property (MCP SDK server)
+		expect(server).toBeDefined();
+		expect(typeof server).toBe('object');
+	});
+});
+
+describe('node-agent-tools: system prompt uses only visible prompt text', () => {
+	test('buildCustomAgentSystemPrompt returns configured text only', async () => {
+		const { buildCustomAgentSystemPrompt } = await import(
+			'../../../../src/lib/space/agents/custom-agent.ts'
+		);
+
+		const prompt = buildCustomAgentSystemPrompt({
+			id: 'agent-1',
+			spaceId: 'space-1',
+			name: 'Coder',
+			description: '',
+			model: null,
+			tools: [],
+			systemPrompt: 'Visible workflow prompt',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		});
+
+		expect(prompt).toBe('Visible workflow prompt');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: list_peers — completion state
+// ---------------------------------------------------------------------------
+
+describe('list_peers — completion state', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('list_peers includes completionState for each peer based on space_tasks', async () => {
+		const workflowNodeId = 'node-abc';
+		const workflowRunId = 'run-test-abc';
+
+		seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
+
+		// Seed a completed task for the reviewer peer
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			workflowNodeId,
+			'reviewer',
+			'done',
+			'All looks good!'
+		);
+
+		const config = makeConfig(ctx, {
+			workflowRunId,
+			workflowNodeId,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		const reviewerPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'reviewer');
+		expect(reviewerPeer).toBeDefined();
+		expect(reviewerPeer.completionState).not.toBeNull();
+		expect(reviewerPeer.completionState.taskStatus).toBe('done');
+		expect(reviewerPeer.completionState.completionSummary).toBe('All looks good!');
+		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
+	});
+
+	test('list_peers shows nodeCompletionState for all tasks on the node', async () => {
+		const workflowNodeId = 'node-xyz';
+		const workflowRunId = 'run-test-xyz';
+
+		seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
+
+		// Seed tasks for both coder and reviewer on the same node
+		seedSpaceTask(ctx.db, ctx.spaceId, workflowRunId, workflowNodeId, 'coder', 'in_progress', null);
+		seedSpaceTask(
+			ctx.db,
+			ctx.spaceId,
+			workflowRunId,
+			workflowNodeId,
+			'reviewer',
+			'done',
+			'Review done'
+		);
+
+		const config = makeConfig(ctx, {
+			workflowRunId,
+			workflowNodeId,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(Array.isArray(data.nodeCompletionState)).toBe(true);
+		expect(data.nodeCompletionState).toHaveLength(2);
+
+		const coderState = data.nodeCompletionState.find(
+			(s: { agentName: string }) => s.agentName === 'coder'
+		);
+		expect(coderState).toBeDefined();
+		expect(coderState.taskStatus).toBe('in_progress');
+
+		const reviewerState = data.nodeCompletionState.find(
+			(s: { agentName: string }) => s.agentName === 'reviewer'
+		);
+		expect(reviewerState).toBeDefined();
+		expect(reviewerState.taskStatus).toBe('done');
+		expect(reviewerState.completionSummary).toBe('Review done');
+	});
+
+	test('list_peers works without space_tasks (no tasks on node)', async () => {
+		const workflowNodeId = 'node-empty';
+		const workflowRunId = 'run-test-empty';
+
+		// No tasks seeded for this node
+		const config = makeConfig(ctx, {
+			workflowRunId,
+			workflowNodeId,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.nodeCompletionState).toHaveLength(0);
+		// All peers should have null completionState
+		for (const peer of data.peers) {
+			expect(peer.completionState).toBeNull();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: async gate evaluation (scriptExecutor + scriptContext)
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: async gate evaluation', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	function makeWorkflowWithGate(gate: Gate, spaceId: string): SpaceWorkflow {
+		return {
+			id: 'wf-1',
+			spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [],
+			gates: [gate],
+		};
+	}
+
+	test('write_gate uses scriptExecutor when provided (script passes)', async () => {
+		const gate: Gate = {
+			id: 'gate-script-pass',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		// Script executor that returns success with merged data
+		const mockExecutor = async () => ({
+			success: true,
+			data: { ready: true },
+			error: undefined,
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-pass',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-pass', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('write_gate uses scriptExecutor when provided (script fails)', async () => {
+		const gate: Gate = {
+			id: 'gate-script-fail',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'exit 1',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'Script check failed: exit code 1',
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-fail',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-fail', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		expect(data.reason).toContain('Script check failed');
+	});
+
+	test('write_gate persists _scriptResult to DB when script fails', async () => {
+		const gate: Gate = {
+			id: 'gate-script-result',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "fail"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'some reason',
+		});
+
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, {
+			workflow,
+			gateDataRepo,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-result',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-script-result', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		const scriptResult = data.updatedData._scriptResult as { success: boolean; reason: string };
+		expect(scriptResult.success).toBe(false);
+		expect(scriptResult.reason).toContain('some reason');
+
+		// P0: _scriptResult should survive a DB re-fetch
+		const dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-script-result');
+		expect(dbRecord).not.toBeNull();
+		const dbScriptResult = dbRecord!.data._scriptResult as { success: boolean; reason: string };
+		expect(dbScriptResult.success).toBe(false);
+		expect(dbScriptResult.reason).toContain('some reason');
+	});
+
+	test('write_gate emits space.gateData.updated with _scriptResult when script fails', async () => {
+		const gate: Gate = {
+			id: 'gate-event',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'exit 1',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'Script failed',
+		});
+
+		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
+		const fakeDaemonHub = {
+			emit: async (name: string, payload: unknown) => {
+				emitted.push({ name, payload: payload as Record<string, unknown> });
+			},
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: 'gate-event' },
+			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		await handlers.write_gate({ gateId: 'gate-event', data: {} });
+
+		// Allow microtasks to flush
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(emitted).toHaveLength(1);
+		expect(emitted[0].name).toBe('space.gateData.updated');
+		const payload = emitted[0].payload;
+		expect(payload.gateId).toBe('gate-event');
+		// _scriptResult should be in the emitted data
+		expect(payload.data).toBeDefined();
+		const gateData = payload.data as Record<string, unknown>;
+		expect(gateData._scriptResult).toEqual({
+			success: false,
+			reason: expect.stringContaining('Script failed'),
+		});
+	});
+
+	test('write_gate does not store _scriptResult when script passes', async () => {
+		const gate: Gate = {
+			id: 'gate-no-result',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: true,
+			data: { ready: true },
+			error: undefined,
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: 'gate-no-result' },
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-no-result', data: {} });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+		expect(data.updatedData._scriptResult).toBeUndefined();
+	});
+
+	test('read_gate uses scriptExecutor when provided', async () => {
+		const gate: Gate = {
+			id: 'gate-read-script',
+			fields: [],
+			script: {
+				interpreter: 'bash',
+				source: 'exit 1',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: false,
+			data: {},
+			error: 'Script failed',
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-read-script',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-read-script' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		expect(data.reason).toContain('Script check failed');
+	});
+
+	test('read_gate without scriptExecutor reports script-only gate as open', async () => {
+		const gate: Gate = {
+			id: 'gate-read-no-exec',
+			fields: [],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "should not run"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		// No scriptExecutor provided — script-only gates report as open (documented limitation)
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.read_gate({ gateId: 'gate-read-no-exec' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('write_gate without scriptExecutor reports script-only gate as open', async () => {
+		const gate: Gate = {
+			id: 'gate-write-no-exec',
+			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "should not run"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		// No scriptExecutor provided — script check is skipped
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-write-no-exec', data: { x: true } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// Gate should be open because script is skipped and field check passes
+		expect(data.gateOpen).toBe(true);
+	});
+
+	test('scriptExecutor receives correct context with gateId', async () => {
+		const gate: Gate = {
+			id: 'gate-context-check',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		let receivedContext: { workspacePath: string; runId: string; gateId: string } | null = null;
+		const mockExecutor = async (
+			_script: import('@neokai/shared').GateScript,
+			context: { workspacePath: string; runId: string; gateId: string }
+		) => {
+			receivedContext = context;
+			return { success: true, data: { ready: true }, error: undefined };
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: { workspacePath: '/my-workspace', runId: 'run-123', gateId: '' },
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		await handlers.write_gate({ gateId: 'gate-context-check', data: {} });
+
+		expect(receivedContext).not.toBeNull();
+		expect(receivedContext!.workspacePath).toBe('/my-workspace');
+		expect(receivedContext!.runId).toBe('run-123');
+		// gateId should be overridden per-gate from the handler
+		expect(receivedContext!.gateId).toBe('gate-context-check');
+	});
+
+	test('write_gate does not store _scriptResult on field failure without executor (P1)', async () => {
+		// Gate has both script and fields, but no scriptExecutor is wired.
+		// A field-check failure should NOT produce a _scriptResult because
+		// the script was never actually executed.
+		const gate: Gate = {
+			id: 'gate-p1-bug',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "never runs"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		// No scriptExecutor provided — falls back to field-only evaluation
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({ gateId: 'gate-p1-bug', data: { ready: false } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.gateOpen).toBe(false);
+		expect(data.reason).toContain('ready');
+		// _scriptResult should NOT be present — it's a field failure, not a script failure
+		expect(data.updatedData._scriptResult).toBeUndefined();
+
+		// Verify it's not in the DB either
+		const dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-p1-bug');
+		expect(dbRecord).not.toBeNull();
+		expect(dbRecord!.data._scriptResult).toBeUndefined();
+	});
+
+	test('write_gate cleans up stale _scriptResult on subsequent success', async () => {
+		const gate: Gate = {
+			id: 'gate-cleanup',
+			fields: [
+				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
+			],
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		let callCount = 0;
+		const mockExecutor = async () => {
+			callCount++;
+			if (callCount === 1) {
+				return { success: false, data: {}, error: 'first run fails' };
+			}
+			return { success: true, data: { ready: true }, error: undefined };
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			gateDataRepo,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-cleanup',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// First write: script fails, _scriptResult should be persisted
+		const result1 = await handlers.write_gate({ gateId: 'gate-cleanup', data: {} });
+		const data1 = JSON.parse(result1.content[0].text);
+		expect(data1.gateOpen).toBe(false);
+		expect(data1.updatedData._scriptResult).toBeDefined();
+		let dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-cleanup');
+		expect(dbRecord!.data._scriptResult).toBeDefined();
+
+		// Second write: script succeeds, _scriptResult should be cleaned up
+		const result2 = await handlers.write_gate({ gateId: 'gate-cleanup', data: {} });
+		const data2 = JSON.parse(result2.content[0].text);
+		expect(data2.gateOpen).toBe(true);
+		expect(data2.updatedData._scriptResult).toBeUndefined();
+		dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-cleanup');
+		expect(dbRecord!.data._scriptResult).toBeUndefined();
+	});
+
+	test('script-only gate does not crash at field authorization (no fields)', async () => {
+		// Script-only gate (no fields) — any write attempt should be rejected at
+		// the field authorization layer (fieldMap will be empty), not crash.
+		const gate: Gate = {
+			id: 'gate-script-only-no-crash',
+			script: {
+				interpreter: 'bash',
+				source: 'echo "ok"',
+			},
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
+
+		const mockExecutor = async () => ({
+			success: true,
+			data: {},
+			error: undefined,
+		});
+
+		const config = makeConfig(ctx, {
+			workflow,
+			scriptExecutor: mockExecutor,
+			scriptContext: {
+				workspacePath: '/tmp',
+				runId: ctx.workflowRunId,
+				gateId: 'gate-script-only-no-crash',
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.write_gate({
+			gateId: 'gate-script-only-no-crash',
+			data: { anyKey: 'val' },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(false);
+		expect(data.error).toContain('not declared');
+	});
+});
