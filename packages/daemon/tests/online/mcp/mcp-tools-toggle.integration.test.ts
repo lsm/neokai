@@ -101,7 +101,6 @@ describe('MCP Tools Toggle Integration', () => {
 					settingSources: ['user', 'project', 'local'],
 					// NEW APPROACH: List of disabled servers (unchecked in UI)
 					disabledMcpServers: ['dummy-test-server'],
-					kaiTools: { memory: false },
 				},
 			})) as { success: boolean };
 			expect(disableResult.success).toBe(true);
@@ -128,7 +127,6 @@ describe('MCP Tools Toggle Integration', () => {
 					settingSources: ['user', 'project', 'local'],
 					// Empty list = all servers enabled
 					disabledMcpServers: [],
-					kaiTools: { memory: false },
 				},
 			})) as { success: boolean };
 			expect(enableResult.success).toBe(true);
@@ -165,7 +163,6 @@ describe('MCP Tools Toggle Integration', () => {
 					useClaudeCodePreset: true,
 					settingSources: ['user', 'project', 'local'],
 					disabledMcpServers: ['dummy-test-server', 'another-server'],
-					kaiTools: { memory: false },
 				},
 			});
 

@@ -76,12 +76,6 @@ export class ToolsConfigManager {
 			// MCP: Direct mapping - list of disabled servers (empty = all enabled)
 			// SDK will auto-load from .mcp.json and apply this filter via settings.local.json
 			disabledMcpServers,
-			// NeoKai tools: Only enable if allowed AND default is on
-			kaiTools: {
-				memory:
-					globalToolsConfig.kaiTools.memory.allowed &&
-					globalToolsConfig.kaiTools.memory.defaultEnabled,
-			},
 		};
 	}
 }

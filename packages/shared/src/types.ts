@@ -412,7 +412,7 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
 /**
  * Tools configuration for a session
- * Controls system prompt, setting sources, MCP tools, and NeoKai tools
+ * Controls system prompt, setting sources, and MCP tools
  *
  * SDK Terms Reference:
  * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
@@ -440,12 +440,6 @@ export interface ToolsConfig {
 	// List of MCP server names to disable (unchecked in UI)
 	// Written to settings.local.json as "disabledMcpjsonServers"
 	disabledMcpServers?: string[];
-
-	// NeoKai-specific tools (not SDK built-in tools)
-	kaiTools?: {
-		// Memory tool: persistent key-value storage for the workspace
-		memory?: boolean;
-	};
 }
 
 /**
@@ -483,13 +477,6 @@ export interface GlobalToolsConfig {
 		// Default for new sessions
 		defaultProjectMcp: boolean;
 	};
-	// NeoKai-specific tools settings
-	kaiTools: {
-		memory: {
-			allowed: boolean;
-			defaultEnabled: boolean;
-		};
-	};
 }
 
 /**
@@ -512,12 +499,6 @@ export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
 	mcp: {
 		allowProjectMcp: true, // Allow but don't enable by default
 		defaultProjectMcp: false,
-	},
-	kaiTools: {
-		memory: {
-			allowed: true,
-			defaultEnabled: false,
-		},
 	},
 };
 

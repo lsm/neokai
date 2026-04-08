@@ -55,10 +55,6 @@ export class SettingsRepository {
 			const newMcp = parsed.mcp as
 				| { allowProjectMcp?: boolean; defaultProjectMcp?: boolean }
 				| undefined;
-			const newKaiTools = parsed.kaiTools as
-				| { memory?: { allowed?: boolean; defaultEnabled?: boolean } }
-				| undefined;
-
 			return {
 				systemPrompt: {
 					claudeCodePreset: {
@@ -91,15 +87,6 @@ export class SettingsRepository {
 						newMcp?.allowProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.allowProjectMcp,
 					defaultProjectMcp:
 						newMcp?.defaultProjectMcp ?? DEFAULT_GLOBAL_TOOLS_CONFIG.mcp.defaultProjectMcp,
-				},
-				kaiTools: {
-					memory: {
-						allowed:
-							newKaiTools?.memory?.allowed ?? DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.allowed,
-						defaultEnabled:
-							newKaiTools?.memory?.defaultEnabled ??
-							DEFAULT_GLOBAL_TOOLS_CONFIG.kaiTools.memory.defaultEnabled,
-					},
 				},
 			};
 		} catch {

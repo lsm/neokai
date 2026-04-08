@@ -48,9 +48,6 @@ describe('SessionManager', () => {
 					claudeCodePreset: { allowed: true, defaultEnabled: true },
 				},
 				mcpServers: {},
-				kaiTools: {
-					memory: { allowed: true, defaultEnabled: true },
-				},
 			})),
 			saveGlobalToolsConfig: mock(() => {}),
 			getMessagesByStatus: mock(() => []),
