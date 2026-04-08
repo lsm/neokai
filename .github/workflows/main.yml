@@ -457,7 +457,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1-core, 2-handlers, 3-features, 4-space-storage]
+        shard: [1-core, 2-handlers, 3-features, 4-space-storage, 5-space]
 
     steps:
       - uses: actions/checkout@v6
