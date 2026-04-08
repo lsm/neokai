@@ -17,6 +17,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useComputed } from '@preact/signals';
 import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
@@ -77,8 +78,9 @@ interface SlotSkillsToggleProps {
 }
 
 function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps) {
-	const allSkills = skillsStore.skills.value.filter((s) => s.enabled);
-	if (allSkills.length === 0) return null;
+	// Use useComputed so the list stays reactive to global skill changes
+	const allSkills = useComputed(() => skillsStore.skills.value.filter((s) => s.enabled));
+	if (allSkills.value.length === 0) return null;
 
 	const disabledSet = new Set(disabledSkillIds ?? []);
 
@@ -88,7 +90,7 @@ function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps)
 				Skills
 			</label>
 			<div class="space-y-0.5">
-				{allSkills.map((skill) => {
+				{allSkills.value.map((skill) => {
 					const isEnabled = !disabledSet.has(skill.id);
 					return (
 						<label key={skill.id} class="flex items-center gap-1.5 cursor-pointer group">

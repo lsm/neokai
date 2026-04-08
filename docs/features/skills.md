@@ -78,18 +78,6 @@ To remove a room override, click **Reset** next to the skill. The skill returns 
 
 ## Built-in Skills
 
-### Web Search (MCP)
-
-Provides real-time web search via Brave Search. Requires a `BRAVE_API_KEY` environment variable.
-
-- **Name**: `web-search-mcp`
-- **Type**: MCP Server (built-in, opt-in — must be explicitly enabled)
-- **Tools exposed**: `brave_web_search`, `brave_image_search`
-
-This skill is **opt-in**, not automatically enabled. You must enable it in both the global skills registry and in your room's settings.
-
-Note: This is separate from the SDK's built-in `WebSearch`/`WebFetch` tools, which are always available to agents.
-
 ### Chrome DevTools (MCP)
 
 Provides browser automation and DevTools integration via the Chrome DevTools MCP server. Runs in isolated mode.

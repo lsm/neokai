@@ -188,6 +188,8 @@ export function buildWorkflowCreateParams(
 				model?: string;
 				systemPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
 				instructions?: import('@neokai/shared').WorkflowNodeAgentOverride;
+				disabledSkillIds?: string[];
+				extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
 			} = {
 				agentId: agentId ?? '',
 				name: a.name,
@@ -198,6 +200,8 @@ export function buildWorkflowCreateParams(
 			if (normalizedSP !== undefined) entry.systemPrompt = normalizedSP;
 			const normalizedInst = normalizeOverride(a.instructions);
 			if (normalizedInst !== undefined) entry.instructions = normalizedInst;
+			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
+			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
 			return entry;
 		});
 

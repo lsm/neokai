@@ -190,23 +190,23 @@ test.describe('App MCP Registry - Per-Room Enable/Disable', () => {
 		// is still set (it just matches the global default). The toggle functionality is verified.
 	});
 
-	test('should show disabled globally badge for brave-search in room settings', async ({
+	test('should show disabled globally badge for chrome-devtools in room settings', async ({
 		page,
 	}) => {
 		await navigateToRoomSettings(page, roomId);
 
-		// Verify brave-search appears in the MCP Servers list
-		const braveSearchEntry = page.locator('label:has-text("brave-search")').first();
-		await expect(braveSearchEntry).toBeVisible({ timeout: 5000 });
+		// Verify chrome-devtools appears in the MCP Servers list (seeded disabled by default)
+		const chromeEntry = page.locator('label:has-text("chrome-devtools")').first();
+		await expect(chromeEntry).toBeVisible({ timeout: 5000 });
 
 		// Verify the checkbox is unchecked (disabled globally by default on seed)
-		const checkbox = braveSearchEntry.locator('input[type="checkbox"]');
+		const checkbox = chromeEntry.locator('input[type="checkbox"]');
 		await expect(checkbox).not.toBeChecked();
 
-		// Verify "disabled globally" badge appears within the brave-search entry.
+		// Verify "disabled globally" badge appears within the chrome-devtools entry.
 		// Scope to the entry to avoid matching the same badge on other globally-disabled
-		// items (e.g. skills in the Skills section below MCP Servers).
-		await expect(braveSearchEntry.locator('text=disabled globally')).toBeVisible({
+		// items.
+		await expect(chromeEntry.locator('text=disabled globally')).toBeVisible({
 			timeout: 5000,
 		});
 	});

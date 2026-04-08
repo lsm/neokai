@@ -9,6 +9,7 @@
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type {
 	AgentDefinition,
+	McpServerConfig,
 	RoomSkillOverride,
 	Space,
 	SpaceAgent,
@@ -42,7 +43,7 @@ export interface SlotOverrides {
 	/** IDs of globally-enabled skills to disable for this slot */
 	disabledSkillIds?: string[];
 	/** Extra MCP servers to add for this slot */
-	extraMcpServers?: Record<string, unknown>;
+	extraMcpServers?: Record<string, McpServerConfig>;
 }
 
 /**
@@ -215,9 +216,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		? slotOverrides.disabledSkillIds.map((id) => ({ skillId: id, roomId: '', enabled: false }))
 		: undefined;
 
-	const extraMcpServers = slotOverrides?.extraMcpServers as
-		| Record<string, import('@neokai/shared').McpServerConfig>
-		| undefined;
+	const extraMcpServers = slotOverrides?.extraMcpServers;
 
 	if (customTools) {
 		const agentKey = sanitizeAgentKey(customAgent.name);

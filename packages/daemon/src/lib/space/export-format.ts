@@ -235,6 +235,8 @@ export function exportWorkflow(
 			if (a.model !== undefined) entry.model = a.model;
 			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
 			if (a.instructions !== undefined) entry.instructions = a.instructions;
+			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
+			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
 			return entry;
 		});
 

@@ -126,24 +126,12 @@ test.describe('Room Skills Settings - UI rendering', () => {
 		});
 	});
 
-	test('should show built-in web-search-mcp skill with always-on badge', async ({ page }) => {
+	test('should show built-in playwright skill', async ({ page }) => {
 		await navigateToRoomSkillsSettings(page, roomId);
 
-		// The web-search-mcp skill is seeded as a built-in skill
-		const skillLabel = page.locator('label').filter({ hasText: 'Web Search (MCP)' }).first();
+		// The playwright skill is seeded as a built-in skill (enabled by default)
+		const skillLabel = page.locator('label').filter({ hasText: 'Playwright' }).first();
 		await expect(skillLabel).toBeVisible({ timeout: 10000 });
-
-		// Built-in skills show "always on" badge
-		await expect(page.locator('text=always on').first()).toBeVisible({ timeout: 5000 });
-
-		// The MCP Server source type badge should be visible
-		await expect(
-			skillLabel.locator('span').filter({ hasText: 'MCP Server' }).first()
-		).toBeVisible();
-
-		// The checkbox for built-in skill should be disabled (cannot toggle)
-		const checkbox = skillLabel.locator('input[type="checkbox"]');
-		await expect(checkbox).toBeDisabled();
 	});
 });
 
