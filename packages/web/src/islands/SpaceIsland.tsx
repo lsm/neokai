@@ -14,6 +14,7 @@ import { useEffect } from 'preact/hooks';
 import type { SpaceViewMode } from '../lib/signals';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
 import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
+import { SpaceTasks } from '../components/space/SpaceTasks';
 import { SpaceDashboard } from '../components/space/SpaceDashboard';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
@@ -106,6 +107,28 @@ export default function SpaceIsland({
 				)}
 			</>
 		);
+	}
+
+	if (viewMode === 'tasks' && space) {
+			return (
+				<>
+					<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-tasks-view">
+						<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+							<SpaceTasks
+								spaceId={spaceId}
+								onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+							/>
+						</div>
+					</div>
+					{overlaySessionId && (
+						<AgentOverlayChat
+							sessionId={overlaySessionId}
+							agentName={overlayAgentName ?? undefined}
+							onClose={handleOverlayClose}
+						/>
+					)}
+				</>
+			);
 	}
 
 	if (viewMode === 'configure' && space) {

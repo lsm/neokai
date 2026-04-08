@@ -8,10 +8,11 @@
 import { useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
 import { spaceStore } from '../lib/space-store';
-import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask } from '../lib/router';
+import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask, navigateToSpaceTasks } from '../lib/router';
 import {
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
+	currentSpaceViewModeSignal,
 	spaceOverlaySessionIdSignal,
 	spaceOverlayAgentNameSignal,
 } from '../lib/signals';
@@ -92,8 +93,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		: null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
-	const isOverviewSelected = selectedSessionId === null && selectedTaskId === null;
+	const isOverviewSelected =
+		selectedSessionId === null && selectedTaskId === null && currentSpaceViewModeSignal.value === 'overview';
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
+	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 
 	const activeCount = tasks.filter(
 		(task) => task.status === 'open' || task.status === 'in_progress'
@@ -148,6 +151,11 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const handleSpaceAgentClick = () => {
 		navigateToSpaceAgent(spaceId);
+		onNavigate?.();
+	};
+
+	const handleTasksClick = () => {
+		navigateToSpaceTasks(spaceId);
 		onNavigate?.();
 	};
 
@@ -221,7 +229,36 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					</svg>
 				</div>
 				<span class="flex-1 text-sm text-gray-200 text-left truncate">Space Agent</span>
-			</button>
+				</button>
+
+				<button
+					onClick={handleTasksClick}
+					data-testid="space-detail-tasks"
+					data-active={isTasksSelected ? 'true' : 'false'}
+					class={cn(
+						'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+						isTasksSelected
+							? 'bg-dark-700 border-dark-600'
+							: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
+					)}
+				>
+					<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-green-900/40 rounded">
+						<svg
+							class="w-3.5 h-3.5 text-green-400"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m0 0h-2"
+							/>
+						</svg>
+					</div>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">Tasks</span>
+				</button>
 
 			<div class="border-t border-dark-700 mx-3 my-3" />
 

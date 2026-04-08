@@ -11,7 +11,7 @@ import { useState } from 'preact/hooks';
 import type { RuntimeState, SpaceTask } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceTask } from '../../lib/router';
-import { cn } from '../../lib/utils';
+import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
@@ -99,17 +99,6 @@ function RuntimeControlBar({ state }: { state: RuntimeState }) {
 }
 
 // ─── Recent Activity ─────────────────────────────────────────────────────────
-
-function getRelativeTime(ts: number): string {
-	const diff = Date.now() - ts;
-	const minutes = Math.floor(diff / 60_000);
-	if (minutes < 1) return 'just now';
-	if (minutes < 60) return `${minutes}m ago`;
-	const hours = Math.floor(minutes / 60);
-	if (hours < 24) return `${hours}h ago`;
-	const days = Math.floor(hours / 24);
-	return `${days}d ago`;
-}
 
 const STATUS_COLORS: Record<string, string> = {
 	in_progress: 'text-blue-400',
