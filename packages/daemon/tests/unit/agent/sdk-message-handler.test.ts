@@ -790,6 +790,58 @@ describe('SDKMessageHandler', () => {
 
 			expect(setCompactingSpy).toHaveBeenCalledWith(false);
 		});
+
+		it('should queue /context after compact to refresh context usage', async () => {
+			const enqueueWithIdSpy = mock(async () => {});
+			mockContext.messageQueue = {
+				...mockMessageQueue,
+				enqueueWithId: enqueueWithIdSpy,
+			} as unknown as MessageQueue;
+
+			const freshHandler = new SDKMessageHandler(mockContext);
+
+			const message: SDKMessage = {
+				type: 'system',
+				subtype: 'compact_boundary',
+				uuid: 'test-uuid',
+				compact_metadata: {
+					trigger: 'auto',
+					pre_tokens: 50000,
+				},
+			} as unknown as SDKMessage;
+
+			await freshHandler.handleMessage(message);
+
+			expect(setCompactingSpy).toHaveBeenCalledWith(false);
+			expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+			expect(enqueueWithIdSpy).toHaveBeenCalledWith(expect.any(String), '/context', true);
+		});
+
+		it('should not queue /context when contextAutoQueueEnabled is false', async () => {
+			mockContext.contextAutoQueueEnabled = false;
+			const enqueueWithIdSpy = mock(async () => {});
+			mockContext.messageQueue = {
+				...mockMessageQueue,
+				enqueueWithId: enqueueWithIdSpy,
+			} as unknown as MessageQueue;
+
+			const freshHandler = new SDKMessageHandler(mockContext);
+
+			const message: SDKMessage = {
+				type: 'system',
+				subtype: 'compact_boundary',
+				uuid: 'test-uuid',
+				compact_metadata: {
+					trigger: 'auto',
+					pre_tokens: 50000,
+				},
+			} as unknown as SDKMessage;
+
+			await freshHandler.handleMessage(message);
+
+			expect(setCompactingSpy).toHaveBeenCalledWith(false);
+			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('circuit breaker integration', () => {
