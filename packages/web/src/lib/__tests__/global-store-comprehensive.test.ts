@@ -15,6 +15,7 @@ vi.mock('../connection-manager.js', () => {
 	const mockHub = {
 		request: vi.fn().mockResolvedValue({ acknowledged: true }),
 		onEvent: vi.fn(() => vi.fn()),
+		onConnection: vi.fn(() => vi.fn()),
 		joinRoom: vi.fn(),
 		leaveRoom: vi.fn(),
 		isConnected: vi.fn(() => true),
@@ -55,6 +56,19 @@ function createMockSession(id: string, overrides: Partial<Session> = {}): Sessio
 	};
 }
 
+// Helper to create a mock hub with all required methods
+function createMockHub(overrides: Record<string, unknown> = {}) {
+	return {
+		request: vi.fn().mockResolvedValue({ acknowledged: true }),
+		onEvent: vi.fn(() => vi.fn()),
+		onConnection: vi.fn(() => vi.fn()),
+		joinRoom: vi.fn(),
+		leaveRoom: vi.fn(),
+		isConnected: vi.fn(() => true),
+		...overrides,
+	};
+}
+
 describe('GlobalStore', () => {
 	let store: GlobalStore;
 
@@ -67,25 +81,13 @@ describe('GlobalStore', () => {
 				getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
-		).getHubIfConnected.mockReturnValue({
-			request: vi.fn().mockResolvedValue({ acknowledged: true }),
-			onEvent: vi.fn(() => vi.fn()),
-			joinRoom: vi.fn(),
-			leaveRoom: vi.fn(),
-			isConnected: vi.fn(() => true),
-		});
+		).getHubIfConnected.mockReturnValue(createMockHub());
 		(
 			connectionManager as unknown as {
 				getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
 				getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
 			}
-		).getHub.mockResolvedValue({
-			request: vi.fn().mockResolvedValue({ acknowledged: true }),
-			onEvent: vi.fn(() => vi.fn()),
-			joinRoom: vi.fn(),
-			leaveRoom: vi.fn(),
-			isConnected: vi.fn(() => true),
-		});
+		).getHub.mockResolvedValue(createMockHub());
 	});
 
 	describe('Initial State', () => {
@@ -206,28 +208,8 @@ describe('GlobalStore', () => {
 	});
 
 	describe('initialize', () => {
-		it('should fetch snapshot and set initial state', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: {
-							sessions: [createMockSession('sess-1')],
-							hasArchivedSessions: false,
-						},
-						system: {
-							auth: { authenticated: true, method: 'api_key' },
-							health: { status: 'healthy' },
-							apiConnection: { status: 'connected' },
-						},
-						settings: { settings: { permissionMode: 'bypassPermissions' } },
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+		it('should subscribe to LiveQuery and state channels', async () => {
+			const mockHub = createMockHub();
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -237,70 +219,31 @@ describe('GlobalStore', () => {
 
 			await store.initialize();
 
-			expect(store.sessions.value).toHaveLength(1);
-			expect(store.sessions.value[0].id).toBe('sess-1');
-			expect(store.systemState.value?.auth?.method).toBe('api_key');
-			expect(store.settings.value).toEqual({ permissionMode: 'bypassPermissions' });
-		});
-
-		it('should subscribe to all state channels', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: { sessions: [], hasArchivedSessions: false },
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
-			(
-				connectionManager as unknown as {
-					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
-					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
-				}
-			).getHub.mockResolvedValue(mockHub);
-
-			await store.initialize();
-
-			expect(mockHub.onEvent).toHaveBeenCalledWith(
-				STATE_CHANNELS.GLOBAL_SESSIONS,
-				expect.any(Function)
-			);
-			expect(mockHub.onEvent).toHaveBeenCalledWith(
-				`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`,
-				expect.any(Function)
-			);
+			// Should subscribe to LiveQuery snapshot and delta events
+			expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.snapshot', expect.any(Function));
+			expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.delta', expect.any(Function));
+			// Should subscribe to system state changes
 			expect(mockHub.onEvent).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SYSTEM,
 				expect.any(Function)
 			);
+			// Should subscribe to settings changes
 			expect(mockHub.onEvent).toHaveBeenCalledWith(
 				STATE_CHANNELS.GLOBAL_SETTINGS,
 				expect.any(Function)
 			);
+			// Should register reconnection handler
+			expect(mockHub.onConnection).toHaveBeenCalledWith(expect.any(Function));
+			// Should fire initial LiveQuery subscribe
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+				queryName: 'sessions.list',
+				params: [],
+				subscriptionId: 'sessions-list',
+			});
 		});
 
 		it('should not initialize twice', async () => {
-			// Setup mock to return valid snapshot
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: { sessions: [], hasArchivedSessions: false },
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+			const mockHub = createMockHub();
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -324,32 +267,14 @@ describe('GlobalStore', () => {
 			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 
-		it('should set hasArchivedSessions from snapshot', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: {
-							sessions: [],
-							hasArchivedSessions: true,
-						},
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
-			(
-				connectionManager as unknown as {
-					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
-					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
-				}
-			).getHub.mockResolvedValue(mockHub);
+		it('should derive hasArchivedSessions from sessions data', async () => {
+			expect(store.hasArchivedSessions.value).toBe(false);
 
-			await store.initialize();
+			// Set sessions with an archived session
+			store.sessions.value = [
+				createMockSession('1'),
+				{ ...createMockSession('2'), status: 'archived' as const },
+			];
 
 			expect(store.hasArchivedSessions.value).toBe(true);
 		});
@@ -358,20 +283,7 @@ describe('GlobalStore', () => {
 	describe('refresh', () => {
 		beforeEach(async () => {
 			// Initialize store first
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: { sessions: [], hasArchivedSessions: false },
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+			const mockHub = createMockHub();
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -381,28 +293,22 @@ describe('GlobalStore', () => {
 			await store.initialize();
 		});
 
-		it('should fetch fresh snapshot from server', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: {
-							sessions: [createMockSession('sess-refreshed')],
-							hasArchivedSessions: true,
-						},
-						system: {
-							auth: { authenticated: true, method: 'oauth' },
-							health: { status: 'healthy' },
-							apiConnection: { status: 'connected' },
-						},
-						settings: { settings: { permissionMode: 'acceptEdits' } },
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+		it('should re-subscribe to LiveQuery and fetch GLOBAL_SNAPSHOT', async () => {
+			const mockHub = createMockHub({
+				request: vi.fn(async (method: string) => {
+					if (method === STATE_CHANNELS.GLOBAL_SNAPSHOT) {
+						return {
+							system: {
+								auth: { authenticated: true, method: 'oauth' },
+								health: { status: 'healthy' },
+								apiConnection: { status: 'connected' },
+							},
+							settings: { settings: { permissionMode: 'acceptEdits' } },
+						};
+					}
+					return { acknowledged: true };
+				}),
+			});
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -412,27 +318,36 @@ describe('GlobalStore', () => {
 
 			await store.refresh();
 
-			expect(store.sessions.value[0].id).toBe('sess-refreshed');
-			expect(store.hasArchivedSessions.value).toBe(true);
+			// Should re-subscribe to LiveQuery
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+				queryName: 'sessions.list',
+				params: [],
+				subscriptionId: 'sessions-list',
+			});
+			// Should fetch GLOBAL_SNAPSHOT
+			expect(mockHub.request).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+
+			// System and settings should be updated from snapshot
 			expect(store.systemState.value?.auth?.method).toBe('oauth');
 			expect(store.settings.value?.permissionMode).toBe('acceptEdits');
 		});
 
-		it('should call correct channel for refresh', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: { sessions: [], hasArchivedSessions: false },
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+		it('should update system and settings from GLOBAL_SNAPSHOT', async () => {
+			const mockHub = createMockHub({
+				request: vi.fn(async (method: string) => {
+					if (method === STATE_CHANNELS.GLOBAL_SNAPSHOT) {
+						return {
+							system: {
+								auth: { authenticated: true, method: 'api_key' },
+								health: { status: 'healthy' },
+								apiConnection: { status: 'connected' },
+							},
+							settings: { settings: { permissionMode: 'bypassPermissions' } },
+						};
+					}
+					return { acknowledged: true };
+				}),
+			});
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -442,7 +357,126 @@ describe('GlobalStore', () => {
 
 			await store.refresh();
 
-			expect(mockHub.request).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
+			expect(store.systemState.value?.auth?.method).toBe('api_key');
+			expect(store.settings.value?.permissionMode).toBe('bypassPermissions');
+		});
+
+		it('should handle null snapshot gracefully', async () => {
+			const mockHub = createMockHub({
+				request: vi.fn(async (method: string) => {
+					if (method === STATE_CHANNELS.GLOBAL_SNAPSHOT) {
+						return null;
+					}
+					return { acknowledged: true };
+				}),
+			});
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+				}
+			).getHub.mockResolvedValue(mockHub);
+
+			// Should not throw
+			await store.refresh();
+		});
+	});
+
+	describe('LiveQuery Event Handling', () => {
+		it('should update sessions from LiveQuery snapshot event', async () => {
+			const snapshotHandlers: Array<(event: unknown) => void> = [];
+			const mockHub = createMockHub({
+				onEvent: vi.fn((event: string, handler: (event: unknown) => void) => {
+					if (event === 'liveQuery.snapshot') {
+						snapshotHandlers.push(handler);
+					}
+					return vi.fn();
+				}),
+			});
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+				}
+			).getHub.mockResolvedValue(mockHub);
+
+			await store.initialize();
+
+			// Simulate LiveQuery snapshot event
+			expect(snapshotHandlers.length).toBe(1);
+			snapshotHandlers[0]({
+				subscriptionId: 'sessions-list',
+				rows: [createMockSession('sess-1'), createMockSession('sess-2')],
+			});
+
+			expect(store.sessions.value).toHaveLength(2);
+			expect(store.sessions.value[0].id).toBe('sess-1');
+			expect(store.sessions.value[1].id).toBe('sess-2');
+		});
+
+		it('should ignore snapshot events for other subscription IDs', async () => {
+			const snapshotHandlers: Array<(event: unknown) => void> = [];
+			const mockHub = createMockHub({
+				onEvent: vi.fn((event: string, handler: (event: unknown) => void) => {
+					if (event === 'liveQuery.snapshot') {
+						snapshotHandlers.push(handler);
+					}
+					return vi.fn();
+				}),
+			});
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+				}
+			).getHub.mockResolvedValue(mockHub);
+
+			await store.initialize();
+
+			// Simulate LiveQuery snapshot event for a different subscription
+			snapshotHandlers[0]({
+				subscriptionId: 'other-subscription',
+				rows: [createMockSession('sess-other')],
+			});
+
+			expect(store.sessions.value).toHaveLength(0);
+		});
+
+		it('should apply delta events correctly', async () => {
+			const deltaHandlers: Array<(event: unknown) => void> = [];
+			const mockHub = createMockHub({
+				onEvent: vi.fn((event: string, handler: (event: unknown) => void) => {
+					if (event === 'liveQuery.delta') {
+						deltaHandlers.push(handler);
+					}
+					return vi.fn();
+				}),
+			});
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+				}
+			).getHub.mockResolvedValue(mockHub);
+
+			// Pre-populate sessions
+			store.sessions.value = [createMockSession('1'), createMockSession('2')];
+
+			await store.initialize();
+
+			// Simulate delta: add one, update one, remove one
+			expect(deltaHandlers.length).toBe(1);
+			deltaHandlers[0]({
+				subscriptionId: 'sessions-list',
+				added: [createMockSession('3')],
+				updated: [{ ...createMockSession('1'), title: 'Updated Session 1' }],
+				removed: [createMockSession('2')],
+			});
+
+			expect(store.sessions.value).toHaveLength(2);
+			expect(store.sessions.value.find((s) => s.id === '1')?.title).toBe('Updated Session 1');
+			expect(store.sessions.value.find((s) => s.id === '2')).toBeUndefined();
+			expect(store.sessions.value.find((s) => s.id === '3')).toBeDefined();
 		});
 	});
 
@@ -488,20 +522,7 @@ describe('GlobalStore', () => {
 
 	describe('destroy', () => {
 		it('should reset initialized flag', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: { sessions: [], hasArchivedSessions: false },
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+			const mockHub = createMockHub();
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -517,20 +538,7 @@ describe('GlobalStore', () => {
 		});
 
 		it('should clear cleanup functions', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValue({ acknowledged: true })
-					.mockResolvedValue({
-						sessions: { sessions: [], hasArchivedSessions: false },
-						system: null,
-						settings: null,
-					}),
-				onEvent: vi.fn(() => vi.fn()),
-				joinRoom: vi.fn(),
-				leaveRoom: vi.fn(),
-				isConnected: vi.fn(() => true),
-			};
+			const mockHub = createMockHub();
 			(
 				connectionManager as unknown as {
 					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -543,6 +551,29 @@ describe('GlobalStore', () => {
 
 			const privateStore = store as unknown as { cleanupFunctions: Array<() => void> };
 			expect(privateStore.cleanupFunctions).toHaveLength(0);
+		});
+
+		it('should unsubscribe from LiveQuery on destroy', async () => {
+			const mockHub = createMockHub();
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+				}
+			).getHub.mockResolvedValue(mockHub);
+			(
+				connectionManager as unknown as {
+					getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+					getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+				}
+			).getHubIfConnected.mockReturnValue(mockHub);
+
+			await store.initialize();
+			store.destroy();
+
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+				subscriptionId: 'sessions-list',
+			});
 		});
 	});
 });

@@ -92,6 +92,9 @@ vi.mock('../../lib/space-store', () => ({
 			space: mockSpace,
 			workflows: mockWorkflows,
 			agents: mockAgents,
+			configDataLoaded: { value: true },
+			ensureConfigData: vi.fn().mockResolvedValue(undefined),
+			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 			selectSpace: mockSelectSpace,
 		};
 	},

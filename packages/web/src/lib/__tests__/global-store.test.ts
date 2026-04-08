@@ -9,12 +9,14 @@
 
 import { signal, computed } from '@preact/signals';
 import type { Session, AuthStatus, HealthStatus, SystemState } from '@neokai/shared';
+import type { LiveQueryDeltaEvent, LiveQuerySnapshotEvent } from '@neokai/shared';
 import { vi } from 'vitest';
 
 // Mock connection-manager before importing GlobalStore
 const mockHub = {
 	request: vi.fn().mockResolvedValue({ acknowledged: true }),
 	onEvent: vi.fn(() => vi.fn()),
+	onConnection: vi.fn(() => vi.fn()),
 	joinRoom: vi.fn(),
 	leaveRoom: vi.fn(),
 	isConnected: vi.fn(() => true),
@@ -23,13 +25,16 @@ const mockHub = {
 vi.mock('../connection-manager', () => ({
 	connectionManager: {
 		getHub: vi.fn(() => Promise.resolve(mockHub)),
+		getHubIfConnected: vi.fn(() => mockHub),
 	},
 }));
 
 // Recreate GlobalStore class locally for testing without connection-manager dependency
 class TestGlobalStore {
 	readonly sessions = signal<Session[]>([]);
-	readonly hasArchivedSessions = signal<boolean>(false);
+	readonly hasArchivedSessions = computed<boolean>(() =>
+		this.sessions.value.some((s) => s.status === 'archived')
+	);
 	readonly systemState = signal<SystemState | null>(null);
 	readonly settings = signal<Record<string, unknown> | null>(null);
 
@@ -71,31 +76,14 @@ class TestGlobalStore {
 		this.sessions.value = [...this.sessions.value, session];
 	}
 
-	applySessionsDelta(delta: {
-		added?: Session[];
-		updated?: Partial<Session>[];
-		removed?: string[];
-	}): void {
-		let sessions = [...this.sessions.value];
+	applySessionsDelta(event: LiveQueryDeltaEvent): void {
+		const next = new Map(this.sessions.value.map((s) => [s.id, s]));
 
-		if (delta.removed && delta.removed.length > 0) {
-			sessions = sessions.filter((s) => !delta.removed!.includes(s.id));
-		}
+		for (const row of (event.removed ?? []) as Session[]) next.delete(row.id);
+		for (const row of (event.updated ?? []) as Session[]) next.set(row.id, row);
+		for (const row of (event.added ?? []) as Session[]) next.set(row.id, row);
 
-		if (delta.updated && delta.updated.length > 0) {
-			for (const updated of delta.updated) {
-				const index = sessions.findIndex((s) => s.id === updated.id);
-				if (index !== -1) {
-					sessions[index] = updated as Session;
-				}
-			}
-		}
-
-		if (delta.added && delta.added.length > 0) {
-			sessions.unshift(...(delta.added as Session[]));
-		}
-
-		this.sessions.value = sessions;
+		this.sessions.value = [...next.values()];
 	}
 
 	destroy(): void {
@@ -153,7 +141,13 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
 		it('should handle empty delta', () => {
 			store.sessions.value = [createMockSession('1'), createMockSession('2')];
 
-			store.applySessionsDelta({});
+			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
+				added: [],
+				removed: [],
+				updated: [],
+			});
 
 			expect(store.sessions.value).toHaveLength(2);
 		});
@@ -162,26 +156,31 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
 			store.sessions.value = [createMockSession('1')];
 
 			store.applySessionsDelta({
-				removed: ['nonexistent'],
+				subscriptionId: 'test',
+				version: 1,
+				removed: [{ ...createMockSession('nonexistent') }],
 			});
 
 			expect(store.sessions.value).toHaveLength(1);
 			expect(store.sessions.value[0].id).toBe('1');
 		});
 
-		it('should handle updating non-existent session', () => {
+		it('should handle updating non-existent session (adds it as new)', () => {
 			store.sessions.value = [createMockSession('1')];
 
 			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				updated: [{ ...createMockSession('nonexistent'), title: 'Updated' }],
 			});
 
-			// Should not add the non-existent session
-			expect(store.sessions.value).toHaveLength(1);
-			expect(store.sessions.value[0].id).toBe('1');
+			// LiveQuery delta uses Map.set, so it gets added
+			expect(store.sessions.value).toHaveLength(2);
+			const added = store.sessions.value.find((s) => s.id === 'nonexistent');
+			expect(added?.title).toBe('Updated');
 		});
 
-		it('should apply operations in correct order: remove, update, add', () => {
+		it('should apply operations: remove, update, add', () => {
 			store.sessions.value = [
 				createMockSession('1'),
 				createMockSession('2'),
@@ -189,30 +188,37 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
 			];
 
 			store.applySessionsDelta({
-				removed: ['2'], // Remove first
-				updated: [{ ...createMockSession('1'), title: 'Updated 1' }], // Update second
-				added: [createMockSession('4')], // Add last (prepended)
+				subscriptionId: 'test',
+				version: 1,
+				removed: [createMockSession('2')],
+				updated: [{ ...createMockSession('1'), title: 'Updated 1' }],
+				added: [createMockSession('4')],
 			});
 
 			expect(store.sessions.value).toHaveLength(3);
-			expect(store.sessions.value[0].id).toBe('4'); // Added at start
-			expect(store.sessions.value[1].id).toBe('1');
-			expect(store.sessions.value[1].title).toBe('Updated 1');
-			expect(store.sessions.value[2].id).toBe('3');
 			// Session '2' should be removed
 			expect(store.sessions.value.find((s) => s.id === '2')).toBeUndefined();
+			// Session '1' should be updated
+			expect(store.sessions.value.find((s) => s.id === '1')?.title).toBe('Updated 1');
+			// Session '4' should be added
+			expect(store.sessions.value.find((s) => s.id === '4')).toBeDefined();
 		});
 
 		it('should handle multiple additions', () => {
 			store.sessions.value = [createMockSession('1')];
 
 			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				added: [createMockSession('2'), createMockSession('3'), createMockSession('4')],
 			});
 
 			expect(store.sessions.value).toHaveLength(4);
-			// Added sessions are prepended in order
-			expect(store.sessions.value.map((s) => s.id)).toEqual(['2', '3', '4', '1']);
+			const ids = store.sessions.value.map((s) => s.id);
+			expect(ids).toContain('1');
+			expect(ids).toContain('2');
+			expect(ids).toContain('3');
+			expect(ids).toContain('4');
 		});
 
 		it('should handle multiple removals', () => {
@@ -224,7 +230,9 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
 			];
 
 			store.applySessionsDelta({
-				removed: ['1', '3'],
+				subscriptionId: 'test',
+				version: 1,
+				removed: [createMockSession('1'), createMockSession('3')],
 			});
 
 			expect(store.sessions.value).toHaveLength(2);
@@ -239,27 +247,58 @@ describe('GlobalStore - Delta Application Edge Cases', () => {
 			];
 
 			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				updated: [
 					{ ...createMockSession('1'), title: 'Title 1' },
 					{ ...createMockSession('3'), title: 'Title 3' },
 				],
 			});
 
-			expect(store.sessions.value[0].title).toBe('Title 1');
-			expect(store.sessions.value[1].title).toBe('Session 2'); // Unchanged
-			expect(store.sessions.value[2].title).toBe('Title 3');
+			expect(store.sessions.value.find((s) => s.id === '1')?.title).toBe('Title 1');
+			expect(store.sessions.value.find((s) => s.id === '2')?.title).toBe('Session 2'); // Unchanged
+			expect(store.sessions.value.find((s) => s.id === '3')?.title).toBe('Title 3');
 		});
 
 		it('should handle empty arrays in delta', () => {
 			store.sessions.value = [createMockSession('1')];
 
 			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				removed: [],
 				updated: [],
 				added: [],
 			});
 
 			expect(store.sessions.value).toHaveLength(1);
+		});
+
+		it('should handle undefined delta fields', () => {
+			store.sessions.value = [createMockSession('1')];
+
+			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
+			});
+
+			expect(store.sessions.value).toHaveLength(1);
+		});
+
+		it('should handle combined remove + update of same session (update wins)', () => {
+			store.sessions.value = [createMockSession('1')];
+
+			// Process in order: removed first, then updated
+			store.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
+				removed: [createMockSession('1')],
+				updated: [{ ...createMockSession('1'), title: 'Still here' }],
+			});
+
+			// removed deletes from map, then updated sets it back
+			expect(store.sessions.value).toHaveLength(1);
+			expect(store.sessions.value[0].title).toBe('Still here');
 		});
 	});
 });
@@ -376,6 +415,30 @@ describe('GlobalStore', () => {
 				apiConnection: { status: 'degraded' },
 			};
 			expect(store.apiConnectionStatus.value).toBe('degraded');
+		});
+
+		it('hasArchivedSessions should be true when sessions contain archived', () => {
+			store.sessions.value = [
+				createMockSession('1'),
+				{ ...createMockSession('2'), status: 'archived' as const },
+			];
+			expect(store.hasArchivedSessions.value).toBe(true);
+		});
+
+		it('hasArchivedSessions should be false when no archived sessions', () => {
+			store.sessions.value = [createMockSession('1'), createMockSession('2')];
+			expect(store.hasArchivedSessions.value).toBe(false);
+		});
+
+		it('hasArchivedSessions should react to session changes', () => {
+			store.sessions.value = [createMockSession('1')];
+			expect(store.hasArchivedSessions.value).toBe(false);
+
+			store.sessions.value = [
+				...store.sessions.value,
+				{ ...createMockSession('2'), status: 'archived' as const },
+			];
+			expect(store.hasArchivedSessions.value).toBe(true);
 		});
 	});
 
@@ -499,33 +562,28 @@ describe('GlobalStore', () => {
 
 		it('should add new sessions', () => {
 			const privateStore = store as unknown as {
-				applySessionsDelta: (delta: {
-					added?: Session[];
-					updated?: Partial<Session>[];
-					removed?: string[];
-				}) => void;
+				applySessionsDelta: (event: LiveQueryDeltaEvent) => void;
 			};
 
 			privateStore.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				added: [createMockSession('4')],
 			});
 
 			expect(store.sessions.value).toHaveLength(4);
-			// New sessions are prepended
-			expect(store.sessions.value[0].id).toBe('4');
+			expect(store.sessions.value.find((s) => s.id === '4')).toBeDefined();
 		});
 
 		it('should remove sessions', () => {
 			const privateStore = store as unknown as {
-				applySessionsDelta: (delta: {
-					added?: Session[];
-					updated?: Partial<Session>[];
-					removed?: string[];
-				}) => void;
+				applySessionsDelta: (event: LiveQueryDeltaEvent) => void;
 			};
 
 			privateStore.applySessionsDelta({
-				removed: ['2'],
+				subscriptionId: 'test',
+				version: 1,
+				removed: [createMockSession('2')],
 			});
 
 			expect(store.sessions.value).toHaveLength(2);
@@ -534,14 +592,12 @@ describe('GlobalStore', () => {
 
 		it('should update existing sessions', () => {
 			const privateStore = store as unknown as {
-				applySessionsDelta: (delta: {
-					added?: Session[];
-					updated?: Partial<Session>[];
-					removed?: string[];
-				}) => void;
+				applySessionsDelta: (event: LiveQueryDeltaEvent) => void;
 			};
 
 			privateStore.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				updated: [{ ...createMockSession('2'), title: 'Updated Title' }],
 			});
 
@@ -551,21 +607,19 @@ describe('GlobalStore', () => {
 
 		it('should handle combined operations', () => {
 			const privateStore = store as unknown as {
-				applySessionsDelta: (delta: {
-					added?: Session[];
-					updated?: Partial<Session>[];
-					removed?: string[];
-				}) => void;
+				applySessionsDelta: (event: LiveQueryDeltaEvent) => void;
 			};
 
 			privateStore.applySessionsDelta({
+				subscriptionId: 'test',
+				version: 1,
 				added: [createMockSession('4')],
 				updated: [{ ...createMockSession('1'), title: 'Updated 1' }],
-				removed: ['2'],
+				removed: [createMockSession('2')],
 			});
 
 			expect(store.sessions.value).toHaveLength(3);
-			expect(store.sessions.value[0].id).toBe('4'); // Added first
+			expect(store.sessions.value.find((s) => s.id === '4')).toBeDefined();
 			expect(store.getSession('1')?.title).toBe('Updated 1');
 			expect(store.getSession('2')).toBeUndefined();
 		});
@@ -587,15 +641,13 @@ describe('GlobalStore - initialize()', () => {
 
 	it('should return early if already initialized', async () => {
 		// First initialize
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		await store.initialize();
 
 		// Reset call count
 		mockHub.request.mockClear();
+		mockHub.onEvent.mockClear();
+		mockHub.onConnection.mockClear();
 
 		// Second initialize should return early
 		await store.initialize();
@@ -603,92 +655,117 @@ describe('GlobalStore - initialize()', () => {
 		expect(mockHub.request).not.toHaveBeenCalled();
 	});
 
-	it('should fetch initial state snapshot on first initialize', async () => {
-		const mockSnapshot = {
-			sessions: {
-				sessions: [createMockSession('1')],
-				hasArchivedSessions: true,
-			},
-			system: {
-				auth: { authenticated: true, method: 'api_key' },
-				health: { status: 'healthy' },
-				apiConnection: { status: 'connected' },
-			},
-			settings: {
-				settings: { showArchived: false },
-			},
-		};
-		mockHub.request.mockResolvedValueOnce(mockSnapshot);
+	it('should subscribe to sessions via LiveQuery', async () => {
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 
 		await store.initialize();
 
-		expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {});
-		expect(store.sessions.value).toHaveLength(1);
-		expect(store.sessions.value[0].id).toBe('1');
-		expect(store.hasArchivedSessions.value).toBe(true);
-		expect(store.systemState.value).toEqual(mockSnapshot.system);
-		expect(store.settings.value).toEqual({ showArchived: false });
-	});
-
-	it('should set up subscriptions after fetching snapshot', async () => {
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
+		// Should call liveQuery.subscribe for sessions.list
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+			queryName: 'sessions.list',
+			params: [],
+			subscriptionId: 'sessions-list',
 		});
 
-		await store.initialize();
+		// Should subscribe to liveQuery.snapshot and liveQuery.delta events
+		expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.snapshot', expect.any(Function));
+		expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.delta', expect.any(Function));
 
-		// Should subscribe to 4 channels: sessions, sessions.delta, system, settings
-		expect(mockHub.onEvent).toHaveBeenCalledTimes(4);
-		expect(mockHub.onEvent).toHaveBeenCalledWith('state.sessions', expect.any(Function));
-		expect(mockHub.onEvent).toHaveBeenCalledWith('state.sessions.delta', expect.any(Function));
+		// Should subscribe to system and settings state channels
 		expect(mockHub.onEvent).toHaveBeenCalledWith('state.system', expect.any(Function));
 		expect(mockHub.onEvent).toHaveBeenCalledWith('state.settings', expect.any(Function));
+
+		// Should register connection handler for reconnect
+		expect(mockHub.onConnection).toHaveBeenCalledWith(expect.any(Function));
 	});
 
-	it('should handle sessions subscription updates', async () => {
-		let sessionsCallback:
-			| ((state: { sessions: Session[]; hasArchivedSessions: boolean }) => void)
-			| null = null;
+	it('should set up subscriptions after subscribing to LiveQuery', async () => {
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		await store.initialize();
 
+		// Should have 4 onEvent subscriptions: snapshot, delta, system, settings
+		expect(mockHub.onEvent).toHaveBeenCalledTimes(4);
+		// Should have 1 onConnection handler
+		expect(mockHub.onConnection).toHaveBeenCalledTimes(1);
+	});
+
+	it('should handle liveQuery.snapshot events', async () => {
+		let snapshotCallback: ((event: LiveQuerySnapshotEvent) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
-			if (channel === 'state.sessions') {
-				sessionsCallback = callback as typeof sessionsCallback;
+			if (channel === 'liveQuery.snapshot') {
+				snapshotCallback = callback as typeof snapshotCallback;
 			}
 			return vi.fn();
 		});
 
 		await store.initialize();
 
-		// Simulate sessions update
-		const newSessions = [createMockSession('new-1'), createMockSession('new-2')];
-		sessionsCallback?.({ sessions: newSessions, hasArchivedSessions: true });
+		// Simulate snapshot event
+		snapshotCallback?.({
+			subscriptionId: 'sessions-list',
+			rows: [createMockSession('new-1'), createMockSession('new-2')],
+			version: 1,
+		});
 
 		expect(store.sessions.value).toHaveLength(2);
 		expect(store.sessions.value[0].id).toBe('new-1');
-		expect(store.hasArchivedSessions.value).toBe(true);
 	});
 
-	it('should handle sessions delta subscription updates', async () => {
-		let deltaCallback:
-			| ((delta: { added?: Session[]; updated?: Partial<Session>[]; removed?: string[] }) => void)
-			| null = null;
+	it('should ignore liveQuery.snapshot events for other subscriptions', async () => {
+		let snapshotCallback: ((event: LiveQuerySnapshotEvent) => void) | null = null;
 
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [createMockSession('1')], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
+			if (channel === 'liveQuery.snapshot') {
+				snapshotCallback = callback as typeof snapshotCallback;
+			}
+			return vi.fn();
 		});
 
+		await store.initialize();
+
+		// Simulate snapshot for different subscription ID
+		snapshotCallback?.({
+			subscriptionId: 'other-subscription',
+			rows: [createMockSession('new-1')],
+			version: 1,
+		});
+
+		expect(store.sessions.value).toHaveLength(0);
+	});
+
+	it('should handle liveQuery.snapshot with null rows', async () => {
+		let snapshotCallback: ((event: LiveQuerySnapshotEvent) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
-			if (channel === 'state.sessions.delta') {
+			if (channel === 'liveQuery.snapshot') {
+				snapshotCallback = callback as typeof snapshotCallback;
+			}
+			return vi.fn();
+		});
+
+		await store.initialize();
+
+		// Simulate snapshot with null rows
+		snapshotCallback?.({
+			subscriptionId: 'sessions-list',
+			rows: null as unknown as Session[],
+			version: 1,
+		});
+
+		expect(store.sessions.value).toEqual([]);
+	});
+
+	it('should handle liveQuery.delta events', async () => {
+		let deltaCallback: ((event: LiveQueryDeltaEvent) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
+			if (channel === 'liveQuery.delta') {
 				deltaCallback = callback as typeof deltaCallback;
 			}
 			return vi.fn();
@@ -696,22 +773,56 @@ describe('GlobalStore - initialize()', () => {
 
 		await store.initialize();
 
-		// Simulate delta update
-		deltaCallback?.({ added: [createMockSession('2')], removed: ['1'] });
+		// First set up some sessions via snapshot
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			added: [createMockSession('1'), createMockSession('2')],
+		});
 
-		expect(store.sessions.value).toHaveLength(1);
-		expect(store.sessions.value[0].id).toBe('2');
+		expect(store.sessions.value).toHaveLength(2);
+
+		// Simulate delta: remove one, add one
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 2,
+			removed: [createMockSession('1')],
+			added: [createMockSession('3')],
+		});
+
+		expect(store.sessions.value).toHaveLength(2);
+		expect(store.sessions.value.find((s) => s.id === '1')).toBeUndefined();
+		expect(store.sessions.value.find((s) => s.id === '2')).toBeDefined();
+		expect(store.sessions.value.find((s) => s.id === '3')).toBeDefined();
+	});
+
+	it('should ignore liveQuery.delta events for other subscriptions', async () => {
+		let deltaCallback: ((event: LiveQueryDeltaEvent) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
+			if (channel === 'liveQuery.delta') {
+				deltaCallback = callback as typeof deltaCallback;
+			}
+			return vi.fn();
+		});
+
+		await store.initialize();
+
+		// Simulate delta for different subscription ID
+		deltaCallback?.({
+			subscriptionId: 'other-subscription',
+			version: 1,
+			added: [createMockSession('new-1')],
+		});
+
+		expect(store.sessions.value).toHaveLength(0);
 	});
 
 	it('should handle system state subscription updates', async () => {
 		let systemCallback: ((state: SystemState) => void) | null = null;
 
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
-
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
 			if (channel === 'state.system') {
 				systemCallback = callback as typeof systemCallback;
@@ -735,12 +846,7 @@ describe('GlobalStore - initialize()', () => {
 	it('should handle settings subscription updates', async () => {
 		let settingsCallback: ((state: { settings: unknown }) => void) | null = null;
 
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
-
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
 			if (channel === 'state.settings') {
 				settingsCallback = callback as typeof settingsCallback;
@@ -756,39 +862,75 @@ describe('GlobalStore - initialize()', () => {
 		expect(store.settings.value).toEqual({ showArchived: true, theme: 'dark' });
 	});
 
-	it('should handle initialization error gracefully', async () => {
-		mockHub.request.mockRejectedValueOnce(new Error('Network error'));
+	it('should handle settings subscription with null settings', async () => {
+		let settingsCallback: ((state: { settings: unknown }) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
+			if (channel === 'state.settings') {
+				settingsCallback = callback as typeof settingsCallback;
+			}
+			return vi.fn();
+		});
+
+		await store.initialize();
+
+		// Simulate settings update with null
+		settingsCallback?.({ settings: null });
+
+		expect(store.settings.value).toBeNull();
+	});
+
+	it('should register reconnection handler', async () => {
+		let connectionCallback: ((state: string) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onConnection.mockImplementation((callback: unknown) => {
+			connectionCallback = callback as typeof connectionCallback;
+			return vi.fn();
+		});
+
+		await store.initialize();
+
+		// Simulate reconnection
+		mockHub.request.mockClear();
+		connectionCallback?.('connected');
+
+		// Should re-subscribe to LiveQuery on reconnect
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+			queryName: 'sessions.list',
+			params: [],
+			subscriptionId: 'sessions-list',
+		});
+	});
+
+	it('should not re-subscribe on non-connected states', async () => {
+		let connectionCallback: ((state: string) => void) | null = null;
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onConnection.mockImplementation((callback: unknown) => {
+			connectionCallback = callback as typeof connectionCallback;
+			return vi.fn();
+		});
+
+		await store.initialize();
+
+		// Simulate disconnecting state
+		mockHub.request.mockClear();
+		connectionCallback?.('disconnected');
+
+		expect(mockHub.request).not.toHaveBeenCalled();
+	});
+
+	it('should handle getHub error gracefully', async () => {
+		const { connectionManager } = await import('../connection-manager');
+		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('Network error'));
 
 		await store.initialize();
 
 		// Store should remain in uninitialized state
 		const privateStore = store as unknown as { initialized: boolean };
 		expect(privateStore.initialized).toBe(false);
-	});
-
-	it('should handle null snapshot gracefully', async () => {
-		mockHub.request.mockResolvedValueOnce(null);
-
-		await store.initialize();
-
-		// Should still set up subscriptions even if snapshot is null
-		expect(mockHub.onEvent).toHaveBeenCalledTimes(4);
-		expect(store.sessions.value).toEqual([]);
-	});
-
-	it('should handle snapshot with missing fields', async () => {
-		mockHub.request.mockResolvedValueOnce({
-			sessions: null,
-			system: null,
-			settings: null,
-		});
-
-		await store.initialize();
-
-		expect(store.sessions.value).toEqual([]);
-		expect(store.hasArchivedSessions.value).toBe(false);
-		expect(store.systemState.value).toBeNull();
-		expect(store.settings.value).toBeNull();
 	});
 });
 
@@ -810,94 +952,95 @@ describe('GlobalStore - refresh()', () => {
 		expect(mockHub.request).not.toHaveBeenCalled();
 	});
 
-	it('should fetch fresh snapshot when initialized', async () => {
+	it('should re-subscribe to LiveQuery and fetch GLOBAL_SNAPSHOT when initialized', async () => {
 		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		await store.initialize();
 
-		// Set up refresh mock
-		const freshSnapshot = {
-			sessions: {
-				sessions: [createMockSession('refreshed-1')],
-				hasArchivedSessions: true,
-			},
-			system: {
-				auth: { authenticated: true, method: 'api_key' },
-				health: { status: 'healthy' },
-				apiConnection: { status: 'connected' },
-			},
-			settings: {
-				settings: { refreshed: true },
-			},
-		};
-		mockHub.request.mockResolvedValueOnce(freshSnapshot);
+		// Set up refresh mocks
+		mockHub.request
+			.mockResolvedValueOnce({ acknowledged: true }) // liveQuery.subscribe
+			.mockResolvedValueOnce({
+				system: {
+					auth: { authenticated: true, method: 'api_key' },
+					health: { status: 'healthy' },
+					apiConnection: { status: 'connected' },
+				},
+				settings: { settings: { refreshed: true } },
+			}); // GLOBAL_SNAPSHOT
 
 		await store.refresh();
 
-		expect(mockHub.request).toHaveBeenLastCalledWith('state.global.snapshot', {});
-		expect(store.sessions.value).toHaveLength(1);
-		expect(store.sessions.value[0].id).toBe('refreshed-1');
-		expect(store.hasArchivedSessions.value).toBe(true);
+		// Should re-subscribe to LiveQuery
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+			queryName: 'sessions.list',
+			params: [],
+			subscriptionId: 'sessions-list',
+		});
+
+		// Should fetch GLOBAL_SNAPSHOT
+		expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {});
+
+		expect(store.systemState.value?.auth).toEqual({
+			authenticated: true,
+			method: 'api_key',
+		});
 		expect(store.settings.value).toEqual({ refreshed: true });
 	});
 
-	it('should complete refresh successfully when initialized', async () => {
+	it('should handle GLOBAL_SNAPSHOT with null fields', async () => {
 		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		await store.initialize();
 
-		// Refresh
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
-		await store.refresh();
-
-		// Verify refresh called the snapshot endpoint
-		expect(mockHub.request).toHaveBeenLastCalledWith('state.global.snapshot', {});
-	});
-
-	it('should throw error on refresh failure', async () => {
-		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
-		await store.initialize();
-
-		// Refresh with error
-		mockHub.request.mockRejectedValueOnce(new Error('Refresh failed'));
-
-		await expect(store.refresh()).rejects.toThrow('Refresh failed');
-	});
-
-	it('should handle null refresh snapshot gracefully', async () => {
-		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [createMockSession('1')], hasArchivedSessions: true },
-			system: { auth: { authenticated: true } },
-			settings: { settings: { initial: true } },
-		});
-		await store.initialize();
-
-		// Refresh with null
-		mockHub.request.mockResolvedValueOnce(null);
+		// Refresh with null snapshot
+		mockHub.request
+			.mockResolvedValueOnce({ acknowledged: true }) // liveQuery.subscribe
+			.mockResolvedValueOnce({
+				system: null,
+				settings: null,
+			}); // GLOBAL_SNAPSHOT
 
 		await store.refresh();
 
-		// State should remain unchanged when snapshot is null
-		expect(store.sessions.value).toHaveLength(1);
-		expect(store.sessions.value[0].id).toBe('1');
+		expect(store.systemState.value).toBeNull();
+		expect(store.settings.value).toBeNull();
+	});
+
+	it('should handle GLOBAL_SNAPSHOT with missing settings field', async () => {
+		// Initialize first
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		await store.initialize();
+
+		// Refresh with missing settings
+		mockHub.request
+			.mockResolvedValueOnce({ acknowledged: true }) // liveQuery.subscribe
+			.mockResolvedValueOnce({
+				system: { auth: { authenticated: true } },
+			}); // GLOBAL_SNAPSHOT without settings
+
+		await store.refresh();
+
+		expect(store.settings.value).toBeNull();
+	});
+
+	it('should handle refresh when LiveQuery subscribe fails', async () => {
+		// Initialize first
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		await store.initialize();
+
+		// Refresh with LiveQuery subscribe failure (swallowed by .catch)
+		mockHub.request
+			.mockRejectedValueOnce(new Error('Subscribe failed')) // liveQuery.subscribe (caught)
+			.mockResolvedValueOnce({
+				system: null,
+				settings: null,
+			}); // GLOBAL_SNAPSHOT
+
+		// Should not throw because liveQuery.subscribe error is caught
+		await store.refresh();
+
+		expect(store.systemState.value).toBeNull();
 	});
 });
 
@@ -969,11 +1112,7 @@ describe('GlobalStore - destroy (actual)', () => {
 
 	it('should handle cleanup function errors gracefully', async () => {
 		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 
 		// Make one of the unsubscribe functions throw
 		let callCount = 0;
@@ -995,11 +1134,7 @@ describe('GlobalStore - destroy (actual)', () => {
 
 	it('should reset initialized flag on destroy', async () => {
 		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		await store.initialize();
 
 		const privateStore = store as unknown as { initialized: boolean };
@@ -1012,47 +1147,168 @@ describe('GlobalStore - destroy (actual)', () => {
 
 	it('should clear cleanup functions on destroy', async () => {
 		// Initialize first
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 		await store.initialize();
 
 		const privateStore = store as unknown as { cleanupFunctions: Array<() => void> };
-		expect(privateStore.cleanupFunctions.length).toBe(4);
+		// 4 onEvent unsubs + 1 onConnection unsub = 5
+		expect(privateStore.cleanupFunctions.length).toBe(5);
 
 		store.destroy();
 
 		expect(privateStore.cleanupFunctions.length).toBe(0);
+	});
+
+	it('should call liveQuery.unsubscribe on destroy when connected', async () => {
+		// Initialize first
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		await store.initialize();
+
+		mockHub.request.mockClear();
+
+		store.destroy();
+
+		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+			subscriptionId: 'sessions-list',
+		});
+	});
+
+	it('should not call liveQuery.unsubscribe on destroy when not connected', async () => {
+		// Don't initialize - store is not connected
+		const { connectionManager } = await import('../connection-manager');
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
+
+		store.destroy();
+
+		expect(mockHub.request).not.toHaveBeenCalledWith('liveQuery.unsubscribe', expect.anything());
 	});
 });
 
 // Tests for actual GlobalStore applySessionsDelta
 describe('GlobalStore - applySessionsDelta (actual)', () => {
 	let store: ActualGlobalStore;
-	let deltaCallback:
-		| ((delta: { added?: Session[]; updated?: Partial<Session>[]; removed?: string[] }) => void)
-		| null = null;
+	let deltaCallback: ((event: LiveQueryDeltaEvent) => void) | null = null;
 
 	beforeEach(async () => {
 		vi.clearAllMocks();
 		store = new ActualGlobalStore();
 
-		// Initialize with sessions
-		mockHub.request.mockResolvedValueOnce({
-			sessions: {
-				sessions: [createMockSession('1'), createMockSession('2'), createMockSession('3')],
-				hasArchivedSessions: false,
-			},
-			system: null,
-			settings: { settings: null },
-		});
+		// Initialize with LiveQuery subscription
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 
 		// Capture the delta callback
 		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
-			if (channel === 'state.sessions.delta') {
+			if (channel === 'liveQuery.delta') {
 				deltaCallback = callback as typeof deltaCallback;
+			}
+			return vi.fn();
+		});
+
+		await store.initialize();
+
+		// Set up initial sessions via snapshot
+		store.sessions.value = [createMockSession('1'), createMockSession('2'), createMockSession('3')];
+	});
+
+	afterEach(() => {
+		store.destroy();
+		deltaCallback = null;
+	});
+
+	it('should handle empty delta', () => {
+		deltaCallback?.({ subscriptionId: 'sessions-list', version: 1 });
+		expect(store.sessions.value).toHaveLength(3);
+	});
+
+	it('should remove sessions via delta', () => {
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			removed: [createMockSession('2')],
+		});
+		expect(store.sessions.value).toHaveLength(2);
+		expect(store.getSession('2')).toBeUndefined();
+	});
+
+	it('should update sessions via delta', () => {
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			updated: [{ ...createMockSession('2'), title: 'Updated Title' }],
+		});
+		expect(store.getSession('2')?.title).toBe('Updated Title');
+	});
+
+	it('should add sessions via delta', () => {
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			added: [createMockSession('4')],
+		});
+		expect(store.sessions.value).toHaveLength(4);
+		expect(store.sessions.value.find((s) => s.id === '4')).toBeDefined();
+	});
+
+	it('should handle removing non-existent session', () => {
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			removed: [createMockSession('nonexistent')],
+		});
+		expect(store.sessions.value).toHaveLength(3);
+	});
+
+	it('should handle updating non-existent session (adds it)', () => {
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			updated: [{ ...createMockSession('nonexistent'), title: 'New' }],
+		});
+		// LiveQuery delta uses Map.set, so it gets added
+		expect(store.sessions.value).toHaveLength(4);
+		expect(store.sessions.value.find((s) => s.id === 'nonexistent')?.title).toBe('New');
+	});
+
+	it('should apply combined delta operations', () => {
+		deltaCallback?.({
+			subscriptionId: 'sessions-list',
+			version: 1,
+			removed: [createMockSession('2')],
+			updated: [{ ...createMockSession('1'), title: 'Updated 1' }],
+			added: [createMockSession('4')],
+		});
+
+		expect(store.sessions.value).toHaveLength(3);
+		expect(store.sessions.value.find((s) => s.id === '4')).toBeDefined();
+		expect(store.getSession('1')?.title).toBe('Updated 1');
+		expect(store.getSession('2')).toBeUndefined();
+	});
+
+	it('should ignore delta for other subscription IDs', () => {
+		deltaCallback?.({
+			subscriptionId: 'other-subscription',
+			version: 1,
+			removed: [createMockSession('1')],
+			added: [createMockSession('5')],
+		});
+
+		expect(store.sessions.value).toHaveLength(3);
+	});
+});
+
+// Tests for liveQuery.snapshot events on actual GlobalStore
+describe('GlobalStore - LiveQuery Snapshot (actual)', () => {
+	let store: ActualGlobalStore;
+	let snapshotCallback: ((event: LiveQuerySnapshotEvent) => void) | null = null;
+
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		store = new ActualGlobalStore();
+
+		mockHub.request.mockResolvedValue({ acknowledged: true });
+		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
+			if (channel === 'liveQuery.snapshot') {
+				snapshotCallback = callback as typeof snapshotCallback;
 			}
 			return vi.fn();
 		});
@@ -1062,61 +1318,61 @@ describe('GlobalStore - applySessionsDelta (actual)', () => {
 
 	afterEach(() => {
 		store.destroy();
-		deltaCallback = null;
+		snapshotCallback = null;
 	});
 
-	it('should handle empty delta', () => {
-		deltaCallback?.({});
-		expect(store.sessions.value).toHaveLength(3);
-	});
+	it('should replace sessions on snapshot', () => {
+		store.sessions.value = [createMockSession('old-1'), createMockSession('old-2')];
 
-	it('should remove sessions via delta', () => {
-		deltaCallback?.({ removed: ['2'] });
-		expect(store.sessions.value).toHaveLength(2);
-		expect(store.getSession('2')).toBeUndefined();
-	});
-
-	it('should update sessions via delta', () => {
-		deltaCallback?.({ updated: [{ ...createMockSession('2'), title: 'Updated Title' }] });
-		expect(store.getSession('2')?.title).toBe('Updated Title');
-	});
-
-	it('should add sessions via delta', () => {
-		deltaCallback?.({ added: [createMockSession('4')] });
-		expect(store.sessions.value).toHaveLength(4);
-		expect(store.sessions.value[0].id).toBe('4'); // Prepended
-	});
-
-	it('should handle removing non-existent session', () => {
-		deltaCallback?.({ removed: ['nonexistent'] });
-		expect(store.sessions.value).toHaveLength(3);
-	});
-
-	it('should handle updating non-existent session', () => {
-		deltaCallback?.({ updated: [{ ...createMockSession('nonexistent'), title: 'New' }] });
-		expect(store.sessions.value).toHaveLength(3);
-	});
-
-	it('should apply combined delta operations in correct order', () => {
-		deltaCallback?.({
-			removed: ['2'],
-			updated: [{ ...createMockSession('1'), title: 'Updated 1' }],
-			added: [createMockSession('4')],
+		snapshotCallback?.({
+			subscriptionId: 'sessions-list',
+			rows: [createMockSession('new-1'), createMockSession('new-2'), createMockSession('new-3')],
+			version: 5,
 		});
 
 		expect(store.sessions.value).toHaveLength(3);
-		expect(store.sessions.value[0].id).toBe('4'); // Added first
-		expect(store.getSession('1')?.title).toBe('Updated 1');
-		expect(store.getSession('2')).toBeUndefined();
+		expect(store.sessions.value.map((s) => s.id)).toEqual(['new-1', 'new-2', 'new-3']);
+	});
+
+	it('should handle snapshot with empty rows', () => {
+		store.sessions.value = [createMockSession('old-1')];
+
+		snapshotCallback?.({
+			subscriptionId: 'sessions-list',
+			rows: [],
+			version: 2,
+		});
+
+		expect(store.sessions.value).toHaveLength(0);
+	});
+
+	it('should update hasArchivedSessions when snapshot includes archived sessions', () => {
+		snapshotCallback?.({
+			subscriptionId: 'sessions-list',
+			rows: [createMockSession('1'), { ...createMockSession('2'), status: 'archived' as const }],
+			version: 1,
+		});
+
+		expect(store.hasArchivedSessions.value).toBe(true);
+	});
+
+	it('should ignore snapshot for other subscription IDs', () => {
+		store.sessions.value = [createMockSession('existing')];
+
+		snapshotCallback?.({
+			subscriptionId: 'other-subscription',
+			rows: [createMockSession('should-not-appear')],
+			version: 1,
+		});
+
+		expect(store.sessions.value).toHaveLength(1);
+		expect(store.sessions.value[0].id).toBe('existing');
 	});
 });
 
 // Tests for subscription callbacks (actual GlobalStore)
 describe('GlobalStore - Subscription Callbacks (actual)', () => {
 	let store: ActualGlobalStore;
-	let sessionsCallback:
-		| ((state: { sessions: Session[]; hasArchivedSessions: boolean }) => void)
-		| null = null;
 	let systemCallback: ((state: SystemState) => void) | null = null;
 	let settingsCallback: ((state: { settings: unknown }) => void) | null = null;
 
@@ -1124,17 +1380,11 @@ describe('GlobalStore - Subscription Callbacks (actual)', () => {
 		vi.clearAllMocks();
 		store = new ActualGlobalStore();
 
-		mockHub.request.mockResolvedValueOnce({
-			sessions: { sessions: [], hasArchivedSessions: false },
-			system: null,
-			settings: { settings: null },
-		});
+		mockHub.request.mockResolvedValue({ acknowledged: true });
 
-		// Capture all callbacks
+		// Capture callbacks
 		mockHub.onEvent.mockImplementation((channel: string, callback: unknown) => {
-			if (channel === 'state.sessions') {
-				sessionsCallback = callback as typeof sessionsCallback;
-			} else if (channel === 'state.system') {
+			if (channel === 'state.system') {
 				systemCallback = callback as typeof systemCallback;
 			} else if (channel === 'state.settings') {
 				settingsCallback = callback as typeof settingsCallback;
@@ -1147,25 +1397,8 @@ describe('GlobalStore - Subscription Callbacks (actual)', () => {
 
 	afterEach(() => {
 		store.destroy();
-		sessionsCallback = null;
 		systemCallback = null;
 		settingsCallback = null;
-	});
-
-	it('should handle sessions update with missing sessions field', () => {
-		sessionsCallback?.({ sessions: undefined as unknown as Session[], hasArchivedSessions: true });
-		expect(store.sessions.value).toEqual([]);
-		expect(store.hasArchivedSessions.value).toBe(true);
-	});
-
-	it('should handle sessions update with missing hasArchivedSessions field', () => {
-		const newSessions = [createMockSession('1')];
-		sessionsCallback?.({
-			sessions: newSessions,
-			hasArchivedSessions: undefined as unknown as boolean,
-		});
-		expect(store.sessions.value).toHaveLength(1);
-		expect(store.hasArchivedSessions.value).toBe(false);
 	});
 
 	it('should update systemState through subscription', () => {
@@ -1200,6 +1433,25 @@ describe('GlobalStore - Computed Accessors (actual)', () => {
 
 	afterEach(() => {
 		store.destroy();
+	});
+
+	describe('hasArchivedSessions', () => {
+		it('should be false when no sessions', () => {
+			expect(store.hasArchivedSessions.value).toBe(false);
+		});
+
+		it('should be false when no archived sessions', () => {
+			store.sessions.value = [createMockSession('1'), createMockSession('2')];
+			expect(store.hasArchivedSessions.value).toBe(false);
+		});
+
+		it('should be true when archived sessions exist', () => {
+			store.sessions.value = [
+				createMockSession('1'),
+				{ ...createMockSession('2'), status: 'archived' as const },
+			];
+			expect(store.hasArchivedSessions.value).toBe(true);
+		});
 	});
 
 	describe('healthStatus', () => {

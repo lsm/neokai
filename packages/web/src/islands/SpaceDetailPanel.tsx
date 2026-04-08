@@ -141,8 +141,14 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
 		}
 
+		// Always include the selected task even if it doesn't match the current tab filter
+		if (selectedTaskId && !filtered.some((t) => t.id === selectedTaskId)) {
+			const selected = sorted.find((t) => t.id === selectedTaskId);
+			if (selected) filtered.push(selected);
+		}
+
 		return filtered;
-	}, [tasks, taskTab]);
+	}, [tasks, taskTab, selectedTaskId]);
 
 	const sessions = useMemo(() => {
 		const storeSessions = spaceStore.sessions.value;

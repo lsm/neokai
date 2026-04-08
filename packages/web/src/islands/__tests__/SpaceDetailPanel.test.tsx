@@ -9,18 +9,27 @@ import { render, fireEvent, cleanup, screen } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceTask, Space } from '@neokai/shared';
 
-const { mockNavigateToSpace, mockNavigateToSpaceAgent, mockNavigateToSpaceTask } = vi.hoisted(
-	() => ({
-		mockNavigateToSpace: vi.fn(),
-		mockNavigateToSpaceAgent: vi.fn(),
-		mockNavigateToSpaceTask: vi.fn(),
-	})
-);
+const {
+	mockNavigateToSpace,
+	mockNavigateToSpaceAgent,
+	mockNavigateToSpaceTask,
+	mockNavigateToSpaceSession,
+	mockNavigateToSpaceTasks,
+} = vi.hoisted(() => ({
+	mockNavigateToSpace: vi.fn(),
+	mockNavigateToSpaceAgent: vi.fn(),
+	mockNavigateToSpaceTask: vi.fn(),
+	mockNavigateToSpaceSession: vi.fn(),
+	mockNavigateToSpaceTasks: vi.fn(),
+}));
 
 let mockTasksSignal!: Signal<SpaceTask[]>;
 let mockSpaceSignal!: Signal<Space | null>;
 let mockLoadingSignal!: Signal<boolean>;
 let mockSpaceIdSignal!: Signal<string | null>;
+let mockSessionsSignal!: Signal<
+	Array<{ id: string; title: string; status: string; lastActiveAt: number }>
+>;
 let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
@@ -31,6 +40,7 @@ function initSignals() {
 	mockSpaceSignal = signal(null);
 	mockLoadingSignal = signal(false);
 	mockSpaceIdSignal = signal('space-1');
+	mockSessionsSignal = signal([]);
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
 	mockSpaceOverlaySessionIdSignal = signal(null);
@@ -46,6 +56,7 @@ vi.mock('../../lib/space-store.ts', () => ({
 			space: mockSpaceSignal,
 			loading: mockLoadingSignal,
 			spaceId: mockSpaceIdSignal,
+			sessions: mockSessionsSignal,
 		};
 	},
 }));
@@ -54,6 +65,8 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToSpace: mockNavigateToSpace,
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	navigateToSpaceTask: mockNavigateToSpaceTask,
+	navigateToSpaceSession: mockNavigateToSpaceSession,
+	navigateToSpaceTasks: mockNavigateToSpaceTasks,
 }));
 
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
@@ -232,36 +245,46 @@ describe('SpaceDetailPanel', () => {
 	});
 
 	it('renders Sessions expanded by default', () => {
-		mockSpaceSignal.value = makeSpace('space-1', { sessionIds: ['manual-session-abc123'] });
+		mockSessionsSignal.value = [
+			{ id: 'manual-session-abc123', title: 'manual-s', status: 'active', lastActiveAt: 0 },
+		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 		expect(screen.getByText('manual-s')).toBeTruthy();
 	});
 
 	it('filters out system sessions from the Sessions section', () => {
-		mockSpaceSignal.value = makeSpace('space-1', {
-			sessionIds: [
-				'space:chat:space-1',
-				'space:space-1:task:task-123',
-				'space:space-1:workflow:run-1',
-				'manual-session-abc123',
-			],
-		});
+		mockSessionsSignal.value = [
+			{
+				id: 'space:space-1:task:task-123',
+				title: 'task-session',
+				status: 'active',
+				lastActiveAt: 0,
+			},
+			{
+				id: 'space:space-1:workflow:run-1',
+				title: 'workflow-session',
+				status: 'active',
+				lastActiveAt: 0,
+			},
+			{ id: 'manual-session-abc123', title: 'manual-s', status: 'active', lastActiveAt: 0 },
+		];
 		render(<SpaceDetailPanel spaceId="space-1" />);
 
-		expect(screen.queryByText('space:cha')).toBeNull();
-		expect(screen.queryByText('space:spa')).toBeNull();
+		expect(screen.queryByText('task-session')).toBeNull();
+		expect(screen.queryByText('workflow-session')).toBeNull();
 		expect(screen.getByText('manual-s')).toBeTruthy();
 	});
 
 	it('opens overlay on session click and calls onNavigate', () => {
 		const onNavigate = vi.fn();
 		mockSpaceOverlaySessionIdSignal.value = null;
-		mockSpaceSignal.value = makeSpace('space-1', { sessionIds: ['manual-session-abc123'] });
+		mockSessionsSignal.value = [
+			{ id: 'manual-session-abc123', title: 'manual-s', status: 'active', lastActiveAt: 0 },
+		];
 		render(<SpaceDetailPanel spaceId="space-1" onNavigate={onNavigate} />);
 
 		fireEvent.click(screen.getByText('manual-s'));
-		expect(mockSpaceOverlaySessionIdSignal.value).toBe('manual-session-abc123');
-		expect(mockSpaceOverlayAgentNameSignal.value).toBe('manual-s');
+		expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'manual-session-abc123');
 		expect(onNavigate).toHaveBeenCalledOnce();
 	});
 

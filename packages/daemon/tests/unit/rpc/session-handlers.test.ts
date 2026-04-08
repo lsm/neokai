@@ -35,6 +35,7 @@ import type { SessionManager } from '../../../src/lib/session-manager';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
+import type { SpaceManager } from '../../../src/lib/space/managers/space-manager';
 import type { Session } from '@neokai/shared';
 
 // Type for captured request handlers
@@ -102,6 +103,14 @@ function createMockRoomManager(): RoomManager {
 		addAllowedPath: mock(() => null),
 		removeAllowedPath: mock(() => null),
 	} as unknown as RoomManager;
+}
+
+// Helper to create mock SpaceManager
+function createMockSpaceManager(): SpaceManager {
+	return {
+		addSession: mock(async () => ({ id: 'space-1' })),
+		removeSession: mock(async () => ({ id: 'space-1' })),
+	} as unknown as SpaceManager;
 }
 
 // Helper to create a mock AgentSession
@@ -226,12 +235,14 @@ describe('Session RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
 	let roomManager: RoomManager;
+	let spaceManager: SpaceManager;
 	let sessionManagerData: ReturnType<typeof createMockSessionManager>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
 		roomManager = createMockRoomManager();
+		spaceManager = createMockSpaceManager();
 		sessionManagerData = createMockSessionManager('/default/workspace');
 
 		// Setup handlers with mocked dependencies
@@ -239,7 +250,8 @@ describe('Session RPC Handlers', () => {
 			messageHubData.hub,
 			sessionManagerData.sessionManager,
 			daemonHubData.daemonHub,
-			roomManager
+			roomManager,
+			spaceManager
 		);
 	});
 
@@ -1148,7 +1160,8 @@ describe('Session RPC Handlers', () => {
 				noRootMessageHub.hub,
 				noRootSessionManager.sessionManager,
 				daemonHubData.daemonHub,
-				roomManager
+				roomManager,
+				spaceManager
 			);
 
 			const handler = noRootMessageHub.handlers.get('worktree.cleanup');
