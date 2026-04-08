@@ -1,10 +1,10 @@
-import type { ServerWebSocket } from 'bun';
 import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { networkInterfaces } from 'node:os';
 import { createLogger } from '@neokai/shared';
 import {
 	findAvailablePort,
@@ -16,6 +16,27 @@ import {
 import { ensureBuiltinSkills } from './skill-utils';
 
 const log = createLogger('kai:cli:dev-server');
+
+/**
+ * Find the LAN IP address (prefers en0).
+ */
+function getLanIp(): string | undefined {
+	const nets = networkInterfaces();
+	for (const name of ['en0', 'en1', 'eth0', 'Ethernet']) {
+		const net = nets[name];
+		if (!net) continue;
+		for (const info of net) {
+			if (info.family === 'IPv4' && !info.internal) return info.address;
+		}
+	}
+	// Fallback: any non-internal IPv4
+	for (const entries of Object.values(nets)) {
+		for (const info of entries ?? []) {
+			if (info.family === 'IPv4' && !info.internal) return info.address;
+		}
+	}
+	return undefined;
+}
 
 export async function startDevServer(config: Config) {
 	log.info('🔧 Starting unified development server...');
@@ -108,19 +129,21 @@ export async function startDevServer(config: Config) {
 	log.info('📦 Starting Vite dev server...');
 	const vitePort = await findAvailablePort();
 	log.info(`   Found available Vite port: ${vitePort}`);
+
+	// Detect LAN IP so Vite generates correct HMR URLs for remote access
+	const lanIp = getLanIp();
+	const hmrHost = lanIp ?? 'localhost';
+
 	vite = await createViteServer({
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
 		server: {
-			// Vite only needs to listen on localhost — all external traffic comes
-			// through the Bun proxy server which handles both HTTP and WebSocket.
+			host: '0.0.0.0',
 			port: vitePort,
 			strictPort: false,
 			hmr: {
-				// Route HMR WebSocket through the Bun proxy on the main server port.
-				// The client derives the hostname from window.location.hostname
-				// so HMR works from any machine (localhost, LAN, Tailscale, etc.).
-				clientPort: config.port,
+				host: hmrHost,
+				port: vitePort,
 				path: '/__vite_hmr',
 			},
 		},
@@ -146,8 +169,8 @@ export async function startDevServer(config: Config) {
 				return createCorsPreflightResponse();
 			}
 
-			// HMR WebSocket — proxy to internal Vite server
-			if (url.pathname === '/__vite_hmr') {
+			// HMR WebSocket — bridge to internal Vite server
+			if (url.pathname === '/__vite_hmr' || url.pathname.startsWith('/__vite_hmr/')) {
 				const isUpgrade = req.headers.get('upgrade')?.toLowerCase() === 'websocket';
 				if (isUpgrade) {
 					const viteWsUrl = `ws://localhost:${vitePort}${url.pathname}${url.search}`;
@@ -183,8 +206,7 @@ export async function startDevServer(config: Config) {
 			try {
 				const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
 
-				// Build fetch options — preserve the original Host header so Vite
-				// generates correct HMR client code with the real hostname (not localhost)
+				// Forward request with original headers
 				const fetchOptions: RequestInit = {
 					method: req.method,
 					headers: Object.fromEntries(req.headers.entries()),
@@ -212,7 +234,7 @@ export async function startDevServer(config: Config) {
 
 		websocket: {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- combined handler for daemon + HMR WS
-			open(ws: ServerWebSocket<any>) {
+			open(ws: any) {
 				if (ws.data.type === 'hmr') {
 					const upstream = ws.data.upstream as WebSocket;
 					upstream.onmessage = (e) => ws.send(e.data as string);
@@ -222,8 +244,7 @@ export async function startDevServer(config: Config) {
 				}
 				wsHandlers.open(ws);
 			},
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			message(ws: ServerWebSocket<any>, msg: string | Buffer) {
+			message(ws: any, msg: string | Buffer) {
 				if (ws.data.type === 'hmr') {
 					const upstream = ws.data.upstream as WebSocket;
 					if (upstream.readyState === WebSocket.OPEN) {
@@ -233,8 +254,7 @@ export async function startDevServer(config: Config) {
 				}
 				wsHandlers.message(ws, msg);
 			},
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			close(ws: ServerWebSocket<any>) {
+			close(ws: any) {
 				if (ws.data.type === 'hmr') {
 					const upstream = ws.data.upstream as WebSocket;
 					upstream.close();
@@ -252,6 +272,6 @@ export async function startDevServer(config: Config) {
 
 	console.log(`\n✨ Unified development server running!`);
 	printServerUrls(config.port, config.host);
-	console.log(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied)`);
+	console.log(`   🔥 HMR enabled (Vite on port ${vitePort}, proxied via /__vite_hmr)`);
 	console.log(`\n📝 Press Ctrl+C to stop\n`);
 }
