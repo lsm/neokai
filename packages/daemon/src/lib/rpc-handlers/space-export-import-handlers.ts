@@ -201,7 +201,11 @@ export function buildWorkflowCreateParams(
 			const normalizedInst = normalizeOverride(a.instructions);
 			if (normalizedInst !== undefined) entry.instructions = normalizedInst;
 			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
-			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
+			if (a.extraMcpServers !== undefined)
+				entry.extraMcpServers = a.extraMcpServers as Record<
+					string,
+					import('@neokai/shared').McpServerConfig
+				>;
 			return entry;
 		});
 

@@ -77,6 +77,13 @@ const exportedWorkflowNodeAgentSchema = z.object({
 	model: z.string().min(1).optional(),
 	systemPrompt: overrideOrStringSchema.optional(),
 	instructions: overrideOrStringSchema.optional(),
+	/** IDs of globally-enabled skills disabled for this slot. */
+	disabledSkillIds: z.array(z.string()).optional(),
+	/**
+	 * Extra MCP servers for this slot.
+	 * Validated as a loose record to stay forward-compatible with SDK McpServerConfig shape changes.
+	 */
+	extraMcpServers: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**

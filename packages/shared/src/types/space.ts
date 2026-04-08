@@ -1047,9 +1047,11 @@ export interface ExportedWorkflowNodeAgent {
 	disabledSkillIds?: string[];
 	/**
 	 * Extra MCP servers to add for this agent slot.
-	 * Preserved through export/import round-trip.
+	 * Typed loosely as `Record<string, unknown>` because this is an export/import
+	 * format — the Zod schema validates the shape at parse time for forward-compatibility,
+	 * and the data is cast to `McpServerConfig` only at runtime use.
 	 */
-	extraMcpServers?: Record<string, McpServerConfig>;
+	extraMcpServers?: Record<string, unknown>;
 }
 
 /**
