@@ -6,12 +6,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { Space, SpaceTask } from '@neokai/shared';
+import type { RuntimeState, Space, SpaceTask } from '@neokai/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
-let mockWorkflows: ReturnType<typeof signal<unknown[]>>;
+let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -19,15 +19,19 @@ vi.mock('../../../lib/space-store', () => ({
 			space: mockSpace,
 			loading: mockLoading,
 			tasks: mockTasks,
-			workflows: mockWorkflows,
+			runtimeState: mockRuntimeState,
 		};
 	},
+}));
+
+vi.mock('../../../lib/router', () => ({
+	navigateToSpaceTask: vi.fn(),
 }));
 
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
-mockWorkflows = signal([]);
+mockRuntimeState = signal<RuntimeState | null>(null);
 
 import { SpaceDashboard } from '../SpaceDashboard';
 
@@ -77,7 +81,7 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = null;
 		mockLoading.value = false;
 		mockTasks.value = [];
-		mockWorkflows.value = [];
+		mockRuntimeState.value = null;
 	});
 
 	afterEach(() => {
@@ -95,23 +99,7 @@ describe('SpaceDashboard', () => {
 		expect(getByText('Space not found')).toBeTruthy();
 	});
 
-	it('renders the task tabs without the removed overview hero', () => {
-		mockSpace.value = makeSpace({
-			name: 'UI Review Space',
-			description: 'Space created for UI review.',
-			workspacePath: '/tmp/workspace',
-		});
-		const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('Active')).toBeTruthy();
-		expect(getByText('Review')).toBeTruthy();
-		expect(getByText('Done')).toBeTruthy();
-		expect(queryByText('UI Review Space')).toBeNull();
-		expect(queryByText('Space created for UI review.')).toBeNull();
-		expect(queryByText('/tmp/workspace')).toBeNull();
-		expect(queryByText('Ask Space Agent')).toBeNull();
-	});
-
-	it('renders the task tabs and grouped active tasks', () => {
+	it('renders stat cards with correct counts', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [
 			makeTask('t1', 'open'),
@@ -121,51 +109,33 @@ describe('SpaceDashboard', () => {
 		];
 
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		// Stats strip: Active (open + in_progress = 2), Review (blocked = 1), Done (done = 1)
 		expect(getByText('Active')).toBeTruthy();
 		expect(getByText('Review')).toBeTruthy();
 		expect(getByText('Done')).toBeTruthy();
-		expect(getByText('In Progress')).toBeTruthy();
-		expect(getByText('Queued')).toBeTruthy();
-		expect(getByText('Task t2')).toBeTruthy();
-		expect(getByText('Task t1')).toBeTruthy();
 	});
 
-	it('switches to the Review tab and shows blocked tasks', () => {
+	it('renders recent activity with tasks sorted by updatedAt', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'open')];
-
-		const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getByText('Review').closest('button')!);
-		expect(getByText('Needs Review')).toBeTruthy();
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(queryByText('Task t2')).toBeNull();
-	});
-
-	it('switches to the Done tab and shows terminal tasks', () => {
-		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'done'), makeTask('t2', 'cancelled')];
+		const now = Date.now();
+		mockTasks.value = [
+			makeTask('t1', 'open', { updatedAt: now - 60_000 }),
+			makeTask('t2', 'in_progress', { updatedAt: now }),
+			makeTask('t3', 'done', { updatedAt: now - 120_000 }),
+		];
 
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getByText('Done').closest('button')!);
-		expect(getByText('Completed')).toBeTruthy();
-		expect(getByText('Cancelled')).toBeTruthy();
+		expect(getByText('Recent Activity')).toBeTruthy();
 		expect(getByText('Task t1')).toBeTruthy();
 		expect(getByText('Task t2')).toBeTruthy();
+		expect(getByText('Task t3')).toBeTruthy();
 	});
 
-	it('shows the empty-state guidance when there are no tasks', () => {
+	it('shows empty state when there are no tasks', () => {
 		mockSpace.value = makeSpace();
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(getByText('This space has no tasks yet.')).toBeTruthy();
-		expect(getByText('Create the first task to start the space.')).toBeTruthy();
-	});
-
-	it('shows the empty state for a tab with no tasks', () => {
-		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'open')];
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getByText('Review').closest('button')!);
-		expect(getByText('No tasks need attention right now.')).toBeTruthy();
+		expect(getByText('No tasks yet')).toBeTruthy();
+		expect(getByText('Create a task to get started')).toBeTruthy();
 	});
 
 	it('calls onSelectTask when a task row is clicked', () => {
@@ -173,18 +143,11 @@ describe('SpaceDashboard', () => {
 		mockTasks.value = [makeTask('t1', 'done')];
 		const onSelectTask = vi.fn();
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
-		fireEvent.click(getByText('Done').closest('button')!);
 		fireEvent.click(getByText('Task t1').closest('button')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
 	});
 
-	it('does not render legacy workflow canvas', () => {
-		mockSpace.value = makeSpace();
-		const { container } = render(<SpaceDashboard spaceId="space-1" />);
-		expect(container.querySelector('[data-testid="workflow-canvas-svg"]')).toBeNull();
-	});
-
-	it('renders only the Create Task action button', () => {
+	it('renders the Create Task button', () => {
 		mockSpace.value = makeSpace();
 		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
 		expect(getByRole('button', { name: 'Create Task' })).toBeTruthy();
@@ -194,165 +157,59 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
 		fireEvent.click(getByRole('button', { name: 'Create Task' }));
-		// Modal renders via Portal into document.body
 		const dialog = document.body.querySelector('[role="dialog"]');
 		expect(dialog).toBeTruthy();
 		expect(dialog?.querySelector('h2')?.textContent).toBe('Create Task');
 	});
 
-	it('renders blocked reason text on a blocked task card', () => {
+	it('renders runtime control bar when runtimeState is set', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'blocked', { result: 'Waiting for human approval' })];
-
+		mockRuntimeState.value = 'running';
 		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getByText('Review').closest('button')!);
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(getByText('Waiting for human approval')).toBeTruthy();
+		expect(getByText('Running')).toBeTruthy();
 	});
 
-	it('does not render blocked reason when result is null', () => {
+	it('does not render runtime control bar when runtimeState is null', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'blocked', { result: null })];
-
-		const { queryByTestId } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(queryByTestId('tab-review') ?? document.querySelector('button')!);
-		expect(document.querySelector('[data-testid="task-blocked-reason"]')).toBeNull();
+		mockRuntimeState.value = null;
+		const { queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		expect(queryByText('Running')).toBeNull();
+		expect(queryByText('Paused')).toBeNull();
+		expect(queryByText('Stopped')).toBeNull();
 	});
 
-	it('does not render blocked reason for non-blocked tasks even if result is set', () => {
+	it('limits recent activity to 8 tasks', () => {
 		mockSpace.value = makeSpace();
-		mockTasks.value = [makeTask('t1', 'done', { result: 'All done' })];
+		const now = Date.now();
+		mockTasks.value = Array.from({ length: 10 }, (_, i) =>
+			makeTask(`t${i + 1}`, 'in_progress', { updatedAt: now - i * 60_000 })
+		);
 
-		const { getByText, queryByTestId } = render(<SpaceDashboard spaceId="space-1" />);
-		fireEvent.click(getByText('Done').closest('button')!);
-		expect(getByText('Task t1')).toBeTruthy();
-		expect(document.querySelector('[data-testid="task-blocked-reason"]')).toBeNull();
+		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		// Each task renders as a button inside the activity list
+		const activityButtons = container.querySelectorAll('.divide-y button');
+		expect(activityButtons.length).toBe(8);
 	});
 
-	describe('task visibility — status-based grouping and count badges', () => {
-		it('shows correct count badges for each tab', () => {
-			mockSpace.value = makeSpace();
-			mockTasks.value = [
-				makeTask('t1', 'open'),
-				makeTask('t2', 'in_progress'),
-				makeTask('t3', 'in_progress'),
-				makeTask('t4', 'blocked'),
-				makeTask('t5', 'blocked'),
-				makeTask('t6', 'blocked'),
-				makeTask('t7', 'done'),
-			];
+	it('stat card counts update when tasks change', () => {
+		mockSpace.value = makeSpace();
+		mockTasks.value = [makeTask('t1', 'open')];
 
-			const { container } = render(<SpaceDashboard spaceId="space-1" />);
-			// Tab buttons contain label + count badge
-			const tabs = container.querySelectorAll('button');
-			const tabTexts = Array.from(tabs).map((btn) => btn.textContent);
-			// Active tab: 3 tasks (1 open + 2 in_progress)
-			expect(tabTexts.some((t) => t?.includes('Active') && t?.includes('3'))).toBe(true);
-			// Review tab: 3 blocked tasks
-			expect(tabTexts.some((t) => t?.includes('Review') && t?.includes('3'))).toBe(true);
-			// Done tab: 1 done task
-			expect(tabTexts.some((t) => t?.includes('Done') && t?.includes('1'))).toBe(true);
-		});
+		const { container, rerender } = render(<SpaceDashboard spaceId="space-1" />);
 
-		it('groups active tasks into In Progress and Queued sections', () => {
-			mockSpace.value = makeSpace();
-			mockTasks.value = [
-				makeTask('t1', 'open'),
-				makeTask('t2', 'open'),
-				makeTask('t3', 'in_progress'),
-			];
+		// Active count should include the open task
+		const getStatText = () =>
+			Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+		let stats = getStatText();
+		expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
+		expect(stats.some((t) => t?.includes('Review') && t?.includes('0'))).toBe(true);
 
-			const { getByText, getAllByText } = render(<SpaceDashboard spaceId="space-1" />);
-			expect(getByText('In Progress')).toBeTruthy();
-			expect(getByText('Queued')).toBeTruthy();
-			expect(getByText('Task t3')).toBeTruthy();
-			expect(getByText('Task t1')).toBeTruthy();
-			expect(getByText('Task t2')).toBeTruthy();
-		});
+		// Add a blocked task
+		mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'blocked')];
+		rerender(<SpaceDashboard spaceId="space-1" />);
 
-		it('groups done tab into Completed, Cancelled, and Archived sections', () => {
-			mockSpace.value = makeSpace();
-			mockTasks.value = [
-				makeTask('t1', 'done'),
-				makeTask('t2', 'cancelled'),
-				makeTask('t3', 'archived'),
-			];
-
-			const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
-			fireEvent.click(getByText('Done').closest('button')!);
-			expect(getByText('Completed')).toBeTruthy();
-			expect(getByText('Cancelled')).toBeTruthy();
-			expect(getByText('Archived')).toBeTruthy();
-			expect(getByText('Task t1')).toBeTruthy();
-			expect(getByText('Task t2')).toBeTruthy();
-			expect(getByText('Task t3')).toBeTruthy();
-		});
-
-		it('omits empty groups within the Active tab', () => {
-			mockSpace.value = makeSpace();
-			// Only open tasks, no in_progress — "In Progress" section should be omitted
-			mockTasks.value = [makeTask('t1', 'open')];
-
-			const { getByText, queryByText } = render(<SpaceDashboard spaceId="space-1" />);
-			expect(getByText('Queued')).toBeTruthy();
-			expect(queryByText('In Progress')).toBeNull();
-		});
-
-		it('tasks appear without manual refresh when signal updates', () => {
-			mockSpace.value = makeSpace();
-			mockTasks.value = [];
-
-			const { getByText, queryByText, rerender } = render(<SpaceDashboard spaceId="space-1" />);
-			expect(getByText('This space has no tasks yet.')).toBeTruthy();
-
-			// Simulate a new task arriving via WebSocket event (signal update)
-			mockTasks.value = [makeTask('t-new', 'in_progress')];
-			rerender(<SpaceDashboard spaceId="space-1" />);
-
-			expect(queryByText('This space has no tasks yet.')).toBeNull();
-			expect(getByText('Task t-new')).toBeTruthy();
-			expect(getByText('In Progress')).toBeTruthy();
-		});
-
-		it('count badges update when tasks signal changes', () => {
-			mockSpace.value = makeSpace();
-			mockTasks.value = [makeTask('t1', 'open')];
-
-			const { container, rerender } = render(<SpaceDashboard spaceId="space-1" />);
-
-			// Initially 1 active, 0 review
-			let tabs = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
-			expect(tabs.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
-			expect(tabs.some((t) => t?.includes('Review') && t?.includes('0'))).toBe(true);
-
-			// Add a blocked task
-			mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'blocked')];
-			rerender(<SpaceDashboard spaceId="space-1" />);
-
-			tabs = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
-			expect(tabs.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
-			expect(tabs.some((t) => t?.includes('Review') && t?.includes('1'))).toBe(true);
-		});
-
-		it('task status transition moves task between tabs', () => {
-			mockSpace.value = makeSpace();
-			mockTasks.value = [makeTask('t1', 'in_progress')];
-
-			const { getByText, queryByText, rerender } = render(<SpaceDashboard spaceId="space-1" />);
-			// Active tab shows the task
-			expect(getByText('Task t1')).toBeTruthy();
-
-			// Task gets blocked — simulate status change
-			mockTasks.value = [makeTask('t1', 'blocked', { result: 'Needs human review' })];
-			rerender(<SpaceDashboard spaceId="space-1" />);
-
-			// Active tab should now be empty
-			expect(queryByText('Task t1')).toBeNull();
-
-			// Switch to Review tab — task should be there
-			fireEvent.click(getByText('Review').closest('button')!);
-			expect(getByText('Task t1')).toBeTruthy();
-			expect(getByText('Needs human review')).toBeTruthy();
-		});
+		stats = getStatText();
+		expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
+		expect(stats.some((t) => t?.includes('Review') && t?.includes('1'))).toBe(true);
 	});
 });

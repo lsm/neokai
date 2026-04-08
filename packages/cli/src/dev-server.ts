@@ -1,3 +1,4 @@
+import type { ServerWebSocket } from 'bun';
 import { createDaemonApp } from '@neokai/daemon/app';
 import type { Config } from '@neokai/daemon/config';
 import { createServer as createViteServer } from 'vite';
@@ -111,15 +112,16 @@ export async function startDevServer(config: Config) {
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
 		server: {
-			host: config.host,
+			// Vite only needs to listen on localhost — all external traffic comes
+			// through the Bun proxy server which handles both HTTP and WebSocket.
 			port: vitePort,
-			strictPort: false, // Allow Vite to find another port if needed
+			strictPort: false,
 			hmr: {
-				// Omit host so the HMR client derives it from window.location.hostname.
-				// This ensures HMR works from any machine (localhost, LAN, Tailscale, etc.)
-				// since Vite listens on 0.0.0.0 and the client connects to the same
-				// hostname it used to load the page.
-				port: vitePort,
+				// Route HMR WebSocket through the Bun proxy on the main server port.
+				// The client derives the hostname from window.location.hostname
+				// so HMR works from any machine (localhost, LAN, Tailscale, etc.).
+				clientPort: config.port,
+				path: '/__vite_hmr',
 			},
 		},
 	});
@@ -144,9 +146,27 @@ export async function startDevServer(config: Config) {
 				return createCorsPreflightResponse();
 			}
 
+			// HMR WebSocket — proxy to internal Vite server
+			if (url.pathname === '/__vite_hmr') {
+				const isUpgrade = req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+				if (isUpgrade) {
+					const viteWsUrl = `ws://localhost:${vitePort}${url.pathname}${url.search}`;
+					const upstream = new WebSocket(viteWsUrl);
+
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					const upgraded = (server as any).upgrade(req, {
+						data: { type: 'hmr', upstream },
+					});
+					if (upgraded) return;
+					upstream.close();
+				}
+				return new Response('HMR WebSocket upgrade failed', { status: 500 });
+			}
+
 			// WebSocket upgrade at /ws (daemon WebSocket)
 			if (isWebSocketPath(url.pathname)) {
-				const upgraded = server.upgrade(req, {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const upgraded = (server as any).upgrade(req, {
 					data: {
 						connectionSessionId: 'global',
 					},
@@ -163,14 +183,11 @@ export async function startDevServer(config: Config) {
 			try {
 				const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
 
-				// Build fetch options, including body for non-GET requests
+				// Build fetch options — preserve the original Host header so Vite
+				// generates correct HMR client code with the real hostname (not localhost)
 				const fetchOptions: RequestInit = {
 					method: req.method,
-					headers: {
-						...Object.fromEntries(req.headers.entries()),
-						// Override host to match Vite's expected host
-						host: `localhost:${vitePort}`,
-					},
+					headers: Object.fromEntries(req.headers.entries()),
 				};
 
 				// Forward request body for methods that may have one
@@ -193,7 +210,39 @@ export async function startDevServer(config: Config) {
 			}
 		},
 
-		websocket: wsHandlers,
+		websocket: {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- combined handler for daemon + HMR WS
+			open(ws: ServerWebSocket<any>) {
+				if (ws.data.type === 'hmr') {
+					const upstream = ws.data.upstream as WebSocket;
+					upstream.onmessage = (e) => ws.send(e.data as string);
+					upstream.onclose = () => ws.close();
+					upstream.onerror = () => ws.close();
+					return;
+				}
+				wsHandlers.open(ws);
+			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			message(ws: ServerWebSocket<any>, msg: string | Buffer) {
+				if (ws.data.type === 'hmr') {
+					const upstream = ws.data.upstream as WebSocket;
+					if (upstream.readyState === WebSocket.OPEN) {
+						upstream.send(msg as string);
+					}
+					return;
+				}
+				wsHandlers.message(ws, msg);
+			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			close(ws: ServerWebSocket<any>) {
+				if (ws.data.type === 'hmr') {
+					const upstream = ws.data.upstream as WebSocket;
+					upstream.close();
+					return;
+				}
+				wsHandlers.close(ws);
+			},
+		},
 
 		error(error) {
 			log.error('Server error:', error);
