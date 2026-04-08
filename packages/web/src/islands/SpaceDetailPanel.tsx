@@ -5,24 +5,38 @@
  * Prioritizes fast access to overview, review work, and sessions.
  */
 
-import { useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
+import { createSession } from '../lib/api-helpers';
 import { spaceStore } from '../lib/space-store';
-import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask } from '../lib/router';
+import {
+	navigateToSpace,
+	navigateToSpaceAgent,
+	navigateToSpaceSession,
+	navigateToSpaceTask,
+	navigateToSpaceTasks,
+} from '../lib/router';
 import {
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
-	spaceOverlaySessionIdSignal,
-	spaceOverlayAgentNameSignal,
+	currentSpaceViewModeSignal,
 } from '../lib/signals';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'review';
 
+const sessionStatusColors: Record<string, string> = {
+	active: 'bg-green-500',
+	pending_worktree_choice: 'bg-amber-500',
+	paused: 'bg-amber-500',
+	ended: 'bg-gray-500',
+};
+
 const taskStatusColors: Record<string, string> = {
 	open: 'bg-gray-500',
 	in_progress: 'bg-blue-500',
 	blocked: 'bg-amber-500',
+	review: 'bg-purple-500',
 	done: 'bg-green-500',
 	cancelled: 'bg-gray-600',
 	archived: 'bg-gray-700',
@@ -83,85 +97,115 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		);
 	}
 
-	const [taskTab, setTaskTab] = useState<TaskTab>('review');
-
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
-	const selectedTask = selectedTaskId
-		? (tasks.find((task) => task.id === selectedTaskId) ?? null)
-		: null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
-	const isOverviewSelected = selectedSessionId === null && selectedTaskId === null;
-	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
+	const [taskTab, setTaskTab] = useState<TaskTab>('review');
 
-	const activeCount = tasks.filter(
-		(task) => task.status === 'open' || task.status === 'in_progress'
-	).length;
-	const reviewCount = tasks.filter((task) => task.status === 'blocked').length;
+	// Auto-switch tab when selectedTaskId or task status changes
+	useEffect(() => {
+		if (!selectedTaskId) return;
+		const task = tasks.find((t) => t.id === selectedTaskId);
+		if (!task) return;
+		const isActive = task.status === 'open' || task.status === 'in_progress';
+		const isReview = task.status === 'blocked' || task.status === 'review';
+		if (isActive && taskTab !== 'active') setTaskTab('active');
+		else if (isReview && taskTab !== 'review') setTaskTab('review');
+	}, [selectedTaskId, tasks]);
+
+	const isOverviewSelected =
+		selectedSessionId === null &&
+		selectedTaskId === null &&
+		currentSpaceViewModeSignal.value === 'overview';
+	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
+	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
+
+	const { activeCount, reviewCount } = useMemo(() => {
+		let active = 0;
+		let review = 0;
+		for (const task of tasks) {
+			if (task.status === 'open' || task.status === 'in_progress') active++;
+			else if (task.status === 'blocked' || task.status === 'review') review++;
+		}
+		return { activeCount: active, reviewCount: review };
+	}, [tasks]);
 
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
 		let filtered: typeof sorted;
 
 		if (taskTab === 'review') {
-			filtered = sorted.filter((task) => task.status === 'blocked');
+			filtered = sorted.filter((task) => task.status === 'blocked' || task.status === 'review');
 		} else {
 			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
 		}
 
-		if (selectedTaskId && !filtered.some((task) => task.id === selectedTaskId)) {
-			const selected = sorted.find((task) => task.id === selectedTaskId);
-			if (selected) {
-				filtered = [selected, ...filtered];
-			}
+		// Always include the selected task even if it doesn't match the current tab filter
+		if (selectedTaskId && !filtered.some((t) => t.id === selectedTaskId)) {
+			const selected = sorted.find((t) => t.id === selectedTaskId);
+			if (selected) filtered.push(selected);
 		}
 
 		return filtered;
 	}, [tasks, taskTab, selectedTaskId]);
 
 	const sessions = useMemo(() => {
-		const list: { id: string; title: string }[] = [];
-		const seen = new Set<string>();
+		const storeSessions = spaceStore.sessions.value;
 		const isSystemSpaceSession = (sessionId: string): boolean =>
-			sessionId === spaceAgentSessionId ||
 			sessionId.startsWith(`space:${spaceId}:task:`) ||
 			sessionId.startsWith(`space:${spaceId}:workflow:`);
 
-		if (space?.sessionIds) {
-			for (const sessionId of space.sessionIds) {
-				if (isSystemSpaceSession(sessionId) || seen.has(sessionId)) {
-					continue;
-				}
-				list.push({ id: sessionId, title: sessionId.slice(0, 8) });
-				seen.add(sessionId);
-			}
-		}
+		return storeSessions.filter((s) => !isSystemSpaceSession(s.id));
+	}, [spaceStore.sessions.value, spaceId]);
 
-		return list;
-	}, [space, spaceAgentSessionId, spaceId]);
-
-	const handleOverviewClick = () => {
+	const handleOverviewClick = useCallback(() => {
 		navigateToSpace(spaceId);
 		onNavigate?.();
-	};
+	}, [spaceId, onNavigate]);
 
-	const handleSpaceAgentClick = () => {
+	const handleSpaceAgentClick = useCallback(() => {
 		navigateToSpaceAgent(spaceId);
 		onNavigate?.();
-	};
+	}, [spaceId, onNavigate]);
 
-	const handleTaskClick = (taskId: string) => {
-		navigateToSpaceTask(spaceId, taskId);
+	const handleTasksClick = useCallback(() => {
+		navigateToSpaceTasks(spaceId);
 		onNavigate?.();
-	};
+	}, [spaceId, onNavigate]);
 
-	const handleSessionClick = (sessionId: string) => {
-		// Use the truncated session ID as a human-readable label (matches what's displayed in the list)
-		spaceOverlayAgentNameSignal.value = sessionId.slice(0, 8);
-		spaceOverlaySessionIdSignal.value = sessionId;
-		onNavigate?.();
-	};
+	const handleTaskClick = useCallback(
+		(taskId: string) => {
+			navigateToSpaceTask(spaceId, taskId);
+			onNavigate?.();
+		},
+		[spaceId, onNavigate]
+	);
+
+	const handleSessionClick = useCallback(
+		(sessionId: string) => {
+			navigateToSpaceSession(spaceId, sessionId);
+			onNavigate?.();
+		},
+		[spaceId, onNavigate]
+	);
+
+	const handleCreateSession = useCallback(
+		async (e: Event) => {
+			e.stopPropagation();
+			try {
+				const response = await createSession({
+					spaceId,
+					workspacePath: space?.workspacePath,
+				});
+				navigateToSpaceSession(spaceId, response.sessionId);
+				onNavigate?.();
+			} catch {
+				// Session creation failed silently
+			}
+		},
+		[spaceId, space?.workspacePath, onNavigate]
+	);
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
@@ -223,6 +267,35 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 				<span class="flex-1 text-sm text-gray-200 text-left truncate">Space Agent</span>
 			</button>
 
+			<button
+				onClick={handleTasksClick}
+				data-testid="space-detail-tasks"
+				data-active={isTasksSelected ? 'true' : 'false'}
+				class={cn(
+					'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isTasksSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
+				)}
+			>
+				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-green-900/40 rounded">
+					<svg
+						class="w-3.5 h-3.5 text-green-400"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m0 0h-2"
+						/>
+					</svg>
+				</div>
+				<span class="flex-1 text-sm text-gray-200 text-left truncate">Tasks</span>
+			</button>
+
 			<div class="border-t border-dark-700 mx-3 my-3" />
 
 			<div class="flex-1 overflow-y-auto">
@@ -256,20 +329,33 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 								<TaskStatusDot status={task.status} />
 								<div class="min-w-0 flex-1">
 									<span class="block text-sm text-gray-400 truncate">{task.title}</span>
-									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
-										Task
-										{selectedTask?.id === task.id &&
-											task.status !== 'open' &&
-											task.status !== 'in_progress' &&
-											` · ${task.status.replace('_', ' ')}`}
-									</span>
 								</div>
 							</button>
 						))
 					)}
 				</CollapsibleSection>
 
-				<CollapsibleSection title="Sessions" count={sessions.length} defaultExpanded={true}>
+				<CollapsibleSection
+					title="Sessions"
+					count={sessions.length}
+					defaultExpanded={true}
+					headerRight={
+						<button
+							onClick={handleCreateSession}
+							class="text-gray-500 hover:text-gray-300 transition-colors p-0.5"
+							aria-label="Create session"
+						>
+							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M12 4v16m8-8H4"
+								/>
+							</svg>
+						</button>
+					}
+				>
 					{sessions.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No sessions</div>
 					) : (
@@ -282,7 +368,12 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									selectedSessionId === session.id ? 'bg-dark-700' : 'hover:bg-dark-800'
 								)}
 							>
-								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-500" />
+								<div
+									class={cn(
+										'w-2 h-2 rounded-full flex-shrink-0',
+										sessionStatusColors[session.status] ?? 'bg-gray-500'
+									)}
+								/>
 								<span class="flex-1 text-sm text-gray-300 truncate text-left">{session.title}</span>
 							</button>
 						))

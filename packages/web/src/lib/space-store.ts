@@ -115,6 +115,23 @@ class SpaceStore {
 	/** Error state */
 	readonly error = signal<string | null>(null);
 
+	/** Whether configure-view data (agents, workflows, templates) has been loaded for the current space */
+	readonly configDataLoaded = signal<boolean>(false);
+
+	/** Whether node executions have been loaded for the current space */
+	readonly nodeExecLoaded = signal<boolean>(false);
+
+	/** Sessions for this space — reactive via LiveQuery (title, status changes) */
+	readonly sessions = signal<
+		Array<{ id: string; title: string; status: string; lastActiveAt: number }>
+	>([]);
+
+	/** Cleanup functions for the space sessions LiveQuery subscription */
+	private spaceSessionsCleanupFns: Array<() => void> = [];
+
+	/** Stale-event guard for space sessions LiveQuery subscription */
+	private activeSpaceSessionsSubscriptionId: string | null = null;
+
 	// ========================================
 	// Computed Signals
 	// ========================================
@@ -200,6 +217,12 @@ class SpaceStore {
 
 	/** Stale-event guard for node execution LiveQuery subscriptions */
 	private activeNodeExecSubscriptionIds = new Set<string>();
+
+	/** In-flight promise for ensureConfigData to prevent duplicate fetches */
+	private configDataPromise: Promise<void> | null = null;
+
+	/** In-flight promise for ensureNodeExecutions to prevent duplicate fetches */
+	private nodeExecPromise: Promise<void> | null = null;
 
 	private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
 		const withoutSameId = tasks.filter((current) => current.id !== task.id);
@@ -477,6 +500,12 @@ class SpaceStore {
 		this.runtimeState.value = null;
 		this.taskActivity.value = new Map();
 		this.error.value = null;
+		this.configDataLoaded.value = false;
+		this.configDataPromise = null;
+		this.nodeExecLoaded.value = false;
+		this.nodeExecPromise = null;
+		this.sessions.value = [];
+		this.disposeSpaceSessionsSubscription();
 
 		// 3. Update active space (may be updated to real UUID after fetch)
 		this.spaceId.value = spaceIdOrSlug;
@@ -531,6 +560,9 @@ class SpaceStore {
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceUpdated);
+
+		// --- spaceSessions.bySpace LiveQuery ---
+		this.subscribeSpaceSessions(hub, spaceId);
 
 		// --- space.archived ---
 		const unsubSpaceArchived = hub.onEvent<{
@@ -742,25 +774,11 @@ class SpaceStore {
 		}
 
 		this.space.value = overview.space;
-		const runs = overview.workflowRuns ?? [];
-		this.workflowRuns.value = runs;
-		this.tasks.value = this.collapseTasksOnePerRun(overview.tasks ?? [], runs);
+		this.workflowRuns.value = overview.workflowRuns ?? [];
+		// Server already returns collapsed tasks via collapseToCanonicalTasks — use directly
+		this.tasks.value = overview.tasks ?? [];
 
-		const resolvedId = overview.space.id;
-
-		// Fetch agents, workflows, and node executions in parallel
-		await Promise.all([
-			this.fetchAgents(hub, resolvedId),
-			this.fetchAgentTemplates(hub, resolvedId),
-			this.fetchWorkflows(hub, resolvedId),
-			this.fetchWorkflowTemplates(hub, resolvedId),
-			this.fetchNodeExecutions(hub, resolvedId),
-		]);
-
-		// Subscribe to node execution LiveQueries for real-time updates
-		this.subscribeNodeExecutions(hub);
-
-		return resolvedId;
+		return overview.space.id;
 	}
 
 	/**
@@ -891,6 +909,82 @@ class SpaceStore {
 		this.cleanupFunctions = [];
 		this.unsubscribeTaskActivity();
 		this.unsubscribeNodeExecutions();
+	}
+
+	// ========================================
+	// Lazy-Loading: Config Data & Node Executions
+	// ========================================
+
+	/**
+	 * Lazily load agents, agent templates, workflows, and workflow templates.
+	 * Called by components that need this data (SpaceConfigurePage, SpaceTaskPane).
+	 * Safe to call multiple times — deduplicates via promise + flag.
+	 */
+	async ensureConfigData(): Promise<void> {
+		if (this.configDataLoaded.value) return;
+		if (this.configDataPromise) return this.configDataPromise;
+
+		const spaceId = this.spaceId.value;
+		if (!spaceId) return;
+
+		this.configDataPromise = this.doEnsureConfigData(spaceId);
+		try {
+			await this.configDataPromise;
+		} finally {
+			this.configDataPromise = null;
+		}
+	}
+
+	private async doEnsureConfigData(spaceId: string): Promise<void> {
+		try {
+			const hub = await connectionManager.getHub();
+			await Promise.all([
+				this.fetchAgents(hub, spaceId),
+				this.fetchAgentTemplates(hub, spaceId),
+				this.fetchWorkflows(hub, spaceId),
+				this.fetchWorkflowTemplates(hub, spaceId),
+			]);
+			// Only mark loaded if still the same space
+			if (this.spaceId.value === spaceId) {
+				this.configDataLoaded.value = true;
+			}
+		} catch (err) {
+			logger.error('Failed to load config data:', err);
+		}
+	}
+
+	/**
+	 * Lazily load node executions and subscribe to LiveQuery updates.
+	 * Called by components that render the workflow canvas.
+	 * Safe to call multiple times — deduplicates via promise + flag.
+	 */
+	async ensureNodeExecutions(): Promise<void> {
+		if (this.nodeExecLoaded.value) return;
+		if (this.nodeExecPromise) return this.nodeExecPromise;
+
+		const spaceId = this.spaceId.value;
+		if (!spaceId) return;
+
+		this.nodeExecPromise = this.doEnsureNodeExecutions(spaceId);
+		try {
+			await this.nodeExecPromise;
+		} finally {
+			this.nodeExecPromise = null;
+		}
+	}
+
+	private async doEnsureNodeExecutions(spaceId: string): Promise<void> {
+		try {
+			const hub = await connectionManager.getHub();
+			await this.fetchNodeExecutions(hub, spaceId);
+			// Subscribe to real-time updates
+			if (this.spaceId.value === spaceId) {
+				this.subscribeNodeExecutions(hub);
+				this.nodeExecLoaded.value = true;
+			}
+		} catch (err) {
+			logger.error('Failed to load node executions:', err);
+		}
 	}
 
 	private applyTaskActivityDelta(
@@ -1125,6 +1219,92 @@ class SpaceStore {
 	}
 
 	// ========================================
+	// Space Sessions LiveQuery
+	// ========================================
+
+	/**
+	 * Subscribe to spaceSessions.bySpace LiveQuery for real-time session title/status updates.
+	 */
+	private subscribeSpaceSessions(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): void {
+		const subscriptionId = `spaceSessions-bySpace-${spaceId}`;
+		if (this.activeSpaceSessionsSubscriptionId === subscriptionId) return;
+		this.disposeSpaceSessionsSubscription();
+		this.activeSpaceSessionsSubscriptionId = subscriptionId;
+
+		type SessionRow = { id: string; title: string; status: string; lastActiveAt: number };
+
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeSpaceSessionsSubscriptionId !== subscriptionId) return;
+			this.sessions.value = (event.rows as SessionRow[]) ?? [];
+		});
+		this.spaceSessionsCleanupFns.push(unsubSnapshot);
+
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeSpaceSessionsSubscriptionId !== subscriptionId) return;
+			const current = this.sessions.value;
+			const next = new Map(current.map((s) => [s.id, s]));
+			for (const row of (event.removed ?? []) as SessionRow[]) next.delete(row.id);
+			for (const row of (event.updated ?? []) as SessionRow[]) next.set(row.id, row);
+			for (const row of (event.added ?? []) as SessionRow[]) next.set(row.id, row);
+			this.sessions.value = [...next.values()];
+		});
+		this.spaceSessionsCleanupFns.push(unsubDelta);
+
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (this.activeSpaceSessionsSubscriptionId !== subscriptionId) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'spaceSessions.bySpace',
+					params: [spaceId],
+					subscriptionId,
+				})
+				.catch((err) => {
+					logger.warn('Space sessions LiveQuery re-subscribe failed:', err);
+				});
+		});
+		this.spaceSessionsCleanupFns.push(unsubReconnect);
+
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'spaceSessions.bySpace',
+				params: [spaceId],
+				subscriptionId,
+			})
+			.catch((err) => {
+				logger.warn('Space sessions LiveQuery subscribe failed:', err);
+			});
+	}
+
+	private disposeSpaceSessionsSubscription(): void {
+		for (const cleanup of this.spaceSessionsCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore
+			}
+		}
+		this.spaceSessionsCleanupFns = [];
+
+		if (this.activeSpaceSessionsSubscriptionId) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub
+					.request('liveQuery.unsubscribe', {
+						subscriptionId: this.activeSpaceSessionsSubscriptionId,
+					})
+					.catch(() => {});
+			}
+			this.activeSpaceSessionsSubscriptionId = null;
+		}
+	}
+
+	// ========================================
 	// Refresh
 	// ========================================
 
@@ -1151,8 +1331,31 @@ class SpaceStore {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) return;
 
+		// Track what was loaded before reconnect so we can re-fetch it
+		const hadConfigData = this.configDataLoaded.value;
+		const hadNodeExec = this.nodeExecLoaded.value;
+
+		// Reset lazy-load flags so ensureX methods will re-fetch
+		this.configDataLoaded.value = false;
+		this.configDataPromise = null;
+		this.nodeExecLoaded.value = false;
+		this.nodeExecPromise = null;
+		this.sessions.value = [];
+		this.disposeSpaceSessionsSubscription();
+
 		try {
 			await this.fetchAndResolveSpace(spaceId);
+			// Re-fetch previously loaded data in background
+			if (hadConfigData) {
+				this.ensureConfigData().catch((err) => {
+					logger.error('Failed to refresh config data:', err);
+				});
+			}
+			if (hadNodeExec) {
+				this.ensureNodeExecutions().catch((err) => {
+					logger.error('Failed to refresh node executions:', err);
+				});
+			}
 		} catch (err) {
 			logger.error('Failed to refresh space state:', err);
 		}

@@ -21,6 +21,7 @@ import {
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
 import type { RoomManager } from '../room';
+import type { SpaceManager } from '../space/managers/space-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
@@ -51,7 +52,8 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
-	roomManager: RoomManager
+	roomManager: RoomManager,
+	spaceManager: SpaceManager
 ): void {
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -62,12 +64,25 @@ export function setupSessionHandlers(
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
 			roomId: req.roomId,
+			spaceId: req.spaceId,
 			createdBy: req.createdBy ?? 'human',
 		});
 
 		// Add session to room if roomId is provided
 		if (req.roomId) {
 			roomManager.assignSession(req.roomId, sessionId);
+		}
+
+		// Add session to space if spaceId is provided
+		if (req.spaceId) {
+			const updatedSpace = await spaceManager.addSession(req.spaceId, sessionId);
+			daemonHub
+				.emit('space.updated', {
+					sessionId: 'global',
+					spaceId: req.spaceId,
+					space: updatedSpace,
+				})
+				.catch(() => {});
 		}
 
 		// Return the full session object so client can optimistically update
@@ -205,11 +220,29 @@ export function setupSessionHandlers(
 	messageHub.onRequest('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
-		// Get roomId before deleting so we can include it in the event payload
+		// Get context before deleting so we can include it in the event payload
 		const agentSessionForDelete = sessionManager.getSession(targetSessionId);
-		const roomIdForDelete = agentSessionForDelete?.getSessionData().context?.roomId;
+		const contextForDelete = agentSessionForDelete?.getSessionData().context;
+		const roomIdForDelete = contextForDelete?.roomId;
+		const spaceIdForDelete = contextForDelete?.spaceId;
 
 		await sessionManager.deleteSession(targetSessionId);
+
+		// Remove from space so deleted sessions don't linger in space.sessionIds
+		if (spaceIdForDelete) {
+			try {
+				const updatedSpace = await spaceManager.removeSession(spaceIdForDelete, targetSessionId);
+				daemonHub
+					.emit('space.updated', {
+						sessionId: 'global',
+						spaceId: spaceIdForDelete,
+						space: updatedSpace,
+					})
+					.catch(() => {});
+			} catch {
+				// Space may already be deleted — ignore
+			}
+		}
 
 		// Broadcast on room channel so RoomStore reacts immediately.
 		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
@@ -237,6 +270,25 @@ export function setupSessionHandlers(
 		}
 
 		const session = agentSession.getSessionData();
+
+		// Remove from space so archived sessions don't linger in space.sessionIds
+		if (session.context?.spaceId) {
+			try {
+				const updatedSpace = await spaceManager.removeSession(
+					session.context.spaceId,
+					targetSessionId
+				);
+				daemonHub
+					.emit('space.updated', {
+						sessionId: 'global',
+						spaceId: session.context.spaceId,
+						space: updatedSpace,
+					})
+					.catch(() => {});
+			} catch {
+				// Space may already be deleted — ignore
+			}
+		}
 
 		// No worktree - direct archive
 		if (!session.worktree) {

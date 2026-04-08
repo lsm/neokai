@@ -69,7 +69,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 
 	// Settings events (global events - use 'global' as sessionId)
 	'settings.updated': { sessionId: string; settings: GlobalSettings };
-	'sessions.filterChanged': { sessionId: string };
 
 	// Commands events
 	'commands.updated': { sessionId: string; commands: string[] };

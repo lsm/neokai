@@ -107,13 +107,17 @@ export function useAutoScroll({
 			container.addEventListener('scroll', handleScroll, { passive: true });
 
 			// Use ResizeObserver to update when content size changes
+			// Batch layout reads via rAF to avoid forced reflow on dirty layout
+			let rafId: number;
 			const resizeObserver = new ResizeObserver(() => {
-				handleScroll();
+				cancelAnimationFrame(rafId);
+				rafId = requestAnimationFrame(() => handleScroll());
 			});
 			resizeObserver.observe(container);
 
 			// Return cleanup function
 			return () => {
+				cancelAnimationFrame(rafId);
 				container.removeEventListener('scroll', handleScroll);
 				resizeObserver.disconnect();
 			};

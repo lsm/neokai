@@ -82,6 +82,10 @@ test-daemon:
 	@echo "Running daemon tests..."
 	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots --only-failures packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
+test-daemon-shard:
+	@echo "Running daemon tests ($(SHARD))..."
+	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit/$(SHARD) packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+
 test-web:
 	@echo "Running web tests..."
 	@cd packages/web && bun run coverage

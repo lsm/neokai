@@ -513,10 +513,14 @@ describe('useAutoScroll', () => {
 			containerRef.current!.scrollTop = 400;
 			// scrollHeight(1000) - scrollTop(400) - clientHeight(500) = 100 < 200 threshold
 
-			// Trigger ResizeObserver callback
+			// Trigger ResizeObserver callback (uses rAF internally for batching)
+			vi.useFakeTimers();
 			act(() => {
 				resizeObserverInstances[0]?.triggerResize();
+				// Flush the requestAnimationFrame scheduled by the ResizeObserver callback
+				vi.advanceTimersByTime(16);
 			});
+			vi.useRealTimers();
 
 			// Should now be near bottom
 			expect(result.current.isNearBottom).toBe(true);

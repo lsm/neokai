@@ -35,6 +35,11 @@ export interface NamedQuery {
 	 * Must return a plain object whose keys match the frontend TypeScript types.
 	 */
 	mapRow?: (row: Record<string, unknown>) => Record<string, unknown>;
+	/**
+	 * Optional hook to extract metadata from raw query results (before mapRow).
+	 * Called once per query evaluation; result is attached to snapshot/delta events.
+	 */
+	mapResult?: (rawRows: Record<string, unknown>[]) => Record<string, unknown> | undefined;
 }
 
 // ============================================================================
@@ -777,6 +782,113 @@ ORDER BY createdAt ASC, id ASC
  * Exported for use in `liveQuery.subscribe` / `liveQuery.unsubscribe` handlers
  * and for direct inspection in unit tests.
  */
+
+/**
+ * SQL for `sessions.list` LiveQuery.
+ *
+ * Returns all user-visible sessions (excludes internal room/space/agent sessions).
+ * Filters out room/space sessions by checking session_context for roomId/spaceId.
+ * Includes archived sessions so the client can toggle visibility.
+ */
+const SESSIONS_LIST_SQL = `
+SELECT
+  s.id as id,
+  s.title as title,
+  s.workspace_path as workspacePath,
+  s.created_at as createdAt,
+  s.last_active_at as lastActiveAt,
+  s.status as status,
+  s.config as config,
+  s.metadata as metadata,
+  s.is_worktree as is_worktree,
+  s.worktree_path as worktree_path,
+  s.main_repo_path as main_repo_path,
+  s.worktree_branch as worktree_branch,
+  s.git_branch as gitBranch,
+  s.sdk_session_id as sdkSessionId,
+  s.available_commands as available_commands,
+  s.processing_state as processingState,
+  s.archived_at as archivedAt,
+  s.type as type,
+  s.session_context as session_context,
+  COUNT(*) OVER() as _totalCount
+FROM sessions s
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+  AND json_extract(s.session_context, '$.roomId') IS NULL
+  AND json_extract(s.session_context, '$.spaceId') IS NULL
+  AND (s.status != 'archived' OR ?1 = 1)
+ORDER BY s.last_active_at DESC, s.id DESC
+`.trim();
+
+/**
+ * Map a raw SQLite sessions row to a SessionInfo object.
+ *
+ * Handles:
+ * - JSON parsing of config, metadata, session_context, available_commands
+ * - Worktree metadata reconstruction from flat columns
+ * - Type coercion for is_worktree (integer → boolean)
+ */
+function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
+	const isWorktree = row.is_worktree === 1;
+	const worktree = isWorktree
+		? {
+				isWorktree: true as const,
+				worktreePath: row.worktree_path as string,
+				mainRepoPath: row.main_repo_path as string,
+				branch: row.worktree_branch as string,
+			}
+		: undefined;
+
+	const availableCommands =
+		row.available_commands && typeof row.available_commands === 'string'
+			? (JSON.parse(row.available_commands) as string[])
+			: undefined;
+
+	const sessionContext =
+		row.session_context && typeof row.session_context === 'string'
+			? parseJsonOptional(row.session_context)
+			: undefined;
+
+	return {
+		id: row.id,
+		title: row.title,
+		workspacePath: row.workspacePath,
+		createdAt: row.createdAt,
+		lastActiveAt: row.lastActiveAt,
+		status: row.status,
+		config: parseJson(row.config as string, {}),
+		metadata: parseJson(row.metadata as string, {
+			messageCount: 0,
+			totalTokens: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalCost: 0,
+			toolCallCount: 0,
+		}),
+		worktree,
+		gitBranch: (row.gitBranch as string | null) ?? undefined,
+		sdkSessionId: (row.sdkSessionId as string | null) ?? undefined,
+		availableCommands,
+		processingState: (row.processingState as string | null) ?? undefined,
+		archivedAt: (row.archivedAt as string | null) ?? undefined,
+		type: (row.type as string | null) ?? 'worker',
+		context: sessionContext,
+	};
+}
+
+const SPACE_SESSIONS_BY_SPACE_SQL = `
+SELECT
+  s.id as id,
+  s.title as title,
+  s.status as status,
+  (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
+FROM sessions s
+INNER JOIN spaces sp ON sp.id = ?
+CROSS JOIN json_each(sp.session_ids) j
+WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
+ORDER BY s.last_active_at DESC, s.id DESC
+`.trim();
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 	[
 		'tasks.byRoom',
@@ -880,6 +992,27 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 		},
 	],
+	[
+		'spaceSessions.bySpace',
+		{
+			sql: SPACE_SESSIONS_BY_SPACE_SQL,
+			paramCount: 1,
+		},
+	],
+	[
+		'sessions.list',
+		{
+			sql: SESSIONS_LIST_SQL,
+			paramCount: 1,
+			mapRow: mapSessionRow,
+			mapResult: (rawRows) => {
+				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
+					return { totalCount: rawRows[0]._totalCount as number };
+				}
+				return { totalCount: 0 };
+			},
+		},
+	],
 ]);
 
 // ============================================================================
@@ -912,6 +1045,7 @@ export function setupLiveQueryHandlers(
 	const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
 	const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
 	const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
+	const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
 
 	// -------------------------------------------------------------------------
 	// liveQuery.subscribe
@@ -989,6 +1123,11 @@ export function setupLiveQueryHandlers(
 			if (!spaceTask) {
 				throw new Error(`Unauthorized: space task "${taskId}" not found`);
 			}
+		} else if (queryName === 'spaceSessions.bySpace') {
+			const spaceId = params[0] as string;
+			if (!stmtSpace.get(spaceId)) {
+				throw new Error(`Unauthorized: space "${spaceId}" not found`);
+			}
 		}
 
 		// 5. Get or create client subscription map
@@ -1045,6 +1184,9 @@ export function setupLiveQueryHandlers(
 					return;
 				}
 
+				// Extract metadata from raw rows (before mapRow strips internal columns)
+				const metadata = namedQuery.mapResult?.(diff.rows as Record<string, unknown>[]);
+
 				let message: ReturnType<typeof createEventMessage>;
 
 				if (diff.type === 'snapshot') {
@@ -1052,6 +1194,7 @@ export function setupLiveQueryHandlers(
 						subscriptionId,
 						rows: applyMapRows(diff.rows),
 						version: diff.version,
+						...(metadata ? { metadata } : {}),
 					};
 					message = createEventMessage({
 						method: 'liveQuery.snapshot',
@@ -1065,6 +1208,7 @@ export function setupLiveQueryHandlers(
 						removed: diff.removed ? applyMapRows(diff.removed) : undefined,
 						updated: diff.updated ? applyMapRows(diff.updated) : undefined,
 						version: diff.version,
+						...(metadata ? { metadata } : {}),
 					};
 					message = createEventMessage({
 						method: 'liveQuery.delta',

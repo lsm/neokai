@@ -20,13 +20,9 @@ import {
 } from '../lib/router';
 import { currentRoomActiveTabSignal, currentRoomAgentActiveSignal } from '../lib/signals';
 import { useRoomLiveQuery } from '../hooks/useRoomLiveQuery';
-import { RoomDashboard } from '../components/room/RoomDashboard';
-import { RoomTasks } from '../components/room/RoomTasks';
 import { RoomAgentContextStrip } from '../components/room/RoomAgentContextStrip';
 import ChatContainer from './ChatContainer';
 import type { CreateGoalFormData } from '../components/room/GoalsEditor';
-import { TaskViewToggle } from '../components/room/TaskViewToggle';
-import { MissionDetail } from '../components/room/MissionDetail';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
@@ -35,13 +31,21 @@ import { toast } from '../lib/toast';
 import { cn } from '../lib/utils';
 
 // Lazy-loaded tab components (code-split into separate chunks)
+const RoomDashboard = lazy(() =>
+	import('../components/room/RoomDashboard').then((m) => ({ default: m.RoomDashboard }))
+);
+const RoomTasks = lazy(() =>
+	import('../components/room/RoomTasks').then((m) => ({ default: m.RoomTasks }))
+);
+const TaskViewToggle = lazy(() =>
+	import('../components/room/TaskViewToggle').then((m) => ({ default: m.TaskViewToggle }))
+);
+const MissionDetail = lazy(() =>
+	import('../components/room/MissionDetail').then((m) => ({ default: m.MissionDetail }))
+);
 const GoalsEditor = lazy(() =>
 	import('../components/room/GoalsEditor').then((m) => ({ default: m.GoalsEditor }))
 );
-// NOTE: GoalsEditor's lazy split is ineffective — MissionDetail statically imports
-// sub-components (StatusIndicator, PriorityBadge, etc.) from GoalsEditor.tsx, so
-// the bundler keeps it in the main bundle. A future refactor could extract shared
-// sub-components into a separate module to enable effective code-splitting.
 const RoomAgents = lazy(() =>
 	import('../components/room/RoomAgents').then((m) => ({ default: m.RoomAgents }))
 );
@@ -291,22 +295,30 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 
 							{activeTab === 'overview' && (
 								<div class="h-full overflow-y-auto">
-									<RoomDashboard />
+									<ErrorBoundary>
+										<Suspense fallback={lazyTabFallback}>
+											<RoomDashboard />
+										</Suspense>
+									</ErrorBoundary>
 								</div>
 							)}
 							{activeTab === 'tasks' && (
 								<div class="h-full overflow-y-auto">
-									<RoomTasks
-										tasks={roomStore.tasks.value}
-										goalByTaskId={roomStore.goalByTaskId.value}
-										onTaskClick={
-											roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
-										}
-										onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
-										onReactivate={async (taskId) => {
-											await roomStore.setTaskStatus(taskId, 'in_progress');
-										}}
-									/>
+									<ErrorBoundary>
+										<Suspense fallback={lazyTabFallback}>
+											<RoomTasks
+												tasks={roomStore.tasks.value}
+												goalByTaskId={roomStore.goalByTaskId.value}
+												onTaskClick={
+													roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
+												}
+												onGoalClick={(goalId) => navigateToRoomMission(roomId, goalId)}
+												onReactivate={async (taskId) => {
+													await roomStore.setTaskStatus(taskId, 'in_progress');
+												}}
+											/>
+										</Suspense>
+									</ErrorBoundary>
 								</div>
 							)}
 							{activeTab === 'agents' && (
@@ -365,13 +377,17 @@ export default function Room({ roomId, sessionViewId, taskViewId, missionViewId 
 							{/* Task slide-over: overlays tab content, keeps header/tabs accessible */}
 							{taskViewId && (
 								<div class="absolute inset-0 z-10 bg-dark-900 flex flex-col overflow-hidden">
-									<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
+									<Suspense fallback={lazyTabFallback}>
+										<TaskViewToggle key={taskViewId} roomId={roomId} taskId={taskViewId} />
+									</Suspense>
 								</div>
 							)}
 							{/* Mission slide-over: overlays tab content, keeps header/tabs accessible */}
 							{missionViewId && (
 								<div class="absolute inset-0 z-10 bg-dark-900 flex flex-col overflow-hidden">
-									<MissionDetail key={missionViewId} roomId={roomId} goalId={missionViewId} />
+									<Suspense fallback={lazyTabFallback}>
+										<MissionDetail key={missionViewId} roomId={roomId} goalId={missionViewId} />
+									</Suspense>
 								</div>
 							)}
 						</div>

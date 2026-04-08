@@ -135,7 +135,7 @@ test.describe('Space Creation UX', () => {
 			createdSpaceId = match[1];
 		}
 
-		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// Delete seeded built-in workflows so showCanvas=false and SpaceOverview is
 		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
 		if (createdSpaceId) {
 			await deleteSpaceWorkflowsViaRpc(page, createdSpaceId);

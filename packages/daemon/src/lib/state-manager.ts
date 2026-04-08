@@ -27,7 +27,6 @@ import type {
 	SessionStateSnapshot,
 	SessionState,
 	SDKMessagesState,
-	SessionsUpdate,
 	SDKMessagesUpdate,
 } from '@neokai/shared';
 import type { Session, ContextInfo } from '@neokai/shared';
@@ -97,14 +96,10 @@ export class StateManager {
 			this.sessionCache.set(session.id, session);
 			this.processingStateCache.set(session.id, { status: 'idle' });
 
-			// Broadcast delta
-			await this.broadcastSessionsDelta({
-				added: [session],
-				timestamp: Date.now(),
-			});
-
 			// Publish session.created event
 			this.messageHub.event('session.created', { sessionId: session.id }, { channel: 'global' });
+
+			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
@@ -140,12 +135,9 @@ export class StateManager {
 			this.processingStateCache.delete(sessionId);
 			this.commandsCache.delete(sessionId);
 
-			// Broadcast
-			await this.broadcastSessionsDelta({
-				removed: [sessionId],
-				timestamp: Date.now(),
-			});
 			this.messageHub.event('session.deleted', { sessionId }, { channel: 'global' });
+
+			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
 		});
 
 		// Auth events
@@ -156,11 +148,6 @@ export class StateManager {
 		// Settings events
 		this.eventBus.on('settings.updated', async () => {
 			await this.broadcastSettingsChange();
-		});
-
-		// Sessions filter changed (when showArchived setting changes)
-		this.eventBus.on('sessions.filterChanged', async () => {
-			await this.broadcastSessionsChange();
 		});
 
 		// Commands updated - cache and broadcast
@@ -402,61 +389,13 @@ export class StateManager {
 	 */
 	private async broadcastSessionUpdateFromCache(sessionId: string): Promise<void> {
 		try {
-			// Get cached session data
-			const session = this.sessionCache.get(sessionId);
-
-			// Get cached processing state (default to idle if not cached)
-			const processingState = this.processingStateCache.get(sessionId) || {
-				status: 'idle' as const,
-			};
-
 			// CRITICAL: Always broadcast session state change, even if session is not cached
 			// This ensures agent state (stop/send button) is always in sync with server
 			// broadcastSessionStateChange has a fallback mechanism using cached processing state
 			await this.broadcastSessionStateChange(sessionId);
 
-			// Skip sessions delta update if session is not cached
-			// (we need session data for sidebar updates)
-			if (!session) {
-				return;
-			}
-
-			// Also update global sessions list delta (for sidebar)
-			// Check if session should be filtered out based on current settings
-			const settings = this.settingsManager.getGlobalSettings();
-			const isArchived = session.status === 'archived';
-			const shouldBeFiltered = isArchived && !settings.showArchived;
-
-			if (shouldBeFiltered) {
-				// If session is archived and showArchived is false, remove it from client lists
-				await this.broadcastSessionsDelta({
-					removed: [sessionId],
-					timestamp: Date.now(),
-				});
-
-				// Also broadcast full sessions state to update hasArchivedSessions flag
-				await this.broadcastSessionsChange();
-			} else {
-				// Merge processing state into session for delta broadcast
-				// This allows sidebar to show processing status without per-session subscriptions
-				// Note: Session.processingState is typed as string (DB serialized), but we send
-				// the object directly for client-side use. Type assertion is intentional.
-				const sessionWithState = {
-					...session,
-					processingState,
-				};
-
-				await this.broadcastSessionsDelta({
-					updated: [sessionWithState as unknown as Session],
-					timestamp: Date.now(),
-				});
-
-				// If this is a newly archived session, broadcast full sessions state
-				// to update hasArchivedSessions flag (in case this is the first archived session)
-				if (isArchived) {
-					await this.broadcastSessionsChange();
-				}
-			}
+			// Note: Global sessions list updates are now handled by LiveQuery (sessions.list)
+			// which automatically detects DB changes via SQLite triggers.
 		} catch (error) {
 			// Session may have been deleted during update
 			this.logger.warn(`Failed to broadcast session update for ${sessionId}:`, error);
@@ -723,32 +662,6 @@ export class StateManager {
 	// ========================================
 	// State Change Broadcasters
 	// ========================================
-
-	/**
-	 * Broadcast sessions list change (full update)
-	 * FIX: Uses per-channel versioning
-	 */
-	async broadcastSessionsChange(sessions?: Session[]): Promise<void> {
-		const version = this.incrementVersion(STATE_CHANNELS.GLOBAL_SESSIONS);
-		const state = sessions
-			? { sessions, timestamp: Date.now(), version }
-			: { ...(await this.getSessionsState()), version };
-
-		this.messageHub.event(STATE_CHANNELS.GLOBAL_SESSIONS, state, {
-			channel: 'global',
-		});
-	}
-
-	/**
-	 * Broadcast sessions delta update (more efficient for single changes)
-	 * Only sends delta - clients not subscribed to deltas should subscribe to full channel
-	 * FIX: Uses per-channel versioning
-	 */
-	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
-		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
-		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		this.messageHub.event(channel, { ...update, version }, { channel: 'global' });
-	}
 
 	/**
 	 * Broadcast unified system state change (auth + config + health)

@@ -240,7 +240,7 @@ describe('Room', () => {
 	});
 
 	describe('View rendering priority', () => {
-		it('renders ChatContainer when sessionViewId is provided (session route)', () => {
+		it('renders ChatContainer when sessionViewId is provided (session route)', async () => {
 			render(<Room roomId={roomId} sessionViewId="session-abc" />);
 
 			expect(screen.getByTestId('chat-container')).toBeTruthy();
@@ -251,7 +251,7 @@ describe('Room', () => {
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders Chat tab with ChatContainer when currentRoomActiveTabSignal is "chat"', () => {
+		it('renders Chat tab with ChatContainer when currentRoomActiveTabSignal is "chat"', async () => {
 			currentRoomActiveTabSignal.value = 'chat';
 			render(<Room roomId={roomId} />);
 
@@ -262,44 +262,44 @@ describe('Room', () => {
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders TaskViewToggle overlay when taskViewId is provided (task route)', () => {
+		it('renders TaskViewToggle overlay when taskViewId is provided (task route)', async () => {
 			render(<Room roomId={roomId} taskViewId="task-xyz" />);
 
-			const taskViewToggle = screen.getByTestId('task-view-toggle');
+			const taskViewToggle = await screen.findByTestId('task-view-toggle');
 			expect(taskViewToggle).toBeTruthy();
 			expect(taskViewToggle.getAttribute('data-task-id')).toBe('task-xyz');
 			// tabs and tab content are still in the DOM behind the overlay
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 		});
 
-		it('non-agent sessionViewId takes over the full area', () => {
+		it('non-agent sessionViewId takes over the full area', async () => {
 			render(<Room roomId={roomId} taskViewId="task-xyz" sessionViewId="some-worker-session" />);
 
 			// Non-agent sessionViewId replaces the whole content area
-			const container = screen.getByTestId('chat-container');
+			const container = await screen.findByTestId('chat-container');
 			expect(container).toBeTruthy();
 			expect(container.getAttribute('data-session-id')).toBe('some-worker-session');
 			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders tabbed dashboard when neither sessionViewId nor taskViewId is set', () => {
+		it('renders tabbed dashboard when neither sessionViewId nor taskViewId is set', async () => {
 			render(<Room roomId={roomId} />);
 
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 		});
 
-		it('renders tabbed dashboard when sessionViewId is null', () => {
+		it('renders tabbed dashboard when sessionViewId is null', async () => {
 			render(<Room roomId={roomId} sessionViewId={null} />);
 
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 		});
 
-		it('renders tabbed dashboard when taskViewId is null', () => {
+		it('renders tabbed dashboard when taskViewId is null', async () => {
 			render(<Room roomId={roomId} taskViewId={null} />);
 
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 		});
 	});
@@ -324,11 +324,11 @@ describe('Room', () => {
 	});
 
 	describe('Tab navigation', () => {
-		it('renders Tasks tab content when currentRoomActiveTabSignal is "tasks"', () => {
+		it('renders Tasks tab content when currentRoomActiveTabSignal is "tasks"', async () => {
 			currentRoomActiveTabSignal.value = 'tasks';
 			render(<Room roomId={roomId} />);
 
-			expect(screen.getByTestId('room-tasks')).toBeTruthy();
+			expect(await screen.findByTestId('room-tasks')).toBeTruthy();
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
@@ -362,7 +362,7 @@ describe('Room', () => {
 			expect(await screen.findByTestId('room-agents')).toBeTruthy();
 		});
 
-		it('calls navigateToRoomTab when a tab is clicked', () => {
+		it('calls navigateToRoomTab when a tab is clicked', async () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Tasks'));
@@ -370,7 +370,7 @@ describe('Room', () => {
 			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'tasks');
 		});
 
-		it('calls navigateToRoomTab with "chat" when Coordinator tab is clicked', () => {
+		it('calls navigateToRoomTab with "chat" when Coordinator tab is clicked', async () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Coordinator'));
@@ -378,7 +378,7 @@ describe('Room', () => {
 			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'chat');
 		});
 
-		it('calls navigateToRoomTab with "goals" when Missions tab is clicked', () => {
+		it('calls navigateToRoomTab with "goals" when Missions tab is clicked', async () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Missions'));
@@ -386,7 +386,7 @@ describe('Room', () => {
 			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'goals');
 		});
 
-		it('calls navigateToRoomTab with "settings" when Settings tab is clicked', () => {
+		it('calls navigateToRoomTab with "settings" when Settings tab is clicked', async () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Settings'));
@@ -394,12 +394,12 @@ describe('Room', () => {
 			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'settings');
 		});
 
-		it('defaults to overview tab when currentRoomActiveTabSignal is null', () => {
+		it('defaults to overview tab when currentRoomActiveTabSignal is null', async () => {
 			currentRoomActiveTabSignal.value = null;
 			render(<Room roomId={roomId} />);
 
 			// Overview is the default tab
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 		});
 
 		it('clears currentRoomActiveTabSignal on unmount', async () => {
@@ -414,7 +414,7 @@ describe('Room', () => {
 	});
 
 	describe('Error and loading states', () => {
-		it('renders loading skeleton during initial load', () => {
+		it('renders loading skeleton during initial load', async () => {
 			// initialLoad state starts as true and only flips after roomStore.select() resolves
 			// (async microtask). render() is synchronous so initialLoad is still true here,
 			// making the skeleton assertion safe without needing act().
@@ -425,7 +425,7 @@ describe('Room', () => {
 			expect(screen.getAllByTestId('skeleton').length).toBeGreaterThan(0);
 		});
 
-		it('renders error state when room fails to load', () => {
+		it('renders error state when room fails to load', async () => {
 			mockErrorSignal.value = 'Room not found';
 			mockRoomSignal.value = null;
 			render(<Room roomId={roomId} />);
@@ -434,7 +434,7 @@ describe('Room', () => {
 			expect(screen.getByText('Room not found')).toBeTruthy();
 		});
 
-		it('renders "Room not found" when room is null with no error', () => {
+		it('renders "Room not found" when room is null with no error', async () => {
 			mockRoomSignal.value = null;
 			render(<Room roomId={roomId} />);
 
@@ -467,17 +467,17 @@ describe('Room', () => {
 			expect(await screen.findByTestId('room-settings')).toBeTruthy();
 		});
 
-		it('RoomDashboard and RoomTasks render without Suspense (eagerly loaded)', () => {
+		it('RoomDashboard and RoomTasks render via lazy loading with Suspense', async () => {
 			// Overview tab — RoomDashboard is eagerly loaded
 			currentRoomActiveTabSignal.value = 'overview';
 			render(<Room roomId={roomId} />);
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 
 			cleanup();
 			// Tasks tab — RoomTasks is eagerly loaded
 			currentRoomActiveTabSignal.value = 'tasks';
 			render(<Room roomId={roomId} />);
-			expect(screen.getByTestId('room-tasks')).toBeTruthy();
+			expect(await screen.findByTestId('room-tasks')).toBeTruthy();
 		});
 	});
 });

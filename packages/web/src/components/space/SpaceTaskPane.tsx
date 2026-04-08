@@ -131,6 +131,11 @@ function formatTaskThreadError(err: unknown): string {
 }
 
 export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) {
+	// Lazy-load agents/workflows needed for mention autocomplete and canvas
+	useEffect(() => {
+		spaceStore.ensureConfigData().catch(() => {});
+	}, [spaceId]);
+
 	const tasks = spaceStore.tasks.value;
 	const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
 	const activityMembers: SpaceTaskActivityMember[] = taskId
@@ -394,7 +399,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<button
 							type="button"
 							onClick={() => {
-								setShowCanvas((v) => !v);
+								setShowCanvas((v) => {
+									if (!v) spaceStore.ensureNodeExecutions().catch(() => {});
+									return !v;
+								});
 								setShowArtifacts(false);
 							}}
 							class={cn(

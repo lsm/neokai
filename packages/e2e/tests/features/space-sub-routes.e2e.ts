@@ -107,7 +107,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'sub-routes');
 		const spaceName = `E2E Sub-Routes Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
-		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// Delete seeded built-in workflows so showCanvas=false and SpaceOverview is
 		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
 		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 		taskId = await createTaskViaRpc(page, spaceId, `Test Task ${Date.now()}`);
@@ -130,7 +130,7 @@ test.describe('Space Sub-Routes Deep Links', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Space overview should be visible (default route renders SpaceDashboard)
+		// Space overview should be visible (default route renders SpaceOverview)
 		await expect(page.getByTestId('space-overview-view')).toBeVisible({ timeout: 5000 });
 
 		// No ChatContainer or task pane

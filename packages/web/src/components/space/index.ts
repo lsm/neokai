@@ -7,7 +7,7 @@ export { SpaceAgentList } from './SpaceAgentList';
 export { SpaceContextPanel } from './SpaceContextPanel';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
-export { SpaceDashboard } from './SpaceDashboard';
+export { SpaceOverview } from './SpaceOverview';
 export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
 export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';

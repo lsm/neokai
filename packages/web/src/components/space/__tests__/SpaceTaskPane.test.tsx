@@ -60,6 +60,8 @@ vi.mock('../../../lib/space-store', () => ({
 			sendTaskMessage: mockSendTaskMessage,
 			subscribeTaskActivity: mockSubscribeTaskActivity,
 			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
+			ensureConfigData: vi.fn().mockResolvedValue(undefined),
+			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 		};
 	},
 }));

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'preact/compat';
 import {
 	currentSessionIdSignal,
 	currentRoomIdSignal,
@@ -12,23 +13,64 @@ import {
 	settingsSectionSignal,
 } from '../lib/signals.ts';
 import { sessions } from '../lib/state.ts';
-import ChatContainer from './ChatContainer.tsx';
-import Room from './Room.tsx';
-import SpaceIsland from './SpaceIsland.tsx';
 import Lobby from './Lobby.tsx';
-import { SessionsPage } from './SessionsPage.tsx';
-import { SpacesPage } from './SpacesPage.tsx';
-import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
-import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
-import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
-import { AppMcpServersSettings } from '../components/settings/AppMcpServersSettings.tsx';
-import { SkillsRegistry } from '../components/settings/SkillsRegistry.tsx';
-import { FallbackModelsSettings } from '../components/settings/FallbackModelsSettings.tsx';
-import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
-import { AboutSection } from '../components/settings/AboutSection.tsx';
-import { NeoSettings } from '../components/settings/NeoSettings.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
-import { Inbox } from '../components/inbox/Inbox.tsx';
+
+// Lazy-loaded route components — reduces initial module count in dev mode
+const ChatContainer = lazy(() => import('./ChatContainer.tsx'));
+const Room = lazy(() => import('./Room.tsx'));
+const SpaceIsland = lazy(() => import('./SpaceIsland.tsx'));
+const SessionsPage = lazy(() =>
+	import('./SessionsPage.tsx').then((m) => ({ default: m.SessionsPage }))
+);
+const SpacesPage = lazy(() => import('./SpacesPage.tsx').then((m) => ({ default: m.SpacesPage })));
+const Inbox = lazy(() =>
+	import('../components/inbox/Inbox.tsx').then((m) => ({ default: m.Inbox }))
+);
+
+// Lazy-loaded settings panels
+const GeneralSettings = lazy(() =>
+	import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
+);
+const ProvidersSettings = lazy(() =>
+	import('../components/settings/ProvidersSettings.tsx').then((m) => ({
+		default: m.ProvidersSettings,
+	}))
+);
+const McpServersSettings = lazy(() =>
+	import('../components/settings/McpServersSettings.tsx').then((m) => ({
+		default: m.McpServersSettings,
+	}))
+);
+const AppMcpServersSettings = lazy(() =>
+	import('../components/settings/AppMcpServersSettings.tsx').then((m) => ({
+		default: m.AppMcpServersSettings,
+	}))
+);
+const SkillsRegistry = lazy(() =>
+	import('../components/settings/SkillsRegistry.tsx').then((m) => ({ default: m.SkillsRegistry }))
+);
+const FallbackModelsSettings = lazy(() =>
+	import('../components/settings/FallbackModelsSettings.tsx').then((m) => ({
+		default: m.FallbackModelsSettings,
+	}))
+);
+const UsageAnalytics = lazy(() =>
+	import('../components/settings/UsageAnalytics.tsx').then((m) => ({ default: m.UsageAnalytics }))
+);
+const AboutSection = lazy(() =>
+	import('../components/settings/AboutSection.tsx').then((m) => ({ default: m.AboutSection }))
+);
+const NeoSettings = lazy(() =>
+	import('../components/settings/NeoSettings.tsx').then((m) => ({ default: m.NeoSettings }))
+);
+
+/** Shared Suspense fallback for lazy-loaded route components. */
+const lazyFallback = (
+	<div class="flex-1 flex items-center justify-center bg-dark-900">
+		<div class="text-xs text-gray-600">Loading...</div>
+	</div>
+);
 
 export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
@@ -76,41 +118,57 @@ export default function MainContent() {
 		// Space route takes priority
 		if (spaceId) {
 			return (
-				<SpaceIsland
-					spaceId={spaceId}
-					viewMode={spaceViewMode}
-					sessionViewId={spaceSessionViewId}
-					taskViewId={spaceTaskViewId}
-				/>
+				<Suspense fallback={lazyFallback}>
+					<SpaceIsland
+						spaceId={spaceId}
+						viewMode={spaceViewMode}
+						sessionViewId={spaceSessionViewId}
+						taskViewId={spaceTaskViewId}
+					/>
+				</Suspense>
 			);
 		}
 
 		// /spaces route: show standalone spaces page (no sidebar)
 		if (navSection === 'spaces') {
-			return <SpacesPage />;
+			return (
+				<Suspense fallback={lazyFallback}>
+					<SpacesPage />
+				</Suspense>
+			);
 		}
 
 		// Room route
 		if (roomId) {
 			return (
-				<Room
-					key={roomId}
-					roomId={roomId}
-					sessionViewId={roomSessionId}
-					taskViewId={roomTaskId}
-					missionViewId={roomGoalId}
-				/>
+				<Suspense fallback={lazyFallback}>
+					<Room
+						key={roomId}
+						roomId={roomId}
+						sessionViewId={roomSessionId}
+						taskViewId={roomTaskId}
+						missionViewId={roomGoalId}
+					/>
+				</Suspense>
 			);
 		}
 
 		// If there's a valid session, show the chat
 		if (sessionExists && sessionId) {
-			return <ChatContainer key={sessionId} sessionId={sessionId} />;
+			return (
+				<Suspense fallback={lazyFallback}>
+					<ChatContainer key={sessionId} sessionId={sessionId} />
+				</Suspense>
+			);
 		}
 
 		// /sessions route: show sessions grid
 		if (navSection === 'chats') {
-			return <SessionsPage />;
+			return (
+				<Suspense fallback={lazyFallback}>
+					<SessionsPage />
+				</Suspense>
+			);
 		}
 
 		// If Settings is selected in NavRail, show the selected settings section content
@@ -127,15 +185,17 @@ export default function MainContent() {
 					</div>
 					{/* Settings Content */}
 					<div class="flex-1 overflow-y-auto p-6">
-						{settingsSection === 'general' && <GeneralSettings />}
-						{settingsSection === 'providers' && <ProvidersSettings />}
-						{settingsSection === 'mcp-servers' && <McpServersSettings />}
-						{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
-						{settingsSection === 'skills' && <SkillsRegistry />}
-						{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
-						{settingsSection === 'neo' && <NeoSettings />}
-						{settingsSection === 'usage' && <UsageAnalytics />}
-						{settingsSection === 'about' && <AboutSection />}
+						<Suspense fallback={lazyFallback}>
+							{settingsSection === 'general' && <GeneralSettings />}
+							{settingsSection === 'providers' && <ProvidersSettings />}
+							{settingsSection === 'mcp-servers' && <McpServersSettings />}
+							{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
+							{settingsSection === 'skills' && <SkillsRegistry />}
+							{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
+							{settingsSection === 'neo' && <NeoSettings />}
+							{settingsSection === 'usage' && <UsageAnalytics />}
+							{settingsSection === 'about' && <AboutSection />}
+						</Suspense>
 					</div>
 				</div>
 			);
@@ -143,7 +203,11 @@ export default function MainContent() {
 
 		// Inbox route
 		if (navSection === 'inbox') {
-			return <Inbox />;
+			return (
+				<Suspense fallback={lazyFallback}>
+					<Inbox />
+				</Suspense>
+			);
 		}
 
 		// Default: Show Lobby (home page)

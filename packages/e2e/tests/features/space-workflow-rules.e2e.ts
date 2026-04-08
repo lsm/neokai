@@ -79,7 +79,7 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		spaceId = await createTestSpace(page);
-		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// Delete seeded built-in workflows so showCanvas=false and SpaceOverview is
 		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
 		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 	});

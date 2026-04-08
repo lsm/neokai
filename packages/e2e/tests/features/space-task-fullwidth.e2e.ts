@@ -37,7 +37,7 @@ test.describe('Space Task Full-Width View', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'task-fullwidth');
 		const spaceName = `E2E Full-Width Task Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
-		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// Delete seeded built-in workflows so showCanvas=false and SpaceOverview is
 		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
 		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 
@@ -45,7 +45,7 @@ test.describe('Space Task Full-Width View', () => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
-		// Wait for the Overview button to be visible (confirms SpaceDashboard is loaded)
+		// Wait for the Overview button to be visible (confirms SpaceOverview is loaded)
 		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
@@ -72,13 +72,13 @@ test.describe('Space Task Full-Width View', () => {
 		await dialog.getByPlaceholder('e.g., Implement authentication module').fill(taskTitle);
 		await dialog.getByRole('button', { name: 'Create Task' }).click();
 
-		// Wait for task to appear in SpaceDashboard's Recent Activity section
+		// Wait for task to appear in SpaceOverview's Recent Activity section
 		await expect(page.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// Overview entry should be visible before clicking a task
 		await expect(page.getByRole('button', { name: 'Overview', exact: true })).toBeVisible();
 
-		// Click the task title link in SpaceDetailPanel (context panel) or SpaceDashboard
+		// Click the task title link in SpaceDetailPanel (context panel) or SpaceOverview
 		// The task title appears as a clickable element in the context panel's task list
 		await page.getByText(taskTitle, { exact: true }).first().click();
 

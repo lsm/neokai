@@ -43,7 +43,7 @@ export const navSectionSignal = signal<NavSection>('home');
 export const currentSpaceIdSignal = signal<string | null>(null);
 export const currentSpaceSessionIdSignal = signal<string | null>(null);
 export const currentSpaceTaskIdSignal = signal<string | null>(null);
-export type SpaceViewMode = 'overview' | 'configure';
+export type SpaceViewMode = 'overview' | 'tasks' | 'configure';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
 // Overlay signals — session shown in slide-over panel on top of the current view
