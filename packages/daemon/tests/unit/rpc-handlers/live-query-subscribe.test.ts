@@ -132,6 +132,17 @@ function createMockSetup() {
 function createDb() {
 	const db = new BunDatabase(':memory:');
 	createTables(db);
+	// Ensure spaces table exists (setupLiveQueryHandlers prepares a statement against it)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS spaces (
+			id TEXT PRIMARY KEY,
+			slug TEXT,
+			workspace_path TEXT NOT NULL,
+			name TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
 	return db;
 }
 

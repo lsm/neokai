@@ -810,7 +810,7 @@ FROM sessions s
 WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
   AND json_extract(s.session_context, '$.roomId') IS NULL
   AND json_extract(s.session_context, '$.spaceId') IS NULL
-ORDER BY s.last_active_at DESC
+ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
 /**
@@ -879,7 +879,7 @@ FROM sessions s
 INNER JOIN spaces sp ON sp.id = ?
 CROSS JOIN json_each(sp.session_ids) j
 WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
-ORDER BY s.last_active_at DESC
+ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
