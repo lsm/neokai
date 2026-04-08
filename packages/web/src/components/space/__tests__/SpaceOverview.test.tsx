@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * Unit tests for SpaceDashboard.
+ * Unit tests for SpaceOverview.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -33,7 +33,7 @@ mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
 mockRuntimeState = signal<RuntimeState | null>(null);
 
-import { SpaceDashboard } from '../SpaceDashboard';
+import { SpaceOverview } from '../SpaceOverview';
 
 function makeSpace(overrides: Partial<Space> = {}): Space {
 	return {
@@ -75,7 +75,7 @@ function makeTask(
 	};
 }
 
-describe('SpaceDashboard', () => {
+describe('SpaceOverview', () => {
 	beforeEach(() => {
 		cleanup();
 		mockSpace.value = null;
@@ -90,12 +90,12 @@ describe('SpaceDashboard', () => {
 
 	it('renders loading spinner when loading', () => {
 		mockLoading.value = true;
-		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		const { container } = render(<SpaceOverview spaceId="space-1" />);
 		expect(container.querySelector('.animate-spin')).toBeTruthy();
 	});
 
 	it('renders "Space not found" when no space', () => {
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
 		expect(getByText('Space not found')).toBeTruthy();
 	});
 
@@ -108,7 +108,7 @@ describe('SpaceDashboard', () => {
 			makeTask('t4', 'done'),
 		];
 
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
 		// Stats strip: Active (open + in_progress = 2), Review (blocked = 1), Done (done = 1)
 		expect(getByText('Active')).toBeTruthy();
 		expect(getByText('Review')).toBeTruthy();
@@ -124,7 +124,7 @@ describe('SpaceDashboard', () => {
 			makeTask('t3', 'done', { updatedAt: now - 120_000 }),
 		];
 
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
 		expect(getByText('Recent Activity')).toBeTruthy();
 		expect(getByText('Task t1')).toBeTruthy();
 		expect(getByText('Task t2')).toBeTruthy();
@@ -133,7 +133,7 @@ describe('SpaceDashboard', () => {
 
 	it('shows empty state when there are no tasks', () => {
 		mockSpace.value = makeSpace();
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
 		expect(getByText('No tasks yet')).toBeTruthy();
 		expect(getByText('Create a task to get started')).toBeTruthy();
 	});
@@ -142,20 +142,20 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'done')];
 		const onSelectTask = vi.fn();
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" onSelectTask={onSelectTask} />);
+		const { getByText } = render(<SpaceOverview spaceId="space-1" onSelectTask={onSelectTask} />);
 		fireEvent.click(getByText('Task t1').closest('button')!);
 		expect(onSelectTask).toHaveBeenCalledWith('t1');
 	});
 
 	it('renders the Create Task button', () => {
 		mockSpace.value = makeSpace();
-		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
 		expect(getByRole('button', { name: 'Create Task' })).toBeTruthy();
 	});
 
 	it('clicking Create Task button opens the Create Task dialog', () => {
 		mockSpace.value = makeSpace();
-		const { getByRole } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
 		fireEvent.click(getByRole('button', { name: 'Create Task' }));
 		const dialog = document.body.querySelector('[role="dialog"]');
 		expect(dialog).toBeTruthy();
@@ -165,14 +165,14 @@ describe('SpaceDashboard', () => {
 	it('renders runtime control bar when runtimeState is set', () => {
 		mockSpace.value = makeSpace();
 		mockRuntimeState.value = 'running';
-		const { getByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
 		expect(getByText('Running')).toBeTruthy();
 	});
 
 	it('does not render runtime control bar when runtimeState is null', () => {
 		mockSpace.value = makeSpace();
 		mockRuntimeState.value = null;
-		const { queryByText } = render(<SpaceDashboard spaceId="space-1" />);
+		const { queryByText } = render(<SpaceOverview spaceId="space-1" />);
 		expect(queryByText('Running')).toBeNull();
 		expect(queryByText('Paused')).toBeNull();
 		expect(queryByText('Stopped')).toBeNull();
@@ -185,7 +185,7 @@ describe('SpaceDashboard', () => {
 			makeTask(`t${i + 1}`, 'in_progress', { updatedAt: now - i * 60_000 })
 		);
 
-		const { container } = render(<SpaceDashboard spaceId="space-1" />);
+		const { container } = render(<SpaceOverview spaceId="space-1" />);
 		// Each task renders as a button inside the activity list
 		const activityButtons = container.querySelectorAll('.divide-y button');
 		expect(activityButtons.length).toBe(8);
@@ -195,7 +195,7 @@ describe('SpaceDashboard', () => {
 		mockSpace.value = makeSpace();
 		mockTasks.value = [makeTask('t1', 'open')];
 
-		const { container, rerender } = render(<SpaceDashboard spaceId="space-1" />);
+		const { container, rerender } = render(<SpaceOverview spaceId="space-1" />);
 
 		// Active count should include the open task
 		const getStatText = () =>
@@ -206,7 +206,7 @@ describe('SpaceDashboard', () => {
 
 		// Add a blocked task
 		mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'blocked')];
-		rerender(<SpaceDashboard spaceId="space-1" />);
+		rerender(<SpaceOverview spaceId="space-1" />);
 
 		stats = getStatText();
 		expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);

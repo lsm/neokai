@@ -2,7 +2,7 @@
  * Space Task Blocked Status & Manual Status Control E2E Tests
  *
  * Verifies:
- * - Blocked tasks show the blocked reason on the SpaceDashboard "Review" tab
+ * - Blocked tasks show the blocked reason on the SpaceOverview "Review" tab
  * - Opening a blocked task shows the blocked reason banner in SpaceTaskPane
  * - User can click "Resume" to transition blocked → in_progress via the UI
  * - Opening a done task shows the "Reopen" action
@@ -48,7 +48,7 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 		const spaceName = `E2E Task Status ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
 
-		// Delete seeded built-in workflows so SpaceDashboard is visible (not hidden by WorkflowCanvas)
+		// Delete seeded built-in workflows so SpaceOverview is visible (not hidden by WorkflowCanvas)
 		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 
 		taskTitle = `Status Control Task ${Date.now()}`;
@@ -65,12 +65,10 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 	});
 
 	// ---------------------------------------------------------------------------
-	// Scenario 1: Blocked indicator on SpaceDashboard "Review" tab
+	// Scenario 1: Blocked indicator on SpaceOverview "Review" tab
 	// ---------------------------------------------------------------------------
 
-	test('blocked task shows blocked reason on the Review tab of SpaceDashboard', async ({
-		page,
-	}) => {
+	test('blocked task shows blocked reason on the Review tab of SpaceOverview', async ({ page }) => {
 		// Set task to blocked with a reason (RPC setup — not a UI action)
 		await updateSpaceTaskStatusViaRpc(page, spaceId, taskId, 'blocked', BLOCKED_REASON);
 

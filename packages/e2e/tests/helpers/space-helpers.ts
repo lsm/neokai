@@ -101,9 +101,9 @@ export async function updateSpaceTaskStatusViaRpc(
  * Delete all seeded workflows for a space via RPC.
  *
  * When a space is created the daemon seeds built-in workflows. This causes
- * `showCanvas` (SpaceIsland) to become `true`, hiding SpaceDashboard behind the
+ * `showCanvas` (SpaceIsland) to become `true`, hiding SpaceOverview behind the
  * WorkflowCanvas on desktop viewports via the `md:hidden` CSS class. Tests that
- * need the SpaceDashboard to be visible (Create Task button, Active/Review/Done
+ * need the SpaceOverview to be visible (Create Task button, Active/Review/Done
  * tabs, etc.) must call this helper in beforeEach after space creation.
  *
  * Best-effort — silently ignores errors so it can be used safely in beforeEach

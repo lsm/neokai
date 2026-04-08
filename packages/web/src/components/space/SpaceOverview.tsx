@@ -1,5 +1,5 @@
 /**
- * SpaceDashboard Component
+ * SpaceOverview Component
  *
  * Overview dashboard showing:
  * - Runtime state indicator with pause/resume/stop/start controls (when available)
@@ -104,6 +104,7 @@ const STATUS_COLORS: Record<string, string> = {
 	in_progress: 'text-blue-400',
 	open: 'text-gray-400',
 	blocked: 'text-amber-400',
+	review: 'text-purple-400',
 	done: 'text-green-400',
 	cancelled: 'text-gray-500',
 	archived: 'text-gray-600',
@@ -133,12 +134,12 @@ function RecentActivityItem({ task, onClick }: { task: SpaceTask; onClick?: () =
 
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
 
-interface SpaceDashboardProps {
+interface SpaceOverviewProps {
 	spaceId: string;
 	onSelectTask?: (taskId: string) => void;
 }
 
-export function SpaceDashboard({ spaceId, onSelectTask }: SpaceDashboardProps) {
+export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const [showCreateTask, setShowCreateTask] = useState(false);
 	const loading = spaceStore.loading.value;
 	const space = spaceStore.space.value;

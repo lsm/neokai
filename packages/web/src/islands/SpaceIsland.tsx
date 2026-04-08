@@ -15,7 +15,7 @@ import type { SpaceViewMode } from '../lib/signals';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
 import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
 import { SpaceTasks } from '../components/space/SpaceTasks';
-import { SpaceDashboard } from '../components/space/SpaceDashboard';
+import { SpaceOverview } from '../components/space/SpaceOverview';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
@@ -178,7 +178,7 @@ export default function SpaceIsland({
 			)}
 			<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-overview-view">
 				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-					<SpaceDashboard
+					<SpaceOverview
 						spaceId={spaceId}
 						onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
 					/>

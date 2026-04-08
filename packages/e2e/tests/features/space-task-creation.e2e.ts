@@ -4,7 +4,7 @@
  * Verifies:
  * - "Create Task" action button opens SpaceCreateTaskDialog
  * - Filling and submitting the Create Task form creates a task
- * - Created task title appears in SpaceDashboard's Active task list
+ * - Created task title appears in SpaceOverview's Active task list
  * - Cancelling the dialog dismisses it without creating a task
  *
  * Setup: creates a space via RPC (infrastructure), navigates to its overview view
@@ -55,7 +55,7 @@ test.describe('Space Task Creation', () => {
 	});
 
 	test('Create Task button opens SpaceCreateTaskDialog', async ({ page }) => {
-		// SpaceDashboard always shows action buttons in the header row
+		// SpaceOverview always shows action buttons in the header row
 		const createTaskBtn = page.getByRole('button', { name: 'Create Task' }).first();
 		await expect(createTaskBtn).toBeVisible({ timeout: 5000 });
 
@@ -70,7 +70,7 @@ test.describe('Space Task Creation', () => {
 	test('submitting the Create Task form creates a task in Recent Activity', async ({ page }) => {
 		const taskTitle = `E2E Task ${Date.now()}`;
 
-		// Click "Create Task" quick action (the first button with that text in SpaceDashboard)
+		// Click "Create Task" quick action (the first button with that text in SpaceOverview)
 		await page.getByRole('button', { name: 'Create Task' }).first().click();
 
 		// Fill in the title field
@@ -88,7 +88,7 @@ test.describe('Space Task Creation', () => {
 		// Dialog should close after successful submission
 		await expect(getModal(page)).not.toBeVisible({ timeout: 3000 });
 
-		// The task title should appear in SpaceDashboard's Active task list.
+		// The task title should appear in SpaceOverview's Active task list.
 		// Newly created tasks have status 'open' and appear in the Active tab.
 		// The store updates reactively via live-query after creation.
 		// Use exact: true to avoid matching the taskTitle substring in the toast.

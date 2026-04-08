@@ -34,7 +34,7 @@ test.describe('Space Agent Chat', () => {
 		const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'agent-chat');
 		const spaceName = `E2E Agent Chat Test ${Date.now()}`;
 		spaceId = await createSpaceViaRpc(page, spaceWorkspacePath, spaceName);
-		// Delete seeded built-in workflows so showCanvas=false and SpaceDashboard is
+		// Delete seeded built-in workflows so showCanvas=false and SpaceOverview is
 		// visible on desktop viewports (otherwise md:hidden hides it behind WorkflowCanvas).
 		await deleteSpaceWorkflowsViaRpc(page, spaceId);
 

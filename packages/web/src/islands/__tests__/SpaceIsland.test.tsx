@@ -56,8 +56,8 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
 	},
 }));
 
-vi.mock('../../components/space/SpaceDashboard', () => ({
-	SpaceDashboard: () => <div data-testid="space-dashboard" />,
+vi.mock('../../components/space/SpaceOverview', () => ({
+	SpaceOverview: () => <div data-testid="space-dashboard" />,
 }));
 
 vi.mock('../../components/space/SpaceTaskPane', () => ({
@@ -155,7 +155,7 @@ describe('SpaceIsland — route-driven views', () => {
 		expect(getByTestId('space-overview-view')).toBeTruthy();
 		// Legacy tab bar is removed from overview
 		expect(queryByTestId('space-tab-bar')).toBeNull();
-		// SpaceDashboard renders directly for overview
+		// SpaceOverview renders directly for overview
 		expect(getByTestId('space-dashboard')).toBeTruthy();
 	});
 
