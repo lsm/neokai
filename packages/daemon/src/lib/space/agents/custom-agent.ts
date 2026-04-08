@@ -9,6 +9,7 @@
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type {
 	AgentDefinition,
+	RoomSkillOverride,
 	Space,
 	SpaceAgent,
 	SpaceTask,
@@ -38,6 +39,10 @@ export interface SlotOverrides {
 	systemPrompt?: WorkflowNodeAgentOverride;
 	/** Override the agent's default instructions for this slot */
 	instructions?: WorkflowNodeAgentOverride;
+	/** IDs of globally-enabled skills to disable for this slot */
+	disabledSkillIds?: string[];
+	/** Extra MCP servers to add for this slot */
+	extraMcpServers?: Record<string, unknown>;
 }
 
 /**
@@ -205,6 +210,15 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 
 	const visiblePrompt = buildCustomAgentSystemPrompt(customAgent, slotOverrides);
 
+	const roomSkillOverrides: RoomSkillOverride[] | undefined = slotOverrides?.disabledSkillIds
+		?.length
+		? slotOverrides.disabledSkillIds.map((id) => ({ skillId: id, roomId: '', enabled: false }))
+		: undefined;
+
+	const extraMcpServers = slotOverrides?.extraMcpServers as
+		| Record<string, import('@neokai/shared').McpServerConfig>
+		| undefined;
+
 	if (customTools) {
 		const agentKey = sanitizeAgentKey(customAgent.name);
 		const agentDef: AgentDefinition = {
@@ -229,6 +243,8 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
 			contextAutoQueue: false,
+			roomSkillOverrides,
+			mcpServers: extraMcpServers,
 		};
 	}
 
@@ -246,6 +262,8 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		model,
 		provider,
 		contextAutoQueue: false,
+		roomSkillOverrides,
+		mcpServers: extraMcpServers,
 	};
 }
 

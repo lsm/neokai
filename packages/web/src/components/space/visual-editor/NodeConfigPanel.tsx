@@ -24,6 +24,7 @@ import { OverrideModeSelector } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { GateEditorPanel } from './GateEditorPanel';
+import { skillsStore } from '../../../lib/skills-store';
 
 // ============================================================================
 // Props
@@ -64,6 +65,56 @@ export interface NodeConfigPanelProps {
 	onClose: () => void;
 	/** Called when the user confirms deletion of this step */
 	onDelete: (stepId: string) => void;
+}
+
+// ============================================================================
+// SlotSkillsToggle — per-slot skill enable/disable toggles
+// ============================================================================
+
+interface SlotSkillsToggleProps {
+	disabledSkillIds?: string[];
+	onChange: (disabledSkillIds: string[]) => void;
+}
+
+function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps) {
+	const allSkills = skillsStore.skills.value.filter((s) => s.enabled);
+	if (allSkills.length === 0) return null;
+
+	const disabledSet = new Set(disabledSkillIds ?? []);
+
+	return (
+		<div class="space-y-1">
+			<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+				Skills
+			</label>
+			<div class="space-y-0.5">
+				{allSkills.map((skill) => {
+					const isEnabled = !disabledSet.has(skill.id);
+					return (
+						<label key={skill.id} class="flex items-center gap-1.5 cursor-pointer group">
+							<input
+								type="checkbox"
+								checked={isEnabled}
+								onChange={() => {
+									const next = new Set(disabledSet);
+									if (isEnabled) {
+										next.add(skill.id);
+									} else {
+										next.delete(skill.id);
+									}
+									onChange(next.size > 0 ? Array.from(next) : []);
+								}}
+								class="w-3 h-3 rounded accent-blue-500 flex-shrink-0"
+							/>
+							<span class="text-[11px] text-gray-400 group-hover:text-gray-200 transition-colors truncate">
+								{skill.displayName}
+							</span>
+						</label>
+					);
+				})}
+			</div>
+		</div>
+	);
 }
 
 // ============================================================================
@@ -250,6 +301,43 @@ function AgentsSection({
 						onChange={updateSingleModel}
 					/>
 				</div>
+				<SlotSkillsToggle
+					disabledSkillIds={singleSlot?.disabledSkillIds}
+					onChange={(disabledSkillIds) => {
+						if (singleSlot) {
+							updateAgents(
+								nodeAgents.map((a) =>
+									a.name === singleSlot.name
+										? {
+												...a,
+												disabledSkillIds:
+													disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+											}
+										: a
+								)
+							);
+						} else {
+							// No slot yet — store on step level via a synthetic slot
+							// We just update the step; actual agent slot will pick this up
+							onUpdate({
+								...step,
+								agents: [
+									{
+										agentId: selectedSingleAgentId || '',
+										name: step.name || 'agent',
+										model: selectedSingleModel,
+										systemPrompt:
+											typeof selectedSingleSystemPrompt !== 'string'
+												? selectedSingleSystemPrompt
+												: undefined,
+										disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+									},
+								],
+								agentId: '',
+							});
+						}
+					}}
+				/>
 				<button
 					type="button"
 					data-testid="edit-single-prompts-button"
@@ -351,6 +439,22 @@ function AgentsSection({
 							>
 								Edit Prompts
 							</button>
+							<SlotSkillsToggle
+								disabledSkillIds={sa.disabledSkillIds}
+								onChange={(disabledSkillIds) => {
+									updateAgents(
+										nodeAgents.map((a) =>
+											a.name === sa.name
+												? {
+														...a,
+														disabledSkillIds:
+															disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+													}
+												: a
+										)
+									);
+								}}
+							/>
 						</div>
 					);
 				})}

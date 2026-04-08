@@ -741,6 +741,17 @@ export interface WorkflowNodeAgent {
 	 * `mode: 'expand'` appends the value to the agent's `instructions`.
 	 */
 	instructions?: WorkflowNodeAgentOverride;
+	/**
+	 * IDs of globally-enabled skills to disable for this agent slot.
+	 * Allows per-slot skill customization on top of the global skills registry.
+	 */
+	disabledSkillIds?: string[];
+	/**
+	 * Extra MCP servers to add for this agent slot (per-node config).
+	 * Merged with app-level MCP servers when building session options.
+	 * Keys are server names; values are McpServerConfig compatible objects.
+	 */
+	extraMcpServers?: Record<string, unknown>;
 }
 
 /**
