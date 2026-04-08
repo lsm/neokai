@@ -243,13 +243,39 @@ describe('SpaceStore — space selection', () => {
 		expect(spaceStore.space.value?.id).toBe('space-1');
 	});
 
-	it('fetches agents, agent templates, and workflows on selectSpace()', async () => {
+	it('does not eagerly fetch agents/workflows on selectSpace() — they are lazy-loaded', async () => {
 		await spaceStore.selectSpace('space-1');
+		const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
+		expect(calledMethods).not.toContain('spaceAgent.list');
+		expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
+		expect(calledMethods).not.toContain('spaceWorkflow.list');
+		expect(calledMethods).not.toContain('spaceWorkflow.listBuiltInTemplates');
+		expect(calledMethods).not.toContain('nodeExecution.list');
+	});
+
+	it('fetches agents and workflows via ensureConfigData()', async () => {
+		await spaceStore.selectSpace('space-1');
+		mockHub.request.mockClear();
+
+		await spaceStore.ensureConfigData();
 		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', { spaceId: 'space-1' });
 		expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listBuiltInTemplates', {
 			spaceId: 'space-1',
 		});
 		expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.list', { spaceId: 'space-1' });
+		expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.listBuiltInTemplates', {
+			spaceId: 'space-1',
+		});
+		expect(spaceStore.configDataLoaded.value).toBe(true);
+	});
+
+	it('ensureConfigData() is idempotent — second call is a no-op', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.ensureConfigData();
+		mockHub.request.mockClear();
+
+		await spaceStore.ensureConfigData();
+		expect(mockHub.request).not.toHaveBeenCalled();
 	});
 
 	it('clears state on clearSpace()', async () => {

@@ -1,5 +1,5 @@
-import { useState } from 'preact/hooks';
-import type { Space, SpaceWorkflow } from '@neokai/shared';
+import { useEffect, useState } from 'preact/hooks';
+import type { Space } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
@@ -22,11 +22,17 @@ const CONFIGURE_TABS: Array<{
 
 interface SpaceConfigurePageProps {
 	space: Space;
-	workflows: SpaceWorkflow[];
 }
 
-export function SpaceConfigurePage({ space, workflows }: SpaceConfigurePageProps) {
+export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 	const agents = spaceStore.agents.value;
+	const workflows = spaceStore.workflows.value;
+	const configLoaded = spaceStore.configDataLoaded.value;
+
+	useEffect(() => {
+		spaceStore.ensureConfigData().catch(() => {});
+		spaceStore.ensureNodeExecutions().catch(() => {});
+	}, [space.id]);
 	const [activeTab, setActiveTab] = useState<ConfigureTab>('agents');
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
@@ -41,6 +47,14 @@ export function SpaceConfigurePage({ space, workflows }: SpaceConfigurePageProps
 		0,
 		CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)
 	);
+
+	if (!configLoaded) {
+		return (
+			<div class="flex-1 flex items-center justify-center">
+				<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+			</div>
+		);
+	}
 
 	return (
 		<div class="flex h-full flex-col overflow-y-auto p-3 sm:p-4 lg:p-6">

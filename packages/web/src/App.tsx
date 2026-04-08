@@ -2,7 +2,7 @@ import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
 import { useNeoKeyboardShortcut } from './hooks/useNeoKeyboardShortcut.ts';
 import { useViewportSafety } from './hooks/useViewportSafety.ts';
-import { NeoPanel } from './components/neo/NeoPanel.tsx';
+
 import { NavRail } from './islands/NavRail.tsx';
 import { BottomTabBar } from './islands/BottomTabBar.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
@@ -83,6 +83,10 @@ export function App() {
 				// This bridges the old signal-based approach with the new store
 				effect(() => {
 					const sessionId = currentSessionIdSignal.value;
+					const spaceSessionId = currentSpaceSessionIdSignal.value;
+					// Don't clobber sessions managed by space routes
+					// (ChatContainer calls sessionStore.select directly in that case)
+					if (spaceSessionId) return;
 					sessionStore.select(sessionId);
 				});
 
@@ -209,8 +213,8 @@ export function App() {
 			{/* Connection Overlay - blocks UI when disconnected */}
 			<ConnectionOverlay />
 
-			{/* Neo AI Assistant Panel */}
-			<NeoPanel />
+			{/* Neo AI Assistant Panel — disabled */}
+			{/* <NeoPanel /> */}
 		</>
 	);
 }

@@ -111,11 +111,14 @@ export async function startDevServer(config: Config) {
 		configFile: resolve(import.meta.dir, '../../web/vite.config.ts'),
 		root: resolve(import.meta.dir, '../../web/src'),
 		server: {
+			host: config.host,
 			port: vitePort,
 			strictPort: false, // Allow Vite to find another port if needed
 			hmr: {
-				protocol: 'ws',
-				host: config.host,
+				// Omit host so the HMR client derives it from window.location.hostname.
+				// This ensures HMR works from any machine (localhost, LAN, Tailscale, etc.)
+				// since Vite listens on 0.0.0.0 and the client connects to the same
+				// hostname it used to load the page.
 				port: vitePort,
 			},
 		},

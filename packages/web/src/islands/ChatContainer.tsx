@@ -45,7 +45,7 @@ import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
-import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
+
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
@@ -68,7 +68,7 @@ import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
-import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+
 import type { RoomContext } from '../components/ChatHeader.tsx';
 import { navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
 import { ErrorCategory } from '../types/error.ts';
@@ -113,6 +113,7 @@ export default function ChatContainer({
 	// This avoids an expensive COUNT query on every session load
 	const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
+	const [loadTimedOut, setLoadTimedOut] = useState(false);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [messagesBottomPadding, setMessagesBottomPadding] = useState(
@@ -360,8 +361,18 @@ export default function ChatContainer({
 		const sessionStateLoaded = sessionStore.sessionState.value !== null;
 		if (hasMessages || sessionStateLoaded) {
 			setIsInitialLoad(false);
+			setLoadTimedOut(false);
 		}
 	});
+
+	// Timeout: if session state doesn't load within 10s, show error instead of infinite spinner
+	useEffect(() => {
+		if (!isInitialLoad) return;
+		const timer = setTimeout(() => {
+			setLoadTimedOut(true);
+		}, 10_000);
+		return () => clearTimeout(timer);
+	}, [isInitialLoad]);
 
 	// Sync resolved questions from session metadata when session loads/updates
 	// Also clears resolvingQuestionsRef for items now confirmed by server
@@ -831,22 +842,23 @@ export default function ChatContainer({
 
 	// Render loading state
 	if (loading) {
-		return (
-			<div class="flex-1 flex flex-col bg-dark-900">
-				<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
-					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
-						<MobileMenuButton />
-						<div class="flex-1 min-w-0">
-							<Skeleton width="200px" height={24} class="mb-2" />
-							<Skeleton width="150px" height={16} />
-						</div>
+		if (loadTimedOut) {
+			return (
+				<div class="flex-1 flex items-center justify-center bg-dark-900">
+					<div class="text-center">
+						<div class="text-5xl mb-4">⚠️</div>
+						<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
+						<p class="text-sm text-gray-400 mb-4">
+							Session may not exist or the connection timed out.
+						</p>
+						<Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
 					</div>
 				</div>
-				<div class="flex-1 overflow-y-auto">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<SkeletonMessage key={i} />
-					))}
-				</div>
+			);
+		}
+		return (
+			<div class="flex-1 flex items-center justify-center bg-dark-900">
+				<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
 			</div>
 		);
 	}
