@@ -166,7 +166,7 @@ export function SpaceDashboard({ spaceId, onSelectTask }: SpaceDashboardProps) {
 
 	// Task counts
 	const activeTasks = tasks.filter((t) => t.status === 'open' || t.status === 'in_progress');
-	const reviewTasks = tasks.filter((t) => t.status === 'blocked');
+	const reviewTasks = tasks.filter((t) => t.status === 'blocked' || t.status === 'review');
 	const doneTasks = tasks.filter(
 		(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
 	);

@@ -5,10 +5,15 @@
  * Prioritizes fast access to overview, review work, and sessions.
  */
 
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
 import { spaceStore } from '../lib/space-store';
-import { navigateToSpace, navigateToSpaceAgent, navigateToSpaceTask, navigateToSpaceTasks } from '../lib/router';
+import {
+	navigateToSpace,
+	navigateToSpaceAgent,
+	navigateToSpaceTask,
+	navigateToSpaceTasks,
+} from '../lib/router';
 import {
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -24,6 +29,7 @@ const taskStatusColors: Record<string, string> = {
 	open: 'bg-gray-500',
 	in_progress: 'bg-blue-500',
 	blocked: 'bg-amber-500',
+	review: 'bg-purple-500',
 	done: 'bg-green-500',
 	cancelled: 'bg-gray-600',
 	archived: 'bg-gray-700',
@@ -84,44 +90,49 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		);
 	}
 
-	const [taskTab, setTaskTab] = useState<TaskTab>('review');
-
 	const selectedSessionId = currentSpaceSessionIdSignal.value;
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
-	const selectedTask = selectedTaskId
-		? (tasks.find((task) => task.id === selectedTaskId) ?? null)
-		: null;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
+	const [taskTab, setTaskTab] = useState<TaskTab>('review');
+
+	// Auto-switch tab when selectedTaskId changes to match the task's status
+	useEffect(() => {
+		if (!selectedTaskId) return;
+		const task = tasks.find((t) => t.id === selectedTaskId);
+		if (!task) return;
+		const isActive = task.status === 'open' || task.status === 'in_progress';
+		const isReview = task.status === 'blocked' || task.status === 'review';
+		if (isActive && taskTab !== 'active') setTaskTab('active');
+		else if (isReview && taskTab !== 'review') setTaskTab('review');
+	}, [selectedTaskId]);
+
 	const isOverviewSelected =
-		selectedSessionId === null && selectedTaskId === null && currentSpaceViewModeSignal.value === 'overview';
+		selectedSessionId === null &&
+		selectedTaskId === null &&
+		currentSpaceViewModeSignal.value === 'overview';
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 
 	const activeCount = tasks.filter(
 		(task) => task.status === 'open' || task.status === 'in_progress'
 	).length;
-	const reviewCount = tasks.filter((task) => task.status === 'blocked').length;
+	const reviewCount = tasks.filter(
+		(task) => task.status === 'blocked' || task.status === 'review'
+	).length;
 
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
 		let filtered: typeof sorted;
 
 		if (taskTab === 'review') {
-			filtered = sorted.filter((task) => task.status === 'blocked');
+			filtered = sorted.filter((task) => task.status === 'blocked' || task.status === 'review');
 		} else {
 			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
 		}
 
-		if (selectedTaskId && !filtered.some((task) => task.id === selectedTaskId)) {
-			const selected = sorted.find((task) => task.id === selectedTaskId);
-			if (selected) {
-				filtered = [selected, ...filtered];
-			}
-		}
-
 		return filtered;
-	}, [tasks, taskTab, selectedTaskId]);
+	}, [tasks, taskTab]);
 
 	const sessions = useMemo(() => {
 		const list: { id: string; title: string }[] = [];
@@ -229,36 +240,36 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					</svg>
 				</div>
 				<span class="flex-1 text-sm text-gray-200 text-left truncate">Space Agent</span>
-				</button>
+			</button>
 
-				<button
-					onClick={handleTasksClick}
-					data-testid="space-detail-tasks"
-					data-active={isTasksSelected ? 'true' : 'false'}
-					class={cn(
-						'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
-						isTasksSelected
-							? 'bg-dark-700 border-dark-600'
-							: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
-					)}
-				>
-					<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-green-900/40 rounded">
-						<svg
-							class="w-3.5 h-3.5 text-green-400"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m0 0h-2"
-							/>
-						</svg>
-					</div>
-					<span class="flex-1 text-sm text-gray-200 text-left truncate">Tasks</span>
-				</button>
+			<button
+				onClick={handleTasksClick}
+				data-testid="space-detail-tasks"
+				data-active={isTasksSelected ? 'true' : 'false'}
+				class={cn(
+					'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isTasksSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
+				)}
+			>
+				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-green-900/40 rounded">
+					<svg
+						class="w-3.5 h-3.5 text-green-400"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m0 0h-2"
+						/>
+					</svg>
+				</div>
+				<span class="flex-1 text-sm text-gray-200 text-left truncate">Tasks</span>
+			</button>
 
 			<div class="border-t border-dark-700 mx-3 my-3" />
 
@@ -293,13 +304,6 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 								<TaskStatusDot status={task.status} />
 								<div class="min-w-0 flex-1">
 									<span class="block text-sm text-gray-400 truncate">{task.title}</span>
-									<span class="block text-[11px] uppercase tracking-[0.14em] text-gray-600">
-										Task
-										{selectedTask?.id === task.id &&
-											task.status !== 'open' &&
-											task.status !== 'in_progress' &&
-											` · ${task.status.replace('_', ' ')}`}
-									</span>
 								</div>
 							</button>
 						))

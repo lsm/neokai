@@ -110,25 +110,25 @@ export default function SpaceIsland({
 	}
 
 	if (viewMode === 'tasks' && space) {
-			return (
-				<>
-					<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-tasks-view">
-						<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-							<SpaceTasks
-								spaceId={spaceId}
-								onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-							/>
-						</div>
-					</div>
-					{overlaySessionId && (
-						<AgentOverlayChat
-							sessionId={overlaySessionId}
-							agentName={overlayAgentName ?? undefined}
-							onClose={handleOverlayClose}
+		return (
+			<>
+				<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-tasks-view">
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<SpaceTasks
+							spaceId={spaceId}
+							onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
 						/>
-					)}
-				</>
-			);
+					</div>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
 	}
 
 	if (viewMode === 'configure' && space) {

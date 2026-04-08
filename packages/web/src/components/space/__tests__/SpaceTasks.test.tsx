@@ -192,10 +192,7 @@ describe('SpaceTasks', () => {
 	});
 
 	it('switches tabs and shows filtered tasks', () => {
-		mockTasks.value = [
-			makeTask('t1', 'open'),
-			makeTask('t2', 'done'),
-		];
+		mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
 		const { getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
 
 		// Active tab shows t1
@@ -209,10 +206,7 @@ describe('SpaceTasks', () => {
 	});
 
 	it('groups tasks by status within a tab', () => {
-		mockTasks.value = [
-			makeTask('t1', 'in_progress'),
-			makeTask('t2', 'open'),
-		];
+		mockTasks.value = [makeTask('t1', 'in_progress'), makeTask('t2', 'open')];
 		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
 
 		// Active tab should show two groups: "In Progress" and "Open"

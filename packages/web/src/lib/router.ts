@@ -1201,7 +1201,6 @@ export function navigateToSpaceTasks(spaceId: string, replace = false): void {
 	}
 }
 
-
 /**
  * Navigate to a session within a space layout
  */
