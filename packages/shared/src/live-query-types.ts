@@ -21,6 +21,7 @@ export interface LiveQuerySnapshotEvent {
 	subscriptionId: string;
 	rows: unknown[];
 	version: number;
+	metadata?: Record<string, unknown>;
 }
 
 export interface LiveQueryDeltaEvent {
@@ -29,4 +30,5 @@ export interface LiveQueryDeltaEvent {
 	removed?: unknown[];
 	updated?: unknown[];
 	version: number;
+	metadata?: Record<string, unknown>;
 }

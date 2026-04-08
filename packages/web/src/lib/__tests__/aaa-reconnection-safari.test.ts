@@ -165,7 +165,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			// Verify LiveQuery re-subscribe was called
 			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
 				queryName: 'sessions.list',
-				params: [],
+				params: [0],
 				subscriptionId: 'sessions-list',
 			});
 

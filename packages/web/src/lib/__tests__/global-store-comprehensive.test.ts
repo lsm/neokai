@@ -237,7 +237,7 @@ describe('GlobalStore', () => {
 			// Should fire initial LiveQuery subscribe
 			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
 				queryName: 'sessions.list',
-				params: [],
+				params: [0],
 				subscriptionId: 'sessions-list',
 			});
 		});
@@ -267,14 +267,12 @@ describe('GlobalStore', () => {
 			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 
-		it('should derive hasArchivedSessions from sessions data', async () => {
+		it('should derive hasArchivedSessions from totalCount metadata', async () => {
 			expect(store.hasArchivedSessions.value).toBe(false);
 
-			// Set sessions with an archived session
-			store.sessions.value = [
-				createMockSession('1'),
-				{ ...createMockSession('2'), status: 'archived' as const },
-			];
+			// Set sessionsTotalCount greater than visible sessions
+			store.sessions.value = [createMockSession('1')];
+			store.sessionsTotalCount.value = 3;
 
 			expect(store.hasArchivedSessions.value).toBe(true);
 		});
@@ -321,7 +319,7 @@ describe('GlobalStore', () => {
 			// Should re-subscribe to LiveQuery
 			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
 				queryName: 'sessions.list',
-				params: [],
+				params: [0],
 				subscriptionId: 'sessions-list',
 			});
 			// Should fetch GLOBAL_SNAPSHOT

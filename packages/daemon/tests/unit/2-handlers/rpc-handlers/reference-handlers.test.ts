@@ -10,7 +10,7 @@
 
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -116,11 +116,9 @@ describe('reference.resolve handler', () => {
 	let testWorkspace: string;
 
 	beforeEach(async () => {
-		testWorkspace = join(
-			tmpdir(),
-			`ref-handlers-${Date.now()}-${Math.random().toString(36).slice(2)}`
-		);
-		await mkdir(testWorkspace, { recursive: true });
+		// Clean up first in case a previous run left residue
+		await rm(join(tmpdir(), 'ref-handlers-test'), { recursive: true, force: true });
+		testWorkspace = await mkdtemp(join(tmpdir(), 'ref-handlers-test-'));
 	});
 
 	afterEach(async () => {

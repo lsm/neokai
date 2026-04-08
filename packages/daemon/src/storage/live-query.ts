@@ -27,6 +27,7 @@ export interface QueryDiff<T = Record<string, unknown>> {
 	removed?: T[];
 	updated?: T[];
 	version: number;
+	metadata?: Record<string, unknown>;
 }
 
 // ============================================================================

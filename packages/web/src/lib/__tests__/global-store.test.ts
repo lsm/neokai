@@ -32,8 +32,9 @@ vi.mock('../connection-manager', () => ({
 // Recreate GlobalStore class locally for testing without connection-manager dependency
 class TestGlobalStore {
 	readonly sessions = signal<Session[]>([]);
-	readonly hasArchivedSessions = computed<boolean>(() =>
-		this.sessions.value.some((s) => s.status === 'archived')
+	readonly sessionsTotalCount = signal<number>(0);
+	readonly hasArchivedSessions = computed<boolean>(
+		() => this.sessionsTotalCount.value > this.sessions.value.length
 	);
 	readonly systemState = signal<SystemState | null>(null);
 	readonly settings = signal<Record<string, unknown> | null>(null);
@@ -417,27 +418,24 @@ describe('GlobalStore', () => {
 			expect(store.apiConnectionStatus.value).toBe('degraded');
 		});
 
-		it('hasArchivedSessions should be true when sessions contain archived', () => {
-			store.sessions.value = [
-				createMockSession('1'),
-				{ ...createMockSession('2'), status: 'archived' as const },
-			];
+		it('hasArchivedSessions should be true when totalCount exceeds visible sessions', () => {
+			store.sessions.value = [createMockSession('1')];
+			store.sessionsTotalCount.value = 3;
 			expect(store.hasArchivedSessions.value).toBe(true);
 		});
 
-		it('hasArchivedSessions should be false when no archived sessions', () => {
+		it('hasArchivedSessions should be false when totalCount equals visible sessions', () => {
 			store.sessions.value = [createMockSession('1'), createMockSession('2')];
+			store.sessionsTotalCount.value = 2;
 			expect(store.hasArchivedSessions.value).toBe(false);
 		});
 
-		it('hasArchivedSessions should react to session changes', () => {
+		it('hasArchivedSessions should react to totalCount changes', () => {
 			store.sessions.value = [createMockSession('1')];
+			store.sessionsTotalCount.value = 1;
 			expect(store.hasArchivedSessions.value).toBe(false);
 
-			store.sessions.value = [
-				...store.sessions.value,
-				{ ...createMockSession('2'), status: 'archived' as const },
-			];
+			store.sessionsTotalCount.value = 3;
 			expect(store.hasArchivedSessions.value).toBe(true);
 		});
 	});
@@ -663,7 +661,7 @@ describe('GlobalStore - initialize()', () => {
 		// Should call liveQuery.subscribe for sessions.list
 		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
 			queryName: 'sessions.list',
-			params: [],
+			params: [0],
 			subscriptionId: 'sessions-list',
 		});
 
@@ -684,8 +682,8 @@ describe('GlobalStore - initialize()', () => {
 
 		await store.initialize();
 
-		// Should have 4 onEvent subscriptions: snapshot, delta, system, settings
-		expect(mockHub.onEvent).toHaveBeenCalledTimes(4);
+		// Should have 5 onEvent subscriptions: snapshot, delta, system, settings, settings-watcher
+		expect(mockHub.onEvent).toHaveBeenCalledTimes(5);
 		// Should have 1 onConnection handler
 		expect(mockHub.onConnection).toHaveBeenCalledTimes(1);
 	});
@@ -899,7 +897,7 @@ describe('GlobalStore - initialize()', () => {
 		// Should re-subscribe to LiveQuery on reconnect
 		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
 			queryName: 'sessions.list',
-			params: [],
+			params: [0],
 			subscriptionId: 'sessions-list',
 		});
 	});
@@ -974,7 +972,7 @@ describe('GlobalStore - refresh()', () => {
 		// Should re-subscribe to LiveQuery
 		expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
 			queryName: 'sessions.list',
-			params: [],
+			params: [0],
 			subscriptionId: 'sessions-list',
 		});
 
@@ -1151,8 +1149,8 @@ describe('GlobalStore - destroy (actual)', () => {
 		await store.initialize();
 
 		const privateStore = store as unknown as { cleanupFunctions: Array<() => void> };
-		// 4 onEvent unsubs + 1 onConnection unsub = 5
-		expect(privateStore.cleanupFunctions.length).toBe(5);
+		// 5 onEvent unsubs + 1 onConnection unsub + 1 no-op = 7
+		expect(privateStore.cleanupFunctions.length).toBe(7);
 
 		store.destroy();
 
@@ -1346,14 +1344,26 @@ describe('GlobalStore - LiveQuery Snapshot (actual)', () => {
 		expect(store.sessions.value).toHaveLength(0);
 	});
 
-	it('should update hasArchivedSessions when snapshot includes archived sessions', () => {
+	it('should update hasArchivedSessions when totalCount exceeds visible sessions', () => {
 		snapshotCallback?.({
 			subscriptionId: 'sessions-list',
-			rows: [createMockSession('1'), { ...createMockSession('2'), status: 'archived' as const }],
+			rows: [createMockSession('1')],
 			version: 1,
+			metadata: { totalCount: 5 },
 		});
 
 		expect(store.hasArchivedSessions.value).toBe(true);
+	});
+
+	it('should not set hasArchivedSessions when totalCount equals visible sessions', () => {
+		snapshotCallback?.({
+			subscriptionId: 'sessions-list',
+			rows: [createMockSession('1'), createMockSession('2')],
+			version: 1,
+			metadata: { totalCount: 2 },
+		});
+
+		expect(store.hasArchivedSessions.value).toBe(false);
 	});
 
 	it('should ignore snapshot for other subscription IDs', () => {
@@ -1440,16 +1450,15 @@ describe('GlobalStore - Computed Accessors (actual)', () => {
 			expect(store.hasArchivedSessions.value).toBe(false);
 		});
 
-		it('should be false when no archived sessions', () => {
+		it('should be false when totalCount equals visible sessions', () => {
 			store.sessions.value = [createMockSession('1'), createMockSession('2')];
+			store.sessionsTotalCount.value = 2;
 			expect(store.hasArchivedSessions.value).toBe(false);
 		});
 
-		it('should be true when archived sessions exist', () => {
-			store.sessions.value = [
-				createMockSession('1'),
-				{ ...createMockSession('2'), status: 'archived' as const },
-			];
+		it('should be true when totalCount exceeds visible sessions', () => {
+			store.sessions.value = [createMockSession('1')];
+			store.sessionsTotalCount.value = 3;
 			expect(store.hasArchivedSessions.value).toBe(true);
 		});
 	});

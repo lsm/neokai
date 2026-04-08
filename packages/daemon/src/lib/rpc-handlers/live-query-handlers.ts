@@ -35,6 +35,11 @@ export interface NamedQuery {
 	 * Must return a plain object whose keys match the frontend TypeScript types.
 	 */
 	mapRow?: (row: Record<string, unknown>) => Record<string, unknown>;
+	/**
+	 * Optional hook to extract metadata from raw query results (before mapRow).
+	 * Called once per query evaluation; result is attached to snapshot/delta events.
+	 */
+	mapResult?: (rawRows: Record<string, unknown>[]) => Record<string, unknown> | undefined;
 }
 
 // ============================================================================
@@ -805,11 +810,13 @@ SELECT
   s.processing_state as processingState,
   s.archived_at as archivedAt,
   s.type as type,
-  s.session_context as session_context
+  s.session_context as session_context,
+  COUNT(*) OVER() as _totalCount
 FROM sessions s
 WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
   AND json_extract(s.session_context, '$.roomId') IS NULL
   AND json_extract(s.session_context, '$.spaceId') IS NULL
+  AND (s.status != 'archived' OR ?1 = 1)
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
@@ -996,8 +1003,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		'sessions.list',
 		{
 			sql: SESSIONS_LIST_SQL,
-			paramCount: 0,
+			paramCount: 1,
 			mapRow: mapSessionRow,
+			mapResult: (rawRows) => {
+				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
+					return { totalCount: rawRows[0]._totalCount as number };
+				}
+				return { totalCount: 0 };
+			},
 		},
 	],
 ]);
@@ -1171,6 +1184,9 @@ export function setupLiveQueryHandlers(
 					return;
 				}
 
+				// Extract metadata from raw rows (before mapRow strips internal columns)
+				const metadata = namedQuery.mapResult?.(diff.rows as Record<string, unknown>[]);
+
 				let message: ReturnType<typeof createEventMessage>;
 
 				if (diff.type === 'snapshot') {
@@ -1178,6 +1194,7 @@ export function setupLiveQueryHandlers(
 						subscriptionId,
 						rows: applyMapRows(diff.rows),
 						version: diff.version,
+						...(metadata ? { metadata } : {}),
 					};
 					message = createEventMessage({
 						method: 'liveQuery.snapshot',
@@ -1191,6 +1208,7 @@ export function setupLiveQueryHandlers(
 						removed: diff.removed ? applyMapRows(diff.removed) : undefined,
 						updated: diff.updated ? applyMapRows(diff.updated) : undefined,
 						version: diff.version,
+						...(metadata ? { metadata } : {}),
 					};
 					message = createEventMessage({
 						method: 'liveQuery.delta',

@@ -643,17 +643,18 @@ describe('Computed Signals', () => {
 
 	describe('hasArchivedSessions signal', () => {
 		it('should reflect globalStore hasArchivedSessions', () => {
-			// hasArchivedSessions is now a computed derived from sessions
+			// hasArchivedSessions is now a computed derived from sessionsTotalCount > sessions.length
 			expect(hasArchivedSessions.value).toBe(false);
 
-			// Add a session with archived status
+			// Set totalCount greater than visible sessions to indicate archived sessions exist
 			globalStore.sessions.value = [
 				{
 					id: '1',
-					title: 'Archived Session',
-					status: 'archived',
+					title: 'Active Session',
+					status: 'active',
 				} as unknown as import('@neokai/shared').Session,
 			];
+			globalStore.sessionsTotalCount.value = 5;
 
 			expect(hasArchivedSessions.value).toBe(true);
 		});

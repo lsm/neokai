@@ -32,9 +32,12 @@ export class GlobalStore {
 	/** All sessions */
 	readonly sessions = signal<Session[]>([]);
 
+	/** Total session count (from server, includes archived) */
+	readonly sessionsTotalCount = signal<number>(0);
+
 	/** Whether there are any archived sessions in the database */
-	readonly hasArchivedSessions = computed<boolean>(() =>
-		this.sessions.value.some((s) => s.status === 'archived')
+	readonly hasArchivedSessions = computed<boolean>(
+		() => this.sessionsTotalCount.value > this.sessions.value.length
 	);
 
 	/** Unified system state (auth + config + health + API connection) */
@@ -126,13 +129,33 @@ export class GlobalStore {
 	 * Subscribe to sessions via LiveQuery.
 	 *
 	 * Uses the `sessions.list` named query which filters out internal room/space
-	 * sessions server-side. Deltas are applied incrementally for efficiency.
+	 * sessions server-side. The showArchived param controls whether archived
+	 * sessions are included. totalCount metadata provides the total count
+	 * regardless of the filter.
 	 */
 	private subscribeSessions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
+		const getParams = (): number[] => {
+			const showArchived = this.settings.value?.showArchived ?? false;
+			return [showArchived ? 1 : 0];
+		};
+
+		const doSubscribe = (): void => {
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'sessions.list',
+					params: getParams(),
+					subscriptionId: SESSIONS_SUBSCRIPTION_ID,
+				})
+				.catch(() => {});
+		};
+
 		// Snapshot: full replacement of sessions list
 		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
 			if (event.subscriptionId !== SESSIONS_SUBSCRIPTION_ID) return;
 			this.sessions.value = (event.rows as Session[]) ?? [];
+			if (event.metadata?.totalCount != null) {
+				this.sessionsTotalCount.value = event.metadata.totalCount as number;
+			}
 		});
 		this.cleanupFunctions.push(unsubSnapshot);
 
@@ -140,30 +163,41 @@ export class GlobalStore {
 		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
 			if (event.subscriptionId !== SESSIONS_SUBSCRIPTION_ID) return;
 			this.applySessionsDelta(event);
+			if (event.metadata?.totalCount != null) {
+				this.sessionsTotalCount.value = event.metadata.totalCount as number;
+			}
 		});
 		this.cleanupFunctions.push(unsubDelta);
 
 		// Re-subscribe on reconnect
 		const unsubReconnect = hub.onConnection((state) => {
 			if (state !== 'connected') return;
-			hub
-				.request('liveQuery.subscribe', {
-					queryName: 'sessions.list',
-					params: [],
-					subscriptionId: SESSIONS_SUBSCRIPTION_ID,
-				})
-				.catch(() => {});
+			doSubscribe();
 		});
 		this.cleanupFunctions.push(unsubReconnect);
 
+		// Re-subscribe when showArchived setting changes
+		let prevShowArchived = this.settings.value?.showArchived ?? false;
+		this.cleanupFunctions.push(() => {
+			// no-op cleanup needed (the effect below uses settings signal directly)
+		});
+		const checkSetting = (): void => {
+			const current = this.settings.value?.showArchived ?? false;
+			if (current !== prevShowArchived) {
+				prevShowArchived = current;
+				doSubscribe();
+			}
+		};
+
+		// Poll setting changes — settings signal updates trigger this check
+		// We use a micro-task to check after settings settle
+		const unsubSettings = hub.onEvent<SettingsState>(STATE_CHANNELS.GLOBAL_SETTINGS, () => {
+			queueMicrotask(checkSetting);
+		});
+		this.cleanupFunctions.push(unsubSettings);
+
 		// Fire initial subscribe
-		hub
-			.request('liveQuery.subscribe', {
-				queryName: 'sessions.list',
-				params: [],
-				subscriptionId: SESSIONS_SUBSCRIPTION_ID,
-			})
-			.catch(() => {});
+		doSubscribe();
 	}
 
 	/**
@@ -194,10 +228,11 @@ export class GlobalStore {
 		const hub = await connectionManager.getHub();
 
 		// Re-subscribe to sessions LiveQuery to get fresh snapshot
+		const showArchived = this.settings.value?.showArchived ?? false;
 		hub
 			.request('liveQuery.subscribe', {
 				queryName: 'sessions.list',
-				params: [],
+				params: [showArchived ? 1 : 0],
 				subscriptionId: SESSIONS_SUBSCRIPTION_ID,
 			})
 			.catch(() => {});
