@@ -40,6 +40,7 @@ export interface CreateSessionRequest {
 	worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
 	title?: string; // Optional title - if provided, skips auto-title generation
 	roomId?: string; // Optional room ID to assign session to
+	spaceId?: string; // Optional space ID to assign session to
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 }
 

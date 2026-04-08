@@ -777,6 +777,20 @@ ORDER BY createdAt ASC, id ASC
  * Exported for use in `liveQuery.subscribe` / `liveQuery.unsubscribe` handlers
  * and for direct inspection in unit tests.
  */
+
+const SPACE_SESSIONS_BY_SPACE_SQL = `
+SELECT
+  s.id as id,
+  s.title as title,
+  s.status as status,
+  (unixepoch(s.last_active_at) - 0) * 1000 as lastActiveAt
+FROM sessions s
+INNER JOIN spaces sp ON sp.id = ?
+CROSS JOIN json_each(sp.session_ids) j
+WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
+ORDER BY s.last_active_at DESC
+`.trim();
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 	[
 		'tasks.byRoom',
@@ -880,6 +894,13 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			paramCount: 1,
 		},
 	],
+	[
+		'spaceSessions.bySpace',
+		{
+			sql: SPACE_SESSIONS_BY_SPACE_SQL,
+			paramCount: 1,
+		},
+	],
 ]);
 
 // ============================================================================
@@ -912,6 +933,7 @@ export function setupLiveQueryHandlers(
 	const stmtRoom = db.prepare('SELECT id FROM rooms WHERE id = ?');
 	const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
 	const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
+	const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
 
 	// -------------------------------------------------------------------------
 	// liveQuery.subscribe
@@ -988,6 +1010,11 @@ export function setupLiveQueryHandlers(
 			}
 			if (!spaceTask) {
 				throw new Error(`Unauthorized: space task "${taskId}" not found`);
+			}
+		} else if (queryName === 'spaceSessions.bySpace') {
+			const spaceId = params[0] as string;
+			if (!stmtSpace.get(spaceId)) {
+				throw new Error(`Unauthorized: space "${spaceId}" not found`);
 			}
 		}
 

@@ -14,7 +14,9 @@ const USER_SESSION_TYPES = new Set<string | undefined>(['worker', undefined]);
  * or Sessions list.
  */
 export function isUserSession(session: Session): boolean {
-	return USER_SESSION_TYPES.has(session.type) && !session.context?.roomId;
+	return (
+		USER_SESSION_TYPES.has(session.type) && !session.context?.roomId && !session.context?.spaceId
+	);
 }
 
 /**

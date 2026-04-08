@@ -179,7 +179,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		return { taskManager, taskRepo };
 	};
 
-	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
+	setupSessionHandlers(
+		deps.messageHub,
+		deps.sessionManager,
+		deps.daemonHub,
+		roomManager,
+		deps.spaceManager
+	);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);

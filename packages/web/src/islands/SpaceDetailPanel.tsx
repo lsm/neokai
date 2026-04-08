@@ -5,12 +5,14 @@
  * Prioritizes fast access to overview, review work, and sessions.
  */
 
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { CollapsibleSection } from '../components/room/CollapsibleSection';
+import { createSession } from '../lib/api-helpers';
 import { spaceStore } from '../lib/space-store';
 import {
 	navigateToSpace,
 	navigateToSpaceAgent,
+	navigateToSpaceSession,
 	navigateToSpaceTask,
 	navigateToSpaceTasks,
 } from '../lib/router';
@@ -18,12 +20,17 @@ import {
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
 	currentSpaceViewModeSignal,
-	spaceOverlaySessionIdSignal,
-	spaceOverlayAgentNameSignal,
 } from '../lib/signals';
 import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'review';
+
+const sessionStatusColors: Record<string, string> = {
+	active: 'bg-green-500',
+	pending_worktree_choice: 'bg-amber-500',
+	paused: 'bg-amber-500',
+	ended: 'bg-gray-500',
+};
 
 const taskStatusColors: Record<string, string> = {
 	open: 'bg-gray-500',
@@ -135,25 +142,13 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	}, [tasks, taskTab]);
 
 	const sessions = useMemo(() => {
-		const list: { id: string; title: string }[] = [];
-		const seen = new Set<string>();
+		const storeSessions = spaceStore.sessions.value;
 		const isSystemSpaceSession = (sessionId: string): boolean =>
-			sessionId === spaceAgentSessionId ||
 			sessionId.startsWith(`space:${spaceId}:task:`) ||
 			sessionId.startsWith(`space:${spaceId}:workflow:`);
 
-		if (space?.sessionIds) {
-			for (const sessionId of space.sessionIds) {
-				if (isSystemSpaceSession(sessionId) || seen.has(sessionId)) {
-					continue;
-				}
-				list.push({ id: sessionId, title: sessionId.slice(0, 8) });
-				seen.add(sessionId);
-			}
-		}
-
-		return list;
-	}, [space, spaceAgentSessionId, spaceId]);
+		return storeSessions.filter((s) => !isSystemSpaceSession(s.id));
+	}, [spaceStore.sessions.value, spaceId]);
 
 	const handleOverviewClick = () => {
 		navigateToSpace(spaceId);
@@ -176,11 +171,26 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	};
 
 	const handleSessionClick = (sessionId: string) => {
-		// Use the truncated session ID as a human-readable label (matches what's displayed in the list)
-		spaceOverlayAgentNameSignal.value = sessionId.slice(0, 8);
-		spaceOverlaySessionIdSignal.value = sessionId;
+		navigateToSpaceSession(spaceId, sessionId);
 		onNavigate?.();
 	};
+
+	const handleCreateSession = useCallback(
+		async (e: Event) => {
+			e.stopPropagation();
+			try {
+				const response = await createSession({
+					spaceId,
+					workspacePath: space?.workspacePath,
+				});
+				navigateToSpaceSession(spaceId, response.sessionId);
+				onNavigate?.();
+			} catch {
+				// Session creation failed silently
+			}
+		},
+		[spaceId, space?.workspacePath, onNavigate]
+	);
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
@@ -310,7 +320,27 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					)}
 				</CollapsibleSection>
 
-				<CollapsibleSection title="Sessions" count={sessions.length} defaultExpanded={true}>
+				<CollapsibleSection
+					title="Sessions"
+					count={sessions.length}
+					defaultExpanded={true}
+					headerRight={
+						<button
+							onClick={handleCreateSession}
+							class="text-gray-500 hover:text-gray-300 transition-colors p-0.5"
+							aria-label="Create session"
+						>
+							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M12 4v16m8-8H4"
+								/>
+							</svg>
+						</button>
+					}
+				>
 					{sessions.length === 0 ? (
 						<div class="px-4 py-3 text-xs text-gray-600">No sessions</div>
 					) : (
@@ -323,7 +353,12 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 									selectedSessionId === session.id ? 'bg-dark-700' : 'hover:bg-dark-800'
 								)}
 							>
-								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-500" />
+								<div
+									class={cn(
+										'w-2 h-2 rounded-full flex-shrink-0',
+										sessionStatusColors[session.status] ?? 'bg-gray-500'
+									)}
+								/>
 								<span class="flex-1 text-sm text-gray-300 truncate text-left">{session.title}</span>
 							</button>
 						))
