@@ -21,6 +21,7 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
+import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
 
 export interface UseModelSwitcherResult {
@@ -241,10 +242,16 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 		}
 	}, [sessionId]);
 
-	// Load on mount and session change
+	// Load when connected and on session change.
+	// connectionState.value triggers a retry when the WebSocket connects
+	// after mount (e.g. fresh page load where ChatContainer renders before
+	// the hub is ready).
+	const isConnected = connectionState.value === 'connected';
 	useEffect(() => {
-		loadModelInfo();
-	}, [loadModelInfo]);
+		if (isConnected) {
+			loadModelInfo();
+		}
+	}, [loadModelInfo, isConnected]);
 
 	const switchModel = useCallback(
 		async (model: ModelInfo) => {
