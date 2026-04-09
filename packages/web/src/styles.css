@@ -672,6 +672,10 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
  * chat footer. The keyboard covers the home indicator area, so the extra
  * padding pushes content up unnecessarily.
  */
+.chat-footer {
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 html.keyboard-open .chat-footer,
 html.keyboard-open .chat-footer > div {
 	padding-bottom: 0px !important;

@@ -444,11 +444,12 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(false);
 	});
 
-	test('plan-approval-gate has boolean == true field with reviewer writer', () => {
+	test('plan-approval-gate has boolean == true field with exclusive human writer', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		expect(gate.fields[0].name).toBe('approved');
 		expect(gate.fields[0].check).toMatchObject({ op: '==', value: true });
-		expect(gate.fields[0].writers).toContain('reviewer');
+		expect(gate.fields[0].writers).toEqual(['human']);
+		expect(gate.label).toBe('Human');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
@@ -1356,9 +1357,8 @@ describe('seedBuiltInWorkflows()', () => {
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toContain('human');
-		// 'reviewer' is also present so the Plan Review AI agent can also approve in automated runs
-		expect(approvedField.writers).toContain('reviewer');
+		// 'human' must be the sole writer — human approval gates are exclusive
+		expect(approvedField.writers).toEqual(['human']);
 	});
 
 	// ─── getBuiltInWorkflows ordering ────────────────────────────────────────

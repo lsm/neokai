@@ -72,8 +72,8 @@ describe('GlmProvider', () => {
 
 			const models = await provider.getModels();
 
-			expect(models).toHaveLength(3);
-			expect(models.map((m) => m.id)).toEqual(['glm-5', 'glm-5-turbo', 'glm-4.7']);
+			expect(models).toHaveLength(4);
+			expect(models.map((m) => m.id)).toEqual(['glm-5', 'glm-5.1', 'glm-5-turbo', 'glm-4.7']);
 		});
 
 		it('should return empty array when API key is not available', async () => {
@@ -210,8 +210,13 @@ describe('GlmProvider', () => {
 
 	describe('static models', () => {
 		it('should have static models defined', () => {
-			expect(GlmProvider.MODELS).toHaveLength(3);
-			expect(GlmProvider.MODELS.map((m) => m.id)).toEqual(['glm-5', 'glm-5-turbo', 'glm-4.7']);
+			expect(GlmProvider.MODELS).toHaveLength(4);
+			expect(GlmProvider.MODELS.map((m) => m.id)).toEqual([
+				'glm-5',
+				'glm-5.1',
+				'glm-5-turbo',
+				'glm-4.7',
+			]);
 		});
 
 		it('should have correct glm-5-turbo model definition', () => {

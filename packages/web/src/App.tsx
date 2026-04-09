@@ -199,7 +199,7 @@ export function App() {
 				<ContextPanel />
 
 				{/* Main Content — bottom padding matches actual BottomTabBar height via --bottom-bar-height */}
-				<div class="flex-1 flex flex-col overflow-hidden pb-bottom-bar min-w-0">
+				<div class="flex-1 flex flex-col overflow-hidden pb-bottom-bar pb-safe min-w-0">
 					<MainContent />
 				</div>
 			</div>

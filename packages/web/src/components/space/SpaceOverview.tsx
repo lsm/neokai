@@ -4,13 +4,14 @@
  * Overview dashboard showing:
  * - Runtime state indicator with pause/resume/stop/start controls (when available)
  * - Task stats summary (active, review, done counts)
- * - Recent activity feed (latest task updates)
+ * - Recent tasks feed (latest task updates)
+ * - Recent sessions (latest active sessions)
  */
 
 import { useState } from 'preact/hooks';
 import type { RuntimeState, SpaceTask } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceTask } from '../../lib/router';
+import { navigateToSpaceTask, navigateToSpaceAgent } from '../../lib/router';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 
@@ -98,7 +99,7 @@ function RuntimeControlBar({ state }: { state: RuntimeState }) {
 	);
 }
 
-// ─── Recent Activity ─────────────────────────────────────────────────────────
+// ─── Recent Tasks ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
 	in_progress: 'text-blue-400',
@@ -110,7 +111,7 @@ const STATUS_COLORS: Record<string, string> = {
 	archived: 'text-gray-600',
 };
 
-function RecentActivityItem({ task, onClick }: { task: SpaceTask; onClick?: () => void }) {
+function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => void }) {
 	const statusColor = STATUS_COLORS[task.status] ?? 'text-gray-400';
 
 	return (
@@ -146,6 +147,11 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const tasks = spaceStore.tasks.value;
 	const runtimeState = spaceStore.runtimeState.value;
 
+	// Recent sessions — sorted by lastActiveAt, top 8 (computed before early returns)
+	const recentSessions = [...spaceStore.sessions.value]
+		.sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+		.slice(0, 8);
+
 	if (loading) {
 		return (
 			<div class="flex h-full items-center justify-center">
@@ -172,7 +178,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
 	);
 
-	// Recent activity — sorted by updatedAt, top 8
+	// Recent tasks — sorted by updatedAt, top 8
 	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8);
 
 	const handleTaskClick =
@@ -204,12 +210,10 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 				/>
 			</div>
 
-			{/* Recent Activity */}
+			{/* Recent Tasks */}
 			<div>
 				<div class="flex items-center justify-between mb-2 px-1">
-					<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-						Recent Activity
-					</h3>
+					<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Recent Tasks</h3>
 					<button
 						type="button"
 						onClick={() => setShowCreateTask(true)}
@@ -239,15 +243,49 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 				) : (
 					<div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
 						{recentTasks.map((task) => (
-							<RecentActivityItem
-								key={task.id}
-								task={task}
-								onClick={() => handleTaskClick(task.id)}
-							/>
+							<RecentTaskItem key={task.id} task={task} onClick={() => handleTaskClick(task.id)} />
 						))}
 					</div>
 				)}
 			</div>
+
+			{/* Recent Sessions */}
+			{recentSessions.length > 0 && (
+				<div>
+					<div class="flex items-center justify-between mb-2 px-1">
+						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+							Recent Sessions
+						</h3>
+						<button
+							type="button"
+							onClick={() => navigateToSpaceAgent(spaceId)}
+							class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+						>
+							New Session
+						</button>
+					</div>
+					<div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
+						{recentSessions.map((session) => (
+							<button
+								key={session.id}
+								type="button"
+								onClick={() => navigateToSpaceAgent(spaceId)}
+								class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
+							>
+								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
+								<div class="flex-1 min-w-0">
+									<span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
+										{session.title || 'Untitled Session'}
+									</span>
+								</div>
+								<span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+									{getRelativeTime(session.lastActiveAt)}
+								</span>
+							</button>
+						))}
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

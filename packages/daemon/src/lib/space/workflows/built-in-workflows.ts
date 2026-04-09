@@ -277,6 +277,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'code-ready-gate',
+			label: 'PR Ready',
 			description: 'Coder has opened an active, mergeable pull request',
 			fields: [
 				{
@@ -406,6 +407,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'research-ready-gate',
+			label: 'PR Ready',
 			description: 'Research agent has opened an active, mergeable pull request',
 			fields: [
 				{
@@ -680,6 +682,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'plan-pr-gate',
+			label: 'PR Ready',
 			description: 'Planning PR is open and mergeable so plan review can start.',
 			fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			script: {
@@ -691,15 +694,16 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 		},
 		{
 			id: 'plan-approval-gate',
-			description: 'Plan has been reviewed and approved by the plan reviewer',
+			label: 'Human',
+			description: 'Plan has been reviewed and approved by a human.',
 			fields: [
 				{
 					name: 'approved',
 					type: 'boolean',
-					// 'human' makes this a human-approval gate (UI shows waiting_human state
-					// and the Reject/Approve buttons). 'reviewer' allows the Plan Review AI
-					// agent to also approve the plan in fully-automated runs.
-					writers: ['reviewer', 'human'],
+					// 'human' is a reserved writer keyword — makes this a human-approval gate
+					// (UI shows waiting_human state and the Approve/Reject buttons).
+					// Human approval gates must use writers: ['human'] exclusively.
+					writers: ['human'],
 					check: { op: '==', value: true },
 				},
 			],
@@ -707,6 +711,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 		},
 		{
 			id: 'code-pr-gate',
+			label: 'PR Ready',
 			description:
 				'Code has been implemented and a pull request has been opened. ' +
 				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
@@ -716,6 +721,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 		},
 		{
 			id: 'review-votes-gate',
+			label: 'Votes',
 			description:
 				'All three reviewers have approved the code changes. ' +
 				'Agents must read the current votes map first, add their entry, then write the full map back ' +
@@ -885,6 +891,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	gates: [
 		{
 			id: 'code-pr-gate',
+			label: 'PR Ready',
 			description: 'Coding PR is open and mergeable for review.',
 			fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			script: {
@@ -896,6 +903,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 		},
 		{
 			id: 'review-approval-gate',
+			label: 'Review',
 			description: 'Reviewer approved the PR for QA.',
 			fields: [
 				{

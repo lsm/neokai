@@ -55,6 +55,17 @@ export class GlmProvider implements Provider {
 			available: true,
 		},
 		{
+			id: 'glm-5.1',
+			name: 'GLM-5.1',
+			alias: 'glm-5.1',
+			family: 'glm',
+			provider: 'glm',
+			contextWindow: 200000,
+			description: 'GLM-5.1 · Enhanced reasoning and instruction following',
+			releaseDate: '2026-04-08',
+			available: true,
+		},
+		{
 			id: 'glm-5-turbo',
 			name: 'GLM-5-Turbo',
 			alias: 'glm-5-turbo',

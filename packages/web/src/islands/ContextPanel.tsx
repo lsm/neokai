@@ -17,7 +17,6 @@ import {
 	navigateToSession,
 	navigateToSessions,
 	navigateToSettings,
-	navigateToHome,
 	navigateToRooms,
 	navigateToInbox,
 	navigateToSpaces,
@@ -202,13 +201,6 @@ export function ContextPanel() {
 
 	// Section config
 	const sectionConfig = {
-		home: {
-			title: 'Rooms',
-			emptyIcon: '🏢',
-			emptyTitle: 'No rooms yet',
-			emptyDesc: 'Create a room to organize work',
-			actionLabel: 'Create Room',
-		},
 		chats: {
 			title: 'Sessions',
 			emptyIcon: '💬',
@@ -293,7 +285,6 @@ export function ContextPanel() {
 
 	const handleAction = () => {
 		switch (navSection) {
-			case 'home':
 			case 'rooms':
 				createRoomModalSignal.value = true;
 				break;
@@ -314,10 +305,6 @@ export function ContextPanel() {
 
 	const handleMobileNavClick = (section: NavSection) => {
 		switch (section) {
-			case 'home':
-				navSectionSignal.value = 'home';
-				navigateToHome();
-				break;
 			case 'chats':
 				navigateToSessions();
 				break;
@@ -470,9 +457,7 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'home' ||
-						navSection === 'chats' ||
-						(navSection === 'rooms' && !isRoomDetail)) && (
+					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}
@@ -501,9 +486,6 @@ export function ContextPanel() {
 					}
 					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
 				>
-					{navSection === 'home' && (
-						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
-					)}
 					{navSection === 'chats' && (
 						<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}

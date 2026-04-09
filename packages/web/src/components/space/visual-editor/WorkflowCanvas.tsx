@@ -78,6 +78,8 @@ export interface WorkflowCanvasProps {
 	onDeleteEdge?: (transitionId: string) => void;
 	/** Called when a channel edge is clicked. Receives the channel's id. */
 	onChannelSelect?: (channelId: string | null) => void;
+	/** Called when a gate runtime-status icon is clicked. Receives gateId and mouse event. */
+	onGateClick?: (gateId: string, event: MouseEvent) => void;
 	/** Currently selected channel ID for highlighting. */
 	selectedChannelId?: string | null;
 	/**
@@ -274,6 +276,7 @@ export function WorkflowCanvas({
 	onEdgeSelect,
 	onDeleteEdge,
 	onChannelSelect,
+	onGateClick,
 	selectedChannelId,
 	readOnly = false,
 }: WorkflowCanvasProps) {
@@ -457,6 +460,7 @@ export function WorkflowCanvas({
 					channels={effectiveChannels}
 					selectedChannelId={selectedChannelId}
 					onChannelSelect={onChannelSelect ?? undefined}
+					onGateClick={onGateClick}
 					readOnly={readOnly}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
@@ -474,6 +478,7 @@ export function WorkflowCanvas({
 			dragState,
 			selectedChannelId,
 			onChannelSelect,
+			onGateClick,
 			readOnly,
 		]
 	);

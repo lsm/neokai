@@ -152,6 +152,11 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(space.instructions);
 	}
 
+	if (workflow?.instructions) {
+		sections.push(`\n## Workflow Instructions\n`);
+		sections.push(workflow.instructions);
+	}
+
 	if (task.prUrl) {
 		sections.push(`\n## Existing Pull Request\n`);
 		sections.push(`**PR URL:** ${task.prUrl}`);

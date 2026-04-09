@@ -369,12 +369,12 @@ export default function ChatContainer({
 		}
 	});
 
-	// Timeout: if session state doesn't load within 10s, show error instead of infinite spinner
+	// Timeout: if session state doesn't load within 30s, show error instead of infinite spinner
 	useEffect(() => {
 		if (!isInitialLoad) return;
 		const timer = setTimeout(() => {
 			setLoadTimedOut(true);
-		}, 10_000);
+		}, 30_000);
 		return () => clearTimeout(timer);
 	}, [isInitialLoad]);
 
@@ -1116,7 +1116,6 @@ export default function ChatContainer({
 				<div
 					ref={footerContainerRef}
 					class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"
-					style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
 				>
 					<SessionStatusBar
 						sessionId={sessionId}

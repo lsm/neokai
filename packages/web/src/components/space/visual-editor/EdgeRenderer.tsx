@@ -106,6 +106,8 @@ export interface ResolvedWorkflowChannel {
 	targetSide?: AnchorSide;
 	/** Runtime gate status for the forward direction (from→to). Only set in runtime/read-only view mode. */
 	runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
+	/** Forward gate ID — set when the channel has a gate with runtime status. */
+	gateId?: string;
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -141,17 +143,6 @@ const CHANNEL_GATE_BADGE_COLORS: Record<
 	check: '#60a5fa',
 	count: '#ec4899',
 };
-const CHANNEL_GATE_BADGE_LABELS: Record<
-	NonNullable<ResolvedWorkflowChannel['gateType']>,
-	string
-> = {
-	human: 'Human',
-	condition: 'Shell',
-	task_result: 'Result',
-	check: 'Check',
-	count: 'Votes',
-};
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -168,6 +159,8 @@ export interface EdgeRendererProps {
 	selectedChannelId?: string | null;
 	/** Called when the user clicks a channel edge. Receives the channel's `id` field. */
 	onChannelSelect?: (channelId: string) => void;
+	/** Called when the user clicks a gate runtime-status icon. Receives the gateId and mouse event for popup positioning. */
+	onGateClick?: (gateId: string, event: MouseEvent) => void;
 	/** When true, the Delete/Backspace keydown listener is not registered. */
 	readOnly?: boolean;
 }
@@ -579,6 +572,7 @@ export function EdgeRenderer({
 	channels = [],
 	selectedChannelId,
 	onChannelSelect,
+	onGateClick,
 	readOnly = false,
 }: EdgeRendererProps) {
 	// Stable per-instance prefix to prevent marker ID collisions across instances
@@ -774,14 +768,12 @@ export function EdgeRenderer({
 				// use the reverse direction's custom fields.
 				const effectiveGateLabel = channel.gateType ? channel.gateLabel : channel.reverseGateLabel;
 				const effectiveGateColor = channel.gateType ? channel.gateColor : channel.reverseGateColor;
-				// Prefer custom gate color, fall back to heuristic color from gateType.
+				// Prefer custom gate color, fall back to type-based color.
 				const gateColor =
 					effectiveGateColor ??
 					(effectiveGateType ? CHANNEL_GATE_BADGE_COLORS[effectiveGateType] : CHANNEL_EDGE_COLOR);
-				// Prefer custom gate label, fall back to heuristic label from gateType.
-				const gateLabel =
-					effectiveGateLabel ??
-					(effectiveGateType ? CHANNEL_GATE_BADGE_LABELS[effectiveGateType] : 'Gate');
+				// gate.label is the authoritative badge text — no heuristic fallback.
+				const gateLabel = effectiveGateLabel ?? 'Gate';
 				// Whether to show a script icon next to the badge.
 				// For bidirectional channels, use the forward direction's hasScript when available.
 				const effectiveHasScript = channel.gateType
@@ -1015,30 +1007,62 @@ export function EdgeRenderer({
 								</text>
 							</g>
 						)}
-						{/* Runtime gate status dot — only rendered in read-only/runtime view mode */}
+						{/* Runtime gate status icon — clickable when waiting_human */}
 						{channel.runtimeStatus && gateBadgePosition && (
-							<circle
-								cx={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
-								cy={gateBadgePosition.y}
-								r={5}
-								fill={
-									channel.runtimeStatus === 'open'
-										? '#16a34a'
-										: channel.runtimeStatus === 'waiting_human'
-											? '#f59e0b'
-											: '#ef4444'
+							<g
+								data-testid={`gate-icon-${channel.runtimeStatus}`}
+								data-gate-id={channel.gateId ?? ''}
+								style={{
+									pointerEvents:
+										channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
+											? 'auto'
+											: 'none',
+									cursor:
+										channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
+											? 'pointer'
+											: 'default',
+								}}
+								onClick={
+									channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
+										? (e: MouseEvent) => {
+												e.stopPropagation();
+												onGateClick(channel.gateId!, e);
+											}
+										: undefined
 								}
-								data-testid={`channel-runtime-status-${channel.id ?? ''}`}
 							>
-								{channel.runtimeStatus === 'waiting_human' && (
-									<animate
-										attributeName="opacity"
-										values="1;0.4;1"
-										dur="1.5s"
-										repeatCount="indefinite"
-									/>
+								<circle
+									cx={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
+									cy={gateBadgePosition.y}
+									r={channel.runtimeStatus === 'waiting_human' ? 7 : 5}
+									fill={
+										channel.runtimeStatus === 'open'
+											? '#16a34a'
+											: channel.runtimeStatus === 'waiting_human'
+												? '#f59e0b'
+												: '#ef4444'
+									}
+									data-testid={`channel-runtime-status-${channel.id ?? ''}`}
+								>
+									{channel.runtimeStatus === 'waiting_human' && (
+										<animate
+											attributeName="opacity"
+											values="1;0.4;1"
+											dur="1.5s"
+											repeatCount="indefinite"
+										/>
+									)}
+								</circle>
+								{/* Blocked icon: small X */}
+								{channel.runtimeStatus === 'blocked' && (
+									<g
+										transform={`translate(${gateBadgePosition.x + gateBadgeWidth / 2 + 10}, ${gateBadgePosition.y})`}
+									>
+										<line x1="-2.5" y1="-2.5" x2="2.5" y2="2.5" stroke="white" stroke-width="1.5" />
+										<line x1="2.5" y1="-2.5" x2="-2.5" y2="2.5" stroke="white" stroke-width="1.5" />
+									</g>
 								)}
-							</circle>
+							</g>
 						)}
 					</g>
 				);

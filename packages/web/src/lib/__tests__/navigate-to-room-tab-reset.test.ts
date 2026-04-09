@@ -65,7 +65,7 @@ describe('navigateToRoom tab signal behavior', () => {
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
-		navSectionSignal.value = 'home';
+		navSectionSignal.value = 'rooms';
 
 		vi.clearAllMocks();
 		cleanupRouter();

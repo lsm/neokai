@@ -1345,6 +1345,7 @@ class SpaceStore {
 
 		try {
 			await this.fetchAndResolveSpace(spaceId);
+			await this.startSubscriptions(spaceId);
 			// Re-fetch previously loaded data in background
 			if (hadConfigData) {
 				this.ensureConfigData().catch((err) => {

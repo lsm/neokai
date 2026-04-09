@@ -399,7 +399,7 @@ describe('Popstate handling for space routes', () => {
 		window.dispatchEvent(new PopStateEvent('popstate', {}));
 
 		expect(currentSpaceIdSignal.value).toBeNull();
-		expect(navSectionSignal.value).toBe('home');
+		expect(navSectionSignal.value).toBe('rooms');
 	});
 
 	it('switches from room to space correctly on popstate', () => {
@@ -513,7 +513,7 @@ describe('navigateToSessions clears space signals', () => {
 describe('navigateToSpace same-path branch sets navSection', () => {
 	it('sets navSection to spaces even when already on the same space path', () => {
 		mockLocation.pathname = `/space/${SPACE_ID}`;
-		navSectionSignal.value = 'home'; // simulate out-of-sync state
+		navSectionSignal.value = 'rooms'; // simulate out-of-sync state
 
 		navigateToSpace(SPACE_ID);
 
@@ -525,7 +525,7 @@ describe('navigateToSpace same-path branch sets navSection', () => {
 describe('navigateToSpaceSession same-path branch sets navSection', () => {
 	it('sets navSection to spaces even when already on the same space/session path', () => {
 		mockLocation.pathname = `/space/${SPACE_ID}/session/${SESSION_ID}`;
-		navSectionSignal.value = 'home';
+		navSectionSignal.value = 'rooms';
 
 		navigateToSpaceSession(SPACE_ID, SESSION_ID);
 
@@ -537,7 +537,7 @@ describe('navigateToSpaceSession same-path branch sets navSection', () => {
 describe('navigateToSpaceTask same-path branch sets navSection', () => {
 	it('sets navSection to spaces even when already on the same space/task path', () => {
 		mockLocation.pathname = `/space/${SPACE_ID}/task/${TASK_ID}`;
-		navSectionSignal.value = 'home';
+		navSectionSignal.value = 'rooms';
 
 		navigateToSpaceTask(SPACE_ID, TASK_ID);
 
