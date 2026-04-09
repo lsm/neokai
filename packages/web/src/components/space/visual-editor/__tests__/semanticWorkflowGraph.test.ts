@@ -158,9 +158,9 @@ describe('buildSemanticWorkflowEdges', () => {
 		expect(result[0].direction).toBe('bidirectional');
 		expect(result[0].hasGate).toBe(true);
 		// Forward gate (plan→review = lowId→highId)
-		expect(result[0].gateType).toBe('human');
+		expect(result[0].gateType).toBe('check');
 		// Reverse gate (review→plan = highId→lowId)
-		expect(result[0].reverseGateType).toBe('human');
+		expect(result[0].reverseGateType).toBe('check');
 	});
 
 	it('does not set reverseGateType when only the forward direction has a gate', () => {
@@ -172,7 +172,7 @@ describe('buildSemanticWorkflowEdges', () => {
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result[0].direction).toBe('bidirectional');
-		expect(result[0].gateType).toBe('human');
+		expect(result[0].gateType).toBe('check');
 		expect(result[0].reverseGateType).toBeUndefined();
 	});
 
@@ -186,7 +186,7 @@ describe('buildSemanticWorkflowEdges', () => {
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result[0].direction).toBe('bidirectional');
 		expect(result[0].gateType).toBeUndefined();
-		expect(result[0].reverseGateType).toBe('human');
+		expect(result[0].reverseGateType).toBe('check');
 	});
 
 	it('a bidirectional underlying channel gates both directions', () => {
@@ -198,8 +198,8 @@ describe('buildSemanticWorkflowEdges', () => {
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result[0].direction).toBe('bidirectional');
-		expect(result[0].gateType).toBe('human');
-		expect(result[0].reverseGateType).toBe('human');
+		expect(result[0].gateType).toBe('check');
+		expect(result[0].reverseGateType).toBe('check');
 	});
 });
 
@@ -215,7 +215,7 @@ describe('gate label/color/hasScript propagation', () => {
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result[0]).toMatchObject({
-			gateType: 'human',
+			gateType: 'check',
 			gateLabel: 'Team Lead',
 			gateColor: '#ff5500',
 			hasScript: undefined,
@@ -289,11 +289,11 @@ describe('gate label/color/hasScript propagation', () => {
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result).toHaveLength(1);
 		expect(result[0]).toMatchObject({
-			gateType: 'human',
+			gateType: 'check',
 			gateLabel: 'Forward',
 			gateColor: '#00ff00',
 			hasScript: true,
-			reverseGateType: 'human',
+			reverseGateType: 'check',
 			reverseGateLabel: 'Reverse',
 			reverseGateColor: '#ff0000',
 			reverseHasScript: undefined,
@@ -315,11 +315,11 @@ describe('gate label/color/hasScript propagation', () => {
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result[0]).toMatchObject({
-			gateType: 'human',
+			gateType: 'check',
 			gateLabel: 'Both Ways',
 			gateColor: '#123456',
 			hasScript: true,
-			reverseGateType: 'human',
+			reverseGateType: 'check',
 			reverseGateLabel: 'Both Ways',
 			reverseGateColor: '#123456',
 			reverseHasScript: true,
@@ -487,7 +487,7 @@ describe('gate label/color/hasScript propagation', () => {
 
 	it('gate with both fields and script propagates both gateType and hasScript', () => {
 		// A human gate (with approved field) that also has a script.
-		// Should produce gateType='human' AND hasScript=true.
+		// Should produce gateType='check' AND hasScript=true.
 		const channels: WorkflowChannel[] = [{ from: 'Planning', to: 'Code Review', gateId: 'g1' }];
 		const gates = [
 			humanGate('g1', {
@@ -499,7 +499,7 @@ describe('gate label/color/hasScript propagation', () => {
 
 		const result = buildSemanticWorkflowEdges(NODES, channels, gates);
 		expect(result[0]).toMatchObject({
-			gateType: 'human',
+			gateType: 'check',
 			gateLabel: 'Hybrid Gate',
 			gateColor: '#112233',
 			hasScript: true,

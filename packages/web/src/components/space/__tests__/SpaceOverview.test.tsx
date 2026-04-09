@@ -12,6 +12,9 @@ let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
+let mockSessions: ReturnType<
+	typeof signal<{ id: string; title?: string; status: string; lastActiveAt: number }[]>
+>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -20,18 +23,21 @@ vi.mock('../../../lib/space-store', () => ({
 			loading: mockLoading,
 			tasks: mockTasks,
 			runtimeState: mockRuntimeState,
+			sessions: mockSessions,
 		};
 	},
 }));
 
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceTask: vi.fn(),
+	navigateToSpaceAgent: vi.fn(),
 }));
 
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
 mockRuntimeState = signal<RuntimeState | null>(null);
+mockSessions = signal([]);
 
 import { SpaceOverview } from '../SpaceOverview';
 
@@ -115,7 +121,7 @@ describe('SpaceOverview', () => {
 		expect(getByText('Done')).toBeTruthy();
 	});
 
-	it('renders recent activity with tasks sorted by updatedAt', () => {
+	it('renders recent tasks sorted by updatedAt', () => {
 		mockSpace.value = makeSpace();
 		const now = Date.now();
 		mockTasks.value = [
@@ -125,7 +131,7 @@ describe('SpaceOverview', () => {
 		];
 
 		const { getByText } = render(<SpaceOverview spaceId="space-1" />);
-		expect(getByText('Recent Activity')).toBeTruthy();
+		expect(getByText('Recent Tasks')).toBeTruthy();
 		expect(getByText('Task t1')).toBeTruthy();
 		expect(getByText('Task t2')).toBeTruthy();
 		expect(getByText('Task t3')).toBeTruthy();
@@ -178,7 +184,7 @@ describe('SpaceOverview', () => {
 		expect(queryByText('Stopped')).toBeNull();
 	});
 
-	it('limits recent activity to 8 tasks', () => {
+	it('limits recent tasks to 8', () => {
 		mockSpace.value = makeSpace();
 		const now = Date.now();
 		mockTasks.value = Array.from({ length: 10 }, (_, i) =>

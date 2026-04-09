@@ -662,7 +662,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'condition',
+				gateType: 'check',
 			},
 		];
 		const { getByTestId, onChannelSelect } = renderEdgesWithChannels({ channels });
@@ -688,7 +688,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'human',
+				gateType: 'check',
 			},
 		];
 		const { container } = renderEdgesWithChannels({ channels });
@@ -717,12 +717,12 @@ describe('EdgeRenderer — channel edge rendering', () => {
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'condition',
+				gateType: 'check',
 			},
 		];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
 		// textContent includes only the <text> label (the polygon has no text content)
-		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Shell');
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Gate');
 	});
 
 	it('one-way gated badge renders a directional arrow polygon', () => {
@@ -757,7 +757,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 		const { getByTestId, queryByTestId } = renderEdgesWithChannels({ channels });
 		expect(queryByTestId('channel-gate-arrow-step-1-step-2')).not.toBeNull();
 		// Plain label — no ⇄ prefix
-		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Check');
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Gate');
 	});
 
 	it('bidirectional channel with only reverse gate renders a single reverse arrow', () => {
@@ -802,7 +802,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
 			},
 		];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
-		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Check');
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Gate');
 	});
 
 	it('renders a loop badge when a channel is cyclic', () => {
@@ -884,17 +884,17 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Custom Gate');
 	});
 
-	it('falls back to heuristic label when gateLabel is not set', () => {
+	it('falls back to "Gate" when gateLabel is not set', () => {
 		const channels: ResolvedWorkflowChannel[] = [
 			{
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'human',
+				gateType: 'check',
 			},
 		];
 		const { getByTestId } = renderEdgesWithChannels({ channels });
-		expect(getByTestId('channel-gate-step-1-step-2').textContent).toContain('Human');
+		expect(getByTestId('channel-gate-step-1-step-2').textContent).toBe('Gate');
 	});
 
 	it('renders custom gateColor on badge text when set', () => {
@@ -933,7 +933,7 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'condition',
+				gateType: 'check',
 				gateColor: '#00ff88',
 			},
 		];
@@ -1078,7 +1078,7 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'human',
+				gateType: 'check',
 				gateLabel: 'Approve',
 				reverseGateType: 'check',
 			},
@@ -1180,7 +1180,7 @@ describe('EdgeRenderer — gate badge custom label/color/hasScript', () => {
 				direction: 'one-way' as const,
 				fromStepId: 'step-1',
 				toStepId: 'step-2',
-				gateType: 'human',
+				gateType: 'check',
 				gateLabel: 'Forward',
 				gateColor: '#ff0000',
 				reverseGateType: 'check',
