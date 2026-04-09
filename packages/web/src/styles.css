@@ -138,14 +138,21 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 	/* Prevent page-level scrolling - only message container should scroll */
 	overflow: hidden;
-	/* Use dynamic viewport height for mobile Safari (accounts for address bar) */
-	height: 100dvh;
 	/* Fallback for browsers that don't support dvh */
 	height: 100vh;
+	/* Dynamic viewport height for mobile Safari (accounts for address bar).
+	   MUST come after 100vh so it overrides in supporting browsers. */
+	height: 100dvh;
 	/* Prevent overscroll bounce on body - scrollable children handle their own */
 	overscroll-behavior: none;
 	/* Allow touch manipulation (zoom, pan) but let children control scroll */
 	touch-action: manipulation;
+}
+
+/* Preact mount point — make it invisible to layout so App's root div
+   is effectively a direct child of <body>. */
+#root {
+	display: contents;
 }
 
 /* Smooth scrolling */
