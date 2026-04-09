@@ -10,7 +10,7 @@
  * - globalTools.saveConfig - Save global tools config
  */
 
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, mock, afterEach, afterAll } from 'bun:test';
 import { MessageHub, type ToolsConfig, type GlobalToolsConfig } from '@neokai/shared';
 import { registerMcpHandlers } from '../../../../src/lib/rpc-handlers/mcp-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
@@ -135,6 +135,18 @@ describe('MCP/Tools RPC Handlers', () => {
 
 	afterEach(() => {
 		mock.restore();
+		// Re-register the default node:fs/promises mock so that per-test overrides
+		// (e.g. 'not valid json' in mcp.listServers tests) don't leak into other
+		// tests within this file.
+		mock.module('node:fs/promises', () => ({
+			readFile: mock(async () => '{}'),
+		}));
+	});
+
+	// Restore the real node:fs/promises after all tests in this file complete
+	// so the mock doesn't leak into subsequent test files in the same process.
+	afterAll(() => {
+		mock.module('node:fs/promises', () => require('node:fs/promises'));
 	});
 
 	describe('tools.save', () => {
