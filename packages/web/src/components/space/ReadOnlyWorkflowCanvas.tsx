@@ -5,6 +5,10 @@
  * Shows the same visual style as the full editor but with no editing affordances.
  *
  * Used in SpaceTaskPane to replace the old custom SVG WorkflowCanvas.
+ *
+ * When a gate icon in `waiting_human` state is clicked, a popup appears with
+ * "View Artifacts", "Approve", and "Reject" buttons. "View Artifacts" opens a
+ * full overlay containing GateArtifactsView.
  */
 
 import { useRef, useEffect, useState, useCallback } from 'preact/hooks';
@@ -12,24 +16,39 @@ import { WorkflowCanvas } from './visual-editor/WorkflowCanvas';
 import { CanvasToolbar } from './visual-editor/CanvasToolbar';
 import { useRuntimeCanvasData } from './useRuntimeCanvasData';
 import { ChannelInfoPanel } from './ChannelInfoPanel';
+import { GateArtifactsView } from './GateArtifactsView';
+import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
 
 interface ReadOnlyWorkflowCanvasProps {
 	workflowId: string;
 	runId?: string | null;
+	spaceId?: string;
 	onNodeClick?: (nodeId: string, nodeName: string, agentNames: string[]) => void;
 	class?: string;
+}
+
+interface GatePopupState {
+	gateId: string;
+	x: number;
+	y: number;
 }
 
 export function ReadOnlyWorkflowCanvas({
 	workflowId,
 	runId,
+	spaceId,
 	onNodeClick,
 	class: className,
 }: ReadOnlyWorkflowCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+
+	// Gate popup / overlay state
+	const [gatePopup, setGatePopup] = useState<GatePopupState | null>(null);
+	const [artifactsOverlay, setArtifactsOverlay] = useState<{ gateId: string } | null>(null);
+	const [approving, setApproving] = useState(false);
 
 	const {
 		nodeData,
@@ -38,6 +57,7 @@ export function ReadOnlyWorkflowCanvas({
 		viewportState,
 		setViewportState,
 		gateDataLoading,
+		gateDataMap,
 	} = useRuntimeCanvasData(workflowId, runId ?? null);
 
 	// Track container dimensions for the toolbar's fit-to-view
@@ -63,8 +83,9 @@ export function ReadOnlyWorkflowCanvas({
 
 	const handleNodeSelect = useCallback(
 		(stepId: string | null) => {
-			// Clicking a node clears channel selection
+			// Clicking a node clears channel selection and gate popup
 			setSelectedChannelId(null);
+			setGatePopup(null);
 			if (!stepId || !onNodeClick) return;
 			// stepId is localId — find the persisted node ID, name, and agent names
 			const nodeEntry = nodeData.find((n) => n.step.localId === stepId);
@@ -78,6 +99,53 @@ export function ReadOnlyWorkflowCanvas({
 
 	const handleChannelSelect = useCallback((channelId: string | null) => {
 		setSelectedChannelId(channelId);
+		setGatePopup(null);
+	}, []);
+
+	// Gate icon click — open action popup
+	const handleGateClick = useCallback((gateId: string, event: MouseEvent) => {
+		const container = containerRef.current;
+		if (!container) return;
+		const rect = container.getBoundingClientRect();
+		setGatePopup({
+			gateId,
+			x: event.clientX - rect.left,
+			y: event.clientY - rect.top,
+		});
+		setSelectedChannelId(null);
+	}, []);
+
+	// Direct approve/reject from popup
+	const handlePopupDecision = useCallback(
+		async (approved: boolean) => {
+			if (!gatePopup || !runId) return;
+			setApproving(true);
+			try {
+				const hub = connectionManager.getHubIfConnected();
+				if (!hub) return;
+				await hub.request('spaceWorkflowRun.approveGate', {
+					runId,
+					gateId: gatePopup.gateId,
+					approved,
+				});
+				setGatePopup(null);
+			} finally {
+				setApproving(false);
+			}
+		},
+		[gatePopup, runId]
+	);
+
+	// Open artifacts overlay from popup
+	const handleOpenArtifacts = useCallback(() => {
+		if (!gatePopup) return;
+		setArtifactsOverlay({ gateId: gatePopup.gateId });
+		setGatePopup(null);
+	}, [gatePopup]);
+
+	// Close artifacts overlay after decision
+	const handleArtifactsDecision = useCallback(() => {
+		setArtifactsOverlay(null);
 	}, []);
 
 	const selectedChannel = selectedChannelId
@@ -106,6 +174,7 @@ export function ReadOnlyWorkflowCanvas({
 					nodePositions={canvasNodePositions}
 					onNodeSelect={handleNodeSelect}
 					onChannelSelect={handleChannelSelect}
+					onGateClick={handleGateClick}
 					selectedChannelId={selectedChannelId}
 					readOnly
 				/>
@@ -124,7 +193,66 @@ export function ReadOnlyWorkflowCanvas({
 						onClose={() => setSelectedChannelId(null)}
 					/>
 				)}
+
+				{/* Gate action popup */}
+				{gatePopup && (
+					<div
+						class="absolute z-30"
+						style={{
+							left: `${gatePopup.x}px`,
+							top: `${gatePopup.y + 12}px`,
+						}}
+					>
+						<div class="bg-dark-800 border border-dark-600 rounded-lg shadow-xl p-2 space-y-2 min-w-[160px]">
+							<button
+								data-testid="view-artifacts-btn"
+								onClick={handleOpenArtifacts}
+								class="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-dark-700 rounded transition-colors"
+							>
+								View Artifacts
+							</button>
+							<div class="flex gap-2">
+								<button
+									onClick={() => void handlePopupDecision(true)}
+									disabled={approving}
+									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 transition-colors"
+								>
+									Approve
+								</button>
+								<button
+									onClick={() => void handlePopupDecision(false)}
+									disabled={approving}
+									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 transition-colors"
+								>
+									Reject
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
 			</div>
+
+			{/* Artifacts panel overlay */}
+			{artifactsOverlay && runId && (
+				<div
+					data-testid="artifacts-panel-overlay"
+					class="absolute inset-0 z-40 bg-black/50 flex items-center justify-center"
+					onClick={(e) => {
+						if (e.target === e.currentTarget) setArtifactsOverlay(null);
+					}}
+				>
+					<div class="w-full max-w-2xl max-h-[80vh] bg-dark-900 border border-dark-600 rounded-xl shadow-2xl overflow-hidden">
+						<GateArtifactsView
+							runId={runId}
+							gateId={artifactsOverlay.gateId}
+							spaceId={spaceId ?? ''}
+							gateData={gateDataMap.get(artifactsOverlay.gateId)}
+							onClose={() => setArtifactsOverlay(null)}
+							onDecision={handleArtifactsDecision}
+						/>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

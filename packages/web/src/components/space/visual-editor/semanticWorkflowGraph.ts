@@ -93,35 +93,10 @@ function resolveSemanticGateType(
 		const gate = gateLookup.get(channel.gateId);
 		if (!gate) return { type: 'check', hasScript: false };
 
-		// Derive gate type from field declarations
-		const fields = gate.fields ?? [];
-
-		let type: SemanticWorkflowEdge['gateType'];
-
-		if (fields.length === 0) {
-			type = 'check';
-		} else if (fields.some((f) => f.type === 'map' && f.check.op === 'count')) {
-			type = 'count';
-		} else {
-			const approvedField = fields.find((f) => f.name === 'approved' && f.type === 'boolean');
-			if (approvedField && approvedField.check.op === '==' && approvedField.check.value === true) {
-				type = 'human';
-			} else {
-				const resultField = fields.find((f) => f.name === 'result' && f.type === 'string');
-				if (
-					resultField &&
-					resultField.check.op === '==' &&
-					typeof resultField.check.value === 'string'
-				) {
-					type = 'task_result';
-				} else {
-					type = 'check';
-				}
-			}
-		}
-
+		// Gate label is the authoritative display text — no heuristic type inference.
+		// Use 'check' as a generic type so the badge renders (isGated check).
 		return {
-			type,
+			type: 'check',
 			label: gate.label,
 			color: gate.color,
 			hasScript: !!gate.script,

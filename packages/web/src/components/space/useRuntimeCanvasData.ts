@@ -109,6 +109,8 @@ export interface RuntimeCanvasData {
 	setViewportState: (state: ViewportState) => void;
 	workflow: SpaceWorkflow | null;
 	gateDataLoading: boolean;
+	/** Gate data keyed by gateId — used by GateArtifactsView for PR link extraction. */
+	gateDataMap: Map<string, Record<string, unknown>>;
 }
 
 export function useRuntimeCanvasData(
@@ -283,6 +285,7 @@ export function useRuntimeCanvasData(
 				targetSide: edge.targetSide,
 				id: edge.id,
 				runtimeStatus,
+				gateId: forwardGateId,
 			};
 		});
 	}, [routedSemanticEdges, channels, endpointNodeIdLookup, gates, gateDataMap, runId]);
@@ -357,5 +360,6 @@ export function useRuntimeCanvasData(
 		setViewportState,
 		workflow,
 		gateDataLoading,
+		gateDataMap,
 	};
 }
