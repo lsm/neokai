@@ -34,12 +34,7 @@ describe('iOS iPad Safari safe area support', () => {
 		expect(useViewportSafetyTs).toContain('--safe-height');
 	});
 
-	it('App.tsx uses pb-bottom-bar utility class for dynamic bottom padding', () => {
-		expect(appTsx).toContain('pb-bottom-bar');
-	});
-
 	it('App.tsx does not use hardcoded pb-16 for main content bottom padding', () => {
-		// The main content div should not have pb-16 — dynamic approach is used instead
 		expect(appTsx).not.toContain('pb-16');
 	});
 
@@ -47,18 +42,11 @@ describe('iOS iPad Safari safe area support', () => {
 		expect(bottomTabBarTsx).toContain('--bottom-bar-height');
 	});
 
-	it('BottomTabBar uses ResizeObserver to measure actual height', () => {
-		expect(bottomTabBarTsx).toContain('ResizeObserver');
+	it('BottomTabBar uses a fixed height constant instead of dynamic measurement', () => {
+		expect(bottomTabBarTsx).toContain('BOTTOM_BAR_HEIGHT');
 	});
 
-	it('BottomTabBar adds a window resize listener for breakpoint transitions', () => {
-		expect(bottomTabBarTsx).toContain("window.addEventListener('resize'");
-	});
-
-	it('BottomTabBar cleans up observers and resets --bottom-bar-height on unmount', () => {
-		expect(bottomTabBarTsx).toContain('ro.disconnect()');
-		expect(bottomTabBarTsx).toContain("window.removeEventListener('resize'");
-		expect(bottomTabBarTsx).toContain('cancelAnimationFrame');
+	it('BottomTabBar resets --bottom-bar-height on unmount', () => {
 		expect(bottomTabBarTsx).toContain("'--bottom-bar-height', '0px'");
 	});
 });

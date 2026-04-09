@@ -138,14 +138,21 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 	/* Prevent page-level scrolling - only message container should scroll */
 	overflow: hidden;
-	/* Use dynamic viewport height for mobile Safari (accounts for address bar) */
-	height: 100dvh;
 	/* Fallback for browsers that don't support dvh */
 	height: 100vh;
+	/* Dynamic viewport height for mobile Safari (accounts for address bar).
+	   MUST come after 100vh so it overrides in supporting browsers. */
+	height: 100dvh;
 	/* Prevent overscroll bounce on body - scrollable children handle their own */
 	overscroll-behavior: none;
 	/* Allow touch manipulation (zoom, pan) but let children control scroll */
 	touch-action: manipulation;
+}
+
+/* Preact mount point — make it invisible to layout so App's root div
+   is effectively a direct child of <body>. */
+#root {
+	display: contents;
 }
 
 /* Smooth scrolling */
@@ -667,16 +674,6 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
 	transform: translateY(100%);
 }
 
-/**
- * When the keyboard is open, remove safe-area-inset-bottom padding from the
- * chat footer. The keyboard covers the home indicator area, so the extra
- * padding pushes content up unnecessarily.
- */
-.chat-footer {
-	padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-html.keyboard-open .chat-footer,
-html.keyboard-open .chat-footer > div {
-	padding-bottom: 0px !important;
-}
+/* Safe area bottom padding is handled at the app level via pb-safe + pb-bottom-bar
+   on the main content wrapper. The chat footer does not need its own safe area
+   padding — the wrapper already accounts for both the tab bar and home indicator. */

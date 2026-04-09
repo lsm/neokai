@@ -17,6 +17,7 @@ import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
 import { SpaceTasks } from '../components/space/SpaceTasks';
 import { SpaceOverview } from '../components/space/SpaceOverview';
 import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
+import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
 import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
@@ -57,12 +58,12 @@ export default function SpaceIsland({
 	}, [spaceId]);
 
 	// Session/agent chat view — render immediately, don't block on space data
+	// ChatContainer's root is already flex-1 flex-col overflow-hidden.
+	// AgentOverlayChat uses a Portal so it doesn't affect layout.
 	if (sessionViewId) {
 		return (
 			<>
-				<div class="flex-1 flex flex-col overflow-hidden">
-					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
-				</div>
+				<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
 				{overlaySessionId && (
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
@@ -114,7 +115,11 @@ export default function SpaceIsland({
 	if (viewMode === 'tasks' && space) {
 		return (
 			<>
-				<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-tasks-view">
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					data-testid="space-tasks-view"
+				>
+					<SpacePageHeader spaceName={space.name} pageTitle="Tasks" />
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<SpaceTasks
 							spaceId={spaceId}
@@ -136,7 +141,11 @@ export default function SpaceIsland({
 	if (viewMode === 'configure' && space) {
 		return (
 			<>
-				<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-configure-view">
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					data-testid="space-configure-view"
+				>
+					<SpacePageHeader spaceName={space.name} pageTitle="Settings" />
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
 						<SpaceConfigurePage space={space} />
 					</div>
@@ -161,7 +170,11 @@ export default function SpaceIsland({
 					onClose={handleOverlayClose}
 				/>
 			)}
-			<div class="flex-1 flex overflow-hidden bg-dark-900" data-testid="space-overview-view">
+			<div
+				class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+				data-testid="space-overview-view"
+			>
+				<SpacePageHeader spaceName={space?.name ?? ''} pageTitle="Overview" />
 				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
 					<SpaceOverview
 						spaceId={spaceId}

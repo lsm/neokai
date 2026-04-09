@@ -1,5 +1,5 @@
 import type { JSX } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect } from 'preact/hooks';
 import {
 	navSectionSignal,
 	currentRoomIdSignal,
@@ -220,44 +220,13 @@ const ROOM_BOTTOM_TABS: TabItem[] = [
 	{ id: 'room-missions', label: 'Missions', icon: MissionIcon },
 ];
 
-export function BottomTabBar() {
-	const innerRef = useRef<HTMLDivElement>(null);
+const BOTTOM_BAR_HEIGHT = 53;
 
+export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
+	// Set CSS variable for other components to account for tab bar height
 	useEffect(() => {
-		const inner = innerRef.current;
-		if (!inner) return;
-
-		const updateHeight = () => {
-			if (document.documentElement.classList.contains('keyboard-open')) return;
-			const h = inner.offsetHeight;
-			document.documentElement.style.setProperty('--bottom-bar-height', h + 'px');
-		};
-
-		// Measure the inner content div (excludes pb-safe) so --bottom-bar-height
-		// only tracks tab content height. Safe area is handled separately via pb-safe
-		// on the main content and chat-footer.
-		const ro = new ResizeObserver(updateHeight);
-		ro.observe(inner);
-
-		let rafId = 0;
-		const scheduleUpdate = () => {
-			cancelAnimationFrame(rafId);
-			rafId = requestAnimationFrame(updateHeight);
-		};
-		window.addEventListener('resize', scheduleUpdate);
-
-		const vv = window.visualViewport;
-		if (vv) vv.addEventListener('resize', scheduleUpdate);
-
-		updateHeight();
-		const timer = setTimeout(updateHeight, 300);
-
+		document.documentElement.style.setProperty('--bottom-bar-height', BOTTOM_BAR_HEIGHT + 'px');
 		return () => {
-			clearTimeout(timer);
-			ro.disconnect();
-			window.removeEventListener('resize', scheduleUpdate);
-			if (vv) vv.removeEventListener('resize', scheduleUpdate);
-			cancelAnimationFrame(rafId);
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 		};
 	}, []);
@@ -271,6 +240,7 @@ export function BottomTabBar() {
 	const roomTaskId = currentRoomTaskIdSignal.value;
 	const isInRoomContext = navSection === 'rooms' && roomId !== null;
 	const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
+
 	const isViewingRoomAgent = currentRoomAgentActiveSignal.value;
 	// Overview is only active when on the room dashboard (no task, no session, no agent chat)
 	const isViewingRoomDashboard =
@@ -360,7 +330,11 @@ export function BottomTabBar() {
 	return (
 		<div
 			data-testid="bottom-tab-bar"
-			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md pb-safe"
+			class={
+				inline
+					? 'flex md:hidden flex-shrink-0 bg-dark-900/90 backdrop-blur-md pb-safe'
+					: 'flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md pb-safe'
+			}
 			role="tablist"
 			aria-label={
 				isInSpaceContext
@@ -371,8 +345,8 @@ export function BottomTabBar() {
 			}
 		>
 			<div
-				ref={innerRef}
 				class="flex w-full border-t border-dark-700 transition-opacity duration-200 ease-out"
+				style={{ height: BOTTOM_BAR_HEIGHT + 'px' }}
 				key={isInSpaceContext ? 'space' : isInRoomContext ? 'room' : 'global'}
 			>
 				{tabs.map((tab) => {

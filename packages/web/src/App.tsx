@@ -4,7 +4,6 @@ import { useNeoKeyboardShortcut } from './hooks/useNeoKeyboardShortcut.ts';
 import { useViewportSafety } from './hooks/useViewportSafety.ts';
 
 import { NavRail } from './islands/NavRail.tsx';
-import { BottomTabBar } from './islands/BottomTabBar.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
@@ -199,13 +198,10 @@ export function App() {
 				<ContextPanel />
 
 				{/* Main Content — bottom padding matches actual BottomTabBar height via --bottom-bar-height */}
-				<div class="flex-1 flex flex-col overflow-hidden pb-bottom-bar pb-safe min-w-0">
+				<div class="flex-1 flex flex-col overflow-hidden min-w-0">
 					<MainContent />
 				</div>
 			</div>
-
-			{/* Bottom Tab Bar (mobile only) */}
-			<BottomTabBar />
 
 			{/* Global Toast Container */}
 			<ToastContainer />

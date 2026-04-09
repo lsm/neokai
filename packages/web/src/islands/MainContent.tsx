@@ -14,6 +14,7 @@ import {
 } from '../lib/signals.ts';
 import { sessions } from '../lib/state.ts';
 import Lobby from './Lobby.tsx';
+import { BottomTabBar } from './BottomTabBar.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 // Lazy-loaded route components — reduces initial module count in dev mode
@@ -216,9 +217,13 @@ export default function MainContent() {
 
 	// Wrap content in a keyed div so Preact remounts it (and replays animate-fadeIn-200)
 	// whenever the major content view changes.
+	// BottomTabBar sits outside the keyed div so it never remounts on view transitions.
 	return (
-		<div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
-			{renderContent()}
-		</div>
+		<>
+			<div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
+				{renderContent()}
+			</div>
+			<BottomTabBar inline />
+		</>
 	);
 }
