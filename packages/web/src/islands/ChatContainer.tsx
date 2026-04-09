@@ -19,7 +19,6 @@
 import type {
 	MessageDeliveryMode,
 	MessageImage,
-	ModelInfo,
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
@@ -36,10 +35,9 @@ import { ChatHeader } from '../components/ChatHeader.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 // Components
-import MessageInput from '../components/MessageInput.tsx';
+import { ChatComposer } from '../components/ChatComposer.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
-import SessionStatusBar from '../components/SessionStatusBar.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
@@ -52,18 +50,15 @@ import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
-import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
+import { useChatComposerController } from '../hooks/useChatComposerController.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
-import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
+import { updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
-import { borderColors } from '../lib/design-tokens.ts';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
-import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
-import { cn } from '../lib/utils.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
 
 import type { RoomContext } from '../components/ChatHeader.tsx';
@@ -112,9 +107,7 @@ export default function ChatContainer({
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
-	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
-	const [sandboxSwitching, setSandboxSwitching] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -410,31 +403,30 @@ export default function ChatContainer({
 	const isWaitingForInput = agentState.status === 'waiting_for_input';
 	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
-	// ========================================
-	// Model Switcher
-	// ========================================
 	const {
 		currentModel,
 		currentModelInfo,
 		availableModels,
-		switching: modelSwitching,
-		loading: modelLoading,
+		modelSwitching,
+		modelLoading,
 		switchModel,
-	} = useModelSwitcher(sessionId);
-
-	// Model switch with processing confirmation
-	const handleModelSwitchWithConfirmation = useCallback(
-		async (model: ModelInfo) => {
-			if (isProcessing) {
-				const confirmed = confirm(
-					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
-				);
-				if (!confirmed) return;
-			}
-			await switchModel(model);
-		},
-		[switchModel, isProcessing]
-	);
+		currentAction,
+		streamingPhase,
+		coordinatorSwitching,
+		sandboxSwitching,
+		handleModelSwitchWithConfirmation,
+		handleCoordinatorModeChange,
+		handleSandboxModeChange,
+	} = useChatComposerController({
+		sessionId,
+		agentState,
+		messages,
+		isProcessing,
+		coordinatorMode,
+		setCoordinatorMode,
+		sandboxEnabled,
+		setSandboxEnabled,
+	});
 
 	// ========================================
 	// Session Actions
@@ -643,50 +635,6 @@ export default function ChatContainer({
 		[sessionId]
 	);
 
-	const handleCoordinatorModeChange = useCallback(
-		async (newMode: boolean) => {
-			if (isProcessing) {
-				const confirmed = confirm(
-					'The agent is currently processing. Changing coordinator mode will interrupt the current operation. Continue?'
-				);
-				if (!confirmed) return;
-			}
-			setCoordinatorSwitching(true);
-			setCoordinatorMode(newMode);
-			try {
-				await switchCoordinatorMode(sessionId, newMode);
-			} catch {
-				setCoordinatorMode(!newMode);
-				toast.error('Failed to toggle coordinator mode');
-			} finally {
-				setCoordinatorSwitching(false);
-			}
-		},
-		[sessionId, isProcessing]
-	);
-
-	const handleSandboxModeChange = useCallback(
-		async (newMode: boolean) => {
-			if (isProcessing) {
-				const confirmed = confirm(
-					'The agent is currently processing. Changing sandbox mode will interrupt the current operation. Continue?'
-				);
-				if (!confirmed) return;
-			}
-			setSandboxSwitching(true);
-			setSandboxEnabled(newMode);
-			try {
-				await switchSandboxMode(sessionId, newMode);
-			} catch {
-				setSandboxEnabled(!newMode);
-				toast.error('Failed to toggle sandbox mode');
-			} finally {
-				setSandboxSwitching(false);
-			}
-		},
-		[sessionId, isProcessing]
-	);
-
 	// ========================================
 	// Display Stats
 	// ========================================
@@ -699,41 +647,6 @@ export default function ChatContainer({
 			totalCost: session?.metadata?.totalCost ?? 0,
 		};
 	}, [session?.metadata?.totalTokens, session?.metadata?.totalCost]);
-
-	// ========================================
-	// Derive currentAction and streamingPhase from agentState
-	// Uses status-actions.ts for intelligent action detection
-	// ========================================
-	const { currentAction, streamingPhase } = useMemo(() => {
-		// Handle queued state
-		if (agentState.status === 'queued') {
-			return { currentAction: 'Message queued...', streamingPhase: null };
-		}
-
-		// Handle interrupted state
-		if (agentState.status === 'interrupted') {
-			return { currentAction: 'Interrupted', streamingPhase: null };
-		}
-
-		// Handle processing state
-		if (agentState.status === 'processing') {
-			const phase = agentState.phase;
-			const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-
-			// Use status-actions.ts to get intelligent action
-			// Priority: compaction > tool-specific actions > phase-based actions > fallback
-			const action = getCurrentAction(latestMessage, true, {
-				isCompacting: agentState.isCompacting,
-				streamingPhase: phase,
-				streamingStartedAt: agentState.streamingStartedAt,
-			});
-
-			return { currentAction: action, streamingPhase: phase };
-		}
-
-		// Idle state
-		return { currentAction: undefined, streamingPhase: null };
-	}, [agentState, messages]);
 
 	// Get retry attempts from session store
 	const retryAttempts = sessionStore.retryAttempts.value;
@@ -1054,73 +967,39 @@ export default function ChatContainer({
 			</div>
 
 			{/* Footer - Floating Status Bar */}
-			<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0">
-				<SessionStatusBar
-					sessionId={sessionId}
-					isProcessing={isProcessing}
-					currentAction={currentAction}
-					streamingPhase={streamingPhase}
-					contextUsage={contextUsage ?? undefined}
-					maxContextTokens={200000}
-					features={features}
-					currentModel={currentModel}
-					currentModelInfo={currentModelInfo}
-					availableModels={availableModels}
-					modelSwitching={modelSwitching}
-					modelLoading={modelLoading}
-					onModelSwitch={handleModelSwitchWithConfirmation}
-					autoScroll={autoScroll}
-					onAutoScrollChange={handleAutoScrollChange}
-					coordinatorMode={coordinatorMode}
-					coordinatorSwitching={coordinatorSwitching}
-					onCoordinatorModeChange={handleCoordinatorModeChange}
-					sandboxEnabled={sandboxEnabled}
-					sandboxSwitching={sandboxSwitching}
-					onSandboxModeChange={handleSandboxModeChange}
-					thinkingLevel={session?.config?.thinkingLevel}
-				/>
-
-				{session?.status === 'archived' ? (
-					<div class="p-4">
-						<div class="max-w-4xl mx-auto">
-							<div
-								class={cn(
-									'rounded-3xl border px-5 py-3 text-center',
-									'bg-dark-800/60 backdrop-blur-sm',
-									borderColors.ui.default
-								)}
-							>
-								<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
-									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-										<path
-											strokeLinecap="round"
-											strokeLinejoin="round"
-											strokeWidth={2}
-											d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-										/>
-									</svg>
-									Session archived
-								</span>
-							</div>
-						</div>
-					</div>
-				) : (
-					!readonly && (
-						<MessageInput
-							sessionId={sessionId}
-							sessionType={session?.type}
-							onSend={handleSendMessage}
-							disabled={isWaitingForInput || !isConnected}
-							autoScroll={autoScroll}
-							onAutoScrollChange={handleAutoScrollChange}
-							onOpenTools={toolsModal.open}
-							onEnterRewindMode={handleEnterRewindMode}
-							rewindMode={rewindMode}
-							onExitRewindMode={handleExitRewindMode}
-						/>
-					)
-				)}
-			</div>
+			<ChatComposer
+				sessionId={sessionId}
+				readonly={readonly}
+				sessionStatus={session?.status}
+				sessionType={session?.type}
+				thinkingLevel={session?.config?.thinkingLevel}
+				isProcessing={isProcessing}
+				currentAction={currentAction}
+				streamingPhase={streamingPhase}
+				contextUsage={contextUsage ?? undefined}
+				features={features}
+				currentModel={currentModel}
+				currentModelInfo={currentModelInfo}
+				availableModels={availableModels}
+				modelSwitching={modelSwitching}
+				modelLoading={modelLoading}
+				autoScroll={autoScroll}
+				coordinatorMode={coordinatorMode}
+				coordinatorSwitching={coordinatorSwitching}
+				sandboxEnabled={sandboxEnabled}
+				sandboxSwitching={sandboxSwitching}
+				isWaitingForInput={isWaitingForInput}
+				isConnected={isConnected}
+				rewindMode={rewindMode}
+				onModelSwitch={handleModelSwitchWithConfirmation}
+				onAutoScrollChange={handleAutoScrollChange}
+				onCoordinatorModeChange={handleCoordinatorModeChange}
+				onSandboxModeChange={handleSandboxModeChange}
+				onSend={handleSendMessage}
+				onOpenTools={toolsModal.open}
+				onEnterRewindMode={handleEnterRewindMode}
+				onExitRewindMode={handleExitRewindMode}
+			/>
 
 			{/* Delete Modal */}
 			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">
