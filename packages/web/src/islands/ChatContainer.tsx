@@ -58,10 +58,7 @@ import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
-import {
-	getMessagesBottomPaddingPx,
-	MIN_MESSAGES_BOTTOM_PADDING_PX,
-} from '../lib/layout-metrics.ts';
+import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
@@ -93,8 +90,6 @@ export default function ChatContainer({
 	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	const footerContainerRef = useRef<HTMLDivElement>(null);
-	const previousMessagesBottomPaddingRef = useRef<number>(MIN_MESSAGES_BOTTOM_PADDING_PX);
 	// Store scroll position info to restore after older messages are loaded
 	const scrollPositionRestoreRef = useRef<{
 		oldScrollHeight: number;
@@ -116,9 +111,6 @@ export default function ChatContainer({
 	const [loadTimedOut, setLoadTimedOut] = useState(false);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
-	const [messagesBottomPadding, setMessagesBottomPadding] = useState(
-		MIN_MESSAGES_BOTTOM_PADDING_PX
-	);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
@@ -570,37 +562,10 @@ export default function ChatContainer({
 		scrollPositionRestoreRef.current = null;
 	}, [messages.length, loadingOlder]);
 
-	useEffect(() => {
-		const footer = footerContainerRef.current;
-		if (!footer) return;
-
-		const updatePadding = () => {
-			const queueOverlay = footer.querySelector('[data-testid="queue-overlay"]');
-			const queueOverlayRows =
-				queueOverlay instanceof HTMLElement ? queueOverlay.children.length : 0;
-			setMessagesBottomPadding(
-				getMessagesBottomPaddingPx(footer.getBoundingClientRect().height, queueOverlayRows)
-			);
-		};
-
-		updatePadding();
-
-		if (typeof ResizeObserver !== 'undefined') {
-			const observer = new ResizeObserver(() => {
-				updatePadding();
-			});
-			observer.observe(footer);
-			return () => observer.disconnect();
-		}
-
-		window.addEventListener('resize', updatePadding);
-		return () => window.removeEventListener('resize', updatePadding);
-	}, []);
-
 	// ========================================
 	// Auto-scroll
 	// ========================================
-	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
+	const { showScrollButton, scrollToBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
 		enabled: autoScroll,
@@ -608,28 +573,6 @@ export default function ChatContainer({
 		isInitialLoad,
 		loadingOlder,
 	});
-
-	useEffect(() => {
-		const previousPadding = previousMessagesBottomPaddingRef.current;
-		if (
-			messagesBottomPadding > previousPadding &&
-			autoScroll &&
-			!loadingOlder &&
-			(isNearBottom || !showScrollButton)
-		) {
-			requestAnimationFrame(() => {
-				scrollToBottom();
-			});
-		}
-		previousMessagesBottomPaddingRef.current = messagesBottomPadding;
-	}, [
-		messagesBottomPadding,
-		autoScroll,
-		loadingOlder,
-		isNearBottom,
-		showScrollButton,
-		scrollToBottom,
-	]);
 
 	// ========================================
 	// Message Maps (for tool results/inputs)
@@ -995,7 +938,7 @@ export default function ChatContainer({
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{
 						WebkitOverflowScrolling: 'touch',
-						paddingBottom: `${messagesBottomPadding}px`,
+						paddingBottom: `${MIN_MESSAGES_BOTTOM_PADDING_PX}px`,
 					}}
 				>
 					{/* Worktree Choice Inline */}
@@ -1111,10 +1054,7 @@ export default function ChatContainer({
 			</div>
 
 			{/* Footer - Floating Status Bar */}
-			<div
-				ref={footerContainerRef}
-				class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"
-			>
+			<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0">
 				<SessionStatusBar
 					sessionId={sessionId}
 					isProcessing={isProcessing}
