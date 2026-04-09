@@ -472,19 +472,6 @@ describe('reference.resolve handler', () => {
 			const filePath = join(testWorkspace, 'hello.txt');
 			await writeFile(filePath, 'Hello world');
 
-			// DEBUG: verify file and workspace exist
-			const { stat } = await import('node:fs/promises');
-			expect(testWorkspace).toBeTruthy();
-			expect(testWorkspace.length).toBeGreaterThan(0);
-			const wsStat = await stat(testWorkspace);
-			expect(wsStat.isDirectory()).toBe(true);
-			const fileStat = await stat(filePath);
-			expect(fileStat.size).toBe(11);
-			// eslint-disable-next-line no-console
-			(globalThis as unknown as Record<string, unknown>).__originalConsole.log(
-				`DEBUG file resolution: testWorkspace="${testWorkspace}" filePath="${filePath}" wsOK=true fileOK=true`
-			);
-
 			const { hub, handlers } = createMockMessageHub();
 			const deps: ReferenceHandlerDeps = {
 				sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
@@ -507,10 +494,6 @@ describe('reference.resolve handler', () => {
 				};
 			};
 
-			// eslint-disable-next-line no-console
-			(globalThis as unknown as Record<string, unknown>).__originalConsole.log(
-				`DEBUG result: ${JSON.stringify(result)}`
-			);
 			expect(result.resolved).not.toBeNull();
 			expect(result.resolved!.type).toBe('file');
 			expect(result.resolved!.id).toBe('hello.txt');
