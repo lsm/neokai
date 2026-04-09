@@ -1603,7 +1603,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
 		if (!sessionId) {
-			navSectionSignal.value = 'home';
+			navSectionSignal.value = 'rooms';
 		}
 	}
 }

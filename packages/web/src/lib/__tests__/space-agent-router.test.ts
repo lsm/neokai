@@ -67,7 +67,7 @@ describe('Space Agent Router', () => {
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
-		navSectionSignal.value = 'home';
+		navSectionSignal.value = 'rooms';
 
 		vi.clearAllMocks();
 		cleanupRouter();

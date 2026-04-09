@@ -2,7 +2,6 @@ import { navSectionSignal, type NavSection } from '../lib/signals.ts';
 import {
 	navigateToSessions,
 	navigateToSettings,
-	navigateToHome,
 	navigateToRooms,
 	navigateToInbox,
 	navigateToSpaces,
@@ -21,10 +20,6 @@ export function NavRail() {
 
 	const handleNavClick = (section: NavSection) => {
 		switch (section) {
-			case 'home':
-				navSectionSignal.value = 'home';
-				navigateToHome();
-				break;
 			case 'chats':
 				navigateToSessions();
 				break;
