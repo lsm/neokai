@@ -369,12 +369,12 @@ export default function ChatContainer({
 		}
 	});
 
-	// Timeout: if session state doesn't load within 10s, show error instead of infinite spinner
+	// Timeout: if session state doesn't load within 30s, show error instead of infinite spinner
 	useEffect(() => {
 		if (!isInitialLoad) return;
 		const timer = setTimeout(() => {
 			setLoadTimedOut(true);
-		}, 10_000);
+		}, 30_000);
 		return () => clearTimeout(timer);
 	}, [isInitialLoad]);
 
