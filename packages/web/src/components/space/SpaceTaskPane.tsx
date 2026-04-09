@@ -385,7 +385,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</button>
 					)}
 					<div class="min-w-0 flex-1">
-						<h2 class="text-lg font-semibold text-gray-100 min-w-0 truncate">{task.title}</h2>
+						<h2 class="text-sm sm:text-lg font-semibold text-gray-100 min-w-0 truncate">
+							{task.title}
+						</h2>
 						<div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-400">
 							<span data-testid="task-status-label">{activitySummary}</span>
 							{task.priority !== 'normal' && (

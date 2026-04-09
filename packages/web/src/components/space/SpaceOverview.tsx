@@ -11,7 +11,11 @@
 import { useState } from 'preact/hooks';
 import type { RuntimeState, SpaceTask } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceTask, navigateToSpaceAgent } from '../../lib/router';
+import {
+	navigateToSpaceTask,
+	navigateToSpaceAgent,
+	navigateToSpaceSession,
+} from '../../lib/router';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 
@@ -185,7 +189,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
 
 	return (
-		<div class="w-full px-8 py-6 space-y-6">
+		<div class="w-full px-4 py-4 sm:px-8 sm:py-6 space-y-6 overflow-y-auto">
 			<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
 			{/* Runtime state (shown when available) */}
@@ -269,7 +273,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 							<button
 								key={session.id}
 								type="button"
-								onClick={() => navigateToSpaceAgent(spaceId)}
+								onClick={() => navigateToSpaceSession(spaceId, session.id)}
 								class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
 							>
 								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />

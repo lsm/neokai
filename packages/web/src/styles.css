@@ -667,16 +667,6 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
 	transform: translateY(100%);
 }
 
-/**
- * When the keyboard is open, remove safe-area-inset-bottom padding from the
- * chat footer. The keyboard covers the home indicator area, so the extra
- * padding pushes content up unnecessarily.
- */
-.chat-footer {
-	padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-html.keyboard-open .chat-footer,
-html.keyboard-open .chat-footer > div {
-	padding-bottom: 0px !important;
-}
+/* Safe area bottom padding is handled at the app level via pb-safe + pb-bottom-bar
+   on the main content wrapper. The chat footer does not need its own safe area
+   padding — the wrapper already accounts for both the tab bar and home indicator. */

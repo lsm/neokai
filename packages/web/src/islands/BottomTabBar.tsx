@@ -223,6 +223,20 @@ const ROOM_BOTTOM_TABS: TabItem[] = [
 export function BottomTabBar() {
 	const innerRef = useRef<HTMLDivElement>(null);
 
+	const navSection = navSectionSignal.value;
+	const roomId = currentRoomIdSignal.value;
+	const spaceId = currentSpaceIdSignal.value;
+	const inboxBadgeCount = inboxStore.reviewCount.value;
+
+	const roomSessionId = currentRoomSessionIdSignal.value;
+	const roomTaskId = currentRoomTaskIdSignal.value;
+	const isInRoomContext = navSection === 'rooms' && roomId !== null;
+	const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
+
+	// Context key tracks which tab set is rendered. When it changes, the inner
+	// div is recreated (via its `key` prop) and the ResizeObserver must re-attach.
+	const contextKey = isInSpaceContext ? 'space' : isInRoomContext ? 'room' : 'global';
+
 	useEffect(() => {
 		const inner = innerRef.current;
 		if (!inner) return;
@@ -234,8 +248,8 @@ export function BottomTabBar() {
 		};
 
 		// Measure the inner content div (excludes pb-safe) so --bottom-bar-height
-		// only tracks tab content height. Safe area is handled separately via pb-safe
-		// on the main content and chat-footer.
+		// only tracks tab content height. Safe area is handled separately via
+		// pb-safe on the main content wrapper in App.tsx.
 		const ro = new ResizeObserver(updateHeight);
 		ro.observe(inner);
 
@@ -260,17 +274,8 @@ export function BottomTabBar() {
 			cancelAnimationFrame(rafId);
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 		};
-	}, []);
+	}, [contextKey]);
 
-	const navSection = navSectionSignal.value;
-	const roomId = currentRoomIdSignal.value;
-	const spaceId = currentSpaceIdSignal.value;
-	const inboxBadgeCount = inboxStore.reviewCount.value;
-
-	const roomSessionId = currentRoomSessionIdSignal.value;
-	const roomTaskId = currentRoomTaskIdSignal.value;
-	const isInRoomContext = navSection === 'rooms' && roomId !== null;
-	const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 	const isViewingRoomAgent = currentRoomAgentActiveSignal.value;
 	// Overview is only active when on the room dashboard (no task, no session, no agent chat)
 	const isViewingRoomDashboard =
@@ -373,7 +378,7 @@ export function BottomTabBar() {
 			<div
 				ref={innerRef}
 				class="flex w-full border-t border-dark-700 transition-opacity duration-200 ease-out"
-				key={isInSpaceContext ? 'space' : isInRoomContext ? 'room' : 'global'}
+				key={contextKey}
 			>
 				{tabs.map((tab) => {
 					const isActive = isTabActive(tab.id);

@@ -298,7 +298,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	}
 
 	return (
-		<div class="w-full px-8 py-6 space-y-6">
+		<div class="w-full px-4 py-4 sm:px-8 sm:py-6 space-y-6 overflow-y-auto">
 			<div class="flex border-b border-dark-700">
 				<TabButton
 					label="Active"

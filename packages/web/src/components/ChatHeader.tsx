@@ -238,16 +238,19 @@ export function ChatHeader({
 							<span class="font-mono text-green-400">${displayStats.totalCost.toFixed(4)}</span>
 							{session?.config?.model && (
 								<>
-									<span class="text-gray-600">·</span>
-									<span class="text-blue-400 font-medium" title={session.config.model}>
+									<span class="hidden sm:inline text-gray-600">·</span>
+									<span
+										class="hidden sm:inline text-blue-400 font-medium"
+										title={session.config.model}
+									>
 										{getModelLabel(session.config.model)}
 									</span>
 								</>
 							)}
 							{(session?.worktree?.branch || session?.gitBranch) && (
 								<>
-									<span class="text-gray-600">·</span>
-									<span class="flex items-center gap-1 font-mono text-gray-500">
+									<span class="hidden sm:inline text-gray-600">·</span>
+									<span class="hidden sm:flex items-center gap-1 font-mono text-gray-500">
 										<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 											<path
 												stroke-linecap="round"
