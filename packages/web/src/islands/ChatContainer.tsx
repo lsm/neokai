@@ -1007,8 +1007,8 @@ export default function ChatContainer({
 			</div>
 
 			{/* Footer - Floating Status Bar */}
-			<ChatComposer
-				sessionId={sessionId}
+				<ChatComposer
+					sessionId={sessionId}
 				readonly={readonly}
 				sessionStatus={session?.status}
 				sessionType={session?.type}
@@ -1037,9 +1037,9 @@ export default function ChatContainer({
 				onSandboxModeChange={handleSandboxModeChange}
 				onSend={handleSendMessage}
 				onOpenTools={toolsModal.open}
-				onEnterRewindMode={handleEnterRewindMode}
-				onExitRewindMode={handleExitRewindMode}
-			/>
+					onEnterRewindMode={handleEnterRewindMode}
+					onExitRewindMode={handleExitRewindMode}
+				/>
 
 			{/* Delete Modal */}
 			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">
