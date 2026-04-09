@@ -221,38 +221,42 @@ const ROOM_BOTTOM_TABS: TabItem[] = [
 ];
 
 export function BottomTabBar() {
-	const rootRef = useRef<HTMLDivElement>(null);
+	const innerRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const el = rootRef.current;
-		if (!el) return;
+		const inner = innerRef.current;
+		if (!inner) return;
 
 		const updateHeight = () => {
-			const h = el.offsetHeight;
+			if (document.documentElement.classList.contains('keyboard-open')) return;
+			const h = inner.offsetHeight;
 			document.documentElement.style.setProperty('--bottom-bar-height', h + 'px');
 		};
 
-		// ResizeObserver fires when the element itself resizes
+		// Measure the inner content div (excludes pb-safe) so --bottom-bar-height
+		// only tracks tab content height. Safe area is handled separately via pb-safe
+		// on the main content and chat-footer.
 		const ro = new ResizeObserver(updateHeight);
-		ro.observe(el);
+		ro.observe(inner);
 
-		// window resize listener handles breakpoint transitions (md:hidden causes
-		// display:none, which ResizeObserver does not fire for).
-		// requestAnimationFrame ensures the browser applies the new display value first.
-		// The cancelled-rAF guard prevents queuing multiple callbacks during rapid resize.
 		let rafId = 0;
-		const onResize = () => {
+		const scheduleUpdate = () => {
 			cancelAnimationFrame(rafId);
 			rafId = requestAnimationFrame(updateHeight);
 		};
-		window.addEventListener('resize', onResize);
+		window.addEventListener('resize', scheduleUpdate);
 
-		// Initial measurement
+		const vv = window.visualViewport;
+		if (vv) vv.addEventListener('resize', scheduleUpdate);
+
 		updateHeight();
+		const timer = setTimeout(updateHeight, 300);
 
 		return () => {
+			clearTimeout(timer);
 			ro.disconnect();
-			window.removeEventListener('resize', onResize);
+			window.removeEventListener('resize', scheduleUpdate);
+			if (vv) vv.removeEventListener('resize', scheduleUpdate);
 			cancelAnimationFrame(rafId);
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 		};
@@ -355,9 +359,8 @@ export function BottomTabBar() {
 
 	return (
 		<div
-			ref={rootRef}
 			data-testid="bottom-tab-bar"
-			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md border-t border-dark-700 pb-safe"
+			class="flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md pb-safe"
 			role="tablist"
 			aria-label={
 				isInSpaceContext
@@ -368,7 +371,8 @@ export function BottomTabBar() {
 			}
 		>
 			<div
-				class="flex w-full transition-opacity duration-200 ease-out"
+				ref={innerRef}
+				class="flex w-full border-t border-dark-700 transition-opacity duration-200 ease-out"
 				key={isInSpaceContext ? 'space' : isInRoomContext ? 'room' : 'global'}
 			>
 				{tabs.map((tab) => {

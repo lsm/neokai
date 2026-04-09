@@ -60,7 +60,9 @@ export default function SpaceIsland({
 	if (sessionViewId) {
 		return (
 			<>
-				<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
+				<div class="flex-1 flex flex-col overflow-hidden">
+					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
+				</div>
 				{overlaySessionId && (
 					<AgentOverlayChat
 						sessionId={overlaySessionId}
