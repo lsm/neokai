@@ -241,9 +241,6 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 	const isInRoomContext = navSection === 'rooms' && roomId !== null;
 	const isInSpaceContext = navSection === 'spaces' && spaceId !== null;
 
-	// When in space context, only render the inline version (inside SpaceIsland layout)
-	if (isInSpaceContext && !inline) return null;
-
 	const isViewingRoomAgent = currentRoomAgentActiveSignal.value;
 	// Overview is only active when on the room dashboard (no task, no session, no agent chat)
 	const isViewingRoomDashboard =

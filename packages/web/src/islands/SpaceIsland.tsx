@@ -22,7 +22,6 @@ import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
 import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
 import ChatContainer from './ChatContainer';
-import { BottomTabBar } from './BottomTabBar';
 
 interface SpaceIslandProps {
 	spaceId: string;
@@ -59,8 +58,7 @@ export default function SpaceIsland({
 	}, [spaceId]);
 
 	// Session/agent chat view — render immediately, don't block on space data
-	// ChatContainer's root is already flex-1 flex-col overflow-hidden, so it
-	// sits directly in the flex column alongside the inline BottomTabBar.
+	// ChatContainer's root is already flex-1 flex-col overflow-hidden.
 	// AgentOverlayChat uses a Portal so it doesn't affect layout.
 	if (sessionViewId) {
 		return (
@@ -73,7 +71,6 @@ export default function SpaceIsland({
 						onClose={handleOverlayClose}
 					/>
 				)}
-				<BottomTabBar inline />
 			</>
 		);
 	}
@@ -111,7 +108,6 @@ export default function SpaceIsland({
 						onClose={handleOverlayClose}
 					/>
 				)}
-				<BottomTabBar inline />
 			</>
 		);
 	}
@@ -138,7 +134,6 @@ export default function SpaceIsland({
 						onClose={handleOverlayClose}
 					/>
 				)}
-				<BottomTabBar inline />
 			</>
 		);
 	}
@@ -162,7 +157,6 @@ export default function SpaceIsland({
 						onClose={handleOverlayClose}
 					/>
 				)}
-				<BottomTabBar inline />
 			</>
 		);
 	}
@@ -188,7 +182,6 @@ export default function SpaceIsland({
 					/>
 				</div>
 			</div>
-			<BottomTabBar inline />
 		</>
 	);
 }
