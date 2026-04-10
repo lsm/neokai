@@ -64,6 +64,7 @@ export interface InputTextareaProps {
 	leadingPaddingClass?: string;
 	/** Optional ref forwarded to the underlying textarea element */
 	textareaRef?: MutableRef<HTMLTextAreaElement | null>;
+	transparent?: boolean;
 }
 
 /**
@@ -93,6 +94,7 @@ export function InputTextarea({
 	leadingElement,
 	leadingPaddingClass,
 	textareaRef: externalTextareaRef,
+	transparent = false,
 }: InputTextareaProps) {
 	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const textareaRef = externalTextareaRef ?? internalTextareaRef;
@@ -200,10 +202,12 @@ export function InputTextarea({
 			<div
 				class={cn(
 					'relative rounded-3xl border transition-all',
-					'bg-dark-800/60 backdrop-blur-sm',
+					transparent ? 'bg-dark-800/45 backdrop-blur-sm' : 'bg-dark-800/60 backdrop-blur-sm',
 					disabled
 						? borderColors.ui.disabled
-						: `${borderColors.ui.input} focus-within:bg-dark-800/80`
+						: transparent
+							? 'border-dark-600/80 focus-within:bg-dark-800/60'
+							: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>
 				{leadingElement && (

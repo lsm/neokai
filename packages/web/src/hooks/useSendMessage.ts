@@ -19,6 +19,7 @@ export interface UseSendMessageOptions {
 	onSendStart: () => void;
 	onSendComplete: () => void;
 	onError: (error: string) => void;
+	onMessageAccepted?: (messageId: string) => void;
 }
 
 export interface UseSendMessageResult {
@@ -43,6 +44,7 @@ export function useSendMessage({
 	onSendStart,
 	onSendComplete,
 	onError,
+	onMessageAccepted,
 }: UseSendMessageOptions): UseSendMessageResult {
 	const sendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -100,7 +102,10 @@ export function useSendMessage({
 					requestPayload.deliveryMode = deliveryMode;
 				}
 
-				await hub.request('message.send', requestPayload);
+				const result = await hub.request<{ messageId?: string }>('message.send', requestPayload);
+				if (result?.messageId) {
+					onMessageAccepted?.(result.messageId);
+				}
 
 				// Clear timeout on successful send
 				clearSendTimeout();
@@ -121,6 +126,7 @@ export function useSendMessage({
 			onSendComplete,
 			onError,
 			clearSendTimeout,
+			onMessageAccepted,
 		]
 	);
 

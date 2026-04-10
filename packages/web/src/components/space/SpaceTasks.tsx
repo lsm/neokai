@@ -298,42 +298,44 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	}
 
 	return (
-		<div class="w-full px-4 py-4 sm:px-8 sm:py-6 space-y-6 overflow-y-auto">
-			<div class="flex border-b border-dark-700">
-				<TabButton
-					label="Active"
-					count={counts.active}
-					isActive={activeTab === 'active'}
-					onClick={() => setActiveTab('active')}
-				/>
-				<TabButton
-					label="Review"
-					count={counts.review}
-					isActive={activeTab === 'review'}
-					onClick={() => setActiveTab('review')}
-					variant="purple"
-				/>
-				<TabButton
-					label="Completed"
-					count={counts.completed}
-					isActive={activeTab === 'completed'}
-					onClick={() => setActiveTab('completed')}
-					variant="green"
-				/>
-				<TabButton
-					label="Archived"
-					count={counts.archived}
-					isActive={activeTab === 'archived'}
-					onClick={() => setActiveTab('archived')}
-					variant="gray"
-				/>
-			</div>
+		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
+			<div class="min-h-[calc(100%+1px)] space-y-6">
+				<div class="flex border-b border-dark-700">
+					<TabButton
+						label="Active"
+						count={counts.active}
+						isActive={activeTab === 'active'}
+						onClick={() => setActiveTab('active')}
+					/>
+					<TabButton
+						label="Review"
+						count={counts.review}
+						isActive={activeTab === 'review'}
+						onClick={() => setActiveTab('review')}
+						variant="purple"
+					/>
+					<TabButton
+						label="Completed"
+						count={counts.completed}
+						isActive={activeTab === 'completed'}
+						onClick={() => setActiveTab('completed')}
+						variant="green"
+					/>
+					<TabButton
+						label="Archived"
+						count={counts.archived}
+						isActive={activeTab === 'archived'}
+						onClick={() => setActiveTab('archived')}
+						variant="gray"
+					/>
+				</div>
 
-			{filteredTasks.length === 0 ? (
-				<EmptyTabState tab={activeTab} />
-			) : (
-				<TaskGroupList tasks={filteredTasks} tab={activeTab} onTaskClick={onSelectTask} />
-			)}
+				{filteredTasks.length === 0 ? (
+					<EmptyTabState tab={activeTab} />
+				) : (
+					<TaskGroupList tasks={filteredTasks} tab={activeTab} onTaskClick={onSelectTask} />
+				)}
+			</div>
 		</div>
 	);
 }

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, render, screen } from '@testing-library/preact';
 import { SpaceTaskUnifiedThread } from '../SpaceTaskUnifiedThread';
 
 let mockRows = [];
@@ -340,8 +340,13 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
 		expect(screen.getAllByTestId('space-task-event-row').length).toBeGreaterThanOrEqual(4);
 		expect(screen.getByText('Thinking')).toBeTruthy();
-		expect(screen.getByText('Tool · Glob')).toBeTruthy();
-		expect(screen.getByText('pattern: *.ts')).toBeTruthy();
+		expect(
+			screen.getByText(
+				(_, element) =>
+					element?.tagName.toLowerCase() === 'span' && element?.textContent === 'Glob: *.ts'
+			)
+		).toBeTruthy();
+		expect(screen.queryByText('pattern: *.ts')).toBeNull();
 		expect(screen.queryByText('Response')).toBeNull();
 		expect(
 			screen.getByText(
@@ -350,11 +355,10 @@ describe('SpaceTaskUnifiedThread', () => {
 		).toBeTruthy();
 	});
 
-	it('switches to verbose mode and renders SDKMessageRenderer rows', () => {
+	it('does not render compact/verbose toggle controls', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		fireEvent.click(screen.getByTestId('space-task-thread-mode-verbose'));
-		expect(screen.getByTestId('space-task-event-feed-verbose')).toBeTruthy();
-		expect(screen.getAllByTestId('sdk-message-renderer')).toHaveLength(2);
+		expect(screen.queryByTestId('space-task-thread-mode-compact')).toBeNull();
+		expect(screen.queryByTestId('space-task-thread-mode-verbose')).toBeNull();
 	});
 
 	it('filters init/success/non-error-rate-limit noise in compact mode', () => {
@@ -453,18 +457,6 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(coderIdx).toBeGreaterThan(taskPlanIdx);
 		expect(reviewerIdx).toBeGreaterThan(coderIdx);
 		expect(taskFinalIdx).toBeGreaterThan(reviewerIdx);
-	});
-
-	it('renders multiple agents in verbose mode with SDKMessageRenderer per agent', () => {
-		mockRows = makeMultiAgentRows();
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-
-		fireEvent.click(screen.getByTestId('space-task-thread-mode-verbose'));
-		expect(screen.getByTestId('space-task-event-feed-verbose')).toBeTruthy();
-
-		// All 4 messages should be rendered
-		const renderers = screen.getAllByTestId('sdk-message-renderer');
-		expect(renderers.length).toBe(4);
 	});
 
 	it('shows loading state when isLoading is true', () => {

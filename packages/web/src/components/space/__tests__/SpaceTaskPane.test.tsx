@@ -206,22 +206,22 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
 	});
 
-	it('shows Open Space Agent button when no task session exists', () => {
+	it('opens Space Agent from task actions dropdown when no task session exists', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		expect(getByTestId('open-space-agent-btn').textContent).toBe('Open Space Agent');
-		fireEvent.click(getByTestId('open-space-agent-btn'));
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Open Space Agent'));
 		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
 	});
 
-	it('shows View Agent Session button when task session exists and opens overlay on click', () => {
+	it('opens overlay from task actions dropdown when task session exists', () => {
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		fireEvent.click(getByTestId('view-agent-session-btn'));
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('View Agent Session'));
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-abc');
-		// agentActionLabel for a task with no activeSession is "View Agent Session"
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('View Agent Session');
 	});
 
@@ -251,15 +251,12 @@ describe('SpaceTaskPane — composer', () => {
 
 	it('sends a message when a task session exists', async () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
-		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByPlaceholderText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-		fireEvent.input(
-			getByPlaceholderText('Message the task agent (Enter to send, Shift+Enter for newline)'),
-			{
-				target: { value: 'Looks good to me' },
-			}
-		);
-		fireEvent.click(getByText('Send to Task Agent'));
+		fireEvent.input(getByPlaceholderText('Message task agent...'), {
+			target: { value: 'Looks good to me' },
+		});
+		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() =>
 			expect(mockSendTaskMessage).toHaveBeenCalledWith('task-1', 'Looks good to me')
@@ -270,58 +267,49 @@ describe('SpaceTaskPane — composer', () => {
 	it('shows send error text when sending fails', async () => {
 		mockSendTaskMessage.mockRejectedValueOnce(new Error('Invalid transition'));
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
-		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
-
-		fireEvent.input(
-			getByPlaceholderText('Message the task agent (Enter to send, Shift+Enter for newline)'),
-			{
-				target: { value: 'Approved' },
-			}
+		const { getByPlaceholderText, getByText, getByTestId } = render(
+			<SpaceTaskPane taskId="task-1" />
 		);
-		fireEvent.click(getByText('Send to Task Agent'));
+
+		fireEvent.input(getByPlaceholderText('Message task agent...'), {
+			target: { value: 'Approved' },
+		});
+		fireEvent.click(getByTestId('send-button'));
 
 		await waitFor(() => expect(getByText('Invalid transition')).toBeTruthy());
 	});
 
 	it('does not submit empty message', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
-		const { getByText } = render(<SpaceTaskPane taskId="task-1" />);
-		fireEvent.click(getByText('Send to Task Agent'));
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('send-button'));
 		expect(mockSendTaskMessage).not.toHaveBeenCalled();
 	});
 
-	it('disables textarea and shows Sending... button during send', async () => {
+	it('disables textarea while send is in flight and re-enables after completion', async () => {
 		let resolveSend: () => void;
 		const sendPromise = new Promise<void>((resolve) => {
 			resolveSend = resolve;
 		});
 		mockSendTaskMessage.mockReturnValueOnce(sendPromise);
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
-		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByPlaceholderText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-		const textarea = getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const textarea = getByPlaceholderText('Message task agent...') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Work in progress check' } });
-		fireEvent.click(getByText('Send to Task Agent'));
+		fireEvent.click(getByTestId('send-button'));
 
-		// While sending: button should say Sending... and textarea should be disabled
-		await waitFor(() => expect(getByText('Sending...')).toBeTruthy());
-		expect((textarea as HTMLTextAreaElement).disabled).toBe(true);
+		await waitFor(() => expect(textarea.disabled).toBe(true));
 
-		// Resolve and verify state normalizes
 		resolveSend!();
-		await waitFor(() => expect(getByText('Send to Task Agent')).toBeTruthy());
-		expect((textarea as HTMLTextAreaElement).disabled).toBe(false);
+		await waitFor(() => expect(textarea.disabled).toBe(false));
 	});
 
 	it('clears draft after successful send', async () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
 
-		const textarea = getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		) as HTMLTextAreaElement;
+		const textarea = getByPlaceholderText('Message task agent...') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Approve the PR' } });
 		expect(textarea.value).toBe('Approve the PR');
 
@@ -337,9 +325,7 @@ describe('SpaceTaskPane — composer', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
 
-		const textarea = getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const textarea = getByPlaceholderText('Message task agent...');
 		fireEvent.input(textarea, { target: { value: 'Quick approve' } });
 		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -352,9 +338,7 @@ describe('SpaceTaskPane — composer', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
 		const { getByPlaceholderText } = render(<SpaceTaskPane taskId="task-1" />);
 
-		const textarea = getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const textarea = getByPlaceholderText('Message task agent...');
 		fireEvent.input(textarea, { target: { value: 'line one' } });
 		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
@@ -363,35 +347,31 @@ describe('SpaceTaskPane — composer', () => {
 
 	it('renders composer with auto-ensure placeholder when task has no session yet', () => {
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: null })];
-		const { getByPlaceholderText, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		const { getByPlaceholderText, getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
 
-		expect(
-			getByPlaceholderText('Type a message — a task agent session will be created on send')
-		).toBeTruthy();
-		expect(getByText('Send to Task Agent')).toBeTruthy();
+		expect(getByPlaceholderText('Message task agent (auto-start)...')).toBeTruthy();
+		expect(getByTestId('send-button')).toBeTruthy();
 		expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
 	});
 
 	it('clears threadSendError when a new send succeeds', async () => {
 		mockSendTaskMessage.mockRejectedValueOnce(new Error('Temporary error'));
 		mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
-		const { getByPlaceholderText, getByText, queryByText } = render(
+		const { getByPlaceholderText, getByText, queryByText, getByTestId } = render(
 			<SpaceTaskPane taskId="task-1" />
 		);
 
-		const textarea = getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const textarea = getByPlaceholderText('Message task agent...');
 
 		// First send fails
 		fireEvent.input(textarea, { target: { value: 'First try' } });
-		fireEvent.click(getByText('Send to Task Agent'));
+		fireEvent.click(getByTestId('send-button'));
 		await waitFor(() => expect(getByText('Temporary error')).toBeTruthy());
 
 		// Second send succeeds — error should be cleared
 		mockSendTaskMessage.mockResolvedValueOnce(undefined);
 		fireEvent.input(textarea, { target: { value: 'Second try' } });
-		fireEvent.click(getByText('Send to Task Agent'));
+		fireEvent.click(getByTestId('send-button'));
 		await waitFor(() => expect(queryByText('Temporary error')).toBeNull());
 	});
 });
@@ -702,7 +682,7 @@ function makeActivityMember(
 	};
 }
 
-describe('SpaceTaskPane — activity members list', () => {
+describe('SpaceTaskPane — activity members actions', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
@@ -721,13 +701,14 @@ describe('SpaceTaskPane — activity members list', () => {
 		cleanup();
 	});
 
-	it('hides members list when no activity members exist', () => {
+	it('does not show activity member actions when no activity members exist', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(queryByTestId('activity-members-list')).toBeNull();
+		const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		expect(queryByText('Open Task Agent (Active)')).toBeNull();
 	});
 
-	it('renders all activity members', () => {
+	it('shows activity members as task action menu items with state', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		mockTaskActivity.value = new Map([
 			[
@@ -739,67 +720,17 @@ describe('SpaceTaskPane — activity members list', () => {
 						label: 'Task Agent',
 						state: 'active',
 					}),
-					makeActivityMember({
-						id: 'm2',
-						sessionId: 'sess-2',
-						label: 'Coder',
-						kind: 'node_agent',
-						state: 'queued',
-					}),
-					makeActivityMember({
-						id: 'm3',
-						sessionId: 'sess-3',
-						label: 'Reviewer',
-						kind: 'node_agent',
-						state: 'idle',
-					}),
+					makeActivityMember({ id: 'm2', sessionId: 'sess-2', label: 'Coder', state: 'queued' }),
 				],
 			],
 		]);
-		const { getByTestId, getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(getByTestId('activity-members-list')).toBeTruthy();
-		const items = getAllByTestId('activity-member-item');
-		expect(items.length).toBe(3);
-		expect(items[0].textContent).toContain('Task Agent');
-		expect(items[1].textContent).toContain('Coder');
-		expect(items[2].textContent).toContain('Reviewer');
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		expect(getByText('Open Task Agent (Active)')).toBeTruthy();
+		expect(getByText('Open Coder (Queued)')).toBeTruthy();
 	});
 
-	it('shows correct state labels for each activity state', () => {
-		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		mockTaskActivity.value = new Map([
-			[
-				'task-1',
-				[
-					makeActivityMember({ id: 'm1', label: 'Agent 1', state: 'active' }),
-					makeActivityMember({ id: 'm2', label: 'Agent 2', state: 'queued' }),
-					makeActivityMember({ id: 'm3', label: 'Agent 3', state: 'idle' }),
-					makeActivityMember({ id: 'm4', label: 'Agent 4', state: 'waiting_for_input' }),
-					makeActivityMember({ id: 'm5', label: 'Agent 5', state: 'completed' }),
-					makeActivityMember({ id: 'm6', label: 'Agent 6', state: 'failed' }),
-					makeActivityMember({ id: 'm7', label: 'Agent 7', state: 'interrupted' }),
-				],
-			],
-		]);
-		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		const items = getAllByTestId('activity-member-item');
-		expect(items[0].getAttribute('data-member-state')).toBe('active');
-		expect(items[0].textContent).toContain('Active');
-		expect(items[1].getAttribute('data-member-state')).toBe('queued');
-		expect(items[1].textContent).toContain('Queued');
-		expect(items[2].getAttribute('data-member-state')).toBe('idle');
-		expect(items[2].textContent).toContain('Idle');
-		expect(items[3].getAttribute('data-member-state')).toBe('waiting_for_input');
-		expect(items[3].textContent).toContain('Waiting');
-		expect(items[4].getAttribute('data-member-state')).toBe('completed');
-		expect(items[4].textContent).toContain('Done');
-		expect(items[5].getAttribute('data-member-state')).toBe('failed');
-		expect(items[5].textContent).toContain('Failed');
-		expect(items[6].getAttribute('data-member-state')).toBe('interrupted');
-		expect(items[6].textContent).toContain('Interrupted');
-	});
-
-	it('clicking a member opens overlay chat with the correct session ID and label', () => {
+	it('clicking an activity member action opens overlay with correct session and label', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		mockTaskActivity.value = new Map([
 			[
@@ -814,44 +745,23 @@ describe('SpaceTaskPane — activity members list', () => {
 				],
 			],
 		]);
-		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		const item = getAllByTestId('activity-member-item')[0];
-		fireEvent.click(item);
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Open Coder Agent (Active)'));
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-coder');
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Agent');
 	});
 
-	it('clicking different members opens overlay with their respective sessions', () => {
+	it('shows only members for the current task (not other tasks)', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
 		mockTaskActivity.value = new Map([
-			[
-				'task-1',
-				[
-					makeActivityMember({
-						id: 'm1',
-						sessionId: 'sess-planner',
-						label: 'Planner',
-						state: 'completed',
-					}),
-					makeActivityMember({
-						id: 'm2',
-						sessionId: 'sess-reviewer',
-						label: 'Reviewer',
-						state: 'active',
-					}),
-				],
-			],
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task 1 Agent', state: 'active' })]],
+			['task-2', [makeActivityMember({ id: 'm2', label: 'Task 2 Agent', state: 'idle' })]],
 		]);
-		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		const items = getAllByTestId('activity-member-item');
-
-		fireEvent.click(items[0]);
-		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-planner');
-		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Planner');
-
-		fireEvent.click(items[1]);
-		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-reviewer');
-		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Reviewer');
+		const { getByTestId, getByText, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		expect(getByText('Open Task 1 Agent (Active)')).toBeTruthy();
+		expect(queryByText('Open Task 2 Agent (Idle)')).toBeNull();
 	});
 
 	it('calls subscribeTaskActivity when a taskId is provided', async () => {
@@ -871,17 +781,5 @@ describe('SpaceTaskPane — activity members list', () => {
 		await waitFor(() => expect(mockSubscribeTaskActivity).toHaveBeenCalledWith('task-1'));
 		unmount();
 		expect(mockUnsubscribeTaskActivity).toHaveBeenCalledWith('task-1');
-	});
-
-	it('shows only members for the current task (not other tasks)', () => {
-		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		mockTaskActivity.value = new Map([
-			['task-1', [makeActivityMember({ id: 'm1', label: 'Task 1 Agent', state: 'active' })]],
-			['task-2', [makeActivityMember({ id: 'm2', label: 'Task 2 Agent', state: 'idle' })]],
-		]);
-		const { getAllByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		const items = getAllByTestId('activity-member-item');
-		expect(items.length).toBe(1);
-		expect(items[0].textContent).toContain('Task 1 Agent');
 	});
 });

@@ -7,10 +7,12 @@
  *  - Two-finger trackpad scroll (wheel event without ctrlKey)
  *  - Spacebar + left-click drag
  *  - Left-click drag on empty canvas or a pan-enabled element (for example the pinned Task Agent)
+ *  - One-finger touch drag on empty canvas or a pan-enabled element (mobile)
  *
  * Zoom methods:
  *  - Trackpad pinch (wheel event with ctrlKey=true)
  *  - Ctrl/Cmd + scroll wheel
+ *  - Two-finger touch pinch (mobile)
  *  - Scale is clamped to [0.25, 2.0] and zooms toward cursor position.
  */
 
@@ -24,6 +26,25 @@ export const MAX_SCALE = 2.0;
 
 function clampScale(s: number): number {
 	return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
+}
+
+function getTouchDistance(touches: TouchList): number {
+	const first = touches[0];
+	const second = touches[1];
+	const dx = second.clientX - first.clientX;
+	const dy = second.clientY - first.clientY;
+	return Math.hypot(dx, dy);
+}
+
+function getTouchMidpoint(touches: TouchList, rect: DOMRect): { x: number; y: number } {
+	const first = touches[0];
+	const second = touches[1];
+	const clientX = (first.clientX + second.clientX) / 2;
+	const clientY = (first.clientY + second.clientY) / 2;
+	return {
+		x: clientX - rect.left,
+		y: clientY - rect.top,
+	};
 }
 
 /**
@@ -128,6 +149,23 @@ export function VisualCanvas({
 	} | null>(null);
 	// Track whether a spacebar-drag actually moved the canvas (suppress background click)
 	const didDrag = useRef(false);
+
+	// Track one-finger touch pan gesture
+	const touchPanState = useRef<{
+		touchId: number;
+		startX: number;
+		startY: number;
+		originOffsetX: number;
+		originOffsetY: number;
+	} | null>(null);
+
+	// Track active pinch-zoom gesture (two-finger touch)
+	const pinchState = useRef<{
+		initialDistance: number;
+		initialScale: number;
+		initialCanvasX: number;
+		initialCanvasY: number;
+	} | null>(null);
 
 	// Keep a ref to the latest viewport so event handlers don't stale-close over it
 	const viewportRef = useRef(viewportState);
@@ -254,6 +292,88 @@ export function VisualCanvas({
 		};
 	}, [handleMouseMove, handleMouseUp]);
 
+	// ---- Touch gestures (mobile Safari / iPhone) ----
+	const handleTouchStart = useCallback((e: TouchEvent) => {
+		if (e.touches.length >= 2) {
+			touchPanState.current = null;
+			const rect = containerRef.current?.getBoundingClientRect();
+			if (!rect) return;
+			const distance = getTouchDistance(e.touches);
+			if (distance <= 0) return;
+			const midpoint = getTouchMidpoint(e.touches, rect);
+			const vp = viewportRef.current;
+			pinchState.current = {
+				initialDistance: distance,
+				initialScale: vp.scale,
+				initialCanvasX: (midpoint.x - vp.offsetX) / vp.scale,
+				initialCanvasY: (midpoint.y - vp.offsetY) / vp.scale,
+			};
+			e.preventDefault();
+			return;
+		}
+
+		pinchState.current = null;
+		if (e.touches.length !== 1) return;
+		const target = e.target as HTMLElement | null;
+		const isBackgroundSurface = target === containerRef.current || target === transformRef.current;
+		const isPanSurface = !!target?.closest('[data-pan-canvas="true"]');
+		if (!isBackgroundSurface && !isPanSurface) return;
+		const touch = e.touches[0];
+		touchPanState.current = {
+			touchId: touch.identifier,
+			startX: touch.clientX,
+			startY: touch.clientY,
+			originOffsetX: viewportRef.current.offsetX,
+			originOffsetY: viewportRef.current.offsetY,
+		};
+		didDrag.current = false;
+		e.preventDefault();
+	}, []);
+
+	const handleTouchMove = useCallback(
+		(e: TouchEvent) => {
+			const pinch = pinchState.current;
+			if (pinch && e.touches.length >= 2) {
+				const rect = containerRef.current?.getBoundingClientRect();
+				if (!rect) return;
+				const distance = getTouchDistance(e.touches);
+				if (distance <= 0) return;
+				const midpoint = getTouchMidpoint(e.touches, rect);
+				const nextScale = clampScale(pinch.initialScale * (distance / pinch.initialDistance));
+				onViewportChange({
+					offsetX: midpoint.x - pinch.initialCanvasX * nextScale,
+					offsetY: midpoint.y - pinch.initialCanvasY * nextScale,
+					scale: nextScale,
+				});
+				e.preventDefault();
+				return;
+			}
+
+			const pan = touchPanState.current;
+			if (!pan || e.touches.length !== 1) return;
+			const touch = Array.from(e.touches).find((t) => t.identifier === pan.touchId) ?? e.touches[0];
+			const dx = touch.clientX - pan.startX;
+			const dy = touch.clientY - pan.startY;
+			didDrag.current = true;
+			onViewportChange({
+				...viewportRef.current,
+				offsetX: pan.originOffsetX + dx,
+				offsetY: pan.originOffsetY + dy,
+			});
+			e.preventDefault();
+		},
+		[onViewportChange]
+	);
+
+	const handleTouchEnd = useCallback((e: TouchEvent) => {
+		if (e.touches.length < 2) {
+			pinchState.current = null;
+		}
+		if (e.touches.length === 0) {
+			touchPanState.current = null;
+		}
+	}, []);
+
 	// ---- Background click: fires when clicking the canvas outside of child nodes ----
 	// Child nodes should call e.stopPropagation() to prevent this from firing.
 	const handleContainerClick = useCallback(
@@ -280,9 +400,19 @@ export function VisualCanvas({
 		<div
 			ref={containerRef}
 			class="visual-canvas-container"
-			style={{ overflow: 'hidden', width: '100%', height: '100%', position: 'relative' }}
+			style={{
+				overflow: 'hidden',
+				width: '100%',
+				height: '100%',
+				position: 'relative',
+				touchAction: 'none',
+			}}
 			onMouseDown={handleMouseDown}
 			onWheel={handleWheel}
+			onTouchStart={handleTouchStart}
+			onTouchMove={handleTouchMove}
+			onTouchEnd={handleTouchEnd}
+			onTouchCancel={handleTouchEnd}
 			onClick={handleContainerClick}
 			data-testid="visual-canvas"
 		>

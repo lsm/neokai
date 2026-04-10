@@ -170,8 +170,10 @@ export function SpaceAgentList() {
 
 	if (loading) {
 		return (
-			<div class="flex items-center justify-center h-32">
-				<span class="text-xs text-gray-600 animate-pulse">Loading agents...</span>
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center">
+					<span class="text-xs text-gray-600 animate-pulse">Loading agents...</span>
+				</div>
 			</div>
 		);
 	}
@@ -201,15 +203,17 @@ export function SpaceAgentList() {
 					</div>
 				</div>
 			) : (
-				<div class="space-y-2 overflow-y-auto flex-1">
-					{agents.map((agent) => (
-						<AgentCard
-							key={agent.id}
-							agent={agent}
-							onEdit={handleEdit}
-							onDelete={handleDeleteClick}
-						/>
-					))}
+				<div class="flex-1 overflow-y-auto">
+					<div class="min-h-[calc(100%+1px)] space-y-2">
+						{agents.map((agent) => (
+							<AgentCard
+								key={agent.id}
+								agent={agent}
+								onEdit={handleEdit}
+								onDelete={handleDeleteClick}
+							/>
+						))}
+					</div>
 				</div>
 			)}
 
