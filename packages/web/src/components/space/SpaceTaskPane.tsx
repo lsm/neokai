@@ -351,7 +351,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				</div>
 			</div>
 
-			<div class="flex-1 min-h-0 overflow-hidden px-4 relative">
+			<div class="flex-1 min-h-0 overflow-hidden relative">
 				<div class="absolute top-3 right-4 z-20 flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
 					<button
 						type="button"

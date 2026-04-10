@@ -103,7 +103,7 @@ export function ThreadedChatComposer({
 	);
 
 	return (
-		<div class="px-1 pb-2" data-testid="threaded-chat-composer">
+		<div class="px-2 pb-2" data-testid="threaded-chat-composer">
 			{errorMessage && (
 				<p class="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
 					{errorMessage}
