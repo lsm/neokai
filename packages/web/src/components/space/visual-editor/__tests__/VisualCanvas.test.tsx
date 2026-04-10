@@ -97,6 +97,25 @@ describe('VisualCanvas', () => {
 		expect(last.scale).toBe(1);
 	});
 
+	it('pans via single-finger touch drag on empty canvas', () => {
+		const { getByTestId, changes } = renderCanvas({ offsetX: 10, offsetY: 20, scale: 1 });
+		const container = getByTestId('visual-canvas');
+
+		fireEvent.touchStart(container, {
+			touches: [{ identifier: 1, clientX: 100, clientY: 80 }],
+		});
+		fireEvent.touchMove(container, {
+			touches: [{ identifier: 1, clientX: 140, clientY: 115 }],
+		});
+		fireEvent.touchEnd(container, { touches: [] });
+
+		expect(changes.length).toBeGreaterThan(0);
+		const last = changes[changes.length - 1];
+		expect(last.offsetX).toBe(50);
+		expect(last.offsetY).toBe(55);
+		expect(last.scale).toBe(1);
+	});
+
 	it('renders SVG overlay layer inside the transform layer', () => {
 		const { getByTestId } = renderCanvas();
 		const transformEl = getByTestId('visual-canvas-transform');
