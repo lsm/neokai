@@ -33,24 +33,30 @@ export function SpaceTaskUnifiedThread({
 
 	if (isReconnecting) {
 		return (
-			<div class="h-full flex items-center justify-center text-sm text-gray-500">
-				Reconnecting task thread…
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-500">
+					Reconnecting task thread…
+				</div>
 			</div>
 		);
 	}
 
 	if (isLoading) {
 		return (
-			<div class="h-full flex items-center justify-center text-sm text-gray-500">
-				Loading task thread…
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-500">
+					Loading task thread…
+				</div>
 			</div>
 		);
 	}
 
 	if (parsedRows.length === 0) {
 		return (
-			<div class="h-full flex items-center justify-center px-6 text-center">
-				<p class="text-sm text-gray-500">No task-agent activity yet.</p>
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
+					<p class="text-sm text-gray-500">No task-agent activity yet.</p>
+				</div>
 			</div>
 		);
 	}
@@ -58,7 +64,9 @@ export function SpaceTaskUnifiedThread({
 	return (
 		<div class="h-full min-h-0 flex flex-col" data-testid="space-task-unified-thread">
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
-				<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
+				<div class="min-h-[calc(100%+1px)]">
+					<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
+				</div>
 			</div>
 		</div>
 	);

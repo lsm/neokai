@@ -58,7 +58,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 
 	return (
 		<div class="flex h-full flex-col overflow-y-auto p-3 sm:p-4 lg:p-6">
-			<div class="mx-auto flex w-full max-w-7xl min-h-0 flex-1 flex-col gap-3 lg:gap-4">
+			<div class="mx-auto flex w-full max-w-7xl min-h-[calc(100%+1px)] flex-1 flex-col gap-3 lg:gap-4">
 				{!showWorkflowEditor && (
 					<TabGroup
 						selectedIndex={selectedIndex}
@@ -92,7 +92,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 
 						<TabPanels class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
 							<TabPanel>
-								<div class="h-full overflow-y-auto p-4 sm:p-5 lg:p-6">
+								<div class="h-full min-h-[calc(100%+1px)] overflow-y-auto p-4 sm:p-5 lg:p-6">
 									<SpaceAgentList />
 								</div>
 							</TabPanel>

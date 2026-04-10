@@ -352,8 +352,10 @@ export function WorkflowList({
 
 	if (loading) {
 		return (
-			<div class="flex items-center justify-center h-32">
-				<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center">
+					<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+				</div>
 			</div>
 		);
 	}
@@ -417,47 +419,49 @@ export function WorkflowList({
 
 			{/* List */}
 			<div class="flex-1 overflow-y-auto p-6">
-				{workflows.length === 0 ? (
-					<div class="text-center py-12">
-						<div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
-							<svg
-								class="w-5 h-5 text-gray-600"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
+				<div class="min-h-[calc(100%+1px)]">
+					{workflows.length === 0 ? (
+						<div class="text-center py-12">
+							<div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
+								<svg
+									class="w-5 h-5 text-gray-600"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M4 6h16M4 10h16M4 14h16M4 18h16"
+									/>
+								</svg>
+							</div>
+							<p class="text-sm text-gray-500">No workflows yet</p>
+							<p class="text-xs text-gray-600 mt-1">
+								Create a workflow to define multi-agent pipelines.
+							</p>
+							<button
+								onClick={onCreateWorkflow}
+								class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
 							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M4 6h16M4 10h16M4 14h16M4 18h16"
-								/>
-							</svg>
+								Create your first workflow
+							</button>
 						</div>
-						<p class="text-sm text-gray-500">No workflows yet</p>
-						<p class="text-xs text-gray-600 mt-1">
-							Create a workflow to define multi-agent pipelines.
-						</p>
-						<button
-							onClick={onCreateWorkflow}
-							class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
-						>
-							Create your first workflow
-						</button>
-					</div>
-				) : (
-					<div class="space-y-3">
-						{workflows.map((wf) => (
-							<WorkflowCard
-								key={wf.id}
-								workflow={wf}
-								spaceId={spaceId}
-								spaceName={spaceName}
-								onEdit={() => onEditWorkflow(wf.id)}
-							/>
-						))}
-					</div>
-				)}
+					) : (
+						<div class="space-y-3">
+							{workflows.map((wf) => (
+								<WorkflowCard
+									key={wf.id}
+									workflow={wf}
+									spaceId={spaceId}
+									spaceName={spaceName}
+									onEdit={() => onEditWorkflow(wf.id)}
+								/>
+							))}
+						</div>
+					)}
+				</div>
 			</div>
 
 			{/* Import Preview Dialog */}

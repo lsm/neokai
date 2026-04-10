@@ -94,6 +94,9 @@ export default function ChatContainer({
 
 	// Ref for tracking resolving questions (sync updates, prevents form disappearance during transition)
 	const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
+	const pendingMessageVisibilityChecksRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+		new Map()
+	);
 
 	// ========================================
 	// Local State (pagination, autoScroll)
@@ -274,7 +277,18 @@ export default function ChatContainer({
 
 	// Sync messages from sessionStore
 	useSignalEffect(() => {
-		setMessages(sessionStore.sdkMessages.value);
+		const nextMessages = sessionStore.sdkMessages.value;
+		const pendingChecks = pendingMessageVisibilityChecksRef.current;
+		if (pendingChecks.size > 0) {
+			for (const [messageId, timer] of pendingChecks) {
+				const isVisible = nextMessages.some((msg) => msg.uuid === messageId);
+				if (isVisible) {
+					clearTimeout(timer);
+					pendingChecks.delete(messageId);
+				}
+			}
+		}
+		setMessages(nextMessages);
 	});
 
 	// Sync session info from sessionStore
@@ -494,6 +508,26 @@ export default function ChatContainer({
 	// ========================================
 	// Send Message
 	// ========================================
+	const handleMessageAccepted = useCallback(
+		(messageId: string) => {
+			const pendingChecks = pendingMessageVisibilityChecksRef.current;
+			const existingTimer = pendingChecks.get(messageId);
+			if (existingTimer) {
+				clearTimeout(existingTimer);
+			}
+			const timer = setTimeout(() => {
+				pendingChecks.delete(messageId);
+				const isVisible = sessionStore.sdkMessages.value.some(
+					(message) => message.uuid === messageId
+				);
+				if (!isVisible && sessionStore.activeSessionId.value === sessionId) {
+					sessionStore.refresh().catch(() => {});
+				}
+			}, 1200);
+			pendingChecks.set(messageId, timer);
+		},
+		[sessionId]
+	);
 	const { sendMessage } = useSendMessage({
 		sessionId,
 		session,
@@ -509,6 +543,7 @@ export default function ChatContainer({
 		onError: useCallback((error: string) => {
 			setLocalError(error);
 		}, []),
+		onMessageAccepted: handleMessageAccepted,
 	});
 
 	// ========================================
@@ -525,6 +560,11 @@ export default function ChatContainer({
 		}
 		// Cleanup: deselect session when component unmounts
 		return () => {
+			const pendingChecks = pendingMessageVisibilityChecksRef.current;
+			for (const timer of pendingChecks.values()) {
+				clearTimeout(timer);
+			}
+			pendingChecks.clear();
 			// Defer cleanup so a newly-mounted ChatContainer can claim selection first.
 			setTimeout(() => {
 				if (sessionStore.activeSessionId.value === sessionId) {

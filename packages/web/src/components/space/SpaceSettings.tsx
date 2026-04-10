@@ -141,205 +141,209 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	}
 
 	return (
-		<div class="flex flex-col h-full overflow-y-auto p-6 space-y-6">
-			{/* Edit name & description */}
-			<section class="space-y-4">
-				<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">General</h3>
+		<div class="flex flex-col h-full overflow-y-auto p-6">
+			<div class="min-h-[calc(100%+1px)] space-y-6">
+				{/* Edit name & description */}
+				<section class="space-y-4">
+					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">General</h3>
 
-				<form onSubmit={handleSave} class="space-y-3">
-					{saveError && (
-						<div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-2 text-red-400 text-sm">
-							{saveError}
-						</div>
-					)}
+					<form onSubmit={handleSave} class="space-y-3">
+						{saveError && (
+							<div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-2 text-red-400 text-sm">
+								{saveError}
+							</div>
+						)}
 
-					<div>
-						<label class="block text-xs font-medium text-gray-400 mb-1">Name</label>
-						<input
-							type="text"
-							value={name}
-							onInput={(e) => setName((e.target as HTMLInputElement).value)}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">Name</label>
+							<input
+								type="text"
+								value={name}
+								onInput={(e) => setName((e.target as HTMLInputElement).value)}
+								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
 								placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
-						/>
-					</div>
+							/>
+						</div>
 
-					<div>
-						<label class="block text-xs font-medium text-gray-400 mb-1">
-							Description
-							<span class="text-gray-600 ml-1">(optional)</span>
-						</label>
-						<textarea
-							value={description}
-							onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-							placeholder="Brief description of this space..."
-							rows={3}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">
+								Description
+								<span class="text-gray-600 ml-1">(optional)</span>
+							</label>
+							<textarea
+								value={description}
+								onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
+								placeholder="Brief description of this space..."
+								rows={3}
+								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
 								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-none text-sm"
-						/>
-					</div>
+							/>
+						</div>
 
-					<div>
-						<label class="block text-xs font-medium text-gray-400 mb-1">
-							Instructions
-							<span class="text-gray-600 ml-1">(optional)</span>
-						</label>
-						<p class="text-xs text-gray-500 mb-1">
-							Operator instructions for all agents in this space. Injected as{' '}
-							<code class="text-gray-400">## Space Instructions</code> in every agent's system
-							prompt.
-						</p>
-						<textarea
-							value={instructions}
-							onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
-							placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
-							rows={5}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">
+								Instructions
+								<span class="text-gray-600 ml-1">(optional)</span>
+							</label>
+							<p class="text-xs text-gray-500 mb-1">
+								Operator instructions for all agents in this space. Injected as{' '}
+								<code class="text-gray-400">## Space Instructions</code> in every agent's system
+								prompt.
+							</p>
+							<textarea
+								value={instructions}
+								onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+								placeholder="e.g. Always use TypeScript strict mode. Prefer functional components..."
+								rows={5}
+								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
 								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
-						/>
-						<div class="text-xs text-gray-600 mt-0.5 text-right">
-							{instructions.length} characters
+							/>
+							<div class="text-xs text-gray-600 mt-0.5 text-right">
+								{instructions.length} characters
+							</div>
 						</div>
-					</div>
 
-					<div>
-						<label class="block text-xs font-medium text-gray-400 mb-1">
-							Background Context
-							<span class="text-gray-600 ml-1">(optional)</span>
-						</label>
-						<p class="text-xs text-gray-500 mb-1">
-							Project or codebase context. Injected as{' '}
-							<code class="text-gray-400">## Space Background</code> or{' '}
-							<code class="text-gray-400">## Project Context</code> in agent prompts.
-						</p>
-						<textarea
-							value={backgroundContext}
-							onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
-							placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
-							rows={5}
-							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">
+								Background Context
+								<span class="text-gray-600 ml-1">(optional)</span>
+							</label>
+							<p class="text-xs text-gray-500 mb-1">
+								Project or codebase context. Injected as{' '}
+								<code class="text-gray-400">## Space Background</code> or{' '}
+								<code class="text-gray-400">## Project Context</code> in agent prompts.
+							</p>
+							<textarea
+								value={backgroundContext}
+								onInput={(e) => setBackgroundContext((e.target as HTMLTextAreaElement).value)}
+								placeholder="e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS..."
+								rows={5}
+								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
 								placeholder-gray-600 focus:outline-none focus:border-blue-500 resize-y text-sm"
-						/>
-						<div class="text-xs text-gray-600 mt-0.5 text-right">
-							{backgroundContext.length} characters
+							/>
+							<div class="text-xs text-gray-600 mt-0.5 text-right">
+								{backgroundContext.length} characters
+							</div>
 						</div>
-					</div>
 
-					{isDirty && (
-						<div class="flex gap-2 justify-end">
-							<Button
-								type="button"
-								variant="secondary"
-								size="sm"
-								onClick={() => {
-									setName(space.name);
-									setDescription(space.description ?? '');
-									setInstructions(space.instructions ?? '');
-									setBackgroundContext(space.backgroundContext ?? '');
-									setSaveError(null);
-								}}
-							>
-								Discard
-							</Button>
-							<Button type="submit" size="sm" loading={saving}>
-								Save Changes
-							</Button>
+						{isDirty && (
+							<div class="flex gap-2 justify-end">
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									onClick={() => {
+										setName(space.name);
+										setDescription(space.description ?? '');
+										setInstructions(space.instructions ?? '');
+										setBackgroundContext(space.backgroundContext ?? '');
+										setSaveError(null);
+									}}
+								>
+									Discard
+								</Button>
+								<Button type="submit" size="sm" loading={saving}>
+									Save Changes
+								</Button>
+							</div>
+						)}
+					</form>
+
+					{/* Workspace path — read-only */}
+					<div>
+						<label class="block text-xs font-medium text-gray-400 mb-1">Workspace Path</label>
+						<p class="text-xs text-gray-500 font-mono break-all">{space.workspacePath}</p>
+					</div>
+				</section>
+
+				{/* Export section */}
+				<section class="space-y-3">
+					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Export</h3>
+					<p class="text-xs text-gray-500">
+						Download all agents and workflows as a portable{' '}
+						<span class="font-mono">.neokai.json</span> bundle.
+					</p>
+					<button
+						type="button"
+						onClick={exportBundle}
+						class="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded-lg transition-colors"
+					>
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+							/>
+						</svg>
+						Export Bundle
+					</button>
+				</section>
+
+				{/* Space metadata */}
+				<section class="space-y-2">
+					<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Details</h3>
+					<dl class="space-y-1">
+						<div class="flex gap-2">
+							<dt class="text-xs text-gray-500 w-20 flex-shrink-0">Status</dt>
+							<dd class="text-xs text-gray-300 capitalize">{space.status}</dd>
 						</div>
-					)}
-				</form>
+						<div class="flex gap-2">
+							<dt class="text-xs text-gray-500 w-20 flex-shrink-0">ID</dt>
+							<dd class="text-xs text-gray-500 font-mono truncate">{space.id}</dd>
+						</div>
+						<div class="flex gap-2">
+							<dt class="text-xs text-gray-500 w-20 flex-shrink-0">Created</dt>
+							<dd class="text-xs text-gray-300">
+								{new Date(space.createdAt).toLocaleDateString()}
+							</dd>
+						</div>
+					</dl>
+				</section>
 
-				{/* Workspace path — read-only */}
-				<div>
-					<label class="block text-xs font-medium text-gray-400 mb-1">Workspace Path</label>
-					<p class="text-xs text-gray-500 font-mono break-all">{space.workspacePath}</p>
-				</div>
-			</section>
+				{/* Danger zone */}
+				<section class="space-y-3 border border-red-900/40 rounded-lg p-4">
+					<h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Danger Zone</h3>
 
-			{/* Export section */}
-			<section class="space-y-3">
-				<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Export</h3>
-				<p class="text-xs text-gray-500">
-					Download all agents and workflows as a portable{' '}
-					<span class="font-mono">.neokai.json</span> bundle.
-				</p>
-				<button
-					type="button"
-					onClick={exportBundle}
-					class="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded-lg transition-colors"
-				>
-					<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-						/>
-					</svg>
-					Export Bundle
-				</button>
-			</section>
-
-			{/* Space metadata */}
-			<section class="space-y-2">
-				<h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Details</h3>
-				<dl class="space-y-1">
-					<div class="flex gap-2">
-						<dt class="text-xs text-gray-500 w-20 flex-shrink-0">Status</dt>
-						<dd class="text-xs text-gray-300 capitalize">{space.status}</dd>
+					<div class="flex items-center justify-between gap-4">
+						<div>
+							<p class="text-sm text-gray-300">Archive space</p>
+							<p class="text-xs text-gray-500 mt-0.5">
+								Hide from the main list. Can be restored later.
+							</p>
+						</div>
+						<Button
+							type="button"
+							variant="secondary"
+							size="sm"
+							onClick={handleArchive}
+							disabled={space.status === 'archived' || isArchiving}
+							loading={isArchiving}
+						>
+							Archive
+						</Button>
 					</div>
-					<div class="flex gap-2">
-						<dt class="text-xs text-gray-500 w-20 flex-shrink-0">ID</dt>
-						<dd class="text-xs text-gray-500 font-mono truncate">{space.id}</dd>
-					</div>
-					<div class="flex gap-2">
-						<dt class="text-xs text-gray-500 w-20 flex-shrink-0">Created</dt>
-						<dd class="text-xs text-gray-300">{new Date(space.createdAt).toLocaleDateString()}</dd>
-					</div>
-				</dl>
-			</section>
 
-			{/* Danger zone */}
-			<section class="space-y-3 border border-red-900/40 rounded-lg p-4">
-				<h3 class="text-xs font-semibold text-red-400 uppercase tracking-wider">Danger Zone</h3>
-
-				<div class="flex items-center justify-between gap-4">
-					<div>
-						<p class="text-sm text-gray-300">Archive space</p>
-						<p class="text-xs text-gray-500 mt-0.5">
-							Hide from the main list. Can be restored later.
-						</p>
+					<div class="border-t border-red-900/30 pt-3 flex items-center justify-between gap-4">
+						<div>
+							<p class="text-sm text-gray-300">Delete space</p>
+							<p class="text-xs text-gray-500 mt-0.5">
+								Permanently remove this space and all its data.
+							</p>
+						</div>
+						<Button
+							type="button"
+							variant="danger"
+							size="sm"
+							onClick={handleDelete}
+							disabled={isDeleting}
+							loading={isDeleting}
+						>
+							Delete
+						</Button>
 					</div>
-					<Button
-						type="button"
-						variant="secondary"
-						size="sm"
-						onClick={handleArchive}
-						disabled={space.status === 'archived' || isArchiving}
-						loading={isArchiving}
-					>
-						Archive
-					</Button>
-				</div>
-
-				<div class="border-t border-red-900/30 pt-3 flex items-center justify-between gap-4">
-					<div>
-						<p class="text-sm text-gray-300">Delete space</p>
-						<p class="text-xs text-gray-500 mt-0.5">
-							Permanently remove this space and all its data.
-						</p>
-					</div>
-					<Button
-						type="button"
-						variant="danger"
-						size="sm"
-						onClick={handleDelete}
-						disabled={isDeleting}
-						loading={isDeleting}
-					>
-						Delete
-					</Button>
-				</div>
-			</section>
+				</section>
+			</div>
 		</div>
 	);
 }

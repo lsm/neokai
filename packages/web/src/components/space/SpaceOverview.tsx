@@ -189,107 +189,115 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
 
 	return (
-		<div class="w-full px-4 py-4 sm:px-8 sm:py-6 space-y-6 overflow-y-auto">
-			<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
+		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
+			<div class="min-h-[calc(100%+1px)] space-y-6">
+				<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-			{/* Runtime state (shown when available) */}
-			{runtimeState && <RuntimeControlBar state={runtimeState} />}
+				{/* Runtime state (shown when available) */}
+				{runtimeState && <RuntimeControlBar state={runtimeState} />}
 
-			{/* Stats strip */}
-			<div class="grid grid-cols-3 gap-3">
-				<StatCard
-					label="Active"
-					count={activeTasks.length}
-					color="border-blue-800/30 text-blue-400"
-				/>
-				<StatCard
-					label="Review"
-					count={reviewTasks.length}
-					color="border-purple-800/30 text-purple-400"
-				/>
-				<StatCard
-					label="Done"
-					count={doneTasks.length}
-					color="border-green-800/30 text-green-400"
-				/>
-			</div>
-
-			{/* Recent Tasks */}
-			<div>
-				<div class="flex items-center justify-between mb-2 px-1">
-					<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Recent Tasks</h3>
-					<button
-						type="button"
-						onClick={() => setShowCreateTask(true)}
-						class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-					>
-						Create Task
-					</button>
+				{/* Stats strip */}
+				<div class="grid grid-cols-3 gap-3">
+					<StatCard
+						label="Active"
+						count={activeTasks.length}
+						color="border-blue-800/30 text-blue-400"
+					/>
+					<StatCard
+						label="Review"
+						count={reviewTasks.length}
+						color="border-purple-800/30 text-purple-400"
+					/>
+					<StatCard
+						label="Done"
+						count={doneTasks.length}
+						color="border-green-800/30 text-green-400"
+					/>
 				</div>
-				{recentTasks.length === 0 ? (
-					<div class="flex flex-col items-center justify-center py-12 text-center">
-						<svg
-							class="w-10 h-10 text-gray-700 mb-3"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={1.5}
-								d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-							/>
-						</svg>
-						<p class="text-sm text-gray-500">No tasks yet</p>
-						<p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
-					</div>
-				) : (
-					<div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
-						{recentTasks.map((task) => (
-							<RecentTaskItem key={task.id} task={task} onClick={() => handleTaskClick(task.id)} />
-						))}
-					</div>
-				)}
-			</div>
 
-			{/* Recent Sessions */}
-			{recentSessions.length > 0 && (
+				{/* Recent Tasks */}
 				<div>
 					<div class="flex items-center justify-between mb-2 px-1">
 						<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-							Recent Sessions
+							Recent Tasks
 						</h3>
 						<button
 							type="button"
-							onClick={() => navigateToSpaceAgent(spaceId)}
+							onClick={() => setShowCreateTask(true)}
 							class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
 						>
-							New Session
+							Create Task
 						</button>
 					</div>
-					<div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
-						{recentSessions.map((session) => (
-							<button
-								key={session.id}
-								type="button"
-								onClick={() => navigateToSpaceSession(spaceId, session.id)}
-								class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
+					{recentTasks.length === 0 ? (
+						<div class="flex flex-col items-center justify-center py-12 text-center">
+							<svg
+								class="w-10 h-10 text-gray-700 mb-3"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
 							>
-								<div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
-								<div class="flex-1 min-w-0">
-									<span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
-										{session.title || 'Untitled Session'}
-									</span>
-								</div>
-								<span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
-									{getRelativeTime(session.lastActiveAt)}
-								</span>
-							</button>
-						))}
-					</div>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={1.5}
+									d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+								/>
+							</svg>
+							<p class="text-sm text-gray-500">No tasks yet</p>
+							<p class="text-xs text-gray-600 mt-1">Create a task to get started</p>
+						</div>
+					) : (
+						<div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
+							{recentTasks.map((task) => (
+								<RecentTaskItem
+									key={task.id}
+									task={task}
+									onClick={() => handleTaskClick(task.id)}
+								/>
+							))}
+						</div>
+					)}
 				</div>
-			)}
+
+				{/* Recent Sessions */}
+				{recentSessions.length > 0 && (
+					<div>
+						<div class="flex items-center justify-between mb-2 px-1">
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+								Recent Sessions
+							</h3>
+							<button
+								type="button"
+								onClick={() => navigateToSpaceAgent(spaceId)}
+								class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+							>
+								New Session
+							</button>
+						</div>
+						<div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
+							{recentSessions.map((session) => (
+								<button
+									key={session.id}
+									type="button"
+									onClick={() => navigateToSpaceSession(spaceId, session.id)}
+									class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
+								>
+									<div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
+									<div class="flex-1 min-w-0">
+										<span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
+											{session.title || 'Untitled Session'}
+										</span>
+									</div>
+									<span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+										{getRelativeTime(session.lastActiveAt)}
+									</span>
+								</button>
+							))}
+						</div>
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }

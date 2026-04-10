@@ -125,96 +125,98 @@ export function TaskArtifactsPanel({
 
 			{/* Scrollable body */}
 			<div class="flex-1 overflow-y-auto min-h-0">
-				{/* Loading */}
-				{loading && (
-					<div class="flex items-center justify-center h-32" data-testid="artifacts-loading">
-						<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-					</div>
-				)}
-
-				{/* Fetch error */}
-				{fetchError && !loading && (
-					<div class="px-4 py-4" data-testid="artifacts-error">
-						<p class="text-sm text-red-400">{fetchError}</p>
-					</div>
-				)}
-
-				{/* Artifacts content */}
-				{!loading && !fetchError && artifacts && (
-					<div class="p-4 space-y-4">
-						{/* Diff summary */}
-						<div class="flex items-center gap-4 text-xs" data-testid="artifacts-summary">
-							<span class="text-gray-400">
-								{artifacts.files.length} {artifacts.files.length === 1 ? 'file' : 'files'} changed
-							</span>
-							<span class="text-green-400 font-mono">+{artifacts.totalAdditions}</span>
-							<span class="text-red-400 font-mono">-{artifacts.totalDeletions}</span>
+				<div class="min-h-[calc(100%+1px)]">
+					{/* Loading */}
+					{loading && (
+						<div class="flex items-center justify-center h-32" data-testid="artifacts-loading">
+							<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
 						</div>
+					)}
 
-						{/* File list */}
-						{artifacts.files.length === 0 ? (
-							<p class="text-sm text-gray-500" data-testid="artifacts-no-files">
-								No changed files found
-							</p>
-						) : (
-							<div class="space-y-0.5" data-testid="artifacts-file-list">
-								{artifacts.files.map((file) => (
-									<button
-										key={file.path}
-										onClick={() => setSelectedFile(file.path)}
-										class={cn(
-											'w-full flex items-center gap-3 px-3 py-2 rounded text-left',
-											'hover:bg-dark-700 transition-colors group'
-										)}
-										data-testid="artifacts-file-row"
-										data-file-path={file.path}
-									>
-										{/* File icon */}
-										<svg
-											class="w-3.5 h-3.5 text-gray-500 flex-shrink-0"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-											/>
-										</svg>
-										{/* Path */}
-										<span
-											class="flex-1 text-xs font-mono text-gray-300 truncate min-w-0 group-hover:text-gray-100"
-											title={file.path}
-										>
-											{file.path}
-										</span>
-										{/* Stats */}
-										<span class="flex-shrink-0 flex items-center gap-1.5 text-xs font-mono">
-											<span class="text-green-400">+{file.additions}</span>
-											<span class="text-red-400">-{file.deletions}</span>
-										</span>
-										{/* Chevron */}
-										<svg
-											class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400"
-											fill="none"
-											viewBox="0 0 24 24"
-											stroke="currentColor"
-										>
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width={2}
-												d="M9 5l7 7-7 7"
-											/>
-										</svg>
-									</button>
-								))}
+					{/* Fetch error */}
+					{fetchError && !loading && (
+						<div class="px-4 py-4" data-testid="artifacts-error">
+							<p class="text-sm text-red-400">{fetchError}</p>
+						</div>
+					)}
+
+					{/* Artifacts content */}
+					{!loading && !fetchError && artifacts && (
+						<div class="p-4 space-y-4">
+							{/* Diff summary */}
+							<div class="flex items-center gap-4 text-xs" data-testid="artifacts-summary">
+								<span class="text-gray-400">
+									{artifacts.files.length} {artifacts.files.length === 1 ? 'file' : 'files'} changed
+								</span>
+								<span class="text-green-400 font-mono">+{artifacts.totalAdditions}</span>
+								<span class="text-red-400 font-mono">-{artifacts.totalDeletions}</span>
 							</div>
-						)}
-					</div>
-				)}
+
+							{/* File list */}
+							{artifacts.files.length === 0 ? (
+								<p class="text-sm text-gray-500" data-testid="artifacts-no-files">
+									No changed files found
+								</p>
+							) : (
+								<div class="space-y-0.5" data-testid="artifacts-file-list">
+									{artifacts.files.map((file) => (
+										<button
+											key={file.path}
+											onClick={() => setSelectedFile(file.path)}
+											class={cn(
+												'w-full flex items-center gap-3 px-3 py-2 rounded text-left',
+												'hover:bg-dark-700 transition-colors group'
+											)}
+											data-testid="artifacts-file-row"
+											data-file-path={file.path}
+										>
+											{/* File icon */}
+											<svg
+												class="w-3.5 h-3.5 text-gray-500 flex-shrink-0"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width={2}
+													d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+												/>
+											</svg>
+											{/* Path */}
+											<span
+												class="flex-1 text-xs font-mono text-gray-300 truncate min-w-0 group-hover:text-gray-100"
+												title={file.path}
+											>
+												{file.path}
+											</span>
+											{/* Stats */}
+											<span class="flex-shrink-0 flex items-center gap-1.5 text-xs font-mono">
+												<span class="text-green-400">+{file.additions}</span>
+												<span class="text-red-400">-{file.deletions}</span>
+											</span>
+											{/* Chevron */}
+											<svg
+												class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width={2}
+													d="M9 5l7 7-7 7"
+												/>
+											</svg>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);

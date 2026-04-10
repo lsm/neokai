@@ -151,6 +151,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
+	const floatingToggleTopClass = activeView === 'artifacts' ? 'top-14' : 'top-3';
 	const activitySummary = STATUS_LABELS[task.status];
 	const transitionActions = getTransitionActions(task.status);
 	const agentActionLabel =
@@ -352,7 +353,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			</div>
 
 			<div class="flex-1 min-h-0 overflow-hidden relative">
-				<div class="absolute top-3 right-4 z-20 flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
+				<div
+					class={cn(
+						'absolute right-4 z-20 flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm',
+						floatingToggleTopClass
+					)}
+				>
 					<button
 						type="button"
 						onClick={() => setActiveView('thread')}
@@ -444,17 +450,19 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 									bottomInsetClass={showInlineComposer ? 'pb-16' : 'pb-3'}
 								/>
 							) : (
-								<div class="h-full px-4 py-10 text-center">
-									<p class="text-sm text-gray-300">
-										{ensuringThread
-											? 'Starting task thread...'
-											: 'Task thread is not available yet.'}
-									</p>
-									<p class="mt-2 text-xs text-gray-500">
-										{ensuringThread
-											? 'Connecting task and node-agent streams.'
-											: 'Keep this view open while the task thread starts.'}
-									</p>
+								<div class="h-full overflow-y-auto">
+									<div class="min-h-[calc(100%+1px)] px-4 py-10 text-center">
+										<p class="text-sm text-gray-300">
+											{ensuringThread
+												? 'Starting task thread...'
+												: 'Task thread is not available yet.'}
+										</p>
+										<p class="mt-2 text-xs text-gray-500">
+											{ensuringThread
+												? 'Connecting task and node-agent streams.'
+												: 'Keep this view open while the task thread starts.'}
+										</p>
+									</div>
 								</div>
 							)}
 						</div>
