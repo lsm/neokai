@@ -26,6 +26,25 @@ function clampScale(s: number): number {
 	return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 }
 
+function getTouchDistance(touches: TouchList): number {
+	const first = touches[0];
+	const second = touches[1];
+	const dx = second.clientX - first.clientX;
+	const dy = second.clientY - first.clientY;
+	return Math.hypot(dx, dy);
+}
+
+function getTouchMidpoint(touches: TouchList, rect: DOMRect): { x: number; y: number } {
+	const first = touches[0];
+	const second = touches[1];
+	const clientX = (first.clientX + second.clientX) / 2;
+	const clientY = (first.clientY + second.clientY) / 2;
+	return {
+		x: clientX - rect.left,
+		y: clientY - rect.top,
+	};
+}
+
 /**
  * Pure function: compute the next ViewportState for a wheel event.
  *
@@ -128,6 +147,14 @@ export function VisualCanvas({
 	} | null>(null);
 	// Track whether a spacebar-drag actually moved the canvas (suppress background click)
 	const didDrag = useRef(false);
+
+	// Track active pinch-zoom gesture (two-finger touch)
+	const pinchState = useRef<{
+		initialDistance: number;
+		initialScale: number;
+		initialCanvasX: number;
+		initialCanvasY: number;
+	} | null>(null);
 
 	// Keep a ref to the latest viewport so event handlers don't stale-close over it
 	const viewportRef = useRef(viewportState);
@@ -254,6 +281,54 @@ export function VisualCanvas({
 		};
 	}, [handleMouseMove, handleMouseUp]);
 
+	// ---- Touch pinch-zoom (mobile Safari / iPhone) ----
+	const handleTouchStart = useCallback((e: TouchEvent) => {
+		if (e.touches.length < 2) return;
+		const rect = containerRef.current?.getBoundingClientRect();
+		if (!rect) return;
+		const distance = getTouchDistance(e.touches);
+		if (distance <= 0) return;
+		const midpoint = getTouchMidpoint(e.touches, rect);
+		const vp = viewportRef.current;
+		pinchState.current = {
+			initialDistance: distance,
+			initialScale: vp.scale,
+			initialCanvasX: (midpoint.x - vp.offsetX) / vp.scale,
+			initialCanvasY: (midpoint.y - vp.offsetY) / vp.scale,
+		};
+		e.preventDefault();
+	}, []);
+
+	const handleTouchMove = useCallback(
+		(e: TouchEvent) => {
+			const state = pinchState.current;
+			if (!state) return;
+			if (e.touches.length < 2) {
+				pinchState.current = null;
+				return;
+			}
+			const rect = containerRef.current?.getBoundingClientRect();
+			if (!rect) return;
+			const distance = getTouchDistance(e.touches);
+			if (distance <= 0) return;
+			const midpoint = getTouchMidpoint(e.touches, rect);
+			const nextScale = clampScale(state.initialScale * (distance / state.initialDistance));
+			onViewportChange({
+				offsetX: midpoint.x - state.initialCanvasX * nextScale,
+				offsetY: midpoint.y - state.initialCanvasY * nextScale,
+				scale: nextScale,
+			});
+			e.preventDefault();
+		},
+		[onViewportChange]
+	);
+
+	const handleTouchEnd = useCallback((e: TouchEvent) => {
+		if (e.touches.length < 2) {
+			pinchState.current = null;
+		}
+	}, []);
+
 	// ---- Background click: fires when clicking the canvas outside of child nodes ----
 	// Child nodes should call e.stopPropagation() to prevent this from firing.
 	const handleContainerClick = useCallback(
@@ -280,9 +355,19 @@ export function VisualCanvas({
 		<div
 			ref={containerRef}
 			class="visual-canvas-container"
-			style={{ overflow: 'hidden', width: '100%', height: '100%', position: 'relative' }}
+			style={{
+				overflow: 'hidden',
+				width: '100%',
+				height: '100%',
+				position: 'relative',
+				touchAction: 'none',
+			}}
 			onMouseDown={handleMouseDown}
 			onWheel={handleWheel}
+			onTouchStart={handleTouchStart}
+			onTouchMove={handleTouchMove}
+			onTouchEnd={handleTouchEnd}
+			onTouchCancel={handleTouchEnd}
 			onClick={handleContainerClick}
 			data-testid="visual-canvas"
 		>
