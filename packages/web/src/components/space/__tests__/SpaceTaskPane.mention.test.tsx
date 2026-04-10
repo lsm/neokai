@@ -177,9 +177,7 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 	});
 
 	function getTextarea(container: ReturnType<typeof render>) {
-		return container.getByPlaceholderText(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		) as HTMLTextAreaElement;
+		return container.getByPlaceholderText('Message task agent...') as HTMLTextAreaElement;
 	}
 
 	function typeIntoTextarea(textarea: HTMLTextAreaElement, value: string) {

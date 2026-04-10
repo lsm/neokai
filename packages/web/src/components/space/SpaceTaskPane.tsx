@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
@@ -11,9 +11,10 @@ import type {
 import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
-import { TaskStatusActions } from './TaskStatusActions';
-import MentionAutocomplete from './MentionAutocomplete';
+import { getTransitionActions } from './TaskStatusActions';
+import { ThreadedChatComposer } from './ThreadedChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
+import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 
 interface SpaceTaskPaneProps {
 	taskId: string | null;
@@ -48,74 +49,6 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
 	interrupted: 'Interrupted',
 };
 
-function activityStateDotClass(state: SpaceTaskActivityState): string {
-	switch (state) {
-		case 'active':
-			return 'bg-green-400 animate-pulse';
-		case 'queued':
-			return 'bg-amber-400';
-		case 'idle':
-			return 'bg-gray-500';
-		case 'waiting_for_input':
-			return 'bg-blue-400';
-		case 'completed':
-			return 'bg-gray-600';
-		case 'failed':
-			return 'bg-red-400';
-		case 'interrupted':
-			return 'bg-yellow-400';
-	}
-}
-
-function ActivityMemberList({
-	members,
-	taskId,
-}: {
-	members: SpaceTaskActivityMember[];
-	taskId: string;
-}) {
-	if (members.length === 0) return null;
-
-	const handleMemberClick = (member: SpaceTaskActivityMember) => {
-		spaceOverlayAgentNameSignal.value = member.label;
-		spaceOverlaySessionIdSignal.value = member.sessionId;
-	};
-
-	return (
-		<div
-			class="px-4 py-2 border-b border-dark-800"
-			data-testid="activity-members-list"
-			data-task-id={taskId}
-		>
-			<p class="text-xs text-gray-500 mb-1.5">Agents</p>
-			<div class="flex flex-wrap gap-1.5">
-				{members.map((member) => (
-					<button
-						key={member.id}
-						type="button"
-						onClick={() => handleMemberClick(member)}
-						class="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 transition-colors"
-						data-testid="activity-member-item"
-						data-member-id={member.id}
-						data-member-state={member.state}
-						title={`${member.label} — ${ACTIVITY_STATE_LABELS[member.state]}`}
-					>
-						<span
-							class={cn(
-								'inline-block w-1.5 h-1.5 rounded-full flex-shrink-0',
-								activityStateDotClass(member.state)
-							)}
-							data-testid="activity-member-state-dot"
-						/>
-						<span class="truncate max-w-[10rem]">{member.label}</span>
-						<span class="text-gray-500 text-[10px]">{ACTIVITY_STATE_LABELS[member.state]}</span>
-					</button>
-				))}
-			</div>
-		</div>
-	);
-}
-
 function formatTaskThreadError(err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
 	if (message.includes('No handler for method: space.task.ensureAgentSession')) {
@@ -144,71 +77,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const [threadSessionId, setThreadSessionId] = useState<string | null>(null);
 	const [ensuringThread, setEnsuringThread] = useState(false);
-	const [threadDraft, setThreadDraft] = useState('');
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
-	const [showArtifacts, setShowArtifacts] = useState(false);
-	const [showCanvas, setShowCanvas] = useState(false);
-	const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-	const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
-	const lastCursorRef = useRef(0);
-
-	const handleThreadDraftInput = useCallback((e: Event) => {
-		const target = e.target as HTMLTextAreaElement;
-		const value = target.value;
-		const cursor = target.selectionStart ?? value.length;
-		lastCursorRef.current = cursor;
-		setThreadDraft(value);
-
-		// Detect @query at cursor position
-		const textBeforeCursor = value.slice(0, cursor);
-		const match = textBeforeCursor.match(/@(\w*)$/);
-		if (match) {
-			setMentionQuery(match[1]);
-			setMentionSelectedIndex(0);
-		} else {
-			setMentionQuery(null);
-		}
-	}, []);
-
-	const handleMentionSelect = useCallback(
-		(name: string) => {
-			if (!textareaRef.current) return;
-			const textarea = textareaRef.current;
-			const cursor = textarea.selectionStart ?? lastCursorRef.current;
-			const textBeforeCursor = threadDraft.slice(0, cursor);
-			const textAfterCursor = threadDraft.slice(cursor);
-			const match = textBeforeCursor.match(/@(\w*)$/);
-			if (!match) return;
-			const start = cursor - match[0].length;
-			const newValue = threadDraft.slice(0, start) + '@' + name + ' ' + textAfterCursor;
-			setThreadDraft(newValue);
-			setMentionQuery(null);
-			setMentionSelectedIndex(0);
-			// Re-focus textarea
-			setTimeout(() => {
-				if (textareaRef.current) {
-					const newCursor = start + name.length + 2; // '@' + name + ' '
-					textareaRef.current.focus();
-					textareaRef.current.setSelectionRange(newCursor, newCursor);
-				}
-			}, 0);
-		},
-		[threadDraft]
-	);
-
-	const handleMentionClose = useCallback(() => {
-		setMentionQuery(null);
-		setMentionSelectedIndex(0);
-	}, []);
+	const [activeView, setActiveView] = useState<'thread' | 'canvas' | 'artifacts'>('thread');
 
 	useEffect(() => {
 		setThreadSendError(null);
-		setThreadDraft('');
-		setShowArtifacts(false);
-		setShowCanvas(false);
+		setActiveView('thread');
 	}, [taskId]);
 
 	useEffect(() => {
@@ -261,13 +137,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const workflowAgentIds = workflow
 		? new Set(workflow.nodes.flatMap((n) => n.agents.map((a) => a.agentId)))
 		: null;
-	const mentionAgents =
-		mentionQuery !== null && workflowAgentIds !== null
-			? spaceStore.agents.value.filter(
-					(a) =>
-						workflowAgentIds.has(a.id) &&
-						a.name.toLowerCase().startsWith(mentionQuery.toLowerCase())
-				)
+	const mentionCandidates =
+		workflowAgentIds !== null
+			? spaceStore.agents.value.filter((a) => workflowAgentIds.has(a.id))
 			: [];
 
 	const isTerminalTask =
@@ -277,7 +149,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const showInlineComposer = !isTerminalTask;
 	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
 	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
+	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
+	const canShowArtifactsTab = !!task.workflowRunId;
 	const activitySummary = STATUS_LABELS[task.status];
+	const transitionActions = getTransitionActions(task.status);
 	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -286,6 +161,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				: agentSessionId
 					? 'View Agent Session'
 					: 'Open Space Agent';
+
+	useEffect(() => {
+		if (activeView === 'canvas' && !canShowCanvasTab) {
+			setActiveView('thread');
+			return;
+		}
+		if (activeView === 'artifacts' && !canShowArtifactsTab) {
+			setActiveView('thread');
+		}
+	}, [activeView, canShowCanvasTab, canShowArtifactsTab]);
 
 	const handleNodeClick = (_nodeId: string, _nodeName: string, _agentSlotNames: string[]) => {
 		// Resolve agent display names from the store using the workflow node’s agent IDs.
@@ -323,11 +208,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
-	const handleThreadSend = async (e: Event) => {
-		e.preventDefault();
-		const nextMessage = threadDraft.trim();
-		if (!nextMessage) return;
-		if (!runtimeSpaceId || !task) return;
+	const sendThreadMessage = async (nextMessage: string): Promise<boolean> => {
+		if (!nextMessage) return false;
+		if (!runtimeSpaceId || !task) return false;
 
 		try {
 			setSendingThread(true);
@@ -341,9 +224,10 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			}
 
 			await spaceStore.sendTaskMessage(task.id, nextMessage);
-			setThreadDraft('');
+			return true;
 		} catch (err) {
 			setThreadSendError(formatTaskThreadError(err));
+			return false;
 		} finally {
 			setEnsuringThread(false);
 			setSendingThread(false);
@@ -362,10 +246,56 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
+	const handleTaskAgentAction = () => {
+		if (!runtimeSpaceId) return;
+		if (agentSessionId) {
+			spaceOverlayAgentNameSignal.value = agentActionLabel;
+			spaceOverlaySessionIdSignal.value = agentSessionId;
+			return;
+		}
+		navigateToSpaceAgent(runtimeSpaceId);
+	};
+
+	const taskActionItems: DropdownMenuItem[] = [];
+	if (showHeaderSessionAction) {
+		taskActionItems.push({
+			label: agentActionLabel,
+			onClick: handleTaskAgentAction,
+		});
+	}
+	if (activityMembers.length > 0) {
+		if (taskActionItems.length > 0) {
+			taskActionItems.push({ type: 'divider' });
+		}
+		taskActionItems.push(
+			...activityMembers.map((member) => ({
+				label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
+				onClick: () => {
+					spaceOverlayAgentNameSignal.value = member.label;
+					spaceOverlaySessionIdSignal.value = member.sessionId;
+				},
+			}))
+		);
+	}
+	if (transitionActions.length > 0) {
+		if (taskActionItems.length > 0) {
+			taskActionItems.push({ type: 'divider' });
+		}
+		taskActionItems.push(
+			...transitionActions.map(({ target, label }) => ({
+				label,
+				onClick: () => {
+					void handleStatusTransition(target);
+				},
+				disabled: statusTransitioning,
+			}))
+		);
+	}
+
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
 			<div class="px-4 py-3 flex-shrink-0">
-				<div class="flex items-start gap-3 border-b border-dark-800 pb-3">
+				<div class="flex items-start gap-3">
 					{onClose && (
 						<button
 							type="button"
@@ -397,83 +327,89 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 					</div>
-					{task.workflowRunId && canvasWorkflowId && (
-						<button
-							type="button"
-							onClick={() => {
-								setShowCanvas((v) => {
-									if (!v) spaceStore.ensureNodeExecutions().catch(() => {});
-									return !v;
-								});
-								setShowArtifacts(false);
-							}}
-							class={cn(
-								'flex-shrink-0 px-2 py-1 text-xs font-medium transition-colors',
-								showCanvas
-									? 'text-blue-300 hover:text-blue-200'
-									: 'text-gray-400 hover:text-gray-200'
-							)}
-							data-testid="canvas-toggle"
-							aria-pressed={showCanvas}
-						>
-							Canvas
-						</button>
-					)}
-					{task.workflowRunId && (
-						<button
-							type="button"
-							onClick={() => {
-								setShowArtifacts((v) => !v);
-								setShowCanvas(false);
-							}}
-							class={cn(
-								'flex-shrink-0 px-2 py-1 text-xs font-medium transition-colors',
-								showArtifacts
-									? 'text-blue-300 hover:text-blue-200'
-									: 'text-gray-400 hover:text-gray-200'
-							)}
-							data-testid="artifacts-toggle"
-							aria-pressed={showArtifacts}
-						>
-							Artifacts
-						</button>
-					)}
-					{showHeaderSessionAction && (
-						<button
-							type="button"
-							onClick={() => {
-								if (agentSessionId) {
-									spaceOverlayAgentNameSignal.value = agentActionLabel;
-									spaceOverlaySessionIdSignal.value = agentSessionId;
-								} else {
-									navigateToSpaceAgent(runtimeSpaceId);
-								}
-							}}
-							class="flex-shrink-0 px-2 py-1 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"
-							data-testid={agentSessionId ? 'view-agent-session-btn' : 'open-space-agent-btn'}
-						>
-							{agentActionLabel}
-						</button>
+					{taskActionItems.length > 0 && (
+						<Dropdown
+							items={taskActionItems}
+							position="right"
+							trigger={
+								<button
+									type="button"
+									class="flex-shrink-0 p-1.5 text-gray-400 hover:text-gray-200 transition-colors"
+									data-testid="task-actions-menu-trigger"
+									aria-label="Task Actions"
+									title="Task Actions"
+								>
+									<svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+										<circle cx="10" cy="4" r="1.75" />
+										<circle cx="10" cy="10" r="1.75" />
+										<circle cx="10" cy="16" r="1.75" />
+									</svg>
+								</button>
+							}
+						/>
 					)}
 				</div>
 			</div>
 
-			{activityMembers.length > 0 && (
-				<ActivityMemberList members={activityMembers} taskId={task.id} />
-			)}
-
-			{task.status === 'blocked' && task.result && (
-				<div
-					class="mx-4 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2"
-					data-testid="task-blocked-banner"
-				>
-					<p class="text-xs font-medium text-amber-300">Blocked</p>
-					<p class="mt-0.5 text-sm text-amber-200/90">{task.result}</p>
+			<div class="flex-1 min-h-0 overflow-hidden px-4 relative">
+				<div class="absolute top-3 right-4 z-20 flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
+					<button
+						type="button"
+						onClick={() => setActiveView('thread')}
+						class={cn(
+							'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+							activeView === 'thread'
+								? 'text-gray-100 bg-dark-700/70 shadow-sm'
+								: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+						)}
+						data-testid="thread-toggle"
+						aria-pressed={activeView === 'thread'}
+					>
+						Thread
+					</button>
+					{canShowCanvasTab && (
+						<button
+							type="button"
+							onClick={() => {
+								if (activeView === 'canvas') {
+									setActiveView('thread');
+									return;
+								}
+								spaceStore.ensureNodeExecutions().catch(() => {});
+								setActiveView('canvas');
+							}}
+							class={cn(
+								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+								activeView === 'canvas'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+							)}
+							data-testid="canvas-toggle"
+							aria-pressed={activeView === 'canvas'}
+						>
+							Canvas
+						</button>
+					)}
+					{canShowArtifactsTab && (
+						<button
+							type="button"
+							onClick={() =>
+								setActiveView((view) => (view === 'artifacts' ? 'thread' : 'artifacts'))
+							}
+							class={cn(
+								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
+								activeView === 'artifacts'
+									? 'text-gray-100 bg-dark-700/70 shadow-sm'
+									: 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40'
+							)}
+							data-testid="artifacts-toggle"
+							aria-pressed={activeView === 'artifacts'}
+						>
+							Artifacts
+						</button>
+					)}
 				</div>
-			)}
-
-			<div class="flex-1 min-h-0 overflow-hidden px-4">
-				{showCanvas && task.workflowRunId && canvasWorkflowId ? (
+				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
 						<ReadOnlyWorkflowCanvas
 							workflowId={canvasWorkflowId}
@@ -483,18 +419,30 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							class="h-full"
 						/>
 					</div>
-				) : showArtifacts && task.workflowRunId ? (
+				) : activeView === 'artifacts' && task.workflowRunId ? (
 					<TaskArtifactsPanel
 						runId={task.workflowRunId}
 						taskId={task.id}
-						onClose={() => setShowArtifacts(false)}
+						onClose={() => setActiveView('thread')}
 						class="h-full"
 					/>
 				) : (
-					<div class="h-full flex flex-col">
+					<div class="h-full flex flex-col relative">
+						{task.status === 'blocked' && task.result && (
+							<div
+								class="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2"
+								data-testid="task-blocked-banner"
+							>
+								<p class="text-xs font-medium text-amber-300">Blocked</p>
+								<p class="mt-0.5 text-sm text-amber-200/90">{task.result}</p>
+							</div>
+						)}
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
-								<SpaceTaskUnifiedThread taskId={task.id} />
+								<SpaceTaskUnifiedThread
+									taskId={task.id}
+									bottomInsetClass={showInlineComposer ? 'pb-16' : 'pb-3'}
+								/>
 							) : (
 								<div class="h-full px-4 py-10 text-center">
 									<p class="text-sm text-gray-300">
@@ -511,89 +459,18 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 
-						<div class="py-3 space-y-3 border-t border-dark-800">
-							{showInlineComposer && (
-								<form onSubmit={handleThreadSend} class="space-y-3">
-									<div class="relative">
-										{mentionQuery !== null && mentionAgents.length > 0 && (
-											<MentionAutocomplete
-												agents={mentionAgents}
-												selectedIndex={mentionSelectedIndex}
-												onSelect={handleMentionSelect}
-												onClose={handleMentionClose}
-											/>
-										)}
-										<textarea
-											ref={textareaRef}
-											value={threadDraft}
-											onInput={handleThreadDraftInput}
-											onKeyDown={(e) => {
-												// Handle @mention autocomplete navigation
-												if (mentionQuery !== null && mentionAgents.length > 0) {
-													if (e.key === 'ArrowDown') {
-														e.preventDefault();
-														setMentionSelectedIndex((i) =>
-															Math.min(i + 1, mentionAgents.length - 1)
-														);
-														return;
-													}
-													if (e.key === 'ArrowUp') {
-														e.preventDefault();
-														setMentionSelectedIndex((i) => Math.max(i - 1, 0));
-														return;
-													}
-													if (e.key === 'Enter' && !e.shiftKey) {
-														e.preventDefault();
-														if (mentionAgents[mentionSelectedIndex]) {
-															handleMentionSelect(mentionAgents[mentionSelectedIndex].name);
-														}
-														return;
-													}
-													if (e.key === 'Escape') {
-														e.preventDefault();
-														setMentionQuery(null);
-														return;
-													}
-												}
-												// Existing Enter to submit
-												if (e.key === 'Enter' && !e.shiftKey) {
-													e.preventDefault();
-													(e.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
-												}
-											}}
-											rows={3}
-											placeholder={
-												agentSessionId
-													? 'Message the task agent (Enter to send, Shift+Enter for newline)'
-													: 'Type a message — a task agent session will be created on send'
-											}
-											disabled={sendingThread}
-											class="w-full bg-transparent border-0 rounded-none px-0 py-0 text-sm text-gray-100 placeholder-gray-600 focus:outline-none resize-none disabled:opacity-60"
-										/>
-									</div>
-									<div class="flex items-center justify-between gap-3">
-										<p class="text-xs text-gray-500">
-											Reply here to steer the task. Agent updates appear in the thread above.
-										</p>
-										<button
-											type="submit"
-											disabled={!canSendThreadMessage || !threadDraft.trim()}
-											class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-										>
-											{sendingThread ? 'Sending...' : 'Send to Task Agent'}
-										</button>
-									</div>
-								</form>
-							)}
-
-							<TaskStatusActions
-								status={task.status}
-								onTransition={handleStatusTransition}
-								disabled={statusTransitioning}
-							/>
-
-							{threadSendError && <p class="text-xs text-red-300">{threadSendError}</p>}
-						</div>
+						{showInlineComposer && (
+							<div class="absolute bottom-0 left-0 right-0 z-10">
+								<ThreadedChatComposer
+									mentionCandidates={mentionCandidates}
+									hasTaskAgentSession={!!agentSessionId}
+									canSend={canSendThreadMessage}
+									isSending={sendingThread}
+									errorMessage={threadSendError}
+									onSend={sendThreadMessage}
+								/>
+							</div>
+						)}
 					</div>
 				)}
 			</div>
