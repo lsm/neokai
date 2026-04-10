@@ -134,20 +134,22 @@ export class AppServerConn {
 
 	static create(codexPath: string, cwd: string, _auth?: AppServerAuth): AppServerConn {
 		const subEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-		logger.debug(`AppServerConn: spawning ${codexPath} app-server`);
-		const proc = Bun.spawn(
-			[codexPath, 'app-server', '-c', 'cli_auth_credentials_store="ephemeral"'],
-			{
-				cwd,
-				env: subEnv,
-				stdout: 'pipe',
-				// Use 'inherit' so stderr flows to the parent process stderr instead of
-				// buffering in a pipe.  A full stderr pipe blocks the child when the kernel
-				// buffer fills up (typically 64 KB), which would deadlock the app-server.
-				stderr: 'inherit',
-				stdin: 'pipe',
-			}
-		) as unknown as PipedProc;
+		// When resolved from node_modules, codexPath may point to a .js entry
+		// point rather than a native binary — prefix with 'node' so it runs.
+		const args: string[] = codexPath.endsWith('.js')
+			? ['node', codexPath, 'app-server', '-c', 'cli_auth_credentials_store="ephemeral"']
+			: [codexPath, 'app-server', '-c', 'cli_auth_credentials_store="ephemeral"'];
+		logger.debug(`AppServerConn: spawning ${args.join(' ')}`);
+		const proc = Bun.spawn(args, {
+			cwd,
+			env: subEnv,
+			stdout: 'pipe',
+			// Use 'inherit' so stderr flows to the parent process stderr instead of
+			// buffering in a pipe.  A full stderr pipe blocks the child when the kernel
+			// buffer fills up (typically 64 KB), which would deadlock the app-server.
+			stderr: 'inherit',
+			stdin: 'pipe',
+		}) as unknown as PipedProc;
 		return new AppServerConn(proc);
 	}
 

@@ -19,9 +19,10 @@
 		"test:online": "bun test --coverage --coverage-reporter=text ./tests/online"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "0.2.94",
-		"@github/copilot-sdk": "0.2.1",
+		"@anthropic-ai/claude-agent-sdk": "0.2.98",
+		"@github/copilot-sdk": "0.2.2",
 		"@neokai/shared": "workspace:*",
+		"@openai/codex": "0.118.0",
 		"croner": "10.0.1",
 		"simple-git": "3.35.2",
 		"zod": "4.3.6"
