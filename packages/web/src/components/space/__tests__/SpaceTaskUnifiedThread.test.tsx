@@ -340,8 +340,13 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
 		expect(screen.getAllByTestId('space-task-event-row').length).toBeGreaterThanOrEqual(4);
 		expect(screen.getByText('Thinking')).toBeTruthy();
-		expect(screen.getByText('Tool · Glob')).toBeTruthy();
-		expect(screen.getByText('pattern: *.ts')).toBeTruthy();
+		expect(
+			screen.getByText(
+				(_, element) =>
+					element?.tagName.toLowerCase() === 'span' && element?.textContent === 'Glob: *.ts'
+			)
+		).toBeTruthy();
+		expect(screen.queryByText('pattern: *.ts')).toBeNull();
 		expect(screen.queryByText('Response')).toBeNull();
 		expect(
 			screen.getByText(

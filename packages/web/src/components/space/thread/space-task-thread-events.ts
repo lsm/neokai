@@ -38,6 +38,12 @@ export interface ParsedThreadRow {
 	fallbackText: string | null;
 }
 
+export interface TodoItem {
+	content: string;
+	status: 'pending' | 'in_progress' | 'completed';
+	activeForm: string;
+}
+
 export interface SpaceTaskThreadEvent {
 	id: string;
 	label: string;
@@ -53,6 +59,7 @@ export interface SpaceTaskThreadEvent {
 	systemSubtype?: string;
 	resultSubtype?: string;
 	isError?: boolean;
+	todos?: TodoItem[];
 }
 
 function oneLine(value: string, max = 180): string {
@@ -63,6 +70,13 @@ function oneLine(value: string, max = 180): string {
 
 function normalizeMultiline(value: string): string {
 	return value.replace(/\r\n/g, '\n').trim();
+}
+
+function shouldPromotePathToTitle(filePath: string): boolean {
+	const trimmed = filePath.trim();
+	if (!trimmed) return false;
+	const isRelative = !trimmed.startsWith('/');
+	return isRelative || trimmed.length <= 72;
 }
 
 function summarizeInputValue(value: unknown): string {
@@ -93,8 +107,8 @@ function summarizeToolInput(input: Record<string, unknown>): string {
 	if (keys.length === 0) return 'No input';
 
 	const entries = keys.slice(0, 3).map((key) => `${key}: ${summarizeInputValue(input[key])}`);
-	const summary = entries.join(' · ');
-	return keys.length > 3 ? `${summary} · +${keys.length - 3} fields` : summary;
+	const summary = entries.join('\n');
+	return keys.length > 3 ? `${summary}\n+${keys.length - 3} fields` : summary;
 }
 
 function extractUserText(message: Extract<SDKMessage, { type: 'user' }>): string {
@@ -143,13 +157,64 @@ function extractAssistantEvents(
 
 		if (isToolUseBlock(block)) {
 			const isSubagent = block.name === 'Task';
+			const isBash = block.name === 'Bash';
 			const input = (block.input ?? {}) as Record<string, unknown>;
 			const subagentType = typeof input.subagent_type === 'string' ? input.subagent_type : 'agent';
 			const description = typeof input.description === 'string' ? input.description : '';
+			const bashCommand =
+				typeof input.command === 'string' ? normalizeMultiline(input.command) : '';
+			const isRead = block.name === 'Read';
+			const readFilePath =
+				isRead && typeof input.file_path === 'string' ? normalizeMultiline(input.file_path) : '';
+			const showReadPathInTitle =
+				isRead && readFilePath ? shouldPromotePathToTitle(readFilePath) : false;
+			const readInputWithoutFilePath = showReadPathInTitle
+				? (Object.fromEntries(
+						Object.entries(input).filter(([key]) => key !== 'file_path')
+					) as Record<string, unknown>)
+				: input;
+			const isGrep = block.name === 'Grep';
+			const grepPattern =
+				isGrep && typeof input.pattern === 'string' ? normalizeMultiline(input.pattern) : '';
+			const showGrepPatternInTitle = isGrep && grepPattern.length > 0;
+			const grepInputWithoutPattern = showGrepPatternInTitle
+				? (Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'pattern')) as Record<
+						string,
+						unknown
+					>)
+				: input;
+			const isTodo = block.name === 'TodoWrite';
+			const todosRaw =
+				isTodo && Array.isArray(input.todos) ? (input.todos as TodoItem[]) : undefined;
+			const isGlob = block.name === 'Glob';
+			const globPattern = isGlob && typeof input.pattern === 'string' ? input.pattern : '';
 			const toolSummary =
 				isSubagent && description
 					? `${subagentType} · ${oneLine(description)}`
-					: summarizeToolInput(input);
+					: isBash
+						? bashCommand || 'No command'
+						: isRead && showReadPathInTitle
+							? Object.keys(readInputWithoutFilePath).length > 0
+								? summarizeToolInput(readInputWithoutFilePath)
+								: ''
+							: isGrep && showGrepPatternInTitle
+								? Object.keys(grepInputWithoutPattern).length > 0
+									? summarizeToolInput(grepInputWithoutPattern)
+									: ''
+								: isGlob
+									? ''
+									: summarizeToolInput(input);
+			const toolTitle = isSubagent
+				? 'Sub-agent'
+				: isBash && description
+					? `Bash: ${oneLine(description, 120)}`
+					: isRead && showReadPathInTitle
+						? `Read: ${oneLine(readFilePath, 120)}`
+						: isGrep && showGrepPatternInTitle
+							? `Grep: ${oneLine(grepPattern, 120)}`
+							: isGlob && globPattern
+								? `Glob: ${oneLine(globPattern, 120)}`
+								: block.name;
 
 			events.push({
 				id: eventId,
@@ -159,9 +224,10 @@ function extractAssistantEvents(
 				sessionId: row.sessionId,
 				createdAt: row.createdAt,
 				kind: isSubagent ? 'subagent' : 'tool',
-				title: isSubagent ? 'Sub-agent' : `Tool · ${block.name}`,
-				summary: toolSummary || block.name,
+				title: toolTitle,
+				summary: toolSummary ?? block.name,
 				iconToolName: isSubagent ? 'Task' : block.name,
+				todos: todosRaw,
 			});
 			continue;
 		}
@@ -294,7 +360,7 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 				sessionId: row.sessionId,
 				createdAt: row.createdAt,
 				kind: 'progress',
-				title: 'Tool Progress',
+				title: 'Progress',
 				summary: progressSummary,
 				message: row.message,
 				iconToolName: row.message.tool_name,

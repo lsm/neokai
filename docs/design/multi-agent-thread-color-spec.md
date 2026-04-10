@@ -21,7 +21,7 @@ Implemented via `getCategoryColors()`:
 - **Terminal ops** (`Bash`, `BashOutput`, `KillShell`): gray
 - **Agent ops** (`Task`, `Agent`): indigo
 - **Web ops** (`WebFetch`, `WebSearch`): green
-- **Todo ops** (`TodoWrite`): amber
+- **Todo ops** (`TodoWrite`): amber (cyan in space task pane to avoid clash with Thinking)
 - **MCP ops** (`mcp__*`): pink
 - **System ops** (`ExitPlanMode`, etc.): cyan
 - **Thinking**: explicit amber override
