@@ -159,7 +159,11 @@ export function ReadOnlyWorkflowCanvas({
 	};
 
 	return (
-		<div class={cn('relative flex flex-col h-full', className)}>
+		<div
+			class={cn('relative flex flex-col h-full', className)}
+			data-testid="workflow-canvas"
+			data-mode="runtime"
+		>
 			{gateDataLoading && (
 				<div class="absolute top-2 right-2 z-10 text-xs text-gray-500 px-2 py-0.5 bg-dark-800 rounded">
 					Loading…

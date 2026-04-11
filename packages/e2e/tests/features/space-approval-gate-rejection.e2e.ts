@@ -45,7 +45,7 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 
 async function createSpaceWithRun(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<{ spaceId: string; runId: string }> {
+): Promise<{ spaceId: string; runId: string; taskId: string }> {
 	await waitForWebSocketConnected(page);
 	const workspaceRoot = await getWorkspaceRoot(page);
 	// Use a unique subdirectory to avoid conflicts with other parallel tests
@@ -72,7 +72,16 @@ async function createSpaceWithRun(
 			})) as { run: { id: string } };
 			const runId = runRes.run.id;
 
-			return { spaceId, runId };
+			// Find the task created for this run.
+			const tasks = (await hub.request('spaceTask.list', { spaceId })) as Array<{
+				id: string;
+				workflowRunId?: string;
+			}>;
+			const task = tasks.find((t) => t.workflowRunId === runId);
+			if (!task) throw new Error(`No task found for run ${runId}`);
+			const taskId = task.id;
+
+			return { spaceId, runId, taskId };
 		},
 		{ wsPath }
 	);
@@ -122,7 +131,7 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
 		timeout: 30000,
 	});
-	await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+	await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
 		timeout: 30000,
 	});
 
@@ -160,12 +169,14 @@ test.describe('Approval Gate Rejection', () => {
 
 	let spaceId = '';
 	let runId = '';
+	let taskId = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		const ids = await createSpaceWithRun(page);
 		spaceId = ids.spaceId;
 		runId = ids.runId;
+		taskId = ids.taskId;
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -184,8 +195,10 @@ test.describe('Approval Gate Rejection', () => {
 	test('rejecting via GateArtifactsView closes overlay and transitions run to needs_attention', async ({
 		page,
 	}) => {
-		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+		await page.getByTestId('canvas-toggle').click();
 
 		// Wait for canvas to be fully initialized (container + SVG + gate data).
 		// Use 30s here — the canvas panel requires workflow data from the store (live query),
@@ -193,7 +206,7 @@ test.describe('Approval Gate Rejection', () => {
 		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
 			timeout: 30000,
 		});
-		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+		await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
 			timeout: 30000,
 		});
 
@@ -244,8 +257,10 @@ test.describe('Approval Gate Rejection', () => {
 	test('rejecting directly from gate popup sets gate to blocked without opening overlay', async ({
 		page,
 	}) => {
-		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+		await page.getByTestId('canvas-toggle').click();
 
 		await rejectViaPopup(page);
 
@@ -263,8 +278,10 @@ test.describe('Approval Gate Rejection', () => {
 	// ─── Test 3: Canvas shows error/attention state after rejection ───────────
 
 	test('canvas shows needs_attention banner and blocked gate after rejection', async ({ page }) => {
-		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+		await page.getByTestId('canvas-toggle').click();
 
 		await rejectViaPopup(page);
 
@@ -279,7 +296,7 @@ test.describe('Approval Gate Rejection', () => {
 		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+		await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -287,8 +304,10 @@ test.describe('Approval Gate Rejection', () => {
 	// ─── Test 4: Space remains usable after rejection ─────────────────────────
 
 	test('space remains fully navigable and usable after gate rejection', async ({ page }) => {
-		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+		await page.getByTestId('canvas-toggle').click();
 
 		await rejectViaPopup(page);
 
@@ -311,8 +330,11 @@ test.describe('Approval Gate Rejection', () => {
 		await expect(page.locator('text=Planner')).toBeVisible({ timeout: 30000 });
 		await expect(page.locator('text=Coder')).toBeVisible({ timeout: 10000 });
 
-		// Return to Dashboard — canvas should still be visible with the blocked state.
-		await page.locator('button:has-text("Dashboard")').click();
+		// Return to task canvas — canvas should still be visible with the blocked state.
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+		await page.getByTestId('canvas-toggle').click();
 		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas')).toBeVisible({
 			timeout: 30000,
 		});
@@ -330,11 +352,13 @@ test.describe('Approval Gate Rejection', () => {
 	test('rejected gate icon transitions from waiting_human (amber) to blocked (red lock)', async ({
 		page,
 	}) => {
-		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}**`, { timeout: 10000 });
+		await page.goto(`/space/${spaceId}/task/${taskId}`);
+		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
+		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+		await page.getByTestId('canvas-toggle').click();
 
 		// Initially: amber waiting_human gate is visible.
-		await expect(page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')).toBeVisible({
+		await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
 			timeout: 10000,
 		});
 		await expect(

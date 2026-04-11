@@ -285,8 +285,8 @@ test.describe('Canvas Mode Toggle', () => {
 		await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
 		await page.getByTestId('canvas-toggle').click();
 
-		// The workflow-canvas-svg must be present inside canvas-view.
-		await expect(page.getByTestId('workflow-canvas-svg')).toBeVisible({ timeout: 5000 });
+		// The visual-canvas-svg must be present inside canvas-view.
+		await expect(page.getByTestId('visual-canvas-svg')).toBeVisible({ timeout: 5000 });
 
 		// At least one node group should be rendered (nodes use data-testid="node-{id}").
 		// Use a CSS attribute selector prefix match to find any node element.
