@@ -324,13 +324,11 @@ jobs:
           # Online space tests - split into 2 parallel jobs to reduce overall CI time.
           - module: space-1
             test_path: >-
-              tests/online/space/space-agent-coordination.test.ts
               tests/online/space/space-chat-session.test.ts
               tests/online/space/space-edge-cases.test.ts
               tests/online/space/space-happy-path-code-review.test.ts
               tests/online/space/space-happy-path-full-pipeline.test.ts
             mock_sdk: true
-            enable_spaces_agent: true
           - module: space-2
             test_path: >-
               tests/online/space/space-happy-path-plan-to-approve.test.ts
@@ -338,7 +336,6 @@ jobs:
               tests/online/space/task-agent-lifecycle.test.ts
               tests/online/space/task-agent-skills.test.ts
             mock_sdk: true
-            enable_spaces_agent: true
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
@@ -400,7 +397,6 @@ jobs:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
-          NEOKAI_ENABLE_SPACES_AGENT: ${{ matrix.enable_spaces_agent == true && '1' || '' }}
           NEOKAI_ENABLE_NEO_AGENT: ${{ matrix.enable_neo_agent == true && '1' || '' }}
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
