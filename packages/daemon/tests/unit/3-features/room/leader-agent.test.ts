@@ -712,7 +712,7 @@ describe('Leader Agent', () => {
 		it('should use default model when not specified', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
-			expect(init.model).toBe('claude-sonnet-4-5-20250929');
+			expect(init.model).toBe('claude-sonnet-4-6');
 		});
 
 		it('should disable all features', () => {

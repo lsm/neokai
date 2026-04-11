@@ -181,7 +181,7 @@ describe('createTaskAgentInit', () => {
 				space: makeSpace({ defaultModel: undefined }),
 			});
 			const init = createTaskAgentInit(config);
-			expect(init.model).toBe('claude-sonnet-4-5-20250929');
+			expect(init.model).toBe('claude-sonnet-4-6');
 		});
 
 		test('falls back to hardcoded default when space.defaultModel is null', () => {
@@ -189,7 +189,7 @@ describe('createTaskAgentInit', () => {
 				space: makeSpace({ defaultModel: null }),
 			});
 			const init = createTaskAgentInit(config);
-			expect(init.model).toBe('claude-sonnet-4-5-20250929');
+			expect(init.model).toBe('claude-sonnet-4-6');
 		});
 	});
 

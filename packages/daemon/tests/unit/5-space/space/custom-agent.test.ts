@@ -261,7 +261,7 @@ describe('createCustomAgentInit', () => {
 				space: makeSpace({ defaultModel: undefined }),
 			})
 		);
-		expect(fallback.model).toBe('claude-sonnet-4-5-20250929');
+		expect(fallback.model).toBe('claude-sonnet-4-6');
 	});
 });
 
