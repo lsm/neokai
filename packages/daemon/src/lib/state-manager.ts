@@ -505,6 +505,7 @@ export class StateManager {
 			defaultModel: this.config.defaultModel,
 			maxSessions: this.config.maxSessions,
 			storageLocation: this.config.dbPath,
+			workspaceRoot: this.config.workspaceRoot,
 
 			// Authentication
 			auth: authStatus,
