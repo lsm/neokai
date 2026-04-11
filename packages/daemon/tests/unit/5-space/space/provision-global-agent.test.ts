@@ -9,10 +9,10 @@
  * 4. Provisioning also works on restart (session already exists)
  *
  * Also verifies (Task 5.3 — tool registration):
- * 5. createGlobalSpacesToolHandlers exposes all 17 expected tools as methods
- * 6. createGlobalSpacesMcpServer registers all 17 tools in the MCP instance
+ * 5. createGlobalSpacesToolHandlers exposes all 19 expected tools as methods
+ * 6. createGlobalSpacesMcpServer registers all 19 tools in the MCP instance
  * 7. provisionGlobalSpacesAgent passes a "global-spaces-tools" server with all
- *    17 tools (including the 5 coordination tools) to setRuntimeMcpServers()
+ *    19 tools (including the 5 coordination tools and 2 task agent communication tools) to setRuntimeMcpServers()
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
@@ -74,6 +74,9 @@ const EXPECTED_TOOLS = [
 	'retry_task',
 	'cancel_task',
 	'reassign_task',
+	// Task agent communication tools
+	'send_message_to_task',
+	'list_task_members',
 ] as const;
 
 const COORDINATION_TOOLS = [
@@ -549,7 +552,7 @@ describe('provisionGlobalSpacesAgent', () => {
 		expect(Object.keys(mcpServersArg)).toContain('global-spaces-tools');
 	});
 
-	test('provisioned MCP server contains all 17 expected tools', async () => {
+	test('provisioned MCP server contains all 19 expected tools', async () => {
 		const stub = makeAgentSessionStub();
 		const sessionManager = {
 			createCalls: 0,
@@ -654,7 +657,7 @@ describe('createGlobalSpacesMcpServer — MCP instance tool registration', () =>
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	test('MCP instance has all 17 expected tools registered', () => {
+	test('MCP instance has all 19 expected tools registered', () => {
 		const server = createGlobalSpacesMcpServer(makeMinimalToolConfig(db), {
 			activeSpaceId: null,
 		});

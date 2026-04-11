@@ -16,7 +16,6 @@ import type {
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
-	WorkflowNodeAgentOverride,
 } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
@@ -28,18 +27,16 @@ const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
  * Per-slot overrides from a `WorkflowNodeAgent` entry.
  * Applied on top of the base `SpaceAgent` config when spawning a specific slot.
  *
- * Override semantics:
- * - `mode: 'override'` — replaces the agent's base value entirely.
- * - `mode: 'expand'`   — appends the value to the agent's base (joined with `\n\n`).
+ * Semantics:
+ * - `customPrompt` is always appended (expanded) after the agent's `customPrompt`.
+ *   It cannot replace the base prompt — the NeoKai contract sections remain intact.
  * - absent (undefined) — uses the agent's base value unchanged.
  */
 export interface SlotOverrides {
 	/** Override the agent's default model for this slot */
 	model?: string;
-	/** Override the agent's default system prompt for this slot */
-	systemPrompt?: WorkflowNodeAgentOverride;
-	/** Override the agent's default instructions for this slot */
-	instructions?: WorkflowNodeAgentOverride;
+	/** Expansion text appended to the agent's customPrompt for this slot */
+	customPrompt?: string;
 	/** IDs of globally-enabled skills to disable for this slot */
 	disabledSkillIds?: string[];
 	/** Extra MCP servers to add for this slot */
@@ -47,25 +44,21 @@ export interface SlotOverrides {
 }
 
 /**
- * Two-layer composition: applies a slot override on top of a base value.
+ * Append-only prompt composition: returns `base` + `\n\n` + `expansion`.
  *
- * - If `override` is absent (undefined), returns the `base` unchanged.
- * - If `override.mode === 'override'`, returns `override.value` (replaces base).
- * - If `override.mode === 'expand'`, returns `base + '\n\n' + override.value`.
- *   When `base` is empty/null/undefined, only `override.value` is returned.
+ * - If `expansion` is absent/empty, returns `base` unchanged.
+ * - If `base` is absent/empty, returns `expansion`.
+ * - Both present: joined with a double newline.
  */
-export function composePromptLayer(
+export function expandPrompt(
 	base: string | null | undefined,
-	override: WorkflowNodeAgentOverride | undefined
+	expansion: string | null | undefined
 ): string {
-	if (!override) return base?.trim() ?? '';
 	const trimmedBase = base?.trim() ?? '';
-	const trimmedValue = override.value.trim();
-	if (override.mode === 'override') return trimmedValue;
-	// expand mode — if value is empty after trimming, just return base
-	if (!trimmedValue) return trimmedBase;
-	if (!trimmedBase) return trimmedValue;
-	return `${trimmedBase}\n\n${trimmedValue}`;
+	const trimmedExpansion = expansion?.trim() ?? '';
+	if (!trimmedExpansion) return trimmedBase;
+	if (!trimmedBase) return trimmedExpansion;
+	return `${trimmedBase}\n\n${trimmedExpansion}`;
 }
 
 export interface CustomAgentConfig {
@@ -92,25 +85,25 @@ export interface CustomAgentConfig {
 /**
  * Build the runtime system prompt text for a custom agent.
  *
- * Applies the slot's `systemPrompt` override (if any) on top of the agent's
- * base `systemPrompt` using two-layer composition.
+ * The NeoKai system contract (tool rules, completion semantics) is applied first by the
+ * SDK preset; then the agent's `customPrompt` is appended, followed by any slot expansion.
+ * User content always comes after the contract and cannot override it.
  */
 export function buildCustomAgentSystemPrompt(
 	customAgent: SpaceAgent,
 	slotOverrides?: SlotOverrides
 ): string {
-	return composePromptLayer(customAgent.systemPrompt, slotOverrides?.systemPrompt);
+	return expandPrompt(customAgent.customPrompt, slotOverrides?.customPrompt);
 }
 
 /**
  * Build the initial user message for a custom agent session.
  *
- * This message contains only factual task/workflow/space context.
- * Slot-level instructions override is composed separately and passed as
- * part of the initial message when provided.
+ * Contains factual task/workflow/space context only.
+ * Behavioral prompt (persona, operating procedure) lives in the system prompt.
  */
 export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
-	const { task, workflowRun, workflow, space, previousTaskSummaries, slotOverrides } = config;
+	const { task, workflowRun, workflow, space, previousTaskSummaries } = config;
 
 	const sections: string[] = [];
 
@@ -142,6 +135,18 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
+	if (task.prUrl) {
+		sections.push(`\n## Existing Pull Request\n`);
+		sections.push(`**PR URL:** ${task.prUrl}`);
+	}
+
+	if (previousTaskSummaries && previousTaskSummaries.length > 0) {
+		sections.push(`\n## Previous Work on This Goal\n`);
+		for (const summary of previousTaskSummaries) {
+			sections.push(`- ${summary}`);
+		}
+	}
+
 	if (space.backgroundContext) {
 		sections.push(`\n## Project Context\n`);
 		sections.push(space.backgroundContext);
@@ -157,53 +162,17 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		sections.push(workflow.instructions);
 	}
 
-	if (task.prUrl) {
-		sections.push(`\n## Existing Pull Request\n`);
-		sections.push(`**PR URL:** ${task.prUrl}`);
-	}
-
-	if (previousTaskSummaries && previousTaskSummaries.length > 0) {
-		sections.push(`\n## Previous Work on This Goal\n`);
-		for (const summary of previousTaskSummaries) {
-			sections.push(`- ${summary}`);
-		}
-	}
-
-	// Compose slot-level instructions override on top of agent's base instructions.
-	// When present, this provides the node-specific HOW for the agent.
-	const composedInstructions = composePromptLayer(
-		customAgentInstructions(config.customAgent, config),
-		slotOverrides?.instructions
-	);
-	if (composedInstructions) {
-		sections.push(`\n## Instructions\n`);
-		sections.push(composedInstructions);
-	}
-
 	return sections.join('\n');
-}
-
-/**
- * Extract the agent's instructions field for composition.
- * Used as the base layer for slot-level instruction overrides.
- */
-function customAgentInstructions(
-	customAgent: SpaceAgent,
-	_config: CustomAgentConfig
-): string | null {
-	return customAgent.instructions;
 }
 
 /**
  * Create an `AgentSessionInit` for a Space agent session.
  *
  * Workflow execution is WYSIWYG:
- * - inside a workflow run, the workflow slot prompt is the only behavioral prompt
- * - outside a workflow run, the agent's own `systemPrompt` is used
+ * - inside a workflow run, the workflow slot customPrompt is expanded on top of the agent's
+ * - outside a workflow run, the agent's own `customPrompt` is used unchanged
  *
- * Override/expand composition:
- * - `slotOverrides.systemPrompt` composes on top of `customAgent.systemPrompt`
- * - `slotOverrides.instructions` composes on top of `customAgent.instructions`
+ * The NeoKai system contract (preset) is always applied first; user content follows.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
 	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;

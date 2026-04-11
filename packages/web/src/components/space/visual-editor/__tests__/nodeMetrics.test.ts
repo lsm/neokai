@@ -19,7 +19,6 @@ describe('nodeMetrics', () => {
 				id: TASK_AGENT_NODE_ID,
 				name: 'Task Agent',
 				agentId: '',
-				instructions: '',
 			})
 		).toEqual({
 			width: TASK_AGENT_NODE_WIDTH,
@@ -33,7 +32,7 @@ describe('nodeMetrics', () => {
 				localId: 'review',
 				name: 'Code Review',
 				agentId: '',
-				instructions: '',
+
 				agents: [
 					{ agentId: 'a1', name: 'Reviewer 1' },
 					{ agentId: 'a2', name: 'Reviewer 2' },
@@ -51,7 +50,6 @@ describe('nodeMetrics', () => {
 				localId: 'plan',
 				name: 'Planning',
 				agentId: 'planner',
-				instructions: '',
 			})
 		).toEqual({
 			width: SINGLE_AGENT_NODE_WIDTH,
@@ -67,7 +65,6 @@ describe('nodeMetrics', () => {
 					id: TASK_AGENT_NODE_ID,
 					name: 'Task Agent',
 					agentId: '',
-					instructions: '',
 				},
 				position: { x: 50, y: 20 },
 			},
@@ -76,7 +73,7 @@ describe('nodeMetrics', () => {
 					localId: 'review',
 					name: 'Code Review',
 					agentId: '',
-					instructions: '',
+
 					agents: [
 						{ agentId: 'a1', name: 'Reviewer 1' },
 						{ agentId: 'a2', name: 'Reviewer 2' },

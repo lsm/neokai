@@ -23,7 +23,7 @@ function makeAgent(id: string, name: string): SpaceAgent {
 		id,
 		spaceId: 'space-1',
 		name,
-		instructions: null,
+		customPrompt: null,
 		createdAt: 0,
 		updatedAt: 0,
 	};
@@ -111,20 +111,18 @@ describe('resolveNodeAgents', () => {
 		expect(result[1].name).toBe('quick-reviewer');
 	});
 
-	test('preserves systemPrompt and instructions overrides on agent slots', () => {
+	test('preserves customPrompt override on agent slots', () => {
 		const node = makeNode({
 			agents: [
 				{
 					agentId: 'agent-coder-id',
 					name: 'fast-coder',
-					systemPrompt: { mode: 'override', value: 'Be concise.' },
-					instructions: { mode: 'expand', value: 'Extra guidance.' },
+					customPrompt: { value: 'Be concise.' },
 				},
 			],
 		});
 		const result = resolveNodeAgents(node);
-		expect(result[0].systemPrompt).toEqual({ mode: 'override', value: 'Be concise.' });
-		expect(result[0].instructions).toEqual({ mode: 'expand', value: 'Extra guidance.' });
+		expect(result[0].customPrompt).toEqual({ value: 'Be concise.' });
 	});
 });
 

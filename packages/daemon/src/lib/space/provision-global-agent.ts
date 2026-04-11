@@ -19,6 +19,7 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { SpaceRuntimeService } from './runtime/space-runtime-service';
+import type { TaskAgentManager } from './runtime/task-agent-manager';
 import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
 import { buildGlobalSpacesAgentPrompt } from './agents/global-spaces-agent';
@@ -76,6 +77,11 @@ export interface ProvisionGlobalSpacesAgentDeps {
 	 * registry entries on name collision.
 	 */
 	appMcpManager?: AppMcpLifecycleManager;
+	/**
+	 * TaskAgentManager instance from SpaceRuntimeService.
+	 * When provided, enables the `send_message_to_task` tool for the global spaces agent.
+	 */
+	taskAgentManager?: TaskAgentManager;
 }
 
 /**
@@ -102,6 +108,7 @@ export async function provisionGlobalSpacesAgent(
 		state,
 		daemonHub,
 		appMcpManager,
+		taskAgentManager,
 	} = deps;
 
 	// Get the shared runtime (no specific space context needed for the global agent)
@@ -152,6 +159,7 @@ export async function provisionGlobalSpacesAgent(
 			nodeExecutionRepo,
 			workflowRunRepo,
 			db,
+			taskAgentManager,
 		},
 		state
 	);

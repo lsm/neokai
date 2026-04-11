@@ -96,6 +96,8 @@ function mapNodeExecutionStatusToTaskStatus(status: NodeExecutionStatus): SpaceT
 			return 'open';
 		case 'in_progress':
 			return 'in_progress';
+		case 'idle':
+			return 'done';
 		case 'done':
 			return 'done';
 		case 'blocked':
@@ -737,7 +739,7 @@ export async function mockAgentDone(
 	const { execution: updatedExecution } = (await daemon.messageHub.request('nodeExecution.update', {
 		id: execution.id,
 		spaceId,
-		status: 'done',
+		status: 'idle',
 		result: result ?? execution.result,
 	})) as { execution: NodeExecution };
 

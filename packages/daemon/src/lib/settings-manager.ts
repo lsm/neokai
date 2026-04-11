@@ -29,7 +29,7 @@ export class SettingsManager {
 
 	constructor(
 		private db: Database,
-		private workspacePath: string
+		private workspacePath?: string
 	) {}
 
 	/**
@@ -181,6 +181,10 @@ export class SettingsManager {
 	 * to the settings file for the SDK to pick them up.
 	 */
 	private async writeFileOnlySettings(settings: GlobalSettings): Promise<void> {
+		if (!this.workspacePath) {
+			return;
+		}
+
 		const settingsLocalPath = join(this.workspacePath, '.claude/settings.local.json');
 
 		// Read existing settings (preserve non-NeoKai settings)
@@ -269,6 +273,10 @@ export class SettingsManager {
 	 * This is useful for syncing UI state with file state.
 	 */
 	readFileOnlySettings(): Partial<GlobalSettings> {
+		if (!this.workspacePath) {
+			return {};
+		}
+
 		const settingsLocalPath = join(this.workspacePath, '.claude/settings.local.json');
 
 		try {
@@ -409,7 +417,7 @@ export class SettingsManager {
 			result.user.push(...readMcpServers(userMcpPath, 'user'));
 		}
 
-		if (enabledSources.includes('project')) {
+		if (enabledSources.includes('project') && this.workspacePath) {
 			const projectSettingsPath = join(this.workspacePath, '.claude', 'settings.json');
 			result.project = readMcpServers(projectSettingsPath, 'project');
 			// Also check project-level .mcp.json (Claude Code standard location)
@@ -417,7 +425,7 @@ export class SettingsManager {
 			result.project.push(...readMcpServers(projectMcpPath, 'project'));
 		}
 
-		if (enabledSources.includes('local')) {
+		if (enabledSources.includes('local') && this.workspacePath) {
 			const localSettingsPath = join(this.workspacePath, '.claude', 'settings.local.json');
 			result.local = readMcpServers(localSettingsPath, 'local');
 		}
@@ -486,7 +494,7 @@ export class SettingsManager {
 			Object.assign(result, readRawMcpServers(join(userMcpDir, '.mcp.json')));
 		}
 
-		if (enabledSources.includes('project')) {
+		if (enabledSources.includes('project') && this.workspacePath) {
 			Object.assign(
 				result,
 				readRawMcpServers(join(this.workspacePath, '.claude', 'settings.json'))

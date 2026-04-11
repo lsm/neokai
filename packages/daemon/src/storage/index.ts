@@ -40,6 +40,7 @@ import { RoomMcpEnablementRepository } from './repositories/room-mcp-enablement-
 import { SkillRepository } from './repositories/skill-repository';
 import { RoomSkillOverrideRepository } from './repositories/room-skill-override-repository';
 import { NeoActivityLogRepository } from './repositories/neo-activity-log-repository';
+import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
 import type { ReactiveDatabase } from './reactive-database';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
@@ -72,6 +73,8 @@ export type {
 	UpdateNeoActivityParams,
 	ListNeoActivityParams,
 } from './repositories/neo-activity-log-repository';
+export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
+export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -94,6 +97,7 @@ export class Database {
 	private skillRepo!: SkillRepository;
 	private roomSkillOverrideRepo!: RoomSkillOverrideRepository;
 	private neoActivityLogRepo!: NeoActivityLogRepository;
+	private workspaceHistoryRepo!: WorkspaceHistoryRepository;
 	private shortIdAllocator!: ShortIdAllocator;
 
 	constructor(dbPath: string) {
@@ -120,6 +124,7 @@ export class Database {
 		this.skillRepo = new SkillRepository(db, reactiveDb);
 		this.roomSkillOverrideRepo = new RoomSkillOverrideRepository(db, reactiveDb);
 		this.neoActivityLogRepo = new NeoActivityLogRepository(db);
+		this.workspaceHistoryRepo = new WorkspaceHistoryRepository(db);
 	}
 
 	// ============================================================================
@@ -503,6 +508,13 @@ export class Database {
 	 */
 	get neoActivityLog(): NeoActivityLogRepository {
 		return this.neoActivityLogRepo;
+	}
+
+	/**
+	 * Get the workspace history repository
+	 */
+	get workspaceHistory(): WorkspaceHistoryRepository {
+		return this.workspaceHistoryRepo;
 	}
 
 	close(): void {

@@ -14,19 +14,29 @@ import { dirname, join } from 'node:path';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 import { Logger } from '../lib/logger';
 import { createTables, runMigrations } from './schema';
+import { DatabaseLock } from './database-lock';
 
 export class DatabaseCore {
 	private db: BunDatabase;
 	private logger = new Logger('Database');
+	private lock: DatabaseLock;
 
 	constructor(private dbPath: string) {
 		// Initialize as null until initialize() is called
 		// This pattern is necessary because BunDatabase constructor is synchronous
 		// but we want to allow async directory creation before opening the DB
 		this.db = null as unknown as BunDatabase;
+		this.lock = new DatabaseLock(dbPath);
 	}
 
 	async initialize(): Promise<void> {
+		// Idempotent — safe to call twice on the same instance.
+		if (this.db !== null) return;
+
+		// Acquire exclusive lock before opening — prevents two daemon instances from
+		// using the same database file simultaneously.
+		this.lock.acquire();
+
 		// Ensure directory exists
 		const dir = dirname(this.dbPath);
 		if (!existsSync(dir)) {
@@ -82,10 +92,11 @@ export class DatabaseCore {
 	}
 
 	/**
-	 * Close the database connection
+	 * Close the database connection and release the lock file.
 	 */
 	close(): void {
 		this.db.close();
+		this.lock.release();
 	}
 
 	/**

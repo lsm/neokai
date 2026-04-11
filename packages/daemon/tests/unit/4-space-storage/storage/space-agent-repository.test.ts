@@ -38,8 +38,7 @@ describe('SpaceAgentRepository', () => {
 			expect(agent.spaceId).toBe('space-1');
 			expect(agent.name).toBe('Coder');
 			expect(agent.description).toBeUndefined();
-			expect(agent.systemPrompt).toBeUndefined();
-			expect(agent.instructions).toBeNull();
+			expect(agent.customPrompt).toBeNull();
 			expect(agent.model).toBeUndefined();
 			expect(agent.provider).toBeUndefined();
 			expect(agent.createdAt).toBeGreaterThan(0);
@@ -53,16 +52,14 @@ describe('SpaceAgentRepository', () => {
 				description: 'Plans tasks',
 				model: 'claude-opus-4-6',
 				provider: 'anthropic',
-				systemPrompt: 'You are a planner',
-				instructions: 'Follow these steps...',
+				customPrompt: 'You are a planner\n\nFollow these steps...',
 			});
 
 			expect(agent.name).toBe('Planner');
 			expect(agent.description).toBe('Plans tasks');
 			expect(agent.model).toBe('claude-opus-4-6');
 			expect(agent.provider).toBe('anthropic');
-			expect(agent.systemPrompt).toBe('You are a planner');
-			expect(agent.instructions).toBe('Follow these steps...');
+			expect(agent.customPrompt).toBe('You are a planner\n\nFollow these steps...');
 		});
 
 		it('stores tools as JSON array', () => {
@@ -165,11 +162,11 @@ describe('SpaceAgentRepository', () => {
 
 			const updated = repo.update(agent.id, {
 				name: 'Renamed',
-				systemPrompt: 'Updated prompt',
+				customPrompt: 'Updated prompt',
 			});
 
 			expect(updated?.name).toBe('Renamed');
-			expect(updated?.systemPrompt).toBe('Updated prompt');
+			expect(updated?.customPrompt).toBe('Updated prompt');
 		});
 
 		it('sets model and provider to null', () => {
@@ -185,34 +182,31 @@ describe('SpaceAgentRepository', () => {
 			expect(updated?.provider).toBeUndefined();
 		});
 
-		it('clears description and systemPrompt to undefined via null (NOT NULL roundtrip)', () => {
-			// Verifies the NOT NULL '' → null → undefined coercion chain introduced in the P0 fix:
-			//   update stores '' for null inputs (avoids NOT NULL violation)
-			//   rowToAgent maps '' back to undefined (consistent with SpaceAgent optional fields)
+		it('clears description to undefined via null', () => {
 			const agent = repo.create({
 				spaceId: 'space-1',
 				name: 'Agent',
 				description: 'Some description',
-				systemPrompt: 'Some prompt',
+				customPrompt: 'Some prompt',
 			});
 			expect(agent.description).toBe('Some description');
-			expect(agent.systemPrompt).toBe('Some prompt');
+			expect(agent.customPrompt).toBe('Some prompt');
 
-			const updated = repo.update(agent.id, { description: null, systemPrompt: null });
+			const updated = repo.update(agent.id, { description: null, customPrompt: null });
 			expect(updated?.description).toBeUndefined();
-			expect(updated?.systemPrompt).toBeUndefined();
+			expect(updated?.customPrompt).toBeNull();
 		});
 
-		it('sets and clears instructions', () => {
+		it('sets and clears customPrompt', () => {
 			const agent = repo.create({
 				spaceId: 'space-1',
 				name: 'Agent',
-				instructions: 'Do step 1, then step 2.',
+				customPrompt: 'Do step 1, then step 2.',
 			});
-			expect(agent.instructions).toBe('Do step 1, then step 2.');
+			expect(agent.customPrompt).toBe('Do step 1, then step 2.');
 
-			const updated = repo.update(agent.id, { instructions: null });
-			expect(updated?.instructions).toBeNull();
+			const updated = repo.update(agent.id, { customPrompt: null });
+			expect(updated?.customPrompt).toBeNull();
 		});
 
 		it('returns null for unknown id', () => {

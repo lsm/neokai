@@ -207,7 +207,9 @@ export function TaskViewV2({ roomId, taskId, viewVersion }: TaskViewV2Props) {
 				prNumber={task.prNumber}
 				// Future: populate from task.origin once NeoTask gains that field (task M6/M3)
 				viaNeo={(task as typeof task & { origin?: string }).origin === 'neo'}
-				worktreePath={workerSession?.worktree?.worktreePath ?? workerSession?.workspacePath}
+				worktreePath={
+					workerSession?.worktree?.worktreePath ?? workerSession?.workspacePath ?? undefined
+				}
 				workerSession={workerSession}
 				leaderSession={leaderSession}
 				actions={{

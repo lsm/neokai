@@ -532,7 +532,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			await daemon.messageHub.request('nodeExecution.update', {
 				id: execution.id,
 				spaceId: space.id,
-				status: 'done',
+				status: 'idle',
 				result: 'Lifecycle completion test',
 			});
 
@@ -541,10 +541,10 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 				space.id,
 				runId,
 				execution.id,
-				['done'],
+				['idle'],
 				IS_MOCK ? 8_000 : 30_000
 			);
-			expect(finalStatus).toBe('done');
+			expect(finalStatus).toBe('idle');
 		},
 		TEST_TIMEOUT
 	);
@@ -601,7 +601,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 			await daemon.messageHub.request('nodeExecution.update', {
 				id: execution.id,
 				spaceId: space.id,
-				status: 'done',
+				status: 'idle',
 				result: 'Completion notification test',
 			});
 
@@ -610,7 +610,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 				space.id,
 				runId,
 				execution.id,
-				['done'],
+				['idle'],
 				IS_MOCK ? 8_000 : 30_000
 			);
 

@@ -328,7 +328,7 @@ describe('DatabaseCore', () => {
 	});
 
 	describe('concurrent access', () => {
-		it('should support multiple connections to same database file', async () => {
+		it('should allow reading from a second connection to the same file', async () => {
 			dbCore = new DatabaseCore(dbPath);
 			await dbCore.initialize();
 
@@ -338,16 +338,16 @@ describe('DatabaseCore', () => {
 				VALUES ('concurrent-1', 'Concurrent Test', '/test', datetime('now'), datetime('now'), 'active', '{}', '{}')
 			`);
 
-			// Create a second DatabaseCore instance pointing to the same file
+			// Lock file is held by dbCore. A second DatabaseCore in the same process
+			// can open the file (same-process bypass), but in production only one
+			// DatabaseCore exists — cross-process attempts are blocked by the lock file.
 			const dbCore2 = new DatabaseCore(dbPath);
 			await dbCore2.initialize();
 			const db2 = dbCore2.getDb();
 
-			// Should be able to read data written by first connection
 			const session = db2.prepare('SELECT * FROM sessions WHERE id = ?').get('concurrent-1') as {
 				id: string;
 			};
-
 			expect(session).toBeDefined();
 			expect(session.id).toBe('concurrent-1');
 

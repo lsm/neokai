@@ -71,7 +71,7 @@ export class MessagePersistence {
 			}
 
 			const context: ResolutionContext = {
-				workspacePath: session.workspacePath,
+				workspacePath: session.worktree?.worktreePath ?? session.workspacePath ?? null,
 				roomId: session.context?.roomId ?? null,
 			};
 

@@ -13,23 +13,6 @@ import { discoverCredentials } from './lib/credential-discovery';
 // Discover credentials and enrich process.env at module load time
 discoverCredentials();
 
-/**
- * Encode an absolute path to a filesystem-safe directory name
- * Uses the same approach as Claude Code (~/.claude/projects/)
- */
-function encodeRepoPath(repoPath: string): string {
-	// Normalize path separators (handle both Unix and Windows)
-	const normalizedPath = repoPath.replace(/\\/g, '/');
-
-	// Strip leading slash (if any) and replace remaining slashes with dashes
-	// Then prepend a dash to indicate it was an absolute path
-	const encoded = normalizedPath.startsWith('/')
-		? '-' + normalizedPath.slice(1).replace(/\//g, '-')
-		: '-' + normalizedPath.replace(/\//g, '-');
-
-	return encoded;
-}
-
 export interface Config {
 	port: number;
 	host: string;
@@ -42,7 +25,6 @@ export interface Config {
 	temperature: number;
 	maxSessions: number;
 	nodeEnv: string;
-	workspaceRoot?: string;
 	disableWorktrees?: boolean; // For testing - disables git worktree creation
 	disableGoalProcessing?: boolean; // For testing/CI - disables automatic goal processing (tick loop)
 	// GitHub integration
@@ -54,47 +36,16 @@ export interface Config {
 export interface ConfigOverrides {
 	port?: number;
 	host?: string;
-	workspace?: string;
 	dbPath?: string;
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {
 	const nodeEnv = process.env.NODE_ENV || 'development';
 
-	// Workspace root priority:
-	// 1. CLI --workspace flag (overrides parameter)
-	// 2. NEOKAI_WORKSPACE_PATH environment variable
-	// 3. undefined — daemon can start without a workspace (e.g. headless/API-only mode)
-	let workspaceRoot: string | undefined;
-	if (overrides?.workspace) {
-		// CLI override has highest priority
-		workspaceRoot = overrides.workspace;
-	} else if (process.env.NEOKAI_WORKSPACE_PATH) {
-		// Environment variable
-		workspaceRoot = process.env.NEOKAI_WORKSPACE_PATH;
-	} else {
-		// No workspace provided — this is intentionally allowed.
-		// The daemon can operate without a global workspace root; rooms provide
-		// their own defaultPath for all room-scoped operations.
-		workspaceRoot = undefined;
-	}
-
-	// Default database path:
-	//   - With workspace: ~/.neokai/projects/{encoded-workspace-path}/database/daemon.db
-	//     (each workspace gets its own isolated database)
-	//   - Without workspace: ~/.neokai/data/daemon.db
-	//     (global fallback that does not collide with any workspace-derived path)
-	const defaultDbPath =
-		workspaceRoot !== undefined
-			? join(
-					homedir(),
-					'.neokai',
-					'projects',
-					encodeRepoPath(workspaceRoot),
-					'database',
-					'daemon.db'
-				)
-			: join(homedir(), '.neokai', 'data', 'daemon.db');
+	// Default database path: ~/.neokai/data/daemon.db
+	// Use --db-path / DB_PATH env var to point to a different database
+	// (e.g. per-project isolation or Docker volume mounts).
+	const defaultDbPath = join(homedir(), '.neokai', 'data', 'daemon.db');
 
 	return {
 		port: overrides?.port ?? parseInt(process.env.NEOKAI_PORT || '9283'),
@@ -110,7 +61,6 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
 		nodeEnv,
-		workspaceRoot,
 		disableWorktrees: process.env.NEOKAI_DISABLE_WORKTREES === '1',
 		disableGoalProcessing: process.env.NEOKAI_DISABLE_GOAL_PROCESSING === '1',
 		// GitHub integration
