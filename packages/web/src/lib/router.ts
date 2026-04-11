@@ -45,11 +45,11 @@ const INBOX_ROUTE_PATTERN = /^\/inbox$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
 /** Legacy: /room/:id/chat was removed — treat as plain room route for backwards compat */
 const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
-/** Space routes accept both UUIDs (a-f0-9-) and slugs (a-z0-9-) */
-const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
-const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
-const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
-const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
+/** Space routes accept both UUIDs (a-f0-9-) and slugs (a-z0-9-) — case-insensitive for UUIDs */
+const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/i;
+const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/i;
+const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/i;
+const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/i;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-f0-9-]+)$/i;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/i;
 

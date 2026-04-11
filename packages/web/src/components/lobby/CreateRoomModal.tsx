@@ -34,7 +34,13 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 
 	// Sync workspacePath with daemon workspaceRoot when it first becomes available.
 	// Only updates the field if the user has not yet typed in it.
+	// Note: systemState.subscribe() may not fire immediately with the current value for
+	// computed signals, so we also read the current value directly after subscribing.
 	useEffect(() => {
+		// Set current value immediately in case subscription doesn't fire with it
+		if (!userEditedPath.current) {
+			setWorkspacePath(systemState.value?.workspaceRoot ?? '');
+		}
 		const unsub = systemState.subscribe((state) => {
 			if (!userEditedPath.current) {
 				setWorkspacePath(state?.workspaceRoot ?? '');
