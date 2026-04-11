@@ -261,11 +261,23 @@ export function useRuntimeCanvasData(
 
 			// Compute runtime status for forward gate
 			let runtimeStatus: GateStatus | undefined;
+			let voteCount: { current: number; min: number } | undefined;
 			if (forwardGateId && runId) {
 				const gate = gateLookup.get(forwardGateId);
 				const data = gateDataMap.get(forwardGateId) ?? {};
 				const scriptResult = gate ? parseScriptResult(data) : { failed: false };
 				runtimeStatus = gate ? evaluateGateStatus(gate, data, scriptResult.failed) : undefined;
+				// Compute vote count for count-type gates (e.g. review-votes-gate)
+				const countField = gate?.fields?.find((f) => f.check.op === 'count');
+				if (countField && countField.check.op === 'count') {
+					const map = data[countField.name];
+					const match = countField.check.match;
+					const current =
+						map && typeof map === 'object' && !Array.isArray(map)
+							? Object.values(map as Record<string, unknown>).filter((v) => v === match).length
+							: 0;
+					voteCount = { current, min: countField.check.min };
+				}
 			}
 
 			return {
@@ -286,6 +298,7 @@ export function useRuntimeCanvasData(
 				id: edge.id,
 				runtimeStatus,
 				gateId: forwardGateId,
+				voteCount,
 			};
 		});
 	}, [routedSemanticEdges, channels, endpointNodeIdLookup, gates, gateDataMap, runId]);
