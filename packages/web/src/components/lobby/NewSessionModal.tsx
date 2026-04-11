@@ -13,7 +13,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import type { Room, ModelInfo } from '@neokai/shared';
+import type { Room, ModelInfo, WorkspaceHistoryEntry } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../../lib/connection-manager';
 import {
@@ -28,12 +28,6 @@ interface RecentPath {
 	path: string;
 	relativeTime: string;
 	absoluteTime: Date;
-}
-
-interface WorkspaceHistoryEntry {
-	path: string;
-	lastUsedAt: number;
-	useCount: number;
 }
 
 /** Fetch available models from the server, mapped and sorted via shared utility */

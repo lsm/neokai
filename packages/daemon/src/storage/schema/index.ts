@@ -511,4 +511,8 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
 	);
+	// Workspace history index — supports ORDER BY last_used_at DESC in list()
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
+	);
 }
