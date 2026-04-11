@@ -8,9 +8,8 @@
  * - Form validation and error handling
  */
 
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { validateWorkspacePath } from '@neokai/shared';
-import { systemState } from '../../lib/state';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 
@@ -22,7 +21,7 @@ interface CreateRoomModalProps {
 
 export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalProps) {
 	const [name, setName] = useState('');
-	const [workspacePath, setWorkspacePath] = useState(() => systemState.value?.workspaceRoot ?? '');
+	const [workspacePath, setWorkspacePath] = useState(() => '');
 	const [background, setBackground] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -31,23 +30,6 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 	// Track whether the user has manually edited the path so we don't overwrite it
 	// when systemState arrives late (WebSocket delivers state after mount).
 	const userEditedPath = useRef(false);
-
-	// Sync workspacePath with daemon workspaceRoot when it first becomes available.
-	// Only updates the field if the user has not yet typed in it.
-	// Note: systemState.subscribe() may not fire immediately with the current value for
-	// computed signals, so we also read the current value directly after subscribing.
-	useEffect(() => {
-		// Set current value immediately in case subscription doesn't fire with it
-		if (!userEditedPath.current) {
-			setWorkspacePath(systemState.value?.workspaceRoot ?? '');
-		}
-		const unsub = systemState.subscribe((state) => {
-			if (!userEditedPath.current) {
-				setWorkspacePath(state?.workspaceRoot ?? '');
-			}
-		});
-		return unsub;
-	}, []);
 
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
@@ -76,7 +58,7 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 			// Reset form on success
 			setName('');
 			setBackground('');
-			setWorkspacePath(systemState.value?.workspaceRoot ?? '');
+			setWorkspacePath('');
 			userEditedPath.current = false;
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to create room');
@@ -88,7 +70,7 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 	const handleClose = () => {
 		setName('');
 		setBackground('');
-		setWorkspacePath(systemState.value?.workspaceRoot ?? '');
+		setWorkspacePath('');
 		userEditedPath.current = false;
 		setError(null);
 		setPathError(null);

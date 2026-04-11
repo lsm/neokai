@@ -1038,6 +1038,10 @@ describe('startBackgroundPolling()', () => {
 // ---------------------------------------------------------------------------
 
 describe('factory registration', () => {
+	beforeEach(() => {
+		resetProviderRegistry();
+		resetProviderFactory();
+	});
 	afterEach(() => {
 		resetProviderRegistry();
 		resetProviderFactory();

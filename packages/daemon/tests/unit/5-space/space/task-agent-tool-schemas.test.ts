@@ -8,92 +8,12 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
-	SpawnNodeAgentSchema,
-	CheckNodeStatusSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
 	ListGroupMembersSchema,
 } from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
-
-// ---------------------------------------------------------------------------
-// spawn_node_agent
-// ---------------------------------------------------------------------------
-
-describe('SpawnNodeAgentSchema', () => {
-	test('accepts valid input with node_id only', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ node_id: 'step-abc' });
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.node_id).toBe('step-abc');
-			expect(result.data.instructions).toBeUndefined();
-		}
-	});
-
-	test('accepts valid input with node_id and instructions', () => {
-		const result = SpawnNodeAgentSchema.safeParse({
-			node_id: 'step-abc',
-			instructions: 'Focus on unit tests only',
-		});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.instructions).toBe('Focus on unit tests only');
-		}
-	});
-
-	test('rejects missing node_id', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ instructions: 'some instructions' });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects non-string node_id', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ node_id: 42 });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects non-string instructions', () => {
-		const result = SpawnNodeAgentSchema.safeParse({ node_id: 'step-1', instructions: 123 });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects empty object', () => {
-		const result = SpawnNodeAgentSchema.safeParse({});
-		expect(result.success).toBe(false);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// check_node_status
-// ---------------------------------------------------------------------------
-
-describe('CheckNodeStatusSchema', () => {
-	test('accepts empty object (check current active step)', () => {
-		const result = CheckNodeStatusSchema.safeParse({});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.node_id).toBeUndefined();
-		}
-	});
-
-	test('accepts valid input with node_id', () => {
-		const result = CheckNodeStatusSchema.safeParse({ node_id: 'step-xyz' });
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.node_id).toBe('step-xyz');
-		}
-	});
-
-	test('rejects non-string node_id', () => {
-		const result = CheckNodeStatusSchema.safeParse({ node_id: true });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects null node_id', () => {
-		const result = CheckNodeStatusSchema.safeParse({ node_id: null });
-		expect(result.success).toBe(false);
-	});
-});
 
 // ---------------------------------------------------------------------------
 // TaskResultStatusSchema
@@ -247,14 +167,12 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 5 tool schemas', () => {
+	test('contains all 3 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
-		expect(keys).toContain('spawn_node_agent');
-		expect(keys).toContain('check_node_status');
 		expect(keys).toContain('report_result');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toHaveLength(5);
+		expect(keys).toHaveLength(3);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {
@@ -263,11 +181,11 @@ describe('TASK_AGENT_TOOL_SCHEMAS', () => {
 		}
 	});
 
-	test('does not contain advance_workflow or any old step-advancement tool', () => {
+	test('does not contain old orchestration tools', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
+		expect(keys).not.toContain('spawn_node_agent');
+		expect(keys).not.toContain('check_node_status');
 		expect(keys).not.toContain('advance_workflow');
-		expect(keys).not.toContain('spawn_step_agent');
-		expect(keys).not.toContain('check_step_status');
 	});
 });
 

@@ -16,7 +16,7 @@ function agent(
 	return {
 		agentId,
 		name,
-		systemPrompt: { mode: 'override', value: prompt },
+		customPrompt: { value: prompt },
 	};
 }
 

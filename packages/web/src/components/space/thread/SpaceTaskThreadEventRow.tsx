@@ -222,6 +222,23 @@ export function SpaceTaskThreadEventRow({
 			: null;
 
 	if (mode === 'compact' && event.kind === 'user' && event.message) {
+		// Synthetic messages render their own flex justify-end wrapper; skip outer alignment wrapper
+		// to avoid double-nesting that causes visual skew in the space task pane.
+		if ((event.message as { isSynthetic?: boolean }).isSynthetic) {
+			return (
+				<div data-testid="space-task-event-row">
+					<SDKMessageRenderer
+						message={event.message}
+						sessionId={event.sessionId ?? undefined}
+						toolResultsMap={maps.toolResultsMap}
+						toolInputsMap={maps.toolInputsMap}
+						subagentMessagesMap={maps.subagentMessagesMap}
+						sessionInfo={maps.sessionInfoMap.get((event.message as { uuid?: string }).uuid ?? '')}
+						taskContext={true}
+					/>
+				</div>
+			);
+		}
 		return (
 			<div class="flex justify-end py-1" data-testid="space-task-event-row">
 				<div class="max-w-full">

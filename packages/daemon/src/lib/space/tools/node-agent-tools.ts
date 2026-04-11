@@ -1,22 +1,23 @@
 /**
  * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
  *
- * These handlers implement peer communication tools for node agents within
- * the same workflow node group:
+ * Action tools:
+ *   send_message — channel-validated direct messaging; auto-writes gate data on gated channels
+ *   save         — persist agent output (summary + structured data) to NodeExecution
  *
- *   list_peers   — discover other group members with agent names and permitted channels
- *   send_message — primary channel-validated direct messaging tool
- *   report_done  — signal that this agent has completed its node task
+ * Discovery tools (read-only):
+ *   list_peers            — discover other group members with agent names and permitted channels
+ *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
+ *   list_channels         — list all channels declared in the workflow
+ *   list_gates            — list all gates with current runtime data
+ *   read_gate             — read current data for a specific gate
  *
  * Communication model:
  * - Node agents communicate via declared channel topology (`send_message`).
- * - `list_peers` reveals who is in the group and what channels are available.
- *
- * Channel topology patterns supported:
- *   - Bidirectional point-to-point: A↔B (both directions permitted)
- *   - One-way: A→B (only A can send to B)
- *   - Fan-out one-way: hub→[spoke1, spoke2, ...]
- *   - Hub-spoke: hub↔spokes (hub sends to all, spokes only reply to hub)
+ * - When a channel is gated, the `data` payload in `send_message` is automatically
+ *   merged into the gate's data store — no separate write_gate call needed.
+ * - `save` stores the agent's result summary and structured output on NodeExecution
+ *   for Task Agent visibility.
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
@@ -26,6 +27,8 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../daemon-hub';
+import { ReportResultSchema } from './task-agent-tool-schemas';
+import type { ReportResultInput } from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
@@ -43,22 +46,20 @@ import type { ToolResult } from './tool-result';
 import {
 	ListPeersSchema,
 	SendMessageSchema,
-	ReportDoneSchema,
+	SaveSchema,
 	ListReachableAgentsSchema,
 	ListChannelsSchema,
 	ListGatesSchema,
 	ReadGateSchema,
-	WriteGateSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
 	SendMessageInput,
-	ReportDoneInput,
+	SaveInput,
 	ListReachableAgentsInput,
 	ListChannelsInput,
 	ListGatesInput,
 	ReadGateInput,
-	WriteGateInput,
 } from './node-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
@@ -139,9 +140,8 @@ export interface NodeAgentToolsConfig {
 	onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
 	/**
 	 * Optional script executor for async gate evaluation.
-	 * When provided, `write_gate` and `read_gate` run gate scripts before
-	 * field evaluation. When absent, script-based gates report as open
-	 * (sync-only path — documented limitation for `list_gates`).
+	 * When provided, `read_gate` and the gate-write path in `send_message` run
+	 * gate scripts before field evaluation.
 	 */
 	scriptExecutor?: GateScriptExecutorFn;
 	/**
@@ -149,6 +149,13 @@ export interface NodeAgentToolsConfig {
 	 * Required when `scriptExecutor` is provided.
 	 */
 	scriptContext?: GateScriptExecutorContext;
+	/**
+	 * Optional callback for the `report_result` tool.
+	 * When provided, a `report_result` tool is added to the MCP server —
+	 * intended for the end node of a workflow so it can close the workflow run.
+	 * When absent, `report_result` is not available to this node agent.
+	 */
+	onReportResult?: (args: ReportResultInput) => Promise<ToolResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +197,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * permitted channel connections, and completion state.
 		 *
 		 * Does NOT include self (filtered by `mySessionId`).
-		 * Does NOT include the Task Agent (filtered by agent name 'task-agent').
+		 * Always includes `task-agent` as a reachable coordinator target.
 		 *
 		 * Returns permittedTargets: agent names this agent can directly send to via send_message.
 		 * Returns completionState per peer: execution status, completion summary, and completedAt.
@@ -206,12 +213,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			const peers = nodeExecs
 				.filter(
 					(ne) =>
-						ne.agentSessionId !== mySessionId && (ne.agentSessionId != null || ne.status === 'done')
+						ne.agentSessionId !== mySessionId && (ne.agentSessionId != null || ne.status === 'idle')
 				)
 				.map((ne) => {
 					const execStatus = ne.status;
 					const memberStatus =
-						execStatus === 'done'
+						execStatus === 'idle'
 							? ('completed' as const)
 							: execStatus === 'blocked' || execStatus === 'cancelled'
 								? ('failed' as const)
@@ -237,7 +244,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				completedAt: ne.completedAt ?? null,
 			}));
 
-			const permittedTargets = resolver.getPermittedTargets(myAgentName);
+			const topologyTargets = resolver.getPermittedTargets(myAgentName);
+			const permittedTargets = [...topologyTargets, 'task-agent'];
 			const channelTopologyDeclared = !resolver.isEmpty();
 
 			return jsonResult({
@@ -249,9 +257,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				channelTopologyDeclared,
 				message:
 					`Found ${peers.length} peer(s). ` +
-					(channelTopologyDeclared
-						? `Permitted direct targets via send_message: ${permittedTargets.length > 0 ? permittedTargets.join(', ') : 'none'}.`
-						: 'No channel topology declared.'),
+					`Permitted direct targets via send_message: ${permittedTargets.join(', ')}. ` +
+					`Use "task-agent" to escalate blockers or request human input.`,
 			});
 		},
 
@@ -261,9 +268,89 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 *
 		 * Validates against declared channel topology — returns an error with
 		 * available targets if not permitted.
+		 *
+		 * When `data` is provided and the target channel is gated, the data is
+		 * automatically merged into the gate's data store before delivery.
+		 * Gate re-evaluation fires after the merge — if the gate opens the message
+		 * is delivered immediately; otherwise it is held until the condition passes.
 		 */
 		async send_message(args: SendMessageInput): Promise<ToolResult> {
 			const { target, message, data } = args;
+
+			// Auto gate-write: if data is provided and the outbound channel to this
+			// target is gated, merge the data into the gate before delivery.
+			// This allows agents to satisfy gate conditions as part of a single send call.
+			let gateWriteResult: { gateId: string; gateOpen: boolean } | null = null;
+			if (data && workflow) {
+				const targetName = Array.isArray(target) ? null : target;
+				if (targetName && targetName !== '*' && targetName !== 'task-agent') {
+					const node = workflow.nodes.find((n) => n.id === workflowNodeId);
+					const myNodeName = node?.name ?? myAgentName;
+					const fromRefs = new Set([myAgentName, myNodeName]);
+
+					const gatedChannel = (workflow.channels ?? []).find((ch) => {
+						if (!ch.gateId) return false;
+						if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
+						const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
+						return tos.some((to) => to === targetName || to === myNodeName || to === myAgentName);
+					});
+
+					if (gatedChannel?.gateId) {
+						const gateId = gatedChannel.gateId;
+						const gates = workflow.gates ?? [];
+						const gateDef = gates.find((g) => g.id === gateId);
+
+						if (gateDef) {
+							// Field-level authorization check
+							const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
+							const authorizedData: Record<string, unknown> = {};
+							for (const [key, value] of Object.entries(data)) {
+								const fieldDef = fieldMap.get(key);
+								if (!fieldDef) continue;
+								const isAuthorized = fieldDef.writers.some((writer) => {
+									const normalized = normalizeAgentNameToken(writer);
+									return normalized === '*' || agentNameAliases.has(normalized);
+								});
+								if (isAuthorized) authorizedData[key] = value;
+							}
+
+							if (Object.keys(authorizedData).length > 0) {
+								const updated = gateDataRepo.merge(workflowRunId, gateId, authorizedData);
+								const evalResult = await evaluateGate(
+									gateDef,
+									updated.data,
+									scriptExecutor,
+									scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
+								);
+								gateWriteResult = { gateId, gateOpen: evalResult.open };
+
+								if (onGateDataChanged) {
+									void onGateDataChanged(workflowRunId, gateId).catch((err) => {
+										log.warn(
+											`onGateDataChanged failed for gate "${gateId}" in run "${workflowRunId}":`,
+											err instanceof Error ? err.message : String(err)
+										);
+									});
+								}
+
+								if (daemonHub) {
+									void daemonHub
+										.emit('space.gateData.updated', {
+											sessionId: 'global',
+											spaceId,
+											runId: workflowRunId,
+											gateId,
+											data: updated.data,
+										})
+										.catch((err) => {
+											log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
+										});
+								}
+							}
+						}
+					}
+				}
+			}
 
 			const result = await agentMessageRouter.deliverMessage({
 				fromAgentName: myAgentName,
@@ -282,6 +369,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					unauthorizedAgentNames: result.unauthorizedAgentNames,
 					permittedTargets: result.permittedTargets,
 					notFoundAgentNames: result.notFoundAgentNames,
+					gateWrite: gateWriteResult ?? undefined,
 				});
 			}
 
@@ -291,6 +379,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					delivered: result.delivered,
 					failed: result.failed,
 					notFoundAgentNames: result.notFoundAgentNames,
+					gateWrite: gateWriteResult ?? undefined,
 					message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
 				});
 			}
@@ -299,6 +388,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				success: true,
 				delivered: result.delivered,
 				notFoundAgentNames: result.notFoundAgentNames,
+				gateWrite: gateWriteResult ?? undefined,
 				message:
 					`Message delivered to ${result.delivered.length} peer(s): ` +
 					result.delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ') +
@@ -310,12 +400,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * List all agents and nodes this agent can reach, grouped as:
 		 *   - withinNodePeers: agents in the same workflow node (current group members)
 		 *   - crossNodeTargets: agents/nodes reachable via declared cross-node paths
+		 *   - taskAgent: always included as a coordinator target (target: "task-agent")
 		 *
 		 * Uses agent-friendly terminology — no mention of channels or policies.
 		 * Gate status is included for cross-node targets so agents know whether
 		 * a target may require conditions to be met before delivery is permitted.
-		 *
-		 * Does NOT include self or the task-agent coordinator.
 		 */
 		async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
 			// Determine this agent's node name from the workflow definition.
@@ -335,7 +424,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					return {
 						agentName: e.agentName,
 						status:
-							ts === 'done'
+							ts === 'idle'
 								? ('completed' as const)
 								: ts === 'blocked' || ts === 'cancelled'
 									? ('failed' as const)
@@ -404,11 +493,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				myNodeName,
 				withinNodePeers,
 				crossNodeTargets,
+				taskAgent: {
+					target: 'task-agent',
+					description: 'Workflow coordinator. Use to escalate blockers or request human input.',
+				},
 				reachabilityDeclared,
 				message:
-					`You can reach ${totalReachable} target(s) in total. ` +
+					`You can reach ${totalReachable} target(s) plus the task-agent coordinator. ` +
 					`Within-node peers: ${withinNodePeers.length > 0 ? withinNodePeers.map((p) => p.agentName).join(', ') : 'none'}.` +
-					crossNodeSummary,
+					crossNodeSummary +
+					` Send to "task-agent" to escalate blockers or request human input.`,
 			});
 		},
 
@@ -524,154 +618,25 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		},
 
 		/**
-		 * Write data to a gate's runtime data store (merge semantics).
+		 * Persist this agent's output to the NodeExecution record.
 		 *
-		 * Authorization: your agent name must be in the gate's allowed writers,
-		 * or the list must contain '*' (allow all).
+		 * Call whenever you have produced output worth recording — at any point
+		 * during your work, not just at the end. Can be called multiple times;
+		 * each call overwrites the previous summary and data.
 		 *
-		 * Merge semantics: top-level keys in `data` overwrite existing entries.
-		 * Nested objects are replaced wholesale (not deep-merged).
-		 *
-		 * For vote-counting gates (count conditions), use your nodeId as the
-		 * map key so each node counts only once. Your nodeId is returned in the JSON response.
-		 *
-		 * Writing triggers gate re-evaluation — the response includes whether
-		 * the gate is now open so you know if the gated channel is unblocked.
+		 * `summary` and `data` are independent — provide either or both.
 		 */
-		async write_gate(args: WriteGateInput): Promise<ToolResult> {
-			const { gateId, data } = args;
+		async save(args: SaveInput): Promise<ToolResult> {
+			const { summary, data } = args;
 
-			// Verify gate exists in this workflow
-			const gates = workflow?.gates ?? [];
-			const gateDef = gates.find((g) => g.id === gateId);
-			if (!gateDef) {
+			if (summary === undefined && data === undefined) {
 				return jsonResult({
 					success: false,
-					error: `Gate "${gateId}" not found in this workflow.`,
-					availableGateIds: gates.map((g) => g.id),
+					error: 'At least one of `summary` or `data` must be provided.',
 				});
 			}
-
-			// Field-level authorization: check each key in data against field declarations.
-			// For script-only gates (no fields), any data write is rejected since there are
-			// no declared fields to validate against. Script execution populates gate data
-			// internally; agents should not write to script-only gates directly.
-			const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
-			for (const key of Object.keys(data)) {
-				const fieldDef = fieldMap.get(key);
-				if (!fieldDef) {
-					return jsonResult({
-						success: false,
-						error:
-							`Field "${key}" is not declared in gate "${gateId}". ` +
-							`Declared fields: ${(gateDef.fields ?? []).map((f) => f.name).join(', ') || '(none)'}.`,
-					});
-				}
-				const writers = fieldDef.writers;
-				const isAuthorized = writers.some((writer) => {
-					const normalizedWriter = normalizeAgentNameToken(writer);
-					return normalizedWriter === '*' || agentNameAliases.has(normalizedWriter);
-				});
-				if (!isAuthorized) {
-					return jsonResult({
-						success: false,
-						error:
-							`Agent "${myAgentName}" is not authorized to write field "${key}" on gate "${gateId}". ` +
-							`Allowed writers: ${writers.length > 0 ? writers.join(', ') : '(none)'}.`,
-						allowedWriters: writers,
-						myAgentName,
-						myAgentNameAliases: [...agentNameAliases],
-					});
-				}
-			}
-
-			// Merge data into gate_data table
-			let updated = gateDataRepo.merge(workflowRunId, gateId, data);
-
-			// Re-evaluate gate with updated data. Uses scriptExecutor when available for
-			// async script-based gates; otherwise falls back to field-only evaluation.
-			const evalResult = await evaluateGate(
-				gateDef,
-				updated.data,
-				scriptExecutor,
-				scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
-			);
-
-			// Persist script evaluation result to gate data for frontend transport.
-			// Only set _scriptResult when a scriptExecutor actually ran (not when a
-			// field-only check fails on a script-annotated gate without an executor).
-			// Persisted to DB so re-fetches include the result.
-			if (scriptExecutor && gateDef.script && !evalResult.open && evalResult.reason) {
-				updated = gateDataRepo.merge(workflowRunId, gateId, {
-					_scriptResult: { success: false, reason: evalResult.reason },
-				});
-			} else if (updated.data._scriptResult) {
-				// Clean up stale _scriptResult from a previous failed script evaluation
-				const { _scriptResult, ...rest } = updated.data;
-				updated = gateDataRepo.set(workflowRunId, gateId, rest);
-			}
-
-			// TODO (P2): evaluateGate deep-merges script output into a local copy of
-			// gateData, but the merged data is not returned to the caller. The event
-			// below emits pre-script data. To fix, evaluateGate should return
-			// { open, reason, mergedData? } so callers can persist/emit the merged state.
-
-			// Trigger re-evaluation and lazy node activation for channels referencing
-			// this gate (fire-and-forget — response is not delayed waiting for activation).
-			if (onGateDataChanged) {
-				void onGateDataChanged(workflowRunId, gateId).catch((err) => {
-					log.warn(
-						`onGateDataChanged failed for gate "${gateId}" in run "${workflowRunId}":`,
-						err instanceof Error ? err.message : String(err)
-					);
-				});
-			}
-
-			// Notify UI about gate data change for real-time canvas updates.
-			if (daemonHub) {
-				void daemonHub
-					.emit('space.gateData.updated', {
-						sessionId: 'global',
-						spaceId,
-						runId: workflowRunId,
-						gateId,
-						data: updated.data,
-					})
-					.catch((err) => {
-						log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
-					});
-			}
-
-			return jsonResult({
-				success: true,
-				gateId,
-				updatedData: updated.data,
-				gateOpen: evalResult.open,
-				reason: evalResult.reason ?? null,
-				nodeId: workflowNodeId,
-				message: evalResult.open
-					? `Gate "${gateId}" is now OPEN — gated channel(s) are unblocked.`
-					: `Gate "${gateId}" is still CLOSED after write: ${evalResult.reason ?? 'condition not met'}.`,
-			});
-		},
-
-		/**
-		 * Signal that this node agent has completed its work.
-		 *
-		 * Updates the NodeExecution record for this agent (identified by
-		 * workflowNodeId + myAgentName) to status 'done' and
-		 * persists the optional summary. SpaceRuntime detects the state change and
-		 * triggers workflow completion checks (end-node short-circuit or
-		 * CompletionDetector safety net).
-		 *
-		 * After calling this tool, the node agent should stop and not perform
-		 * further work — the task lifecycle is closed.
-		 */
-		async report_done(args: ReportDoneInput): Promise<ToolResult> {
-			const { summary } = args;
 
 			try {
-				// Preferred path: update NodeExecution status to 'done'
 				const nodeExecs = workflowRunId
 					? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
 					: [];
@@ -682,23 +647,23 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						success: false,
 						error:
 							`NodeExecution not found for agent "${myAgentName}" in node "${workflowNodeId}" ` +
-							`(run: ${workflowRunId}). Cannot mark as done.`,
+							`(run: ${workflowRunId}). Cannot save output.`,
 					});
 				}
 
-				nodeExecutionRepo.update(myExec.id, {
-					status: 'done',
-					result: summary ?? null,
-				});
+				const updates: { result?: string | null; data?: Record<string, unknown> | null } = {};
+				if (summary !== undefined) updates.result = summary;
+				if (data !== undefined) updates.data = data;
+
+				nodeExecutionRepo.update(myExec.id, updates);
 
 				return jsonResult({
 					success: true,
 					executionId: myExec.id,
 					agentName: myAgentName,
-					summary,
-					message:
-						'Step execution has been marked as completed. ' +
-						'Your work is done — stop here and do not continue.',
+					savedSummary: summary ?? null,
+					savedData: data ?? null,
+					message: 'Output saved to execution record.',
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -718,14 +683,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
  */
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 	const handlers = createNodeAgentToolHandlers(config);
+	const { onReportResult } = config;
 
 	const tools = [
 		tool(
 			'list_peers',
 			'List all other agents in this workflow node group with their agent names, statuses, session IDs, ' +
-				'permitted channel connections, and completion state from node executions. ' +
+				'permitted channel connections, and output state from node executions. ' +
 				'Use this to discover which peers are active, what direct messaging channels are available, ' +
-				'and whether peer executions have completed (including their completion summaries).',
+				'and what output peers have saved (including their summaries).',
 			ListPeersSchema.shape,
 			(args) => handlers.list_peers(args)
 		),
@@ -744,8 +710,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			'List all channels declared in this workflow. ' +
 				'Channels define the messaging topology — which agents can communicate and whether a gate ' +
 				'guards the channel. Use this to understand the full channel map for this workflow run. ' +
-				'Each entry includes `hasGate` (true when a gate guards the channel) and `gateId` ' +
-				'(non-null when using the new separated gate architecture — use `list_gates` to read gate state).',
+				'Each entry includes `hasGate` (true when a gate guards the channel) and `gateId`.',
 			ListChannelsSchema.shape,
 			(args) => handlers.list_channels(args)
 		),
@@ -766,33 +731,36 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			(args) => handlers.read_gate(args)
 		),
 		tool(
-			'write_gate',
-			"Write (merge) data into a gate's runtime data store. " +
-				'Each field you write must exist in the gate schema and your agent name must be in the field writers list. ' +
-				'For map-type (vote) fields, use your nodeId as the map key so each node votes once. ' +
-				'After writing, gate re-evaluation is triggered — the response tells you if the gate is now open. ' +
-				'When the gate opens, blocked target nodes are automatically activated by the workflow runtime.',
-			WriteGateSchema.shape,
-			(args) => handlers.write_gate(args)
-		),
-		tool(
 			'send_message',
 			'Send a message to a peer agent by name (DM), a node by name (fan-out), or broadcast to all permitted targets. ' +
 				"Use agent name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
 				'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
-				'Include structured data in the optional `data` field for gate writes or machine-readable payloads.',
+				'When the target channel is gated, the optional `data` payload is automatically merged into the gate ' +
+				'and gate re-evaluation fires — no separate gate write needed.',
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
 		),
 		tool(
-			'report_done',
-			'Signal that this node agent has completed its work. ' +
-				'Marks the node execution as completed and persists an optional summary as the result. ' +
-				'Call this when you have finished all assigned work. ' +
-				'After calling this tool, stop — do not continue with further actions.',
-			ReportDoneSchema.shape,
-			(args) => handlers.report_done(args)
+			'save',
+			'Persist your output to the execution record. ' +
+				'Provide a human-readable `summary`, structured `data` (key-value pairs), or both. ' +
+				'Can be called multiple times — each call overwrites previous values. ' +
+				'Use `data` for machine-readable artifacts like pr_url, commit_sha, test_results.',
+			SaveSchema.shape,
+			(args) => handlers.save(args)
 		),
+		...(onReportResult
+			? [
+					tool(
+						'report_result',
+						'Mark the workflow as completed, failed, or cancelled and record the final result. ' +
+							'Only available to the end node of the workflow. ' +
+							'Call this when the workflow has reached its terminal state.',
+						ReportResultSchema.shape,
+						(args) => onReportResult(args)
+					),
+				]
+			: []),
 	];
 
 	return createSdkMcpServer({ name: 'node-agent', tools });

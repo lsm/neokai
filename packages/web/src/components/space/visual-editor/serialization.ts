@@ -128,7 +128,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			name: s.name,
 			agentId: '',
 			agents: s.agents,
-			instructions: '',
 		};
 		return { step, position };
 	});
@@ -141,7 +140,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			id: TASK_AGENT_NODE_ID,
 			name: 'Task Agent',
 			agentId: '',
-			instructions: '',
 		},
 		position: { x: 0, y: 0 },
 	};
@@ -188,7 +186,6 @@ interface BuiltWorkflowFields {
 		id: string;
 		name: string;
 		agents: WorkflowNodeAgent[];
-		instructions?: string;
 	}>;
 	startNodeId: string;
 	endNodeId?: string;
@@ -292,7 +289,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 			id: persistedId,
 			name: node.step.name || `Step ${i + 1}`,
 			agents,
-			...(node.step.instructions ? { instructions: node.step.instructions } : {}),
 		};
 	});
 

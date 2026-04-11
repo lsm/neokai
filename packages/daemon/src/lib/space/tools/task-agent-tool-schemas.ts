@@ -1,11 +1,9 @@
 /**
- * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 5
+ * Task Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 4
  * tools available to the Task Agent session (send_message schema is shared
- * from node-agent-tool-schemas.ts, making 6 tools total in the MCP server).
+ * from node-agent-tool-schemas.ts).
  *
  * Tools (defined in this file):
- *   spawn_node_agent      — spawn a sub-session for a specific workflow node (node_id)
- *   check_node_status     — check the status of the current or a specific node's sub-session (node_id)
  *   report_result         — report the final task result (terminal tool)
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
@@ -20,45 +18,6 @@
  */
 
 import { z } from 'zod';
-
-// ---------------------------------------------------------------------------
-// spawn_node_agent
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `spawn_node_agent` input.
- * Spawns a sub-session for the given workflow node (identified by node_id).
- */
-export const SpawnNodeAgentSchema = z.object({
-	/** ID of the workflow node to execute. */
-	node_id: z.string().describe('ID of the workflow node to spawn a sub-session for'),
-	/** Optional override instructions to pass to the node agent. */
-	instructions: z
-		.string()
-		.describe('Optional instructions to pass to the node agent, overriding the default node prompt')
-		.optional(),
-});
-
-export type SpawnNodeAgentInput = z.infer<typeof SpawnNodeAgentSchema>;
-
-// ---------------------------------------------------------------------------
-// check_node_status
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `check_node_status` input.
- * Checks the processing state, completion, and any errors for the current or
- * a specific node's sub-session.
- */
-export const CheckNodeStatusSchema = z.object({
-	/** Optional node ID to check. Omit to check the current active node. */
-	node_id: z
-		.string()
-		.describe('ID of the workflow node to check. Omit to check the currently active node.')
-		.optional(),
-});
-
-export type CheckNodeStatusInput = z.infer<typeof CheckNodeStatusSchema>;
 
 // ---------------------------------------------------------------------------
 // report_result
@@ -133,8 +92,6 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
  * The MCP server factory can iterate this map to register tools.
  */
 export const TASK_AGENT_TOOL_SCHEMAS = {
-	spawn_node_agent: SpawnNodeAgentSchema,
-	check_node_status: CheckNodeStatusSchema,
 	report_result: ReportResultSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,

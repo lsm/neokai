@@ -39,6 +39,10 @@ import type {
 	McpRoomGetEnabledResponse,
 	McpRoomSetEnabledResponse,
 	McpRoomResetToGlobalResponse,
+	WorkspaceHistoryEntry,
+	WorkspaceHistoryResponse,
+	WorkspaceAddResponse,
+	WorkspaceRemoveResponse,
 } from '@neokai/shared';
 import type {
 	ProviderAuthResponse,
@@ -325,4 +329,27 @@ export async function setRoomMcpEnabled(
 export async function resetRoomMcpToGlobal(roomId: string): Promise<McpRoomResetToGlobalResponse> {
 	const hub = getHubOrThrow();
 	return await hub.request<McpRoomResetToGlobalResponse>('mcp.room.resetToGlobal', { roomId });
+}
+
+// ==================== Workspace History Operations ====================
+
+/** Get recently-used workspace paths from backend */
+export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
+	const hub = getHubOrThrow();
+	const { entries } = await hub.request<WorkspaceHistoryResponse>('workspace.history', {});
+	return entries;
+}
+
+/** Record a workspace path as recently used (upserts into backend history) */
+export async function addWorkspaceToHistory(path: string): Promise<WorkspaceHistoryEntry> {
+	const hub = getHubOrThrow();
+	const { entry } = await hub.request<WorkspaceAddResponse>('workspace.add', { path });
+	return entry;
+}
+
+/** Remove a workspace path from backend history */
+export async function removeWorkspaceFromHistory(path: string): Promise<boolean> {
+	const hub = getHubOrThrow();
+	const { success } = await hub.request<WorkspaceRemoveResponse>('workspace.remove', { path });
+	return success;
 }

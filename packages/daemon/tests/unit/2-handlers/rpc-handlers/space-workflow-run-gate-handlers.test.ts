@@ -542,9 +542,8 @@ describe('space-workflow-run gate handlers', () => {
 		});
 
 		it('returns file stats from git diff --numstat', async () => {
-			// merge-base call returns a base SHA, numstat returns file changes
+			// numstat returns file changes for uncommitted working tree vs HEAD
 			mockExecResult = (args) => {
-				if (args.includes('merge-base')) return 'abc123\n';
 				if (args.includes('--numstat')) return '5\t3\tsrc/foo.ts\n2\t0\tsrc/bar.ts\n';
 				return '';
 			};
@@ -556,7 +555,6 @@ describe('space-workflow-run gate handlers', () => {
 				totalAdditions: number;
 				totalDeletions: number;
 				worktreePath: string;
-				baseRef: string | null;
 			};
 
 			expect(result.files).toHaveLength(2);
@@ -565,23 +563,6 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.totalAdditions).toBe(7);
 			expect(result.totalDeletions).toBe(3);
 			expect(result.worktreePath).toBe('/tmp/test-workspace');
-			expect(result.baseRef).toBe('abc123');
-		});
-
-		it('falls back to uncommitted diff when merge-base fails', async () => {
-			mockExecResult = (args) => {
-				if (args.includes('merge-base')) throw new Error('not found');
-				if (args.includes('--numstat')) return '10\t2\tsrc/main.ts\n';
-				return '';
-			};
-
-			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
-				runId: 'run-1',
-			})) as { files: Array<{ path: string }>; baseRef: string | null };
-
-			expect(result.files).toHaveLength(1);
-			expect(result.files[0].path).toBe('src/main.ts');
-			expect(result.baseRef).toBeNull();
 		});
 
 		it('returns empty file list when no changes', async () => {
@@ -597,7 +578,6 @@ describe('space-workflow-run gate handlers', () => {
 
 		it('handles binary files (- entries in numstat)', async () => {
 			mockExecResult = (args) => {
-				if (args.includes('merge-base')) return 'abc123\n';
 				if (args.includes('--numstat')) return '-\t-\tassets/image.png\n3\t1\tsrc/foo.ts\n';
 				return '';
 			};
@@ -709,11 +689,8 @@ describe('space-workflow-run gate handlers', () => {
 			expect(result.deletions).toBe(0);
 		});
 
-		it('passes correct git args with baseRef', async () => {
-			mockExecResult = (args) => {
-				if (args.includes('merge-base')) return 'deadbeef\n';
-				return '+added line\n-removed line\n';
-			};
+		it('passes correct git args for uncommitted diff', async () => {
+			mockExecResult = () => '+added line\n-removed line\n';
 
 			await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
@@ -726,15 +703,15 @@ describe('space-workflow-run gate handlers', () => {
 				(c: unknown[]) => Array.isArray(c[1]) && c[1].includes('diff') && c[1].includes('--')
 			);
 			expect(diffCall).toBeDefined();
-			expect(diffCall![1]).toContain('deadbeef..HEAD');
-			expect(diffCall![1]).toContain('src/foo.ts');
+			const diffArgs = diffCall![1] as string[];
+			expect(diffArgs).toContain('HEAD');
+			expect(diffArgs).toContain('src/foo.ts');
+			// Should not use range notation (e.g. baseRef..HEAD)
+			expect(diffArgs.some((a) => a.includes('..'))).toBe(false);
 		});
 
-		it('falls back to uncommitted diff range when merge-base fails', async () => {
-			mockExecResult = (args) => {
-				if (args.includes('merge-base')) throw new Error('no remote');
-				return '+new line\n';
-			};
+		it('always uses HEAD-based diff (no merge-base lookup)', async () => {
+			mockExecResult = () => '+new line\n';
 
 			await call('spaceWorkflowRun.getFileDiff', {
 				runId: 'run-1',
@@ -742,11 +719,16 @@ describe('space-workflow-run gate handlers', () => {
 			});
 
 			const calls = mockExecFile.mock.calls;
+			// Confirm no merge-base call was made
+			const mergeBaseCall = calls.find(
+				(c: unknown[]) => Array.isArray(c[1]) && c[1].includes('merge-base')
+			);
+			expect(mergeBaseCall).toBeUndefined();
+
 			const diffCall = calls.find(
 				(c: unknown[]) => Array.isArray(c[1]) && c[1].includes('diff') && c[1].includes('--')
 			);
 			expect(diffCall).toBeDefined();
-			// Should use HEAD (not baseRef..HEAD) when merge-base unavailable
 			const diffArgs = diffCall![1] as string[];
 			expect(diffArgs).toContain('HEAD');
 			expect(diffArgs.some((a) => a.includes('..'))).toBe(false);

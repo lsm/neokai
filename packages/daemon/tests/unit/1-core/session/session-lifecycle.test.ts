@@ -10,6 +10,59 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 // Mock SDK type-guards at the top level
 mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
+	isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
+		msg.type === 'user' && (!('isReplay' in msg) || msg.isReplay === false),
+	isSDKUserMessageReplay: (msg: { type: string; isReplay?: boolean }) =>
+		msg.type === 'user' && 'isReplay' in msg && msg.isReplay === true,
+	isSDKResultMessage: (msg: { type: string }) => msg.type === 'result',
+	isSDKResultSuccess: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'result' && msg.subtype === 'success',
+	isSDKResultError: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'result' && msg.subtype !== 'success',
+	isSDKSystemMessage: (msg: { type: string }) => msg.type === 'system',
+	isSDKSystemInit: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'init',
+	isSDKCompactBoundary: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'compact_boundary',
+	isSDKStatusMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'status',
+	isSDKHookResponse: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'hook_response',
+	isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'api_retry',
+	isSDKStreamEvent: (msg: { type: string }) => msg.type === 'stream_event',
+	isSDKToolProgressMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'tool_progress',
+	isSDKAuthStatusMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'auth_status',
+	isSDKRateLimitEvent: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'rate_limit',
+	isToolUseBlock: (block: { type: string }) => block.type === 'tool_use',
+	isTextBlock: (block: { type: string }) => block.type === 'text',
+	isThinkingBlock: (block: { type: string }) => block.type === 'thinking',
+	isUserVisibleMessage: (msg: { type: string }) => msg.type === 'assistant' || msg.type === 'user',
+}));
+
+// Mock provider-service so generateTitleAndRenameBranch tests don't hit real credentials.
+// getProviderApiKey reads from process.env at call time so that:
+//   - This file's own tests (ANTHROPIC_API_KEY cleared by setup.ts) get undefined → fallback path.
+//   - session-lifecycle-sdk-title tests (ANTHROPIC_API_KEY='test-api-key' in beforeEach) get a
+//     truthy key and proceed to generateTitleWithSdk. All methods needed by that path are
+//     included here so that bun's module-cache sharing across files never causes a TypeError.
+mock.module('../../../../src/lib/provider-service', () => ({
+	getProviderService: () => ({
+		getDefaultProvider: async () => 'anthropic',
+		getProviderApiKey: (_provider: string) => process.env.ANTHROPIC_API_KEY || undefined,
+		isProviderAvailable: async () => false,
+		mergeProviderEnvVars: (s: object) => s,
+		applyEnvVarsToProcessForProvider: (_provider: string, _modelId: string) => ({}),
+		getTitleGenerationConfig: async (_provider: string) => ({
+			modelId: 'claude-sonnet-4-20250514',
+		}),
+		getEnvVarsForModel: (_modelId: string, _provider: string) => ({}),
+		restoreEnvVars: (_originalEnv: Record<string, string | undefined>) => {},
+	}),
+	mergeProviderEnvVars: (session: object) => session,
 }));
 
 import {
@@ -198,12 +251,12 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
-		it('should use default workspace root when not specified', async () => {
+		it('should create unbound session when no workspacePath specified', async () => {
 			await lifecycle.create({});
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					workspacePath: '/default/workspace',
+					workspacePath: null,
 				})
 			);
 		});
@@ -256,30 +309,23 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
-		it('worker session without workspacePath falls back to config.workspaceRoot with warning', async () => {
-			const warnSpy = mock(() => {});
-			// Patch the logger on the lifecycle instance
-			(lifecycle as unknown as { logger: { warn: typeof warnSpy } }).logger.warn = warnSpy;
-
+		it('worker session without workspacePath creates unbound session', async () => {
 			await lifecycle.create({ sessionType: 'worker' });
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					workspacePath: '/default/workspace',
+					workspacePath: null,
 				})
-			);
-			expect(warnSpy).toHaveBeenCalledWith(
-				expect.stringContaining('falling back to workspaceRoot')
 			);
 		});
 
-		it('default (undefined sessionType) session without workspacePath falls back to config.workspaceRoot', async () => {
+		it('default (undefined sessionType) session without workspacePath creates unbound session', async () => {
 			// sessionType defaults to 'worker' per line 91 — should NOT throw
 			await lifecycle.create({});
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					workspacePath: '/default/workspace',
+					workspacePath: null,
 				})
 			);
 		});
@@ -307,7 +353,7 @@ describe('SessionLifecycle', () => {
 				mockAgentSessionFactory
 			);
 
-			await worktreeLifecycle.create({});
+			await worktreeLifecycle.create({ workspacePath: '/test/repo' });
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1235,7 +1281,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 	});
 
 	it('should create worktree for non-git repos when worktrees enabled', async () => {
-		await lifecycle.create({ title: 'Test Session' });
+		await lifecycle.create({ title: 'Test Session', workspacePath: '/default/workspace' });
 
 		expect(mockWorktreeManager.createWorktree).toHaveBeenCalled();
 	});
@@ -1246,13 +1292,19 @@ describe('SessionLifecycle - session creation with worktree', () => {
 		);
 
 		// Should not throw
-		const sessionId = await lifecycle.create({ title: 'Test Session' });
+		const sessionId = await lifecycle.create({
+			title: 'Test Session',
+			workspacePath: '/default/workspace',
+		});
 
 		expect(sessionId).toBeDefined();
 	});
 
 	it('should use title for branch name when title provided', async () => {
-		await lifecycle.create({ title: 'Feature Implementation' });
+		await lifecycle.create({
+			title: 'Feature Implementation',
+			workspacePath: '/default/workspace',
+		});
 
 		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1262,7 +1314,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 	});
 
 	it('should use session ID for branch name when no title provided', async () => {
-		await lifecycle.create({});
+		await lifecycle.create({ workspacePath: '/default/workspace' });
 
 		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
 			expect.objectContaining({

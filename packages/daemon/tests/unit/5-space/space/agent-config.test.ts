@@ -12,7 +12,7 @@ import {
 } from '../../../../src/lib/space/agents/seed-agents';
 import {
 	createCustomAgentInit,
-	composePromptLayer,
+	expandPrompt,
 	type SlotOverrides,
 	type CustomAgentConfig,
 } from '../../../../src/lib/space/agents/custom-agent';
@@ -27,7 +27,7 @@ function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'TestAgent',
-		instructions: null,
+		customPrompt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -164,152 +164,86 @@ describe('SUB_SESSION_FEATURES', () => {
 });
 
 // ============================================================================
-// composePromptLayer — override/expand composition
+// expandPrompt — append-only composition
 // ============================================================================
 
-describe('composePromptLayer', () => {
-	it('returns base when no override is provided', () => {
-		expect(composePromptLayer('base prompt', undefined)).toBe('base prompt');
+describe('expandPrompt', () => {
+	it('returns base when no expansion is provided', () => {
+		expect(expandPrompt('base prompt', undefined)).toBe('base prompt');
 	});
 
-	it('returns empty string when base and override are both absent', () => {
-		expect(composePromptLayer(undefined, undefined)).toBe('');
-		expect(composePromptLayer(null, undefined)).toBe('');
-		expect(composePromptLayer('', undefined)).toBe('');
+	it('returns empty string when base and expansion are both absent', () => {
+		expect(expandPrompt(undefined, undefined)).toBe('');
+		expect(expandPrompt(null, undefined)).toBe('');
+		expect(expandPrompt('', undefined)).toBe('');
 	});
 
-	it('override mode replaces base entirely', () => {
-		const override = { mode: 'override' as const, value: 'new prompt' };
-		expect(composePromptLayer('old base', override)).toBe('new prompt');
+	it('appends expansion to base with double newline', () => {
+		expect(expandPrompt('base', 'additional')).toBe('base\n\nadditional');
 	});
 
-	it('override mode uses value when base is absent', () => {
-		const override = { mode: 'override' as const, value: 'new prompt' };
-		expect(composePromptLayer(null, override)).toBe('new prompt');
+	it('returns expansion only when base is empty', () => {
+		expect(expandPrompt('', 'additional')).toBe('additional');
+		expect(expandPrompt(null, 'additional')).toBe('additional');
+		expect(expandPrompt(undefined, 'additional')).toBe('additional');
 	});
 
-	it('expand mode appends to base with double newline', () => {
-		const override = { mode: 'expand' as const, value: 'additional' };
-		expect(composePromptLayer('base', override)).toBe('base\n\nadditional');
+	it('trims whitespace from both base and expansion value', () => {
+		expect(expandPrompt('  base  ', '  extra  ')).toBe('base\n\nextra');
 	});
 
-	it('expand mode returns value only when base is empty', () => {
-		const override = { mode: 'expand' as const, value: 'additional' };
-		expect(composePromptLayer('', override)).toBe('additional');
-		expect(composePromptLayer(null, override)).toBe('additional');
-		expect(composePromptLayer(undefined, override)).toBe('additional');
-	});
-
-	it('trims whitespace from both base and override value', () => {
-		const override = { mode: 'expand' as const, value: '  extra  ' };
-		expect(composePromptLayer('  base  ', override)).toBe('base\n\nextra');
-	});
-
-	it('handles multiline values in expand mode', () => {
-		const override = { mode: 'expand' as const, value: 'line1\nline2\nline3' };
-		const result = composePromptLayer('base', override);
+	it('handles multiline values', () => {
+		const result = expandPrompt('base', 'line1\nline2\nline3');
 		expect(result).toBe('base\n\nline1\nline2\nline3');
 	});
 
-	it('handles multiline values in override mode', () => {
-		const override = { mode: 'override' as const, value: 'line1\nline2' };
-		expect(composePromptLayer('old base', override)).toBe('line1\nline2');
-	});
-
-	it('expands on top of non-empty base instructions', () => {
+	it('expands on top of non-empty base', () => {
 		const base = 'Follow TDD principles.\nWrite tests first.';
-		const override = { mode: 'expand' as const, value: 'Use bun:test for all tests.' };
-		const result = composePromptLayer(base, override);
+		const result = expandPrompt(base, 'Use bun:test for all tests.');
 		expect(result).toBe(
 			'Follow TDD principles.\nWrite tests first.\n\nUse bun:test for all tests.'
 		);
 	});
 
-	it('overrides long base instructions with short override', () => {
-		const base = 'Follow TDD principles.\nWrite tests first.\nCommit frequently.';
-		const override = { mode: 'override' as const, value: 'Just write code.' };
-		expect(composePromptLayer(base, override)).toBe('Just write code.');
+	it('returns base when expansion is blank', () => {
+		expect(expandPrompt('base', '')).toBe('base');
+		expect(expandPrompt('base', '   ')).toBe('base');
 	});
 
-	it('preserves empty override value in override mode', () => {
-		const override = { mode: 'override' as const, value: '' };
-		expect(composePromptLayer('base', override)).toBe('');
+	it('returns empty string when base is empty and expansion is blank', () => {
+		expect(expandPrompt('', '')).toBe('');
+		expect(expandPrompt('', '   ')).toBe('');
 	});
 
-	it('preserves empty override value in expand mode', () => {
-		const override = { mode: 'expand' as const, value: '' };
-		expect(composePromptLayer('base', override)).toBe('base');
+	it('handles expansion with only whitespace base', () => {
+		expect(expandPrompt('   ', 'value')).toBe('value');
 	});
 
-	it('works with SlotOverrides interface type', () => {
-		const overrides: SlotOverrides = {
-			systemPrompt: { mode: 'expand', value: 'extra context' },
-			instructions: { mode: 'override', value: 'new instructions' },
-		};
-
-		expect(composePromptLayer('base prompt', overrides.systemPrompt)).toBe(
-			'base prompt\n\nextra context'
-		);
-		expect(composePromptLayer('old instructions', overrides.instructions)).toBe('new instructions');
-	});
-
-	it('returns base when SlotOverrides.systemPrompt is undefined', () => {
-		const overrides: SlotOverrides = {};
-		expect(composePromptLayer('base prompt', overrides.systemPrompt)).toBe('base prompt');
-	});
-
-	it('returns base when SlotOverrides.instructions is undefined', () => {
-		const overrides: SlotOverrides = {};
-		expect(composePromptLayer('base instructions', overrides.instructions)).toBe(
-			'base instructions'
-		);
-	});
-
-	it('handles expand with null base', () => {
-		const override = { mode: 'expand' as const, value: 'some text' };
-		expect(composePromptLayer(null, override)).toBe('some text');
-	});
-
-	it('handles override trimming edge cases', () => {
-		const override = { mode: 'override' as const, value: '\n\n  padded  \n\n' };
-		expect(composePromptLayer('old', override)).toBe('padded');
-	});
-
-	it('handles expand trimming edge cases', () => {
-		const override = { mode: 'expand' as const, value: '\n\n  padded  \n\n' };
-		expect(composePromptLayer('base', override)).toBe('base\n\npadded');
-	});
-
-	it('with only whitespace base and expand mode', () => {
-		const override = { mode: 'expand' as const, value: 'value' };
-		expect(composePromptLayer('   ', override)).toBe('value');
-	});
-
-	it('with only whitespace base and override mode', () => {
-		const override = { mode: 'override' as const, value: 'value' };
-		expect(composePromptLayer('   ', override)).toBe('value');
-	});
-
-	it('with empty override and empty base returns empty', () => {
-		const override = { mode: 'expand' as const, value: '' };
-		expect(composePromptLayer('', override)).toBe('');
-	});
-
-	it('preserves exact base when override is undefined', () => {
-		expect(composePromptLayer('  exact  spacing  ', undefined)).toBe('exact  spacing');
+	it('preserves trimmed base when expansion is undefined', () => {
+		expect(expandPrompt('  exact  spacing  ', undefined)).toBe('exact  spacing');
 	});
 
 	it('handles unicode content', () => {
-		const override = { mode: 'expand' as const, value: '日本語の指示' };
-		expect(composePromptLayer('English base', override)).toBe('English base\n\n日本語の指示');
+		expect(expandPrompt('English base', '日本語の指示')).toBe('English base\n\n日本語の指示');
 	});
 
 	it('handles very long values', () => {
 		const longValue = 'x'.repeat(10000);
-		const override = { mode: 'expand' as const, value: longValue };
-		const result = composePromptLayer('base', override);
+		const result = expandPrompt('base', longValue);
 		expect(result).toBe(`base\n\n${longValue}`);
 		expect(result.length).toBe(10006);
+	});
+
+	it('handles expand with null base', () => {
+		expect(expandPrompt(null, 'some text')).toBe('some text');
+	});
+
+	it('trims padded expansion', () => {
+		expect(expandPrompt('base', '\n\n  padded  \n\n')).toBe('base\n\npadded');
+	});
+
+	it('with only whitespace base and expansion', () => {
+		expect(expandPrompt('   ', 'value')).toBe('value');
 	});
 });
 
@@ -384,37 +318,58 @@ describe('createCustomAgentInit — sub-session features', () => {
 		expect(init.agents).toBeUndefined();
 	});
 
-	it('applies systemPrompt override mode in system prompt', () => {
+	it('applies customPrompt slot expansion in system prompt', () => {
 		const config = makeConfig(PRESET_AGENT_TOOLS.coder);
+		config.customAgent = makeAgent({
+			customPrompt: 'Base prompt',
+			tools: PRESET_AGENT_TOOLS.coder,
+		});
 		config.slotOverrides = {
-			systemPrompt: { mode: 'override', value: 'Override prompt' },
+			customPrompt: 'Slot expansion',
 		};
 		const init = createCustomAgentInit(config);
 
-		// Check that the system prompt is set via append (non-tools path)
-		if (init.systemPrompt && 'append' in init.systemPrompt) {
-			expect(init.systemPrompt.append).toBe('Override prompt');
-		} else if (init.systemPrompt && 'type' in init.systemPrompt) {
-			// tools path — check agent prompt
+		// tools path — check agent prompt contains expanded text
+		if (init.agent && init.agents) {
 			const agentKey = init.agent as string;
 			const agentDef = init.agents![agentKey];
-			expect(agentDef.prompt).toBe('Override prompt');
+			expect(agentDef.prompt).toBe('Base prompt\n\nSlot expansion');
 		}
 	});
 
-	it('applies systemPrompt expand mode in system prompt', () => {
+	it('applies customPrompt expansion in non-tools system prompt path', () => {
 		const config = makeConfig(undefined);
 		config.customAgent = makeAgent({
-			systemPrompt: 'Base prompt',
+			customPrompt: 'Base prompt',
 			tools: undefined,
 		});
 		config.slotOverrides = {
-			systemPrompt: { mode: 'expand', value: 'Expanded context' },
+			customPrompt: 'Expanded context',
 		};
 		const init = createCustomAgentInit(config);
 
 		if (init.systemPrompt && 'append' in init.systemPrompt) {
 			expect(init.systemPrompt.append).toBe('Base prompt\n\nExpanded context');
 		}
+	});
+});
+
+// ============================================================================
+// SlotOverrides interface
+// ============================================================================
+
+describe('SlotOverrides interface', () => {
+	it('accepts customPrompt as string', () => {
+		const overrides: SlotOverrides = {
+			customPrompt: 'extra context',
+		};
+		expect(expandPrompt('base prompt', overrides.customPrompt)).toBe(
+			'base prompt\n\nextra context'
+		);
+	});
+
+	it('returns base when SlotOverrides.customPrompt is undefined', () => {
+		const overrides: SlotOverrides = {};
+		expect(expandPrompt('base prompt', overrides.customPrompt)).toBe('base prompt');
 	});
 });

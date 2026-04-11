@@ -50,7 +50,7 @@ const AGENT_A: SpaceAgent = {
 	id: 'agent-1',
 	spaceId: 'space-1',
 	name: 'Alpha Agent',
-	instructions: null,
+	customPrompt: null,
 	createdAt: 0,
 	updatedAt: 0,
 };
@@ -59,7 +59,7 @@ const AGENT_B: SpaceAgent = {
 	id: 'agent-2',
 	spaceId: 'space-1',
 	name: 'Beta Agent',
-	instructions: null,
+	customPrompt: null,
 	createdAt: 0,
 	updatedAt: 0,
 };
@@ -315,7 +315,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		expect(getByTestId('agent-name').textContent).toContain('coder');
 	});
 
-	it('shows override-indicator dot when a multi-agent slot has instructions override', () => {
+	it('shows override-indicator dot when a multi-agent slot has customPrompt override', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
@@ -323,24 +323,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 				{
 					agentId: 'agent-1',
 					name: 'coder',
-					instructions: { mode: 'override' as const, value: 'Be precise.' },
-				},
-				{ agentId: 'agent-2', name: 'reviewer' },
-			],
-		};
-		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
-		expect(getByTestId('override-indicator')).toBeTruthy();
-	});
-
-	it('shows override-indicator dot when a multi-agent slot has systemPrompt override', () => {
-		const step = {
-			...STEP_DRAFT,
-			agentId: '',
-			agents: [
-				{
-					agentId: 'agent-1',
-					name: 'coder',
-					systemPrompt: { mode: 'override' as const, value: 'Be strict.' },
+					customPrompt: { value: 'Be precise.' },
 				},
 				{ agentId: 'agent-2', name: 'reviewer' },
 			],
@@ -702,8 +685,8 @@ describe('WorkflowNode — agent completion state', () => {
 		expect(getByTestId('agent-status-spinner')).toBeTruthy();
 	});
 
-	it('shows checkmark for done single-agent', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'done' }];
+	it('shows checkmark for idle single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'idle' }];
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-check')).toBeTruthy();
 	});
@@ -716,7 +699,7 @@ describe('WorkflowNode — agent completion state', () => {
 
 	it('shows per-agent status icons for multi-agent node', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
 			{ agentName: 'reviewer', status: 'in_progress' },
 		];
 		const { getAllByTestId } = render(
@@ -728,8 +711,8 @@ describe('WorkflowNode — agent completion state', () => {
 
 	it('applies gray border when all agents done (green is start-node only)', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
-			{ agentName: 'reviewer', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
+			{ agentName: 'reviewer', status: 'idle' },
 		];
 		const { getByTestId } = render(
 			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
@@ -740,7 +723,7 @@ describe('WorkflowNode — agent completion state', () => {
 
 	it('does not apply green border when not all done', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
 			{ agentName: 'reviewer', status: 'in_progress' },
 		];
 		const { getByTestId } = render(

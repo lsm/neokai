@@ -2,9 +2,12 @@
  * Unit tests for createNodeAgentToolHandlers()
  *
  * Covers all node agent peer communication tools:
- *   list_peers   — list peers excluding self and task-agent
- *   send_message — channel-validated direct messaging
- *   report_done  — signal agent completion, persist summary, emit event
+ *   list_peers              — list peers excluding self and task-agent
+ *   send_message            — channel-validated direct messaging + gate-write side-effect
+ *   save                    — persist summary and/or structured data to NodeExecution
+ *   list_channels           — enumerate declared channels
+ *   read_gate / list_gates  — gate inspection
+ *   list_reachable_agents   — cross-node reachability
  *
  * Tests use a real SQLite database (via runMigrations) and mock message
  * injectors so no real agent sessions are created.
@@ -80,16 +83,17 @@ function makeFreshRunId(db: BunDatabase, spaceId: string): string {
 
 function toNodeExecutionStatus(
 	status: string
-): 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled' {
+): 'pending' | 'in_progress' | 'idle' | 'blocked' | 'cancelled' {
 	switch (status) {
 		case 'pending':
 		case 'open':
 			return 'pending';
 		case 'in_progress':
 			return 'in_progress';
+		case 'idle':
 		case 'done':
 		case 'completed':
-			return 'done';
+			return 'idle';
 		case 'blocked':
 		case 'failed':
 			return 'blocked';
@@ -330,7 +334,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(false);
-		expect(data.permittedTargets).toEqual([]);
+		expect(data.permittedTargets).toEqual(['task-agent']);
 	});
 
 	test('reports permitted targets when channels declared', async () => {
@@ -342,7 +346,7 @@ describe('node-agent-tools: list_peers', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.channelTopologyDeclared).toBe(true);
-		expect(data.permittedTargets).toEqual(['reviewer']);
+		expect(data.permittedTargets).toEqual(['reviewer', 'task-agent']);
 	});
 
 	test('returns empty peer list when no peers in the run', async () => {
@@ -405,8 +409,9 @@ describe('node-agent-tools: list_peers', () => {
 		expect(data.peers).toHaveLength(0);
 	});
 
-	test('includes done task with no session in peers list', async () => {
-		// A done task whose session was cleared should still appear for visibility
+	test('includes idle task with no session in peers list', async () => {
+		// An idle task whose session was cleared should still appear for visibility
+		// space_tasks uses 'done'; toNodeExecutionStatus maps it to 'idle' for node_executions
 		const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 		seedSpaceTask(ctx.db, ctx.spaceId, isolatedRunId, ctx.nodeId, 'tester', 'done', 'Done');
 		// Do NOT set task_agent_session_id — simulates post-session cleanup
@@ -799,10 +804,10 @@ describe('node-agent-tools: send_message', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: report_done
+// Tests: save
 // ---------------------------------------------------------------------------
 
-describe('node-agent-tools: report_done', () => {
+describe('node-agent-tools: save', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -820,58 +825,80 @@ describe('node-agent-tools: report_done', () => {
 			.find((e) => e.agentName === 'coder');
 	}
 
-	test('marks node execution as done without summary', async () => {
+	test('save({ summary }) persists summary to result field', async () => {
 		const myExec = getCoderExecution();
 		expect(myExec).toBeDefined();
 
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const result = await handlers.report_done({});
+		const result = await handlers.save({ summary: 'PR #42 merged.' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
 		expect(data.executionId).toBe(myExec!.id);
 		expect(data.agentName).toBe('coder');
-		expect(data.message).toContain('marked as completed');
+		expect(data.savedSummary).toBe('PR #42 merged.');
+		expect(data.savedData).toBeNull();
 
 		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
-		expect(updated?.status).toBe('done');
-		expect(updated?.result).toBeNull();
-		expect(updated?.completedAt).not.toBeNull();
+		expect(updated?.result).toBe('PR #42 merged.');
+		expect(updated?.data).toBeNull();
+		expect(updated?.status).toBe('in_progress'); // save does not change status
 	});
 
-	test('persists summary to node execution result', async () => {
+	test('save({ data }) persists data to data field', async () => {
 		const myExec = getCoderExecution();
 		expect(myExec).toBeDefined();
 
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const result = await handlers.report_done({ summary: 'PR #42 merged successfully.' });
+		const result = await handlers.save({ data: { prNumber: 42, merged: true } });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		expect(data.summary).toBe('PR #42 merged successfully.');
+		expect(data.savedSummary).toBeNull();
+		expect(data.savedData).toEqual({ prNumber: 42, merged: true });
 
 		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
-		expect(updated?.status).toBe('done');
-		expect(updated?.result).toBe('PR #42 merged successfully.');
+		expect(updated?.data).toEqual({ prNumber: 42, merged: true });
+		expect(updated?.result).toBeNull();
 	});
 
-	test('calling report_done twice is idempotent for status done', async () => {
+	test('save({ summary, data }) persists both fields', async () => {
+		const myExec = getCoderExecution();
+		expect(myExec).toBeDefined();
+
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const first = JSON.parse((await handlers.report_done({ summary: 'first' })).content[0].text);
+		const result = await handlers.save({ summary: 'work done', data: { pr: 99 } });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.savedSummary).toBe('work done');
+		expect(data.savedData).toEqual({ pr: 99 });
+
+		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
+		expect(updated?.result).toBe('work done');
+		expect(updated?.data).toEqual({ pr: 99 });
+	});
+
+	test('multiple save calls overwrite previous values', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const first = JSON.parse(
+			(await handlers.save({ summary: 'first', data: { v: 1 } })).content[0].text
+		);
 		expect(first.success).toBe(true);
 
-		const second = JSON.parse((await handlers.report_done({ summary: 'second' })).content[0].text);
+		const second = JSON.parse(
+			(await handlers.save({ summary: 'second', data: { v: 2 } })).content[0].text
+		);
 		expect(second.success).toBe(true);
 
 		const myExec = getCoderExecution();
-		expect(myExec).toBeDefined();
-		expect(myExec?.status).toBe('done');
 		expect(myExec?.result).toBe('second');
+		expect(myExec?.data).toEqual({ v: 2 });
 	});
 
-	test('returns error when node execution for myAgentName is missing', async () => {
+	test('returns error when NodeExecution not found for agent', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { myAgentName: 'ghost-agent' }));
-		const result = await handlers.report_done({});
+		const result = await handlers.save({ summary: 'hello' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
@@ -879,42 +906,31 @@ describe('node-agent-tools: report_done', () => {
 		expect(data.error).toContain('ghost-agent');
 	});
 
-	test('daemonHub is not used by report_done in node_execution path', async () => {
-		const emitted: string[] = [];
-		const fakeDaemonHub = {
-			emit: async (name: string) => {
-				emitted.push(name);
-			},
-		};
-
-		const handlers = createNodeAgentToolHandlers(
-			makeConfig(ctx, {
-				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
-			})
-		);
-		const data = JSON.parse((await handlers.report_done({ summary: 'done' })).content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(emitted).toHaveLength(0);
-	});
-
-	test('daemonHub is not called when report_done fails', async () => {
-		const emitted: string[] = [];
-		const fakeDaemonHub = {
-			emit: async (name: string) => {
-				emitted.push(name);
-			},
-		};
-
-		const handlers = createNodeAgentToolHandlers(
-			makeConfig(ctx, {
-				myAgentName: 'ghost-agent',
-				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
-			})
-		);
-		const data = JSON.parse((await handlers.report_done({})).content[0].text);
+	test('returns error when neither summary nor data provided', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const result = await handlers.save({});
+		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
+		expect(data.error).toContain('At least one');
+	});
+
+	test('does not emit daemonHub events', async () => {
+		const emitted: string[] = [];
+		const fakeDaemonHub = {
+			emit: async (name: string) => {
+				emitted.push(name);
+			},
+		};
+
+		const handlers = createNodeAgentToolHandlers(
+			makeConfig(ctx, {
+				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+			})
+		);
+		const result = JSON.parse((await handlers.save({ summary: 'done' })).content[0].text);
+
+		expect(result.success).toBe(true);
 		expect(emitted).toHaveLength(0);
 	});
 });
@@ -1268,10 +1284,10 @@ describe('node-agent-tools: read_gate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: write_gate
+// Tests: send_message (gate-write)
 // ---------------------------------------------------------------------------
 
-describe('node-agent-tools: write_gate', () => {
+describe('node-agent-tools: send_message (gate-write)', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -1283,7 +1299,61 @@ describe('node-agent-tools: write_gate', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('returns error for non-existent gateId', async () => {
+	/** Build a workflow with a gated channel from coder → reviewer. */
+	function makeWorkflowWithGatedChannel(gate: Gate): SpaceWorkflow {
+		return {
+			id: 'wf-1',
+			spaceId: ctx.spaceId,
+			name: 'Test Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer', gateId: gate.id }],
+			gates: [gate],
+		};
+	}
+
+	test('gate-write occurs and gateWrite returned in response when data provided on gated channel', async () => {
+		const gate: Gate = {
+			id: 'gate-writable',
+			fields: [{ name: 'x', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { x: 'val' },
+		});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.gateWrite).toBeDefined();
+		expect(data.gateWrite.gateId).toBe('gate-writable');
+		expect(data.gateWrite.gateOpen).toBe(true);
+	});
+
+	test('no gateWrite in response when data not provided', async () => {
+		const gate: Gate = {
+			id: 'gate-no-data',
+			fields: [{ name: 'x', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
+			resetOnCycle: false,
+		};
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const config = makeConfig(ctx, { workflow });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		const result = await handlers.send_message({ target: 'reviewer', message: 'hi' });
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.gateWrite).toBeUndefined();
+	});
+
+	test('no gateWrite when channel has no gateId', async () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
 			spaceId: ctx.spaceId,
@@ -1293,258 +1363,114 @@ describe('node-agent-tools: write_gate', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [],
+			channels: [{ id: 'ch-open', from: 'coder', to: 'reviewer' }],
 			gates: [],
 		};
 		const config = makeConfig(ctx, { workflow });
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gateghost', data: { x: 1 } });
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { x: 1 },
+		});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('not found');
+		expect(data.gateWrite).toBeUndefined();
 	});
 
-	test('returns error when role is not in field writers', async () => {
+	test('only authorized fields are merged into gate', async () => {
 		const gate: Gate = {
-			id: 'gate-restricted',
-			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }], // only reviewer can write
+			id: 'gate-auth',
+			fields: [
+				{ name: 'approved', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+				{ name: 'score', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+			],
 			resetOnCycle: false,
 		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// coder can write 'approved' but not 'score'
+		await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { approved: 'yes', score: '10' },
+		});
+
+		const record = gateDataRepo.get(ctx.workflowRunId, 'gate-auth');
+		expect(record?.data.approved).toBe('yes');
+		expect(record?.data.score).toBeUndefined();
+	});
+
+	test('gate is closed when only partial conditions met', async () => {
+		const gate: Gate = {
+			id: 'gate-partial',
+			fields: [
+				{ name: 'a', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+				{ name: 'b', type: 'string', writers: ['coder'], check: { op: 'exists' } },
+			],
+			resetOnCycle: false,
 		};
-		// makeConfig uses myAgentName: 'coder' by default
+		const workflow = makeWorkflowWithGatedChannel(gate);
 		const config = makeConfig(ctx, { workflow });
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-restricted', data: { x: 1 } });
-		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('not authorized');
-		expect(data.allowedWriters).toEqual(['reviewer']);
-		expect(data.myAgentName).toBe('coder');
-	});
-
-	test('succeeds when writer matches a role alias (case-insensitive)', async () => {
-		const gate: Gate = {
-			id: 'gate-alias-writable',
-			fields: [{ name: 'x', type: 'string', writers: ['reviewer'], check: { op: 'exists' } }],
-			resetOnCycle: false,
-		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-		const config = makeConfig(ctx, {
-			workflow,
-			myAgentName: '3de067fc-82f3-4f8c-a3fc-c2c3205648dd',
-			myAgentNameAliases: ['Reviewer'],
+		// Only provide 'a', missing 'b'
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { a: '1' },
 		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-alias-writable', data: { x: 'ok' } });
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
-		expect(data.updatedData).toEqual({ x: 'ok' });
+		expect(data.gateWrite.gateOpen).toBe(false);
 	});
 
-	test('succeeds when role is in field writers and merges data', async () => {
+	test('gate opens once all conditions satisfied across multiple sends', async () => {
 		const gate: Gate = {
-			id: 'gate-writable',
+			id: 'gate-accumulate',
 			fields: [
 				{ name: 'x', type: 'string', writers: ['coder'], check: { op: 'exists' } },
 				{ name: 'y', type: 'string', writers: ['coder'], check: { op: 'exists' } },
 			],
 			resetOnCycle: false,
 		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-		const config = makeConfig(ctx, { workflow });
-		const handlers = createNodeAgentToolHandlers(config);
-		// First write: creates the record with { x: 42 }
-		const result = await handlers.write_gate({ gateId: 'gate-writable', data: { x: 42 } });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		// Shallow merge: x=42 overwrites existing x, y is not in the partial so it's absent.
-		// Gate defaults are NOT merged in by write_gate — merge is only against stored data.
-		expect(data.updatedData).toEqual({ x: 42 });
-		expect(data.gateOpen).toBe(false); // y field also needs to exist for gate to open
-		expect(data.nodeId).toBe(ctx.nodeId);
-
-		// Second write: merge adds 'y' alongside existing 'x' — now both fields exist, gate opens
-		const result2 = await handlers.write_gate({ gateId: 'gate-writable', data: { y: 'original' } });
-		const data2 = JSON.parse(result2.content[0].text);
-		expect(data2.success).toBe(true);
-		expect(data2.updatedData).toEqual({ x: 42, y: 'original' });
-		expect(data2.gateOpen).toBe(true);
-	});
-
-	test('shallow merge: nested object is replaced wholesale', async () => {
-		const gate: Gate = {
-			id: 'gate-nested',
-			fields: [{ name: 'config', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
-			resetOnCycle: false,
-		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-		const config = makeConfig(ctx, { workflow });
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const gateDataRepo = new GateDataRepository(ctx.db);
+		const config = makeConfig(ctx, { workflow, gateDataRepo });
 		const handlers = createNodeAgentToolHandlers(config);
 
-		// Write with new nested object
-		const result = await handlers.write_gate({
-			gateId: 'gate-nested',
-			data: { config: { c: 3 } },
+		// First send: x only — gate still closed
+		const r1 = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { x: 'val1' },
 		});
-		const data = JSON.parse(result.content[0].text);
+		expect(JSON.parse(r1.content[0].text).gateWrite.gateOpen).toBe(false);
 
-		expect(data.success).toBe(true);
-		// Nested object replaced (not deep-merged)
-		expect(data.updatedData).toEqual({ config: { c: 3 } });
+		// Second send: y — gate now opens (both x and y satisfied)
+		const r2 = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { y: 'val2' },
+		});
+		expect(JSON.parse(r2.content[0].text).gateWrite.gateOpen).toBe(true);
+
+		const record = gateDataRepo.get(ctx.workflowRunId, 'gate-accumulate');
+		expect(record?.data.x).toBe('val1');
+		expect(record?.data.y).toBe('val2');
 	});
 
-	test('authorized role with wildcard (*) allows any role to write', async () => {
+	test('onGateDataChanged fires after gate-write via send_message', async () => {
 		const gate: Gate = {
-			id: 'gate-open',
-			fields: [{ name: 'voted', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-			resetOnCycle: false,
-		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-		// myAgentName is 'coder' but '*' should authorize any role
-		const config = makeConfig(ctx, { workflow });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-open', data: { voted: true } });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(data.gateOpen).toBe(true);
-	});
-
-	test('count condition gate opens after sufficient votes', async () => {
-		const gate: Gate = {
-			id: 'gate-vote',
-			fields: [
-				{
-					name: 'votes',
-					type: 'map',
-					writers: ['*'],
-					check: { op: 'count', match: 'approved', min: 2 },
-				},
-			],
-			resetOnCycle: false,
-		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-
-		// First vote (node-a): write only node-a's vote, gate is still closed
-		const configA = makeConfig(ctx, {
-			workflow,
-			workflowNodeId: 'node-a',
-		});
-		const handlersA = createNodeAgentToolHandlers(configA);
-		const resultA = await handlersA.write_gate({
-			gateId: 'gate-vote',
-			data: { votes: { 'node-a': 'approved' } },
-		});
-		const dataA = JSON.parse(resultA.content[0].text);
-		expect(dataA.success).toBe(true);
-		expect(dataA.gateOpen).toBe(false); // only 1 vote, need 2
-
-		// Second vote (node-b): shallow merge replaces the entire votes map,
-		// so node-b must write the accumulated map. In practice, an agent would
-		// read the current state first and then write the updated map.
-		const configB = makeConfig(ctx, {
-			workflow,
-			workflowNodeId: 'node-b',
-		});
-		const handlersB = createNodeAgentToolHandlers(configB);
-		const resultB = await handlersB.write_gate({
-			gateId: 'gate-vote',
-			data: { votes: { 'node-a': 'approved', 'node-b': 'approved' } },
-		});
-		const dataB = JSON.parse(resultB.content[0].text);
-		expect(dataB.success).toBe(true);
-		expect(dataB.gateOpen).toBe(true); // 2 votes, min=2
-	});
-
-	test('write_gate calls onGateDataChanged when provided', async () => {
-		const gate: Gate = {
-			id: 'trigger-gate',
+			id: 'gate-callback',
 			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-trigger',
-			spaceId: ctx.spaceId,
-			name: 'Trigger Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-
+		const workflow = makeWorkflowWithGatedChannel(gate);
 		const calls: Array<{ runId: string; gateId: string }> = [];
 		const config = makeConfig(ctx, {
 			workflow,
@@ -1554,74 +1480,39 @@ describe('node-agent-tools: write_gate', () => {
 		});
 		const handlers = createNodeAgentToolHandlers(config);
 
-		await handlers.write_gate({ gateId: 'trigger-gate', data: { ready: true } });
-
-		// Allow microtasks to flush the fire-and-forget promise
+		await handlers.send_message({ target: 'reviewer', message: 'hi', data: { ready: true } });
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].runId).toBe(ctx.workflowRunId);
-		expect(calls[0].gateId).toBe('trigger-gate');
+		expect(calls[0].gateId).toBe('gate-callback');
 	});
 
-	test('write_gate does not fail when onGateDataChanged is absent', async () => {
+	test('daemonHub emits space.gateData.updated after gate-write via send_message', async () => {
 		const gate: Gate = {
-			id: 'no-callback-gate',
-			fields: [{ name: 'x', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+			id: 'gate-event',
+			fields: [{ name: 'ready', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			resetOnCycle: false,
 		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-no-cb',
-			spaceId: ctx.spaceId,
-			name: 'No Callback Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-
-		// No onGateDataChanged provided — should not throw
-		const config = makeConfig(ctx, { workflow });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'no-callback-gate', data: { x: 1 } });
-		const data = JSON.parse(result.content[0].text);
-		expect(data.success).toBe(true);
-	});
-
-	test('rejects write_gate on script-only gate (no declared fields)', async () => {
-		// Script-only gates have no declared fields, so any data write is rejected
-		// at the field authorization layer. This is intentional — script execution
-		// populates gate data internally; agents should not write directly.
-		const gate: Gate = {
-			id: 'gate-script-only',
-			script: {
-				interpreter: 'bash',
-				source: 'echo "ok"',
+		const workflow = makeWorkflowWithGatedChannel(gate);
+		const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
+		const fakeDaemonHub = {
+			emit: async (name: string, payload: unknown) => {
+				emitted.push({ name, payload: payload as Record<string, unknown> });
 			},
-			resetOnCycle: false,
 		};
-		const workflow: SpaceWorkflow = {
-			id: 'wf-1',
-			spaceId: ctx.spaceId,
-			name: 'Test Workflow',
-			description: '',
-			nodes: [],
-			startNodeId: '',
-			rules: [],
-			tags: [],
-			channels: [],
-			gates: [gate],
-		};
-		const config = makeConfig(ctx, { workflow });
+		const config = makeConfig(ctx, {
+			workflow,
+			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
+		});
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-script-only', data: { x: 1 } });
-		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('not declared');
+		await handlers.send_message({ target: 'reviewer', message: 'hi', data: { ready: true } });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		const gateEvent = emitted.find((e) => e.name === 'space.gateData.updated');
+		expect(gateEvent).toBeDefined();
+		expect(gateEvent!.payload.gateId).toBe('gate-event');
 	});
 });
 
@@ -1908,10 +1799,7 @@ describe('node-agent-tools: system prompt uses only visible prompt text', () => 
 			id: 'agent-1',
 			spaceId: 'space-1',
 			name: 'Coder',
-			description: '',
-			model: null,
-			tools: [],
-			systemPrompt: 'Visible workflow prompt',
+			customPrompt: 'Visible workflow prompt',
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});
@@ -1943,6 +1831,7 @@ describe('list_peers — completion state', () => {
 		seedSpaceWorkflowRunRow(ctx.db, workflowRunId, ctx.spaceId, 'wf-seed');
 
 		// Seed a completed task for the reviewer peer
+		// space_tasks uses 'done'; toNodeExecutionStatus maps it to 'idle' for node_executions
 		seedSpaceTask(
 			ctx.db,
 			ctx.spaceId,
@@ -1965,7 +1854,7 @@ describe('list_peers — completion state', () => {
 		const reviewerPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'reviewer');
 		expect(reviewerPeer).toBeDefined();
 		expect(reviewerPeer.completionState).not.toBeNull();
-		expect(reviewerPeer.completionState.taskStatus).toBe('done');
+		expect(reviewerPeer.completionState.taskStatus).toBe('idle');
 		expect(reviewerPeer.completionState.completionSummary).toBe('All looks good!');
 		expect(reviewerPeer.completionState.agentName).toBe('reviewer');
 	});
@@ -1978,6 +1867,7 @@ describe('list_peers — completion state', () => {
 
 		// Seed tasks for both coder and reviewer on the same node
 		seedSpaceTask(ctx.db, ctx.spaceId, workflowRunId, workflowNodeId, 'coder', 'in_progress', null);
+		// space_tasks uses 'done'; toNodeExecutionStatus maps it to 'idle' for node_executions
 		seedSpaceTask(
 			ctx.db,
 			ctx.spaceId,
@@ -2010,7 +1900,7 @@ describe('list_peers — completion state', () => {
 			(s: { agentName: string }) => s.agentName === 'reviewer'
 		);
 		expect(reviewerState).toBeDefined();
-		expect(reviewerState.taskStatus).toBe('done');
+		expect(reviewerState.taskStatus).toBe('idle');
 		expect(reviewerState.completionSummary).toBe('Review done');
 	});
 
@@ -2052,6 +1942,10 @@ describe('node-agent-tools: async gate evaluation', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
+	/**
+	 * Build a workflow with a gated channel from coder → reviewer.
+	 * Used by tests that drive gate-write via send_message.
+	 */
 	function makeWorkflowWithGate(gate: Gate, spaceId: string): SpaceWorkflow {
 		return {
 			id: 'wf-1',
@@ -2062,12 +1956,12 @@ describe('node-agent-tools: async gate evaluation', () => {
 			startNodeId: '',
 			rules: [],
 			tags: [],
-			channels: [],
+			channels: [{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer', gateId: gate.id }],
 			gates: [gate],
 		};
 	}
 
-	test('write_gate uses scriptExecutor when provided (script passes)', async () => {
+	test('send_message gate-write uses scriptExecutor when provided (script passes)', async () => {
 		const gate: Gate = {
 			id: 'gate-script-pass',
 			fields: [
@@ -2098,14 +1992,18 @@ describe('node-agent-tools: async gate evaluation', () => {
 			},
 		});
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-script-pass', data: {} });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { ready: true },
+		});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
-		expect(data.gateOpen).toBe(true);
+		expect(data.gateWrite).toBeDefined();
+		expect(data.gateWrite.gateOpen).toBe(true);
 	});
 
-	test('write_gate uses scriptExecutor when provided (script fails)', async () => {
+	test('send_message gate-write uses scriptExecutor when provided (script fails)', async () => {
 		const gate: Gate = {
 			id: 'gate-script-fail',
 			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
@@ -2133,62 +2031,18 @@ describe('node-agent-tools: async gate evaluation', () => {
 			},
 		});
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-script-fail', data: {} });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { x: true },
+		});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
-		expect(data.gateOpen).toBe(false);
-		expect(data.reason).toContain('Script check failed');
+		expect(data.gateWrite).toBeDefined();
+		expect(data.gateWrite.gateOpen).toBe(false);
 	});
 
-	test('write_gate persists _scriptResult to DB when script fails', async () => {
-		const gate: Gate = {
-			id: 'gate-script-result',
-			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
-			script: {
-				interpreter: 'bash',
-				source: 'echo "fail"',
-			},
-			resetOnCycle: false,
-		};
-		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
-
-		const mockExecutor = async () => ({
-			success: false,
-			data: {},
-			error: 'some reason',
-		});
-
-		const gateDataRepo = new GateDataRepository(ctx.db);
-		const config = makeConfig(ctx, {
-			workflow,
-			gateDataRepo,
-			scriptExecutor: mockExecutor,
-			scriptContext: {
-				workspacePath: '/tmp',
-				runId: ctx.workflowRunId,
-				gateId: 'gate-script-result',
-			},
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-script-result', data: {} });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(data.gateOpen).toBe(false);
-		const scriptResult = data.updatedData._scriptResult as { success: boolean; reason: string };
-		expect(scriptResult.success).toBe(false);
-		expect(scriptResult.reason).toContain('some reason');
-
-		// P0: _scriptResult should survive a DB re-fetch
-		const dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-script-result');
-		expect(dbRecord).not.toBeNull();
-		const dbScriptResult = dbRecord!.data._scriptResult as { success: boolean; reason: string };
-		expect(dbScriptResult.success).toBe(false);
-		expect(dbScriptResult.reason).toContain('some reason');
-	});
-
-	test('write_gate emits space.gateData.updated with _scriptResult when script fails', async () => {
+	test('send_message gate-write emits space.gateData.updated when script fails', async () => {
 		const gate: Gate = {
 			id: 'gate-event',
 			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
@@ -2220,56 +2074,14 @@ describe('node-agent-tools: async gate evaluation', () => {
 			daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
 		});
 		const handlers = createNodeAgentToolHandlers(config);
-		await handlers.write_gate({ gateId: 'gate-event', data: {} });
+		await handlers.send_message({ target: 'reviewer', message: 'hi', data: { x: true } });
 
 		// Allow microtasks to flush
 		await new Promise((resolve) => setTimeout(resolve, 0));
 
-		expect(emitted).toHaveLength(1);
-		expect(emitted[0].name).toBe('space.gateData.updated');
-		const payload = emitted[0].payload;
-		expect(payload.gateId).toBe('gate-event');
-		// _scriptResult should be in the emitted data
-		expect(payload.data).toBeDefined();
-		const gateData = payload.data as Record<string, unknown>;
-		expect(gateData._scriptResult).toEqual({
-			success: false,
-			reason: expect.stringContaining('Script failed'),
-		});
-	});
-
-	test('write_gate does not store _scriptResult when script passes', async () => {
-		const gate: Gate = {
-			id: 'gate-no-result',
-			fields: [
-				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-			],
-			script: {
-				interpreter: 'bash',
-				source: 'echo "ok"',
-			},
-			resetOnCycle: false,
-		};
-		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
-
-		const mockExecutor = async () => ({
-			success: true,
-			data: { ready: true },
-			error: undefined,
-		});
-
-		const config = makeConfig(ctx, {
-			workflow,
-			scriptExecutor: mockExecutor,
-			scriptContext: { workspacePath: '/tmp', runId: ctx.workflowRunId, gateId: 'gate-no-result' },
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-no-result', data: {} });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(data.gateOpen).toBe(true);
-		expect(data.updatedData._scriptResult).toBeUndefined();
+		const gateEvent = emitted.find((e) => e.name === 'space.gateData.updated');
+		expect(gateEvent).toBeDefined();
+		expect(gateEvent!.payload.gateId).toBe('gate-event');
 	});
 
 	test('read_gate uses scriptExecutor when provided', async () => {
@@ -2330,7 +2142,7 @@ describe('node-agent-tools: async gate evaluation', () => {
 		expect(data.gateOpen).toBe(true);
 	});
 
-	test('write_gate without scriptExecutor reports script-only gate as open', async () => {
+	test('send_message gate-write without scriptExecutor skips script check and opens gate on field pass', async () => {
 		const gate: Gate = {
 			id: 'gate-write-no-exec',
 			fields: [{ name: 'x', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
@@ -2342,18 +2154,21 @@ describe('node-agent-tools: async gate evaluation', () => {
 		};
 		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
 
-		// No scriptExecutor provided — script check is skipped
+		// No scriptExecutor provided — script check is skipped, field check alone opens gate
 		const config = makeConfig(ctx, { workflow });
 		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-write-no-exec', data: { x: true } });
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
+			data: { x: true },
+		});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
-		// Gate should be open because script is skipped and field check passes
-		expect(data.gateOpen).toBe(true);
+		expect(data.gateWrite).toBeDefined();
+		expect(data.gateWrite.gateOpen).toBe(true);
 	});
 
-	test('scriptExecutor receives correct context with gateId', async () => {
+	test('scriptExecutor receives correct context with gateId via send_message', async () => {
 		const gate: Gate = {
 			id: 'gate-context-check',
 			fields: [
@@ -2382,57 +2197,20 @@ describe('node-agent-tools: async gate evaluation', () => {
 			scriptContext: { workspacePath: '/my-workspace', runId: 'run-123', gateId: '' },
 		});
 		const handlers = createNodeAgentToolHandlers(config);
-		await handlers.write_gate({ gateId: 'gate-context-check', data: {} });
+		await handlers.send_message({ target: 'reviewer', message: 'hi', data: { ready: true } });
 
 		expect(receivedContext).not.toBeNull();
 		expect(receivedContext!.workspacePath).toBe('/my-workspace');
 		expect(receivedContext!.runId).toBe('run-123');
-		// gateId should be overridden per-gate from the handler
+		// gateId should be overridden per-gate inside the send_message handler
 		expect(receivedContext!.gateId).toBe('gate-context-check');
 	});
 
-	test('write_gate does not store _scriptResult on field failure without executor (P1)', async () => {
-		// Gate has both script and fields, but no scriptExecutor is wired.
-		// A field-check failure should NOT produce a _scriptResult because
-		// the script was never actually executed.
+	test('send_message with script-only gated channel does not perform gate-write (no declared fields)', async () => {
+		// Script-only gates have no declared fields, so all data keys are filtered out
+		// at the field authorization layer — authorizedData stays empty, gate-write is skipped.
 		const gate: Gate = {
-			id: 'gate-p1-bug',
-			fields: [
-				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-			],
-			script: {
-				interpreter: 'bash',
-				source: 'echo "never runs"',
-			},
-			resetOnCycle: false,
-		};
-		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
-
-		const gateDataRepo = new GateDataRepository(ctx.db);
-		// No scriptExecutor provided — falls back to field-only evaluation
-		const config = makeConfig(ctx, { workflow, gateDataRepo });
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({ gateId: 'gate-p1-bug', data: { ready: false } });
-		const data = JSON.parse(result.content[0].text);
-
-		expect(data.success).toBe(true);
-		expect(data.gateOpen).toBe(false);
-		expect(data.reason).toContain('ready');
-		// _scriptResult should NOT be present — it's a field failure, not a script failure
-		expect(data.updatedData._scriptResult).toBeUndefined();
-
-		// Verify it's not in the DB either
-		const dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-p1-bug');
-		expect(dbRecord).not.toBeNull();
-		expect(dbRecord!.data._scriptResult).toBeUndefined();
-	});
-
-	test('write_gate cleans up stale _scriptResult on subsequent success', async () => {
-		const gate: Gate = {
-			id: 'gate-cleanup',
-			fields: [
-				{ name: 'ready', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-			],
+			id: 'gate-script-only-no-write',
 			script: {
 				interpreter: 'bash',
 				source: 'echo "ok"',
@@ -2441,81 +2219,16 @@ describe('node-agent-tools: async gate evaluation', () => {
 		};
 		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
 
-		const gateDataRepo = new GateDataRepository(ctx.db);
-		let callCount = 0;
-		const mockExecutor = async () => {
-			callCount++;
-			if (callCount === 1) {
-				return { success: false, data: {}, error: 'first run fails' };
-			}
-			return { success: true, data: { ready: true }, error: undefined };
-		};
-
-		const config = makeConfig(ctx, {
-			workflow,
-			gateDataRepo,
-			scriptExecutor: mockExecutor,
-			scriptContext: {
-				workspacePath: '/tmp',
-				runId: ctx.workflowRunId,
-				gateId: 'gate-cleanup',
-			},
-		});
+		const config = makeConfig(ctx, { workflow });
 		const handlers = createNodeAgentToolHandlers(config);
-
-		// First write: script fails, _scriptResult should be persisted
-		const result1 = await handlers.write_gate({ gateId: 'gate-cleanup', data: {} });
-		const data1 = JSON.parse(result1.content[0].text);
-		expect(data1.gateOpen).toBe(false);
-		expect(data1.updatedData._scriptResult).toBeDefined();
-		let dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-cleanup');
-		expect(dbRecord!.data._scriptResult).toBeDefined();
-
-		// Second write: script succeeds, _scriptResult should be cleaned up
-		const result2 = await handlers.write_gate({ gateId: 'gate-cleanup', data: {} });
-		const data2 = JSON.parse(result2.content[0].text);
-		expect(data2.gateOpen).toBe(true);
-		expect(data2.updatedData._scriptResult).toBeUndefined();
-		dbRecord = gateDataRepo.get(ctx.workflowRunId, 'gate-cleanup');
-		expect(dbRecord!.data._scriptResult).toBeUndefined();
-	});
-
-	test('script-only gate does not crash at field authorization (no fields)', async () => {
-		// Script-only gate (no fields) — any write attempt should be rejected at
-		// the field authorization layer (fieldMap will be empty), not crash.
-		const gate: Gate = {
-			id: 'gate-script-only-no-crash',
-			script: {
-				interpreter: 'bash',
-				source: 'echo "ok"',
-			},
-			resetOnCycle: false,
-		};
-		const workflow = makeWorkflowWithGate(gate, ctx.spaceId);
-
-		const mockExecutor = async () => ({
-			success: true,
-			data: {},
-			error: undefined,
-		});
-
-		const config = makeConfig(ctx, {
-			workflow,
-			scriptExecutor: mockExecutor,
-			scriptContext: {
-				workspacePath: '/tmp',
-				runId: ctx.workflowRunId,
-				gateId: 'gate-script-only-no-crash',
-			},
-		});
-		const handlers = createNodeAgentToolHandlers(config);
-		const result = await handlers.write_gate({
-			gateId: 'gate-script-only-no-crash',
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'hi',
 			data: { anyKey: 'val' },
 		});
 		const data = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(false);
-		expect(data.error).toContain('not declared');
+		// Gate-write is silently skipped — no gateWrite field in response
+		expect(data.gateWrite).toBeUndefined();
 	});
 });

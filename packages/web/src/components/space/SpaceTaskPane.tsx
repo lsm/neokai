@@ -9,6 +9,7 @@ import type {
 	SpaceTaskStatus,
 } from '@neokai/shared';
 import { cn } from '../../lib/utils';
+import { borderColors } from '../../lib/design-tokens';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { getTransitionActions, TaskStatusActions } from './TaskStatusActions';
@@ -274,13 +275,13 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
-			<div class="px-4 py-3 flex-shrink-0">
-				<div class="flex items-start gap-3">
+			<div class={`px-4 py-4 flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default}`}>
+				<div class="flex items-center gap-3">
 					{onClose && (
 						<button
 							type="button"
 							onClick={onClose}
-							class="mt-1 text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
+							class="text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
 							aria-label="Back"
 							data-testid="task-back-button"
 						>
@@ -294,18 +295,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							</svg>
 						</button>
 					)}
-					<div class="min-w-0 flex-1">
-						<h2 class="text-sm sm:text-lg font-semibold text-gray-100 min-w-0 truncate">
-							{task.title}
-						</h2>
-						<div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-400">
-							<span data-testid="task-status-label">{activitySummary}</span>
-							{task.priority !== 'normal' && (
-								<span class="text-xs uppercase tracking-[0.12em] text-gray-500">
-									{PRIORITY_LABELS[task.priority]} Priority
-								</span>
-							)}
-						</div>
+					<h2 class="text-sm sm:text-lg font-semibold text-gray-100 min-w-0 truncate flex-1">
+						{task.title}
+					</h2>
+					<div class="flex items-center gap-2 text-sm text-gray-400 flex-shrink-0">
+						<span data-testid="task-status-label">{activitySummary}</span>
+						{task.priority !== 'normal' && (
+							<span class="text-xs uppercase tracking-[0.12em] text-gray-500">
+								{PRIORITY_LABELS[task.priority]} Priority
+							</span>
+						)}
 					</div>
 					{showHeaderSessionAction && (
 						<button

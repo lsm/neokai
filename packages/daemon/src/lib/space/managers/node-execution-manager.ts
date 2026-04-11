@@ -24,16 +24,16 @@ import type { NodeExecution, NodeExecutionStatus, UpdateNodeExecutionParams } fr
  *
  * Lifecycle:
  *   pending     → in_progress, cancelled
- *   in_progress → done, blocked, cancelled
- *   done        → in_progress (reactivation)
+ *   in_progress → idle, blocked, cancelled
+ *   idle        → in_progress (reactivation)
  *   blocked     → in_progress (retry), cancelled
  *   cancelled   → in_progress (retry)
  */
 export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeExecutionStatus[]> =
 	{
 		pending: ['in_progress', 'cancelled'],
-		in_progress: ['done', 'blocked', 'cancelled'],
-		done: ['in_progress'], // Reactivation — allows re-running a completed node
+		in_progress: ['idle', 'blocked', 'cancelled'],
+		idle: ['in_progress'], // Reactivation — allows re-running a completed node
 		blocked: ['in_progress', 'cancelled'],
 		cancelled: ['in_progress'], // Retry
 	};
@@ -42,7 +42,7 @@ export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeE
  * Terminal node execution statuses — these represent final states where
  * no further processing will occur.
  */
-export const TERMINAL_NODE_EXECUTION_STATUSES = new Set<NodeExecutionStatus>(['done', 'cancelled']);
+export const TERMINAL_NODE_EXECUTION_STATUSES = new Set<NodeExecutionStatus>(['idle', 'cancelled']);
 
 /**
  * Check if a node execution status transition is valid.

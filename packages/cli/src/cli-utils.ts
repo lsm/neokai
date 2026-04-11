@@ -5,7 +5,6 @@
 
 export interface CliOptions {
 	port?: number;
-	workspace?: string;
 	host?: string;
 	dbPath?: string;
 	help?: boolean;
@@ -38,15 +37,6 @@ export function parseArgs(args: string[]): ParseArgsResult {
 			} else {
 				return { options, error: `Invalid port value: ${portValue}` };
 			}
-		} else if (arg === '--workspace' || arg === '-w') {
-			if (options.workspace) {
-				options.help = true;
-				return { options, error: `Workspace already set to: ${options.workspace}` };
-			}
-			options.workspace = args[++i];
-			if (!options.workspace) {
-				return { options, error: '--workspace requires a path' };
-			}
 		} else if (arg === '--host') {
 			options.host = args[++i];
 			if (!options.host) {
@@ -57,13 +47,6 @@ export function parseArgs(args: string[]): ParseArgsResult {
 			if (!options.dbPath) {
 				return { options, error: '--db-path requires a path' };
 			}
-		} else if (!arg.startsWith('-')) {
-			// Positional argument: treat as workspace path
-			if (options.workspace) {
-				options.help = true;
-				return { options, error: `Unexpected argument: ${arg} (workspace already set)` };
-			}
-			options.workspace = arg;
 		} else {
 			// Unknown option - set help flag and return error
 			options.help = true;
@@ -81,52 +64,20 @@ export function getHelpText(): string {
 	return `
 NeoKai - Claude Code web UI for coding, life, and anything in between
 
-Usage: kai [path] [options]
-
-Arguments:
-  path                      Workspace directory (default: current directory)
+Usage: kai [options]
 
 Options:
   -p, --port <port>         Port to listen on (default: 9283)
-  -w, --workspace <path>    Alias for path argument
   --host <host>             Host to bind to (default: 0.0.0.0)
-  --db-path <path>          Database file path (default: ./data/daemon.db)
+  --db-path <path>          Database file path (default: ~/.neokai/data/daemon.db)
   -V, --version             Show version number
   -h, --help                Show this help message
 
-Environment Variables:
-  NEOKAI_WORKSPACE_PATH    Workspace root directory (overridden by path/--workspace)
-
 Examples:
-  kai                           Start in current directory
-  kai /path/to/project          Start with specific workspace
-  kai . -p 8080                 Start on port 8080
-  kai --db-path /shared/db.db   Use a shared database
+  kai                           Start server (database at ~/.neokai/data/daemon.db)
+  kai -p 8080                   Start on port 8080
+  kai --db-path /data/db.db     Use a custom database path
 `;
-}
-
-/**
- * Resolve default workspace path based on environment
- */
-export function resolveDefaultWorkspace(
-	nodeEnv: string,
-	projectRoot: string,
-	cwd: string,
-	envWorkspacePath?: string
-): string {
-	// CLI or env workspace takes priority
-	if (envWorkspacePath) {
-		return envWorkspacePath;
-	}
-
-	const isDev = nodeEnv === 'development';
-	if (isDev) {
-		// Development: use project_root/tmp/workspace
-		return `${projectRoot}/tmp/workspace`;
-	}
-
-	// Production/Test: use current working directory
-	return cwd;
 }
 
 // ============================================================

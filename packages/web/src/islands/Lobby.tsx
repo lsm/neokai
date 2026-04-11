@@ -29,7 +29,8 @@ import { Button } from '../components/ui/Button';
 import { useModal } from '../hooks/useModal';
 import { getRecentPaths, addRecentPath } from '../lib/recent-paths';
 import { formatRelativeTime } from '../lib/utils';
-import { createSession } from '../lib/api-helpers';
+import { createSession, getWorkspaceHistory, addWorkspaceToHistory } from '../lib/api-helpers';
+import type { WorkspaceHistoryEntry } from '@neokai/shared';
 import { toast } from '../lib/toast';
 import { createRoomModalSignal } from '../lib/signals';
 import { isUserSession } from '../lib/session-utils';
@@ -37,6 +38,7 @@ import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
+	const [workspaceHistory, setWorkspaceHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	const isCreateRoomModalOpen = createRoomModalSignal.value;
 	const newSessionModal = useModal();
 
@@ -62,14 +64,23 @@ export default function Lobby() {
 		absoluteTime: p.usedAt,
 	}));
 
+	async function loadWorkspaceHistory() {
+		try {
+			const entries = await getWorkspaceHistory();
+			setWorkspaceHistory(entries);
+		} catch {
+			// Fallback — keep empty; localStorage paths will be shown instead
+		}
+	}
+
 	async function handleCreateSession(params: {
-		workspacePath: string;
+		workspacePath?: string;
 		roomId?: string;
 		model?: ModelInfo;
 	}) {
 		try {
 			const { sessionId } = await createSession({
-				workspacePath: params.workspacePath,
+				workspacePath: params.workspacePath ?? null,
 				roomId: params.roomId,
 				createdBy: 'human',
 				...(params.model && {
@@ -80,8 +91,13 @@ export default function Lobby() {
 				}),
 			});
 
-			// Add to recent paths
-			addRecentPath(params.workspacePath);
+			if (params.workspacePath) {
+				// Persist to backend history and localStorage
+				addRecentPath(params.workspacePath);
+				addWorkspaceToHistory(params.workspacePath).catch(() => {
+					// Non-critical — backend history update failure is silent
+				});
+			}
 
 			// Navigate to session
 			navigateToSession(sessionId);
@@ -132,6 +148,7 @@ export default function Lobby() {
 							variant="secondary"
 							onClick={() => {
 								createRoomModalSignal.value = false;
+								loadWorkspaceHistory();
 								newSessionModal.open();
 							}}
 						>
@@ -151,6 +168,7 @@ export default function Lobby() {
 						<button
 							onClick={() => {
 								createRoomModalSignal.value = false;
+								loadWorkspaceHistory();
 								newSessionModal.open();
 							}}
 							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
@@ -284,6 +302,7 @@ export default function Lobby() {
 				onClose={newSessionModal.close}
 				onSubmit={handleCreateSession}
 				recentPaths={recentPaths}
+				workspaceHistory={workspaceHistory}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
 					const room = await lobbyStore.createRoom({

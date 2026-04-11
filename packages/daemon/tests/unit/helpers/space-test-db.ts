@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with the fully-migrated production schema (after M74).
+ * Keep in sync with the fully-migrated production schema (after M77).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -151,8 +151,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			agent_id TEXT,
 			agent_session_id TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+				CHECK(status IN ('pending', 'in_progress', 'idle', 'done', 'blocked', 'cancelled')),
 			result TEXT,
+			data TEXT,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,

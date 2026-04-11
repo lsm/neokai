@@ -303,7 +303,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(stepAExecutions).toHaveLength(2);
 
 		// Complete only one parallel execution; keep sibling active.
-		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'idle' });
 		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'in_progress' });
 
 		await runtime.executeTick();
@@ -384,7 +384,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		expect(stepAExecutions).toHaveLength(2);
 
 		// One completes, one fails — both are terminal.
-		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'idle' });
 		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'blocked', result: 'Agent crashed' });
 
 		await runtime.executeTick();
@@ -423,8 +423,8 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 		const stepAExecutions = nodeExecutionRepo.listByNode(run.id, STEP_A);
 		expect(stepAExecutions).toHaveLength(3);
 
-		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'done' });
-		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'done' });
+		nodeExecutionRepo.update(stepAExecutions[0].id, { status: 'idle' });
+		nodeExecutionRepo.update(stepAExecutions[1].id, { status: 'idle' });
 		nodeExecutionRepo.update(stepAExecutions[2].id, { status: 'blocked', result: 'Crash' });
 
 		await runtime.executeTick();

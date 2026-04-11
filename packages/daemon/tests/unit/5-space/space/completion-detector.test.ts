@@ -4,26 +4,26 @@
  * Scenarios (32 total):
  *   1.  No executions exist — returns false (workflow not started)
  *   2.  Single execution in_progress — returns false
- *   3.  Single execution done — returns true
+ *   3.  Single execution idle — returns true
  *   4.  Single execution blocked — returns false (non-terminal)
  *   5.  Single execution cancelled — returns true (terminal)
  *   6.  Single execution pending — returns false (non-terminal)
  *   7.  Multi-node workflow — all agents terminal → true
  *   8.  Multi-node workflow — one agent non-terminal → false
- *   9.  Mixed terminal: done + cancelled → true
+ *   9.  Mixed terminal: idle + cancelled → true
  *  10.  One non-terminal execution blocks completion regardless of terminal count
- *  11.  done + in_progress → false
- *  12.  Many done + one blocked → false
+ *  11.  idle + in_progress → false
+ *  12.  Many idle + one blocked → false
  *  13.  All executions in_progress → false
  *  14.  All executions blocked → false
  *  15.  pending + in_progress → false
  *  16. Tasks from different workflow runs do not interfere
  *  17.  Empty run vs run with executions — no cross-contamination
- *  18.  done + blocked → false
- *  19.  Multiple terminal (done + cancelled) in one run → true
- *  20.  TERMINAL_NODE_EXECUTION_STATUSES — size=2 (done, cancelled)
+ *  18.  idle + blocked → false
+ *  19.  Multiple terminal (idle + cancelled) in one run → true
+ *  20.  TERMINAL_NODE_EXECUTION_STATUSES — size=2 (idle, cancelled)
  *  21.  TERMINAL_NODE_EXECUTION_STATUSES — does not contain non-terminal statuses
- *  22.  End-node short-circuit: end node done → true (other nodes still running)
+ *  22.  End-node short-circuit: end node idle → true (other nodes still running)
  *  23.  End-node short-circuit: end node cancelled → true (other nodes still running)
  *  24.  End-node short-circuit: end node in_progress → false
  *  25.  End-node short-circuit: end node blocked → false
@@ -132,8 +132,8 @@ describe('CompletionDetector', () => {
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
-	test('3. single execution done — returns true', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+	test('3. single execution idle — returns true', () => {
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 	});
 
@@ -155,42 +155,42 @@ describe('CompletionDetector', () => {
 	// ---- Multi-node workflows ----
 
 	test('7. multi-node workflow — all agents terminal → true', () => {
-		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
+		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'cancelled' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 	});
 
 	test('8. multi-node workflow — one agent non-terminal → false', () => {
-		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
+		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'in_progress' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
 	// ---- Mixed terminal statuses ----
 
-	test('9. mixed done + cancelled → true', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+	test('9. mixed idle + cancelled → true', () => {
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, status: 'cancelled' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 	});
 
 	test('10. one non-terminal execution blocks completion regardless of terminal count', () => {
 		for (let i = 0; i < 5; i++) {
-			seedExecution(db, { workflowRunId: RUN, status: 'done' });
+			seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		}
 		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
-	test('11. done + in_progress → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+	test('11. idle + in_progress → false', () => {
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, status: 'in_progress' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
-	test('12. many done + one blocked → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+	test('12. many idle + one blocked → false', () => {
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
@@ -213,16 +213,16 @@ describe('CompletionDetector', () => {
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
-	test('18. done + blocked → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+	test('18. idle + blocked → false', () => {
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
-	test('19. multiple terminal (done + cancelled) in one run → true', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+	test('19. multiple terminal (idle + cancelled) in one run → true', () => {
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		seedExecution(db, { workflowRunId: RUN, status: 'cancelled' });
-		seedExecution(db, { workflowRunId: RUN, status: 'done' });
+		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 	});
 
@@ -234,11 +234,11 @@ describe('CompletionDetector', () => {
 			const RUN_B = 'run-b';
 
 			// Run A: all terminal
-			seedExecution(db, { workflowRunId: RUN_A, status: 'done' });
+			seedExecution(db, { workflowRunId: RUN_A, status: 'idle' });
 			seedExecution(db, { workflowRunId: RUN_A, status: 'cancelled' });
 
 			// Run B: one non-terminal
-			seedExecution(db, { workflowRunId: RUN_B, status: 'done' });
+			seedExecution(db, { workflowRunId: RUN_B, status: 'idle' });
 			seedExecution(db, { workflowRunId: RUN_B, status: 'in_progress' });
 
 			expect(detector.isComplete({ workflowRunId: RUN_A })).toBe(true);
@@ -249,7 +249,7 @@ describe('CompletionDetector', () => {
 			const RUN_A = 'run-empty';
 			const RUN_B = 'run-with-tasks';
 
-			seedExecution(db, { workflowRunId: RUN_B, status: 'done' });
+			seedExecution(db, { workflowRunId: RUN_B, status: 'idle' });
 
 			expect(detector.isComplete({ workflowRunId: RUN_A })).toBe(false);
 			expect(detector.isComplete({ workflowRunId: RUN_B })).toBe(true);
@@ -259,8 +259,8 @@ describe('CompletionDetector', () => {
 	// ---- TERMINAL_NODE_EXECUTION_STATUSES ----
 
 	describe('TERMINAL_NODE_EXECUTION_STATUSES', () => {
-		test('20. contains exactly two statuses: done and cancelled', () => {
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('done')).toBe(true);
+		test('20. contains exactly two statuses: idle and cancelled', () => {
+			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('idle')).toBe(true);
 			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('cancelled')).toBe(true);
 			expect(TERMINAL_NODE_EXECUTION_STATUSES.size).toBe(2);
 		});
@@ -276,7 +276,7 @@ describe('CompletionDetector', () => {
 		describe('end-node short-circuit', () => {
 			const END_NODE_ID = 'end-node';
 
-			test('22. end node done → true (other nodes still running)', () => {
+			test('22. end node idle → true (other nodes still running)', () => {
 				seedExecution(db, {
 					workflowRunId: RUN,
 					workflowNodeId: 'start-node',
@@ -285,7 +285,7 @@ describe('CompletionDetector', () => {
 				seedExecution(db, {
 					workflowRunId: RUN,
 					workflowNodeId: END_NODE_ID,
-					status: 'done',
+					status: 'idle',
 				});
 				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
 			});
@@ -305,7 +305,7 @@ describe('CompletionDetector', () => {
 			});
 
 			test('24. end node in_progress → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
 				seedExecution(db, {
 					workflowRunId: RUN,
 					workflowNodeId: END_NODE_ID,
@@ -315,7 +315,7 @@ describe('CompletionDetector', () => {
 			});
 
 			test('25. end node blocked → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
 				seedExecution(db, {
 					workflowRunId: RUN,
 					workflowNodeId: END_NODE_ID,
@@ -326,12 +326,12 @@ describe('CompletionDetector', () => {
 
 			test('26. no execution for end node → not complete', () => {
 				// Only a start-node execution exists; end node has none.
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
 				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
 			});
 
 			test('27. endNodeId not provided → all-agents-done fallback', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: END_NODE_ID, status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: END_NODE_ID, status: 'idle' });
 				expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 			});
 
@@ -340,7 +340,7 @@ describe('CompletionDetector', () => {
 			});
 
 			test('29. end node pending → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
 				seedExecution(db, {
 					workflowRunId: RUN,
 					workflowNodeId: END_NODE_ID,
@@ -354,13 +354,13 @@ describe('CompletionDetector', () => {
 
 		describe('all-agents-done fallback', () => {
 			test('30. all terminal with no endNodeId → true', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
 				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'cancelled' });
 				expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 			});
 
 			test('31. some non-terminal with no endNodeId → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'done' });
+				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
 				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'blocked' });
 				expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 			});

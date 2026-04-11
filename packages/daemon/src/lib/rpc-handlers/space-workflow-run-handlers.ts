@@ -9,8 +9,10 @@
  * - spaceWorkflowRun.markFailed     - Marks a run as blocked with a specific failure reason
  * - spaceWorkflowRun.approveGate    - Approves or rejects a human approval gate
  * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
- * - spaceWorkflowRun.getGateArtifacts - Returns changed files and diff summary for a run's worktree
- * - spaceWorkflowRun.getFileDiff    - Returns unified diff for a specific file in the worktree
+ * - spaceWorkflowRun.getGateArtifacts   - Returns uncommitted files and diff summary for a run's worktree
+ * - spaceWorkflowRun.getFileDiff        - Returns unified diff for a specific uncommitted file
+ * - spaceWorkflowRun.getCommits         - Returns git commits between branch point and HEAD with per-commit stats
+ * - spaceWorkflowRun.getCommitFileDiff  - Returns unified diff for a specific file in a specific commit
  * - spaceWorkflowRun.writeGateData  - Writes arbitrary gate data (E2E test infrastructure only)
  */
 
@@ -143,6 +145,19 @@ async function resolveWorktreePath(
 }
 
 /**
+ * Returns true when `worktreePath` is inside a git repository.
+ * Uses `git rev-parse --git-dir` which exits non-zero outside a repo.
+ */
+async function isGitRepo(worktreePath: string): Promise<boolean> {
+	try {
+		await execGit(['rev-parse', '--git-dir'], worktreePath, 5000);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Get the diff base ref for a worktree.
  * Tries `origin/dev` merge-base first; falls back to empty string (uncommitted only).
  */
@@ -156,6 +171,51 @@ async function getDiffBaseRef(worktreePath: string): Promise<string> {
 		}
 	}
 	return '';
+}
+
+interface CommitInfo {
+	sha: string;
+	message: string;
+	author: string;
+	timestamp: number;
+	additions: number;
+	deletions: number;
+	fileCount: number;
+}
+
+/**
+ * Parse `git log --format=COMMIT:%H|%s|%aN|%at --numstat` output.
+ * Each commit block starts with a "COMMIT:" line followed by numstat lines.
+ */
+function parseCommitLog(output: string): CommitInfo[] {
+	const commits: CommitInfo[] = [];
+	let current: CommitInfo | null = null;
+
+	for (const line of output.split('\n')) {
+		if (line.startsWith('COMMIT:')) {
+			if (current) commits.push(current);
+			const parts = line.slice('COMMIT:'.length).split('|');
+			current = {
+				sha: parts[0]?.trim() ?? '',
+				message: parts[1]?.trim() ?? '',
+				author: parts[2]?.trim() ?? '',
+				timestamp: parseInt(parts[3]?.trim() ?? '0', 10) * 1000,
+				additions: 0,
+				deletions: 0,
+				fileCount: 0,
+			};
+		} else if (current && line.trim()) {
+			// numstat line: <additions>\t<deletions>\t<path>
+			const parts = line.split('\t');
+			if (parts.length >= 3) {
+				current.additions += parseInt(parts[0], 10) || 0;
+				current.deletions += parseInt(parts[1], 10) || 0;
+				current.fileCount += 1;
+			}
+		}
+	}
+	if (current) commits.push(current);
+	return commits;
 }
 
 /** Factory that creates a SpaceTaskManager bound to a specific spaceId. */
@@ -644,20 +704,20 @@ export function setupSpaceWorkflowRunHandlers(
 			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
 
-		const baseRef = await getDiffBaseRef(worktreePath);
-		const diffArgs = baseRef
-			? ['diff', '--numstat', `${baseRef}..HEAD`]
-			: ['diff', '--numstat', 'HEAD'];
+		if (!(await isGitRepo(worktreePath))) {
+			return { files: [], totalAdditions: 0, totalDeletions: 0, worktreePath, isGitRepo: false };
+		}
 
+		// Uncommitted changes only: working tree vs HEAD
 		let numstatOutput = '';
 		try {
-			numstatOutput = await execGit(diffArgs, worktreePath);
+			numstatOutput = await execGit(['diff', 'HEAD', '--numstat'], worktreePath);
 		} catch (err) {
-			log.warn('git diff --numstat failed:', err);
+			log.warn('git diff HEAD --numstat failed:', err);
 		}
 
 		const summary = parseNumstat(numstatOutput);
-		return { ...summary, worktreePath, baseRef: baseRef || null };
+		return { ...summary, worktreePath, isGitRepo: true };
 	});
 
 	// ─── spaceWorkflowRun.getFileDiff ────────────────────────────────────────
@@ -692,17 +752,158 @@ export function setupSpaceWorkflowRunHandlers(
 			throw new Error(`No workspace path found for run: ${params.runId}`);
 		}
 
-		const baseRef = await getDiffBaseRef(worktreePath);
-		const diffRangeArgs = baseRef ? [`${baseRef}..HEAD`] : ['HEAD'];
+		if (!(await isGitRepo(worktreePath))) {
+			return { diff: '', additions: 0, deletions: 0, filePath: params.filePath };
+		}
 
+		// Uncommitted diff: working tree vs HEAD
 		let diff = '';
 		try {
-			diff = await execGit(['diff', ...diffRangeArgs, '--', params.filePath], worktreePath);
+			diff = await execGit(['diff', 'HEAD', '--', params.filePath], worktreePath);
 		} catch (err) {
-			log.warn('git diff for file failed:', err);
+			log.warn('git diff HEAD for file failed:', err);
 		}
 
 		// Parse per-file stats from the diff itself
+		let additions = 0;
+		let deletions = 0;
+		for (const line of diff.split('\n')) {
+			if (line.startsWith('+') && !line.startsWith('+++')) additions++;
+			else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+		}
+
+		return { diff, additions, deletions, filePath: params.filePath };
+	});
+
+	// ─── spaceWorkflowRun.getCommits ─────────────────────────────────────────
+	//
+	// Returns the list of commits between the branch point (baseRef) and HEAD,
+	// with per-commit addition/deletion/file-count stats.
+	messageHub.onRequest('spaceWorkflowRun.getCommits', async (data) => {
+		const params = data as { runId: string; taskId?: string };
+		if (!params.runId) throw new Error('runId is required');
+
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager,
+			params.taskId
+		);
+		if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+
+		if (!(await isGitRepo(worktreePath))) {
+			return { commits: [], baseRef: null, isGitRepo: false };
+		}
+
+		const baseRef = await getDiffBaseRef(worktreePath);
+		const range = baseRef ? `${baseRef}..HEAD` : '';
+
+		let logOutput = '';
+		try {
+			const args = ['log', '--format=COMMIT:%H|%s|%aN|%at', '--numstat'];
+			if (range) args.push(range);
+			logOutput = await execGit(args, worktreePath);
+		} catch (err) {
+			log.warn('git log --numstat failed:', err);
+		}
+
+		const commits = parseCommitLog(logOutput);
+		return { commits, baseRef: baseRef || null, isGitRepo: true };
+	});
+
+	// ─── spaceWorkflowRun.getCommitFiles ─────────────────────────────────────
+	//
+	// Returns the list of files changed in a specific commit with per-file stats.
+	// Uses `git diff-tree --numstat -r <sha>`.
+	messageHub.onRequest('spaceWorkflowRun.getCommitFiles', async (data) => {
+		const params = data as { runId: string; taskId?: string; commitSha: string };
+		if (!params.runId) throw new Error('runId is required');
+		if (!params.commitSha || !/^[0-9a-f]{4,64}$/i.test(params.commitSha)) {
+			throw new Error('commitSha must be a valid git sha');
+		}
+
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager,
+			params.taskId
+		);
+		if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+
+		if (!(await isGitRepo(worktreePath))) {
+			return { files: [] };
+		}
+
+		let numstatOutput = '';
+		try {
+			numstatOutput = await execGit(
+				['diff-tree', '--numstat', '-r', params.commitSha],
+				worktreePath
+			);
+		} catch (err) {
+			log.warn('git diff-tree --numstat failed:', err);
+		}
+
+		const summary = parseNumstat(numstatOutput);
+		return { files: summary.files };
+	});
+
+	// ─── spaceWorkflowRun.getCommitFileDiff ──────────────────────────────────
+	//
+	// Returns the unified diff for a specific file within a specific commit
+	// using `git show <sha> -- <filePath>`.
+	messageHub.onRequest('spaceWorkflowRun.getCommitFileDiff', async (data) => {
+		const params = data as {
+			runId: string;
+			taskId?: string;
+			commitSha: string;
+			filePath: string;
+		};
+		if (!params.runId) throw new Error('runId is required');
+		if (!params.commitSha || !/^[0-9a-f]{4,64}$/i.test(params.commitSha)) {
+			throw new Error('commitSha must be a valid git sha');
+		}
+		if (!params.filePath || params.filePath.trim() === '') {
+			throw new Error('filePath is required');
+		}
+		if (params.filePath.includes('..') || isAbsolute(params.filePath)) {
+			throw new Error('filePath must be a relative path within the worktree');
+		}
+
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const worktreePath = await resolveWorktreePath(
+			run.id,
+			run.spaceId,
+			spaceManager,
+			spaceTaskRepo,
+			spaceWorktreeManager,
+			params.taskId
+		);
+		if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+
+		if (!(await isGitRepo(worktreePath))) {
+			return { diff: '', additions: 0, deletions: 0, filePath: params.filePath };
+		}
+
+		let diff = '';
+		try {
+			diff = await execGit(['show', params.commitSha, '--', params.filePath], worktreePath);
+		} catch (err) {
+			log.warn('git show for commit file failed:', err);
+		}
+
 		let additions = 0;
 		let deletions = 0;
 		for (const line of diff.split('\n')) {

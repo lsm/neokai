@@ -33,8 +33,7 @@ let mockAgentTemplates: Array<{
 	name: string;
 	description: string;
 	tools: string[];
-	systemPrompt: string;
-	instructions: string;
+	customPrompt: string;
 }>;
 
 vi.mock('../../../lib/space-store', () => ({
@@ -139,7 +138,7 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		name: 'My Coder',
 		description: 'A test agent',
 		model: 'claude-sonnet-4-6',
-		systemPrompt: 'Be helpful.',
+		customPrompt: 'Be helpful.',
 		tools: ['Read', 'Write', 'Edit', 'Bash'],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -212,7 +211,7 @@ describe('SpaceAgentEditor', () => {
 	});
 
 	it('pre-fills system prompt in edit mode', () => {
-		const agent = makeAgent({ systemPrompt: 'Always be brief.' });
+		const agent = makeAgent({ customPrompt: 'Always be brief.' });
 		const { container } = render(<SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />);
 		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 		expect(textarea.value).toBe('Always be brief.');
@@ -306,13 +305,13 @@ describe('SpaceAgentEditor', () => {
 				name: 'Coder',
 				description: 'Implementation worker',
 				tools: ['Read', 'Write', 'Edit', 'Bash'],
-				systemPrompt: 'You are a coder.',
+				customPrompt: 'You are a coder.',
 			},
 			{
 				name: 'Reviewer',
 				description: 'Review specialist',
 				tools: ['Read', 'Bash', 'Grep', 'Glob'],
-				systemPrompt: 'You are a reviewer.',
+				customPrompt: 'You are a reviewer.',
 			},
 		];
 
@@ -331,7 +330,7 @@ describe('SpaceAgentEditor', () => {
 				name: 'Research',
 				description: 'Research specialist',
 				tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
-				systemPrompt: 'You are a research specialist.',
+				customPrompt: 'You are a research specialist.',
 			},
 		];
 
@@ -366,7 +365,7 @@ describe('SpaceAgentEditor', () => {
 				name: 'Reviewer',
 				description: 'Code review specialist',
 				tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
-				systemPrompt: 'You are an expert code reviewer.',
+				customPrompt: 'You are an expert code reviewer.',
 			},
 		];
 		const agent = makeAgent({ name: 'Custom Agent', description: 'Existing description' });

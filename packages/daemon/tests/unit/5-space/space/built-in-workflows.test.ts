@@ -65,8 +65,8 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
 	db.prepare(
-		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, custom_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', null, ?, ?)`
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
@@ -204,12 +204,11 @@ describe('CODING_WORKFLOW template', () => {
 	});
 });
 
-test('CODING_WORKFLOW nodes define systemPrompt with mode expand', () => {
+test('CODING_WORKFLOW nodes define customPrompt with non-empty value', () => {
 	for (const node of CODING_WORKFLOW.nodes) {
 		for (const agent of node.agents) {
-			expect(agent.systemPrompt).toBeDefined();
-			expect(agent.systemPrompt?.mode).toBe('expand');
-			expect(agent.systemPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
+			expect(agent.customPrompt).toBeDefined();
+			expect(agent.customPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
 		}
 	}
 });
@@ -306,21 +305,20 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('nodes have agents with instructions (node-level instructions removed; agent slots carry them)', () => {
+	test('nodes have agents with non-empty customPrompt', () => {
 		for (const node of RESEARCH_WORKFLOW.nodes) {
-			// WorkflowNode.instructions was removed; check that agents have instructions instead
 			for (const agent of node.agents) {
-				expect(agent.instructions).toBeDefined();
+				expect(agent.customPrompt).toBeDefined();
+				expect(agent.customPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
 			}
 		}
 	});
 
-	test('RESEARCH_WORKFLOW nodes define systemPrompt with mode expand', () => {
+	test('RESEARCH_WORKFLOW nodes define customPrompt with non-empty value', () => {
 		for (const node of RESEARCH_WORKFLOW.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.systemPrompt).toBeDefined();
-				expect(agent.systemPrompt?.mode).toBe('expand');
-				expect(agent.systemPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
+				expect(agent.customPrompt).toBeDefined();
+				expect(agent.customPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
 			}
 		}
 	});
@@ -360,11 +358,10 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 		expect(REVIEW_ONLY_WORKFLOW.spaceId).toBe('');
 	});
 
-	test('REVIEW_ONLY_WORKFLOW node defines systemPrompt with mode expand', () => {
+	test('REVIEW_ONLY_WORKFLOW node defines customPrompt with non-empty value', () => {
 		const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
-		expect(agent.systemPrompt).toBeDefined();
-		expect(agent.systemPrompt?.mode).toBe('expand');
-		expect(agent.systemPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
+		expect(agent.customPrompt).toBeDefined();
+		expect(agent.customPrompt?.value?.trim().length ?? 0).toBeGreaterThan(0);
 	});
 });
 
@@ -396,11 +393,11 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(nodes[4].agents[0]?.name).toBe('qa'); // QA
 	});
 
-	test('all V2 nodes define explicit system prompts', () => {
-		// systemPrompt is on each WorkflowNodeAgent, not on WorkflowNode
+	test('all V2 nodes define explicit custom prompts', () => {
+		// customPrompt is on each WorkflowNodeAgent, not on WorkflowNode
 		for (const node of FULL_CYCLE_CODING_WORKFLOW.nodes) {
 			for (const agent of node.agents) {
-				expect((agent.systemPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
+				expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
 			}
 		}
 	});
@@ -557,22 +554,22 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('code review node contains three reviewer slots with read-merge-write instructions', () => {
+	test('code review node contains three reviewer slots with read-merge-write customPrompt', () => {
 		const reviewNode = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Code Review')!;
 		expect(reviewNode.agents).toHaveLength(3);
 		for (const slot of reviewNode.agents ?? []) {
-			// slot.instructions is a WorkflowNodeAgentOverride {mode, value} object
-			expect(slot.instructions?.value).toContain('read_gate');
-			expect(slot.instructions?.value).toContain('write_gate');
+			// slot.customPrompt contains the task instructions
+			expect(slot.customPrompt?.value).toContain('read_gate');
+			expect(slot.customPrompt?.value).toContain('write_gate');
 			// Must warn against writing only own entry to prevent overwriting peers.
-			expect(slot.instructions?.value).toContain('overwriting');
+			expect(slot.customPrompt?.value).toContain('overwriting');
 		}
 	});
 
-	test('QA node agent slot instructions describe pass and fail actions', () => {
+	test('QA node agent slot customPrompt describes pass and fail actions', () => {
 		const qa = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
 		// Node-level instructions were removed; agent slots carry the task instructions
-		expect(qa.agents[0].instructions?.value).toContain('report_done');
+		expect(qa.agents[0].customPrompt?.value).toContain('report_done');
 	});
 
 	test('review-votes-gate description mentions read-merge-write requirement', () => {
@@ -759,40 +756,40 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
 
-	test('Full-Cycle Coding Workflow seeding preserves explicit node system prompts', async () => {
+	test('Full-Cycle Coding Workflow seeding preserves explicit node custom prompts', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		// systemPrompt is on each WorkflowNodeAgent, not on WorkflowNode
+		// customPrompt is on each WorkflowNodeAgent, not on WorkflowNode
 		for (const node of wf!.nodes) {
 			for (const agent of node.agents) {
-				expect((agent.systemPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
+				expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
 			}
 		}
 	});
 
-	test('CODING_WORKFLOW seeding preserves node system prompts with mode expand', async () => {
+	test('CODING_WORKFLOW seeding preserves node custom prompts with non-empty value', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		for (const node of wf!.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.systemPrompt?.mode).toBe('expand');
-				expect((agent.systemPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
+				expect(agent.customPrompt).toBeDefined();
+				expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
 			}
 		}
 	});
 
-	test('RESEARCH_WORKFLOW seeding preserves node system prompts with mode expand', async () => {
+	test('RESEARCH_WORKFLOW seeding preserves node custom prompts with non-empty value', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		for (const node of wf!.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.systemPrompt?.mode).toBe('expand');
-				expect((agent.systemPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
+				expect(agent.customPrompt).toBeDefined();
+				expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
 			}
 		}
 	});
@@ -1239,35 +1236,35 @@ describe('seedBuiltInWorkflows()', () => {
 
 	// ─── Node instructions preservation ─────────────────────────────────────
 
-	test('CODING_WORKFLOW seeded nodes preserve instructions', () => {
+	test('CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		const codeNode = wf.nodes.find((n) => n.name === 'Code');
-		expect(codeNode?.agents[0].instructions?.value).toContain('gh pr create');
+		expect(codeNode?.agents[0].customPrompt?.value).toContain('gh pr create');
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode?.agents[0].instructions?.value).toContain('report_done()');
+		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_done()');
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve instructions', () => {
+	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const planNode = wf.nodes.find((n) => n.name === 'Planning');
-		expect(planNode?.agents[0].instructions?.value).toContain('plan-pr-gate');
+		expect(planNode?.agents[0].customPrompt?.value).toContain('plan-pr-gate');
 		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
-		expect(codingNode?.agents[0].instructions?.value).toContain('code-pr-gate');
+		expect(codingNode?.agents[0].customPrompt?.value).toContain('code-pr-gate');
 		const qaNode = wf.nodes.find((n) => n.name === 'QA');
-		expect(qaNode?.agents[0].instructions?.value).toContain('report_done');
+		expect(qaNode?.agents[0].customPrompt?.value).toContain('report_done');
 	});
 
-	test('RESEARCH_WORKFLOW seeded nodes preserve instructions', () => {
+	test('RESEARCH_WORKFLOW seeded nodes preserve customPrompt content', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
 		const researchNode = wf.nodes.find((n) => n.name === 'Research');
-		expect(researchNode?.agents[0].instructions?.value).toContain('gh pr create');
+		expect(researchNode?.agents[0].customPrompt?.value).toContain('gh pr create');
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode?.agents[0].instructions?.value).toContain('report_done()');
+		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_done()');
 	});
 
 	// ─── Gate preservation per workflow ──────────────────────────────────────
@@ -1444,90 +1441,53 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	// ─── 2-layer system prompt override design ──────────────────────────────
+	// ─── customPrompt design ─────────────────────────────────────────────────
 
-	test('CODING_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+	test('CODING_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		for (const node of wf.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.systemPrompt).toBeDefined();
-				expect(agent.systemPrompt!.mode).toBe('expand');
-				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+				expect(agent.customPrompt).toBeDefined();
+				expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});
 
-	test('CODING_WORKFLOW seeded agent slots have instructions with mode=expand', () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		for (const node of wf.nodes) {
-			for (const agent of node.agents) {
-				expect(agent.instructions).toBeDefined();
-				expect(agent.instructions!.mode).toBe('expand');
-				expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
-			}
-		}
-	});
-
-	test('RESEARCH_WORKFLOW seeded with systemPrompt mode=expand on all agent slots', () => {
+	test('RESEARCH_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
 		for (const node of wf.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.systemPrompt).toBeDefined();
-				expect(agent.systemPrompt!.mode).toBe('expand');
-				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+				expect(agent.customPrompt).toBeDefined();
+				expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});
 
-	test('RESEARCH_WORKFLOW seeded agent slots have instructions with mode=expand', () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-		for (const node of wf.nodes) {
-			for (const agent of node.agents) {
-				expect(agent.instructions).toBeDefined();
-				expect(agent.instructions!.mode).toBe('expand');
-				expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
-			}
-		}
-	});
-
-	test('REVIEW_ONLY_WORKFLOW seeded with systemPrompt mode=expand on reviewer slot', () => {
+	test('REVIEW_ONLY_WORKFLOW seeded with non-empty customPrompt on reviewer slot', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
 		expect(wf.nodes).toHaveLength(1);
 		const agent = wf.nodes[0].agents[0];
-		expect(agent.systemPrompt).toBeDefined();
-		expect(agent.systemPrompt!.mode).toBe('expand');
-		expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+		expect(agent.customPrompt).toBeDefined();
+		expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 	});
 
-	test('REVIEW_ONLY_WORKFLOW seeded reviewer slot has instructions with mode=expand', () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
-		const agent = wf.nodes[0].agents[0];
-		expect(agent.instructions).toBeDefined();
-		expect(agent.instructions!.mode).toBe('expand');
-		expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
-	});
-
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with systemPrompt mode=override on all agent slots', () => {
+	test('FULL_CYCLE_CODING_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		for (const node of wf.nodes) {
 			for (const agent of node.agents) {
-				expect(agent.systemPrompt).toBeDefined();
-				expect(agent.systemPrompt!.mode).toBe('override');
-				expect(agent.systemPrompt!.value.trim().length).toBeGreaterThan(0);
+				expect(agent.customPrompt).toBeDefined();
+				expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW Code Review node reviewer slots have instructions mode=override', () => {
+	test('FULL_CYCLE_CODING_WORKFLOW Code Review node reviewer slots have customPrompt containing slot name', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
@@ -1535,15 +1495,14 @@ describe('seedBuiltInWorkflows()', () => {
 		const codeReviewNode = wf.nodes.find((n) => n.name === 'Code Review')!;
 		expect(codeReviewNode.agents).toHaveLength(3);
 		for (const agent of codeReviewNode.agents) {
-			expect(agent.instructions).toBeDefined();
-			expect(agent.instructions!.mode).toBe('override');
-			expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
-			// Each reviewer's instructions should contain their specific slot name
-			expect(agent.instructions!.value).toContain(agent.name);
+			expect(agent.customPrompt).toBeDefined();
+			expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
+			// Each reviewer's customPrompt should contain their specific slot name
+			expect(agent.customPrompt!.value).toContain(agent.name);
 		}
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have instructions with mode=override', () => {
+	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have non-empty customPrompt', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
@@ -1552,43 +1511,21 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(nonReviewNodes.length).toBe(4); // Planning, Plan Review, Coding, QA
 		for (const node of nonReviewNodes) {
 			for (const agent of node.agents) {
-				expect(agent.instructions).toBeDefined();
-				expect(agent.instructions!.mode).toBe('override');
-				expect(agent.instructions!.value.trim().length).toBeGreaterThan(0);
+				expect(agent.customPrompt).toBeDefined();
+				expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 			}
 		}
 	});
 
-	test('expand-mode workflows append to agent prompts while override-mode workflows replace them', () => {
-		// Structural design check: the two prompt layering strategies are correctly assigned
+	test('all seeded workflows have non-empty customPrompt on all agent slots', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
 
-		// Iterative workflows (Coding, Research, Review-Only) use 'expand' — they augment
-		// the agent's base prompt with workflow-specific context
-		const expandWorkflows = [
-			CODING_WORKFLOW.name,
-			RESEARCH_WORKFLOW.name,
-			REVIEW_ONLY_WORKFLOW.name,
-		];
-		for (const name of expandWorkflows) {
-			const wf = workflows.find((w) => w.name === name)!;
+		for (const wf of workflows) {
 			for (const node of wf.nodes) {
 				for (const agent of node.agents) {
-					if (agent.systemPrompt) {
-						expect(agent.systemPrompt.mode).toBe('expand');
-					}
-				}
-			}
-		}
-
-		// Full-Cycle workflow uses 'override' — nodes have specialized roles that
-		// completely replace the agent's generic prompt
-		const fullCycle = workflows.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		for (const node of fullCycle.nodes) {
-			for (const agent of node.agents) {
-				if (agent.systemPrompt) {
-					expect(agent.systemPrompt.mode).toBe('override');
+					expect(agent.customPrompt).toBeDefined();
+					expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 				}
 			}
 		}
@@ -1628,12 +1565,7 @@ describe('Coding Workflow export/import round-trip', () => {
 			id: CODER_ID,
 			spaceId: SPACE_ID,
 			name: 'Coder',
-			role: 'coder',
-			description: '',
-			model: null,
-			tools: [],
-			systemPrompt: '',
-			config: null,
+			customPrompt: null,
 			createdAt: 0,
 			updatedAt: 0,
 		},
@@ -1641,12 +1573,7 @@ describe('Coding Workflow export/import round-trip', () => {
 			id: RESEARCH_ID,
 			spaceId: SPACE_ID,
 			name: 'Research',
-			role: 'research',
-			description: '',
-			model: null,
-			tools: [],
-			systemPrompt: '',
-			config: null,
+			customPrompt: null,
 			createdAt: 0,
 			updatedAt: 0,
 		},
@@ -1654,12 +1581,7 @@ describe('Coding Workflow export/import round-trip', () => {
 			id: REVIEWER_ID,
 			spaceId: SPACE_ID,
 			name: 'Reviewer',
-			role: 'reviewer',
-			description: '',
-			model: null,
-			tools: [],
-			systemPrompt: '',
-			config: null,
+			customPrompt: null,
 			createdAt: 0,
 			updatedAt: 0,
 		},
@@ -1792,46 +1714,22 @@ describe('all built-in workflows have non-empty agent slot prompts', () => {
 		}
 	});
 
-	test('every agent slot has a non-empty systemPrompt override', () => {
+	test('every agent slot has a non-empty customPrompt override', () => {
 		for (const wf of workflows) {
 			for (const node of wf.nodes) {
 				for (const agent of node.agents) {
-					expect(agent.systemPrompt).toBeDefined();
-					expect(agent.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
-					expect(['expand', 'override']).toContain(agent.systemPrompt?.mode);
+					expect(agent.customPrompt).toBeDefined();
+					expect(agent.customPrompt?.value?.trim().length).toBeGreaterThan(0);
 				}
 			}
 		}
 	});
 
-	test('every agent slot has a non-empty instructions override', () => {
+	test('customPrompt values contain meaningful content (at least 50 chars)', () => {
 		for (const wf of workflows) {
 			for (const node of wf.nodes) {
 				for (const agent of node.agents) {
-					expect(agent.instructions).toBeDefined();
-					expect(agent.instructions?.value?.trim().length).toBeGreaterThan(0);
-					expect(['expand', 'override']).toContain(agent.instructions?.mode);
-				}
-			}
-		}
-	});
-
-	test('systemPrompt values contain meaningful content (at least 50 chars)', () => {
-		for (const wf of workflows) {
-			for (const node of wf.nodes) {
-				for (const agent of node.agents) {
-					const len = agent.systemPrompt?.value?.trim().length ?? 0;
-					expect(len).toBeGreaterThanOrEqual(50);
-				}
-			}
-		}
-	});
-
-	test('instructions values contain meaningful content (at least 50 chars)', () => {
-		for (const wf of workflows) {
-			for (const node of wf.nodes) {
-				for (const agent of node.agents) {
-					const len = agent.instructions?.value?.trim().length ?? 0;
+					const len = agent.customPrompt?.value?.trim().length ?? 0;
 					expect(len).toBeGreaterThanOrEqual(50);
 				}
 			}
@@ -1839,104 +1737,88 @@ describe('all built-in workflows have non-empty agent slot prompts', () => {
 	});
 });
 
-describe('CODING_WORKFLOW agent slot instructions', () => {
-	test('Code node coder has expand-mode instructions', () => {
+describe('CODING_WORKFLOW agent slot customPrompt', () => {
+	test('Code node coder has non-empty customPrompt', () => {
 		const codeNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Code')!;
 		const coder = codeNode.agents[0];
-		expect(coder.instructions?.mode).toBe('expand');
-		expect(coder.instructions?.value).toContain('Expected inputs');
-		expect(coder.instructions?.value).toContain('Expected outputs');
+		expect(coder.customPrompt?.value).toBeDefined();
+		expect(coder.customPrompt?.value.trim().length).toBeGreaterThan(0);
 	});
 
-	test('Review node reviewer has expand-mode instructions', () => {
+	test('Review node reviewer has non-empty customPrompt', () => {
 		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const reviewer = reviewNode.agents[0];
-		expect(reviewer.instructions?.mode).toBe('expand');
-		expect(reviewer.instructions?.value).toContain('Expected inputs');
-		expect(reviewer.instructions?.value).toContain('report_done');
+		expect(reviewer.customPrompt?.value).toBeDefined();
+		expect(reviewer.customPrompt?.value).toContain('report_done');
 	});
 });
 
-describe('RESEARCH_WORKFLOW agent slot instructions', () => {
-	test('Research node has expand-mode instructions', () => {
+describe('RESEARCH_WORKFLOW agent slot customPrompt', () => {
+	test('Research node has non-empty customPrompt', () => {
 		const researchNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Research')!;
 		const agent = researchNode.agents[0];
-		expect(agent.instructions?.mode).toBe('expand');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('Expected outputs');
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value.trim().length).toBeGreaterThan(0);
 	});
 
-	test('Review node has expand-mode instructions', () => {
+	test('Review node has non-empty customPrompt', () => {
 		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const agent = reviewNode.agents[0];
-		expect(agent.instructions?.mode).toBe('expand');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('report_done');
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('report_done');
 	});
 });
 
-describe('REVIEW_ONLY_WORKFLOW agent slot instructions', () => {
-	test('Review node has expand-mode instructions', () => {
+describe('REVIEW_ONLY_WORKFLOW agent slot customPrompt', () => {
+	test('Review node has non-empty customPrompt', () => {
 		const reviewNode = REVIEW_ONLY_WORKFLOW.nodes[0];
 		const agent = reviewNode.agents[0];
-		expect(agent.instructions?.mode).toBe('expand');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('report_done');
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('report_done');
 	});
 
-	test('Review node has agent slot instructions (node-level instructions removed)', () => {
-		// Node-level instructions removed from WorkflowNode schema
-		// Agent slots carry the instructions
+	test('Review node has agent slot customPrompt (no separate node-level instructions)', () => {
 		const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
-		expect(agent.instructions).toBeDefined();
+		expect(agent.customPrompt).toBeDefined();
 	});
 });
 
-describe('FULL_CYCLE_CODING_WORKFLOW agent slot instructions', () => {
-	test('Planning node planner has override-mode instructions', () => {
+describe('FULL_CYCLE_CODING_WORKFLOW agent slot customPrompt', () => {
+	test('Planning node planner has non-empty customPrompt', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
 		const agent = node.agents[0];
-		expect(agent.instructions?.mode).toBe('override');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('plan-pr-gate');
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('plan-pr-gate');
 	});
 
-	test('Plan Review node reviewer has override-mode instructions', () => {
+	test('Plan Review node reviewer has non-empty customPrompt', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
 		const agent = node.agents[0];
-		expect(agent.instructions?.mode).toBe('override');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('plan-approval-gate');
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('plan-approval-gate');
 	});
 
-	test('Coding node coder has override-mode instructions', () => {
+	test('Coding node coder has non-empty customPrompt', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
 		const agent = node.agents[0];
-		expect(agent.instructions?.mode).toBe('override');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('code-pr-gate');
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('code-pr-gate');
 	});
 
-	test('Code Review node all 3 reviewers have override-mode instructions with vote guidance', () => {
+	test('Code Review node all 3 reviewers have customPrompt with vote guidance', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Code Review')!;
 		expect(node.agents).toHaveLength(3);
 		for (const agent of node.agents) {
-			expect(agent.instructions?.mode).toBe('override');
-			expect(agent.instructions?.value).toContain('vote');
-			expect(agent.instructions?.value).toContain(agent.name);
+			expect(agent.customPrompt?.value).toBeDefined();
+			expect(agent.customPrompt?.value).toContain('vote');
+			expect(agent.customPrompt?.value).toContain(agent.name);
 		}
 	});
 
-	test('QA node has override-mode instructions', () => {
+	test('QA node has non-empty customPrompt', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
 		const agent = node.agents[0];
-		expect(agent.instructions?.mode).toBe('override');
-		expect(agent.instructions?.value).toContain('Expected inputs');
-		expect(agent.instructions?.value).toContain('report_done');
-	});
-
-	test('QA node has node-level instructions', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-		// node.instructions field removed from schema; agent slots carry instructions
+		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('report_done');
 	});
 });

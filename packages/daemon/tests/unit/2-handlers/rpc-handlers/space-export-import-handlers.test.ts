@@ -60,8 +60,7 @@ function createSchema(db: Database): void {
 			model TEXT,
 			provider TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
-			system_prompt TEXT NOT NULL DEFAULT '',
-			instructions TEXT,
+			custom_prompt TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -326,7 +325,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				spaceId: SPACE_ID,
 				name: 'Coder',
 				model: 'claude-3',
-				systemPrompt: 'You code.',
+				customPrompt: 'You code.',
 				tools: ['read_file'],
 			});
 
@@ -602,7 +601,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 		it('creates agents and workflows with no conflicts', async () => {
 			const bundle = makeBundle(
-				[{ name: 'Coder', role: 'coder', systemPrompt: 'You code.' }],
+				[{ name: 'Coder', role: 'coder', customPrompt: 'You code.' }],
 				[{ name: 'Pipeline', nodes: [{ agentRef: 'Coder', name: 'Code' }] }]
 			);
 
@@ -618,7 +617,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
 			// Verify data persisted
 			const agents = agentRepo.getBySpaceId(SPACE_ID);
-			expect(agents.find((a) => a.name === 'Coder')?.systemPrompt).toBe('You code.');
+			expect(agents.find((a) => a.name === 'Coder')?.customPrompt).toBe('You code.');
 			const workflows = workflowRepo.listWorkflows(SPACE_ID);
 			expect(workflows.find((w) => w.name === 'Pipeline')).toBeTruthy();
 		});
@@ -1022,12 +1021,11 @@ describe('Space Export/Import RPC Handlers', () => {
 				expect(agent.model).toBeUndefined();
 			});
 
-			it('clears systemPrompt when not present in exported agent', async () => {
+			it('clears customPrompt when not present in exported agent', async () => {
 				const existing = agentRepo.create({
 					spaceId: SPACE_ID,
 					name: 'Coder',
-					role: 'coder',
-					systemPrompt: 'Old prompt.',
+					customPrompt: 'Old prompt.',
 				});
 
 				const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
@@ -1039,7 +1037,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				});
 
 				const agent = agentRepo.getById(existing.id)!;
-				expect(agent.systemPrompt).toBeUndefined();
+				expect(agent.customPrompt).toBeNull();
 			});
 		});
 	});
@@ -1258,7 +1256,7 @@ describe('multi-agent step import', () => {
 		expect(agentIds).toContain(reviewerAgent.id);
 	});
 
-	it('preserves per-agent instructions in imported multi-agent step', async () => {
+	it('preserves per-agent customPrompt in imported multi-agent step', async () => {
 		const bundle = makeMultiAgentBundle(
 			[
 				{ name: 'Coder', role: 'coder' },
@@ -1275,12 +1273,12 @@ describe('multi-agent step import', () => {
 									{
 										agentRef: 'Coder',
 										name: 'coder',
-										instructions: { mode: 'override' as const, value: 'Implement the feature' },
+										systemPrompt: { value: 'Implement the feature' },
 									},
 									{
 										agentRef: 'Reviewer',
 										name: 'reviewer',
-										instructions: { mode: 'override' as const, value: 'Review thoroughly' },
+										systemPrompt: { value: 'Review thoroughly' },
 									},
 								],
 							},
@@ -1301,8 +1299,8 @@ describe('multi-agent step import', () => {
 
 		const coderId = result.agents.find((a) => a.name === 'Coder')!.id;
 		const reviewerId = result.agents.find((a) => a.name === 'Reviewer')!.id;
-		expect((byAgentId.get(coderId)?.instructions as any)?.value).toBe('Implement the feature');
-		expect((byAgentId.get(reviewerId)?.instructions as any)?.value).toBe('Review thoroughly');
+		expect((byAgentId.get(coderId)?.customPrompt as any)?.value).toBe('Implement the feature');
+		expect((byAgentId.get(reviewerId)?.customPrompt as any)?.value).toBe('Review thoroughly');
 	});
 
 	it('imports channels as-is in multi-agent step', async () => {
@@ -1489,10 +1487,10 @@ describe('multi-agent step import', () => {
 
 // ─── Bundle builder helpers ───────────────────────────────────────────────────
 
-type BundleAgent = { name: string; systemPrompt?: string; model?: string };
+type BundleAgent = { name: string; customPrompt?: string; model?: string; role?: string };
 type BundleWorkflow = {
 	name: string;
-	nodes: Array<{ agentRef: string; name: string; instructions?: string }>;
+	nodes: Array<{ agentRef: string; name: string }>;
 };
 
 function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object {
@@ -1504,7 +1502,7 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 			version: 1,
 			type: 'agent',
 			name: a.name,
-			...(a.systemPrompt ? { systemPrompt: a.systemPrompt } : {}),
+			...(a.customPrompt ? { systemPrompt: a.customPrompt } : {}),
 			...(a.model ? { model: a.model } : {}),
 		})),
 		workflows: workflows.map((w) => ({
@@ -1515,7 +1513,6 @@ function makeBundle(agents: BundleAgent[], workflows: BundleWorkflow[]): object 
 			nodes: w.nodes.map((s) => ({
 				agents: [{ agentRef: s.agentRef, name: s.agentRef }],
 				name: s.name,
-				...(s.instructions ? { instructions: s.instructions } : {}),
 			})),
 			startNode: w.nodes[0]?.name ?? '',
 			tags: [],
@@ -1595,17 +1592,17 @@ function makeTwoStepBundle(): object {
 
 // ─── Multi-agent bundle builder helpers ──────────────────────────────────────
 
-type AgentInstructionOverride = { mode: 'override' | 'expand'; value: string };
+type AgentPromptOverride = { value: string };
 
 type MultiAgentStepEntry =
-	| { agentRef: string; name: string; instructions?: string | AgentInstructionOverride }
+	| { agentRef: string; name: string; systemPrompt?: string | AgentPromptOverride }
 	| {
 			multiAgentStep: {
 				name: string;
 				agents: Array<{
 					agentRef: string;
 					name: string;
-					instructions?: string | AgentInstructionOverride;
+					systemPrompt?: string | AgentPromptOverride;
 				}>;
 				channels?: Array<{
 					from: string;
@@ -1655,7 +1652,7 @@ function makeMultiAgentBundle(
 				return {
 					agents: [{ agentRef: s.agentRef, name: s.agentRef }],
 					name: s.name,
-					...(s.instructions ? { instructions: s.instructions } : {}),
+					...(s.systemPrompt ? { systemPrompt: s.systemPrompt } : {}),
 				};
 			});
 			return {
@@ -1753,8 +1750,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-agent-1',
 			spaceId: 'other-space',
 			name: 'My Coder',
-			instructions: null,
-			systemPrompt: 'You write code.',
+			customPrompt: 'You write code.',
 			tools: ['bash', 'read_file'],
 			createdAt: 1000,
 			updatedAt: 2000,
@@ -1769,7 +1765,6 @@ describe('full export→import round-trip', () => {
 					id: 'src-step-1',
 					name: 'Code',
 					agents: [{ agentId: 'src-agent-1', name: 'coder' }],
-					instructions: 'Write clean code',
 				},
 			],
 			startNodeId: 'src-step-1',
@@ -1802,7 +1797,7 @@ describe('full export→import round-trip', () => {
 		// Step resolved to correct agentId UUID (new, not source UUID)
 		const importedAgent = agentRepo.getById(result.agents[0].id)!;
 		expect(importedAgent.name).toBe('My Coder');
-		expect(importedAgent.systemPrompt).toBe('You write code.');
+		expect(importedAgent.customPrompt).toBe('You write code.');
 		expect(importedAgent.tools).toEqual(['bash', 'read_file']);
 
 		const step = importedWf.nodes[0];
@@ -1826,7 +1821,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-coder',
 			spaceId: 'other-space',
 			name: 'Senior Coder',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -1834,7 +1829,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-reviewer',
 			spaceId: 'other-space',
 			name: 'Code Reviewer',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -1851,12 +1846,12 @@ describe('full export→import round-trip', () => {
 						{
 							agentId: 'src-coder',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'Implement the feature' },
+							customPrompt: { value: 'Implement the feature' },
 						},
 						{
 							agentId: 'src-reviewer',
 							name: 'reviewer',
-							instructions: { mode: 'override', value: 'Review thoroughly' },
+							customPrompt: { value: 'Review thoroughly' },
 						},
 					],
 				},
@@ -1896,12 +1891,12 @@ describe('full export→import round-trip', () => {
 		expect(importedAgentIds).not.toContain('src-coder');
 		expect(importedAgentIds).not.toContain('src-reviewer');
 
-		// Per-agent instructions preserved (as override objects)
+		// Per-agent customPrompt preserved (as override objects)
 		const coderEntry = importedStep.agents!.find((a) => a.agentId === coderImported.id)!;
 		const reviewerEntry = importedStep.agents!.find((a) => a.agentId === reviewerImported.id)!;
-		expect((coderEntry.instructions as any)?.value).toBe('Implement the feature');
+		expect((coderEntry.customPrompt as any)?.value).toBe('Implement the feature');
 		expect(coderEntry.name).toBe('coder');
-		expect((reviewerEntry.instructions as any)?.value).toBe('Review thoroughly');
+		expect((reviewerEntry.customPrompt as any)?.value).toBe('Review thoroughly');
 		expect(reviewerEntry.name).toBe('reviewer');
 
 		// Shared step instructions preserved
@@ -2131,7 +2126,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-planner',
 			spaceId: 'other-space',
 			name: 'Planner',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2139,7 +2134,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-coder2',
 			spaceId: 'other-space',
 			name: 'Coder2',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2147,7 +2142,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-review',
 			spaceId: 'other-space',
 			name: 'Reviewer2',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2214,7 +2209,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-legacy',
 			spaceId: 'other-space',
 			name: 'Legacy Coder',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};
@@ -2249,7 +2244,7 @@ describe('full export→import round-trip', () => {
 			id: 'src-known',
 			spaceId: 'other-space',
 			name: 'Known Agent',
-			instructions: null,
+			customPrompt: null,
 			createdAt: 1000,
 			updatedAt: 2000,
 		};

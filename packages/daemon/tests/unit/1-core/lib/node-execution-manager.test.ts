@@ -128,7 +128,7 @@ describe('VALID_NODE_EXECUTION_TRANSITIONS', () => {
 		const keys = Object.keys(VALID_NODE_EXECUTION_TRANSITIONS);
 		expect(keys).toContain('pending');
 		expect(keys).toContain('in_progress');
-		expect(keys).toContain('done');
+		expect(keys).toContain('idle');
 		expect(keys).toContain('blocked');
 		expect(keys).toContain('cancelled');
 		expect(keys).toHaveLength(5);
@@ -144,8 +144,8 @@ describe('isValidNodeExecutionTransition', () => {
 		expect(isValidNodeExecutionTransition('pending', 'cancelled')).toBe(true);
 	});
 
-	test('4. in_progress → done is valid', () => {
-		expect(isValidNodeExecutionTransition('in_progress', 'done')).toBe(true);
+	test('4. in_progress → idle is valid', () => {
+		expect(isValidNodeExecutionTransition('in_progress', 'idle')).toBe(true);
 	});
 
 	test('5. in_progress → blocked is valid', () => {
@@ -156,8 +156,8 @@ describe('isValidNodeExecutionTransition', () => {
 		expect(isValidNodeExecutionTransition('in_progress', 'cancelled')).toBe(true);
 	});
 
-	test('7. done → in_progress is valid (reactivation)', () => {
-		expect(isValidNodeExecutionTransition('done', 'in_progress')).toBe(true);
+	test('7. idle → in_progress is valid (reactivation)', () => {
+		expect(isValidNodeExecutionTransition('idle', 'in_progress')).toBe(true);
 	});
 
 	test('8. blocked → in_progress is valid (retry)', () => {
@@ -182,8 +182,8 @@ describe('isValidNodeExecutionTransition', () => {
 });
 
 describe('isNodeExecutionTerminal', () => {
-	test('13. done is terminal', () => {
-		expect(isNodeExecutionTerminal('done')).toBe(true);
+	test('13. idle is terminal', () => {
+		expect(isNodeExecutionTerminal('idle')).toBe(true);
 	});
 
 	test('14. cancelled is terminal', () => {
@@ -219,12 +219,12 @@ describe('NodeExecutionManager.setExecutionStatus', () => {
 		expect(result.startedAt).not.toBeNull();
 	});
 
-	test('20. in_progress → done stamps completedAt', async () => {
+	test('20. in_progress → idle stamps completedAt', async () => {
 		const id = seedExecution(db, { status: 'in_progress' });
 		const before = Date.now();
-		const result = manager.setExecutionStatus(id, 'done');
+		const result = manager.setExecutionStatus(id, 'idle');
 		const after = Date.now();
-		expect(result.status).toBe('done');
+		expect(result.status).toBe('idle');
 		expect(result.completedAt).not.toBeNull();
 		expect(result.completedAt!).toBeGreaterThanOrEqual(before);
 		expect(result.completedAt!).toBeLessThanOrEqual(after);
@@ -244,8 +244,8 @@ describe('NodeExecutionManager.setExecutionStatus', () => {
 		expect(result.completedAt).not.toBeNull();
 	});
 
-	test('23. done → in_progress (reactivation) allows re-running', async () => {
-		const id = seedExecution(db, { status: 'done' });
+	test('23. idle → in_progress (reactivation) allows re-running', async () => {
+		const id = seedExecution(db, { status: 'idle' });
 		const result = manager.setExecutionStatus(id, 'in_progress');
 		expect(result.status).toBe('in_progress');
 	});

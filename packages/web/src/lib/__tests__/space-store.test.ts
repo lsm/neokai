@@ -93,7 +93,7 @@ function makeAgent(id: string): SpaceAgent {
 		id,
 		spaceId: 'space-1',
 		name: `Agent ${id}`,
-		instructions: null,
+		customPrompt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -1266,6 +1266,7 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
 		agentSessionId: overrides.agentSessionId ?? null,
 		status: overrides.status ?? ('pending' as NodeExecution['status']),
 		result: overrides.result ?? null,
+		data: overrides.data ?? null,
 		createdAt: overrides.createdAt ?? Date.now(),
 		startedAt: overrides.startedAt ?? null,
 		completedAt: overrides.completedAt ?? null,

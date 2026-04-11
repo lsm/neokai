@@ -261,12 +261,12 @@ describe('NodeExecutionRepository', () => {
 			expect(updated!.startedAt).toBeGreaterThan(0);
 		});
 
-		it('updates status and stamps completedAt for done', () => {
+		it('updates status and stamps completedAt for idle', () => {
 			const exec = createExecution();
 			repo.update(exec.id, { status: 'in_progress' });
-			const updated = repo.update(exec.id, { status: 'done' });
+			const updated = repo.update(exec.id, { status: 'idle' });
 
-			expect(updated!.status).toBe('done');
+			expect(updated!.status).toBe('idle');
 			expect(updated!.completedAt).not.toBeNull();
 			expect(updated!.completedAt).toBeGreaterThan(0);
 		});
@@ -300,15 +300,15 @@ describe('NodeExecutionRepository', () => {
 			expect(updated!.startedAt).toBe(explicitTime);
 		});
 
-		it('explicit completedAt overrides auto-stamp when status is done', () => {
+		it('explicit completedAt overrides auto-stamp when status is idle', () => {
 			const exec = createExecution();
 			const explicitTime = 2000000;
 			const updated = repo.update(exec.id, {
-				status: 'done',
+				status: 'idle',
 				completedAt: explicitTime,
 			});
 
-			expect(updated!.status).toBe('done');
+			expect(updated!.status).toBe('idle');
 			expect(updated!.completedAt).toBe(explicitTime);
 		});
 
@@ -340,12 +340,12 @@ describe('NodeExecutionRepository', () => {
 		it('updates multiple fields at once', () => {
 			const exec = createExecution();
 			const updated = repo.update(exec.id, {
-				status: 'done',
+				status: 'idle',
 				agentSessionId: 'session-final',
 				result: 'Completed successfully',
 			});
 
-			expect(updated!.status).toBe('done');
+			expect(updated!.status).toBe('idle');
 			expect(updated!.agentSessionId).toBe('session-final');
 			expect(updated!.result).toBe('Completed successfully');
 			expect(updated!.completedAt).not.toBeNull();
@@ -381,11 +381,11 @@ describe('NodeExecutionRepository', () => {
 			expect(updated!.startedAt).not.toBeNull();
 		});
 
-		it('transitions in_progress → done', () => {
+		it('transitions in_progress → idle', () => {
 			const exec = createExecution();
 			repo.updateStatus(exec.id, 'in_progress');
-			const updated = repo.updateStatus(exec.id, 'done');
-			expect(updated!.status).toBe('done');
+			const updated = repo.updateStatus(exec.id, 'idle');
+			expect(updated!.status).toBe('idle');
 			expect(updated!.completedAt).not.toBeNull();
 		});
 
@@ -500,7 +500,7 @@ describe('NodeExecutionRepository', () => {
 	});
 
 	describe('status transitions and timestamp stamping', () => {
-		it('full lifecycle: pending → in_progress → done', () => {
+		it('full lifecycle: pending → in_progress → idle', () => {
 			const exec = createExecution();
 			expect(exec.status).toBe('pending');
 			expect(exec.startedAt).toBeNull();
@@ -513,8 +513,8 @@ describe('NodeExecutionRepository', () => {
 			expect(started.completedAt).toBeNull();
 
 			// Complete
-			const completed = repo.updateStatus(started.id, 'done')!;
-			expect(completed.status).toBe('done');
+			const completed = repo.updateStatus(started.id, 'idle')!;
+			expect(completed.status).toBe('idle');
 			expect(completed.startedAt).toBe(started.startedAt);
 			expect(completed.completedAt).not.toBeNull();
 		});
