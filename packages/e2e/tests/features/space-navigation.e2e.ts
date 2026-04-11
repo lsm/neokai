@@ -7,9 +7,9 @@
  * - Deep link: direct /space/:id/agent loads space with agent chat
  *
  * Also provides integration-level coverage for the two-layer nav flow as a single chain:
- * - Level 1→2: NavRail → SpaceContextPanel → click space → SpaceDetailPanel
+ * - Level 1→2: NavRail → SpacesPage → click space card → SpaceDetailPanel
  * - Task drill-down: task in SpaceOverview → click → full-width pane → back → dashboard returns
- * - Level 2→1: back button → SpaceContextPanel + SpacesPage content
+ * - Level 2→1: back button → SpacesPage content (full-width, no sidebar)
  *
  * Note: Space Agent and Dashboard use `data-testid="space-detail-agent"` /
  * `data-testid="space-detail-dashboard"` selectors to disambiguate the sidebar
@@ -78,14 +78,14 @@ test.describe('Comprehensive Space Navigation', () => {
 	// Level 1 → Level 2 transition (integration chain)
 	// ---------------------------------------------------------------------------
 
-	test('Level 1→2: NavRail Spaces → SpaceContextPanel → click space → SpaceDetailPanel', async ({
+	test('Level 1→2: NavRail Spaces → SpacesPage → click space card → SpaceDetailPanel', async ({
 		page,
 	}) => {
 		// Navigate to Spaces via NavRail
 		await page.getByRole('button', { name: 'Spaces', exact: true }).click();
 
-		// SpaceContextPanel visible: "Create Space" button present
-		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
+		// SpacesPage header: "New Space" button and heading visible
+		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
@@ -95,14 +95,9 @@ test.describe('Comprehensive Space Navigation', () => {
 		// Back button should NOT be visible at Level 1
 		await expect(page.getByTitle('Back to Spaces')).not.toBeVisible();
 
-		// Click the created space to drill into Level 2.
-		// The space name button only expands the row (calls onSelect); navigation to
-		// SpaceDetailPanel requires the "Open space" arrow button (calls onSpaceNavigate).
-		// The arrow is opacity-0 until hover, so hover the space name first to reveal it,
-		// then scope to the parent row div to avoid clicking a different space's arrow.
-		const spaceNameBtn = page.getByText(spaceName, { exact: true }).first();
-		await spaceNameBtn.hover();
-		await spaceNameBtn.locator('..').getByTitle('Open space').click();
+		// Click the space card to drill into Level 2.
+		// SpacesPage renders each space as a card button — clicking anywhere on it navigates.
+		await page.getByText(spaceName, { exact: true }).first().click();
 
 		// SpaceDetailPanel: pinned sidebar items visible
 		await expect(page.locator('[data-testid="space-detail-dashboard"]')).toBeVisible({
@@ -230,7 +225,7 @@ test.describe('Comprehensive Space Navigation', () => {
 	// Level 2 → Level 1 back navigation
 	// ---------------------------------------------------------------------------
 
-	test('Level 2→1: back button → SpaceContextPanel + SpacesPage content', async ({ page }) => {
+	test('Level 2→1: back button → SpacesPage content', async ({ page }) => {
 		await page.goto(`/space/${spaceId}`);
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 
@@ -240,7 +235,7 @@ test.describe('Comprehensive Space Navigation', () => {
 		await page.getByTitle('Back to Spaces').click();
 
 		// Level 1 restored
-		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({

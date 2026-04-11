@@ -295,8 +295,8 @@ describe('MessageInfoDropdown', () => {
 			const sessionInfo = createSessionInfo();
 			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
-			expect(container.querySelector('.max-h-\\[70vh\\]')).toBeTruthy();
-			expect(container.querySelector('.overflow-y-auto')).toBeTruthy();
+			expect(container.querySelector('.max-h-\\[60vh\\]')).toBeTruthy();
+			expect(container.querySelector('.overflow-y-scroll')).toBeTruthy();
 		});
 
 		it('should have shadow for dropdown appearance', () => {

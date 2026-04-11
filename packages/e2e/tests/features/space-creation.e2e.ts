@@ -2,8 +2,8 @@
  * Space Creation E2E Tests
  *
  * Verifies:
- * - Navigating to the Spaces section (NavRail Spaces button + Create Space button visible)
- * - "Create Space" dialog opens
+ * - Navigating to the Spaces section (NavRail Spaces button + New Space button visible)
+ * - "Create Space" dialog opens (triggered by "New Space" button)
  * - Workspace path field is required
  * - Name auto-suggests from workspace path
  * - Creating a space navigates to it
@@ -51,11 +51,11 @@ test.describe('Space Creation UX', () => {
 		await expect(spacesButton).toBeVisible({ timeout: 5000 });
 		await spacesButton.click();
 
-		// ContextPanel should show the Spaces list view with "Spaces" heading and "Create Space" button
+		// SpacesPage should show "Spaces" heading and "New Space" button
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 	});
@@ -64,7 +64,7 @@ test.describe('Space Creation UX', () => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
 
-		const createButton = page.getByRole('button', { name: 'Create Space', exact: true });
+		const createButton = page.getByRole('button', { name: 'New Space', exact: true });
 		await expect(createButton).toBeVisible({ timeout: 5000 });
 		await createButton.click();
 
@@ -76,7 +76,7 @@ test.describe('Space Creation UX', () => {
 	test('workspace path is required — shows error on empty submit', async ({ page }) => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+		await page.getByRole('button', { name: 'New Space', exact: true }).click();
 		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Submit without filling workspace path
@@ -90,7 +90,7 @@ test.describe('Space Creation UX', () => {
 	test('auto-suggests name from workspace path', async ({ page }) => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+		await page.getByRole('button', { name: 'New Space', exact: true }).click();
 		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Type a workspace path
@@ -110,7 +110,7 @@ test.describe('Space Creation UX', () => {
 
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+		await page.getByRole('button', { name: 'New Space', exact: true }).click();
 		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Fill workspace path with a unique subdirectory (guaranteed to exist)
@@ -164,7 +164,7 @@ test.describe('Space Creation UX', () => {
 	test('dialog can be closed with Cancel button', async ({ page }) => {
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+		await page.getByRole('button', { name: 'New Space', exact: true }).click();
 		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		// Click Cancel
@@ -181,7 +181,7 @@ test.describe('Space Creation UX', () => {
 		// Create space via UI dialog
 		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
 		await spacesButton.click();
-		await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+		await page.getByRole('button', { name: 'New Space', exact: true }).click();
 		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
 
 		const pathInput = page.locator('input[placeholder*="/Users/you/projects"]');
