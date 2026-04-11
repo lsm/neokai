@@ -30,12 +30,12 @@ import {
 } from './signals.ts';
 
 /** Route patterns */
-const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
+const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/i;
 const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
 const ROOM_AGENT_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/agent$/;
-const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
-const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
-const ROOM_MISSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/mission\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
+const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/i;
+const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/i;
+const ROOM_MISSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/mission\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/i;
 const ROOM_TASKS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/tasks$/;
 const ROOM_AGENTS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/agents$/;
 const ROOM_GOALS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/goals$/;
@@ -50,8 +50,8 @@ const SPACE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)$/;
 const SPACE_CONFIGURE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/configure$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
-const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-f0-9-]+)$/;
-const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/;
+const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-f0-9-]+)$/i;
+const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-f0-9-]+|[a-z]-[1-9]\d*)$/i;
 
 /**
  * Router state and configuration
