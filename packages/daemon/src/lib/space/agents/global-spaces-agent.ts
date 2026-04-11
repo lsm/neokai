@@ -30,6 +30,10 @@
  *   - retry_task
  *   - cancel_task
  *   - reassign_task
+ *
+ * Task agent communication tools (super-task-agent capabilities):
+ *   - send_message_to_task — Inject a message into a running task agent session
+ *   - list_task_members    — List all node executions for a task's workflow run
  */
 
 export function buildGlobalSpacesAgentPrompt(): string {
@@ -117,6 +121,26 @@ export function buildGlobalSpacesAgentPrompt(): string {
 			`human input regardless of autonomy level.\n` +
 			`\nAlways check the space's \`autonomy_level\` via \`get_space\` before taking autonomous ` +
 			`coordination actions. You can change a space's \`autonomy_level\` via \`update_space\`.`
+	);
+
+	sections.push(
+		`\n## Task Agent Communication\n` +
+			`\nYou are a super-task-agent: you have all the capabilities of a Task Agent, but ` +
+			`operating across every space and task simultaneously. Use these tools to directly ` +
+			`interact with running task agents and inspect their workflow state:\n` +
+			`\n- **\`send_message_to_task\`** — Inject a message into a running task agent session. ` +
+			`Use this to provide real-time guidance, corrections, or context to a task agent that ` +
+			`is currently executing. The message is delivered asynchronously to the agent's session. ` +
+			`Use \`get_task_detail\` first to confirm the task is in \`in_progress\` status.\n` +
+			`- **\`list_task_members\`** — List all node executions (workflow member agents) for a task. ` +
+			`Returns each node's name, execution status (\`pending\`, \`in_progress\`, \`idle\`, \`blocked\`, ` +
+			`\`cancelled\`), result summary, and saved data. Use this to inspect the detailed state of a ` +
+			`running or completed workflow task — more granular than \`get_task_detail\` alone.\n` +
+			`\nWhen to use task agent communication:\n` +
+			`- A task agent appears stuck or is making wrong assumptions — inject a corrective message.\n` +
+			`- You need to understand which specific workflow nodes are blocked vs. in progress.\n` +
+			`- A human has provided new requirements mid-execution that the task agent needs to know.\n` +
+			`- You want to check the saved outputs from individual node agents within a workflow run.`
 	);
 
 	sections.push(

@@ -1,11 +1,17 @@
 /**
- * Node Agent MCP Tool Schemas — Zod schemas and TypeScript types for the 3
- * peer communication tools available to node agent sub-sessions.
+ * Node Agent MCP Tool Schemas — Zod schemas and TypeScript types for the
+ * tools available to node agent sub-sessions.
  *
- * Tools:
- *   list_peers   — list other group members with their agent names, statuses, and permitted channels
- *   send_message — channel-validated direct messaging tool (string-based target)
- *   report_done  — signal that this agent has completed its work
+ * Action tools:
+ *   send_message — channel-validated direct messaging; writes gate data on gated channels
+ *   save         — persist agent output (summary + structured data) to NodeExecution
+ *
+ * Discovery tools (read-only):
+ *   list_peers           — list other group members with statuses and permitted channels
+ *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
+ *   list_channels        — list all channels declared in the workflow
+ *   list_gates           — list all gates with current runtime data
+ *   read_gate            — read current data for a specific gate
  *
  * This file contains only schema definitions — no runtime logic or side effects.
  *
@@ -42,6 +48,12 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
  *   - Node name: `target: 'node-name'` — fan-out to all agents in the named node
  *   - Multicast array: `target: ['coder', 'reviewer']` — deliver to multiple agents
  *   - Broadcast to all permitted: `target: '*'`
+ *
+ * When the target channel is gated, the optional `data` payload is automatically
+ * merged into the gate's data store (merge semantics: top-level keys overwrite,
+ * other keys survive). Gate re-evaluation fires after the merge — if the gate
+ * opens, the message is delivered immediately; otherwise it is held until the
+ * gate condition passes.
  */
 export const SendMessageSchema = z.object({
 	/**
@@ -61,13 +73,13 @@ export const SendMessageSchema = z.object({
 	message: z.string().min(1).describe('The message content to send to the target peer(s)'),
 	/**
 	 * Optional structured data payload attached to the message.
-	 * Used for machine-readable data (gate writes, task results, structured feedback)
-	 * alongside the human-readable `message` text.
+	 * When the target channel is gated, this data is automatically merged into the gate.
+	 * Also passed through to the target as part of the delivery.
 	 */
 	data: z
 		.record(z.string(), z.unknown())
 		.describe(
-			'Optional structured data payload (key-value pairs) attached to the message. Used for gate writes, task results, and structured feedback.'
+			'Optional structured data payload. Automatically merged into the gate data store when the channel is gated (merge semantics). Also passed through to the target agent.'
 		)
 		.optional(),
 });
@@ -75,26 +87,41 @@ export const SendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
 // ---------------------------------------------------------------------------
-// report_done
+// save
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `report_done` input.
+ * Schema for `save` input.
  *
- * Signals that this node agent has completed its work. Marks the node's SpaceTask
- * as 'completed' and persists an optional summary as the task result.
+ * Persists the agent's output to the NodeExecution record.
+ * Call this whenever you have produced output worth recording — at any point
+ * during your work, not just at the end. Multiple calls overwrite previous values.
+ *
+ * `summary` and `data` are independent — provide either or both.
  */
-export const ReportDoneSchema = z.object({
-	/** Optional summary of what was accomplished. Persisted as the task result. */
+export const SaveSchema = z.object({
+	/**
+	 * Human-readable summary of work completed so far.
+	 * Overwrites any previous summary on each call.
+	 */
 	summary: z
 		.string()
+		.describe('Human-readable summary of work completed. Overwrites previous summary.')
+		.optional(),
+	/**
+	 * Structured output data (key-value pairs) produced by this agent.
+	 * Use for machine-readable artifacts: pr_url, commit_sha, test_results, etc.
+	 * Overwrites previous data on each call.
+	 */
+	data: z
+		.record(z.string(), z.unknown())
 		.describe(
-			'Optional summary of what was accomplished. Will be persisted as the task completion result.'
+			'Structured output data (key-value pairs). Use for artifacts like pr_url, commit_sha, test_results. Overwrites previous data.'
 		)
 		.optional(),
 });
 
-export type ReportDoneInput = z.infer<typeof ReportDoneSchema>;
+export type SaveInput = z.infer<typeof SaveSchema>;
 
 // ---------------------------------------------------------------------------
 // list_reachable_agents
@@ -152,37 +179,6 @@ export const ReadGateSchema = z.object({
 export type ReadGateInput = z.infer<typeof ReadGateSchema>;
 
 // ---------------------------------------------------------------------------
-// write_gate
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `write_gate` input.
- *
- * Merges key-value data into a gate's runtime data store. The caller's agent name must
- * be listed in the gate's allowed writers (or the list contains `'*'`).
- *
- * For vote-counting gates (count conditions): use your `nodeId` (returned in the
- * tool response) as the key in the vote map so each node's vote counts only once
- * even if multiple agents in the node send votes.
- */
-export const WriteGateSchema = z.object({
-	/** The ID of the gate to write data to. */
-	gateId: z.string().min(1).describe('The gate ID to write data to'),
-	/**
-	 * Key-value data to merge (shallow) into the gate's data store.
-	 * For vote-counting (count conditions), use your nodeId (provided in the response)
-	 * as the map key: e.g. { votes: { [nodeId]: "approved" } }
-	 */
-	data: z
-		.record(z.string(), z.unknown())
-		.describe(
-			'Key-value data to merge into the gate data store. Shallow merge: top-level keys overwrite existing entries.'
-		),
-});
-
-export type WriteGateInput = z.infer<typeof WriteGateSchema>;
-
-// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -192,12 +188,11 @@ export type WriteGateInput = z.infer<typeof WriteGateSchema>;
 export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
-	report_done: ReportDoneSchema,
+	save: SaveSchema,
 	list_reachable_agents: ListReachableAgentsSchema,
 	list_channels: ListChannelsSchema,
 	list_gates: ListGatesSchema,
 	read_gate: ReadGateSchema,
-	write_gate: WriteGateSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

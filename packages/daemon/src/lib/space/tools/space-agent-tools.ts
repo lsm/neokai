@@ -30,6 +30,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
@@ -55,6 +56,11 @@ export interface SpaceAgentToolsConfig {
 	taskManager: SpaceTaskManager;
 	/** Space agent manager for reassign validation. */
 	spaceAgentManager: SpaceAgentManager;
+	/**
+	 * Task Agent Manager for injecting messages into running task agent sessions.
+	 * When provided, enables the `send_message_to_task` and `list_task_members` tools.
+	 */
+	taskAgentManager?: TaskAgentManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +81,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
+		taskAgentManager,
 	} = config;
 
 	return {
@@ -417,6 +424,61 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		/**
+		 * Inject a message into a running task agent session.
+		 */
+		async send_message_to_task(args: { task_id: string; message: string }): Promise<ToolResult> {
+			if (!taskAgentManager) {
+				return jsonResult({
+					success: false,
+					error: 'Task agent communication is not available in this context.',
+				});
+			}
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			try {
+				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
+				return jsonResult({ success: true, task_id: args.task_id });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * List all node executions for a task's workflow run.
+		 */
+		async list_task_members(args: { task_id: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (!task.workflowRunId) {
+				return jsonResult({
+					success: true,
+					task_id: args.task_id,
+					executions: [],
+					message: 'This task has no associated workflow run.',
+				});
+			}
+			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+			return jsonResult({ success: true, task_id: args.task_id, executions });
+		},
 	};
 }
 
@@ -589,6 +651,27 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.describe('Agent type to assign (coder or general)'),
 			},
 			(args) => handlers.reassign_task(args)
+		),
+
+		// Task agent communication tools
+		tool(
+			'send_message_to_task',
+			'Inject a message into a running task agent session. Use this to provide real-time guidance, corrections, or context to a task that is currently executing.',
+			{
+				task_id: z
+					.string()
+					.describe('ID of the task whose agent session should receive the message'),
+				message: z.string().describe('Message to inject into the task agent session'),
+			},
+			(args) => handlers.send_message_to_task(args)
+		),
+		tool(
+			'list_task_members',
+			"List all node executions (workflow member agents) for a task. Returns each node's status, result, and saved data. Use this to inspect the detailed execution state of a running or completed workflow task.",
+			{
+				task_id: z.string().describe('ID of the task to inspect'),
+			},
+			(args) => handlers.list_task_members(args)
 		),
 	];
 

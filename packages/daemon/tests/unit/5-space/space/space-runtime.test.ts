@@ -1095,7 +1095,7 @@ describe('SpaceRuntime', () => {
 
 			const executions = nodeExecutionRepo.listByNode(run.id, STEP_A);
 			expect(executions).toHaveLength(2);
-			nodeExecutionRepo.update(executions[0].id, { status: 'done' });
+			nodeExecutionRepo.update(executions[0].id, { status: 'idle' });
 
 			await runtime.executeTick();
 
@@ -1128,7 +1128,7 @@ describe('SpaceRuntime', () => {
 			expect(tasks).toHaveLength(1);
 
 			const executions = nodeExecutionRepo.listByNode(run.id, STEP_A);
-			nodeExecutionRepo.update(executions[0].id, { status: 'done' });
+			nodeExecutionRepo.update(executions[0].id, { status: 'idle' });
 			nodeExecutionRepo.update(executions[1].id, { status: 'blocked', result: 'Build failed' });
 
 			await runtime.executeTick();

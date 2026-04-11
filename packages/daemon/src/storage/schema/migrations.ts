@@ -327,6 +327,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 78: Create workspace_history table for persisting recently-used workspace paths.
 	runMigration78(db);
+
+	// Migration 79: Update node_executions for the new agent model.
+	//   - Add 'idle' status (replaces 'done') to the CHECK constraint.
+	//   - Add 'data TEXT' column for structured agent output.
+	runMigration79(db);
+
+	// Migration 80: Consolidate space_agents.system_prompt + instructions → custom_prompt.
+	//   - Adds 'custom_prompt TEXT' column.
+	//   - Migrates data: combines system_prompt and instructions into a single field.
+	runMigration80(db);
 }
 
 /**
@@ -5403,5 +5413,131 @@ export function runMigration78(db: BunDatabase): void {
 			last_used_at INTEGER NOT NULL,
 			use_count INTEGER NOT NULL DEFAULT 1
 		)
+	`);
+}
+
+/**
+ * Migration 79: Update node_executions for the new agent model.
+ *
+ * Changes:
+ * 1. Add 'idle' status to the CHECK constraint (replaces 'done').
+ *    'done' is kept in the constraint for backward compatibility with any
+ *    existing rows; new code only writes 'idle'.
+ * 2. Add `data TEXT` column for structured agent output from `save()`.
+ *
+ * SQLite does not support ALTER CHECK CONSTRAINT, so a table rebuild is used.
+ */
+function runMigration79(db: BunDatabase): void {
+	if (!tableExists(db, 'node_executions')) return;
+
+	// Idempotency: check if 'idle' status is already accepted and data column exists.
+	const hasDataColumn = tableHasColumn(db, 'node_executions', 'data');
+	let needsStatusUpdate = false;
+	if (!hasDataColumn) {
+		needsStatusUpdate = true;
+	} else {
+		const testId = '__m78_probe__';
+		try {
+			db.prepare(
+				`INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, status, created_at, updated_at)
+         VALUES (?, '__probe__', '__probe__', '__probe__', 'idle', 0, 0)`
+			).run(testId);
+			db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(testId);
+		} catch {
+			needsStatusUpdate = true;
+		}
+	}
+
+	if (!needsStatusUpdate) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec('BEGIN');
+	try {
+		db.exec(`
+			CREATE TABLE node_executions_m78_new (
+				id TEXT PRIMARY KEY,
+				workflow_run_id TEXT NOT NULL,
+				workflow_node_id TEXT NOT NULL,
+				agent_name TEXT NOT NULL,
+				agent_id TEXT,
+				agent_session_id TEXT,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'in_progress', 'idle', 'done', 'blocked', 'cancelled')),
+				result TEXT,
+				data TEXT,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+				FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+			)
+		`);
+
+		db.exec(`
+			INSERT INTO node_executions_m78_new
+			  (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+			   agent_session_id, status, result, data, created_at, started_at,
+			   completed_at, updated_at)
+			SELECT
+			  id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+			  agent_session_id, status, result, NULL, created_at, started_at,
+			  completed_at, updated_at
+			FROM node_executions
+		`);
+
+		db.exec(`DROP TABLE node_executions`);
+		db.exec(`ALTER TABLE node_executions_m78_new RENAME TO node_executions`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
+		);
+		// Re-create the unique index added in migration 75.
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_node_executions_unique_slot
+			   ON node_executions(workflow_run_id, workflow_node_id, agent_name)`
+		);
+		db.exec('COMMIT');
+	} catch (err) {
+		db.exec('ROLLBACK');
+		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 80: Consolidate space_agents system_prompt + instructions → custom_prompt.
+ *
+ * Adds a single `custom_prompt TEXT` column and populates it by merging the two
+ * legacy columns:
+ *   - Both non-empty: `system_prompt + '\n\n' + instructions`
+ *   - Only system_prompt: `system_prompt`
+ *   - Only instructions: `instructions`
+ *   - Neither: NULL
+ *
+ * The old columns are kept for now to avoid a lossy table-rebuild migration.
+ * They are no longer read by the application after this migration.
+ */
+function runMigration80(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agents')) return;
+	if (tableHasColumn(db, 'space_agents', 'custom_prompt')) return;
+
+	db.exec(`ALTER TABLE space_agents ADD COLUMN custom_prompt TEXT`);
+
+	db.exec(`
+		UPDATE space_agents
+		SET custom_prompt = CASE
+			WHEN (system_prompt IS NOT NULL AND system_prompt != '')
+			     AND (instructions IS NOT NULL AND instructions != '')
+				THEN system_prompt || char(10) || char(10) || instructions
+			WHEN (system_prompt IS NOT NULL AND system_prompt != '')
+				THEN system_prompt
+			WHEN (instructions IS NOT NULL AND instructions != '')
+				THEN instructions
+			ELSE NULL
+		END
 	`);
 }

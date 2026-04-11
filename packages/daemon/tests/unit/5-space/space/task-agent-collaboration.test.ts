@@ -3,20 +3,11 @@
  *
  * Covers the agent-centric collaboration model end-to-end:
  *
- * 1. Full collaboration flow:
- *    - Multi-node workflow with channels between agents
- *    - Task Agent spawns node agents for each node
- *    - All agents reach terminal status
- *    - End node reports done → SpaceRuntime tick completes the run
- *
- * 2. Gate-blocked flow with escalation:
- *    - Human gate on a channel blocks message delivery
- *    - Task Agent detects blocked state via check_node_status
+ * 1. Gate-blocked flow with escalation:
  *    - Task Agent escalates by calling request_human_input
  *    - Main task transitions to blocked
  *
- * 3. Multi-agent node collaboration:
- *    - Multiple agents on the same node can complete independently
+ * 2. Multi-agent node collaboration:
  *    - Channels are persisted and accessible
  */
 
@@ -37,9 +28,6 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import {
 	createTaskAgentToolHandlers,
-	type SubSessionFactory,
-	type SubSessionMemberInfo,
-	type SubSessionState,
 	type TaskAgentToolsConfig,
 } from '../../../../src/lib/space/tools/task-agent-tools.ts';
 import type { Space, SpaceWorkflow, SpaceTask } from '@neokai/shared';
@@ -94,53 +82,6 @@ function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
 }
 
 // ---------------------------------------------------------------------------
-// Mock SubSessionFactory
-// ---------------------------------------------------------------------------
-
-function makeMockSessionFactory(overrides?: {
-	create?: (init: unknown, memberInfo?: SubSessionMemberInfo) => Promise<string>;
-	getProcessingState?: (sessionId: string) => SubSessionState | null;
-	onComplete?: (sessionId: string, callback: () => Promise<void>) => void;
-}): SubSessionFactory & {
-	_completionCallbacks: Map<string, () => Promise<void>>;
-	_triggerComplete: (sessionId: string) => Promise<void>;
-} {
-	const completionCallbacks = new Map<string, () => Promise<void>>();
-	const sessionStates = new Map<string, SubSessionState>();
-
-	return {
-		_completionCallbacks: completionCallbacks,
-
-		async create(init: unknown, memberInfo?: SubSessionMemberInfo): Promise<string> {
-			if (overrides?.create) return overrides.create(init, memberInfo);
-			const id = `sub-session-${Math.random().toString(36).slice(2)}`;
-			sessionStates.set(id, { isProcessing: true, isComplete: false });
-			return id;
-		},
-
-		getProcessingState(sessionId: string): SubSessionState | null {
-			if (overrides?.getProcessingState) return overrides.getProcessingState(sessionId);
-			return sessionStates.get(sessionId) ?? null;
-		},
-
-		onComplete(sessionId: string, callback: () => Promise<void>): void {
-			if (overrides?.onComplete) {
-				overrides.onComplete(sessionId, callback);
-				return;
-			}
-			completionCallbacks.set(sessionId, callback);
-		},
-
-		async _triggerComplete(sessionId: string): Promise<void> {
-			sessionStates.set(sessionId, { isProcessing: false, isComplete: true });
-			const cb = completionCallbacks.get(sessionId);
-			if (cb) await cb();
-		},
-	} as SubSessionFactory & {
-		_completionCallbacks: Map<string, () => Promise<void>>;
-		_triggerComplete: (sessionId: string) => Promise<void>;
-	};
-}
 
 // ---------------------------------------------------------------------------
 // Test context
@@ -158,7 +99,6 @@ interface TestCtx {
 	taskRepo: SpaceTaskRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
-	agentManager: SpaceAgentManager;
 	runtime: SpaceRuntime;
 }
 
@@ -210,7 +150,6 @@ function makeCtx(): TestCtx {
 		taskRepo,
 		nodeExecutionRepo,
 		taskManager,
-		agentManager,
 		runtime,
 	};
 }
@@ -219,10 +158,8 @@ function makeConfig(
 	ctx: TestCtx,
 	taskId: string,
 	workflowRunId: string,
-	sessionFactory: SubSessionFactory,
 	options?: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
-		onSubSessionComplete?: (nodeId: string, sessionId: string) => Promise<void>;
 		daemonHub?: DaemonHub;
 	}
 ): TaskAgentToolsConfig {
@@ -230,16 +167,10 @@ function makeConfig(
 		taskId,
 		space: ctx.space,
 		workflowRunId,
-		workspacePath: ctx.space.workspacePath,
-		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
-		workflowRunRepo: ctx.workflowRunRepo,
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
-		agentManager: ctx.agentManager,
 		taskManager: ctx.taskManager,
-		sessionFactory,
 		messageInjector: options?.messageInjector ?? (async () => {}),
-		onSubSessionComplete: options?.onSubSessionComplete ?? (async () => {}),
 		daemonHub: options?.daemonHub,
 	};
 }
@@ -331,66 +262,6 @@ async function startRun(
 }
 
 // ---------------------------------------------------------------------------
-// Full collaboration flow
-// ---------------------------------------------------------------------------
-
-describe('Task Agent — full collaboration flow', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('check_node_status reflects completion after agent finishes', async () => {
-		const wf = ctx.workflowManager.createWorkflow({
-			spaceId: ctx.spaceId,
-			name: 'Status Check WF',
-			nodes: [{ id: 'code-node', name: 'Code', agentId: ctx.coderAgentId }],
-			transitions: [],
-			startNodeId: 'code-node',
-			rules: [],
-			channels: [],
-		});
-
-		const { run, mainTask, stepTask } = await startRun(ctx, wf);
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(
-			makeConfig(ctx, mainTask.id, run.id, factory, {
-				onSubSessionComplete: async (_nodeId) => {
-					// workflowNodeId was removed in M71; use stepTask directly
-					ctx.taskRepo.updateTask(stepTask.id, {
-						status: 'done',
-						completedAt: Date.now(),
-					});
-				},
-			})
-		);
-
-		// Spawn
-		const spawnResult = await handlers.spawn_node_agent({ node_id: 'code-node' });
-		const { sessionId } = JSON.parse(spawnResult.content[0].text);
-
-		// Check status — running
-		const running = await handlers.check_node_status({ node_id: 'code-node' });
-		expect(JSON.parse(running.content[0].text).sessionStatus).toBe('running');
-
-		// Complete the sub-session
-		await (factory as ReturnType<typeof makeMockSessionFactory>)._triggerComplete(sessionId);
-
-		// Check status — completed
-		const done = await handlers.check_node_status({ node_id: 'code-node' });
-		const doneParsed = JSON.parse(done.content[0].text);
-		expect(doneParsed.taskStatus).toBe('done');
-		expect(doneParsed.sessionStatus).toBe('completed');
-		expect(doneParsed.taskId).toBe(stepTask.id);
-	});
-});
-
-// ---------------------------------------------------------------------------
 // Gate-blocked flow with escalation
 // ---------------------------------------------------------------------------
 
@@ -404,52 +275,12 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('human gate workflow: spawned agent blocked → task agent escalates via request_human_input', async () => {
-		const wf = buildHumanGateWorkflow(ctx);
-		const { run, mainTask } = await startRun(ctx, wf);
-		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
-
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
-
-		// Spawn the code node agent
-		const spawnResult = await handlers.spawn_node_agent({ node_id: wf.startNodeId });
-		const spawnParsed = JSON.parse(spawnResult.content[0].text);
-		expect(spawnParsed.success).toBe(true);
-
-		// The code agent is blocked (waiting for human approval on the gate).
-		// Simulate this by marking the spawned step task as blocked.
-		expect(spawnParsed.taskId).toBeDefined();
-		ctx.taskRepo.updateTask(spawnParsed.taskId, { status: 'blocked' });
-
-		// check_node_status should report blocked
-		const checkResult = await handlers.check_node_status({ node_id: wf.startNodeId });
-		const checkParsed = JSON.parse(checkResult.content[0].text);
-		expect(checkParsed.success).toBe(true);
-		expect(checkParsed.taskStatus).toBe('blocked');
-
-		// Task Agent escalates to human via request_human_input
-		const escalateResult = await handlers.request_human_input({
-			question:
-				'Human gate reached: please review and approve the code to allow reviewer activation.',
-			context: 'The coder has finished. A human gate blocks the coder→reviewer channel.',
-		});
-		const escalateParsed = JSON.parse(escalateResult.content[0].text);
-		expect(escalateParsed.success).toBe(true);
-		expect(escalateParsed.question).toContain('Human gate reached');
-
-		// Main task should be blocked (escalation recorded by request_human_input)
-		const updatedTask = ctx.taskRepo.getTask(mainTask.id);
-		expect(updatedTask?.status).toBe('blocked');
-	});
-
 	test('escalation context is recorded on task error field', async () => {
 		const wf = buildHumanGateWorkflow(ctx);
 		const { run, mainTask } = await startRun(ctx, wf);
 		await ctx.taskManager.setTaskStatus(mainTask.id, 'in_progress');
 
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id));
 
 		const escalationContext =
 			'The coder sent a message to the reviewer but the human gate channel requires approval. PR #42 is open.';
@@ -518,8 +349,7 @@ describe('Task Agent — multi-agent node collaboration', () => {
 
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		const factory = makeMockSessionFactory();
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id, factory));
+		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, run.id));
 
 		const result = await handlers.list_group_members({});
 		const parsed = JSON.parse(result.content[0].text);

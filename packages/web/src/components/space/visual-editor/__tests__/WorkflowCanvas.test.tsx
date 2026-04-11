@@ -37,11 +37,11 @@ afterEach(() => cleanup());
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
 function makeAgent(id: string, name: string): SpaceAgent {
-	return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
+	return { id, spaceId: 'space-1', name, customPrompt: null, createdAt: 0, updatedAt: 0 };
 }
 
 function makeStep(localId: string, name: string): NodeDraft {
-	return { localId, name, agentId: 'agent-1', instructions: '' };
+	return { localId, name, agentId: 'agent-1' };
 }
 
 const AGENTS: SpaceAgent[] = [makeAgent('agent-1', 'Coder')];
@@ -472,7 +472,7 @@ import type { WorkflowChannel } from '@neokai/shared';
 
 describe('computeChannelEdges', () => {
 	function makeAgentWithRole(id: string, role: string): SpaceAgent {
-		return { id, spaceId: 'space-1', name: role, instructions: null, createdAt: 0, updatedAt: 0 };
+		return { id, spaceId: 'space-1', name: role, customPrompt: null, createdAt: 0, updatedAt: 0 };
 	}
 
 	function makeNodeWithAgentsAndChannels(

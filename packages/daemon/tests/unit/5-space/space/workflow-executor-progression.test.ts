@@ -448,14 +448,14 @@ describe('Parallel branch execution — CompletionDetector', () => {
 
 	test('2-agent parallel node: both done → workflow complete', () => {
 		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'done');
-		seedNodeExecution(runId, 'node-parallel', 'agent-reviewer', 'done');
+		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'idle');
+		seedNodeExecution(runId, 'node-parallel', 'agent-reviewer', 'idle');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
 	});
 
 	test('2-agent parallel node: one still in_progress → not complete', () => {
 		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'done');
+		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'idle');
 		seedNodeExecution(runId, 'node-parallel', 'agent-reviewer', 'in_progress');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
 	});
@@ -469,31 +469,31 @@ describe('Parallel branch execution — CompletionDetector', () => {
 
 	test('3-agent parallel node: all done → complete', () => {
 		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'done');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'done');
-		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'done');
+		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
+		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'idle');
+		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'idle');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
 	});
 
 	test('3-agent parallel node: 2 done, 1 in_progress → not complete', () => {
 		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'done');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'done');
+		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
+		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'idle');
 		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'in_progress');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
 	});
 
 	test('3-agent parallel node: 2 done, 1 blocked → not complete', () => {
 		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'done');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'done');
+		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
+		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'idle');
 		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'blocked');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
 	});
 
 	test('parallel node done + cancelled (mixed terminal) → complete', () => {
 		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'done');
+		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
 		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'cancelled');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
 	});
@@ -501,18 +501,18 @@ describe('Parallel branch execution — CompletionDetector', () => {
 	test('linear A done + parallel (B1 done, B2 in_progress) → not complete', () => {
 		const runId = makeLinearRun();
 		// Node A completes (linear)
-		seedNodeExecution(runId, 'node-a', 'agent-a', 'done');
+		seedNodeExecution(runId, 'node-a', 'agent-a', 'idle');
 		// Node B forks into 2 parallel agents; B2 still running
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-1', 'done');
+		seedNodeExecution(runId, 'node-b', 'agent-b-worker-1', 'idle');
 		seedNodeExecution(runId, 'node-b', 'agent-b-worker-2', 'in_progress');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
 	});
 
 	test('linear A done + parallel (B1 done, B2 done) → complete', () => {
 		const runId = makeLinearRun();
-		seedNodeExecution(runId, 'node-a', 'agent-a', 'done');
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-1', 'done');
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-2', 'done');
+		seedNodeExecution(runId, 'node-a', 'agent-a', 'idle');
+		seedNodeExecution(runId, 'node-b', 'agent-b-worker-1', 'idle');
+		seedNodeExecution(runId, 'node-b', 'agent-b-worker-2', 'idle');
 		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
 	});
 
@@ -522,7 +522,7 @@ describe('Parallel branch execution — CompletionDetector', () => {
 		// Start node still running
 		seedNodeExecution(runId, 'node-a', 'agent-a', 'in_progress');
 		// End node agent completes
-		seedNodeExecution(runId, endNodeId, 'agent-b', 'done');
+		seedNodeExecution(runId, endNodeId, 'agent-b', 'idle');
 		expect(detector.isComplete({ workflowRunId: runId, endNodeId })).toBe(true);
 	});
 });

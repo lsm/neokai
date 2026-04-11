@@ -4,9 +4,8 @@
  * CRUD operations for space_agents table.
  *
  * Column mapping:
+ *   SpaceAgent.customPrompt  ↔  custom_prompt column (nullable text)
  *   SpaceAgent.tools         ↔  tools column (JSON string array; '[]' or null → undefined)
- *   SpaceAgent.systemPrompt  ↔  system_prompt column
- *   SpaceAgent.instructions  ↔  instructions column (nullable text)
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -27,8 +26,8 @@ export class SpaceAgentRepository {
 		this.db
 			.prepare(
 				`INSERT INTO space_agents
-					(id, space_id, name, description, model, provider, tools, system_prompt, instructions, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					(id, space_id, name, description, model, provider, tools, custom_prompt, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -38,8 +37,7 @@ export class SpaceAgentRepository {
 				params.model ?? null,
 				params.provider ?? null,
 				params.tools && params.tools.length > 0 ? JSON.stringify(params.tools) : '[]',
-				params.systemPrompt ?? '',
-				params.instructions ?? null,
+				params.customPrompt ?? null,
 				now,
 				now
 			);
@@ -122,13 +120,9 @@ export class SpaceAgentRepository {
 			fields.push('provider = ?');
 			values.push(params.provider ?? null);
 		}
-		if (params.systemPrompt !== undefined) {
-			fields.push('system_prompt = ?');
-			values.push(params.systemPrompt ?? '');
-		}
-		if (params.instructions !== undefined) {
-			fields.push('instructions = ?');
-			values.push(params.instructions ?? null);
+		if (params.customPrompt !== undefined) {
+			fields.push('custom_prompt = ?');
+			values.push(params.customPrompt ?? null);
 		}
 		if (params.tools !== undefined) {
 			fields.push('tools = ?');
@@ -187,8 +181,7 @@ export class SpaceAgentRepository {
 			description: (row.description as string) || undefined,
 			model: (row.model as string | null) ?? undefined,
 			provider: (row.provider as string | null) ?? undefined,
-			systemPrompt: (row.system_prompt as string) || undefined,
-			instructions: (row.instructions as string | null) ?? null,
+			customPrompt: (row.custom_prompt as string | null) ?? null,
 			tools,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,

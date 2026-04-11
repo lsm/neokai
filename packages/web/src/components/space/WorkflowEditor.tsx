@@ -94,7 +94,7 @@ function makeLocalId(): string {
 }
 
 function makeEmptyStep(): NodeDraft {
-	return { localId: makeLocalId(), name: '', agentId: '', instructions: '' };
+	return { localId: makeLocalId(), name: '', agentId: '' };
 }
 
 function makeDefaultCondition(): ConditionDraft {
@@ -176,7 +176,6 @@ function extractInstructionText(
 		| null
 		| undefined
 		| {
-				mode: string;
 				value?: string | null;
 		  }
 ): string | undefined {
@@ -204,8 +203,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 					role: agent.name || agent.agentId,
 					agentId: agent.agentId,
 					model: agent.model,
-					systemPrompt: extractInstructionText(agent.systemPrompt),
-					instructions: extractInstructionText(agent.instructions),
+					systemPrompt: extractInstructionText(agent.customPrompt),
 				})),
 			};
 		}
@@ -216,7 +214,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
 			role: primary?.name ?? primary?.agentId ?? '',
 			agentId: primary?.agentId,
 			model: primary?.model,
-			systemPrompt: extractInstructionText(primary?.systemPrompt),
+			systemPrompt: extractInstructionText(primary?.customPrompt),
 		};
 	});
 
@@ -273,12 +271,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 					agentId: assigned?.id ?? '',
 					name: slot.name?.trim() || `${capitalizeRole(slot.role)} ${slotIndex + 1}`,
 					model: slot.model?.trim() || undefined,
-					systemPrompt: slot.systemPrompt?.trim()
-						? { mode: 'override' as const, value: slot.systemPrompt.trim() }
-						: undefined,
-					instructions: slot.instructions?.trim()
-						? { mode: 'override' as const, value: slot.instructions.trim() }
-						: undefined,
+					customPrompt: slot.systemPrompt?.trim() ? { value: slot.systemPrompt.trim() } : undefined,
 				};
 			});
 
@@ -287,10 +280,7 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				name,
 				agentId: '',
 				agents: agentSlots,
-				systemPrompt: step.systemPrompt?.trim()
-					? { mode: 'override' as const, value: step.systemPrompt.trim() }
-					: undefined,
-				instructions: step.instructions?.trim() ?? '',
+				customPrompt: step.systemPrompt?.trim() ? { value: step.systemPrompt.trim() } : undefined,
 			};
 		}
 
@@ -304,8 +294,8 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 				if (agents.length === 0) return undefined;
 				return agents[Math.min(fallbackUsed, agents.length - 1)];
 			})();
-		const resolvedSystemPrompt = step.systemPrompt?.trim()
-			? { mode: 'override' as const, value: step.systemPrompt.trim() }
+		const resolvedCustomPrompt = step.systemPrompt?.trim()
+			? { value: step.systemPrompt.trim() }
 			: undefined;
 		const resolvedRoleName =
 			role || assigned?.name?.trim() || name.toLowerCase().replace(/\s+/g, '-') || 'agent';
@@ -318,13 +308,12 @@ export function buildTemplateNodes(template: WorkflowTemplate, agents: SpaceAgen
 					agentId: assigned?.id ?? '',
 					name: resolvedRoleName,
 					model: step.model?.trim() || undefined,
-					systemPrompt: resolvedSystemPrompt,
+					customPrompt: resolvedCustomPrompt,
 				},
 			],
 			// Keep legacy top-level fields in sync for single-slot UI paths.
 			model: step.model?.trim() || undefined,
-			systemPrompt: resolvedSystemPrompt,
-			instructions: step.instructions?.trim() ?? '',
+			customPrompt: resolvedCustomPrompt,
 		};
 	});
 }
@@ -365,13 +354,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 			id: startNode.id,
 			name: startNode.name,
 			agentId: startNode.agents?.[0]?.agentId ?? '',
-			systemPrompt:
-				startNode.agents?.[0]?.systemPrompt && typeof startNode.agents[0].systemPrompt !== 'string'
-					? startNode.agents[0].systemPrompt
-					: typeof startNode.agents?.[0]?.systemPrompt === 'string'
-						? { mode: 'override' as const, value: startNode.agents[0].systemPrompt }
-						: undefined,
-			instructions: '',
+			customPrompt: startNode.agents?.[0]?.customPrompt,
 			agents: startNode.agents && startNode.agents.length > 1 ? startNode.agents : undefined,
 		});
 	}
@@ -384,13 +367,7 @@ export function initFromWorkflow(wf: SpaceWorkflow): {
 				id: s.id,
 				name: s.name,
 				agentId: s.agents?.[0]?.agentId ?? '',
-				systemPrompt:
-					s.agents?.[0]?.systemPrompt && typeof s.agents[0].systemPrompt !== 'string'
-						? s.agents[0].systemPrompt
-						: typeof s.agents?.[0]?.systemPrompt === 'string'
-							? { mode: 'override' as const, value: s.agents[0].systemPrompt }
-							: undefined,
-				instructions: '',
+				customPrompt: s.agents?.[0]?.customPrompt,
 				agents: s.agents && s.agents.length > 1 ? s.agents : undefined,
 			});
 		}
@@ -628,9 +605,9 @@ export function WorkflowEditor({ workflow, onSave, onCancel }: WorkflowEditorPro
 						: s.agentId
 							? [{ agentId: s.agentId, name: s.name || `Step ${i + 1}` }]
 							: [];
-				// For single-agent nodes, apply node-level systemPrompt override to the agent
-				if (nodeAgents.length === 1 && s.systemPrompt && !s.agents?.length) {
-					nodeAgents[0] = { ...nodeAgents[0], systemPrompt: s.systemPrompt };
+				// For single-agent nodes, apply node-level customPrompt override to the agent
+				if (nodeAgents.length === 1 && s.customPrompt && !s.agents?.length) {
+					nodeAgents[0] = { ...nodeAgents[0], customPrompt: s.customPrompt };
 				}
 				return {
 					id: stepIds[i],

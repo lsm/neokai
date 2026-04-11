@@ -37,9 +37,9 @@ export class NodeExecutionRepository {
 			.prepare(
 				`INSERT INTO node_executions
 				    (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-				     agent_session_id, status, result, created_at, started_at,
+				     agent_session_id, status, result, data, created_at, started_at,
 				     completed_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -49,7 +49,7 @@ export class NodeExecutionRepository {
 				params.agentId ?? null,
 				params.agentSessionId ?? null,
 				params.status ?? 'pending',
-				// result is only set via update() after the agent calls report_done
+				null,
 				null,
 				now,
 				null,
@@ -78,9 +78,9 @@ export class NodeExecutionRepository {
 			.prepare(
 				`INSERT OR IGNORE INTO node_executions
 					    (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-					     agent_session_id, status, result, created_at, started_at,
+					     agent_session_id, status, result, data, created_at, started_at,
 					     completed_at, updated_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -90,6 +90,7 @@ export class NodeExecutionRepository {
 				params.agentId ?? null,
 				params.agentSessionId ?? null,
 				params.status ?? 'pending',
+				null,
 				null,
 				now,
 				null,
@@ -175,7 +176,7 @@ export class NodeExecutionRepository {
 				fields.push('started_at = ?');
 				values.push(Date.now());
 			} else if (
-				(params.status === 'done' ||
+				(params.status === 'idle' ||
 					params.status === 'blocked' ||
 					params.status === 'cancelled') &&
 				params.completedAt === undefined
@@ -191,6 +192,10 @@ export class NodeExecutionRepository {
 		if (params.result !== undefined) {
 			fields.push('result = ?');
 			values.push(params.result ?? null);
+		}
+		if (params.data !== undefined) {
+			fields.push('data = ?');
+			values.push(params.data !== null ? JSON.stringify(params.data) : null);
 		}
 		if (params.startedAt !== undefined) {
 			fields.push('started_at = ?');
@@ -247,6 +252,15 @@ export class NodeExecutionRepository {
 	 * Convert a database row to a NodeExecution object
 	 */
 	private rowToNodeExecution(row: Record<string, unknown>): NodeExecution {
+		const rawData = row.data as string | null | undefined;
+		let parsedData: Record<string, unknown> | null = null;
+		if (rawData) {
+			try {
+				parsedData = JSON.parse(rawData) as Record<string, unknown>;
+			} catch {
+				parsedData = null;
+			}
+		}
 		return {
 			id: row.id as string,
 			workflowRunId: row.workflow_run_id as string,
@@ -256,6 +270,7 @@ export class NodeExecutionRepository {
 			agentSessionId: (row.agent_session_id as string | null) ?? null,
 			status: row.status as NodeExecutionStatus,
 			result: (row.result as string | null) ?? null,
+			data: parsedData,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? null,
 			completedAt: (row.completed_at as number | null) ?? null,

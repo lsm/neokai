@@ -4,10 +4,11 @@ import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space
 import {
 	buildCustomAgentSystemPrompt,
 	buildCustomAgentTaskMessage,
-	composePromptLayer,
+	expandPrompt,
 	createCustomAgentInit,
 	resolveAgentInit,
 	type CustomAgentConfig,
+	type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
 
 function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
@@ -15,7 +16,7 @@ function makeAgent(overrides?: Partial<SpaceAgent>): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'Test Agent',
-		instructions: null,
+		customPrompt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -83,7 +84,7 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 					{
 						agentId: 'agent-1',
 						name: 'Coder',
-						instructions: { mode: 'override', value: 'Write a plan' },
+						customPrompt: { value: 'Write a plan' },
 					},
 				],
 			},
@@ -112,13 +113,13 @@ function makeConfig(overrides?: Partial<CustomAgentConfig>): CustomAgentConfig {
 
 describe('buildCustomAgentSystemPrompt', () => {
 	it('returns only trimmed visible prompt text', () => {
-		expect(buildCustomAgentSystemPrompt(makeAgent({ systemPrompt: '  Visible prompt  ' }))).toBe(
+		expect(buildCustomAgentSystemPrompt(makeAgent({ customPrompt: '  Visible prompt  ' }))).toBe(
 			'Visible prompt'
 		);
 	});
 
 	it('returns empty string when no prompt is configured', () => {
-		expect(buildCustomAgentSystemPrompt(makeAgent({ systemPrompt: undefined }))).toBe('');
+		expect(buildCustomAgentSystemPrompt(makeAgent({ customPrompt: null }))).toBe('');
 	});
 });
 
@@ -149,7 +150,6 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).toContain('Workflow Structure');
 		expect(message).toContain('Nodes:');
 		expect(message).toContain('Plan');
-		// Agent slot carries the instructions (node-level instructions removed)
 		expect(message).toContain('Monorepo project');
 		expect(message).toContain('Run tests before finishing.');
 		expect(message).toContain('https://github.com/org/repo/pull/42');
@@ -164,46 +164,14 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).not.toContain('Focus on the current step first');
 	});
 
-	it('applies instructions override in override mode', () => {
+	it('does not include ## Instructions section', () => {
 		const message = buildCustomAgentTaskMessage(
 			makeConfig({
-				customAgent: makeAgent({ instructions: 'Base instructions' }),
-				slotOverrides: {
-					instructions: { mode: 'override', value: 'Override instructions' },
-				},
+				customAgent: makeAgent({ customPrompt: 'Some instructions' }),
 			})
 		);
 
-		expect(message).toContain('## Instructions');
-		expect(message).toContain('Override instructions');
-		expect(message).not.toContain('Base instructions');
-	});
-
-	it('applies instructions override in expand mode', () => {
-		const message = buildCustomAgentTaskMessage(
-			makeConfig({
-				customAgent: makeAgent({ instructions: 'Base instructions' }),
-				slotOverrides: {
-					instructions: { mode: 'expand', value: 'Additional context' },
-				},
-			})
-		);
-
-		expect(message).toContain('## Instructions');
-		expect(message).toContain('Base instructions');
-		expect(message).toContain('Additional context');
-		expect(message).toContain('Base instructions\n\nAdditional context');
-	});
-
-	it('uses agent instructions when no slot override is provided', () => {
-		const message = buildCustomAgentTaskMessage(
-			makeConfig({
-				customAgent: makeAgent({ instructions: 'Agent own instructions' }),
-			})
-		);
-
-		expect(message).toContain('## Instructions');
-		expect(message).toContain('Agent own instructions');
+		expect(message).not.toContain('## Instructions');
 	});
 });
 
@@ -211,7 +179,7 @@ describe('createCustomAgentInit', () => {
 	it('uses the agent prompt outside workflow runs', () => {
 		const init = createCustomAgentInit(
 			makeConfig({
-				customAgent: makeAgent({ systemPrompt: 'Agent-visible prompt' }),
+				customAgent: makeAgent({ customPrompt: 'Agent-visible prompt' }),
 			})
 		);
 
@@ -219,23 +187,22 @@ describe('createCustomAgentInit', () => {
 		expect(init.systemPrompt?.append).toBe('Agent-visible prompt');
 	});
 
-	it('uses only the workflow slot prompt inside workflow runs', () => {
+	it('expands slot customPrompt on top of agent customPrompt inside workflow runs', () => {
 		const init = createCustomAgentInit(
 			makeConfig({
-				customAgent: makeAgent({ systemPrompt: 'Hidden base prompt' }),
+				customAgent: makeAgent({ customPrompt: 'Base prompt' }),
 				workflowRun: makeWorkflowRun(),
-				slotOverrides: { systemPrompt: { mode: 'override', value: 'Workflow-visible prompt' } },
+				slotOverrides: { customPrompt: 'Slot expansion' },
 			})
 		);
 
-		expect(init.systemPrompt?.append).toBe('Workflow-visible prompt');
-		expect(init.systemPrompt?.append).not.toContain('Hidden base prompt');
+		expect(init.systemPrompt?.append).toBe('Base prompt\n\nSlot expansion');
 	});
 
-	it('uses the agent system prompt when no slot override is defined', () => {
+	it('uses the agent custom prompt when no slot override is defined', () => {
 		const init = createCustomAgentInit(
 			makeConfig({
-				customAgent: makeAgent({ systemPrompt: 'Agent base prompt' }),
+				customAgent: makeAgent({ customPrompt: 'Agent base prompt' }),
 				workflowRun: makeWorkflowRun(),
 			})
 		);
@@ -248,7 +215,7 @@ describe('createCustomAgentInit', () => {
 			makeConfig({
 				customAgent: makeAgent({
 					name: 'Restricted Agent',
-					systemPrompt: 'Visible prompt',
+					customPrompt: 'Visible prompt',
 					tools: ['Read', 'Bash'],
 				}),
 			})
@@ -316,7 +283,7 @@ describe('resolveAgentInit', () => {
 
 	it('resolves the assigned agent and builds the session init', () => {
 		const agentManager = {
-			getById: mock(() => makeAgent({ id: 'agent-2', systemPrompt: 'Visible prompt' })),
+			getById: mock(() => makeAgent({ id: 'agent-2', customPrompt: 'Visible prompt' })),
 		} as unknown as SpaceAgentManager;
 
 		const init = resolveAgentInit({
@@ -333,65 +300,100 @@ describe('resolveAgentInit', () => {
 });
 
 // ---------------------------------------------------------------------------
-// composePromptLayer
+// expandPrompt
 // ---------------------------------------------------------------------------
 
-describe('composePromptLayer', () => {
-	describe('override mode', () => {
-		it('replaces non-empty base entirely', () => {
-			expect(composePromptLayer('Base value', { mode: 'override', value: 'X' })).toBe('X');
-		});
-
-		it('replaces null base', () => {
-			expect(composePromptLayer(null, { mode: 'override', value: 'Override only' })).toBe(
-				'Override only'
-			);
-		});
-
-		it('replaces empty string base', () => {
-			expect(composePromptLayer('', { mode: 'override', value: 'Override' })).toBe('Override');
-		});
-
-		it('returns trimmed override value', () => {
-			expect(composePromptLayer('Base', { mode: 'override', value: '  Trimmed  ' })).toBe(
-				'Trimmed'
-			);
-		});
+describe('expandPrompt', () => {
+	it('returns base when no expansion is provided', () => {
+		expect(expandPrompt('base prompt', undefined)).toBe('base prompt');
 	});
 
-	describe('expand mode', () => {
-		it('appends override to non-empty base with double newline', () => {
-			expect(composePromptLayer('Base prompt', { mode: 'expand', value: 'Extra' })).toBe(
-				'Base prompt\n\nExtra'
-			);
-		});
-
-		it('returns only override value when base is empty string', () => {
-			expect(composePromptLayer('', { mode: 'expand', value: 'Expand only' })).toBe('Expand only');
-		});
-
-		it('returns only override value when base is null', () => {
-			expect(composePromptLayer(null, { mode: 'expand', value: 'Expand only' })).toBe(
-				'Expand only'
-			);
-		});
-
-		it('returns base only when override value is blank', () => {
-			expect(composePromptLayer('Base value', { mode: 'expand', value: '   ' })).toBe('Base value');
-		});
+	it('returns empty string when base and expansion are both absent', () => {
+		expect(expandPrompt(undefined, undefined)).toBe('');
+		expect(expandPrompt(null, undefined)).toBe('');
+		expect(expandPrompt('', undefined)).toBe('');
 	});
 
-	describe('no override (undefined)', () => {
-		it('returns base value unchanged', () => {
-			expect(composePromptLayer('Agent base prompt', undefined)).toBe('Agent base prompt');
-		});
+	it('appends expansion to base with double newline', () => {
+		expect(expandPrompt('base', 'additional')).toBe('base\n\nadditional');
+	});
 
-		it('returns empty string when base is null', () => {
-			expect(composePromptLayer(null, undefined)).toBe('');
-		});
+	it('returns expansion only when base is empty', () => {
+		expect(expandPrompt('', 'additional')).toBe('additional');
+		expect(expandPrompt(null, 'additional')).toBe('additional');
+		expect(expandPrompt(undefined, 'additional')).toBe('additional');
+	});
 
-		it('returns empty string when base is empty', () => {
-			expect(composePromptLayer('', undefined)).toBe('');
-		});
+	it('trims whitespace from both base and expansion', () => {
+		expect(expandPrompt('  base  ', '  extra  ')).toBe('base\n\nextra');
+	});
+
+	it('handles multiline values', () => {
+		const result = expandPrompt('base', 'line1\nline2\nline3');
+		expect(result).toBe('base\n\nline1\nline2\nline3');
+	});
+
+	it('expands on top of non-empty base', () => {
+		const base = 'Follow TDD principles.\nWrite tests first.';
+		const result = expandPrompt(base, 'Use bun:test for all tests.');
+		expect(result).toBe(
+			'Follow TDD principles.\nWrite tests first.\n\nUse bun:test for all tests.'
+		);
+	});
+
+	it('returns base when expansion is empty', () => {
+		expect(expandPrompt('base', '')).toBe('base');
+		expect(expandPrompt('base', '   ')).toBe('base');
+	});
+
+	it('returns base when expansion is undefined', () => {
+		expect(expandPrompt('base prompt', undefined)).toBe('base prompt');
+	});
+
+	it('handles unicode content', () => {
+		expect(expandPrompt('English base', '日本語の指示')).toBe('English base\n\n日本語の指示');
+	});
+
+	it('handles very long values', () => {
+		const longValue = 'x'.repeat(10000);
+		const result = expandPrompt('base', longValue);
+		expect(result).toBe(`base\n\n${longValue}`);
+		expect(result.length).toBe(10006);
+	});
+
+	it('returns empty string when base is null and expansion is absent', () => {
+		expect(expandPrompt(null, undefined)).toBe('');
+	});
+
+	it('handles expansion with only whitespace base', () => {
+		expect(expandPrompt('   ', 'value')).toBe('value');
+	});
+
+	it('with empty expansion and empty base returns empty', () => {
+		expect(expandPrompt('', '')).toBe('');
+	});
+
+	it('preserves exact base trimmed when expansion is undefined', () => {
+		expect(expandPrompt('  exact  spacing  ', undefined)).toBe('exact  spacing');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// SlotOverrides interface
+// ---------------------------------------------------------------------------
+
+describe('SlotOverrides interface', () => {
+	it('accepts customPrompt as string', () => {
+		const overrides: SlotOverrides = {
+			customPrompt: 'extra context',
+		};
+		expect(expandPrompt('base prompt', overrides.customPrompt)).toBe(
+			'base prompt\n\nextra context'
+		);
+	});
+
+	it('returns base when SlotOverrides.customPrompt is undefined', () => {
+		const overrides: SlotOverrides = {};
+		expect(expandPrompt('base prompt', overrides.customPrompt)).toBe('base prompt');
 	});
 });

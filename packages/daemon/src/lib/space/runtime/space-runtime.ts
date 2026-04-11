@@ -1125,7 +1125,8 @@ export class SpaceRuntime {
 				return;
 			}
 
-			// Step 1.5: Auto-complete alive agents that never call report_done.
+			// Step 1.5: Auto-complete alive agents that have exceeded their timeout.
+			// Transitions to 'idle' — the same state as a naturally completing session.
 			let autoCompleted = 0;
 			const now = Date.now();
 			for (const execution of nodeExecutions) {
@@ -1139,8 +1140,8 @@ export class SpaceRuntime {
 
 				const timeoutMinutes = Math.round(timeoutMs / 60_000);
 				this.config.nodeExecutionRepo.update(execution.id, {
-					status: 'done',
-					result: `Auto-completed: agent did not call report_done within ${timeoutMinutes} minutes`,
+					status: 'idle',
+					result: `Auto-completed: agent timed out after ${timeoutMinutes} minutes`,
 				});
 				await this.safeNotify({
 					kind: 'agent_auto_completed',
@@ -1417,7 +1418,7 @@ export class SpaceRuntime {
 		for (const execution of executions) {
 			if (
 				terminalNodeIds.has(execution.workflowNodeId) &&
-				execution.status === 'done' &&
+				execution.status === 'idle' &&
 				execution.result
 			) {
 				return execution.result;

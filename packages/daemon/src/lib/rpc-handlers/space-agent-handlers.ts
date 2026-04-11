@@ -45,8 +45,7 @@ export function setupSpaceAgentHandlers(
 			description?: string;
 			model?: string;
 			provider?: string;
-			systemPrompt?: string;
-			instructions?: string | null;
+			customPrompt?: string | null;
 		};
 
 		if (!params.spaceId) throw new Error('spaceId is required');
@@ -58,8 +57,7 @@ export function setupSpaceAgentHandlers(
 			description: params.description,
 			model: params.model,
 			provider: params.provider,
-			systemPrompt: params.systemPrompt,
-			instructions: params.instructions,
+			customPrompt: params.customPrompt,
 		});
 
 		if (!result.ok) throw new Error(result.error);
@@ -105,8 +103,7 @@ export function setupSpaceAgentHandlers(
 			description?: string | null;
 			model?: string | null;
 			provider?: string | null;
-			systemPrompt?: string | null;
-			instructions?: string | null;
+			customPrompt?: string | null;
 		};
 
 		if (!params.id) throw new Error('id is required');
@@ -117,8 +114,7 @@ export function setupSpaceAgentHandlers(
 			description: updateFields.description,
 			model: updateFields.model,
 			provider: updateFields.provider,
-			systemPrompt: updateFields.systemPrompt,
-			instructions: updateFields.instructions,
+			customPrompt: updateFields.customPrompt,
 		});
 
 		if (!result.ok) throw new Error(result.error);

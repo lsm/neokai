@@ -9,7 +9,7 @@
  * - Description (optional)
  * - Model (dropdown override)
  * - Tools (multi-select checkboxes from KNOWN_TOOLS)
- * - System Prompt (monospace textarea with line numbers)
+ * - Custom Prompt (monospace textarea with line numbers; appended after NeoKai contract)
  *
  * Tool presets: "Full Coding" · "Read Only" · "Custom"
  *
@@ -130,7 +130,7 @@ export function SpaceAgentEditor({
 	const [description, setDescription] = useState(agent?.description ?? '');
 	const [model, setModel] = useState(agent?.model ?? '');
 	const [tools, setTools] = useState<string[]>(agent?.tools ?? [...TOOL_PRESETS['Full Coding']]);
-	const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt ?? '');
+	const [customPrompt, setCustomPrompt] = useState(agent?.customPrompt ?? '');
 	const [activePreset, setActivePreset] = useState<string>(() => detectPreset(agent?.tools));
 	const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
 
@@ -151,7 +151,7 @@ export function SpaceAgentEditor({
 			setName(template.name);
 		}
 		setDescription(template.description ?? '');
-		setSystemPrompt(template.systemPrompt ?? '');
+		setCustomPrompt(template.customPrompt ?? '');
 		setTools([...template.tools]);
 		setActivePreset(detectPreset(template.tools));
 		setErrors((prev) => ({ ...prev, tools: '', name: '', model: '' }));
@@ -204,7 +204,7 @@ export function SpaceAgentEditor({
 				name: name.trim(),
 				description: description.trim() || undefined,
 				model: model.trim(),
-				systemPrompt: systemPrompt || undefined,
+				customPrompt: customPrompt || null,
 				tools: tools.length > 0 ? tools : undefined,
 			};
 
@@ -386,16 +386,18 @@ export function SpaceAgentEditor({
 					{errors['tools'] && <p class="mt-1.5 text-xs text-red-400">{errors['tools']}</p>}
 				</div>
 
-				{/* System Prompt */}
+				{/* Custom Prompt */}
 				<div>
 					<label class="block text-sm font-medium text-gray-300 mb-2">
-						System Prompt
-						<span class="text-gray-500 text-xs ml-2">(optional)</span>
+						Custom Prompt
+						<span class="text-gray-500 text-xs ml-2">
+							(optional — appended after NeoKai contract)
+						</span>
 					</label>
 					<LineNumberedTextarea
-						value={systemPrompt}
-						onChange={setSystemPrompt}
-						placeholder="Exact system prompt text for this agent..."
+						value={customPrompt}
+						onChange={setCustomPrompt}
+						placeholder="Persona, operating procedure, or any additional context for this agent..."
 						rows={8}
 					/>
 				</div>

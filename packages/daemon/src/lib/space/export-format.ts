@@ -59,15 +59,14 @@ const _workflowConditionSchema = z
 	});
 
 const workflowNodeAgentOverrideSchema = z.object({
-	mode: z.enum(['override', 'expand']),
 	value: z.string(),
 });
 
 /**
- * Union schema accepting both legacy plain-string overrides and new `{ mode, value }` objects.
+ * Union schema accepting both legacy plain-string overrides and new `{ value }` objects.
  * Legacy exports stored systemPrompt/instructions as plain strings; the new format uses
- * `WorkflowNodeAgentOverride { mode, value }`. Both are accepted on import for backward
- * compatibility — plain strings are normalized to `{ mode: 'override', value }` during import.
+ * `WorkflowNodeAgentOverride { value }`. Both are accepted on import for backward
+ * compatibility — plain strings are normalized to `{ value }` during import.
  */
 const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.string().min(1)]);
 
@@ -158,19 +157,19 @@ export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: s
 // ============================================================================
 
 /**
- * Normalize a systemPrompt or instructions override value from the exported format.
+ * Normalize a legacy override value from the exported format.
  *
- * The Zod schema accepts both plain strings (legacy) and `{ mode, value }` objects (new).
+ * The Zod schema accepts both plain strings (legacy) and `{ value }` objects (new).
  * This helper converts the union to the canonical `WorkflowNodeAgentOverride` format:
- * - Plain string → `{ mode: 'override', value: <string> }`
- * - `{ mode, value }` object → passed through as-is
+ * - Plain string → `{ value: <string> }`
+ * - `{ value }` object → passed through as-is
  * - `undefined` → `undefined`
  */
 export function normalizeOverride(
 	value: import('@neokai/shared').WorkflowNodeAgentOverride | string | undefined
 ): import('@neokai/shared').WorkflowNodeAgentOverride | undefined {
 	if (value === undefined) return undefined;
-	if (typeof value === 'string') return { mode: 'override', value };
+	if (typeof value === 'string') return { value };
 	return value;
 }
 
@@ -191,9 +190,8 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	if (agent.description !== undefined) exported.description = agent.description;
 	if (agent.model !== undefined) exported.model = agent.model;
 	if (agent.provider !== undefined) exported.provider = agent.provider;
-	if (agent.systemPrompt !== undefined) exported.systemPrompt = agent.systemPrompt;
-	if (agent.instructions !== null && agent.instructions !== undefined)
-		exported.instructions = agent.instructions;
+	if (agent.customPrompt !== null && agent.customPrompt !== undefined)
+		exported.systemPrompt = agent.customPrompt;
 	if (agent.tools !== undefined) exported.tools = agent.tools;
 	return exported;
 }
@@ -240,8 +238,7 @@ export function exportWorkflow(
 				name: a.name,
 			};
 			if (a.model !== undefined) entry.model = a.model;
-			if (a.systemPrompt !== undefined) entry.systemPrompt = a.systemPrompt;
-			if (a.instructions !== undefined) entry.instructions = a.instructions;
+			if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;
 			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
 			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
 			return entry;

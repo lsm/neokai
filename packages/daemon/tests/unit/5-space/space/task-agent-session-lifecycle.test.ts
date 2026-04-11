@@ -820,15 +820,8 @@ describe('Task Agent Session Lifecycle', () => {
 				workspacePath: '/tmp/ws',
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
-			// Register a completion callback
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-			factory.onComplete(subSessionId, async () => {});
+			// Register a completion callback directly
+			ctx.manager.registerCompletionCallback(subSessionId, async () => {});
 
 			// Emit an idle event before cleanup — callback should fire
 			const subSession = ctx.createdSessions.get(subSessionId)!;
@@ -845,7 +838,7 @@ describe('Task Agent Session Lifecycle', () => {
 				sessionId: subSessionId2,
 				workspacePath: '/tmp/ws',
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
-			factory.onComplete(subSessionId2, async () => {});
+			ctx.manager.registerCompletionCallback(subSessionId2, async () => {});
 
 			await ctx.manager.cleanup(task.id);
 
@@ -1176,16 +1169,8 @@ describe('Task Agent Session Lifecycle', () => {
 			const subSession = ctx.createdSessions.get(subSessionId)!;
 			subSession._sdkMessageCount = 3;
 
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-
 			let completionFired = false;
-			factory.onComplete(subSessionId, async () => {
+			ctx.manager.registerCompletionCallback(subSessionId, async () => {
 				completionFired = true;
 			});
 

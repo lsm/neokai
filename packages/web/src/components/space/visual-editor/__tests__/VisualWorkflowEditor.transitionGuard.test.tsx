@@ -66,7 +66,7 @@ import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 // ---- Helpers ----
 
 function makeAgent(id: string, name: string): SpaceAgent {
-	return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
+	return { id, spaceId: 'space-1', name, customPrompt: null, createdAt: 0, updatedAt: 0 };
 }
 
 function makeWorkflow(): SpaceWorkflow {
