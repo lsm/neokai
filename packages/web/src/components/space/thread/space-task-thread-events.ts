@@ -455,3 +455,97 @@ export function buildThreadEvents(parsedRows: ParsedThreadRow[]): SpaceTaskThrea
 
 	return events;
 }
+
+// ============================================================================
+// File operations extraction (for non-git workspaces)
+// ============================================================================
+
+export interface FileOperation {
+	path: string;
+	/** Last tool that touched this file */
+	tool: 'Write' | 'Edit';
+	/** Write: full file content written */
+	content?: string;
+	/** Edit: the string that was replaced */
+	oldString?: string;
+	/** Edit: the replacement string */
+	newString?: string;
+}
+
+/**
+ * Scan all assistant tool-use blocks in `parsedRows` and return the last
+ * Write/Edit operation per file path. Used as a fallback when the workspace
+ * is not a git repository.
+ */
+export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperation[] {
+	const opsByFile = new Map<string, FileOperation>();
+
+	for (const row of parsedRows) {
+		const msg = row.message;
+		if (!msg || msg.role !== 'assistant') continue;
+		const content = Array.isArray(msg.content) ? msg.content : [];
+
+		for (const block of content) {
+			if (!isToolUseBlock(block)) continue;
+			const input =
+				typeof block.input === 'object' && block.input !== null
+					? (block.input as Record<string, unknown>)
+					: {};
+
+			if (block.name === 'Write') {
+				const path = typeof input.file_path === 'string' ? input.file_path : null;
+				const fileContent = typeof input.content === 'string' ? input.content : null;
+				if (path && fileContent !== null) {
+					opsByFile.set(path, { path, tool: 'Write', content: fileContent });
+				}
+			} else if (block.name === 'Edit') {
+				const path = typeof input.file_path === 'string' ? input.file_path : null;
+				const oldString = typeof input.old_string === 'string' ? input.old_string : null;
+				const newString = typeof input.new_string === 'string' ? input.new_string : null;
+				if (path && oldString !== null && newString !== null) {
+					opsByFile.set(path, { path, tool: 'Edit', oldString, newString });
+				}
+			}
+		}
+	}
+
+	return Array.from(opsByFile.values());
+}
+
+/**
+ * Build a synthetic unified diff string from a FileOperation so it can be
+ * displayed in FileDiffView without a real git repo.
+ *
+ * - Write → full content shown as a new-file addition
+ * - Edit  → old_string lines as removals, new_string lines as additions
+ */
+export function buildSyntheticDiff(op: FileOperation): {
+	diff: string;
+	additions: number;
+	deletions: number;
+} {
+	if (op.tool === 'Write') {
+		const lines = (op.content ?? '').split('\n');
+		const hunks = lines.map((l) => `+${l}`).join('\n');
+		const diff = [
+			`diff --git a/${op.path} b/${op.path}`,
+			'--- /dev/null',
+			`+++ b/${op.path}`,
+			`@@ -0,0 +1,${lines.length} @@`,
+			hunks,
+		].join('\n');
+		return { diff, additions: lines.length, deletions: 0 };
+	}
+
+	const oldLines = (op.oldString ?? '').split('\n');
+	const newLines = (op.newString ?? '').split('\n');
+	const diff = [
+		`diff --git a/${op.path} b/${op.path}`,
+		`--- a/${op.path}`,
+		`+++ b/${op.path}`,
+		`@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+		...oldLines.map((l) => `-${l}`),
+		...newLines.map((l) => `+${l}`),
+	].join('\n');
+	return { diff, additions: newLines.length, deletions: oldLines.length };
+}
