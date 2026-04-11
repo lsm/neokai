@@ -77,9 +77,10 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
 		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
 
-		// Click the "Review" tab — the tab label includes a count badge so use a regex prefix match
+		// Click the "Review" tab — the tab label includes a count badge so use regex to match
+		// the label anywhere in the accessible name (count precedes label: "0 Review")
 		const overviewView = page.locator(OVERVIEW_VIEW);
-		const reviewTab = overviewView.getByRole('button', { name: /^Review/ });
+		const reviewTab = overviewView.getByRole('button', { name: /Review/ });
 		await expect(reviewTab).toBeVisible({ timeout: 5000 });
 		await reviewTab.click();
 
@@ -152,7 +153,7 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 
 		// Click the "Done" tab to reveal the task
 		const overviewView = page.locator(OVERVIEW_VIEW);
-		const doneTab = overviewView.getByRole('button', { name: /^Done/ });
+		const doneTab = overviewView.getByRole('button', { name: /Done/ });
 		await expect(doneTab).toBeVisible({ timeout: 5000 });
 		await doneTab.click();
 
