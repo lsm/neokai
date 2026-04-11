@@ -142,7 +142,7 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		daemon = await createDaemonServer({ env: { NEOKAI_ENABLE_SPACES_AGENT: '1' } });
+		daemon = await createDaemonServer();
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {

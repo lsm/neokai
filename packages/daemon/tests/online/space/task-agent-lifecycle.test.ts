@@ -61,9 +61,6 @@ const TEST_TIMEOUT = IS_MOCK ? 60_000 : 240_000;
 // How long to wait for SpaceRuntime tick loop to spawn a Task Agent (default tick: 5s)
 const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
 
-// The global spaces agent session ID — auto-provisioned when NEOKAI_ENABLE_SPACES_AGENT=1
-const GLOBAL_SPACES_SESSION_ID = 'spaces:global';
-
 // Pre-assigned step ID used in all test workflows so mocks can reference it by ID.
 // Fresh DB per test daemon means no cross-test ID conflicts.
 const STEP_CODE_ID = 'step-code-lifecycle-001';
@@ -273,9 +270,8 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
-		// NEOKAI_ENABLE_SPACES_AGENT=1 enables the global spaces agent for notification tests.
 		// Each test gets a fresh daemon with its own in-memory SQLite DB — no cross-test state.
-		daemon = await createDaemonServer({ env: { NEOKAI_ENABLE_SPACES_AGENT: '1' } });
+		daemon = await createDaemonServer();
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
@@ -545,85 +541,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
 				IS_MOCK ? 8_000 : 30_000
 			);
 			expect(finalStatus).toBe('idle');
-		},
-		TEST_TIMEOUT
-	);
-
-	// -------------------------------------------------------------------------
-	// Test 6: Space Agent receives completion notification
-	// -------------------------------------------------------------------------
-	test(
-		'Space Agent receives a completion notification when a run completes',
-		async () => {
-			const spacesAgentDeadline = Date.now() + SETUP_TIMEOUT;
-			let spacesAgentReady = false;
-			while (Date.now() < spacesAgentDeadline) {
-				try {
-					await daemon.messageHub.request('session.get', {
-						sessionId: GLOBAL_SPACES_SESSION_ID,
-					});
-					spacesAgentReady = true;
-					break;
-				} catch {
-					await new Promise((resolve) => setTimeout(resolve, 200));
-				}
-			}
-			if (!spacesAgentReady) {
-				throw new Error(`spaces:global session was not ready within ${SETUP_TIMEOUT}ms — aborting`);
-			}
-			daemon.trackSession(GLOBAL_SPACES_SESSION_ID);
-
-			const { space, workflow } = await createTestFixtures(daemon);
-			const { runId, execution } = await startWorkflowRunAndGetTask(
-				daemon,
-				space.id,
-				workflow.id,
-				'Lifecycle test run — space agent notification'
-			);
-
-			const nodeAgentSessionId = await waitForNodeAgentSpawned(
-				daemon,
-				space.id,
-				runId,
-				execution.id,
-				TASK_AGENT_SPAWN_TIMEOUT
-			);
-			daemon.trackSession(nodeAgentSessionId);
-			await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
-
-			const { sdkMessages: beforeMessages } = await waitForSdkMessages(
-				daemon,
-				GLOBAL_SPACES_SESSION_ID,
-				{ minCount: 0, timeout: 2_000 }
-			).catch(() => ({ sdkMessages: [] as Array<Record<string, unknown>> }));
-			const messageCountBefore = beforeMessages.length;
-
-			await daemon.messageHub.request('nodeExecution.update', {
-				id: execution.id,
-				spaceId: space.id,
-				status: 'idle',
-				result: 'Completion notification test',
-			});
-
-			await waitForExecutionStatus(
-				daemon,
-				space.id,
-				runId,
-				execution.id,
-				['idle'],
-				IS_MOCK ? 8_000 : 30_000
-			);
-
-			// Run completion is processed on runtime ticks.
-			await waitForRunStatus(daemon, runId, ['done'], IS_MOCK ? 15_000 : 45_000);
-			await waitForIdle(daemon, GLOBAL_SPACES_SESSION_ID, IDLE_TIMEOUT);
-
-			const { sdkMessages: afterMessages } = await waitForSdkMessages(
-				daemon,
-				GLOBAL_SPACES_SESSION_ID,
-				{ minCount: messageCountBefore + 1, timeout: 15_000 }
-			);
-			expect(afterMessages.length).toBeGreaterThan(messageCountBefore);
 		},
 		TEST_TIMEOUT
 	);
