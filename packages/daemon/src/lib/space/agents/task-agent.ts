@@ -23,8 +23,8 @@
  * ## Node agent tools (for reference)
  * Node agents have their own peer communication tools:
  *   - list_peers            — Discover peers and their completion state (queries space_tasks)
- *   - send_message          — Channel-validated messaging (agent name→DM, node name→fan-out)
- *   - report_done           — Signal task completion with an optional summary
+ *   - send_message          — Channel-validated messaging; auto-writes gate data when channel has a gate
+ *   - save                  — Persist intermediate or final result data; does not change node status
  *   - list_reachable_agents — Discover which agents/nodes are reachable and gate status
  *
  * ## Content interpolation
@@ -194,7 +194,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
 			`Pass \`status\` (\`done\`, \`blocked\`, or \`cancelled\`) and a \`summary\` string. ` +
 			`Call this when the workflow reaches an unrecoverable error or you need to cancel. ` +
-			`Workflow completion is automatic — the end node's \`report_done\` call triggers it.`
+			`Workflow completion is automatic — it triggers when the end node's session completes.`
 	);
 	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
@@ -206,7 +206,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`- **list_group_members** — List all members of the current task's session group. ` +
 			`Returns each member's \`sessionId\`, \`agentName\`, \`status\`, \`completionState\`, and ` +
 			`\`permittedTargets\`. Completion state is read from node execution records — use this to monitor ` +
-			`when all agents have called \`report_done\`. Use it after event messages and before finalizing.`
+			`when all agents have reached idle status. Use it after event messages and before finalizing.`
 	);
 	sections.push(
 		`- **send_message** — Send a message to a peer node agent using a plain string target. ` +
@@ -219,8 +219,8 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(
 		`**Node agent tools (for reference):** Each spawned node agent also has access to: ` +
 			`\`list_peers\` (discover peers with completion state from node executions), ` +
-			`\`send_message\` (same string-based targeting), ` +
-			`\`report_done\` (signal task completion — the end node's call triggers automatic workflow completion), and ` +
+			`\`send_message\` (same string-based targeting; automatically writes gate data when the channel has a gate and \`data\` is provided), ` +
+			`\`save\` (persist intermediate or final result data without changing node status), and ` +
 			`\`list_reachable_agents\` (discover reachable agents and cross-node gate status). ` +
 			`Node agents drive their own progression — you do not need to manually route messages between them.`
 	);
@@ -229,7 +229,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	sections.push(`\n## Collaboration Execution Instructions\n`);
 	sections.push(
 		`In the agent-centric model, node agents are self-directing participants that communicate ` +
-			`via declared channels and signal completion via \`report_done\`. Your role is to monitor state, ` +
+			`via declared channels and complete their work naturally when done. Your role is to monitor state, ` +
 			`monitor the collaboration, and handle gate events — you do not manually route messages between agents.\n`
 	);
 	sections.push(`Follow this event-driven loop until all agents have completed:\n`);
@@ -244,10 +244,10 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`a \`human\` gate requires explicit approval (call \`request_human_input\`); ` +
 			`\`condition\` and \`task_result\` gates are evaluated automatically by the system. ` +
 			`If a node agent reports that a message was blocked by a gate, surface the gate to the user.\n` +
-			`5. **Automatic workflow completion** — When the end node agent calls \`report_done\`, the ` +
+			`5. **Automatic workflow completion** — When the end node agent's session completes, the ` +
 			`system automatically marks the workflow run and main task as completed. You do not need to ` +
 			`call any completion tool — just wait for the \`[NODE_COMPLETE]\` event from the end node. ` +
-			`Use \`list_group_members\` to verify all agents have finished if needed. ` +
+			`Use \`list_group_members\` to verify all agents have reached idle status if needed. ` +
 			`Only call \`report_result\` if you need to cancel or signal an unrecoverable error.\n` +
 			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
 			`\`status: "cancelled"\` and the error details.`
@@ -438,7 +438,8 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 			parts.push(`\n## Workflow Gates\n`);
 			parts.push(
 				`Gates guard channels — a message on a gated channel is held until the gate's condition passes. ` +
-					`Node agents use \`list_gates\`, \`read_gate\`, and \`write_gate\` tools to inspect and update gate state.\n` +
+					`Node agents use \`list_gates\` and \`read_gate\` tools to inspect gate state. Gate data is written ` +
+					`automatically when \`send_message\` is called on a gated channel with a \`data\` parameter.\n` +
 					`\n` +
 					`**Vote counting:** for \`count\` condition gates, node agents use their \`nodeId\` ` +
 					`(workflow node ID) as the map key — each node votes exactly once.\n`

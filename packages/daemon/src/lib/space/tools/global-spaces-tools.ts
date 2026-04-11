@@ -28,6 +28,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
@@ -47,6 +48,11 @@ export interface GlobalSpacesToolsConfig {
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Database instance used to create SpaceTaskManager instances on demand. */
 	db: BunDatabase;
+	/**
+	 * TaskAgentManager instance for injecting messages into running task agent sessions.
+	 * When provided, enables the `send_message_to_task` tool.
+	 */
+	taskAgentManager?: TaskAgentManager;
 }
 
 /**
@@ -89,6 +95,7 @@ export function createGlobalSpacesToolHandlers(
 		nodeExecutionRepo,
 		workflowRunRepo,
 		db,
+		taskAgentManager,
 	} = config;
 
 	/**
@@ -480,6 +487,63 @@ export function createGlobalSpacesToolHandlers(
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		// ---- Task agent communication tools ----
+
+		async send_message_to_task(args: {
+			task_id: string;
+			message: string;
+			space_id?: string;
+		}): Promise<ToolResult> {
+			if (!taskAgentManager) {
+				return jsonResult({
+					success: false,
+					error: 'Task agent communication is not available in this context.',
+				});
+			}
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			const resolved = resolveSpaceId(args.space_id);
+			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to space ${resolved.spaceId}`,
+				});
+			}
+			try {
+				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
+				return jsonResult({ success: true, task_id: args.task_id });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_task_members(args: { task_id: string; space_id?: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			const resolved = resolveSpaceId(args.space_id);
+			if ('spaceId' in resolved && task.spaceId !== resolved.spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to space ${resolved.spaceId}`,
+				});
+			}
+			if (!task.workflowRunId) {
+				return jsonResult({
+					success: true,
+					task_id: args.task_id,
+					executions: [],
+					message: 'This task has no associated workflow run.',
+				});
+			}
+			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+			return jsonResult({ success: true, task_id: args.task_id, executions });
+		},
 	};
 }
 
@@ -756,6 +820,35 @@ export function createGlobalSpacesMcpServer(
 					.describe('Built-in agent type (used when custom_agent_id is null)'),
 			},
 			(args) => handlers.reassign_task(args)
+		),
+
+		// Task agent communication tools
+		tool(
+			'send_message_to_task',
+			'Inject a message into a running task agent session. Use this to give real-time guidance, corrections, or context to a task agent that is currently executing.',
+			{
+				task_id: z
+					.string()
+					.describe('ID of the task whose agent session should receive the message'),
+				message: z.string().describe('Message to inject into the task agent session'),
+				space_id: z
+					.string()
+					.optional()
+					.describe('Space ID to validate ownership (defaults to active space context)'),
+			},
+			(args) => handlers.send_message_to_task(args)
+		),
+		tool(
+			'list_task_members',
+			"List all node executions (workflow member agents) for a task. Returns each node's execution status, result, and saved data. Use this to inspect the detailed state of a running or completed workflow task.",
+			{
+				task_id: z.string().describe('ID of the task to inspect'),
+				space_id: z
+					.string()
+					.optional()
+					.describe('Space ID to validate ownership (defaults to active space context)'),
+			},
+			(args) => handlers.list_task_members(args)
 		),
 	];
 

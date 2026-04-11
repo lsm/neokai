@@ -706,6 +706,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 			state: globalSpacesState,
 			daemonHub: deps.daemonHub,
 			appMcpManager: deps.appMcpManager,
+			taskAgentManager,
 		}).catch((error) => {
 			log.error('Failed to provision global spaces agent:', error);
 		});
