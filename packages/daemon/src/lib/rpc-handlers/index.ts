@@ -309,7 +309,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupDialogHandlers(deps.messageHub);
 
 	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
-	const fileIndex = new FileIndex(undefined);
+	const fileIndex = new FileIndex(deps.config.workspaceRoot);
 	fileIndex.init().catch((err) => {
 		log.warn('FileIndex init failed:', err);
 	});
@@ -320,7 +320,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
 		goalRepo: deps.db.getGoalRepo(),
-		workspaceRoot: undefined,
+		workspaceRoot: deps.config.workspaceRoot,
 		fileIndex,
 		getRoomDefaultPath: (roomId: string) => roomManager.getRoom(roomId)?.defaultPath ?? undefined,
 	});

@@ -539,7 +539,9 @@ test.describe
 				await expect(page.locator('text=Reviewer 1')).toBeVisible({ timeout: 5000 });
 				await expect(page.locator('text=Reviewer 2')).toBeVisible({ timeout: 5000 });
 				await expect(page.locator('text=Reviewer 3')).toBeVisible({ timeout: 5000 });
-				await expect(page.locator('text=QA')).toBeVisible({ timeout: 5000 });
+				await expect(
+					page.locator('[data-testid="step-name"]').filter({ hasText: 'QA' }).first()
+				).toBeVisible({ timeout: 5000 });
 			});
 		});
 
