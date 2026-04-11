@@ -206,21 +206,19 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
 	});
 
-	it('opens Space Agent from task actions dropdown when no task session exists', () => {
+	it('opens Space Agent via header button when no task session exists', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
-		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		fireEvent.click(getByTestId('task-actions-menu-trigger'));
-		fireEvent.click(getByText('Open Space Agent'));
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('view-agent-session-btn'));
 		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
 	});
 
-	it('opens overlay from task actions dropdown when task session exists', () => {
+	it('opens overlay via header button when task session exists', () => {
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		fireEvent.click(getByTestId('task-actions-menu-trigger'));
-		fireEvent.click(getByText('View Agent Session'));
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		fireEvent.click(getByTestId('view-agent-session-btn'));
 		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-abc');
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('View Agent Session');
 	});
@@ -703,8 +701,9 @@ describe('SpaceTaskPane — activity members actions', () => {
 
 	it('does not show activity member actions when no activity members exist', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		const { getByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		const { queryByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
+		// No activity members → dropdown trigger is not rendered
+		expect(queryByTestId('task-actions-menu-trigger')).toBeNull();
 		expect(queryByText('Open Task Agent (Active)')).toBeNull();
 	});
 
