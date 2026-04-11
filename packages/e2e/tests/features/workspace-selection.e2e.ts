@@ -57,8 +57,8 @@ test.describe('Workspace selection in New Session modal', () => {
 		const workspaceInput = page.getByTestId('new-session-workspace-input');
 		await expect(workspaceInput).toBeVisible();
 
-		// The label should say workspace is optional
-		await expect(page.getByRole('dialog').getByText('optional')).toBeVisible();
+		// The label should say workspace is optional (check specific "(optional)" text)
+		await expect(page.getByRole('dialog').getByText('(optional)', { exact: true })).toBeVisible();
 
 		// Close the modal
 		await page.keyboard.press('Escape');
