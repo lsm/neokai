@@ -321,6 +321,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 76: Add 'review' status to space_tasks CHECK constraint.
 	//   - In supervised mode, completed workflow tasks land in 'review' for human approval.
 	runMigration76(db);
+
+	// Migration 77: Make sessions.workspace_path nullable for unbound sessions.
+	runMigration77(db);
 }
 
 /**
@@ -5319,6 +5322,65 @@ function runMigration76(db: BunDatabase): void {
 	} catch (err) {
 		db.exec('ROLLBACK');
 		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 77: Make sessions.workspace_path nullable.
+ *
+ * Enables unbound sessions that do not have an initial workspace binding.
+ * SQLite does not support dropping NOT NULL directly, so this rebuilds the table.
+ */
+function runMigration77(db: BunDatabase): void {
+	if (!tableExists(db, 'sessions')) return;
+
+	const columns = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{
+		name: string;
+		notnull: number;
+	}>;
+	const workspaceCol = columns.find((c) => c.name === 'workspace_path');
+	if (!workspaceCol || workspaceCol.notnull === 0) {
+		return;
+	}
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		db.exec(`
+			CREATE TABLE sessions_new (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat', 'neo')),
+				session_context TEXT
+			)
+		`);
+		db.exec(`
+			INSERT INTO sessions_new
+			SELECT id, title, workspace_path, created_at, last_active_at,
+				status, config, metadata, is_worktree, worktree_path, main_repo_path,
+				worktree_branch, git_branch, sdk_session_id, available_commands,
+				processing_state, archived_at, parent_id, type, session_context
+			FROM sessions
+		`);
+		db.exec(`DROP TABLE sessions`);
+		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}

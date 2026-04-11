@@ -80,7 +80,9 @@ export class QueryLifecycleManager {
 	 */
 	private getSDKWorkspacePath(): string {
 		const { session } = this.ctx;
-		return session.worktree ? session.worktree.worktreePath : session.workspacePath;
+		return session.worktree
+			? session.worktree.worktreePath
+			: (session.workspacePath ?? process.cwd());
 	}
 
 	/**

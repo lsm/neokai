@@ -12,6 +12,17 @@ mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
 }));
 
+// Mock provider-service so generateTitleAndRenameBranch tests don't hit real credentials
+mock.module('../../../../src/lib/provider-service', () => ({
+	getProviderService: () => ({
+		getDefaultProvider: async () => 'anthropic',
+		getProviderApiKey: () => undefined, // no key → fallback title path
+		isProviderAvailable: async () => false,
+		mergeProviderEnvVars: (s: object) => s,
+	}),
+	mergeProviderEnvVars: (session: object) => session,
+}));
+
 import {
 	SessionLifecycle,
 	type SessionLifecycleConfig,
@@ -198,12 +209,12 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
-		it('should use default workspace root when not specified', async () => {
+		it('should create unbound session when no workspacePath specified', async () => {
 			await lifecycle.create({});
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					workspacePath: '/default/workspace',
+					workspacePath: null,
 				})
 			);
 		});
@@ -256,30 +267,23 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
-		it('worker session without workspacePath falls back to config.workspaceRoot with warning', async () => {
-			const warnSpy = mock(() => {});
-			// Patch the logger on the lifecycle instance
-			(lifecycle as unknown as { logger: { warn: typeof warnSpy } }).logger.warn = warnSpy;
-
+		it('worker session without workspacePath creates unbound session', async () => {
 			await lifecycle.create({ sessionType: 'worker' });
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					workspacePath: '/default/workspace',
+					workspacePath: null,
 				})
-			);
-			expect(warnSpy).toHaveBeenCalledWith(
-				expect.stringContaining('falling back to workspaceRoot')
 			);
 		});
 
-		it('default (undefined sessionType) session without workspacePath falls back to config.workspaceRoot', async () => {
+		it('default (undefined sessionType) session without workspacePath creates unbound session', async () => {
 			// sessionType defaults to 'worker' per line 91 — should NOT throw
 			await lifecycle.create({});
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
-					workspacePath: '/default/workspace',
+					workspacePath: null,
 				})
 			);
 		});
@@ -307,7 +311,7 @@ describe('SessionLifecycle', () => {
 				mockAgentSessionFactory
 			);
 
-			await worktreeLifecycle.create({});
+			await worktreeLifecycle.create({ workspacePath: '/test/repo' });
 
 			expect(mockDb.createSession).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -1235,7 +1239,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 	});
 
 	it('should create worktree for non-git repos when worktrees enabled', async () => {
-		await lifecycle.create({ title: 'Test Session' });
+		await lifecycle.create({ title: 'Test Session', workspacePath: '/default/workspace' });
 
 		expect(mockWorktreeManager.createWorktree).toHaveBeenCalled();
 	});
@@ -1246,13 +1250,19 @@ describe('SessionLifecycle - session creation with worktree', () => {
 		);
 
 		// Should not throw
-		const sessionId = await lifecycle.create({ title: 'Test Session' });
+		const sessionId = await lifecycle.create({
+			title: 'Test Session',
+			workspacePath: '/default/workspace',
+		});
 
 		expect(sessionId).toBeDefined();
 	});
 
 	it('should use title for branch name when title provided', async () => {
-		await lifecycle.create({ title: 'Feature Implementation' });
+		await lifecycle.create({
+			title: 'Feature Implementation',
+			workspacePath: '/default/workspace',
+		});
 
 		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1262,7 +1272,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 	});
 
 	it('should use session ID for branch name when no title provided', async () => {
-		await lifecycle.create({});
+		await lifecycle.create({ workspacePath: '/default/workspace' });
 
 		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
 			expect.objectContaining({

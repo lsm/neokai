@@ -53,6 +53,9 @@ export function setupMessageHandlers(
 		const sdkWorkspacePath = session.worktree
 			? session.worktree.worktreePath
 			: session.workspacePath;
+		if (!sdkWorkspacePath) {
+			throw new Error('Session has no workspace path for SDK session file update');
+		}
 		const success = removeToolResultFromSessionFile(
 			sdkWorkspacePath,
 			sdkSessionId,

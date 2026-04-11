@@ -149,7 +149,7 @@ export function setupSessionHandlers(
 			// File/workspace context (for display purposes)
 			context: {
 				files: [],
-				workingDirectory: session.workspacePath,
+				workingDirectory: session.worktree?.worktreePath ?? session.workspacePath ?? null,
 			},
 			// Context info is in session.metadata.lastContextInfo
 		};
@@ -292,12 +292,10 @@ export function setupSessionHandlers(
 
 		// No worktree - direct archive
 		if (!session.worktree) {
-			// Archive SDK session files
-			const archiveResult = archiveSDKSessionFiles(
-				session.workspacePath,
-				session.sdkSessionId ?? null,
-				targetSessionId
-			);
+			const sdkWorkspacePath = session.workspacePath;
+			const archiveResult = sdkWorkspacePath
+				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
+				: { archivedFiles: [], totalSize: 0, archivePath: null };
 
 			const updatedMetadata = {
 				...session.metadata,
@@ -352,11 +350,10 @@ export function setupSessionHandlers(
 			await worktreeManager.removeWorktree(session.worktree, true);
 
 			// Archive SDK session files
-			const archiveResult = archiveSDKSessionFiles(
-				session.workspacePath,
-				session.sdkSessionId ?? null,
-				targetSessionId
-			);
+			const sdkWorkspacePath = session.worktree?.worktreePath ?? session.workspacePath;
+			const archiveResult = sdkWorkspacePath
+				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
+				: { archivedFiles: [], totalSize: 0, archivePath: null };
 
 			const updatedMetadata = {
 				...session.metadata,

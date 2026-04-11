@@ -311,6 +311,9 @@ export class RewindHandler {
 		const sdkWorkspacePath = session.worktree
 			? session.worktree.worktreePath
 			: session.workspacePath;
+		if (!sdkWorkspacePath) {
+			throw new Error('Cannot rewind unbound session without a workspace path');
+		}
 		const _jsonlResult = truncateSessionFileAtMessage(
 			sdkWorkspacePath,
 			session.sdkSessionId,
@@ -725,6 +728,9 @@ export class RewindHandler {
 					const rewindSdkPath = session.worktree
 						? session.worktree.worktreePath
 						: session.workspacePath;
+					if (!rewindSdkPath) {
+						throw new Error('Cannot rewind unbound session without a workspace path');
+					}
 					const _jsonlResult = truncateSessionFileAtMessage(
 						rewindSdkPath,
 						session.sdkSessionId,

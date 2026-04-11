@@ -34,7 +34,7 @@ import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/ski
 
 // Request types
 export interface CreateSessionRequest {
-	workspacePath?: string;
+	workspacePath?: string | null;
 	initialTools?: string[];
 	config?: Partial<SessionConfig>;
 	worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
@@ -68,13 +68,13 @@ export interface GetSessionResponse {
 	activeTools: string[];
 	context: {
 		files: string[];
-		workingDirectory: string;
+		workingDirectory: string | null;
 	};
 }
 
 export interface UpdateSessionRequest {
 	title?: string;
-	workspacePath?: string;
+	workspacePath?: string | null;
 	config?: Partial<SessionConfig>;
 }
 

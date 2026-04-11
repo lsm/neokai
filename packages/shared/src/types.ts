@@ -151,7 +151,7 @@ export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
 export interface SessionInfo {
 	id: string;
 	title: string;
-	workspacePath: string;
+	workspacePath: string | null;
 	createdAt: string;
 	lastActiveAt: string;
 	status: SessionStatus;

@@ -51,7 +51,7 @@ export function createTables(db: BunDatabase): void {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
-        workspace_path TEXT NOT NULL,
+	        workspace_path TEXT,
         created_at TEXT NOT NULL,
         last_active_at TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
