@@ -32,9 +32,7 @@ import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
-import { SpaceContextPanel } from '../components/space/SpaceContextPanel.tsx';
 import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
-import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { spaceStore } from '../lib/space-store.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 
@@ -172,7 +170,6 @@ function SectionIcon({ type }: { type: string }) {
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
-	const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
@@ -291,9 +288,6 @@ export function ContextPanel() {
 			case 'chats':
 				handleCreateSession();
 				break;
-			case 'spaces':
-				setCreateSpaceOpen(true);
-				break;
 			default:
 				break;
 		}
@@ -331,6 +325,10 @@ export function ContextPanel() {
 
 	const isActionLoading = creatingSession;
 
+	// On the spaces list view (no space selected), hide the desktop sidebar — SpacesPage fills
+	// the full width. On mobile, the panel still slides in so the nav strip is accessible.
+	const hideDesktopPanel = navSection === 'spaces' && !isSpaceDetail;
+
 	return (
 		<>
 			{/* Mobile backdrop */}
@@ -340,9 +338,6 @@ export function ContextPanel() {
 					onClick={handlePanelClose}
 				/>
 			)}
-
-			{/* Space Create Dialog */}
-			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
 
 			<div
 				class={`
@@ -355,6 +350,7 @@ export function ContextPanel() {
 					z-40 md:z-auto
 					transition-transform duration-300 ease-in-out
 					${isPanelOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+					${hideDesktopPanel ? 'md:hidden' : ''}
 				`}
 			>
 				{/* Mobile nav strip - replaces NavRail on mobile */}
@@ -502,12 +498,6 @@ export function ContextPanel() {
 						<SpaceDetailPanel
 							spaceId={currentSpaceId!}
 							onNavigate={() => (contextPanelOpenSignal.value = false)}
-						/>
-					)}
-					{navSection === 'spaces' && !isSpaceDetail && (
-						<SpaceContextPanel
-							onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
-							onCreateSpace={() => setCreateSpaceOpen(true)}
 						/>
 					)}
 					{navSection === 'projects' && (

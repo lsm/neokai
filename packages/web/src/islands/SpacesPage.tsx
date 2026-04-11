@@ -5,7 +5,7 @@
  * Clicking a card navigates to the space detail view.
  */
 
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../lib/space-store.ts';
 import { navigateToSpace } from '../lib/router.ts';
 import { cn, getRelativeTime } from '../lib/utils.ts';
@@ -13,6 +13,7 @@ import type { SpaceSessionSummary, SpaceWithTasks } from '../lib/space-store.ts'
 import type { SpaceTask } from '@neokai/shared';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 
 const STATUS_COLORS: Record<string, string> = {
 	in_progress: 'bg-blue-400',
@@ -121,6 +122,8 @@ function SpaceCard({ space }: { space: SpaceWithTasks }) {
 }
 
 export function SpacesPage() {
+	const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
+
 	useEffect(() => {
 		spaceStore.initGlobalList().catch(() => {
 			// Error tracked inside initGlobalList
@@ -132,6 +135,8 @@ export function SpacesPage() {
 
 	return (
 		<div class="flex-1 min-h-0 flex flex-col">
+			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
+
 			{/* Sticky header — matches SpacePageHeader pattern */}
 			<div
 				class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 py-2.5 relative z-10`}
@@ -140,7 +145,24 @@ export function SpacesPage() {
 					<MobileMenuButton />
 					<div class="flex-1 min-w-0 flex items-center justify-between">
 						<h1 class="text-sm font-semibold text-gray-100">Spaces</h1>
-						<span class="text-xs text-gray-500 tabular-nums">{activeSpaces.length} spaces</span>
+						<div class="flex items-center gap-3">
+							<span class="text-xs text-gray-500 tabular-nums">{activeSpaces.length} spaces</span>
+							<button
+								type="button"
+								onClick={() => setCreateSpaceOpen(true)}
+								class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-800 hover:bg-dark-700 border border-dark-600 text-xs text-gray-300 hover:text-gray-100 transition-colors"
+							>
+								<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 4v16m8-8H4"
+									/>
+								</svg>
+								New Space
+							</button>
+						</div>
 					</div>
 				</div>
 			</div>
