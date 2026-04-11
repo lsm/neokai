@@ -462,6 +462,11 @@ export class SessionLifecycle {
 			);
 		}
 
+		// Guard against overwriting an existing workspace (would orphan old worktrees)
+		if (session.workspacePath !== null) {
+			throw new Error(`Session ${sessionId} already has a workspace`);
+		}
+
 		const normalizedPath = workspacePath.trim();
 		if (!normalizedPath) {
 			throw new Error('Workspace path cannot be empty');

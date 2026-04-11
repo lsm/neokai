@@ -1571,6 +1571,15 @@ describe('SessionLifecycle - setWorkspace', () => {
 		);
 	});
 
+	it('throws when session already has a workspace (prevents silent overwrite)', async () => {
+		const agentSession = makeAgentSession({ workspacePath: '/existing/workspace' });
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await expect(lifecycle.setWorkspace(SESSION_ID, '/new/workspace', 'direct')).rejects.toThrow(
+			'already has a workspace'
+		);
+	});
+
 	it('detects git branch for direct mode on git repos', async () => {
 		(mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
 			isGitRepo: true,

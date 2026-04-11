@@ -21,11 +21,15 @@ import { addRecentPath } from '../lib/recent-paths';
 
 interface WorkspaceSelectorProps {
 	sessionId: string;
-	onConfirm: (workspacePath: string, worktreeMode: 'worktree' | 'direct') => void;
+	onConfirm: () => void;
 	onSkip: () => void;
 }
 
-export function WorkspaceSelector({ sessionId, onConfirm, onSkip }: WorkspaceSelectorProps) {
+export function WorkspaceSelector({
+	sessionId,
+	onConfirm: onConfirmCallback,
+	onSkip,
+}: WorkspaceSelectorProps) {
 	const [history, setHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	const [selectedPath, setSelectedPath] = useState<string>('');
 	const [customPath, setCustomPath] = useState<string>('');
@@ -92,7 +96,7 @@ export function WorkspaceSelector({ sessionId, onConfirm, onSkip }: WorkspaceSel
 			addRecentPath(path);
 			addWorkspaceToHistory(path).catch(() => {});
 
-			onConfirm(path, worktreeMode);
+			onConfirmCallback();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to set workspace');
 		} finally {
