@@ -11,6 +11,8 @@ import { navigateToSpace } from '../lib/router.ts';
 import { cn, getRelativeTime } from '../lib/utils.ts';
 import type { SpaceSessionSummary, SpaceWithTasks } from '../lib/space-store.ts';
 import type { SpaceTask } from '@neokai/shared';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import { borderColors } from '../lib/design-tokens.ts';
 
 const STATUS_COLORS: Record<string, string> = {
 	in_progress: 'bg-blue-400',
@@ -129,38 +131,48 @@ export function SpacesPage() {
 	const activeSpaces = spaces.filter((s) => s.status === 'active');
 
 	return (
-		<div class="flex-1 min-h-0 overflow-y-auto">
-			<div class="max-w-5xl mx-auto px-6 py-8">
-				<div class="flex items-center justify-between mb-6">
-					<h1 class="text-lg font-semibold text-gray-100">Spaces</h1>
-					<span class="text-sm text-gray-500 tabular-nums">{activeSpaces.length} spaces</span>
+		<div class="flex-1 min-h-0 flex flex-col">
+			{/* Sticky header — matches SpacePageHeader pattern */}
+			<div
+				class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 py-2.5 relative z-10`}
+			>
+				<div class="flex items-center gap-3">
+					<MobileMenuButton />
+					<div class="flex-1 min-w-0 flex items-center justify-between">
+						<h1 class="text-sm font-semibold text-gray-100">Spaces</h1>
+						<span class="text-xs text-gray-500 tabular-nums">{activeSpaces.length} spaces</span>
+					</div>
 				</div>
+			</div>
 
-				{activeSpaces.length === 0 ? (
-					<div class="flex flex-col items-center justify-center py-20 text-center">
-						<svg
-							class="w-12 h-12 text-gray-700 mb-4"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={1.5}
-								d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-							/>
-						</svg>
-						<p class="text-sm text-gray-500">No spaces yet</p>
-						<p class="text-xs text-gray-600 mt-1">Create a space to get started</p>
-					</div>
-				) : (
-					<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-						{activeSpaces.map((space) => (
-							<SpaceCard key={space.id} space={space} />
-						))}
-					</div>
-				)}
+			<div class="flex-1 min-h-0 overflow-y-auto">
+				<div class="max-w-5xl mx-auto px-4 sm:px-6 py-6">
+					{activeSpaces.length === 0 ? (
+						<div class="flex flex-col items-center justify-center py-20 text-center">
+							<svg
+								class="w-12 h-12 text-gray-700 mb-4"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={1.5}
+									d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+								/>
+							</svg>
+							<p class="text-sm text-gray-500">No spaces yet</p>
+							<p class="text-xs text-gray-600 mt-1">Create a space to get started</p>
+						</div>
+					) : (
+						<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+							{activeSpaces.map((space) => (
+								<SpaceCard key={space.id} space={space} />
+							))}
+						</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);
