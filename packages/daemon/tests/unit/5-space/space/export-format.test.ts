@@ -38,9 +38,8 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		description: 'Writes code',
 		model: 'claude-sonnet-4-6',
 		provider: 'anthropic',
-		systemPrompt: 'You are an expert coder.',
+		customPrompt: 'You are an expert coder.',
 		tools: ['bash', 'read_file'],
-		instructions: null,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -52,7 +51,7 @@ function makeMinimalAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		id: 'agent-uuid-2',
 		spaceId: 'space-uuid-1',
 		name: 'Simple Agent',
-		instructions: null,
+		customPrompt: null,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -64,7 +63,7 @@ function makeReviewerAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		id: 'agent-uuid-3',
 		spaceId: 'space-uuid-1',
 		name: 'Reviewer',
-		instructions: null,
+		customPrompt: null,
 		createdAt: 1000,
 		updatedAt: 2000,
 		...overrides,
@@ -778,7 +777,7 @@ describe('exportWorkflow — multi-agent nodes', () => {
 						{
 							agentId: 'agent-uuid-1',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'Write the feature' },
+							customPrompt: { value: 'Write the feature' },
 						},
 						{ agentId: 'agent-uuid-3', name: 'reviewer' },
 					],
@@ -825,17 +824,15 @@ describe('exportWorkflow — multi-agent nodes', () => {
 		expect(node.agents![1].agentRef).toBe('Reviewer');
 	});
 
-	test('preserves per-agent instructions in agents array', () => {
+	test('preserves per-agent customPrompt in agents array (exported as systemPrompt)', () => {
 		const workflow = makeMultiAgentWorkflow();
 		const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// instructions is WorkflowNodeAgentOverride { mode, value }, not a plain string
-		expect(exported.nodes[0].agents![0].instructions).toEqual({
-			mode: 'override',
-			value: 'Write the feature',
-		});
-		expect(exported.nodes[0].agents![1].instructions).toBeUndefined();
+		// customPrompt is exported as systemPrompt in the portable format
+		expect(exported.nodes[0].agents![0].systemPrompt).toEqual({ value: 'Write the feature' });
+		expect(exported.nodes[0].agents![0].instructions).toBeUndefined();
+		expect(exported.nodes[0].agents![1].systemPrompt).toBeUndefined();
 	});
 
 	test('falls back to UUID for unresolved agent in multi-agent node', () => {
@@ -965,10 +962,7 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		if (result.ok) {
 			expect(result.value.nodes[0].agents).toHaveLength(2);
 			expect(result.value.nodes[0].agents![0].agentRef).toBe('My Coder');
-			expect(result.value.nodes[0].agents![0].instructions).toEqual({
-				mode: 'override',
-				value: 'Code it',
-			});
+			expect(result.value.nodes[0].agents![0].instructions).toEqual({ value: 'Code it' });
 		}
 	});
 
@@ -1082,7 +1076,6 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		expect(result.ok).toBe(true);
 		if (result.ok) {
 			expect(result.value.nodes[0].agents![0].instructions).toEqual({
-				mode: 'override',
 				value: 'Write minimal code.',
 			});
 		}
@@ -1112,7 +1105,6 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		expect(result.ok).toBe(true);
 		if (result.ok) {
 			expect(result.value.nodes[0].agents![0].systemPrompt).toEqual({
-				mode: 'override',
 				value: 'You are a strict code reviewer.',
 			});
 		}
@@ -1178,9 +1170,9 @@ describe('validateExportedWorkflow — multi-agent and channels', () => {
 		expect(result.ok).toBe(true);
 		if (result.ok) {
 			const agents = result.value.nodes[0].agents!;
-			expect(agents[0].systemPrompt).toEqual({ mode: 'override', value: 'Write minimal code.' });
-			expect(agents[0].instructions).toEqual({ mode: 'expand', value: 'Focus on tests.' });
-			expect(agents[1].systemPrompt).toEqual({ mode: 'override', value: 'Review briefly.' });
+			expect(agents[0].systemPrompt).toEqual({ value: 'Write minimal code.' });
+			expect(agents[0].instructions).toEqual({ value: 'Focus on tests.' });
+			expect(agents[1].systemPrompt).toEqual({ value: 'Review briefly.' });
 		}
 	});
 });
@@ -1204,12 +1196,12 @@ describe('round-trip: multi-agent + channels', () => {
 						{
 							agentId: 'agent-uuid-1',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'Implement the feature' },
+							customPrompt: { value: 'Implement the feature' },
 						},
 						{
 							agentId: 'agent-uuid-3',
 							name: 'reviewer',
-							instructions: { mode: 'override', value: 'Review the code' },
+							customPrompt: { value: 'Review the code' },
 						},
 					],
 					// node-level instructions removed from schema
@@ -1242,12 +1234,9 @@ describe('round-trip: multi-agent + channels', () => {
 			// Multi-agent node preserved
 			expect(node.agents).toHaveLength(2);
 			expect(node.agents![0].agentRef).toBe('My Coder');
-			expect(node.agents![0].instructions).toEqual({
-				mode: 'override',
-				value: 'Implement the feature',
-			});
+			expect(node.agents![0].systemPrompt).toEqual({ value: 'Implement the feature' });
 			expect(node.agents![1].agentRef).toBe('Reviewer');
-			expect(node.agents![1].instructions).toEqual({ mode: 'override', value: 'Review the code' });
+			expect(node.agents![1].systemPrompt).toEqual({ value: 'Review the code' });
 			// agentRef at node level is not used (all nodes use agents[])
 			expect((node as Record<string, unknown>).agentRef).toBeUndefined();
 			// Channels preserved at workflow level
@@ -1321,7 +1310,7 @@ describe('round-trip: multi-agent + channels', () => {
 		}
 	});
 
-	test('exports per-slot systemPrompt override', () => {
+	test('exports per-slot customPrompt override as systemPrompt in exported format', () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
 			spaceId: 'space-1',
@@ -1334,7 +1323,7 @@ describe('round-trip: multi-agent + channels', () => {
 						{
 							agentId: 'agent-uuid-1',
 							name: 'coder',
-							systemPrompt: { mode: 'override', value: 'Always write tests first.' },
+							customPrompt: { value: 'Always write tests first.' },
 						},
 					],
 				},
@@ -1348,16 +1337,16 @@ describe('round-trip: multi-agent + channels', () => {
 		const exported = exportWorkflow(workflow, agents);
 
 		expect(exported.nodes[0].agents![0].systemPrompt).toEqual({
-			mode: 'override',
 			value: 'Always write tests first.',
 		});
+		expect(exported.nodes[0].agents![0].instructions).toBeUndefined();
 	});
 
-	test('exports per-slot instructions override', () => {
+	test('exports per-slot customPrompt (no instructions field in new API)', () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-1',
 			spaceId: 'space-1',
-			name: 'Instructions Override',
+			name: 'Prompt Override',
 			nodes: [
 				{
 					id: 'node-1',
@@ -1366,12 +1355,12 @@ describe('round-trip: multi-agent + channels', () => {
 						{
 							agentId: 'agent-uuid-1',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'Focus on the auth module only.' },
+							customPrompt: { value: 'Focus on the auth module only.' },
 						},
 						{
 							agentId: 'agent-uuid-3',
 							name: 'reviewer',
-							// no instructions
+							// no customPrompt
 						},
 					],
 				},
@@ -1384,11 +1373,11 @@ describe('round-trip: multi-agent + channels', () => {
 		const agents = [makeAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		expect(exported.nodes[0].agents![0].instructions).toEqual({
-			mode: 'override',
+		expect(exported.nodes[0].agents![0].systemPrompt).toEqual({
 			value: 'Focus on the auth module only.',
 		});
-		expect(exported.nodes[0].agents![1].instructions).toBeUndefined();
+		expect(exported.nodes[0].agents![0].instructions).toBeUndefined();
+		expect(exported.nodes[0].agents![1].systemPrompt).toBeUndefined();
 	});
 
 	test('omits systemPrompt when not set (clean export)', () => {
@@ -1423,7 +1412,7 @@ describe('round-trip: multi-agent + channels', () => {
 		expect('instructions' in entry1).toBe(false);
 	});
 
-	test('systemPrompt and instructions slot overrides survive export → JSON → validate round-trip', () => {
+	test('customPrompt slot override survives export → JSON → validate round-trip', () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-overrides',
 			spaceId: 'space-1',
@@ -1436,7 +1425,7 @@ describe('round-trip: multi-agent + channels', () => {
 						{
 							agentId: 'agent-uuid-1',
 							name: 'coder',
-							systemPrompt: { mode: 'override', value: 'You are a strict reviewer.' },
+							customPrompt: { value: 'You are a strict reviewer.' },
 						},
 						{
 							agentId: 'agent-uuid-3',
@@ -1454,12 +1443,10 @@ describe('round-trip: multi-agent + channels', () => {
 		const agents = [makeAgent(), makeReviewerAgent()];
 		const exported = exportWorkflow(workflow, agents);
 
-		// Verify export includes systemPrompt override
+		// customPrompt is exported as systemPrompt in the portable format
 		const exportedNode = exported.nodes[0];
-		expect(exportedNode.agents![0].systemPrompt).toEqual({
-			mode: 'override',
-			value: 'You are a strict reviewer.',
-		});
+		expect(exportedNode.agents![0].systemPrompt).toEqual({ value: 'You are a strict reviewer.' });
+		expect(exportedNode.agents![0].instructions).toBeUndefined();
 		expect(exportedNode.agents![1].systemPrompt).toBeUndefined();
 
 		// Verify round-trip via JSON serialization + validate
@@ -1472,21 +1459,18 @@ describe('round-trip: multi-agent + channels', () => {
 			const node = result.value.nodes[0];
 			expect(node.agents![0].agentRef).toBe('My Coder');
 			expect(node.agents![0].name).toBe('coder');
-			expect(node.agents![0].systemPrompt).toEqual({
-				mode: 'override',
-				value: 'You are a strict reviewer.',
-			});
+			expect(node.agents![0].systemPrompt).toEqual({ value: 'You are a strict reviewer.' });
 			expect(node.agents![1].agentRef).toBe('Reviewer');
 			expect(node.agents![1].name).toBe('reviewer');
 			expect(node.agents![1].systemPrompt).toBeUndefined();
 		}
 	});
 
-	test('instructions slot override survives export → JSON → validate round-trip', () => {
+	test('customPrompt slot override (no separate instructions field in new API)', () => {
 		const workflow: SpaceWorkflow = {
 			id: 'wf-instructions',
 			spaceId: 'space-1',
-			name: 'Instructions Workflow',
+			name: 'Prompt Workflow',
 			nodes: [
 				{
 					id: 'node-1',
@@ -1495,12 +1479,12 @@ describe('round-trip: multi-agent + channels', () => {
 						{
 							agentId: 'agent-uuid-1',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'Focus on the auth module only.' },
+							customPrompt: { value: 'Focus on the auth module only.' },
 						},
 						{
 							agentId: 'agent-uuid-3',
 							name: 'reviewer',
-							// no instructions override
+							// no customPrompt override
 						},
 					],
 				},
@@ -1518,11 +1502,11 @@ describe('round-trip: multi-agent + channels', () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
-			expect(result.value.nodes[0].agents![0].instructions).toEqual({
-				mode: 'override',
+			expect(result.value.nodes[0].agents![0].systemPrompt).toEqual({
 				value: 'Focus on the auth module only.',
 			});
-			expect(result.value.nodes[0].agents![1].instructions).toBeUndefined();
+			expect(result.value.nodes[0].agents![0].instructions).toBeUndefined();
+			expect(result.value.nodes[0].agents![1].systemPrompt).toBeUndefined();
 		}
 	});
 });
@@ -1853,19 +1837,13 @@ describe('normalizeOverride', () => {
 		expect(normalizeOverride(undefined)).toBeUndefined();
 	});
 
-	test('converts plain string to { mode: "override", value }', () => {
+	test('converts plain string to { value }', () => {
 		const result = normalizeOverride('Be helpful.');
-		expect(result).toEqual({ mode: 'override', value: 'Be helpful.' });
+		expect(result).toEqual({ value: 'Be helpful.' });
 	});
 
-	test('passes through { mode: "override", value } as-is', () => {
-		const override = { mode: 'override' as const, value: 'You are strict.' };
-		const result = normalizeOverride(override);
-		expect(result).toBe(override);
-	});
-
-	test('passes through { mode: "expand", value } as-is', () => {
-		const override = { mode: 'expand' as const, value: 'Append this.' };
+	test('passes through { value } object as-is', () => {
+		const override = { value: 'You are strict.' };
 		const result = normalizeOverride(override);
 		expect(result).toBe(override);
 	});
@@ -1950,8 +1928,8 @@ describe('validateExportedWorkflow — legacy plain-string overrides', () => {
 		if (result.ok) {
 			const agents = result.value.nodes[0].agents;
 			expect(agents[0].systemPrompt).toBe('You are a coder');
-			expect(agents[0].instructions).toEqual({ mode: 'override', value: 'Write tests' });
-			expect(agents[1].systemPrompt).toEqual({ mode: 'expand', value: 'Extra context' });
+			expect(agents[0].instructions).toEqual({ value: 'Write tests' });
+			expect(agents[1].systemPrompt).toEqual({ value: 'Extra context' });
 			expect(agents[1].instructions).toBe('Review thoroughly');
 		}
 	});

@@ -332,6 +332,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Add 'idle' status (replaces 'done') to the CHECK constraint.
 	//   - Add 'data TEXT' column for structured agent output.
 	runMigration79(db);
+
+	// Migration 80: Consolidate space_agents.system_prompt + instructions → custom_prompt.
+	//   - Adds 'custom_prompt TEXT' column.
+	//   - Migrates data: combines system_prompt and instructions into a single field.
+	runMigration80(db);
 }
 
 /**
@@ -5501,4 +5506,38 @@ function runMigration79(db: BunDatabase): void {
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}
+}
+
+/**
+ * Migration 80: Consolidate space_agents system_prompt + instructions → custom_prompt.
+ *
+ * Adds a single `custom_prompt TEXT` column and populates it by merging the two
+ * legacy columns:
+ *   - Both non-empty: `system_prompt + '\n\n' + instructions`
+ *   - Only system_prompt: `system_prompt`
+ *   - Only instructions: `instructions`
+ *   - Neither: NULL
+ *
+ * The old columns are kept for now to avoid a lossy table-rebuild migration.
+ * They are no longer read by the application after this migration.
+ */
+function runMigration80(db: BunDatabase): void {
+	if (!tableExists(db, 'space_agents')) return;
+	if (tableHasColumn(db, 'space_agents', 'custom_prompt')) return;
+
+	db.exec(`ALTER TABLE space_agents ADD COLUMN custom_prompt TEXT`);
+
+	db.exec(`
+		UPDATE space_agents
+		SET custom_prompt = CASE
+			WHEN (system_prompt IS NOT NULL AND system_prompt != '')
+			     AND (instructions IS NOT NULL AND instructions != '')
+				THEN system_prompt || char(10) || char(10) || instructions
+			WHEN (system_prompt IS NOT NULL AND system_prompt != '')
+				THEN system_prompt
+			WHEN (instructions IS NOT NULL AND instructions != '')
+				THEN instructions
+			ELSE NULL
+		END
+	`);
 }

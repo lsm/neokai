@@ -58,8 +58,7 @@ export interface SpaceAgentTemplate {
 	name: string;
 	description: string;
 	tools: string[];
-	systemPrompt: string;
-	instructions: string;
+	customPrompt: string;
 }
 
 class SpaceStore {

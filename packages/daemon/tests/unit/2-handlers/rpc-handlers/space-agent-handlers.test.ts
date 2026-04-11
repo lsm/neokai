@@ -159,7 +159,7 @@ describe('Space Agent RPC Handlers', () => {
 			]);
 			for (const template of result.templates) {
 				expect(template.tools.length).toBeGreaterThan(0);
-				expect(template.systemPrompt.length).toBeGreaterThan(0);
+				expect(template.customPrompt.length).toBeGreaterThan(0);
 			}
 		});
 
@@ -198,7 +198,7 @@ describe('Space Agent RPC Handlers', () => {
 					name: string;
 					description: string;
 					model: string | undefined;
-					systemPrompt: string;
+					customPrompt: string | null;
 				};
 			}>(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
@@ -206,12 +206,12 @@ describe('Space Agent RPC Handlers', () => {
 				description: 'A detailed agent',
 				model: 'claude-opus-4-5',
 				provider: 'anthropic',
-				systemPrompt: 'You are helpful.',
+				customPrompt: 'You are helpful.',
 			});
 
 			expect(result.agent.name).toBe('FullAgent');
 			expect(result.agent.description).toBe('A detailed agent');
-			expect(result.agent.systemPrompt).toBe('You are helpful.');
+			expect(result.agent.customPrompt).toBe('You are helpful.');
 		});
 
 		it('emits spaceAgent.created event after creation', async () => {
@@ -371,16 +371,16 @@ describe('Space Agent RPC Handlers', () => {
 			expect(result.agent.name).toBe('Renamed');
 		});
 
-		it('updates description and systemPrompt', async () => {
+		it('updates description and customPrompt', async () => {
 			const result = await call<{
-				agent: { description: string; systemPrompt: string };
+				agent: { description: string; customPrompt: string | null };
 			}>(hubData.handlers, 'spaceAgent.update', {
 				id: agentId,
 				description: 'New desc',
-				systemPrompt: 'New prompt',
+				customPrompt: 'New prompt',
 			});
 			expect(result.agent.description).toBe('New desc');
-			expect(result.agent.systemPrompt).toBe('New prompt');
+			expect(result.agent.customPrompt).toBe('New prompt');
 		});
 
 		it('emits spaceAgent.updated event', async () => {

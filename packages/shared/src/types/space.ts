@@ -490,15 +490,11 @@ export interface SpaceAgent {
 	/** Provider name override (e.g., 'anthropic', 'openai') */
 	provider?: string;
 	/**
-	 * System prompt — persona and constraints for this agent.
-	 * Defines WHO the agent is and WHAT it must/must not do.
+	 * Custom prompt — operator-supplied persona, context, and operating procedure for this agent.
+	 * Appended AFTER the NeoKai system contract in the prompt so the contract cannot be overridden.
+	 * Null when not set.
 	 */
-	systemPrompt?: string;
-	/**
-	 * Instructions — default operating procedure for this agent.
-	 * Describes HOW the agent performs its work by default. Null when not set.
-	 */
-	instructions: string | null;
+	customPrompt: string | null;
 	/**
 	 * Tool list override — which tools this agent may use.
 	 * Any entry must be a name from KNOWN_TOOLS.
@@ -520,9 +516,8 @@ export interface CreateSpaceAgentParams {
 	description?: string;
 	model?: string;
 	provider?: string;
-	systemPrompt?: string;
-	/** Default operating procedure for this agent; null when not set */
-	instructions?: string | null;
+	/** Operator-supplied custom prompt appended after the NeoKai contract; null when not set */
+	customPrompt?: string | null;
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
 }
@@ -535,9 +530,8 @@ export interface UpdateSpaceAgentParams {
 	description?: string | null;
 	model?: string | null;
 	provider?: string | null;
-	systemPrompt?: string | null;
-	/** Default operating procedure for this agent; null to clear */
-	instructions?: string | null;
+	/** Operator-supplied custom prompt; null clears */
+	customPrompt?: string | null;
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
 }
@@ -705,13 +699,12 @@ export type WorkflowRunFailureReason =
 	| 'agentCrash';
 
 /**
- * Override shape for `systemPrompt` and `instructions` in a workflow node agent slot.
+ * Expansion value for `customPrompt` in a workflow node agent slot.
  *
- * - `mode: 'override'` — replaces the agent's default value entirely.
- * - `mode: 'expand'`   — appends the value to the agent's default (separated by `\n\n`).
+ * Always appended (expanded) to the agent's `customPrompt` — never replaces it.
+ * This ensures the agent's base prompt is preserved when node-level context is added.
  */
 export interface WorkflowNodeAgentOverride {
-	mode: 'override' | 'expand';
 	value: string;
 }
 
@@ -735,17 +728,11 @@ export interface WorkflowNodeAgent {
 	 */
 	model?: string;
 	/**
-	 * Optional system-prompt override for this agent slot.
-	 * `mode: 'override'` replaces the agent's `systemPrompt` entirely.
-	 * `mode: 'expand'` appends the value to the agent's `systemPrompt`.
+	 * Optional custom-prompt expansion for this agent slot.
+	 * Always appended to the agent's `customPrompt` (never replaces it).
+	 * Use this to add node-specific context or role focus on top of the agent's base prompt.
 	 */
-	systemPrompt?: WorkflowNodeAgentOverride;
-	/**
-	 * Optional instructions override for this agent slot.
-	 * `mode: 'override'` replaces the agent's `instructions` entirely.
-	 * `mode: 'expand'` appends the value to the agent's `instructions`.
-	 */
-	instructions?: WorkflowNodeAgentOverride;
+	customPrompt?: WorkflowNodeAgentOverride;
 	/**
 	 * IDs of globally-enabled skills to disable for this agent slot.
 	 * Allows per-slot skill customization on top of the global skills registry.

@@ -95,16 +95,6 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`work by selecting the right workflow or creating standalone tasks.`
 	);
 
-	// Operator-supplied background
-	if (context.background) {
-		sections.push(`\n## Space Background\n\n${context.background}`);
-	}
-
-	// Operator-supplied instructions
-	if (context.instructions) {
-		sections.push(`\n## Space Instructions\n\n${context.instructions}`);
-	}
-
 	// Available workflows
 	if (context.workflows && context.workflows.length > 0) {
 		sections.push(`\n## Available Workflows\n`);
@@ -308,6 +298,16 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`into a running workflow than \`get_task_detail\` provides — for example, to see which specific ` +
 			`node is stuck or to read intermediate outputs from individual agents.`
 	);
+
+	// Operator-supplied context appended last — after all contract sections —
+	// so the NeoKai system contract cannot be overridden by user content.
+	if (context.background) {
+		sections.push(`\n## Space Background\n\n${context.background}`);
+	}
+
+	if (context.instructions) {
+		sections.push(`\n## Space Instructions\n\n${context.instructions}`);
+	}
 
 	return sections.join('\n');
 }

@@ -50,7 +50,7 @@ const AGENT_A: SpaceAgent = {
 	id: 'agent-1',
 	spaceId: 'space-1',
 	name: 'Alpha Agent',
-	instructions: null,
+	customPrompt: null,
 	createdAt: 0,
 	updatedAt: 0,
 };
@@ -59,7 +59,7 @@ const AGENT_B: SpaceAgent = {
 	id: 'agent-2',
 	spaceId: 'space-1',
 	name: 'Beta Agent',
-	instructions: null,
+	customPrompt: null,
 	createdAt: 0,
 	updatedAt: 0,
 };
@@ -315,7 +315,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 		expect(getByTestId('agent-name').textContent).toContain('coder');
 	});
 
-	it('shows override-indicator dot when a multi-agent slot has instructions override', () => {
+	it('shows override-indicator dot when a multi-agent slot has customPrompt override', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
@@ -323,24 +323,7 @@ describe('WorkflowNode multi-agent rendering', () => {
 				{
 					agentId: 'agent-1',
 					name: 'coder',
-					instructions: { mode: 'override' as const, value: 'Be precise.' },
-				},
-				{ agentId: 'agent-2', name: 'reviewer' },
-			],
-		};
-		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
-		expect(getByTestId('override-indicator')).toBeTruthy();
-	});
-
-	it('shows override-indicator dot when a multi-agent slot has systemPrompt override', () => {
-		const step = {
-			...STEP_DRAFT,
-			agentId: '',
-			agents: [
-				{
-					agentId: 'agent-1',
-					name: 'coder',
-					systemPrompt: { mode: 'override' as const, value: 'Be strict.' },
+					customPrompt: { value: 'Be precise.' },
 				},
 				{ agentId: 'agent-2', name: 'reviewer' },
 			],

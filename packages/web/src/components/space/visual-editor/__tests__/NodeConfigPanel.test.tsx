@@ -73,7 +73,7 @@ function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
 		id,
 		spaceId: 'space-1',
 		name,
-		instructions: null,
+		customPrompt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -84,7 +84,6 @@ function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
 		localId: 'step-local-1',
 		name: 'My Step',
 		agentId: 'agent-1',
-		instructions: 'Do stuff.',
 		...overrides,
 	};
 }
@@ -294,21 +293,7 @@ describe('NodeConfigPanel', () => {
 			});
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({
-					systemPrompt: { mode: 'override', value: 'Custom system prompt.' },
-				})
-			);
-		});
-
-		it('calls onUpdate with new single-agent instructions from prompts view', () => {
-			const onUpdate = vi.fn();
-			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-			fireEvent.click(getByTestId('edit-single-prompts-button'));
-			fireEvent.input(getByTestId('single-prompts-instructions'), {
-				target: { value: 'Focus on acceptance criteria.' },
-			});
-			expect(onUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({
-					instructions: 'Focus on acceptance criteria.',
+					customPrompt: { value: 'Custom system prompt.' },
 				})
 			);
 		});
@@ -673,7 +658,7 @@ describe('NodeConfigPanel', () => {
 					{
 						agentId: 'agent-1',
 						name: 'planner',
-						instructions: { mode: 'override', value: 'Be strict.' },
+						customPrompt: { value: 'Be strict.' },
 					},
 					{ agentId: 'agent-2', name: 'coder' },
 				],
@@ -719,7 +704,6 @@ describe('NodeConfigPanel', () => {
 			});
 			const { getAllByTestId, getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-			expect(getByTestId('slot-prompts-instructions')).toBeTruthy();
 			expect(getByTestId('slot-prompts-system-prompt')).toBeTruthy();
 			expect(getByTestId('slot-prompts-model-input')).toBeTruthy();
 		});
@@ -747,7 +731,7 @@ describe('NodeConfigPanel', () => {
 					{
 						agentId: 'agent-2',
 						name: 'coder',
-						instructions: { mode: 'override', value: 'Code carefully.' },
+						customPrompt: { value: 'Code carefully.' },
 					},
 					{ agentId: 'agent-1', name: 'planner' },
 				],
@@ -764,11 +748,10 @@ describe('NodeConfigPanel', () => {
 			});
 
 			const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-			expect(updatedStep.agents[0].systemPrompt).toEqual({
-				mode: 'override',
+			expect(updatedStep.agents[0].customPrompt).toEqual({
 				value: 'Be extra strict.',
 			});
-			expect(updatedStep.agents[1].systemPrompt).toBeUndefined();
+			expect(updatedStep.agents[1].customPrompt).toBeUndefined();
 		});
 
 		it('slot prompts editor stays addressable after a slot role rename', async () => {
@@ -809,38 +792,13 @@ describe('NodeConfigPanel', () => {
 		it('opens single prompts view from the main panel', () => {
 			const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
 			fireEvent.click(getByTestId('edit-single-prompts-button'));
-			expect(getByTestId('single-prompts-instructions')).toBeTruthy();
 			expect(getByTestId('single-prompts-system-prompt')).toBeTruthy();
 		});
 
-		it('system prompt mode selector toggles between override and expand', async () => {
+		it('custom prompt textarea calls onUpdate with customPrompt override', async () => {
 			const onUpdate = vi.fn();
-			const initialStep = makeStep();
-
-			function Wrapper() {
-				const [step, setStep] = useState(initialStep);
-				return (
-					<NodeConfigPanel
-						{...makeProps({
-							step,
-							onUpdate: (next) => {
-								onUpdate(next);
-								setStep(next);
-							},
-						})}
-					/>
-				);
-			}
-
-			const { getByTestId } = render(<Wrapper />);
+			const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
 			fireEvent.click(getByTestId('edit-single-prompts-button'));
-
-			const systemPromptField = getByTestId('single-prompts-system-prompt');
-			const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
-			const expandButton = systemPromptSection.querySelector(
-				'[data-testid="mode-expand"]'
-			) as HTMLElement;
-			fireEvent.click(expandButton);
 
 			await act(async () => {
 				fireEvent.input(getByTestId('single-prompts-system-prompt'), {
@@ -850,18 +808,18 @@ describe('NodeConfigPanel', () => {
 
 			expect(onUpdate).toHaveBeenCalledWith(
 				expect.objectContaining({
-					systemPrompt: { mode: 'expand', value: 'Extra context.' },
+					customPrompt: { value: 'Extra context.' },
 				})
 			);
 		});
 	});
 
 	// ============================================================================
-	// Multi-agent mode: per-slot fields in slot prompts panel
+	// Multi-agent mode: per-slot custom prompt in slot prompts panel
 	// ============================================================================
 
-	describe('multi-agent slot prompts with mode selectors', () => {
-		it('shows per-slot instructions and system prompt fields in slot prompts panel', () => {
+	describe('multi-agent slot prompts', () => {
+		it('shows per-slot custom prompt field in slot prompts panel', () => {
 			const step = makeStep({
 				agentId: '',
 				agents: [
@@ -871,109 +829,31 @@ describe('NodeConfigPanel', () => {
 			});
 			const { getAllByTestId, getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
 			fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-			expect(getByTestId('slot-prompts-instructions')).toBeTruthy();
 			expect(getByTestId('slot-prompts-system-prompt')).toBeTruthy();
 		});
 
-		it('per-slot instructions use correct override mode', async () => {
+		it('typing in slot custom prompt calls onUpdate with customPrompt override', async () => {
 			const onUpdate = vi.fn();
-			const initialStep = makeStep({
+			const step = makeStep({
 				agentId: '',
 				agents: [
 					{
 						agentId: 'agent-1',
 						name: 'coder',
-						instructions: { mode: 'override', value: 'Seed instructions.' },
+						customPrompt: { value: 'Seed prompt.' },
 					},
 					{ agentId: 'agent-2', name: 'reviewer' },
 				],
 			});
-
-			function Wrapper() {
-				const [step, setStep] = useState(initialStep);
-				return (
-					<NodeConfigPanel
-						{...makeProps({
-							step,
-							onUpdate: (next) => {
-								onUpdate(next);
-								setStep(next);
-							},
-						})}
-					/>
-				);
-			}
-
-			const { getAllByTestId, getByTestId } = render(<Wrapper />);
-
-			fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-			const instructionsField = getByTestId('slot-prompts-instructions');
-			const instructionsSection = instructionsField.closest('.space-y-1') as HTMLElement;
-			const expandButton = instructionsSection.querySelector(
-				'[data-testid="mode-expand"]'
-			) as HTMLElement;
-			fireEvent.click(expandButton);
-
-			await act(async () => {
-				fireEvent.input(getByTestId('slot-prompts-instructions'), {
-					target: { value: 'Extra instructions.' },
-				});
-			});
-
-			expect(onUpdate).toHaveBeenCalledWith(
-				expect.objectContaining({
-					agents: [
-						expect.objectContaining({
-							instructions: { mode: 'expand', value: 'Extra instructions.' },
-						}),
-						expect.anything(),
-					],
-				})
+			const { getAllByTestId, getByTestId } = render(
+				<NodeConfigPanel {...makeProps({ step, onUpdate })} />
 			);
-		});
-
-		it('per-slot system prompt uses correct override mode', async () => {
-			const onUpdate = vi.fn();
-			const initialStep = makeStep({
-				agentId: '',
-				agents: [
-					{
-						agentId: 'agent-1',
-						name: 'coder',
-						systemPrompt: { mode: 'override', value: 'Seed prompt.' },
-					},
-					{ agentId: 'agent-2', name: 'reviewer' },
-				],
-			});
-
-			function Wrapper() {
-				const [step, setStep] = useState(initialStep);
-				return (
-					<NodeConfigPanel
-						{...makeProps({
-							step,
-							onUpdate: (next) => {
-								onUpdate(next);
-								setStep(next);
-							},
-						})}
-					/>
-				);
-			}
-
-			const { getAllByTestId, getByTestId } = render(<Wrapper />);
 
 			fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-			const systemPromptField = getByTestId('slot-prompts-system-prompt');
-			const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
-			const expandButton = systemPromptSection.querySelector(
-				'[data-testid="mode-expand"]'
-			) as HTMLElement;
-			fireEvent.click(expandButton);
 
 			await act(async () => {
 				fireEvent.input(getByTestId('slot-prompts-system-prompt'), {
-					target: { value: 'Extra system prompt.' },
+					target: { value: 'Extra prompt.' },
 				});
 			});
 
@@ -981,144 +861,12 @@ describe('NodeConfigPanel', () => {
 				expect.objectContaining({
 					agents: [
 						expect.objectContaining({
-							systemPrompt: { mode: 'expand', value: 'Extra system prompt.' },
+							customPrompt: { value: 'Extra prompt.' },
 						}),
 						expect.anything(),
 					],
 				})
 			);
-		});
-
-		// ============================================================================
-		// P2: Mode change propagation — changing mode without editing text updates data model
-		// ============================================================================
-
-		describe('mode change propagation (P2)', () => {
-			it('changing single-agent system prompt mode from override to expand propagates to data model immediately', async () => {
-				const onUpdate = vi.fn();
-				const step = makeStep({
-					systemPrompt: { mode: 'override', value: 'Existing prompt.' },
-				});
-				const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-				fireEvent.click(getByTestId('edit-single-prompts-button'));
-
-				const systemPromptField = getByTestId('single-prompts-system-prompt');
-				const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
-				const expandButton = systemPromptSection.querySelector(
-					'[data-testid="mode-expand"]'
-				) as HTMLElement;
-				fireEvent.click(expandButton);
-
-				expect(onUpdate).toHaveBeenCalledWith(
-					expect.objectContaining({
-						systemPrompt: { mode: 'expand', value: 'Existing prompt.' },
-					})
-				);
-			});
-
-			it('changing single-agent instructions mode from override to expand propagates to data model immediately', async () => {
-				const onUpdate = vi.fn();
-				const step = makeStep({
-					agentId: 'agent-1',
-					instructions: 'Original instructions.',
-				});
-				const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-				fireEvent.click(getByTestId('edit-single-prompts-button'));
-
-				const instructionsField = getByTestId('single-prompts-instructions');
-				const instructionsSection = instructionsField.closest('.space-y-1') as HTMLElement;
-				const expandButton = instructionsSection.querySelector(
-					'[data-testid="mode-expand"]'
-				) as HTMLElement;
-				fireEvent.click(expandButton);
-
-				expect(onUpdate).toHaveBeenCalledWith(
-					expect.objectContaining({
-						agentId: '',
-						instructions: '',
-						agents: [
-							expect.objectContaining({
-								agentId: 'agent-1',
-								instructions: { mode: 'expand', value: 'Original instructions.' },
-							}),
-						],
-					})
-				);
-			});
-
-			it('changing multi-agent slot instructions mode propagates to data model immediately', async () => {
-				const onUpdate = vi.fn();
-				const step = makeStep({
-					agentId: '',
-					agents: [
-						{
-							agentId: 'agent-1',
-							name: 'coder',
-							instructions: { mode: 'override', value: 'Original instructions.' },
-						},
-						{ agentId: 'agent-2', name: 'reviewer' },
-					],
-				});
-				const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-				fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-
-				const instructionsField = document.querySelector(
-					'[data-testid="slot-prompts-instructions"]'
-				) as HTMLElement;
-				const instructionsSection = instructionsField.closest('.space-y-1') as HTMLElement;
-				const expandButton = instructionsSection.querySelector(
-					'[data-testid="mode-expand"]'
-				) as HTMLElement;
-				fireEvent.click(expandButton);
-
-				expect(onUpdate).toHaveBeenCalledWith(
-					expect.objectContaining({
-						agents: [
-							expect.objectContaining({
-								instructions: { mode: 'expand', value: 'Original instructions.' },
-							}),
-							expect.anything(),
-						],
-					})
-				);
-			});
-
-			it('changing multi-agent slot systemPrompt mode propagates to data model immediately', async () => {
-				const onUpdate = vi.fn();
-				const step = makeStep({
-					agentId: '',
-					agents: [
-						{
-							agentId: 'agent-1',
-							name: 'coder',
-							systemPrompt: { mode: 'override', value: 'Original prompt.' },
-						},
-						{ agentId: 'agent-2', name: 'reviewer' },
-					],
-				});
-				const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-				fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-
-				const systemPromptField = document.querySelector(
-					'[data-testid="slot-prompts-system-prompt"]'
-				) as HTMLElement;
-				const systemPromptSection = systemPromptField.closest('.space-y-1') as HTMLElement;
-				const expandButton = systemPromptSection.querySelector(
-					'[data-testid="mode-expand"]'
-				) as HTMLElement;
-				fireEvent.click(expandButton);
-
-				expect(onUpdate).toHaveBeenCalledWith(
-					expect.objectContaining({
-						agents: [
-							expect.objectContaining({
-								systemPrompt: { mode: 'expand', value: 'Original prompt.' },
-							}),
-							expect.anything(),
-						],
-					})
-				);
-			});
 		});
 	});
 });

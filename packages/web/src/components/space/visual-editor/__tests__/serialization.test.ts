@@ -251,7 +251,7 @@ describe('visualStateToCreateParams', () => {
 		return {
 			nodes: [
 				{
-					step: { localId: 'local-1', id: 's1', name: 'Step 1', agentId: 'a1', instructions: '' },
+					step: { localId: 'local-1', id: 's1', name: 'Step 1', agentId: 'a1' },
 					position: { x: 50, y: 50 },
 				},
 				{
@@ -260,7 +260,6 @@ describe('visualStateToCreateParams', () => {
 						id: 's2',
 						name: 'Step 2',
 						agentId: 'a2',
-						instructions: 'do work',
 					},
 					position: { x: 300, y: 50 },
 				},
@@ -286,11 +285,7 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes![0]).toMatchObject({ id: 's1', name: 'Step 1' });
 		expect(params.nodes![0].agents).toHaveLength(1);
 		expect(params.nodes![0].agents[0].agentId).toBe('a1');
-		expect(params.nodes![1]).toMatchObject({
-			id: 's2',
-			name: 'Step 2',
-			instructions: 'do work',
-		});
+		expect(params.nodes![1]).toMatchObject({ id: 's2', name: 'Step 2' });
 		expect(params.nodes![1].agents[0].agentId).toBe('a2');
 	});
 
@@ -300,8 +295,8 @@ describe('visualStateToCreateParams', () => {
 		expect(params.nodes![1].agents[0].name).toBe('step-2');
 	});
 
-	it('produces agents array (model/systemPrompt removed from WorkflowNodeInput)', () => {
-		// model and systemPrompt are NodeDraft-only fields (not on WorkflowNodeInput or WorkflowNodeAgent)
+	it('produces agents array (model/customPrompt on WorkflowNodeAgent)', () => {
+		// model and customPrompt are NodeDraft/WorkflowNodeAgent fields
 		const params = visualStateToCreateParams(
 			makeState({
 				nodes: [
@@ -311,7 +306,6 @@ describe('visualStateToCreateParams', () => {
 							id: 's1',
 							name: 'Step 1',
 							agentId: 'a1',
-							instructions: '',
 						},
 						position: { x: 50, y: 50 },
 					},
@@ -367,7 +361,7 @@ describe('visualStateToCreateParams', () => {
 		const state: VisualEditorState = {
 			nodes: [
 				{
-					step: { localId: 'local-new', name: 'New Step', agentId: 'a1', instructions: '' },
+					step: { localId: 'local-new', name: 'New Step', agentId: 'a1' },
 					position: { x: 0, y: 0 },
 				},
 			],
@@ -551,7 +545,7 @@ describe('visualStateToUpdateParams', () => {
 		const state: VisualEditorState = {
 			nodes: [
 				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
+					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a' },
 					position: { x: 0, y: 0 },
 				},
 			],
@@ -573,11 +567,11 @@ describe('visualStateToUpdateParams', () => {
 		const state: VisualEditorState = {
 			nodes: [
 				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
+					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a' },
 					position: { x: 0, y: 0 },
 				},
 				{
-					step: { localId: 'l2', id: 's2', name: 'S2', agentId: 'a', instructions: '' },
+					step: { localId: 'l2', id: 's2', name: 'S2', agentId: 'a' },
 					position: { x: 200, y: 0 },
 				},
 			],
@@ -596,7 +590,7 @@ describe('visualStateToUpdateParams', () => {
 		const state: VisualEditorState = {
 			nodes: [
 				{
-					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a', instructions: '' },
+					step: { localId: 'l1', id: 's1', name: 'S1', agentId: 'a' },
 					position: { x: 0, y: 0 },
 				},
 			],
@@ -627,7 +621,7 @@ describe('multi-agent step serialization', () => {
 						{
 							agentId: 'a2',
 							name: 'reviewer',
-							instructions: { mode: 'override', value: 'focus on security' },
+							customPrompt: { value: 'focus on security' },
 						},
 					],
 				},
@@ -639,7 +633,7 @@ describe('multi-agent step serialization', () => {
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
 		expect(step.agents![1].agentId).toBe('a2');
-		expect(step.agents![1].instructions).toEqual({ mode: 'override', value: 'focus on security' });
+		expect(step.agents![1].customPrompt).toEqual({ value: 'focus on security' });
 		// agentId should be empty (multi-agent step)
 		expect(step.agentId).toBe('');
 	});
@@ -679,10 +673,9 @@ describe('multi-agent step serialization', () => {
 							{
 								agentId: 'a2',
 								name: 'reviewer',
-								instructions: { mode: 'override', value: 'custom' },
+								customPrompt: { value: 'custom' },
 							},
 						],
-						instructions: '',
 					},
 					position: { x: 0, y: 0 },
 				},
@@ -697,7 +690,7 @@ describe('multi-agent step serialization', () => {
 		const step = params.nodes![0];
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
-		expect(step.agents![1].instructions).toEqual({ mode: 'override', value: 'custom' });
+		expect(step.agents![1].customPrompt).toEqual({ value: 'custom' });
 		// agentId should be absent (undefined) when agents is set
 		expect((step as unknown as Record<string, unknown>)['agentId']).toBeUndefined();
 	});
@@ -712,7 +705,6 @@ describe('multi-agent step serialization', () => {
 						name: 'Step',
 						agentId: '',
 						agents: [{ agentId: 'a1', name: 'coder' }],
-						instructions: '',
 					},
 					position: { x: 0, y: 0 },
 				},
@@ -738,7 +730,6 @@ describe('multi-agent step serialization', () => {
 						name: 'Plan',
 						agentId: '',
 						agents: [{ agentId: 'a1', name: 'planner' }],
-						instructions: '',
 					},
 					position: { x: 0, y: 0 },
 				},
@@ -749,7 +740,6 @@ describe('multi-agent step serialization', () => {
 						name: 'Code',
 						agentId: '',
 						agents: [{ agentId: 'a2', name: 'coder' }],
-						instructions: '',
 					},
 					position: { x: 200, y: 0 },
 				},
@@ -822,7 +812,7 @@ describe('multi-agent step serialization', () => {
 						{
 							agentId: 'a1',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'focus on tests' },
+							customPrompt: { value: 'focus on tests' },
 						},
 						{ agentId: 'a2', name: 'reviewer' },
 					],
@@ -837,9 +827,9 @@ describe('multi-agent step serialization', () => {
 		// agents array preserved through update round-trip
 		expect(step.agents).toHaveLength(2);
 		expect(step.agents![0].agentId).toBe('a1');
-		expect(step.agents![0].instructions).toEqual({ mode: 'override', value: 'focus on tests' });
+		expect(step.agents![0].customPrompt).toEqual({ value: 'focus on tests' });
 		expect(step.agents![1].agentId).toBe('a2');
-		expect(step.agents![1].instructions).toBeUndefined();
+		expect(step.agents![1].customPrompt).toBeUndefined();
 		// agentId should be absent for multi-agent steps
 		expect((step as unknown as Record<string, unknown>)['agentId']).toBeUndefined();
 		// Workflow-level channels are preserved through serialization
@@ -967,7 +957,7 @@ describe('Task Agent virtual node', () => {
 // ---------------------------------------------------------------------------
 
 describe('per-slot agent overrides round-trip', () => {
-	it('workflowToVisualState preserves systemPrompt override on agents', () => {
+	it('workflowToVisualState preserves customPrompt override on agents', () => {
 		const wf = makeWorkflow({
 			nodes: [
 				{
@@ -977,7 +967,7 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'a1',
 							name: 'strict-reviewer',
-							systemPrompt: { mode: 'override', value: 'Be strict.' },
+							customPrompt: { value: 'Be strict.' },
 						},
 						{ agentId: 'a1', name: 'quick-reviewer' },
 					],
@@ -989,15 +979,12 @@ describe('per-slot agent overrides round-trip', () => {
 		const node = state.nodes.find((n) => n.step.id === 's1')!;
 		expect(node.step.agents).toHaveLength(2);
 		expect(node.step.agents![0].name).toBe('strict-reviewer');
-		expect(node.step.agents![0].systemPrompt).toMatchObject({
-			mode: 'override',
-			value: 'Be strict.',
-		});
-		// slot without override has no systemPrompt field
-		expect(node.step.agents![1].systemPrompt).toBeUndefined();
+		expect(node.step.agents![0].customPrompt).toMatchObject({ value: 'Be strict.' });
+		// slot without override has no customPrompt field
+		expect(node.step.agents![1].customPrompt).toBeUndefined();
 	});
 
-	it('workflowToVisualState preserves instructions override on agents', () => {
+	it('workflowToVisualState preserves customPrompt override on single-slot agents', () => {
 		const wf = makeWorkflow({
 			nodes: [
 				{
@@ -1007,7 +994,7 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'a1',
 							name: 'coder',
-							instructions: { mode: 'override', value: 'You are a strict TypeScript expert.' },
+							customPrompt: { value: 'You are a strict TypeScript expert.' },
 						},
 					],
 				},
@@ -1016,13 +1003,12 @@ describe('per-slot agent overrides round-trip', () => {
 		});
 		const state = workflowToVisualState(wf);
 		const node = state.nodes.find((n) => n.step.id === 's1')!;
-		expect(node.step.agents![0].instructions).toMatchObject({
-			mode: 'override',
+		expect(node.step.agents![0].customPrompt).toMatchObject({
 			value: 'You are a strict TypeScript expert.',
 		});
 	});
 
-	it('visualStateToCreateParams passes systemPrompt override through to output', () => {
+	it('visualStateToCreateParams passes customPrompt override through to output', () => {
 		const wf = makeWorkflow({
 			nodes: [
 				{
@@ -1032,7 +1018,7 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'a1',
 							name: 'strict-reviewer',
-							systemPrompt: { mode: 'override', value: 'Be strict.' },
+							customPrompt: { value: 'Be strict.' },
 						},
 						{ agentId: 'a2', name: 'quick-reviewer' },
 					],
@@ -1046,11 +1032,11 @@ describe('per-slot agent overrides round-trip', () => {
 		const node = params.nodes![0];
 		expect(node.agents).toHaveLength(2);
 		expect(node.agents![0].name).toBe('strict-reviewer');
-		expect(node.agents![0].systemPrompt).toMatchObject({ mode: 'override', value: 'Be strict.' });
-		expect(node.agents![1].systemPrompt).toBeUndefined();
+		expect(node.agents![0].customPrompt).toMatchObject({ value: 'Be strict.' });
+		expect(node.agents![1].customPrompt).toBeUndefined();
 	});
 
-	it('full round-trip: workflow->visualState->createParams preserves all override fields', () => {
+	it('full round-trip: workflow->visualState->createParams preserves customPrompt fields', () => {
 		const wf = makeWorkflow({
 			nodes: [
 				{
@@ -1060,13 +1046,12 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'a1',
 							name: 'coder',
-							systemPrompt: { mode: 'override', value: 'Fast coder.' },
-							instructions: { mode: 'override', value: 'Focus on speed.' },
+							customPrompt: { value: 'Fast coder. Focus on speed.' },
 						},
 						{
 							agentId: 'a1',
 							name: 'coder-2',
-							instructions: { mode: 'expand', value: 'Focus on quality.' },
+							customPrompt: { value: 'Focus on quality.' },
 						},
 					],
 				},
@@ -1078,11 +1063,9 @@ describe('per-slot agent overrides round-trip', () => {
 
 		const [slot1, slot2] = params.nodes![0].agents!;
 		expect(slot1.name).toBe('coder');
-		expect(slot1.systemPrompt).toMatchObject({ mode: 'override', value: 'Fast coder.' });
-		expect(slot1.instructions).toMatchObject({ mode: 'override', value: 'Focus on speed.' });
+		expect(slot1.customPrompt).toMatchObject({ value: 'Fast coder. Focus on speed.' });
 		expect(slot2.name).toBe('coder-2');
-		expect(slot2.systemPrompt).toBeUndefined();
-		expect(slot2.instructions).toMatchObject({ mode: 'expand', value: 'Focus on quality.' });
+		expect(slot2.customPrompt).toMatchObject({ value: 'Focus on quality.' });
 	});
 
 	it('same agent added twice with different roles: both preserved in create params', () => {
@@ -1096,7 +1079,7 @@ describe('per-slot agent overrides round-trip', () => {
 						{
 							agentId: 'reviewer-agent',
 							name: 'reviewer-2',
-							systemPrompt: { mode: 'override', value: 'Be thorough.' },
+							customPrompt: { value: 'Be thorough.' },
 						},
 					],
 				},
@@ -1112,7 +1095,7 @@ describe('per-slot agent overrides round-trip', () => {
 		expect(agents[0].name).toBe('reviewer');
 		expect(agents[1].agentId).toBe('reviewer-agent');
 		expect(agents[1].name).toBe('reviewer-2');
-		expect(agents[1].systemPrompt).toMatchObject({ mode: 'override', value: 'Be thorough.' });
+		expect(agents[1].customPrompt).toMatchObject({ value: 'Be thorough.' });
 	});
 
 	it('role rename in visual state is reflected in serialized output', () => {

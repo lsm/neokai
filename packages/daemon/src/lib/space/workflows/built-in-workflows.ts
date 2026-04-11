@@ -206,8 +206,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Coder',
 					name: 'coder',
-					systemPrompt: {
-						mode: 'expand',
+					customPrompt: {
 						value:
 							'You are the Coder in a Coder→Reviewer iterative workflow. Your job is to implement the ' +
 							'task, write tests, commit all changes, and open a pull request.\n\n' +
@@ -216,11 +215,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'open and mergeable before the Reviewer sees it.\n' +
 							'- If the Reviewer requests changes, you will be re-activated with their feedback. ' +
 							'Address all feedback, push new commits, and the gate re-checks automatically.\n' +
-							'- This cycle can repeat up to 5 times before the workflow fails.',
-					},
-					instructions: {
-						mode: 'expand',
-						value:
+							'- This cycle can repeat up to 5 times before the workflow fails.\n\n' +
 							'Expected inputs: Task description from the workflow trigger.\n' +
 							'Expected outputs: A clean, mergeable PR with passing tests.\n\n' +
 							'Steps:\n' +
@@ -242,8 +237,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'reviewer',
-					systemPrompt: {
-						mode: 'expand',
+					customPrompt: {
 						value:
 							'You are the Reviewer in a Coder→Reviewer iterative workflow. You review the open PR ' +
 							'and either approve it or send it back for changes.\n\n' +
@@ -251,11 +245,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'- The Coder has already implemented and opened a PR (verified by code-ready-gate).\n' +
 							'- If you request changes, the Coder is automatically re-activated with your feedback.\n' +
 							'- When you are satisfied, call report_done() to complete the entire workflow.\n' +
-							'- This node is the endNodeId — your report_done() signals workflow completion.',
-					},
-					instructions: {
-						mode: 'expand',
-						value:
+							'- This node is the endNodeId — your report_done() signals workflow completion.\n\n' +
 							'Expected inputs: An open, mergeable PR from the Coder.\n' +
 							'Expected outputs: Either approval (report_done) or specific change requests.\n\n' +
 							'Review checklist:\n' +
@@ -336,8 +326,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Research',
 					name: 'research',
-					systemPrompt: {
-						mode: 'expand',
+					customPrompt: {
 						value:
 							'You are the Research agent in a Research→Reviewer iterative workflow. Your job is to ' +
 							'investigate the topic thoroughly, document findings, and open a PR.\n\n' +
@@ -345,11 +334,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'- You are in the Research node. After you open a PR, the research-ready-gate verifies ' +
 							'it is open and mergeable before the Reviewer sees it.\n' +
 							'- If the Reviewer requests more research, you will be re-activated with their feedback.\n' +
-							'- This cycle can repeat up to 5 times.',
-					},
-					instructions: {
-						mode: 'expand',
-						value:
+							'- This cycle can repeat up to 5 times.\n\n' +
 							'Expected inputs: Research topic/question from the workflow trigger.\n' +
 							'Expected outputs: Well-structured markdown document(s) with findings, committed and PR opened.\n\n' +
 							'Steps:\n' +
@@ -371,8 +356,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'reviewer',
-					systemPrompt: {
-						mode: 'expand',
+					customPrompt: {
 						value:
 							'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
 							'research findings for completeness, accuracy, and quality.\n\n' +
@@ -380,11 +364,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'- The Research agent has investigated and opened a PR (verified by research-ready-gate).\n' +
 							'- If you request more research, the Research agent is automatically re-activated.\n' +
 							'- When satisfied, call report_done() to complete the entire workflow.\n' +
-							'- This node is the endNodeId — your report_done() signals workflow completion.',
-					},
-					instructions: {
-						mode: 'expand',
-						value:
+							'- This node is the endNodeId — your report_done() signals workflow completion.\n\n' +
 							'Expected inputs: A PR containing research findings from the Research agent.\n' +
 							'Expected outputs: Either approval (report_done) or specific feedback for more research.\n\n' +
 							'Review checklist:\n' +
@@ -464,18 +444,13 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'reviewer',
-					systemPrompt: {
-						mode: 'expand',
+					customPrompt: {
 						value:
 							'You are the sole Reviewer in a single-node Review-Only workflow. There is no planning ' +
 							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
 							'Workflow context:\n' +
 							'- This is both the start and end node — the workflow completes when you call report_done().\n' +
-							'- There are no other agents in this workflow; your review is the only node.',
-					},
-					instructions: {
-						mode: 'expand',
-						value:
+							'- There are no other agents in this workflow; your review is the only node.\n\n' +
 							'Expected inputs: A PR or code to review (specified in the task description).\n' +
 							'Expected outputs: A thorough review summary with actionable findings.\n\n' +
 							'Review checklist:\n' +
@@ -531,10 +506,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Planner',
 					name: 'planner',
-					systemPrompt: { mode: 'override', value: V2_PLANNING_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_PLANNING_PROMPT +
+							'\n\n' +
 							'Expected inputs: Task description from the workflow trigger.\n' +
 							'Expected outputs: A committed plan file in an open, mergeable PR.\n\n' +
 							'Steps:\n' +
@@ -556,10 +531,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'reviewer',
-					systemPrompt: { mode: 'override', value: V2_PLAN_REVIEW_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_PLAN_REVIEW_PROMPT +
+							'\n\n' +
 							'Expected inputs: A committed plan from the Planning node (plan-pr-gate satisfied).\n' +
 							'Expected outputs: Approval signal or specific revision feedback.\n\n' +
 							'Steps:\n' +
@@ -579,10 +554,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Coder',
 					name: 'coder',
-					systemPrompt: { mode: 'override', value: V2_CODING_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_CODING_PROMPT +
+							'\n\n' +
 							'Expected inputs: An approved plan from Plan Review (plan-approval-gate satisfied).\n' +
 							'Expected outputs: Implementation with PR opened and code-pr-gate signaled.\n\n' +
 							'Steps:\n' +
@@ -604,10 +579,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'Reviewer 1',
-					systemPrompt: { mode: 'override', value: V2_CODE_REVIEW_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_CODE_REVIEW_PROMPT +
+							'\n\n' +
 							'Review the pull request for correctness, style, and test coverage. ' +
 							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
 							'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
@@ -619,10 +594,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'Reviewer 2',
-					systemPrompt: { mode: 'override', value: V2_CODE_REVIEW_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_CODE_REVIEW_PROMPT +
+							'\n\n' +
 							'Review the pull request for correctness, style, and test coverage. ' +
 							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
 							'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
@@ -634,10 +609,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'Reviewer 3',
-					systemPrompt: { mode: 'override', value: V2_CODE_REVIEW_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_CODE_REVIEW_PROMPT +
+							'\n\n' +
 							'Review the pull request for correctness, style, and test coverage. ' +
 							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
 							'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
@@ -655,10 +630,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'QA',
 					name: 'qa',
-					systemPrompt: { mode: 'override', value: V2_QA_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							V2_QA_PROMPT +
+							'\n\n' +
 							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
 							'Expected outputs: report_done() on pass, or detailed feedback to Coding on fail.\n\n' +
 							'Steps:\n' +
@@ -821,10 +796,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Coder',
 					name: 'coder',
-					systemPrompt: { mode: 'override', value: FULLSTACK_CODING_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							FULLSTACK_CODING_PROMPT +
+							'\n\n' +
 							'Expected inputs: Task description and review/QA feedback from prior loops.\n' +
 							'Expected outputs: Updated implementation in an open, mergeable PR.\n\n' +
 							'Steps:\n' +
@@ -845,10 +820,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'Reviewer',
 					name: 'reviewer',
-					systemPrompt: { mode: 'override', value: FULLSTACK_REVIEW_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							FULLSTACK_REVIEW_PROMPT +
+							'\n\n' +
 							'Expected inputs: Open PR from Coding.\n' +
 							'Expected outputs: Approval gate write or actionable feedback.\n\n' +
 							'Steps:\n' +
@@ -866,10 +841,10 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					agentId: 'QA',
 					name: 'qa',
-					systemPrompt: { mode: 'override', value: FULLSTACK_QA_PROMPT },
-					instructions: {
-						mode: 'override',
+					customPrompt: {
 						value:
+							FULLSTACK_QA_PROMPT +
+							'\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
 							'Expected outputs: report_done() on pass or QA feedback to Coding.\n\n' +
 							'Steps:\n' +

@@ -137,8 +137,11 @@ function buildAgentCreateParams(
 	if (exported.description !== undefined) params.description = exported.description;
 	if (exported.model !== undefined) params.model = exported.model;
 	if (exported.provider !== undefined) params.provider = exported.provider;
-	if (exported.systemPrompt !== undefined) params.systemPrompt = exported.systemPrompt;
-	if (exported.instructions !== undefined) params.instructions = exported.instructions;
+	// Combine legacy systemPrompt + instructions into customPrompt, joining with \n\n when both present
+	const parts = [exported.systemPrompt, exported.instructions].filter(
+		(s): s is string => typeof s === 'string' && s.length > 0
+	);
+	if (parts.length > 0) params.customPrompt = parts.join('\n\n');
 	if (exported.tools !== undefined) params.tools = exported.tools;
 	return params;
 }
@@ -186,8 +189,7 @@ export function buildWorkflowCreateParams(
 				agentId: string;
 				name: string;
 				model?: string;
-				systemPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
-				instructions?: import('@neokai/shared').WorkflowNodeAgentOverride;
+				customPrompt?: import('@neokai/shared').WorkflowNodeAgentOverride;
 				disabledSkillIds?: string[];
 				extraMcpServers?: import('@neokai/shared').WorkflowNodeAgent['extraMcpServers'];
 			} = {
@@ -195,11 +197,16 @@ export function buildWorkflowCreateParams(
 				name: a.name,
 			};
 			if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
-			// Normalize overrides: plain strings (legacy) → { mode: 'override', value }
+			// Normalize overrides: combine legacy systemPrompt + instructions into customPrompt.
+			// Plain strings (legacy) are normalized to { value }; both fields are joined with \n\n.
 			const normalizedSP = normalizeOverride(a.systemPrompt);
-			if (normalizedSP !== undefined) entry.systemPrompt = normalizedSP;
 			const normalizedInst = normalizeOverride(a.instructions);
-			if (normalizedInst !== undefined) entry.instructions = normalizedInst;
+			if (normalizedSP !== undefined || normalizedInst !== undefined) {
+				const parts = [normalizedSP?.value, normalizedInst?.value].filter(
+					(s): s is string => typeof s === 'string' && s.length > 0
+				);
+				if (parts.length > 0) entry.customPrompt = { value: parts.join('\n\n') };
+			}
 			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
 			if (a.extraMcpServers !== undefined)
 				entry.extraMcpServers = a.extraMcpServers as Record<
@@ -513,12 +520,15 @@ export function setupSpaceExportImportHandlers(
 						// Overwrite existing agent in place (preserve UUID and spaceId).
 						// Fields absent from the export are explicitly cleared (null → empty string
 						// or null) so that replace produces the same result as delete + create.
+						// Combine legacy systemPrompt + instructions into customPrompt on replace.
+						const replaceParts = [exportedAgent.systemPrompt, exportedAgent.instructions].filter(
+							(s): s is string => typeof s === 'string' && s.length > 0
+						);
 						const updated = agentRepo.update(existing.id, {
 							description: exportedAgent.description ?? null,
 							model: exportedAgent.model ?? null,
 							provider: exportedAgent.provider ?? null,
-							systemPrompt: exportedAgent.systemPrompt ?? null,
-							instructions: exportedAgent.instructions ?? null,
+							customPrompt: replaceParts.length > 0 ? replaceParts.join('\n\n') : null,
 							tools: exportedAgent.tools ?? null,
 						});
 						const id = updated?.id ?? existing.id;

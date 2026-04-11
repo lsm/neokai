@@ -174,15 +174,6 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`- Operate as a communication/status helper only: summarize progress, route human intent, and surface approvals.`
 	);
 
-	// ---- Space context -------------------------------------------------------
-	if (context.space.backgroundContext) {
-		sections.push(`\n## Space Background\n\n${context.space.backgroundContext}`);
-	}
-
-	if (context.space.instructions) {
-		sections.push(`\n## Space Instructions\n\n${context.space.instructions}`);
-	}
-
 	// ---- MCP Tools -----------------------------------------------------------
 	sections.push(`\n## Available MCP Tools\n`);
 	sections.push(
@@ -330,6 +321,15 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	}
 	if (context.task.dependsOn && context.task.dependsOn.length > 0) {
 		sections.push(`\n**Dependencies:** ${context.task.dependsOn.join(', ')}`);
+	}
+
+	// ---- Operator-supplied context (appended last so contract sections cannot be overridden) --
+	if (context.space.backgroundContext) {
+		sections.push(`\n## Space Background\n\n${context.space.backgroundContext}`);
+	}
+
+	if (context.space.instructions) {
+		sections.push(`\n## Space Instructions\n\n${context.space.instructions}`);
 	}
 
 	return sections.join('\n');

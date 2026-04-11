@@ -184,72 +184,63 @@ describe('seedPresetAgents', () => {
 		expect(qa?.tools).toContain('Glob');
 	});
 
-	it('all preset agents have a non-empty system prompt', async () => {
+	it('all preset agents have a non-empty custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 
 		for (const agent of seeded) {
-			expect(typeof agent.systemPrompt).toBe('string');
-			expect(agent.systemPrompt?.length ?? 0).toBeGreaterThan(0);
+			expect(typeof agent.customPrompt).toBe('string');
+			expect(agent.customPrompt?.length ?? 0).toBeGreaterThan(0);
 		}
 	});
 
-	it('all preset agents have non-empty instructions', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-
-		for (const agent of seeded) {
-			expect(typeof agent.instructions).toBe('string');
-			expect(agent.instructions?.length ?? 0).toBeGreaterThan(0);
-		}
-	});
-
-	it('Coder system prompt mentions code and PR', async () => {
+	it('Coder custom prompt mentions code and PR', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const coder = seeded.find((a) => a.name === 'Coder');
 
-		expect(coder?.systemPrompt).toContain('software engineer');
-		expect(coder?.systemPrompt).toContain('commit');
-		expect(coder?.instructions).toContain('PR');
+		expect(coder?.customPrompt).toContain('software engineer');
+		expect(coder?.customPrompt).toContain('commit');
+		expect(coder?.customPrompt).toContain('PR');
 	});
 
-	it('Research system prompt mentions investigation and findings', async () => {
+	it('Research custom prompt mentions investigation and findings', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const research = seeded.find((a) => a.name === 'Research');
 
-		expect(research?.systemPrompt).toContain('research specialist');
-		expect(research?.instructions).toContain('markdown');
-		expect(research?.instructions).toContain('PR');
+		expect(research?.customPrompt).toContain('research specialist');
+		expect(research?.customPrompt).toContain('markdown');
+		expect(research?.customPrompt).toContain('PR');
 	});
 
-	it('Reviewer system prompt mentions code review', async () => {
+	it('Reviewer custom prompt mentions code review', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-		expect(reviewer?.systemPrompt).toContain('code reviewer');
-		expect(reviewer?.instructions).toContain('specific feedback');
+		expect(reviewer?.customPrompt).toContain('code reviewer');
+		expect(reviewer?.customPrompt).toContain('specific feedback');
 	});
 
-	it('Planner system prompt mentions planning', async () => {
+	it('Planner custom prompt mentions planning', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const planner = seeded.find((a) => a.name === 'Planner');
 
-		expect(planner?.systemPrompt).toContain('project manager');
-		expect(planner?.instructions).toContain('plan');
+		expect(planner?.customPrompt).toContain('project manager');
+		expect(planner?.customPrompt).toContain('plan');
 	});
 
-	it('QA system prompt mentions quality assurance', async () => {
+	it('QA custom prompt mentions quality assurance', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.name === 'QA');
 
-		expect(qa?.systemPrompt).toContain('quality assurance');
-		expect(qa?.instructions).toContain('test suite');
+		expect(qa?.customPrompt).toContain('quality assurance');
+		expect(qa?.customPrompt).toContain('test suite');
 	});
 
-	it('General system prompt mentions versatile development', async () => {
+	it('General custom prompt mentions versatile development', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General');
 
-		expect(general?.systemPrompt).toContain('versatile');
-		expect(general?.instructions).toContain('implement');
+		expect(general?.customPrompt).toContain('versatile');
+		expect(general?.customPrompt).toContain('implement');
 	});
 });
 
@@ -327,111 +318,67 @@ describe('preset agent exact definitions', () => {
 		expect(qa.tools).toEqual(EXPECTED_READONLY_TOOLS);
 	});
 
-	// --- Exact system prompts ---
+	// --- Exact custom prompts ---
 
-	it('Coder has exact system prompt', async () => {
+	it('Coder has exact custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const coder = seeded.find((a) => a.name === 'Coder')!;
-		expect(coder.systemPrompt).toBe(
+		expect(coder.customPrompt).toBe(
 			'You are an expert software engineer. You write clean, well-tested code following the ' +
 				"project's existing conventions. You always commit your work, keep the working tree clean, " +
-				'and open pull requests for review.'
+				'and open pull requests for review.\n\n' +
+				'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
 		);
 	});
 
-	it('General has exact system prompt', async () => {
+	it('General has exact custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const general = seeded.find((a) => a.name === 'General')!;
-		expect(general.systemPrompt).toBe(
+		expect(general.customPrompt).toBe(
 			'You are a versatile software development assistant. You can write code, fix bugs, write documentation, ' +
-				'analyze problems, and handle any general development task. You adapt to what is needed.'
+				'analyze problems, and handle any general development task. You adapt to what is needed.\n\n' +
+				'Understand the task, implement the solution, verify it works, and commit your changes.'
 		);
 	});
 
-	it('Planner has exact system prompt', async () => {
+	it('Planner has exact custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const planner = seeded.find((a) => a.name === 'Planner')!;
-		expect(planner.systemPrompt).toBe(
+		expect(planner.customPrompt).toBe(
 			'You are a technical project manager. You analyze goals, break them down into clear actionable ' +
-				'tasks, identify dependencies, and produce structured implementation plans.'
+				'tasks, identify dependencies, and produce structured implementation plans.\n\n' +
+				'Produce a concrete plan with clear steps. Write the plan to a file and commit it.'
 		);
 	});
 
-	it('Research has exact system prompt', async () => {
+	it('Research has exact custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const research = seeded.find((a) => a.name === 'Research')!;
-		expect(research.systemPrompt).toBe(
+		expect(research.customPrompt).toBe(
 			'You are a research specialist. You investigate topics thoroughly using web search and code ' +
-				'exploration, synthesize findings clearly, and document results in well-structured markdown files.'
+				'exploration, synthesize findings clearly, and document results in well-structured markdown files.\n\n' +
+				'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.'
 		);
 	});
 
-	it('Reviewer has exact system prompt', async () => {
+	it('Reviewer has exact custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-		expect(reviewer.systemPrompt).toBe(
+		expect(reviewer.customPrompt).toBe(
 			'You are an expert code reviewer. You review pull requests for correctness, security, performance, ' +
-				'style, and test coverage. You give specific, actionable feedback.'
-		);
-	});
-
-	it('QA has exact system prompt', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const qa = seeded.find((a) => a.name === 'QA')!;
-		expect(qa.systemPrompt).toBe(
-			'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
-				'and ensure the codebase meets quality standards before release.'
-		);
-	});
-
-	// --- Exact instructions ---
-
-	it('Coder has exact instructions', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const coder = seeded.find((a) => a.name === 'Coder')!;
-		expect(coder.instructions).toBe(
-			'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
-		);
-	});
-
-	it('General has exact instructions', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const general = seeded.find((a) => a.name === 'General')!;
-		expect(general.instructions).toBe(
-			'Understand the task, implement the solution, verify it works, and commit your changes.'
-		);
-	});
-
-	it('Planner has exact instructions', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const planner = seeded.find((a) => a.name === 'Planner')!;
-		expect(planner.instructions).toBe(
-			'Produce a concrete plan with clear steps. Write the plan to a file and commit it.'
-		);
-	});
-
-	it('Research has exact instructions', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const research = seeded.find((a) => a.name === 'Research')!;
-		expect(research.instructions).toBe(
-			'Save all findings to a markdown file, commit the file, and open a PR with a summary of what you found.'
-		);
-	});
-
-	it('Reviewer has exact instructions', async () => {
-		const { seeded } = await seedPresetAgents('space-1', manager);
-		const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
-		expect(reviewer.instructions).toBe(
-			'Review the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide ' +
+				'style, and test coverage. You give specific, actionable feedback.\n\n' +
+				'Review the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide ' +
 				'specific feedback.'
 		);
 	});
 
-	it('QA has exact instructions', async () => {
+	it('QA has exact custom prompt', async () => {
 		const { seeded } = await seedPresetAgents('space-1', manager);
 		const qa = seeded.find((a) => a.name === 'QA')!;
-		expect(qa.instructions).toBe(
-			'Run the full test suite and report results with specific details on any failures.'
+		expect(qa.customPrompt).toBe(
+			'You are a quality assurance engineer. You verify test coverage, run test suites, check CI status, ' +
+				'and ensure the codebase meets quality standards before release.\n\n' +
+				'Run the full test suite and report results with specific details on any failures.'
 		);
 	});
 
@@ -566,7 +513,7 @@ describe('getPresetAgentTemplates', () => {
 		expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
 	});
 
-	it('each template has name, description, tools, systemPrompt, and instructions', () => {
+	it('each template has name, description, tools, and customPrompt', () => {
 		const templates = getPresetAgentTemplates();
 		for (const t of templates) {
 			expect(typeof t.name).toBe('string');
@@ -575,10 +522,8 @@ describe('getPresetAgentTemplates', () => {
 			expect(t.description.length).toBeGreaterThan(0);
 			expect(Array.isArray(t.tools)).toBe(true);
 			expect(t.tools.length).toBeGreaterThan(0);
-			expect(typeof t.systemPrompt).toBe('string');
-			expect(t.systemPrompt.length).toBeGreaterThan(0);
-			expect(typeof t.instructions).toBe('string');
-			expect(t.instructions.length).toBeGreaterThan(0);
+			expect(typeof t.customPrompt).toBe('string');
+			expect(t.customPrompt.length).toBeGreaterThan(0);
 		}
 	});
 

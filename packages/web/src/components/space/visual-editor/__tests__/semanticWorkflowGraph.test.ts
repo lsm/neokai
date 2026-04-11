@@ -11,7 +11,6 @@ const NODES: VisualNode[] = [
 			id: TASK_AGENT_NODE_ID,
 			name: 'Task Agent',
 			agentId: '',
-			instructions: '',
 		},
 		position: { x: 50, y: 20 },
 	},
@@ -20,7 +19,6 @@ const NODES: VisualNode[] = [
 			localId: 'plan',
 			name: 'Planning',
 			agentId: 'planner-id',
-			instructions: '',
 		},
 		position: { x: 50, y: 170 },
 	},
@@ -29,7 +27,7 @@ const NODES: VisualNode[] = [
 			localId: 'review',
 			name: 'Code Review',
 			agentId: '',
-			instructions: '',
+
 			agents: [
 				{ agentId: 'reviewer-1-id', name: 'Reviewer 1' },
 				{ agentId: 'reviewer-2-id', name: 'Reviewer 2' },
@@ -43,7 +41,6 @@ const NODES: VisualNode[] = [
 			localId: 'qa',
 			name: 'QA',
 			agentId: 'qa-id',
-			instructions: '',
 		},
 		position: { x: 50, y: 470 },
 	},

@@ -21,7 +21,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceAgent, SpaceWorkflow, WorkflowNodeAgentOverride } from '@neokai/shared';
+import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 import { makeBuiltInTemplateWorkflows } from './fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
@@ -67,7 +67,7 @@ function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
 		id,
 		spaceId: 'space-1',
 		name,
-		instructions: null,
+		customPrompt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -304,7 +304,7 @@ describe('WorkflowEditor', () => {
 			expect(channels).toHaveLength(0);
 		});
 
-		it('preserves systemPrompt from agents[0] for single-agent nodes', () => {
+		it('preserves customPrompt from agents[0] for single-agent nodes', () => {
 			const wf = makeWorkflow({
 				nodes: [
 					{
@@ -314,7 +314,7 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-1',
 								name: 'planner',
-								systemPrompt: { mode: 'override', value: 'Plan carefully.' },
+								customPrompt: { value: 'Plan carefully.' },
 							},
 						],
 					},
@@ -325,18 +325,18 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-2',
 								name: 'coder',
-								systemPrompt: { mode: 'expand', value: 'Code fast.' },
+								customPrompt: { value: 'Code fast.' },
 							},
 						],
 					},
 				],
 			});
 			const { steps } = initFromWorkflow(wf);
-			expect(steps[0].systemPrompt).toEqual({ mode: 'override', value: 'Plan carefully.' });
-			expect(steps[1].systemPrompt).toEqual({ mode: 'expand', value: 'Code fast.' });
+			expect(steps[0].customPrompt).toEqual({ value: 'Plan carefully.' });
+			expect(steps[1].customPrompt).toEqual({ value: 'Code fast.' });
 		});
 
-		it('preserves systemPrompt mode from agents[0]', () => {
+		it('preserves customPrompt value from agents[0]', () => {
 			const wf = makeWorkflow({
 				nodes: [
 					{
@@ -346,23 +346,18 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-1',
 								name: 'planner',
-								systemPrompt: { mode: 'expand', value: 'Extra planning context.' },
+								customPrompt: { value: 'Extra planning context.' },
 							},
 						],
 					},
 				],
 			});
 			const { steps } = initFromWorkflow(wf);
-			expect(steps[0].systemPrompt?.mode).toBe('expand');
-			expect(steps[0].systemPrompt?.value).toBe('Extra planning context.');
+			expect(steps[0].customPrompt?.value).toBe('Extra planning context.');
 		});
 
-		it('normalizes legacy string systemPrompt to override object', () => {
-			const wf: SpaceWorkflow = {
-				id: 'wf-legacy',
-				spaceId: 'space-1',
-				name: 'Legacy Workflow',
-				description: '',
+		it('sets customPrompt from agents[0].customPrompt object', () => {
+			const wf = makeWorkflow({
 				nodes: [
 					{
 						id: 'step-1',
@@ -371,28 +366,20 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-1',
 								name: 'coder',
-								systemPrompt: 'Legacy string prompt.',
-							} as unknown as {
-								agentId: string;
-								name: string;
-								systemPrompt?: WorkflowNodeAgentOverride;
+								customPrompt: { value: 'Be helpful.' },
 							},
 						],
 					},
 				],
-				startNodeId: 'step-1',
-				tags: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-			};
+			});
 			const { steps } = initFromWorkflow(wf);
-			expect(steps[0].systemPrompt).toEqual({ mode: 'override', value: 'Legacy string prompt.' });
+			expect(steps[0].customPrompt).toEqual({ value: 'Be helpful.' });
 		});
 
-		it('sets systemPrompt to undefined when agents[0] has no systemPrompt', () => {
+		it('sets customPrompt to undefined when agents[0] has no customPrompt', () => {
 			const wf = makeWorkflow();
 			const { steps } = initFromWorkflow(wf);
-			expect(steps[0].systemPrompt).toBeUndefined();
+			expect(steps[0].customPrompt).toBeUndefined();
 		});
 
 		it('preserves multi-agent nodes with their agents array', () => {
@@ -405,12 +392,12 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-1',
 								name: 'planner',
-								systemPrompt: { mode: 'override', value: 'Plan.' },
+								customPrompt: { value: 'Plan.' },
 							},
 							{
 								agentId: 'agent-2',
 								name: 'coder',
-								systemPrompt: { mode: 'override', value: 'Code.' },
+								customPrompt: { value: 'Code.' },
 							},
 						],
 					},
@@ -418,8 +405,8 @@ describe('WorkflowEditor', () => {
 			});
 			const { steps } = initFromWorkflow(wf);
 			expect(steps[0].agents).toHaveLength(2);
-			expect(steps[0].agents?.[0].systemPrompt).toEqual({ mode: 'override', value: 'Plan.' });
-			expect(steps[0].agents?.[1].systemPrompt).toEqual({ mode: 'override', value: 'Code.' });
+			expect(steps[0].agents?.[0].customPrompt).toEqual({ value: 'Plan.' });
+			expect(steps[0].agents?.[1].customPrompt).toEqual({ value: 'Code.' });
 		});
 	});
 
@@ -474,7 +461,7 @@ describe('WorkflowEditor', () => {
 			expect(getByText('5 steps')).toBeTruthy();
 		});
 
-		it('Full-Cycle Coding Workflow template builds explicit system prompts for every node', () => {
+		it('Full-Cycle Coding Workflow template builds explicit custom prompts for every node', () => {
 			const template = getAvailableTemplates(mockWorkflowTemplates.value).find(
 				(entry) => entry.label === 'Full-Cycle Coding Workflow'
 			);
@@ -484,11 +471,11 @@ describe('WorkflowEditor', () => {
 			for (const node of nodes) {
 				if (node.agents && node.agents.length > 0) {
 					for (const agent of node.agents) {
-						expect(agent.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
+						expect(agent.customPrompt?.value?.trim().length).toBeGreaterThan(0);
 					}
 					continue;
 				}
-				expect(node.systemPrompt?.value?.trim().length).toBeGreaterThan(0);
+				expect(node.customPrompt?.value?.trim().length).toBeGreaterThan(0);
 			}
 		});
 
@@ -609,7 +596,7 @@ describe('WorkflowEditor', () => {
 				},
 				mockAgents.value
 			);
-			expect(nodes[0].systemPrompt).toEqual({ mode: 'override', value: 'Be careful.' });
+			expect(nodes[0].customPrompt).toEqual({ value: 'Be careful.' });
 		});
 
 		it('creates a single-slot agents entry for single-agent steps', () => {
@@ -645,17 +632,15 @@ describe('WorkflowEditor', () => {
 				mockAgents.value
 			);
 			expect(nodes[0].agents).toHaveLength(2);
-			expect(nodes[0].agents?.[0].systemPrompt).toEqual({
-				mode: 'override',
+			expect(nodes[0].agents?.[0].customPrompt).toEqual({
 				value: 'Review carefully.',
 			});
-			expect(nodes[0].agents?.[1].systemPrompt).toEqual({
-				mode: 'override',
+			expect(nodes[0].agents?.[1].customPrompt).toEqual({
 				value: 'Focus on bugs.',
 			});
 		});
 
-		it('sets systemPrompt to undefined when template step has no systemPrompt', () => {
+		it('sets customPrompt to undefined when template step has no systemPrompt', () => {
 			const nodes = buildTemplateNodes(
 				{
 					label: 'No Prompt Template',
@@ -664,10 +649,10 @@ describe('WorkflowEditor', () => {
 				},
 				mockAgents.value
 			);
-			expect(nodes[0].systemPrompt).toBeUndefined();
+			expect(nodes[0].customPrompt).toBeUndefined();
 		});
 
-		it('wraps per-slot instructions in WorkflowNodeAgentOverride for multi-agent steps', () => {
+		it('wraps per-slot systemPrompt in WorkflowNodeAgentOverride for multi-agent steps (via instructions field)', () => {
 			const nodes = buildTemplateNodes(
 				{
 					label: 'Instructions Template',
@@ -675,14 +660,13 @@ describe('WorkflowEditor', () => {
 					steps: [
 						{
 							name: 'Code',
-							agentSlots: [{ name: 'Coder 1', role: 'coder', instructions: 'Focus on tests.' }],
+							agentSlots: [{ name: 'Coder 1', role: 'coder', systemPrompt: 'Focus on tests.' }],
 						},
 					],
 				},
 				mockAgents.value
 			);
-			expect(nodes[0].agents?.[0].instructions).toEqual({
-				mode: 'override',
+			expect(nodes[0].agents?.[0].customPrompt).toEqual({
 				value: 'Focus on tests.',
 			});
 		});
@@ -726,7 +710,7 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('persists per-agent systemPrompt overrides when saving an existing workflow', async () => {
+		it('persists per-agent customPrompt overrides when saving an existing workflow', async () => {
 			const workflow = makeWorkflow({
 				nodes: [
 					{
@@ -736,7 +720,7 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-1',
 								name: 'planner',
-								systemPrompt: { mode: 'override', value: 'Visible workflow prompt.' },
+								customPrompt: { value: 'Visible workflow prompt.' },
 							},
 						],
 					},
@@ -747,7 +731,7 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-2',
 								name: 'coder',
-								systemPrompt: { mode: 'override', value: 'Implement exactly what was approved.' },
+								customPrompt: { value: 'Implement exactly what was approved.' },
 							},
 						],
 					},
@@ -768,7 +752,7 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('includes systemPrompt in saved agent for single-agent nodes', async () => {
+		it('includes customPrompt in saved agent for single-agent nodes', async () => {
 			const workflow = makeWorkflow({
 				nodes: [
 					{
@@ -778,7 +762,7 @@ describe('WorkflowEditor', () => {
 							{
 								agentId: 'agent-1',
 								name: 'planner',
-								systemPrompt: { mode: 'override', value: 'Plan carefully.' },
+								customPrompt: { value: 'Plan carefully.' },
 							},
 						],
 					},
@@ -791,8 +775,7 @@ describe('WorkflowEditor', () => {
 			});
 			const callArgs = mockUpdateWorkflow.mock.calls[0][1];
 			const savedNode = callArgs.nodes[0];
-			expect(savedNode.agents[0].systemPrompt).toEqual({
-				mode: 'override',
+			expect(savedNode.agents[0].customPrompt).toEqual({
 				value: 'Plan carefully.',
 			});
 		});

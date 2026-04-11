@@ -673,10 +673,26 @@ export class TaskAgentManager {
 				}
 			}
 
+			// Resolve customPrompt from the slot. Support legacy JSON blobs that may still
+			// have the old `systemPrompt`/`instructions` shape from before migration 79.
+			let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
+			if (!slotCustomPrompt) {
+				// Backward compat: combine legacy systemPrompt + instructions into a single string.
+				const legacySlot = slot as {
+					systemPrompt?: { value: string };
+					instructions?: { value: string };
+				};
+				const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+				const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+				if (legacySp && legacyInstr) {
+					slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
+				} else {
+					slotCustomPrompt = legacySp || legacyInstr || undefined;
+				}
+			}
 			const slotOverrides: SlotOverrides = {
 				model: slot.model,
-				systemPrompt: slot.systemPrompt,
-				instructions: slot.instructions,
+				customPrompt: slotCustomPrompt,
 				disabledSkillIds: slot.disabledSkillIds,
 				extraMcpServers: slot.extraMcpServers,
 			};

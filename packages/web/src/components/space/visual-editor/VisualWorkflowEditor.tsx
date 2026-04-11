@@ -74,15 +74,13 @@ function buildTemplateCanvasSignature(
 			name: node.step.name,
 			agentId: node.step.agentId ?? null,
 			model: node.step.model ?? null,
-			systemPrompt: node.step.systemPrompt ?? null,
-			instructions: node.step.instructions ?? '',
+			customPrompt: node.step.customPrompt ?? null,
 			agents:
 				node.step.agents?.map((agent) => ({
 					agentId: agent.agentId ?? null,
 					name: agent.name ?? '',
 					model: agent.model ?? null,
-					systemPrompt: agent.systemPrompt ?? null,
-					instructions: agent.instructions ?? null,
+					customPrompt: agent.customPrompt ?? null,
 				})) ?? [],
 			nodeChannels:
 				node.step.channels?.map((channel) => ({
@@ -273,7 +271,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 						id: TASK_AGENT_NODE_ID,
 						name: 'Task Agent',
 						agentId: '',
-						instructions: '',
 					},
 					position: { x: 0, y: 0 },
 				},
@@ -575,7 +572,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
 	function addStep() {
 		const newLocalId = generateUUID();
-		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '', instructions: '' };
+		const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '' };
 
 		setNodes((prev) => {
 			// Exclude the Task Agent virtual node — it is always present but not a real workflow step.
@@ -948,7 +945,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			id: n.step.localId,
 			name: n.step.name,
 			agents: n.step.agents?.map((slot) => ({ ...slot })) ?? [],
-			instructions: n.step.instructions || undefined,
 		}));
 		const layoutTransitions: VisualTransition[] = newEdges.map((e, i) => ({
 			id: `t-${i}`,
@@ -975,7 +971,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				id: TASK_AGENT_NODE_ID,
 				name: 'Task Agent',
 				agentId: '',
-				instructions: '',
 			},
 			position: { x: 0, y: 0 },
 		};
