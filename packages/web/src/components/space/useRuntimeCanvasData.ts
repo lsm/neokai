@@ -152,11 +152,18 @@ export function useRuntimeCanvasData(
 			.request<{ gateData: GateDataRecord[] }>('spaceWorkflowRun.listGateData', { runId })
 			.then((result) => {
 				if (runIdRef.current !== runId) return;
-				const map = new Map<string, Record<string, unknown>>();
-				for (const record of result.gateData) {
-					map.set(record.gateId, record.data);
-				}
-				setGateDataMap(map);
+				setGateDataMap((prev) => {
+					// Build from fetched data, then overlay any event-based updates that
+					// arrived while the request was in-flight — events are more recent.
+					const fetched = new Map<string, Record<string, unknown>>();
+					for (const record of result.gateData) {
+						fetched.set(record.gateId, record.data);
+					}
+					for (const [gateId, data] of prev) {
+						fetched.set(gateId, data);
+					}
+					return fetched;
+				});
 			})
 			.catch(() => {})
 			.finally(() => {
