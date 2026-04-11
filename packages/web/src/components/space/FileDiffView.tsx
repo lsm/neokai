@@ -22,6 +22,10 @@ export interface FileDiffViewProps {
 	/** Task ID — when provided, diffs this task's worktree specifically */
 	taskId?: string;
 	filePath: string;
+	/** When set, shows the diff for this file within the specific commit (git show) */
+	commitSha?: string;
+	/** When set, skips the RPC fetch and renders this diff directly (non-git fallback) */
+	precomputedDiff?: { diff: string; additions: number; deletions: number };
 	onBack: () => void;
 	class?: string;
 }
@@ -123,16 +127,27 @@ export function FileDiffView({
 	runId,
 	taskId,
 	filePath,
+	commitSha,
+	precomputedDiff,
 	onBack,
 	class: className,
 }: FileDiffViewProps) {
-	const [loading, setLoading] = useState(true);
+	const [loading, setLoading] = useState(!precomputedDiff);
 	const [error, setError] = useState<string | null>(null);
-	const [diffText, setDiffText] = useState<string | null>(null);
-	const [additions, setAdditions] = useState(0);
-	const [deletions, setDeletions] = useState(0);
+	const [diffText, setDiffText] = useState<string | null>(precomputedDiff?.diff ?? null);
+	const [additions, setAdditions] = useState(precomputedDiff?.additions ?? 0);
+	const [deletions, setDeletions] = useState(precomputedDiff?.deletions ?? 0);
 
 	useEffect(() => {
+		// When a pre-computed diff is supplied, skip the RPC entirely.
+		if (precomputedDiff) {
+			setDiffText(precomputedDiff.diff);
+			setAdditions(precomputedDiff.additions);
+			setDeletions(precomputedDiff.deletions);
+			setLoading(false);
+			return;
+		}
+
 		setLoading(true);
 		setError(null);
 		setDiffText(null);
@@ -144,10 +159,17 @@ export function FileDiffView({
 			return;
 		}
 
+		const rpcName = commitSha
+			? 'spaceWorkflowRun.getCommitFileDiff'
+			: 'spaceWorkflowRun.getFileDiff';
+		const rpcParams = commitSha
+			? { runId, filePath, commitSha, ...(taskId ? { taskId } : {}) }
+			: { runId, filePath, ...(taskId ? { taskId } : {}) };
+
 		hub
 			.request<{ diff: string; additions: number; deletions: number; filePath: string }>(
-				'spaceWorkflowRun.getFileDiff',
-				{ runId, filePath, ...(taskId ? { taskId } : {}) }
+				rpcName,
+				rpcParams
 			)
 			.then((result) => {
 				setDiffText(result.diff);
@@ -158,7 +180,7 @@ export function FileDiffView({
 				setError(err instanceof Error ? err.message : 'Failed to load diff');
 			})
 			.finally(() => setLoading(false));
-	}, [runId, taskId, filePath]);
+	}, [runId, taskId, filePath, commitSha, precomputedDiff]);
 
 	const parsedLines = diffText ? parseDiff(diffText) : [];
 
