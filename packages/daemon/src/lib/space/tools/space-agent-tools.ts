@@ -306,12 +306,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			title: string;
 			description: string;
 			priority?: SpaceTaskPriority;
+			workflow_id?: string;
 		}): Promise<ToolResult> {
 			try {
 				const task = await taskManager.createTask({
 					title: args.title,
 					description: args.description,
 					priority: args.priority,
+					preferredWorkflowId: args.workflow_id ?? null,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
@@ -592,6 +594,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.string()
 					.optional()
 					.describe('ID of a custom Space agent to assign this task to'),
+				workflow_id: z
+					.string()
+					.optional()
+					.describe(
+						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Example: "67b42e04-ae03-425d-b267-40527b042dcc" for Coding with QA Workflow.'
+					),
 			},
 			(args) => handlers.create_standalone_task(args)
 		),

@@ -353,6 +353,7 @@ export function createGlobalSpacesToolHandlers(
 			description: string;
 			priority?: SpaceTaskPriority;
 			depends_on?: string[];
+			workflow_id?: string;
 		}): Promise<ToolResult> {
 			const resolved = resolveSpaceId(args.space_id);
 			if ('error' in resolved) return jsonResult({ success: false, error: resolved.error });
@@ -363,6 +364,7 @@ export function createGlobalSpacesToolHandlers(
 					description: args.description,
 					priority: args.priority,
 					dependsOn: args.depends_on,
+					preferredWorkflowId: args.workflow_id ?? null,
 				});
 				return jsonResult({ success: true, space_id: resolved.spaceId, task });
 			} catch (err) {
@@ -753,6 +755,12 @@ export function createGlobalSpacesMcpServer(
 					.array(z.string())
 					.optional()
 					.describe('IDs of tasks that must complete before this task can start'),
+				workflow_id: z
+					.string()
+					.optional()
+					.describe(
+						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Example: "67b42e04-ae03-425d-b267-40527b042dcc" for Coding with QA Workflow.'
+					),
 			},
 			(args) => handlers.create_standalone_task(args)
 		),

@@ -836,6 +836,31 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		expect(stored).not.toBeNull();
 		expect(stored?.title).toBe('Stored task');
 	});
+
+	test('persists preferredWorkflowId when workflow_id is provided', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Coding QA');
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Fix auth bug',
+			description: 'Authentication fails for international users',
+			workflow_id: wf.id,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored).not.toBeNull();
+		expect(stored?.preferredWorkflowId).toBe(wf.id);
+	});
+
+	test('preferredWorkflowId is null when workflow_id not provided', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Generic task',
+			description: 'No explicit workflow',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId ?? null).toBeNull();
+	});
 });
 
 // ---------------------------------------------------------------------------

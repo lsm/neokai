@@ -509,6 +509,48 @@ describe('createGlobalSpacesToolHandlers — create_standalone_task', () => {
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.dependsOn).toContain(firstTaskId);
 	});
+
+	test('persists preferredWorkflowId when workflow_id is provided', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: null });
+		const wf = ctx.workflowManager.createWorkflow({
+			spaceId: ctx.spaceId,
+			name: 'Coding with QA',
+			description: 'Coder + Reviewer + QA loop',
+			nodes: [{ id: 'step-1', name: 'Coding', agentId: ctx.agentId }],
+			transitions: [],
+			startNodeId: 'step-1',
+			rules: [],
+			tags: ['coding'],
+		});
+
+		const result = await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Fix login bug',
+			description: 'Authentication fails for international users',
+			workflow_id: wf.id,
+		});
+
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored).not.toBeNull();
+		expect(stored?.preferredWorkflowId).toBe(wf.id);
+	});
+
+	test('preferredWorkflowId is null when workflow_id not provided', async () => {
+		const handlers = makeHandlers(ctx, { activeSpaceId: null });
+
+		const result = await handlers.create_standalone_task({
+			space_id: ctx.spaceId,
+			title: 'Generic task',
+			description: 'No explicit workflow',
+		});
+
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.preferredWorkflowId ?? null).toBeNull();
+	});
 });
 
 // ---------------------------------------------------------------------------

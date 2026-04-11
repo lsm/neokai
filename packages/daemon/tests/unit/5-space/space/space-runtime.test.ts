@@ -460,6 +460,63 @@ describe('SpaceRuntime', () => {
 			const unchanged = taskRepo.getTask(task.id)!;
 			expect(unchanged.status).toBe('open');
 		});
+
+		test('uses preferredWorkflowId when attaching workflow to standalone task', async () => {
+			// Create two workflows — one preferred, one that would match heuristically
+			const preferredWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Coding', agentId: AGENT_CODER },
+			]);
+			// Second workflow with tags that would win the heuristic for "fix bug" keywords
+			buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_B, name: 'Fix', agentId: AGENT_GENERAL },
+			]);
+
+			// Create task with explicit preferredWorkflowId
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Fix login bug',
+				description: 'Authentication fails for international users',
+				status: 'open',
+				preferredWorkflowId: preferredWorkflow.id,
+			});
+
+			// Tick attaches the preferred workflow
+			await runtime.executeTick();
+
+			const updated = taskRepo.getTask(task.id)!;
+			expect(updated.workflowRunId).not.toBeNull();
+
+			// Verify the run uses the preferred workflow
+			const run = workflowRunRepo.getRun(updated.workflowRunId!);
+			expect(run).not.toBeNull();
+			expect(run!.workflowId).toBe(preferredWorkflow.id);
+		});
+
+		test('falls back to heuristic when preferredWorkflowId workflow is not found', async () => {
+			const fallbackWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: STEP_A, name: 'Work', agentId: AGENT_CODER },
+			]);
+
+			// Create task with a non-existent preferred workflow ID
+			const task = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Some task',
+				description: 'Some description',
+				status: 'open',
+				preferredWorkflowId: 'wf-does-not-exist',
+			});
+
+			await runtime.executeTick();
+
+			// Runtime should have fallen back and attached a workflow
+			const updated = taskRepo.getTask(task.id)!;
+			expect(updated.workflowRunId).not.toBeNull();
+
+			const run = workflowRunRepo.getRun(updated.workflowRunId!);
+			expect(run).not.toBeNull();
+			// Fallback: uses the only available workflow
+			expect(run!.workflowId).toBe(fallbackWorkflow.id);
+		});
 	});
 
 	// -------------------------------------------------------------------------
