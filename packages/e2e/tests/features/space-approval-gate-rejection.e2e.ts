@@ -145,7 +145,10 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	await expect(waitingGate).toBeVisible({ timeout: 30000 });
 
 	// Open the action popup.
-	await waitingGate.click();
+	// The gate icon is an SVG <g> element with animate-pulse applied when in waiting_human
+	// state, which causes Playwright's stability checks to time out. Use force:true to bypass
+	// the actionability checks and click immediately.
+	await waitingGate.click({ force: true });
 	await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 5000 });
 
 	// Click Reject in the popup.
