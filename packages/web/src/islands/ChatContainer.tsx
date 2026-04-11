@@ -46,6 +46,7 @@ import { Modal } from '../components/ui/Modal.tsx';
 
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
+import { WorkspaceSelector } from '../components/WorkspaceSelector.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 // Hooks
@@ -133,6 +134,9 @@ export default function ChatContainer({
 	// Worktree choice modal state
 	const [showWorktreeChoice, setShowWorktreeChoice] = useState(false);
 	const [pendingWorktreeMode, setPendingWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
+
+	// Inline workspace selector state (for sessions created without a workspace)
+	const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false);
 
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// Moved here before callbacks that depend on it
@@ -406,6 +410,20 @@ export default function ChatContainer({
 			setShowWorktreeChoice(false);
 		}
 	}, [session]);
+
+	// Show workspace selector for active worker sessions without a workspace
+	useEffect(() => {
+		if (
+			session?.type === 'worker' &&
+			session?.status === 'active' &&
+			session?.workspacePath === null &&
+			!readonly
+		) {
+			setShowWorkspaceSelector(true);
+		} else {
+			setShowWorkspaceSelector(false);
+		}
+	}, [session?.type, session?.status, session?.workspacePath, readonly]);
 
 	// Handler for worktree mode change
 	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
@@ -1005,6 +1023,17 @@ export default function ChatContainer({
 				{/* Scroll Button - positioned relative to container, not scrollable content */}
 				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
 			</div>
+
+			{/* Inline Workspace Selector - shown for sessions without workspace */}
+			{showWorkspaceSelector && session && (
+				<WorkspaceSelector
+					sessionId={sessionId}
+					onConfirm={() => {
+						setShowWorkspaceSelector(false);
+					}}
+					onSkip={() => setShowWorkspaceSelector(false)}
+				/>
+			)}
 
 			{/* Footer - Floating Status Bar */}
 			<ChatComposer

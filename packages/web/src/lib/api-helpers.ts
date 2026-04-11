@@ -353,3 +353,19 @@ export async function removeWorkspaceFromHistory(path: string): Promise<boolean>
 	const { success } = await hub.request<WorkspaceRemoveResponse>('workspace.remove', { path });
 	return success;
 }
+
+// ==================== Session Workspace Operations ====================
+
+/** Set workspace on an existing session via inline workspace selector */
+export async function setSessionWorkspace(
+	sessionId: string,
+	workspacePath: string,
+	worktreeMode: 'worktree' | 'direct'
+): Promise<import('@neokai/shared').Session> {
+	const hub = getHubOrThrow();
+	const { session } = await hub.request<{
+		success: boolean;
+		session: import('@neokai/shared').Session;
+	}>('session.setWorkspace', { sessionId, workspacePath, worktreeMode });
+	return session;
+}

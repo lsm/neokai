@@ -59,6 +59,17 @@ export interface SetWorktreeModeResponse {
 	session?: Session;
 }
 
+export interface SetWorkspaceRequest {
+	sessionId: string;
+	workspacePath: string;
+	worktreeMode: 'worktree' | 'direct';
+}
+
+export interface SetWorkspaceResponse {
+	success: boolean;
+	session: Session;
+}
+
 export interface ListSessionsResponse {
 	sessions: Session[];
 }

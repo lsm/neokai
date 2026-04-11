@@ -428,6 +428,105 @@ export class SessionLifecycle {
 	}
 
 	/**
+	 * Set workspace on an existing session (post-creation)
+	 *
+	 * Called when user selects a workspace via the inline WorkspaceSelector in chat.
+	 * The session must be active with no workspace (workspacePath === null).
+	 *
+	 * @param sessionId - Session ID
+	 * @param workspacePath - Workspace path to set
+	 * @param worktreeMode - Whether to create a worktree or use direct mode
+	 * @returns Updated session data
+	 */
+	async setWorkspace(
+		sessionId: string,
+		workspacePath: string,
+		worktreeMode: 'worktree' | 'direct'
+	): Promise<Session> {
+		const agentSession = this.sessionCache.get(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+
+		const session = agentSession.getSessionData();
+
+		// Only worker sessions support workspace setup
+		if (session.type !== 'worker') {
+			throw new Error(`Session ${sessionId} is not a worker session`);
+		}
+
+		// Session must be active
+		if (session.status !== 'active') {
+			throw new Error(
+				`Session ${sessionId} status is ${session.status}, must be active to set workspace`
+			);
+		}
+
+		const normalizedPath = workspacePath.trim();
+		if (!normalizedPath) {
+			throw new Error('Workspace path cannot be empty');
+		}
+
+		let worktreeMetadata: WorktreeMetadata | undefined;
+		let currentBranch: string | undefined;
+
+		if (worktreeMode === 'worktree' && !this.config.disableWorktrees) {
+			const branchName = `session/${sessionId}`;
+			worktreeMetadata = await this.createWorktreeInternal(
+				sessionId,
+				normalizedPath,
+				branchName,
+				'HEAD'
+			);
+		} else if (worktreeMode === 'direct') {
+			// Detect current branch if git repo
+			try {
+				const gitSupport = await this.worktreeManager.detectGitSupport(normalizedPath);
+				if (gitSupport.isGitRepo && gitSupport.gitRoot) {
+					const branch = await this.worktreeManager.getCurrentBranch(gitSupport.gitRoot);
+					currentBranch = branch ?? undefined;
+				}
+			} catch (error) {
+				this.logger.debug('[SessionLifecycle] Failed to detect git/branch for direct mode:', error);
+			}
+		}
+
+		// Re-read to pick up any concurrent metadata updates
+		const latestSession = agentSession.getSessionData();
+
+		const updatedSession: Session = {
+			...latestSession,
+			workspacePath: normalizedPath,
+			worktree: worktreeMetadata,
+			gitBranch: currentBranch ?? worktreeMetadata?.branch,
+			metadata: {
+				...latestSession.metadata,
+				workspaceInitialized: true,
+				worktreeChoice: {
+					status: 'completed',
+					choice: worktreeMode,
+					createdAt: new Date().toISOString(),
+					completedAt: new Date().toISOString(),
+				},
+			},
+		};
+
+		// Save to database
+		this.db.updateSession(sessionId, updatedSession);
+
+		// Update in-memory agent session
+		agentSession.updateMetadata(updatedSession);
+
+		// Emit event for state synchronization
+		await this.eventBus.emit('session.updated', {
+			sessionId,
+			session: updatedSession,
+		});
+
+		return updatedSession;
+	}
+
+	/**
 	 * Update a session
 	 */
 	async update(sessionId: string, updates: Partial<Session>): Promise<void> {

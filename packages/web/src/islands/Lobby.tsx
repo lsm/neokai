@@ -27,10 +27,8 @@ import { NewSessionModal } from '../components/lobby/NewSessionModal';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { useModal } from '../hooks/useModal';
-import { getRecentPaths, addRecentPath } from '../lib/recent-paths';
 import { formatRelativeTime } from '../lib/utils';
-import { createSession, getWorkspaceHistory, addWorkspaceToHistory } from '../lib/api-helpers';
-import type { WorkspaceHistoryEntry } from '@neokai/shared';
+import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 import { createRoomModalSignal } from '../lib/signals';
 import { isUserSession } from '../lib/session-utils';
@@ -38,7 +36,6 @@ import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const [workspaceHistory, setWorkspaceHistory] = useState<WorkspaceHistoryEntry[]>([]);
 	const isCreateRoomModalOpen = createRoomModalSignal.value;
 	const newSessionModal = useModal();
 
@@ -58,29 +55,11 @@ export default function Lobby() {
 	const error = lobbyStore.error.value;
 	// Only show user-created sessions (not internal Room Runtime agents)
 	const recentSessions = globalStore.activeSessions.value.filter(isUserSession).slice(0, 5);
-	const recentPaths = getRecentPaths().map((p) => ({
-		path: p.path,
-		relativeTime: formatRelativeTime(p.usedAt),
-		absoluteTime: p.usedAt,
-	}));
 
-	async function loadWorkspaceHistory() {
-		try {
-			const entries = await getWorkspaceHistory();
-			setWorkspaceHistory(entries);
-		} catch {
-			// Fallback — keep empty; localStorage paths will be shown instead
-		}
-	}
-
-	async function handleCreateSession(params: {
-		workspacePath?: string;
-		roomId?: string;
-		model?: ModelInfo;
-	}) {
+	async function handleCreateSession(params: { roomId?: string; model?: ModelInfo }) {
 		try {
 			const { sessionId } = await createSession({
-				workspacePath: params.workspacePath ?? null,
+				workspacePath: null,
 				roomId: params.roomId,
 				createdBy: 'human',
 				...(params.model && {
@@ -90,14 +69,6 @@ export default function Lobby() {
 					},
 				}),
 			});
-
-			if (params.workspacePath) {
-				// Persist to backend history and localStorage
-				addRecentPath(params.workspacePath);
-				addWorkspaceToHistory(params.workspacePath).catch(() => {
-					// Non-critical — backend history update failure is silent
-				});
-			}
 
 			// Navigate to session
 			navigateToSession(sessionId);
@@ -148,7 +119,6 @@ export default function Lobby() {
 							variant="secondary"
 							onClick={() => {
 								createRoomModalSignal.value = false;
-								loadWorkspaceHistory();
 								newSessionModal.open();
 							}}
 						>
@@ -168,7 +138,6 @@ export default function Lobby() {
 						<button
 							onClick={() => {
 								createRoomModalSignal.value = false;
-								loadWorkspaceHistory();
 								newSessionModal.open();
 							}}
 							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
@@ -301,14 +270,11 @@ export default function Lobby() {
 				isOpen={newSessionModal.isOpen}
 				onClose={newSessionModal.close}
 				onSubmit={handleCreateSession}
-				recentPaths={recentPaths}
-				workspaceHistory={workspaceHistory}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
 					const room = await lobbyStore.createRoom({
 						name: params.name,
-						// NewSessionModal always provides defaultPath (selectedPath from the form)
-						defaultPath: params.defaultPath!,
+						defaultPath: params.defaultPath ?? '',
 						...(params.background ? { background: params.background } : {}),
 						...(params.allowedPaths ? { allowedPaths: params.allowedPaths } : {}),
 					});
