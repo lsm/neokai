@@ -213,7 +213,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		roomManager,
 		sessionManager: deps.sessionManager,
-		defaultWorkspacePath: deps.config.workspaceRoot,
+		defaultWorkspacePath: undefined,
 		defaultModel: deps.config.defaultModel,
 		getGlobalSettings: () => deps.settingsManager.getGlobalSettings(),
 		settingsManager: deps.settingsManager,
@@ -307,7 +307,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupDialogHandlers(deps.messageHub);
 
 	// Reference handlers (@ mention system — search + resolve tasks, goals, files, folders)
-	const fileIndex = new FileIndex(deps.config.workspaceRoot);
+	const fileIndex = new FileIndex(undefined);
 	fileIndex.init().catch((err) => {
 		log.warn('FileIndex init failed:', err);
 	});
@@ -318,7 +318,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		sessionManager: deps.sessionManager,
 		taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
 		goalRepo: deps.db.getGoalRepo(),
-		workspaceRoot: deps.config.workspaceRoot,
+		workspaceRoot: undefined,
 		fileIndex,
 		getRoomDefaultPath: (roomId: string) => roomManager.getRoom(roomId)?.defaultPath ?? undefined,
 	});
@@ -340,12 +340,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
 
 	// Skills registry RPC handlers
-	registerSkillHandlers(
-		deps.messageHub,
-		deps.skillsManager,
-		deps.daemonHub,
-		deps.config.workspaceRoot
-	);
+	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub, undefined);
 
 	// Neo global agent RPC handlers
 	// The PendingActionStore is created here (application lifecycle) so it is
@@ -390,7 +385,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		authManager: deps.authManager,
 		mcpServerRepository: deps.db.appMcpServers,
 		skillsManager: deps.skillsManager,
-		workspaceRoot: deps.config.workspaceRoot,
+		workspaceRoot: undefined,
 		appVersion: '0.1.1', // TODO: centralise into a shared VERSION constant (same value in system-handlers.ts and state-manager.ts)
 		startedAt: Date.now(),
 		spaceManager: deps.spaceManager,
@@ -529,7 +524,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		},
 		runtimeService: roomRuntimeService,
 		pendingStore: neoPendingActions,
-		workspaceRoot: deps.config.workspaceRoot,
+		workspaceRoot: undefined,
 		getSecurityMode: () => deps.neoAgentManager.getSecurityMode(),
 		spaceHandlers: createGlobalSpacesToolHandlers(
 			{

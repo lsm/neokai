@@ -25,7 +25,6 @@ export interface SessionLifecycleConfig {
 	defaultModel: string;
 	maxTokens: number;
 	temperature: number;
-	workspaceRoot?: string;
 	disableWorktrees?: boolean;
 }
 

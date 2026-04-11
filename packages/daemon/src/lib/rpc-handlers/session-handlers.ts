@@ -707,11 +707,9 @@ export function setupSessionHandlers(
 
 	// Handle manual cleanup of orphaned worktrees
 	messageHub.onRequest('worktree.cleanup', async (data) => {
-		const { workspacePath: payloadPath } = data as { workspacePath?: string };
-		// Apply fallback at the RPC boundary so cleanupOrphanedWorktrees always receives an explicit path.
-		const resolvedPath = payloadPath ?? sessionManager.getWorkspaceRoot();
+		const { workspacePath: resolvedPath } = data as { workspacePath?: string };
 		if (!resolvedPath) {
-			throw new Error('workspacePath is required when daemon has no default workspace');
+			throw new Error('workspacePath is required');
 		}
 		const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(resolvedPath);
 

@@ -126,35 +126,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	await db.initialize(reactiveDb);
 	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
 
-	// Startup hook: replace '__NEEDS_WORKSPACE_PATH__' sentinels left by migration 70.
-	// Migration 70 uses this sentinel for rooms where allowed_paths was also empty/null,
-	// because the migration runs in pure SQL without access to config. Here we have config,
-	// so we replace sentinels with the real workspaceRoot before any room operations begin.
-	{
-		const rawDb = db.getDatabase();
-		const sentinelRows = rawDb
-			.prepare(`SELECT id FROM rooms WHERE default_path = '__NEEDS_WORKSPACE_PATH__'`)
-			.all() as Array<{ id: string }>;
-		if (sentinelRows.length > 0) {
-			if (config.workspaceRoot) {
-				rawDb
-					.prepare(
-						`UPDATE rooms SET default_path = ? WHERE default_path = '__NEEDS_WORKSPACE_PATH__'`
-					)
-					.run(config.workspaceRoot);
-				logInfo(
-					`[Daemon] Replaced sentinel default_path with workspaceRoot for ${sentinelRows.length} room(s)`
-				);
-			} else {
-				const ids = sentinelRows.map((r) => r.id).join(', ');
-				logError(
-					`[Daemon] WARNING: ${sentinelRows.length} room(s) have sentinel default_path '__NEEDS_WORKSPACE_PATH__' but workspaceRoot is not set. ` +
-						`Affected room IDs: ${ids}. Use room.update RPC to set defaultPath explicitly.`
-				);
-			}
-		}
-	}
-
 	// Initialize job queue
 	const jobQueue = new JobQueueRepository(db.getDatabase());
 	const maxConcurrent = Number(process.env.NEOKAI_JOB_QUEUE_MAX_CONCURRENT) || 5;
@@ -195,13 +166,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const authManager = new AuthManager(db, config);
 	await authManager.initialize();
 
-	// Initialize settings manager.
-	// When no workspace is set, fall back to homedir() so SettingsManager reads global
-	// MCP config from ~/.claude/.mcp.json. This means MCP servers configured in a
-	// project-level .mcp.json won't be discovered for the global instance — but that
-	// is acceptable because room-scoped sessions use their own defaultPath for MCP
-	// resolution, not the global settings manager workspace path.
-	const settingsManager = new SettingsManager(db, config.workspaceRoot ?? homedir());
+	// Initialize settings manager using homedir() so it discovers MCP config from
+	// ~/.claude/.mcp.json. Room-scoped sessions use their own defaultPath for
+	// project-level MCP resolution.
+	const settingsManager = new SettingsManager(db, homedir());
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
@@ -265,7 +233,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,
-			workspaceRoot: config.workspaceRoot,
 		},
 		jobQueue,
 		jobProcessor,
@@ -325,7 +292,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	}
 
 	// Initialize workspace file index (non-blocking — init runs in the background)
-	const fileIndex = new FileIndex(config.workspaceRoot);
+	const fileIndex = new FileIndex(undefined);
 	void fileIndex.init();
 
 	// Setup RPC handlers (returns cleanup function + exposed services)
