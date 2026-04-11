@@ -152,6 +152,9 @@ export function ReadOnlyWorkflowCanvas({
 		? (channelEdges.find((c) => c.id === selectedChannelId) ?? null)
 		: null;
 
+	// Show a banner when a human-approval gate has been rejected (approved === false).
+	const isWorkflowRejected = [...gateDataMap.values()].some((data) => data['approved'] === false);
+
 	// Resolve node names for the info panel
 	const getNodeName = (stepLocalId: string): string => {
 		const node = nodeData.find((n) => n.step.localId === stepLocalId);
@@ -167,6 +170,11 @@ export function ReadOnlyWorkflowCanvas({
 			{gateDataLoading && (
 				<div class="absolute top-2 right-2 z-10 text-xs text-gray-500 px-2 py-0.5 bg-dark-800 rounded">
 					Loading…
+				</div>
+			)}
+			{isWorkflowRejected && (
+				<div class="flex-shrink-0 flex items-center justify-center px-4 py-2 bg-red-900/80 border-b border-red-700/60 text-sm text-red-200">
+					Workflow paused — awaiting approval
 				</div>
 			)}
 			<div ref={containerRef} class="flex-1 min-h-0 relative">

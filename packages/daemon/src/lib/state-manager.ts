@@ -315,6 +315,12 @@ export class StateManager {
 			});
 		});
 
+		this.eventBus.on('space.gateData.updated', (data) => {
+			this.messageHub.event('space.gateData.updated', data, {
+				channel: data.sessionId, // 'global'
+			});
+		});
+
 		// Space agent events (space-scoped channel: 'space:${spaceId}')
 		this.eventBus.on('spaceAgent.created', (data) => {
 			this.messageHub.event('spaceAgent.created', data, {
