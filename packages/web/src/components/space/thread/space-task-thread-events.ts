@@ -482,8 +482,10 @@ export function extractFileOperations(parsedRows: ParsedThreadRow[]): FileOperat
 
 	for (const row of parsedRows) {
 		const msg = row.message;
-		if (!msg || msg.role !== 'assistant') continue;
-		const content = Array.isArray(msg.content) ? msg.content : [];
+		if (!msg || !isSDKAssistantMessage(msg)) continue;
+		const content = Array.isArray(msg.message?.content)
+			? (msg.message.content as ContentBlock[])
+			: [];
 
 		for (const block of content) {
 			if (!isToolUseBlock(block)) continue;

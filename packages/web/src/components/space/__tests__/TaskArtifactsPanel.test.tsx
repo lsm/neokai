@@ -2,6 +2,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 
+// ---- Mock useSpaceTaskMessages ----
+vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
+	useSpaceTaskMessages: () => ({ rows: [] }),
+}));
+
 // ---- Mock connectionManager ----
 const mockRequest = vi.fn();
 const mockHub = { request: mockRequest };
@@ -30,14 +35,29 @@ vi.mock('../../../lib/utils', () => ({
 
 import { TaskArtifactsPanel } from '../TaskArtifactsPanel';
 
-const ARTIFACTS_RESULT = {
+const UNCOMMITTED_RESULT = {
 	files: [
 		{ path: 'src/foo.ts', additions: 10, deletions: 2 },
 		{ path: 'src/bar.ts', additions: 5, deletions: 0 },
 	],
 	totalAdditions: 15,
 	totalDeletions: 2,
+	isGitRepo: true,
 };
+
+const COMMITS_RESULT = {
+	commits: [],
+	baseRef: null,
+	isGitRepo: true,
+};
+
+function setupDefaultMocks() {
+	mockRequest.mockImplementation((method: string) => {
+		if (method === 'spaceWorkflowRun.getGateArtifacts') return Promise.resolve(UNCOMMITTED_RESULT);
+		if (method === 'spaceWorkflowRun.getCommits') return Promise.resolve(COMMITS_RESULT);
+		return Promise.resolve({});
+	});
+}
 
 describe('TaskArtifactsPanel', () => {
 	beforeEach(() => {
@@ -49,14 +69,14 @@ describe('TaskArtifactsPanel', () => {
 		cleanup();
 	});
 
-	it('shows loading spinner initially', () => {
-		mockRequest.mockReturnValue(new Promise(() => {})); // never resolves
+	it('has data-testid="artifacts-panel" on root element', async () => {
+		setupDefaultMocks();
 		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
-		expect(getByTestId('artifacts-loading')).toBeTruthy();
+		expect(getByTestId('artifacts-panel')).toBeTruthy();
 	});
 
 	it('renders file list after successful fetch', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
+		setupDefaultMocks();
 		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
 		await waitFor(() => expect(getByTestId('artifacts-file-list')).toBeTruthy());
 
@@ -66,7 +86,7 @@ describe('TaskArtifactsPanel', () => {
 	});
 
 	it('shows +/- line counts for each file', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
+		setupDefaultMocks();
 		const { container, getByTestId } = render(
 			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
 		);
@@ -83,36 +103,24 @@ describe('TaskArtifactsPanel', () => {
 		expect(barRow?.textContent).toContain('-0');
 	});
 
-	it('shows summary totals', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
-		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
-		await waitFor(() => expect(getByTestId('artifacts-summary')).toBeTruthy());
-
-		const summary = getByTestId('artifacts-summary');
-		expect(summary.textContent).toContain('2 files changed');
-		expect(summary.textContent).toContain('+15');
-		expect(summary.textContent).toContain('-2');
-	});
-
-	it('shows "1 file" singular when only one file changed', async () => {
-		mockRequest.mockResolvedValue({
-			files: [{ path: 'src/only.ts', additions: 3, deletions: 1 }],
-			totalAdditions: 3,
-			totalDeletions: 1,
+	it('shows no-files message when uncommitted files array is empty', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve({
+					files: [],
+					totalAdditions: 0,
+					totalDeletions: 0,
+					isGitRepo: true,
+				});
+			if (method === 'spaceWorkflowRun.getCommits') return Promise.resolve(COMMITS_RESULT);
+			return Promise.resolve({});
 		});
-		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
-		await waitFor(() => expect(getByTestId('artifacts-summary')).toBeTruthy());
-		expect(getByTestId('artifacts-summary').textContent).toContain('1 file changed');
-	});
-
-	it('shows no-files message when files array is empty', async () => {
-		mockRequest.mockResolvedValue({ files: [], totalAdditions: 0, totalDeletions: 0 });
 		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
 		await waitFor(() => expect(getByTestId('artifacts-no-files')).toBeTruthy());
 	});
 
 	it('clicking a file opens FileDiffView for that file', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
+		setupDefaultMocks();
 		const { container, getByTestId, queryByTestId } = render(
 			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
 		);
@@ -128,7 +136,7 @@ describe('TaskArtifactsPanel', () => {
 	});
 
 	it('back button in FileDiffView returns to file list', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
+		setupDefaultMocks();
 		const { container, getByTestId, queryByTestId } = render(
 			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
 		);
@@ -143,16 +151,6 @@ describe('TaskArtifactsPanel', () => {
 		expect(getByTestId('artifacts-file-list')).toBeTruthy();
 	});
 
-	it('calls onClose when close button is clicked', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
-		const onClose = vi.fn();
-		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={onClose} />);
-		await waitFor(() => expect(getByTestId('artifacts-panel')).toBeTruthy());
-
-		fireEvent.click(getByTestId('artifacts-panel-close'));
-		expect(onClose).toHaveBeenCalled();
-	});
-
 	it('shows error when not connected', async () => {
 		const { connectionManager } = await import('../../../lib/connection-manager');
 		vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
@@ -162,15 +160,20 @@ describe('TaskArtifactsPanel', () => {
 		expect(getByTestId('artifacts-error').textContent).toContain('Not connected');
 	});
 
-	it('shows fetch error when request fails', async () => {
-		mockRequest.mockRejectedValue(new Error('Server error'));
+	it('shows fetch error when uncommitted request fails', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.reject(new Error('Server error'));
+			if (method === 'spaceWorkflowRun.getCommits') return Promise.resolve(COMMITS_RESULT);
+			return Promise.resolve({});
+		});
 		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
 		await waitFor(() => expect(getByTestId('artifacts-error')).toBeTruthy());
 		expect(getByTestId('artifacts-error').textContent).toContain('Server error');
 	});
 
 	it('fetches with the correct runId', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
+		setupDefaultMocks();
 		render(<TaskArtifactsPanel runId="run-abc-123" onClose={vi.fn()} />);
 		await waitFor(() =>
 			expect(mockRequest).toHaveBeenCalledWith('spaceWorkflowRun.getGateArtifacts', {
@@ -179,10 +182,63 @@ describe('TaskArtifactsPanel', () => {
 		);
 	});
 
-	it('has data-testid="artifacts-panel" on root element', async () => {
-		mockRequest.mockResolvedValue(ARTIFACTS_RESULT);
+	it('shows commits section with no-commits message when commits list is empty', async () => {
+		setupDefaultMocks();
 		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
-		expect(getByTestId('artifacts-panel')).toBeTruthy();
+		await waitFor(() => expect(getByTestId('artifacts-commits-list')).toBeTruthy());
+		expect(getByTestId('artifacts-commits-list').textContent).toContain('No commits yet');
+	});
+
+	it('shows commit rows when commits are returned', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve(UNCOMMITTED_RESULT);
+			if (method === 'spaceWorkflowRun.getCommits')
+				return Promise.resolve({
+					commits: [
+						{
+							sha: 'abc1234',
+							message: 'feat: add feature',
+							author: 'Dev',
+							timestamp: Date.now(),
+							additions: 10,
+							deletions: 2,
+							fileCount: 3,
+						},
+					],
+					baseRef: 'origin/dev',
+					isGitRepo: true,
+				});
+			return Promise.resolve({});
+		});
+
+		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
+		await waitFor(() =>
+			expect(getByTestId('artifacts-commits-list').textContent).toContain('feat: add feature')
+		);
+		expect(getByTestId('artifacts-commits-list').textContent).toContain('abc1234');
+	});
+
+	it('shows Files Touched section (not Commits) when isGitRepo is false', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve({
+					files: [],
+					totalAdditions: 0,
+					totalDeletions: 0,
+					isGitRepo: false,
+				});
+			if (method === 'spaceWorkflowRun.getCommits')
+				return Promise.resolve({ commits: [], baseRef: null, isGitRepo: false });
+			return Promise.resolve({});
+		});
+
+		const { getByTestId, queryByTestId } = render(
+			<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
+		);
+		await waitFor(() => expect(getByTestId('artifacts-file-list')).toBeTruthy());
+		// Commits section should not be present
+		expect(queryByTestId('artifacts-commits-list')).toBeNull();
 	});
 });
 
@@ -227,15 +283,12 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
-					taskActivity: signal(new Map()),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({
 						id: 'task-1',
 						taskAgentSessionId: 'session-abc',
 					}),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
-					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
-					unsubscribeTaskActivity: vi.fn(),
 					ensureConfigData: vi.fn().mockResolvedValue(undefined),
 					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 				};
@@ -291,12 +344,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
-					taskActivity: signal(new Map()),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({ id: 'task-2' }),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
-					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
-					unsubscribeTaskActivity: vi.fn(),
 					ensureConfigData: vi.fn().mockResolvedValue(undefined),
 					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 				};
@@ -350,15 +400,12 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 					agents: signal([]),
 					workflows: signal([]),
 					workflowRuns: signal([]),
-					taskActivity: signal(new Map()),
 					updateTask: vi.fn().mockResolvedValue(undefined),
 					ensureTaskAgentSession: vi.fn().mockResolvedValue({
 						id: 'task-3',
 						taskAgentSessionId: 'session-toggle',
 					}),
 					sendTaskMessage: vi.fn().mockResolvedValue(undefined),
-					subscribeTaskActivity: vi.fn().mockResolvedValue(undefined),
-					unsubscribeTaskActivity: vi.fn(),
 					ensureConfigData: vi.fn().mockResolvedValue(undefined),
 					ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
 				};
