@@ -89,6 +89,11 @@ async function createSpaceWithRun(
 			if (!task) throw new Error(`No task found for run ${runId}`);
 			const taskId = task.id;
 
+			// Mark the task as done to prevent the task agent from running — the runtime
+			// skips terminal tasks, so no sub-sessions are created that would cause the
+			// space store to reload and disturb canvas assertions.
+			await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
+
 			return { spaceId, runId, taskId };
 		},
 		{ wsPath: workspaceRoot }
@@ -350,8 +355,11 @@ test.describe
 					timeout: 30000,
 				});
 
-				// The Coding node with in_progress execution renders the g element with animate-pulse class
-				const codingNodeEl = page.getByTestId('canvas-view').getByTestId(`node-${codingNodeId}`);
+				// The Coding node with in_progress execution renders with animate-pulse class.
+				// Use text-based locator since WorkflowNode testids use localId (slug), not UUID.
+				const codingNodeEl = page
+					.getByTestId('canvas-view')
+					.locator('[data-testid^="workflow-node-"]:has-text("Coding")');
 				await expect(codingNodeEl).toBeVisible({ timeout: 30000 });
 
 				// Active nodes have animate-pulse CSS class.

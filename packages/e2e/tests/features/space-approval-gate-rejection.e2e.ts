@@ -81,6 +81,11 @@ async function createSpaceWithRun(
 			if (!task) throw new Error(`No task found for run ${runId}`);
 			const taskId = task.id;
 
+			// Mark the task as done to prevent the task agent from running — the runtime
+			// skips terminal tasks, so no sub-sessions are created that would cause the
+			// space store to reload and disturb canvas assertions.
+			await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
+
 			return { spaceId, runId, taskId };
 		},
 		{ wsPath }

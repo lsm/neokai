@@ -290,8 +290,10 @@ test.describe('Canvas Mode Toggle', () => {
 
 		// At least one node group should be rendered (nodes use data-testid="node-{id}").
 		// Wait for the first node to appear before counting — nodes render after workflow data loads.
-		await expect(page.locator('[data-testid^="node-"]').first()).toBeVisible({ timeout: 10000 });
-		const nodeCount = await page.locator('[data-testid^="node-"]').count();
+		await expect(page.locator('[data-testid^="workflow-node-"]').first()).toBeVisible({
+			timeout: 10000,
+		});
+		const nodeCount = await page.locator('[data-testid^="workflow-node-"]').count();
 		expect(nodeCount).toBeGreaterThan(0);
 	});
 
@@ -325,7 +327,7 @@ test.describe('Canvas Mode Toggle', () => {
 
 		// Verify canvas is visible with nodes.
 		await expect(page.getByTestId('visual-canvas-svg')).toBeVisible({ timeout: 5000 });
-		const firstNode = page.locator('[data-testid^="node-"]').first();
+		const firstNode = page.locator('[data-testid^="workflow-node-"]').first();
 		await expect(firstNode).toBeVisible({ timeout: 5000 });
 
 		// Click the first node. onNodeClick falls back to the task's agent session
