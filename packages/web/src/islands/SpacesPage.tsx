@@ -9,7 +9,7 @@ import { useEffect } from 'preact/hooks';
 import { spaceStore } from '../lib/space-store.ts';
 import { navigateToSpace } from '../lib/router.ts';
 import { cn, getRelativeTime } from '../lib/utils.ts';
-import type { SpaceWithTasks } from '../lib/space-store.ts';
+import type { SpaceSessionSummary, SpaceWithTasks } from '../lib/space-store.ts';
 import type { SpaceTask } from '@neokai/shared';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -35,11 +35,33 @@ function TaskRow({ task }: { task: SpaceTask }) {
 	);
 }
 
+const SESSION_STATUS_COLORS: Record<string, string> = {
+	active: 'bg-green-400',
+	paused: 'bg-amber-400',
+	ended: 'bg-gray-500',
+	pending_worktree_choice: 'bg-blue-400',
+};
+
+function SessionRow({ session }: { session: SpaceSessionSummary }) {
+	const dotColor = SESSION_STATUS_COLORS[session.status] ?? 'bg-gray-400';
+	const label = session.title || session.id.slice(0, 20);
+	return (
+		<div class="flex items-center gap-2 py-1.5">
+			<div class={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', dotColor)} />
+			<span class="text-xs text-gray-500 truncate flex-1 italic">{label}</span>
+			<span class="text-xs text-gray-600 flex-shrink-0 tabular-nums">
+				{getRelativeTime(session.lastActiveAt)}
+			</span>
+		</div>
+	);
+}
+
 function SpaceCard({ space }: { space: SpaceWithTasks }) {
 	const activeTasks = space.tasks.filter(
 		(t) => t.status === 'open' || t.status === 'in_progress' || t.status === 'review'
 	);
-	const recentTasks = [...space.tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
+	const recentTasks = [...space.tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
+	const activeSessions = (space.sessions ?? []).filter((s) => s.status === 'active').slice(0, 3);
 
 	return (
 		<button
@@ -62,18 +84,36 @@ function SpaceCard({ space }: { space: SpaceWithTasks }) {
 				)}
 			</div>
 
+			{/* Active sessions */}
+			{activeSessions.length > 0 && (
+				<div class="border-t border-dark-700/60 pt-3 flex flex-col">
+					<div class="text-xs font-medium text-gray-600 mb-1">Sessions</div>
+					{activeSessions.map((session) => (
+						<SessionRow key={session.id} session={session} />
+					))}
+				</div>
+			)}
+
 			{/* Recent tasks */}
 			{recentTasks.length > 0 ? (
-				<div class="border-t border-dark-700/60 pt-3 flex flex-col">
+				<div
+					class={cn(
+						'flex flex-col',
+						activeSessions.length === 0 && 'border-t border-dark-700/60 pt-3'
+					)}
+				>
+					{activeSessions.length > 0 && (
+						<div class="text-xs font-medium text-gray-600 mb-1 mt-2">Tasks</div>
+					)}
 					{recentTasks.map((task) => (
 						<TaskRow key={task.id} task={task} />
 					))}
 				</div>
-			) : (
+			) : activeSessions.length === 0 ? (
 				<div class="border-t border-dark-700/60 pt-3">
 					<p class="text-xs text-gray-600 italic">No tasks yet</p>
 				</div>
-			)}
+			) : null}
 		</button>
 	);
 }

@@ -321,19 +321,50 @@ export function setupSpaceHandlers(
 	});
 
 	// ─── space.listWithTasks ────────────────────────────────────────────────────
-	// Returns all spaces with their active (non-completed, non-cancelled) tasks.
-	// Used by the Context Panel to show thread-style space list with nested tasks.
+	// Returns all spaces with their active (non-completed, non-cancelled) tasks
+	// and up to 3 recent active sessions per space.
+	// Used by the SpacesPage and Context Panel to show the space list.
 	messageHub.onRequest('space.listWithTasks', async (data) => {
 		const params = (data ?? {}) as { includeArchived?: boolean };
 		const spaces = await spaceManager.listSpaces(params.includeArchived ?? false);
 
-		return spaces.map((space) => ({
-			...space,
-			tasks: collapseToCanonicalTasks(
-				taskRepo.listBySpace(space.id),
-				workflowRunRepo.listBySpace(space.id)
-			).filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
-		}));
+		// Load all non-archived sessions once; filter per-space below.
+		const allSessions = sessionManager?.listSessions({ includeArchived: false }) ?? [];
+		const sessionById = new Map(allSessions.map((s) => [s.id, s]));
+
+		return spaces.map((space) => {
+			const spaceSessions = space.sessionIds
+				.map((id) => sessionById.get(id))
+				.filter(
+					(s) =>
+						s !== undefined &&
+						s.status !== 'archived' &&
+						s.status !== 'ended' &&
+						s.type !== 'space_chat'
+				)
+				.sort((a, b) => {
+					const aTime = a!.lastActiveAt ? new Date(a!.lastActiveAt).getTime() : 0;
+					const bTime = b!.lastActiveAt ? new Date(b!.lastActiveAt).getTime() : 0;
+					return bTime - aTime;
+				})
+				.slice(0, 3)
+				.map((s) => ({
+					id: s!.id,
+					title: s!.title,
+					status: s!.status,
+					type: s!.type ?? 'worker',
+					lastActiveAt: s!.lastActiveAt ? new Date(s!.lastActiveAt).getTime() : 0,
+				}));
+
+			return {
+				...space,
+				tasks: collapseToCanonicalTasks(
+					taskRepo.listBySpace(space.id),
+					workflowRunRepo.listBySpace(space.id)
+				).filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
+				sessions: spaceSessions,
+			};
+		});
 	});
 
 	// ─── space.overview ─────────────────────────────────────────────────────────
