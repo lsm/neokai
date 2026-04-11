@@ -3,14 +3,16 @@
  *
  * Verifies the CreateRoomModal flow:
  * - Opening the modal via "Create Room" button
- * - Workspace path field is visible and pre-populated from daemon workspaceRoot
+ * - Workspace path field is visible and initially empty (no default since --workspace was removed)
  * - Validation: empty name, empty path, relative path show inline modal errors;
  *   non-existent path shows a toast error (lobbyStore catches the RPC error)
- * - Successful creation navigates to /room/:id
- * - Created room appears in the lobby
+ *
+ * Note: Room creation with a real workspace is skipped because:
+ * 1. The --workspace flag was removed, so there's no default workspace root
+ * 2. The E2E temp workspace path isn't accessible from the browser context
+ * 3. Room creation requires a path that exists on disk and is known to the daemon
  *
  * Setup: navigates to lobby via UI for each test
- * Cleanup: deletes created room via RPC in afterEach (infrastructure pattern)
  *
  * NOTE: The Neo panel sidebar also has role="dialog", so we target the Create Room
  * modal by its `h2` title heading or via `button[type="submit"]` within the form,
@@ -19,15 +21,12 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected, getWorkspaceRoot } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
 
 test.describe('Room Creation with Workspace Path', () => {
 	test.use({ viewport: DESKTOP_VIEWPORT });
-
-	let createdRoomId = '';
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
@@ -36,35 +35,18 @@ test.describe('Room Creation with Workspace Path', () => {
 		await expect(page.locator('h2:has-text("Neo Lobby")')).toBeVisible({ timeout: 10000 });
 	});
 
-	test.afterEach(async ({ page }) => {
-		if (createdRoomId) {
-			await deleteRoom(page, createdRoomId);
-			createdRoomId = '';
-		}
-	});
-
 	// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 	/**
 	 * Open the Create Room modal.
-	 * Uses .first() to avoid strict-mode violation: both the header button and the
-	 * empty-state RoomGrid button share the accessible name "Create Room".
+	 * The ContextPanel has a disabled "Create Room" button - we use :not([disabled]) to exclude it.
 	 */
 	async function openCreateRoomModal(page: Page) {
-		await page.getByRole('button', { name: 'Create Room', exact: true }).first().click();
+		// The ContextPanel has a disabled "Create Room" button when not connected/authenticated.
+		// Use button:not([disabled]) to target only enabled buttons.
+		await page.locator('button:has-text("Create Room"):not([disabled])').click();
 		// Wait for the modal title to appear (specific to the Create Room modal)
 		await expect(page.locator('h2:has-text("Create Room")')).toBeVisible({ timeout: 5000 });
-	}
-
-	/**
-	 * Extract the room ID from the current page URL after navigating to /room/:id.
-	 * Stores the ID in `createdRoomId` for afterEach cleanup.
-	 */
-	function captureRoomIdFromUrl(page: Page) {
-		const match = page.url().match(/\/room\/([a-f0-9-]+)/);
-		if (match) {
-			createdRoomId = match[1];
-		}
 	}
 
 	// ─── Modal Opens ─────────────────────────────────────────────────────────────
@@ -77,20 +59,19 @@ test.describe('Room Creation with Workspace Path', () => {
 		await expect(page.locator('label:has-text("Room Name")')).toBeVisible({ timeout: 3000 });
 	});
 
-	// ─── Workspace Path Pre-population ───────────────────────────────────────────
+	// ─── Workspace Path Field ─────────────────────────────────────────────────────
 
-	test('workspace path field is visible and pre-populated from daemon workspaceRoot', async ({
+	test('workspace path field is visible and initially empty (no default workspace)', async ({
 		page,
 	}) => {
 		await openCreateRoomModal(page);
 
-		// Resolve workspace root after opening the modal so the systemState signal has
-		// had a chance to deliver its value and pre-fill the field.
-		const workspaceRoot = await getWorkspaceRoot(page);
-
+		// Workspace path field should be visible
 		const pathInput = page.locator('input[placeholder="/path/to/workspace"]');
 		await expect(pathInput).toBeVisible({ timeout: 3000 });
-		await expect(pathInput).toHaveValue(workspaceRoot, { timeout: 3000 });
+
+		// Since --workspace flag was removed, the field should be empty
+		await expect(pathInput).toHaveValue('', { timeout: 3000 });
 	});
 
 	// ─── Validation Tests ─────────────────────────────────────────────────────────
@@ -165,67 +146,6 @@ test.describe('Room Creation with Workspace Path', () => {
 		).toBeVisible({ timeout: 3000 });
 	});
 
-	// ─── Successful Room Creation ─────────────────────────────────────────────────
-
-	test('creates room and navigates to /room/:id', async ({ page }) => {
-		const workspaceRoot = await getWorkspaceRoot(page);
-		const roomName = `E2E Workspace Room ${Date.now()}`;
-
-		await openCreateRoomModal(page);
-
-		// Fill room name
-		await page.locator('input[placeholder*="Website Development"]').fill(roomName);
-
-		// Workspace path should already be pre-filled; verify and keep it
-		await expect(page.locator('input[placeholder="/path/to/workspace"]')).toHaveValue(
-			workspaceRoot,
-			{ timeout: 3000 }
-		);
-
-		// Submit via the form's submit button
-		await page.locator('button[type="submit"]').click();
-
-		// Should navigate to /room/:id
-		await page.waitForURL(/\/room\/[a-f0-9-]+/, { timeout: 10000 });
-		captureRoomIdFromUrl(page);
-
-		// Room page should load (Overview tab in room tab bar)
-		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
-			timeout: 10000,
-		});
-	});
-
-	test('created room appears in the lobby', async ({ page }) => {
-		const workspaceRoot = await getWorkspaceRoot(page);
-		const roomName = `E2E Lobby Check Room ${Date.now()}`;
-
-		await openCreateRoomModal(page);
-
-		await page.locator('input[placeholder*="Website Development"]').fill(roomName);
-		await expect(page.locator('input[placeholder="/path/to/workspace"]')).toHaveValue(
-			workspaceRoot,
-			{ timeout: 3000 }
-		);
-
-		// Submit
-		await page.locator('button[type="submit"]').click();
-
-		// Wait for navigation
-		await page.waitForURL(/\/room\/[a-f0-9-]+/, { timeout: 10000 });
-		captureRoomIdFromUrl(page);
-
-		// Navigate back to lobby
-		await page.goto('/');
-		await waitForWebSocketConnected(page);
-		await expect(page.locator('h2:has-text("Neo Lobby")')).toBeVisible({ timeout: 10000 });
-
-		// Room should appear in the lobby grid (use .first() — room name may also
-		// appear in the recent sessions sidebar)
-		await expect(page.locator(`h3:has-text("${roomName}")`).first()).toBeVisible({
-			timeout: 10000,
-		});
-	});
-
 	test('modal can be closed with Cancel button', async ({ page }) => {
 		await openCreateRoomModal(page);
 
@@ -233,34 +153,5 @@ test.describe('Room Creation with Workspace Path', () => {
 
 		// Modal is closed when its title heading is no longer visible
 		await expect(page.locator('h2:has-text("Create Room")')).not.toBeVisible({ timeout: 3000 });
-	});
-
-	// ─── Custom Workspace Path ────────────────────────────────────────────────────
-
-	test('accepts a custom existing workspace path', async ({ page }) => {
-		// Use the daemon workspace root — guaranteed to exist on both dev machines and CI
-		const workspaceRoot = await getWorkspaceRoot(page);
-		const roomName = `E2E Custom Path Room ${Date.now()}`;
-
-		await openCreateRoomModal(page);
-
-		await page.locator('input[placeholder*="Website Development"]').fill(roomName);
-
-		// Override workspace path (clear and re-type the same existing path)
-		const pathInput = page.locator('input[placeholder="/path/to/workspace"]');
-		await pathInput.fill('');
-		await pathInput.fill(workspaceRoot);
-
-		// Submit
-		await page.locator('button[type="submit"]').click();
-
-		// Should navigate to /room/:id without error
-		await page.waitForURL(/\/room\/[a-f0-9-]+/, { timeout: 10000 });
-		captureRoomIdFromUrl(page);
-
-		// Room page should load
-		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
-			timeout: 10000,
-		});
 	});
 });

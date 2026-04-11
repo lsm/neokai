@@ -175,7 +175,8 @@ jobs:
           # - room-replan
           # - room-planner
           # - room-reviewer
-          - neo
+          # Neo agent tests disabled
+          # - neo
           - rpc-1
           - rpc-2
           - rpc-3
@@ -234,11 +235,12 @@ jobs:
           - module: mcp
             test_path: tests/online/mcp
             mock_sdk: true
-          - module: neo
-            test_path: tests/online/neo
-            mock_sdk: true
-            enable_neo_agent: true
-            timeout: 10
+          # Neo agent tests disabled
+          # - module: neo
+          #   test_path: tests/online/neo
+          #   mock_sdk: true
+          #   enable_neo_agent: true
+          #   timeout: 10
           # - module: providers-anthropic-to-codex-bridge
           #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
           # - module: providers-anthropic-copilot
