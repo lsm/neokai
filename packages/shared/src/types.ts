@@ -74,7 +74,6 @@ export type SessionType =
 	| 'leader'
 	| 'general'
 	| 'lobby'
-	| 'spaces_global'
 	| 'space_task_agent'
 	| 'space_chat'
 	| 'neo';

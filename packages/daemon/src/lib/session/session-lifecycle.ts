@@ -57,7 +57,6 @@ export interface CreateSessionParams {
 		| 'general'
 		| 'worker'
 		| 'lobby'
-		| 'spaces_global'
 		| 'space_chat'
 		| 'neo';
 	pairedSessionId?: string;

@@ -248,9 +248,7 @@ test.describe('Comprehensive Space Navigation', () => {
 		});
 		await expect(page.getByTitle('Back to Spaces')).not.toBeVisible();
 
-		// SpacesPage renders the global spaces agent chat
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-		await expect(messageInput).toBeVisible({ timeout: 10000 });
+		// SpacesPage renders the spaces card list (heading "Spaces" is already asserted above)
 	});
 
 	// ---------------------------------------------------------------------------

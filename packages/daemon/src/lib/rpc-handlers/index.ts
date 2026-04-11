@@ -5,7 +5,7 @@
  * Organized by domain for better maintainability.
  */
 
-import type { MessageHub, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
+import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
@@ -72,8 +72,6 @@ import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers';
 import { setupSpaceExportImportHandlers } from './space-export-import-handlers';
-import { provisionGlobalSpacesAgent } from '../space/provision-global-agent';
-import { setupGlobalSpacesHandlers } from './global-spaces-handlers';
 import { setupLiveQueryHandlers } from './live-query-handlers';
 import { setupReferenceHandlers } from './reference-handlers';
 import { FileIndex } from '../file-index';
@@ -90,10 +88,6 @@ import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
 import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
 import type { NeoActionToolsConfig, NeoWorkflowRun } from '../neo/tools/neo-action-tools';
-import {
-	createGlobalSpacesToolHandlers,
-	type GlobalSpacesState,
-} from '../space/tools/global-spaces-tools';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -507,9 +501,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Wire Neo action tools — must happen before neoAgentManager.provision() in app.ts.
 	// spaceRuntimeService.start() must be called first so getSharedRuntime() is available.
-	// Neo uses its own GlobalSpacesState (activeSpaceId stays null — Neo always passes
-	// space_id explicitly in tool calls, never relies on an ambient active-space context).
-	const neoSpacesState: GlobalSpacesState = { activeSpaceId: null };
 	const neoActionToolsConfig: NeoActionToolsConfig = {
 		roomManager,
 		managerFactory: {
@@ -532,19 +523,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		pendingStore: neoPendingActions,
 		workspaceRoot: undefined,
 		getSecurityMode: () => deps.neoAgentManager.getSecurityMode(),
-		spaceHandlers: createGlobalSpacesToolHandlers(
-			{
-				spaceManager: deps.spaceManager,
-				spaceAgentManager: deps.spaceAgentManager,
-				runtime: spaceRuntimeService.getSharedRuntime(),
-				workflowManager: spaceWorkflowManager,
-				taskRepo: spaceTaskRepo,
-				nodeExecutionRepo,
-				workflowRunRepo: spaceWorkflowRunRepo,
-				db: deps.db.getDatabase(),
-			},
-			neoSpacesState
-		),
 		workflowRunRepo: spaceWorkflowRunRepo,
 		spaceTaskManagerFactory: {
 			getTaskManager: (spaceId: string) => new SpaceTaskManager(deps.db.getDatabase(), spaceId),
@@ -655,62 +633,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Node execution handlers
 	setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);
-
-	// Provision the Global Spaces Agent session (spaces:global)
-	// Create shared state synchronously so the RPC handler is available immediately.
-	// The actual session creation and MCP wiring happens asynchronously.
-	// Skip provisioning in tests to avoid side-effects on session counts.
-	// Set NEOKAI_ENABLE_SPACES_AGENT=1 to opt in (e.g., online tests that need spaces:global).
-	const globalSpacesState: GlobalSpacesState = { activeSpaceId: null };
-	setupGlobalSpacesHandlers(deps.messageHub, globalSpacesState);
-
-	if (process.env.NODE_ENV !== 'test' || process.env.NEOKAI_ENABLE_SPACES_AGENT === '1') {
-		// Build a minimal SessionFactory adapter so SessionNotificationSink can inject messages
-		// into the spaces:global session. The adapter delegates to SessionManager.injectMessage()
-		// which handles DB persistence, UI publishing, and SDK query feeding.
-		const globalSessionFactory = {
-			injectMessage: (
-				sessionId: string,
-				message: string,
-				opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
-			) => deps.sessionManager.injectMessage(sessionId, message, opts),
-			hasSession: (sessionId: string) => deps.sessionManager.getSession(sessionId) !== null,
-			// Remaining SessionFactory methods are not needed for notification injection
-			createAndStartSession: async () => {},
-			answerQuestion: async () => false as const,
-			createWorktree: async () => null,
-			restoreSession: async () => false as const,
-			startSession: async () => false as const,
-			setSessionMcpServers: () => false as const,
-			removeWorktree: async () => false as const,
-			getProcessingState: (_sessionId: string) => undefined,
-			switchModel: async (_sessionId: string, _model: string, _provider: string) => ({
-				success: false,
-				model: '',
-				error: 'switchModel not supported for global session factory',
-			}),
-			getCurrentModel: async (_sessionId: string) => null,
-		};
-
-		provisionGlobalSpacesAgent({
-			sessionManager: deps.sessionManager,
-			spaceManager: deps.spaceManager,
-			spaceAgentManager: deps.spaceAgentManager,
-			spaceWorkflowManager,
-			spaceRuntimeService,
-			sessionFactory: globalSessionFactory,
-			taskRepo: spaceTaskRepo,
-			nodeExecutionRepo,
-			workflowRunRepo: spaceWorkflowRunRepo,
-			db: deps.db.getDatabase(),
-			state: globalSpacesState,
-			daemonHub: deps.daemonHub,
-			appMcpManager: deps.appMcpManager,
-			taskAgentManager,
-		}).catch((error) => {
-			log.error('Failed to provision global spaces agent:', error);
-		});
-	}
 
 	// Return result with cleanup function and exposed services
 	return {

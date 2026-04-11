@@ -141,7 +141,7 @@ export class NeoAgentManager {
 	 *
 	 * Must be called before `provision()`. When set, `provision()` will create the
 	 * neo-query MCP server and attach it to the session alongside any registry-sourced
-	 * servers from AppMcpLifecycleManager (same pattern as provisionGlobalSpacesAgent).
+	 * servers from AppMcpLifecycleManager.
 	 *
 	 * @param toolsConfig  All dependencies needed by createNeoQueryMcpServer().
 	 * @param appMcpManager  Optional registry manager; when provided, its globally-enabled
@@ -397,11 +397,11 @@ export class NeoAgentManager {
 	 * current session, merged with any globally-enabled registry servers from
 	 * AppMcpLifecycleManager.
 	 *
-	 * Mirrors the pattern used in provisionGlobalSpacesAgent():
+	 * Merges any globally-enabled registry servers from AppMcpLifecycleManager:
 	 *   - Registry servers loaded from appMcpManager (if set).
 	 *   - In-process servers ('neo-query', 'neo-action') always win on name collision.
 	 *   - No subscription to mcp.registry.changed — registry changes take effect
-	 *     on the next daemon restart (consistent with the global spaces agent).
+	 *     on the next daemon restart.
 	 *
 	 * No-op when toolsConfig has not been set via setToolsConfig().
 	 */
