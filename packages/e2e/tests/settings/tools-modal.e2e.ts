@@ -61,14 +61,11 @@ test.describe('Tools Modal - Redesigned', () => {
 		const dialog = await openToolsModal(page);
 
 		// Should show the group section headers — scoped to dialog to avoid page-level duplicates.
-		// "App MCP Servers" renders as a <button> (GroupHeader) when skills exist, or a plain
-		// <span> when no app skills are configured. The button's full text includes the item count
-		// (e.g. "App MCP Servers (2)"), so { exact: true } matches only the inner <span> whose
-		// text is exactly "App MCP Servers" — correct in both DOM states without strict-mode issues.
-		await expect(dialog.getByText('App MCP Servers', { exact: true })).toBeVisible();
-		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
+		// "App Skills & MCP Servers" renders as a <button> (GroupHeader) when skills exist, or a
+		// plain <span> when no app skills are configured. In both cases the text is always present.
+		await expect(dialog.getByText('App Skills & MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" always renders as a GroupHeader button.
 		await expect(dialog.locator('button:has-text("Project MCP Servers")')).toBeVisible();
-		await expect(dialog.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 	});
 
 	test('should show Advanced section collapsed by default', async ({ page }) => {
@@ -113,29 +110,23 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(dialog.getByText('This session').first()).toBeVisible();
 	});
 
-	test('should collapse NeoKai Tools group and hide Memory child', async ({ page }) => {
+	test('should collapse Advanced group and hide Claude Code Preset', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 		const dialog = await openToolsModal(page);
 
-		const neoKaiHeader = dialog.locator('button:has-text("NeoKai Tools")');
-		await expect(neoKaiHeader).toBeVisible();
+		const advancedHeader = dialog.getByRole('button', { name: /Advanced/i });
+		await expect(advancedHeader).toBeVisible();
 
-		// Initially expanded — Memory child should be visible
-		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'true');
-		await expect(dialog.locator('label:has-text("Memory")').first()).toBeVisible();
+		// Initially collapsed — Claude Code Preset should NOT be visible
+		await expect(dialog.getByText('Claude Code Preset')).not.toBeVisible();
 
-		// Collapse
-		await neoKaiHeader.click();
+		// Expand
+		await advancedHeader.click();
+		await expect(dialog.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
-		// Header reports collapsed
-		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'false');
-		// Child content is removed from DOM (Preact conditional render)
-		await expect(dialog.locator('label:has-text("Memory")').first()).not.toBeAttached();
-
-		// Re-expand — child reappears
-		await neoKaiHeader.click();
-		await expect(neoKaiHeader).toHaveAttribute('aria-expanded', 'true');
-		await expect(dialog.locator('label:has-text("Memory")').first()).toBeVisible();
+		// Collapse again
+		await advancedHeader.click();
+		await expect(dialog.getByText('Claude Code Preset')).not.toBeVisible({ timeout: 2000 });
 	});
 
 	test('should collapse Project MCP Servers group and hide content', async ({ page }) => {
@@ -166,15 +157,17 @@ test.describe('Tools Modal - Redesigned', () => {
 		await expect(fileMcpContent.first()).not.toBeAttached({ timeout: 2000 });
 	});
 
-	test('should show NeoKai Tools with Memory toggle', async ({ page }) => {
+	test('should show Claude Code Preset toggle in Advanced section', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
 		const dialog = await openToolsModal(page);
 
-		// NeoKai Tools group should be expanded showing Memory
-		await expect(dialog.getByText('NeoKai Tools')).toBeVisible();
-		await expect(dialog.getByText('Memory').first()).toBeVisible();
-		await expect(dialog.getByText('Persistent key-value storage')).toBeVisible();
+		// Expand Advanced section
+		await dialog.getByRole('button', { name: /Advanced/i }).click();
+
+		// Claude Code Preset and Setting Sources should be visible
+		await expect(dialog.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
+		await expect(dialog.getByText('Use official Claude Code system prompt')).toBeVisible();
 	});
 
 	test('should enable Save button when session-local setting is toggled', async ({ page }) => {
@@ -186,10 +179,11 @@ test.describe('Tools Modal - Redesigned', () => {
 		const saveBtn = dialog.getByRole('button', { name: 'Save' });
 		await expect(saveBtn).toBeDisabled();
 
-		// Toggle Memory (always present in NeoKai Tools group)
-		const memoryLabel = dialog.locator('label:has-text("Memory")').first();
-		await expect(memoryLabel).toBeVisible();
-		await memoryLabel.click();
+		// Toggle Claude Code Preset (in Advanced section) to mark modal as changed
+		await dialog.getByRole('button', { name: /Advanced/i }).click();
+		const claudeCodeLabel = dialog.locator('label:has-text("Claude Code Preset")');
+		await expect(claudeCodeLabel).toBeVisible({ timeout: 2000 });
+		await claudeCodeLabel.locator('input[type="checkbox"]').click();
 
 		// Save button must now be enabled
 		await expect(saveBtn).toBeEnabled({ timeout: 2000 });

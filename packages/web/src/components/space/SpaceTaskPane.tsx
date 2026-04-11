@@ -11,7 +11,7 @@ import type {
 import { cn } from '../../lib/utils';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
-import { getTransitionActions } from './TaskStatusActions';
+import { getTransitionActions, TaskStatusActions } from './TaskStatusActions';
 import { ThreadedChatComposer } from './ThreadedChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -258,16 +258,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	};
 
 	const taskActionItems: DropdownMenuItem[] = [];
-	if (showHeaderSessionAction) {
-		taskActionItems.push({
-			label: agentActionLabel,
-			onClick: handleTaskAgentAction,
-		});
-	}
 	if (activityMembers.length > 0) {
-		if (taskActionItems.length > 0) {
-			taskActionItems.push({ type: 'divider' });
-		}
 		taskActionItems.push(
 			...activityMembers.map((member) => ({
 				label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
@@ -278,20 +269,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			}))
 		);
 	}
-	if (transitionActions.length > 0) {
-		if (taskActionItems.length > 0) {
-			taskActionItems.push({ type: 'divider' });
-		}
-		taskActionItems.push(
-			...transitionActions.map(({ target, label }) => ({
-				label,
-				onClick: () => {
-					void handleStatusTransition(target);
-				},
-				disabled: statusTransitioning,
-			}))
-		);
-	}
+	// Status transition actions are rendered inline (TaskStatusActions) rather
+	// than in the dropdown, so they're always visible without an extra click.
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
@@ -328,6 +307,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							)}
 						</div>
 					</div>
+					{showHeaderSessionAction && (
+						<button
+							type="button"
+							onClick={handleTaskAgentAction}
+							data-testid="view-agent-session-btn"
+							class="flex-shrink-0 px-2 py-1 text-xs text-gray-400 hover:text-gray-200 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors"
+						>
+							{agentActionLabel}
+						</button>
+					)}
 					{taskActionItems.length > 0 && (
 						<Dropdown
 							items={taskActionItems}
@@ -351,6 +340,16 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					)}
 				</div>
 			</div>
+
+			{transitionActions.length > 0 && (
+				<div class="px-4 pb-2 flex-shrink-0">
+					<TaskStatusActions
+						status={task.status}
+						onTransition={handleStatusTransition}
+						disabled={statusTransitioning}
+					/>
+				</div>
+			)}
 
 			<div class="flex-1 min-h-0 overflow-hidden relative">
 				<div

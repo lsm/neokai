@@ -29,7 +29,7 @@ import {
 } from '../helpers/space-helpers';
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
-const OVERVIEW_VIEW = '[data-testid="space-overview-view"]';
+const TASKS_VIEW = '[data-testid="space-tasks-view"]';
 const BLOCKED_REASON = 'Need more information about the API endpoint design before proceeding.';
 
 test.describe('Space Task Blocked Status & Manual Status Control', () => {
@@ -68,27 +68,29 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 	// Scenario 1: Blocked indicator on SpaceOverview "Review" tab
 	// ---------------------------------------------------------------------------
 
-	test('blocked task shows blocked reason on the Review tab of SpaceOverview', async ({ page }) => {
+	test('blocked task shows blocked reason on the Review tab of SpaceTasks', async ({ page }) => {
 		// Set task to blocked with a reason (RPC setup — not a UI action)
 		await updateSpaceTaskStatusViaRpc(page, spaceId, taskId, 'blocked', BLOCKED_REASON);
 
-		// Navigate to space overview
+		// Navigate to space overview first, then SPA-navigate to tasks
+		// (direct URL to /tasks can race with space data loading)
 		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('space-detail-tasks')).toBeVisible({ timeout: 15000 });
+		await page.getByTestId('space-detail-tasks').click();
+		await page.waitForURL(`/space/${spaceId}/tasks`, { timeout: 5000 });
+		await expect(page.locator(TASKS_VIEW)).toBeVisible({ timeout: 10000 });
 
-		// Click the "Review" tab — the tab label includes a count badge so use regex to match
-		// the label anywhere in the accessible name (count precedes label: "0 Review")
-		const overviewView = page.locator(OVERVIEW_VIEW);
-		const reviewTab = overviewView.getByRole('button', { name: /Review/ });
-		await expect(reviewTab).toBeVisible({ timeout: 5000 });
+		// Click the "Review" tab which shows blocked + review tasks
+		const tasksView = page.locator(TASKS_VIEW);
+		const reviewTab = tasksView.getByRole('button', { name: 'Review' });
+		await expect(reviewTab).toBeVisible({ timeout: 10000 });
 		await reviewTab.click();
 
 		// The task title should appear in the Review group
-		await expect(overviewView.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
+		await expect(tasksView.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// The blocked reason should appear as amber text below the task title
-		const blockedReason = overviewView.getByTestId('task-blocked-reason');
+		const blockedReason = tasksView.getByTestId('task-blocked-reason');
 		await expect(blockedReason).toBeVisible({ timeout: 5000 });
 		await expect(blockedReason).toContainText(BLOCKED_REASON);
 	});
@@ -146,22 +148,25 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 		// Set task to done (RPC setup — open → done is a valid transition)
 		await updateSpaceTaskStatusViaRpc(page, spaceId, taskId, 'done');
 
-		// Navigate to space overview to find the task in the "Done" tab
+		// Navigate to space overview first, then SPA-navigate to tasks
+		// (direct URL to /tasks can race with space data loading)
 		await page.goto(`/space/${spaceId}`);
-		await page.waitForURL(`/space/${spaceId}`, { timeout: 10000 });
-		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
+		await expect(page.getByTestId('space-detail-tasks')).toBeVisible({ timeout: 15000 });
+		await page.getByTestId('space-detail-tasks').click();
+		await page.waitForURL(`/space/${spaceId}/tasks`, { timeout: 5000 });
+		await expect(page.locator(TASKS_VIEW)).toBeVisible({ timeout: 10000 });
 
-		// Click the "Done" tab to reveal the task
-		const overviewView = page.locator(OVERVIEW_VIEW);
-		const doneTab = overviewView.getByRole('button', { name: /Done/ });
-		await expect(doneTab).toBeVisible({ timeout: 5000 });
-		await doneTab.click();
+		// Click the "Completed" tab (shows done + cancelled tasks)
+		const tasksView = page.locator(TASKS_VIEW);
+		const completedTab = tasksView.getByRole('button', { name: 'Completed' });
+		await expect(completedTab).toBeVisible({ timeout: 10000 });
+		await completedTab.click();
 
-		// Task title should appear under the Done tab
-		await expect(overviewView.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
+		// Task title should appear under the Completed tab
+		await expect(tasksView.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// Click the task to open the task pane
-		await overviewView.getByText(taskTitle, { exact: true }).first().click();
+		await tasksView.getByText(taskTitle, { exact: true }).first().click();
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 5000 });
 
 		// Task pane should be visible

@@ -91,7 +91,7 @@ async function getSkillEnabledStateViaUI(page: Page, displayName: string): Promi
 	const toggle = skillRow.locator('[role="switch"]').first();
 	const checked = await toggle.getAttribute('aria-checked', { timeout: 5000 });
 	// Navigate home to close settings before returning
-	await page.getByRole('button', { name: 'Home', exact: true }).click();
+	await page.getByRole('button', { name: 'Rooms', exact: true }).click();
 	return checked === 'true';
 }
 
@@ -688,7 +688,7 @@ test.describe('Neo Settings – Clear session', () => {
 		await expect(page.locator('text=Neo session cleared')).toBeVisible();
 
 		// Navigate home and reopen Neo panel — chat should be empty
-		await page.getByRole('button', { name: 'Home', exact: true }).click();
+		await page.getByRole('button', { name: 'Rooms', exact: true }).click();
 		await openNeoPanel(page);
 
 		// No user or assistant message bubbles remain

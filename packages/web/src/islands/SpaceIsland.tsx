@@ -44,7 +44,6 @@ export default function SpaceIsland({
 		spaceOverlayAgentNameSignal.value = null;
 	}, []);
 
-	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
 
 	useEffect(() => {
@@ -75,9 +74,12 @@ export default function SpaceIsland({
 		);
 	}
 
-	// For non-session views, show spinner/error while space data loads
+	// For non-session views, show spinner/error while space data loads.
+	// Show spinner if space is not yet loaded and there's no error — this covers
+	// both the initial render (loading=false, space=null) before the useEffect has
+	// called selectSpace and the active-loading state (loading=true, space=null).
 	const space = spaceStore.space.value;
-	if (!space && loading) {
+	if (!space && !error) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
