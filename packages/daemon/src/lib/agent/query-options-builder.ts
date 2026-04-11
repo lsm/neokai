@@ -634,6 +634,7 @@ CRITICAL RULES:
 	 * - ~/.neokai/: For NeoKai-specific configuration and state
 	 *
 	 * For worktree sessions, also includes:
+	 * - /tmp: System temp for tools that write directly here (e.g. git hook tee, bun test)
 	 * - /tmp/claude: SDK sets TMPDIR=/tmp/claude, most shells (bash, fish, etc.) respect this
 	 * - /tmp/zsh-${uid}: Zsh's default behavior creates /tmp/zsh-UID paths
 	 *
@@ -650,7 +651,7 @@ CRITICAL RULES:
 		// For worktree sessions, also allow temp directories for shell operations
 		if (this.ctx.session.worktree) {
 			const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
-			directories.push('/tmp/claude', `/tmp/zsh-${uid}`);
+			directories.push('/tmp', '/tmp/claude', `/tmp/zsh-${uid}`);
 		}
 
 		return directories;
