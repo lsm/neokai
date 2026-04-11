@@ -199,6 +199,12 @@ export interface SpaceTask {
 	result: string | null;
 	/** ID of the workflow run that orchestrates this task (links task to its workflow execution) */
 	workflowRunId?: string | null;
+	/**
+	 * Preferred workflow template ID for this task.
+	 * When set by the caller via `create_standalone_task({ workflow_id })`, the runtime
+	 * uses this workflow instead of the heuristic fallback when attaching a workflow run.
+	 */
+	preferredWorkflowId?: string | null;
 	/** ID of the planning task that created this task */
 	createdByTaskId?: string | null;
 	/**
@@ -296,6 +302,12 @@ export interface CreateSpaceTaskParams {
 	status?: SpaceTaskStatus;
 	/** Workflow run that spawned this task */
 	workflowRunId?: string | null;
+	/**
+	 * Preferred workflow template ID.
+	 * When provided, the runtime uses this workflow for standalone task attachment
+	 * instead of the heuristic auto-selection.
+	 */
+	preferredWorkflowId?: string | null;
 	/** ID of planning task that created this task */
 	createdByTaskId?: string | null;
 	/**
@@ -317,6 +329,7 @@ export interface UpdateSpaceTaskParams {
 	dependsOn?: string[];
 	result?: string | null;
 	workflowRunId?: string | null;
+	preferredWorkflowId?: string | null;
 	createdByTaskId?: string | null;
 	activeSession?: 'worker' | 'leader' | null;
 	prUrl?: string | null;

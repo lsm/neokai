@@ -337,6 +337,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Adds 'custom_prompt TEXT' column.
 	//   - Migrates data: combines system_prompt and instructions into a single field.
 	runMigration80(db);
+
+	// Migration 81: Add preferred_workflow_id to space_tasks.
+	//   - Stores the caller-specified workflow template ID for standalone task attachment.
+	//   - When set, the runtime uses this workflow instead of heuristic auto-selection.
+	runMigration81(db);
 }
 
 /**
@@ -5540,4 +5545,22 @@ function runMigration80(db: BunDatabase): void {
 			ELSE NULL
 		END
 	`);
+}
+
+/**
+ * Migration 81: Add preferred_workflow_id column to space_tasks.
+ *
+ * Stores the caller-specified workflow template ID for standalone task workflow
+ * attachment. When set via `create_standalone_task({ workflow_id })`, the
+ * SpaceRuntime uses this workflow instead of the heuristic auto-selection.
+ *
+ * The column is nullable with no foreign key — workflows can be deleted
+ * independently of tasks, and the runtime falls back gracefully when the
+ * referenced workflow no longer exists.
+ */
+function runMigration81(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	if (tableHasColumn(db, 'space_tasks', 'preferred_workflow_id')) return;
+
+	db.exec(`ALTER TABLE space_tasks ADD COLUMN preferred_workflow_id TEXT`);
 }

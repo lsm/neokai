@@ -43,8 +43,8 @@ export class SpaceTaskRepository {
 
 			this.db
 				.prepare(
-					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					`INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, depends_on, task_agent_session_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 				)
 				.run(
 					id,
@@ -56,6 +56,7 @@ export class SpaceTaskRepository {
 					params.priority ?? 'normal',
 					JSON.stringify(params.labels ?? []),
 					params.workflowRunId ?? null,
+					params.preferredWorkflowId ?? null,
 					params.createdByTaskId ?? null,
 					JSON.stringify(params.dependsOn ?? []),
 					params.taskAgentSessionId ?? null,
@@ -182,6 +183,10 @@ export class SpaceTaskRepository {
 		if (params.workflowRunId !== undefined) {
 			fields.push('workflow_run_id = ?');
 			values.push(params.workflowRunId ?? null);
+		}
+		if (params.preferredWorkflowId !== undefined) {
+			fields.push('preferred_workflow_id = ?');
+			values.push(params.preferredWorkflowId ?? null);
 		}
 		if (params.createdByTaskId !== undefined) {
 			fields.push('created_by_task_id = ?');
@@ -364,6 +369,7 @@ export class SpaceTaskRepository {
 			priority: row.priority as SpaceTask['priority'],
 			labels: JSON.parse((row.labels as string | null) ?? '[]') as string[],
 			workflowRunId: (row.workflow_run_id as string | null) ?? undefined,
+			preferredWorkflowId: (row.preferred_workflow_id as string | null) ?? undefined,
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
 			result: (row.result as string | null) ?? null,
 			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],

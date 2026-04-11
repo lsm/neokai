@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with the fully-migrated production schema (after M77).
+ * Keep in sync with the fully-migrated production schema (after M81).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -180,6 +180,7 @@ export function createSpaceTables(db: BunDatabase): void {
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 			labels TEXT NOT NULL DEFAULT '[]',
 			workflow_run_id TEXT,
+			preferred_workflow_id TEXT,
 			created_by_task_id TEXT,
 			result TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',

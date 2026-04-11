@@ -1595,7 +1595,21 @@ export class SpaceRuntime {
 				if (!fresh || fresh.workflowRunId) continue;
 				if (fresh.status !== 'open') continue;
 
-				const selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
+				// Prefer the caller-specified workflow; fall back to heuristic selection.
+				let selectedWorkflow: ReturnType<typeof this.selectFallbackWorkflowForStandaloneTask>;
+				if (fresh.preferredWorkflowId) {
+					const explicit = this.config.spaceWorkflowManager.getWorkflow(fresh.preferredWorkflowId);
+					if (explicit) {
+						selectedWorkflow = explicit;
+					} else {
+						log.warn(
+							`SpaceRuntime: preferred_workflow_id "${fresh.preferredWorkflowId}" not found for task ${fresh.id}; falling back to heuristic selection`
+						);
+						selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
+					}
+				} else {
+					selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
+				}
 				if (!selectedWorkflow) continue;
 
 				try {
