@@ -344,11 +344,11 @@ export interface UpdateSpaceTaskParams {
  *
  * - `pending`     — slot has been created but the agent has not started yet
  * - `in_progress` — agent session is actively running
- * - `done`        — agent called `report_done`; execution completed successfully
+ * - `idle`        — agent session finished naturally (detected via session idle event)
  * - `blocked`     — execution requires human intervention or a gate has not passed
  * - `cancelled`   — execution was cancelled (workflow run cancelled or error path)
  */
-export type NodeExecutionStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
+export type NodeExecutionStatus = 'pending' | 'in_progress' | 'idle' | 'blocked' | 'cancelled';
 
 /**
  * Records the execution of a single agent slot within a workflow run's node.
@@ -370,8 +370,10 @@ export interface NodeExecution {
 	agentSessionId: string | null;
 	/** Current execution status */
 	status: NodeExecutionStatus;
-	/** Output captured from `report_done(summary)`; null until the agent completes */
+	/** Human-readable summary from `save(summary)`; null until the agent saves output */
 	result: string | null;
+	/** Structured output from `save(data)`; null until the agent saves structured data */
+	data: Record<string, unknown> | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Timestamp when execution transitioned to `in_progress`; null until started */
@@ -403,6 +405,7 @@ export interface UpdateNodeExecutionParams {
 	status?: NodeExecutionStatus;
 	agentSessionId?: string | null;
 	result?: string | null;
+	data?: Record<string, unknown> | null;
 	startedAt?: number | null;
 	completedAt?: number | null;
 }

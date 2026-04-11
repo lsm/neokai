@@ -75,9 +75,9 @@ export interface AgentTaskState {
 	completionSummary?: string | null;
 }
 
-/** Returns true when all provided agent states have status === 'done'. */
+/** Returns true when all provided agent states have status === 'idle'. */
 export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
-	return states.length > 0 && states.every((s) => s.status === 'done');
+	return states.length > 0 && states.every((s) => s.status === 'idle');
 }
 
 // ============================================================================
@@ -144,7 +144,7 @@ function FailIcon({ title }: { title?: string }) {
 /** Renders the appropriate icon for an agent's task status. */
 export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
 	const summary = state.completionSummary ?? undefined;
-	if (state.status === 'done') {
+	if (state.status === 'idle') {
 		return (
 			<span class="text-green-400 flex-shrink-0" title={summary ?? 'Done'}>
 				<CheckIcon title={summary ?? 'Done'} />

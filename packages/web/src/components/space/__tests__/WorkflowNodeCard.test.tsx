@@ -562,8 +562,8 @@ describe('WorkflowNodeCard — agent completion state', () => {
 		expect(getByTestId('agent-status-spinner')).toBeTruthy();
 	});
 
-	it('shows checkmark for done agent (single-agent)', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'done' }];
+	it('shows checkmark for idle agent (single-agent)', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'idle' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-check')).toBeTruthy();
 	});
@@ -587,7 +587,7 @@ describe('WorkflowNodeCard — agent completion state', () => {
 	});
 
 	it('applies green step badge when all agents done', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'done' }];
+		const states: AgentTaskState[] = [{ agentName: null, status: 'idle' }];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		const badge = getByTestId('node-step-badge');
 		expect(badge.className).toContain('green');
@@ -602,7 +602,7 @@ describe('WorkflowNodeCard — agent completion state', () => {
 
 	it('shows completion summary text when provided', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: null, status: 'done', completionSummary: 'All done nicely' },
+			{ agentName: null, status: 'idle', completionSummary: 'All done nicely' },
 		];
 		const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('node-completion-summary').textContent).toBe('All done nicely');
@@ -610,7 +610,7 @@ describe('WorkflowNodeCard — agent completion state', () => {
 
 	it('shows per-agent status for multi-agent nodes', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
 			{ agentName: 'reviewer', status: 'in_progress' },
 		];
 		const { getAllByTestId } = render(
@@ -630,8 +630,8 @@ describe('WorkflowNodeCard — agent completion state', () => {
 
 	it('shows green border when all agents done', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
-			{ agentName: 'reviewer', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
+			{ agentName: 'reviewer', status: 'idle' },
 		];
 		const { container } = render(
 			<WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />

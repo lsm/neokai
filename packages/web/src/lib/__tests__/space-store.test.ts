@@ -1266,6 +1266,7 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
 		agentSessionId: overrides.agentSessionId ?? null,
 		status: overrides.status ?? ('pending' as NodeExecution['status']),
 		result: overrides.result ?? null,
+		data: overrides.data ?? null,
 		createdAt: overrides.createdAt ?? Date.now(),
 		startedAt: overrides.startedAt ?? null,
 		completedAt: overrides.completedAt ?? null,

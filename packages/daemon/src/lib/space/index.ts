@@ -88,21 +88,15 @@ export {
 export type {
 	TaskAgentToolsConfig,
 	TaskAgentMcpServer,
-	SubSessionFactory,
-	SubSessionState,
 } from './tools/task-agent-tools';
 
 export {
 	TASK_AGENT_TOOL_SCHEMAS,
-	SpawnNodeAgentSchema,
-	CheckNodeStatusSchema,
 	ReportResultSchema,
 	RequestHumanInputSchema,
 	TaskResultStatusSchema,
 } from './tools/task-agent-tool-schemas';
 export type {
-	SpawnNodeAgentInput,
-	CheckNodeStatusInput,
 	ReportResultInput,
 	RequestHumanInputInput,
 	TaskResultStatus,

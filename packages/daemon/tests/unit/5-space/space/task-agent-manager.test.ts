@@ -4,7 +4,6 @@
  * Covers:
  *   - spawnTaskAgent: basic spawn, idempotency, concurrency guard
  *   - Session ID generation with monotonic suffix on collision
- *   - Sub-session creation via SubSessionFactory
  *   - Completion callback registration and firing
  *   - Sub-session completion propagation to Task Agent
  *   - Message injection (immediate and defer)
@@ -730,81 +729,6 @@ describe('TaskAgentManager', () => {
 	});
 
 	// -----------------------------------------------------------------------
-	// SubSessionFactory via spawnTaskAgent's MCP server config
-	// -----------------------------------------------------------------------
-
-	describe('SubSessionFactory (created via spawnTaskAgent)', () => {
-		test('getProcessingState returns null for unknown session', async () => {
-			const task = await makeTask(ctx.taskManager);
-			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
-
-			// Access factory indirectly by testing getSubSession
-			// The factory is wired into the MCP server; we test getProcessingState
-			// by calling the public manager API
-			const state = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			)
-				.createSubSessionFactory(task.id)
-				.getProcessingState('no-such-session');
-			expect(state).toBeNull();
-		});
-
-		test('getProcessingState returns not-started for fresh session', async () => {
-			const task = await makeTask(ctx.taskManager);
-			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
-
-			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:s1`;
-			await ctx.manager.createSubSession(task.id, subSessionId, {
-				sessionId: subSessionId,
-				workspacePath: '/tmp/ws',
-			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
-
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-			const state = factory.getProcessingState(subSessionId);
-			// Session exists but has no SDK messages yet → not complete
-			expect(state).not.toBeNull();
-			expect(state!.isComplete).toBe(false);
-		});
-
-		test('getProcessingState returns complete when session has messages and is idle', async () => {
-			const task = await makeTask(ctx.taskManager);
-			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
-
-			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:s2`;
-			await ctx.manager.createSubSession(task.id, subSessionId, {
-				sessionId: subSessionId,
-				workspacePath: '/tmp/ws',
-			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
-
-			// Simulate that the sub-session has processed messages
-			const subSession = ctx.createdSessions.get(subSessionId)!;
-			subSession._sdkMessageCount = 5;
-			subSession._processingState = { status: 'idle' } as AgentProcessingState;
-
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-			const state = factory.getProcessingState(subSessionId);
-			expect(state!.isComplete).toBe(true);
-			expect(state!.isProcessing).toBe(false);
-		});
-	});
-
-	// -----------------------------------------------------------------------
 	// Completion callback registration
 	// -----------------------------------------------------------------------
 
@@ -820,14 +744,7 @@ describe('TaskAgentManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
 			let callbackFired = false;
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-			factory.onComplete(subSessionId, async () => {
+			ctx.manager.registerCompletionCallback(subSessionId, async () => {
 				callbackFired = true;
 			});
 
@@ -857,14 +774,7 @@ describe('TaskAgentManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
 			let callCount = 0;
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-			factory.onComplete(subSessionId, async () => {
+			ctx.manager.registerCompletionCallback(subSessionId, async () => {
 				callCount++;
 			});
 
@@ -896,14 +806,7 @@ describe('TaskAgentManager', () => {
 			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
 
 			let callbackFired = false;
-			const factory = (
-				ctx.manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(task.id);
-			factory.onComplete(subSessionId, async () => {
+			ctx.manager.registerCompletionCallback(subSessionId, async () => {
 				callbackFired = true;
 			});
 
@@ -1050,59 +953,27 @@ describe('TaskAgentManager', () => {
 			).resolves.toBeUndefined();
 		});
 
-		test('sends runtime reminder with gate requirements when execution idles without report_done', async () => {
-			const workflow = ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Reminder Workflow',
-				description: '',
-				nodes: [
-					{
-						id: 'coding-node',
-						name: 'Coding',
-						agents: [{ agentId: ctx.agentId, name: 'coder' }],
-					},
-					{
-						id: 'review-node',
-						name: 'Review',
-						agents: [{ agentId: ctx.agentId, name: 'reviewer' }],
-					},
-				],
-				startNodeId: 'coding-node',
-				endNodeId: 'review-node',
-				gates: [
-					{
-						id: 'code-pr-gate',
-						description: 'PR URL required before review',
-						fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-						resetOnCycle: false,
-					},
-				],
-				channels: [
-					{
-						from: 'Coding',
-						to: 'Review',
-						gateId: 'code-pr-gate',
-					},
-				],
-			});
+		test('auto-transitions execution to idle when session completes normally', async () => {
+			// Seed the workflow run row first so FK constraints are satisfied
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run('run-auto-idle', ctx.spaceId, 'wf-seed', now, now);
 
-			const pendingRun = ctx.workflowRunRepo.createRun({
-				spaceId: ctx.spaceId,
-				workflowId: workflow.id,
-				title: 'Reminder run',
-			});
-			const run = ctx.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
-
+			// Create parentTask WITH the workflowRunId so handleSubSessionComplete can look up the execution
 			const parentTask = await ctx.taskManager.createTask({
 				title: 'Workflow task',
-				description: 'Drive coding -> review',
+				description: 'Drive coding',
 				taskType: 'coding',
 				status: 'in_progress',
-				workflowRunId: run.id,
+				workflowRunId: 'run-auto-idle',
 			});
 
 			const execution = ctx.nodeExecutionRepo.create({
-				workflowRunId: run.id,
+				workflowRunId: 'run-auto-idle',
 				workflowNodeId: 'coding-node',
 				agentName: 'coder',
 				agentId: ctx.agentId,
@@ -1110,6 +981,7 @@ describe('TaskAgentManager', () => {
 			});
 
 			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execution.id}`;
+			// createSubSession sets agentSessionId on the matching NodeExecution when parentTask has workflowRunId
 			await ctx.manager.createSubSession(
 				parentTask.id,
 				subSessionId,
@@ -1123,143 +995,12 @@ describe('TaskAgentManager', () => {
 					nodeId: 'coding-node',
 				}
 			);
-
-			const subSession = ctx.createdSessions.get(subSessionId)!;
-			const beforeMessages = subSession._enqueuedMessages.length;
 
 			await callHandleSubSessionComplete(ctx.manager, parentTask.id, 'coding-node', subSessionId);
 
+			// Session completion automatically transitions in_progress → idle (no tool call required)
 			const after = ctx.nodeExecutionRepo.getById(execution.id);
-			expect(after?.status).toBe('in_progress');
-			expect(subSession._enqueuedMessages.length).toBeGreaterThan(beforeMessages);
-			const reminder = subSession._enqueuedMessages.at(-1)?.msg ?? '';
-			expect(reminder).toContain('[RUNTIME_REMINDER');
-			expect(reminder).toContain('code-pr-gate');
-			expect(reminder).toContain('pr_url');
-			expect(reminder).toContain('report_done');
-		});
-
-		test('escalates execution to blocked after repeated missing-report_done reminders', async () => {
-			const workflow = ctx.workflowManager.createWorkflow({
-				spaceId: ctx.spaceId,
-				name: 'Reminder Escalation Workflow',
-				description: '',
-				nodes: [
-					{
-						id: 'coding-node',
-						name: 'Coding',
-						agents: [{ agentId: ctx.agentId, name: 'coder' }],
-					},
-					{
-						id: 'review-node',
-						name: 'Review',
-						agents: [{ agentId: ctx.agentId, name: 'reviewer' }],
-					},
-				],
-				startNodeId: 'coding-node',
-				endNodeId: 'review-node',
-				gates: [
-					{
-						id: 'code-pr-gate',
-						description: 'PR URL required before review',
-						fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-						resetOnCycle: false,
-					},
-				],
-				channels: [
-					{
-						from: 'Coding',
-						to: 'Review',
-						gateId: 'code-pr-gate',
-					},
-				],
-			});
-
-			const pendingRun = ctx.workflowRunRepo.createRun({
-				spaceId: ctx.spaceId,
-				workflowId: workflow.id,
-				title: 'Reminder escalation run',
-			});
-			const run = ctx.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
-
-			const parentTask = await ctx.taskManager.createTask({
-				title: 'Workflow task',
-				description: 'Drive coding -> review',
-				taskType: 'coding',
-				status: 'in_progress',
-				workflowRunId: run.id,
-			});
-
-			const execution = ctx.nodeExecutionRepo.create({
-				workflowRunId: run.id,
-				workflowNodeId: 'coding-node',
-				agentName: 'coder',
-				agentId: ctx.agentId,
-				status: 'in_progress',
-			});
-
-			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${execution.id}`;
-			await ctx.manager.createSubSession(
-				parentTask.id,
-				subSessionId,
-				{
-					sessionId: subSessionId,
-					workspacePath: '/tmp/ws',
-				} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
-				{
-					agentId: ctx.agentId,
-					agentName: 'coder',
-					nodeId: 'coding-node',
-				}
-			);
-
-			for (let i = 0; i < 4; i++) {
-				await callHandleSubSessionComplete(ctx.manager, parentTask.id, 'coding-node', subSessionId);
-			}
-
-			const after = ctx.nodeExecutionRepo.getById(execution.id);
-			expect(after?.status).toBe('blocked');
-			expect(after?.result).toContain('without calling report_done');
-		});
-	});
-
-	// -----------------------------------------------------------------------
-	// Sub-session group membership
-	// -----------------------------------------------------------------------
-
-	describe('sub-session group membership', () => {
-		/** Helper: get the SubSessionFactory bound to a taskId via the private method */
-		function getFactory(
-			manager: TaskAgentManager,
-			taskId: string
-		): import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory {
-			return (
-				manager as unknown as {
-					createSubSessionFactory: (
-						taskId: string
-					) => import('../../../../src/lib/space/tools/task-agent-tools.ts').SubSessionFactory;
-				}
-			).createSubSessionFactory(taskId);
-		}
-
-		test('sub-session factory returns the correct session ID', async () => {
-			// Create a task but do NOT spawn its Task Agent (so no group is created).
-			const task = await makeTask(ctx.taskManager);
-
-			// The factory is created directly without spawning the task agent.
-			const factory = getFactory(ctx.manager, task.id);
-			const subSessionId = `sub-no-group-${task.id}`;
-
-			// Should succeed without throwing even though there is no group
-			await expect(
-				factory.create(
-					{
-						sessionId: subSessionId,
-						workspacePath: '/tmp/ws',
-					} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
-					{ agentId: ctx.agentId, agentName: 'coder' }
-				)
-			).resolves.toBe(subSessionId);
+			expect(after?.status).toBe('idle');
 		});
 	});
 
@@ -1747,8 +1488,10 @@ describe('TaskAgentManager', () => {
 			expect(session._enqueuedMessages.length).toBeGreaterThan(0);
 			const msgs = session._enqueuedMessages.map((m) => m.msg);
 			expect(msgs.some((m) => m.includes('resuming after a daemon restart'))).toBe(true);
-			// Workflow tasks should reference check_node_status to resume the workflow
-			expect(msgs.some((m) => m.includes('check_node_status'))).toBe(true);
+			// Workflow tasks should reference event-driven orchestration to resume
+			expect(
+				msgs.some((m) => m.includes('event-driven mode') || m.includes('continue orchestration'))
+			).toBe(true);
 		});
 
 		test('restore returning null skips task and does not add to map', async () => {

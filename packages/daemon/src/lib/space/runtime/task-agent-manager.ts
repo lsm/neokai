@@ -68,11 +68,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
-import type {
-	SubSessionFactory,
-	SubSessionMemberInfo,
-	SubSessionState,
-} from '../tools/task-agent-tools';
+import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
@@ -90,14 +86,10 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import type { ReportResultInput } from '../tools/task-agent-tool-schemas';
+import { jsonResult } from '../tools/tool-result';
 
 const log = new Logger('task-agent-manager');
-
-/**
- * Number of runtime reminders sent to a node agent that became idle without
- * calling report_done() before the execution is escalated to blocked.
- */
-const MAX_MISSING_REPORT_DONE_REMINDERS = 3;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -245,15 +237,6 @@ export class TaskAgentManager {
 	 * Closed when the task agent session is cleaned up.
 	 */
 	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
-
-	/**
-	 * Tracks how many runtime reminders were sent for each node execution that
-	 * became idle without calling report_done().
-	 *
-	 * Key: node_execution.id
-	 * Value: reminder attempt count (1..MAX_MISSING_REPORT_DONE_REMINDERS)
-	 */
-	private missingReportDoneReminders = new Map<string, number>();
 
 	constructor(private readonly config: TaskAgentManagerConfig) {}
 
@@ -501,49 +484,18 @@ export class TaskAgentManager {
 			);
 
 			// --- Build and attach MCP server with live runtime dependencies
-			const subSessionFactory = this.createSubSessionFactory(taskId);
-
 			const workflowRunId = workflowRun?.id ?? '';
-
-			// Build shared channel routing instance.
-			const channelRouter = new ChannelRouter({
-				taskRepo: this.config.taskRepo,
-				workflowRunRepo: this.config.workflowRunRepo,
-				workflowManager: this.config.spaceWorkflowManager,
-				agentManager: this.config.spaceAgentManager,
-				nodeExecutionRepo: this.config.nodeExecutionRepo,
-				gateDataRepo: this.config.gateDataRepo,
-				db: this.config.db.getDatabase(),
-				workspacePath,
-			});
 
 			const mcpServer = createTaskAgentMcpServer({
 				taskId,
 				space,
 				workflowRunId,
-				workspacePath,
-				workflowManager: this.config.spaceWorkflowManager,
 				taskRepo: this.config.taskRepo,
-				workflowRunRepo: this.config.workflowRunRepo,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
-				agentManager: this.config.spaceAgentManager,
 				taskManager,
-				sessionFactory: subSessionFactory,
 				messageInjector: (subSessionId, message) =>
 					this.injectSubSessionMessage(subSessionId, message),
-				onSubSessionComplete: (nodeId, subSessionId) =>
-					this.handleSubSessionComplete(taskId, nodeId, subSessionId),
 				daemonHub: this.config.daemonHub,
-				channelRouter,
-				buildNodeAgentMcpServer: (subSessionId, agentName, _nodeTaskId) =>
-					this.buildNodeAgentMcpServerForSession(
-						taskId,
-						subSessionId,
-						agentName,
-						spaceId,
-						workflowRunId,
-						workspacePath
-					) as unknown as McpServerConfig,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -1111,7 +1063,6 @@ export class TaskAgentManager {
 	async cleanupAll(): Promise<void> {
 		const taskIds = Array.from(this.taskAgentSessions.keys());
 		await Promise.allSettled(taskIds.map((taskId) => this.cleanup(taskId)));
-		this.missingReportDoneReminders.clear();
 		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks cleaned up)`);
 	}
 
@@ -1203,86 +1154,7 @@ export class TaskAgentManager {
 			this.taskDbQueryServers.delete(taskId);
 		}
 
-		const taskWorkflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId;
-		if (taskWorkflowRunId) {
-			const executions = this.config.nodeExecutionRepo.listByWorkflowRun(taskWorkflowRunId);
-			for (const execution of executions) {
-				this.missingReportDoneReminders.delete(execution.id);
-			}
-		}
-
 		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId} (reason: ${reason})`);
-	}
-
-	// -------------------------------------------------------------------------
-	// Private — SubSessionFactory
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Create a `SubSessionFactory` implementation bound to a specific taskId.
-	 * Passed to `createTaskAgentMcpServer()` for the given Task Agent session.
-	 */
-	private createSubSessionFactory(taskId: string): SubSessionFactory {
-		// Capture workflowRunId once at factory-creation time to avoid a DB round-trip
-		// on every spawn. The run ID is immutable once assigned, so this is safe.
-		// Log a warning if the task lacks a workflow run — node-agent tools will
-		// produce an empty ChannelResolver (no declared channels) in that case.
-		const taskWorkflowRunId = this.config.taskRepo.getTask(taskId)?.workflowRunId ?? '';
-		if (!taskWorkflowRunId) {
-			log.warn(
-				`TaskAgentManager.createSubSessionFactory: task ${taskId} has no workflowRunId — ` +
-					`node-agent channel topology will be unavailable`
-			);
-		}
-
-		return {
-			create: async (
-				init: AgentSessionInit,
-				_memberInfo?: SubSessionMemberInfo
-			): Promise<string> => {
-				// Forward the task's worktree path to every sub-session so all node
-				// agents share the same isolated git worktree for the duration of the run.
-				const worktreePath = this.taskWorktreePaths.get(taskId);
-				const effectiveInit: AgentSessionInit = worktreePath
-					? { ...init, workspacePath: worktreePath }
-					: init;
-				const sessionId = await this.createSubSession(
-					taskId,
-					effectiveInit.sessionId,
-					effectiveInit,
-					_memberInfo
-				);
-				return sessionId;
-			},
-
-			getProcessingState: (subSessionId: string): SubSessionState | null => {
-				// Look up session by ID
-				const session = this.getSubSession(subSessionId);
-				if (!session) return null;
-
-				const state = session.getProcessingState();
-				const isProcessing = state.status === 'processing' || state.status === 'queued';
-				// Terminal states: if the session's query has ended and it never processes again,
-				// we consider it complete. The sub-session is marked complete when the Task Agent's
-				// completion callback fires (see onComplete + handleSubSessionComplete).
-				// For getProcessingState, 'idle' after having processed at least once = complete.
-				// We use a heuristic: if the session has received at least one SDK message and is
-				// now idle, it is complete.
-				const sdkCount = session.getSDKMessageCount();
-				const isIdle = state.status === 'idle';
-				const isComplete = isIdle && sdkCount > 0;
-
-				return {
-					isProcessing,
-					isComplete,
-					error: undefined,
-				};
-			},
-
-			onComplete: (subSessionId: string, callback: () => Promise<void>): void => {
-				this.registerCompletionCallback(subSessionId, callback);
-			},
-		};
 	}
 
 	// -------------------------------------------------------------------------
@@ -1295,7 +1167,7 @@ export class TaskAgentManager {
 	 * The callback is called at most once when the session first goes idle.
 	 * Also subscribes to session.error to mark the group member as 'failed'.
 	 */
-	private registerCompletionCallback(subSessionId: string, callback: () => Promise<void>): void {
+	registerCompletionCallback(subSessionId: string, callback: () => Promise<void>): void {
 		// Add to callback list
 		if (!this.completionCallbacks.has(subSessionId)) {
 			this.completionCallbacks.set(subSessionId, []);
@@ -1384,7 +1256,10 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Called by the MCP onSubSessionComplete callback (registered in spawn_node_agent).
+	 * Called when a node agent sub-session completes (session goes idle).
+	 *
+	 * Automatically transitions the execution to `idle` when the agent's session
+	 * finishes naturally — no explicit `report_done` call needed.
 	 * Notifies the Task Agent (when present) about workflow node session completion.
 	 */
 	private async handleSubSessionComplete(
@@ -1403,20 +1278,11 @@ export class TaskAgentManager {
 					.find((candidate) => candidate.agentSessionId === subSessionId)
 			: null;
 
+		// Auto-transition to idle when the session finishes while still in_progress.
+		// This is the normal completion path — agents don't need to call a separate tool.
 		if (execution && execution.status === 'in_progress') {
-			const handled = await this.handleIdleExecutionWithoutReportDone(
-				taskId,
-				subSessionId,
-				execution
-			);
-			if (handled) {
-				return;
-			}
+			this.config.nodeExecutionRepo.update(execution.id, { status: 'idle' });
 			execution = this.config.nodeExecutionRepo.getById(execution.id);
-		}
-
-		if (execution && execution.status !== 'in_progress') {
-			this.missingReportDoneReminders.delete(execution.id);
 		}
 
 		const resolvedNodeId = execution?.workflowNodeId ?? nodeId;
@@ -1441,76 +1307,10 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Recover from node agents that went idle without calling report_done().
-	 *
-	 * Sends deterministic runtime reminders (with gate/channel requirements) for a
-	 * bounded number of attempts, then escalates the execution to blocked.
-	 *
-	 * @returns true when the completion event was fully handled here (reminder sent
-	 *          or execution escalated), false when normal completion flow should continue.
-	 */
-	private async handleIdleExecutionWithoutReportDone(
-		taskId: string,
-		subSessionId: string,
-		execution: NodeExecution
-	): Promise<boolean> {
-		const refreshed = this.config.nodeExecutionRepo.getById(execution.id);
-		if (!refreshed || refreshed.status !== 'in_progress') {
-			this.missingReportDoneReminders.delete(execution.id);
-			return false;
-		}
-
-		const attempt = (this.missingReportDoneReminders.get(execution.id) ?? 0) + 1;
-		this.missingReportDoneReminders.set(execution.id, attempt);
-
-		const run = this.config.workflowRunRepo.getRun(refreshed.workflowRunId);
-		const workflow = run
-			? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
-			: null;
-
-		if (attempt <= MAX_MISSING_REPORT_DONE_REMINDERS) {
-			const reminder = this.buildMissingReportDoneReminder(
-				workflow,
-				refreshed,
-				attempt,
-				MAX_MISSING_REPORT_DONE_REMINDERS
-			);
-			const subSession = this.getSubSession(subSessionId);
-			if (!subSession) {
-				log.warn(
-					`TaskAgentManager: sub-session ${subSessionId} not found while sending missing-report_done reminder for execution ${execution.id}`
-				);
-				return false;
-			}
-
-			// Re-arm completion detection for the next idle transition after this reminder.
-			this.registerCompletionCallback(subSessionId, async () => {
-				await this.handleSubSessionComplete(taskId, refreshed.workflowNodeId, subSessionId);
-			});
-
-			await this.injectMessageIntoSession(subSession, reminder, 'defer');
-			log.warn(
-				`TaskAgentManager: reminded execution ${execution.id} (${attempt}/${MAX_MISSING_REPORT_DONE_REMINDERS}) to call report_done()`
-			);
-			return true;
-		}
-
-		const reason =
-			`Node agent session became idle without calling report_done after ` +
-			`${MAX_MISSING_REPORT_DONE_REMINDERS} reminder attempts.`;
-		this.missingReportDoneReminders.delete(execution.id);
-		await this.handleSubSessionError(subSessionId, reason);
-		log.warn(
-			`TaskAgentManager: escalated execution ${execution.id} to blocked after missing report_done reminders`
-		);
-		return true;
-	}
-
-	/**
 	 * Handle a sub-session error event and notify the parent Task Agent.
 	 *
 	 * This enables event-driven orchestration: Task Agent can react to failures
-	 * without continuously polling check_node_status.
+	 * without polling node status.
 	 */
 	private async handleSubSessionError(subSessionId: string, error: string): Promise<void> {
 		const parentTaskId = this.findParentTaskIdForSubSession(subSessionId);
@@ -1529,10 +1329,6 @@ export class TaskAgentManager {
 			});
 		}
 
-		if (failedExecution) {
-			this.missingReportDoneReminders.delete(failedExecution.id);
-		}
-
 		const taskAgentSession = this.taskAgentSessions.get(parentTaskId);
 		if (!taskAgentSession) return;
 
@@ -1544,21 +1340,6 @@ export class TaskAgentManager {
 		);
 	}
 
-	private buildMissingReportDoneReminder(
-		workflow: SpaceWorkflow | null,
-		execution: NodeExecution,
-		attempt: number,
-		maxAttempts: number
-	): string {
-		const contract = this.buildNodeExecutionRuntimeContract(workflow, execution);
-		return [
-			`[RUNTIME_REMINDER ${attempt}/${maxAttempts}] Node session became idle, but execution "${execution.id}" is still in_progress.`,
-			'Workflow progression is blocked until this execution is completed.',
-			contract,
-			'Take action now: satisfy required gate checks/writes (if any), then call report_done({ summary: "..." }).',
-		].join('\n\n');
-	}
-
 	/**
 	 * Build a runtime contract for a specific node execution from the current
 	 * workflow graph, including gate requirements derived from outbound channels.
@@ -1567,12 +1348,21 @@ export class TaskAgentManager {
 		workflow: SpaceWorkflow | null,
 		execution: NodeExecution
 	): string {
+		const isEndNode = !!workflow?.endNodeId && execution.workflowNodeId === workflow.endNodeId;
+
 		const fallback = [
 			'## Runtime Execution Contract',
 			`Role: "${execution.agentName}"`,
-			'When your work is complete, call report_done({ summary: "..." }).',
-			'If blocked, send a clear blocker message instead of stopping silently.',
-		].join('\n');
+			'Tools available:',
+			'  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
+			'  - save({ summary?, data? }) — persist your output at any time (call multiple times as needed)',
+			isEndNode
+				? '  - report_result({ status, summary }) — YOU ARE THE END NODE: call this when the workflow is complete to close the run'
+				: null,
+			'Only contact the task-agent via send_message if you are blocked or need human input.',
+		]
+			.filter(Boolean)
+			.join('\n');
 
 		if (!workflow) {
 			return fallback;
@@ -1598,14 +1388,27 @@ export class TaskAgentManager {
 			'## Runtime Execution Contract',
 			`Node: "${node.name}" (${node.id})`,
 			`Agent: "${execution.agentName}"`,
+			'Tools available:',
+			'  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
+			'  - save({ summary?, data? }) — persist your output (summary text and/or structured data like pr_url)',
 		];
+
+		if (isEndNode) {
+			lines.push(
+				'  - report_result({ status, summary }) — YOU ARE THE END NODE: call this when the workflow is complete'
+			);
+		}
+
+		lines.push(
+			'  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery'
+		);
 
 		if (outboundGatedChannels.length === 0) {
 			lines.push('No outbound gated channels are currently mapped from this agent/node.');
 		} else {
 			const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
 			const agentNameAliases = this.buildAgentNameAliasesForExecution(workflow, execution);
-			lines.push('Before completion, satisfy outbound gate requirements:');
+			lines.push('Outbound gated channels (data in send_message satisfies these gates):');
 
 			for (const channel of outboundGatedChannels) {
 				const gateId = channel.gateId!;
@@ -1630,7 +1433,7 @@ export class TaskAgentManager {
 					continue;
 				}
 
-				lines.push(`  - Write via write_gate("${gateId}", { ... }) with:`);
+				lines.push(`  - Include in send_message data:`);
 				for (const field of writableFields) {
 					lines.push(
 						`    • ${field.name} (${field.type}) — check: ${this.describeGateCheck(field.check)}`
@@ -1639,8 +1442,14 @@ export class TaskAgentManager {
 			}
 		}
 
-		lines.push('After requirements are met, call report_done({ summary: "..." }).');
-		lines.push('If blocked, send a clear blocker message instead of stopping silently.');
+		lines.push(
+			'Only contact the task-agent via send_message if you are blocked or need human input.'
+		);
+		if (isEndNode) {
+			lines.push(
+				'When your work is complete, call report_result({ status: "done", summary: "..." }) to close the workflow run.'
+			);
+		}
 		return lines.join('\n');
 	}
 
@@ -1841,50 +1650,18 @@ export class TaskAgentManager {
 		);
 
 		// --- Build and attach MCP server (runtime-only, not persisted)
-		const subSessionFactory = this.createSubSessionFactory(taskId);
-
 		const rehydrateWorkflowRunId = workflowRun?.id ?? '';
-
-		// Build shared channel routing instance for rehydration.
-		const rehydrateChannelRouter = new ChannelRouter({
-			taskRepo: this.config.taskRepo,
-			workflowRunRepo: this.config.workflowRunRepo,
-			workflowManager: this.config.spaceWorkflowManager,
-			agentManager: this.config.spaceAgentManager,
-			nodeExecutionRepo: this.config.nodeExecutionRepo,
-			gateDataRepo: this.config.gateDataRepo,
-			channelCycleRepo: this.config.channelCycleRepo,
-			db: this.config.db.getDatabase(),
-			workspacePath: rehydrateWorkspacePath,
-		});
 
 		const mcpServer = createTaskAgentMcpServer({
 			taskId,
 			space,
 			workflowRunId: rehydrateWorkflowRunId,
-			workspacePath: rehydrateWorkspacePath,
-			workflowManager: this.config.spaceWorkflowManager,
 			taskRepo: this.config.taskRepo,
-			workflowRunRepo: this.config.workflowRunRepo,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
-			agentManager: this.config.spaceAgentManager,
 			taskManager,
-			sessionFactory: subSessionFactory,
 			messageInjector: (subSessionId, message) =>
 				this.injectSubSessionMessage(subSessionId, message),
-			onSubSessionComplete: (nodeId, subSessionId) =>
-				this.handleSubSessionComplete(taskId, nodeId, subSessionId),
 			daemonHub: this.config.daemonHub,
-			channelRouter: rehydrateChannelRouter,
-			buildNodeAgentMcpServer: (subSessionId, agentName, _nodeTaskId) =>
-				this.buildNodeAgentMcpServerForSession(
-					taskId,
-					subSessionId,
-					agentName,
-					spaceId,
-					rehydrateWorkflowRunId,
-					rehydrateWorkspacePath
-				) as unknown as McpServerConfig,
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
@@ -1949,12 +1726,9 @@ export class TaskAgentManager {
 		await agentSession.startStreamingQuery();
 
 		// --- Inject re-orientation message so the agent checks state and continues.
-		// For workflow tasks: ask the agent to use check_node_status to resume workflow execution.
-		// For standalone tasks (no workflowRunId): ask the agent to check status and continue.
 		const reorientMessage = task.workflowRunId
 			? 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
-				'Please review pending tasks and recent [NODE_*] event messages, then continue orchestration in event-driven mode. ' +
-				'Use `check_node_status` only for specific reconciliation checks.'
+				'Please review recent [NODE_*] event messages and continue orchestration in event-driven mode.'
 			: 'You are resuming after a daemon restart. Your previous conversation state has been restored. ' +
 				'Please check the current task status and continue from where you left off.';
 		await this.injectMessageIntoSession(agentSession, reorientMessage);
@@ -1996,11 +1770,12 @@ export class TaskAgentManager {
 			state.status === 'interrupted';
 
 		const messageId = generateUUID();
-		const sdkUserMessage: SDKUserMessage = {
+		const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
 			type: 'user' as const,
 			uuid: messageId as UUID,
 			session_id: sessionId,
 			parent_tool_use_id: null,
+			isSynthetic: true,
 			message: {
 				role: 'user' as const,
 				content: [{ type: 'text' as const, text: message }],
@@ -2150,6 +1925,61 @@ export class TaskAgentManager {
 			? this.buildAgentNameAliasesForExecution(workflow, execution)
 			: this.agentNameVariants(agentName);
 
+		// Build onReportResult callback for end-node agents so they can close the workflow run.
+		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
+		let onReportResult:
+			| ((args: ReportResultInput) => Promise<ReturnType<typeof jsonResult>>)
+			| undefined;
+		if (isEndNode) {
+			const capturedTaskId = taskId;
+			const capturedSpaceId = spaceId;
+			const capturedWorkflowRunId = workflowRunId;
+			onReportResult = async (args: ReportResultInput) => {
+				const task = this.config.taskRepo.getTask(capturedTaskId);
+				if (!task)
+					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
+
+				try {
+					const taskManager = new SpaceTaskManager(
+						this.config.db.getDatabase(),
+						capturedSpaceId,
+						this.config.reactiveDb
+					);
+					await taskManager.setTaskStatus(capturedTaskId, args.status, { result: args.summary });
+
+					if (this.config.daemonHub) {
+						const eventName = args.status === 'done' ? 'space.task.done' : 'space.task.failed';
+						void this.config.daemonHub
+							.emit(eventName, {
+								sessionId: 'global',
+								taskId: capturedTaskId,
+								spaceId: capturedSpaceId,
+								status: args.status,
+								summary: args.summary ?? '',
+								workflowRunId: capturedWorkflowRunId,
+								taskTitle: task.title,
+							})
+							.catch((err) => {
+								log.warn(
+									`Failed to emit ${eventName} for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
+								);
+							});
+					}
+
+					return jsonResult({
+						success: true,
+						taskId: capturedTaskId,
+						status: args.status,
+						summary: args.summary,
+						message: `Task has been marked as "${args.status}". The workflow run is now closed.`,
+					});
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					return jsonResult({ success: false, error: message });
+				}
+			};
+		}
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myAgentName: agentName,
@@ -2168,6 +1998,7 @@ export class TaskAgentManager {
 			scriptExecutor: executeGateScript,
 			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId })
 			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
+			onReportResult,
 		});
 	}
 }

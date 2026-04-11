@@ -702,8 +702,8 @@ describe('WorkflowNode — agent completion state', () => {
 		expect(getByTestId('agent-status-spinner')).toBeTruthy();
 	});
 
-	it('shows checkmark for done single-agent', () => {
-		const states: AgentTaskState[] = [{ agentName: null, status: 'done' }];
+	it('shows checkmark for idle single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'idle' }];
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
 		expect(getByTestId('agent-status-check')).toBeTruthy();
 	});
@@ -716,7 +716,7 @@ describe('WorkflowNode — agent completion state', () => {
 
 	it('shows per-agent status icons for multi-agent node', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
 			{ agentName: 'reviewer', status: 'in_progress' },
 		];
 		const { getAllByTestId } = render(
@@ -728,8 +728,8 @@ describe('WorkflowNode — agent completion state', () => {
 
 	it('applies gray border when all agents done (green is start-node only)', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
-			{ agentName: 'reviewer', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
+			{ agentName: 'reviewer', status: 'idle' },
 		];
 		const { getByTestId } = render(
 			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
@@ -740,7 +740,7 @@ describe('WorkflowNode — agent completion state', () => {
 
 	it('does not apply green border when not all done', () => {
 		const states: AgentTaskState[] = [
-			{ agentName: 'coder', status: 'done' },
+			{ agentName: 'coder', status: 'idle' },
 			{ agentName: 'reviewer', status: 'in_progress' },
 		];
 		const { getByTestId } = render(
