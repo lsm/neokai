@@ -30,6 +30,12 @@ interface RecentPath {
 	absoluteTime: Date;
 }
 
+interface WorkspaceHistoryEntry {
+	path: string;
+	lastUsedAt: number;
+	useCount: number;
+}
+
 /** Fetch available models from the server, mapped and sorted via shared utility */
 async function fetchAvailableModels(): Promise<import('@neokai/shared').ModelInfo[]> {
 	const hub = connectionManager.getHubIfConnected();
@@ -58,11 +64,12 @@ interface NewSessionModalProps {
 	isOpen: boolean;
 	onClose: () => void;
 	onSubmit: (params: {
-		workspacePath: string;
+		workspacePath?: string;
 		roomId?: string;
 		model?: ModelInfo;
 	}) => Promise<void>;
 	recentPaths: RecentPath[];
+	workspaceHistory?: WorkspaceHistoryEntry[];
 	rooms: Room[];
 	onCreateRoom?: (params: {
 		name: string;
@@ -77,6 +84,7 @@ export function NewSessionModal({
 	onClose,
 	onSubmit,
 	recentPaths,
+	workspaceHistory,
 	rooms,
 	onCreateRoom,
 }: NewSessionModalProps) {
@@ -134,11 +142,7 @@ export function NewSessionModal({
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
 
-		const workspacePath = selectedPath.trim();
-		if (!workspacePath) {
-			setError('Workspace path is required');
-			return;
-		}
+		const workspacePath = selectedPath.trim() || undefined;
 
 		try {
 			setSubmitting(true);
@@ -236,11 +240,11 @@ export function NewSessionModal({
 				{/* Workspace Path Section */}
 				<div>
 					<label class="block text-sm font-medium text-gray-300 mb-1.5">
-						Where do you want to work?
+						Where do you want to work? <span class="text-gray-500 font-normal">(optional)</span>
 					</label>
 
-					{/* Recent Paths Dropdown */}
-					{recentPaths.length > 0 && (
+					{/* History Dropdown — backend history takes precedence; fallback to localStorage */}
+					{(workspaceHistory && workspaceHistory.length > 0 ? true : recentPaths.length > 0) && (
 						<div class="mb-3">
 							<select
 								value={selectedPath}
@@ -248,16 +252,22 @@ export function NewSessionModal({
 								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
 							>
 								<option value="">Select a recent path...</option>
-								{recentPaths.map((item) => (
-									<option key={item.path} value={item.path}>
-										{item.path} ({item.relativeTime})
-									</option>
-								))}
+								{workspaceHistory && workspaceHistory.length > 0
+									? workspaceHistory.map((item) => (
+											<option key={item.path} value={item.path}>
+												{item.path}
+											</option>
+										))
+									: recentPaths.map((item) => (
+											<option key={item.path} value={item.path}>
+												{item.path} ({item.relativeTime})
+											</option>
+										))}
 							</select>
 						</div>
 					)}
 
-					<div class="text-center text-sm text-gray-500 py-1">or</div>
+					<div class="text-center text-sm text-gray-500 py-1">or enter a path</div>
 
 					{/* Path Input */}
 					<input
@@ -265,7 +275,7 @@ export function NewSessionModal({
 						data-testid="new-session-workspace-input"
 						value={selectedPath}
 						onInput={(e) => setSelectedPath((e.target as HTMLInputElement).value)}
-						placeholder="Enter workspace path..."
+						placeholder="Enter workspace path (optional)..."
 						class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
 					/>
 
@@ -414,7 +424,7 @@ export function NewSessionModal({
 					<Button type="button" variant="secondary" onClick={handleClose} fullWidth>
 						Cancel
 					</Button>
-					<Button type="submit" loading={submitting} disabled={!selectedPath.trim()} fullWidth>
+					<Button type="submit" loading={submitting} disabled={submitting} fullWidth>
 						Create Session
 					</Button>
 				</div>

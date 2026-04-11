@@ -84,6 +84,8 @@ import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
 import type { NeoAgentManager } from '../neo/neo-agent-manager';
+import { setupWorkspaceHandlers } from './workspace-handlers';
+import { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
 import { NeoActivityLogger } from '../neo/activity-logger';
 import { PendingActionStore } from '../neo/security-tier';
 import type { NeoToolsConfig } from '../neo/tools/neo-query-tools';
@@ -341,6 +343,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub, undefined);
+
+	// Workspace history RPC handlers
+	const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
+	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo);
 
 	// Neo global agent RPC handlers
 	// The PendingActionStore is created here (application lifecycle) so it is

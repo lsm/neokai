@@ -41,6 +41,8 @@ export { runMigration68 } from './migrations';
 export { runMigration72 } from './migrations';
 // knip-ignore-next-line
 export { runMigration74 } from './migrations';
+// knip-ignore-next-line
+export { runMigration78 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -438,6 +440,16 @@ export function createTables(db: BunDatabase): void {
         created_at INTEGER NOT NULL,
         started_at INTEGER,
         completed_at INTEGER
+      )
+    `);
+
+	// Workspace history — persists recently-used workspace paths
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL UNIQUE,
+        last_used_at INTEGER NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1
       )
     `);
 
