@@ -41,6 +41,8 @@ export { runMigration68 } from './migrations';
 export { runMigration72 } from './migrations';
 // knip-ignore-next-line
 export { runMigration74 } from './migrations';
+// knip-ignore-next-line
+export { runMigration78 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -441,6 +443,16 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// Workspace history — persists recently-used workspace paths
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL UNIQUE,
+        last_used_at INTEGER NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1
+      )
+    `);
+
 	// Create indexes
 	createIndexes(db);
 }
@@ -498,5 +510,9 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
+	);
+	// Workspace history index — supports ORDER BY last_used_at DESC in list()
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
 	);
 }

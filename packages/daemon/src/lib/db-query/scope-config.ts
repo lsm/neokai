@@ -283,6 +283,8 @@ const EXCLUDED_TABLE_NAMES: string[] = [
 	'node_executions',
 	// Dynamically created tables (managed by FilterConfigManager, not part of static schema)
 	'github_filter_configs',
+	// Workspace history — user-level path bookmarks, not useful for agent queries
+	'workspace_history',
 	// Dropped tables (no longer exist in schema)
 	'space_session_groups',
 	'space_session_group_members',

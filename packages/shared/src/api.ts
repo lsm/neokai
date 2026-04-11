@@ -78,6 +78,32 @@ export interface UpdateSessionRequest {
 	config?: Partial<SessionConfig>;
 }
 
+export interface WorkspaceHistoryEntry {
+	path: string;
+	lastUsedAt: number; // unix timestamp ms
+	useCount: number;
+}
+
+export interface WorkspaceHistoryResponse {
+	entries: WorkspaceHistoryEntry[];
+}
+
+export interface WorkspaceAddRequest {
+	path: string;
+}
+
+export interface WorkspaceAddResponse {
+	entry: WorkspaceHistoryEntry;
+}
+
+export interface WorkspaceRemoveRequest {
+	path: string;
+}
+
+export interface WorkspaceRemoveResponse {
+	success: boolean;
+}
+
 export interface ArchiveSessionRequest {
 	sessionId: string;
 	confirmed?: boolean;

@@ -324,6 +324,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 77: Make sessions.workspace_path nullable for unbound sessions.
 	runMigration77(db);
+
+	// Migration 78: Create workspace_history table for persisting recently-used workspace paths.
+	runMigration78(db);
 }
 
 /**
@@ -5384,4 +5387,21 @@ function runMigration77(db: BunDatabase): void {
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}
+}
+
+/**
+ * Migration 78: Create workspace_history table.
+ *
+ * Persists recently-used workspace paths with usage metadata so the frontend
+ * can show a backend-backed history list across devices/profiles.
+ */
+export function runMigration78(db: BunDatabase): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS workspace_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			path TEXT NOT NULL UNIQUE,
+			last_used_at INTEGER NOT NULL,
+			use_count INTEGER NOT NULL DEFAULT 1
+		)
+	`);
 }
