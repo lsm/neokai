@@ -107,6 +107,17 @@ export async function waitForNeoAssistantResponse(
 // ─── Availability helpers ──────────────────────────────────────────────────────
 
 /**
+ * Check whether the NeoPanel is rendered in the DOM.
+ *
+ * The NeoPanel may be disabled/commented out in App.tsx. This helper checks
+ * if the panel element exists before attempting to open it.
+ */
+export async function isNeoPanelRendered(page: Page): Promise<boolean> {
+	const count = await page.getByTestId(NEO_PANEL_TESTID).count();
+	return count > 0;
+}
+
+/**
  * Check whether the Neo agent is provisioned (credentials configured and session active).
  *
  * Uses the `neo.isProvisioned` RPC endpoint for a reliable, synchronous check.

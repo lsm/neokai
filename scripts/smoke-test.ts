@@ -131,7 +131,7 @@ log(`Port: ${port}`);
 log(`Workspace: ${workspace}`);
 
 // Start the binary
-const proc = spawn(binaryPath, ['--port', String(port), workspace], {
+const proc = spawn(binaryPath, ['--port', String(port)], {
 	stdio: ['ignore', 'pipe', 'pipe'],
 	env: { ...process.env, NODE_ENV: 'production' },
 });

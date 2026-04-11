@@ -48,6 +48,7 @@ export interface SystemState {
 	defaultModel: string;
 	maxSessions: number;
 	storageLocation: string;
+	workspaceRoot?: string;
 
 	// Authentication
 	auth: AuthStatus;

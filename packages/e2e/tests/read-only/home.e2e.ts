@@ -14,8 +14,8 @@ test.describe('Home Page', () => {
 	test('should have a sidebar visible', async ({ page }) => {
 		await page.goto('/');
 
-		// NavRail should be visible - look for the Home button
-		await expect(page.getByRole('button', { name: 'Home' })).toBeVisible();
+		// NavRail should be visible - look for the Rooms button (first nav item)
+		await expect(page.getByRole('button', { name: 'Rooms', exact: true })).toBeVisible();
 
 		// Check for New Session button
 		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();

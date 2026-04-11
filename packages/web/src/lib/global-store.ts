@@ -35,9 +35,18 @@ export class GlobalStore {
 	/** Total session count (from server, includes archived) */
 	readonly sessionsTotalCount = signal<number>(0);
 
-	/** Whether there are any archived sessions in the database */
+	/** Count of archived sessions in the database (from server metadata) */
+	readonly archivedSessionCount = signal<number>(0);
+
+	/**
+	 * Whether there are any archived sessions in the database.
+	 * Derived from archivedSessionCount (sent by server in live-query metadata)
+	 * OR the fallback totalCount > visible-count comparison for backward compat.
+	 */
 	readonly hasArchivedSessions = computed<boolean>(
-		() => this.sessionsTotalCount.value > this.sessions.value.length
+		() =>
+			this.archivedSessionCount.value > 0 ||
+			this.sessionsTotalCount.value > this.sessions.value.length
 	);
 
 	/** Unified system state (auth + config + health + API connection) */
@@ -156,6 +165,9 @@ export class GlobalStore {
 			if (event.metadata?.totalCount != null) {
 				this.sessionsTotalCount.value = event.metadata.totalCount as number;
 			}
+			if (event.metadata?.archivedCount != null) {
+				this.archivedSessionCount.value = event.metadata.archivedCount as number;
+			}
 		});
 		this.cleanupFunctions.push(unsubSnapshot);
 
@@ -165,6 +177,9 @@ export class GlobalStore {
 			this.applySessionsDelta(event);
 			if (event.metadata?.totalCount != null) {
 				this.sessionsTotalCount.value = event.metadata.totalCount as number;
+			}
+			if (event.metadata?.archivedCount != null) {
+				this.archivedSessionCount.value = event.metadata.archivedCount as number;
 			}
 		});
 		this.cleanupFunctions.push(unsubDelta);

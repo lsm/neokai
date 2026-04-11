@@ -224,9 +224,22 @@ const BOTTOM_BAR_HEIGHT = 53;
 
 export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
 	// Set CSS variable for other components to account for tab bar height
+	// Only set non-zero height when viewport is mobile (< md breakpoint)
 	useEffect(() => {
-		document.documentElement.style.setProperty('--bottom-bar-height', BOTTOM_BAR_HEIGHT + 'px');
+		const mq = window.matchMedia('(max-width: 767px)');
+
+		const updateHeight = () => {
+			document.documentElement.style.setProperty(
+				'--bottom-bar-height',
+				mq.matches ? BOTTOM_BAR_HEIGHT + 'px' : '0px'
+			);
+		};
+
+		updateHeight();
+		mq.addEventListener('change', updateHeight);
+
 		return () => {
+			mq.removeEventListener('change', updateHeight);
 			document.documentElement.style.setProperty('--bottom-bar-height', '0px');
 		};
 	}, []);

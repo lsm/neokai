@@ -28,9 +28,9 @@ export async function openSettingsModal(page: Page): Promise<void> {
  * navigating to a different section via the NavRail.
  */
 export async function closeSettingsModal(page: Page): Promise<void> {
-	// Navigate away from settings by clicking the Home button in the NavRail
-	const homeButton = page.getByRole('button', { name: 'Home', exact: true });
-	await homeButton.click();
+	// Navigate away from settings by clicking the Rooms button in the NavRail
+	const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
+	await roomsButton.click();
 
 	// Wait for settings view to close
 	await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'hidden', timeout: 5000 });

@@ -348,6 +348,8 @@ export function WorkflowNode({
 	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+	const hasActiveExecution = nodeTaskStates?.some((s) => s.status === 'in_progress') ?? false;
+	const pulseClass = hasActiveExecution ? 'animate-pulse' : '';
 	const activeAnchorSideSet = new Set(activeAnchorSides);
 
 	// Task Agent: render a visually distinct pinned node with no ports
@@ -409,7 +411,7 @@ export function WorkflowNode({
 				cursor: draggable ? 'grab' : 'default',
 				userSelect: 'none',
 			}}
-			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass}`}
+			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass} ${pulseClass}`}
 			onMouseDown={handleMouseDown}
 			onClick={handleClick}
 		>

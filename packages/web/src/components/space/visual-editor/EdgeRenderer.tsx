@@ -108,6 +108,8 @@ export interface ResolvedWorkflowChannel {
 	runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
 	/** Forward gate ID — set when the channel has a gate with runtime status. */
 	gateId?: string;
+	/** Vote count for count-type gates: current number of matching votes and the required minimum. */
+	voteCount?: { current: number; min: number };
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -1061,6 +1063,19 @@ export function EdgeRenderer({
 										<line x1="-2.5" y1="-2.5" x2="2.5" y2="2.5" stroke="white" stroke-width="1.5" />
 										<line x1="2.5" y1="-2.5" x2="-2.5" y2="2.5" stroke="white" stroke-width="1.5" />
 									</g>
+								)}
+								{/* Vote count label for count-type gates (e.g. "2/3") */}
+								{channel.voteCount && (
+									<text
+										data-testid="gate-vote-count"
+										x={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
+										y={gateBadgePosition.y + 16}
+										textAnchor="middle"
+										fontSize="9"
+										fill="#9ca3af"
+									>
+										{channel.voteCount.current}/{channel.voteCount.min}
+									</text>
 								)}
 							</g>
 						)}

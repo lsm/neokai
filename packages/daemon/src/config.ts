@@ -25,6 +25,7 @@ export interface Config {
 	temperature: number;
 	maxSessions: number;
 	nodeEnv: string;
+	workspaceRoot?: string; // Optional default workspace root (from NEOKAI_WORKSPACE_ROOT env)
 	disableWorktrees?: boolean; // For testing - disables git worktree creation
 	disableGoalProcessing?: boolean; // For testing/CI - disables automatic goal processing (tick loop)
 	// GitHub integration
@@ -61,6 +62,7 @@ export function getConfig(overrides?: ConfigOverrides): Config {
 		temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
 		maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
 		nodeEnv,
+		workspaceRoot: process.env.NEOKAI_WORKSPACE_ROOT,
 		disableWorktrees: process.env.NEOKAI_DISABLE_WORKTREES === '1',
 		disableGoalProcessing: process.env.NEOKAI_DISABLE_GOAL_PROCESSING === '1',
 		// GitHub integration

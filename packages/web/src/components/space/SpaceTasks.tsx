@@ -234,6 +234,11 @@ function TaskItem({ task, onClick }: { task: SpaceTask; onClick?: (taskId: strin
 							<span class="text-xs text-gray-600">{getRelativeTime(task.updatedAt)}</span>
 						)}
 					</div>
+					{task.status === 'blocked' && task.result && (
+						<p class="mt-1 text-xs text-amber-400/80 truncate" data-testid="task-blocked-reason">
+							{task.result}
+						</p>
+					)}
 				</div>
 				<div class="ml-4 flex items-center flex-shrink-0">
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}

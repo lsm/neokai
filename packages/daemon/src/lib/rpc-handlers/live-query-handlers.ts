@@ -811,13 +811,45 @@ SELECT
   s.archived_at as archivedAt,
   s.type as type,
   s.session_context as session_context,
-  COUNT(*) OVER() as _totalCount
+  (SELECT COUNT(*) FROM sessions s2
+   WHERE s2.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+   AND json_extract(s2.session_context, '$.roomId') IS NULL
+   AND json_extract(s2.session_context, '$.spaceId') IS NULL) as _totalCount,
+  (SELECT COUNT(*) FROM sessions s3
+   WHERE s3.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+   AND json_extract(s3.session_context, '$.roomId') IS NULL
+   AND json_extract(s3.session_context, '$.spaceId') IS NULL
+   AND s3.status = 'archived') as _archivedCount
 FROM sessions s
 WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
   AND json_extract(s.session_context, '$.roomId') IS NULL
   AND json_extract(s.session_context, '$.spaceId') IS NULL
   AND (s.status != 'archived' OR ?1 = 1)
 ORDER BY s.last_active_at DESC, s.id DESC
+`.trim();
+
+/**
+ * SQL for counting ALL user-visible sessions regardless of archived status.
+ * Used to provide an accurate totalCount even when the visible session list is empty
+ * (e.g. when all sessions are archived and showArchived=false).
+ */
+const SESSIONS_TOTAL_COUNT_SQL = `
+SELECT COUNT(*) as cnt FROM sessions s
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+  AND json_extract(s.session_context, '$.roomId') IS NULL
+  AND json_extract(s.session_context, '$.spaceId') IS NULL
+`.trim();
+
+/**
+ * SQL for counting only archived user-visible sessions.
+ * Used to provide an accurate archivedCount even when the visible session list is empty.
+ */
+const SESSIONS_ARCHIVED_COUNT_SQL = `
+SELECT COUNT(*) as cnt FROM sessions s
+WHERE s.type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+  AND json_extract(s.session_context, '$.roomId') IS NULL
+  AND json_extract(s.session_context, '$.spaceId') IS NULL
+  AND s.status = 'archived'
 `.trim();
 
 /**
@@ -1007,9 +1039,12 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			mapRow: mapSessionRow,
 			mapResult: (rawRows) => {
 				if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
-					return { totalCount: rawRows[0]._totalCount as number };
+					return {
+						totalCount: rawRows[0]._totalCount as number,
+						archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
+					};
 				}
-				return { totalCount: 0 };
+				return { totalCount: 0, archivedCount: 0 };
 			},
 		},
 	],
@@ -1039,6 +1074,33 @@ export function setupLiveQueryHandlers(
 	// Map<clientId → Map<subscriptionId → LiveQueryHandle>>
 	const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
 
+	// Build a local registry that overrides sessions.list with a closure capturing db.
+	// This ensures totalCount and archivedCount metadata are accurate even when the
+	// visible session list is empty (e.g. all sessions are archived, showArchived=false).
+	const stmtSessionsTotalCount = db.prepare(SESSIONS_TOTAL_COUNT_SQL);
+	const stmtSessionsArchivedCount = db.prepare(SESSIONS_ARCHIVED_COUNT_SQL);
+	const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
+	const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
+	activeRegistry.set('sessions.list', {
+		...sessionsListBase,
+		mapResult: (rawRows) => {
+			if (rawRows.length > 0 && rawRows[0]._totalCount != null) {
+				return {
+					totalCount: rawRows[0]._totalCount as number,
+					archivedCount: (rawRows[0]._archivedCount as number | null) ?? 0,
+				};
+			}
+			// When no visible sessions exist (e.g. all archived and showArchived=false),
+			// run direct count queries so hasArchivedSessions correctly shows the toggle.
+			const totalRow = stmtSessionsTotalCount.get() as { cnt: number } | undefined;
+			const archivedRow = stmtSessionsArchivedCount.get() as { cnt: number } | undefined;
+			return {
+				totalCount: totalRow?.cnt ?? 0,
+				archivedCount: archivedRow?.cnt ?? 0,
+			};
+		},
+	});
+
 	// Cache prepared statements once at setup time — compiled once per handler
 	// registration, not once per subscribe call (which would add compilation
 	// overhead on every subscribe RPC invocation).
@@ -1061,7 +1123,7 @@ export function setupLiveQueryHandlers(
 		}
 
 		// 2. Resolve query from registry
-		const namedQuery = NAMED_QUERY_REGISTRY.get(queryName);
+		const namedQuery = activeRegistry.get(queryName);
 		if (!namedQuery) {
 			throw new Error(`Unknown query name: "${queryName}"`);
 		}

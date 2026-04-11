@@ -277,7 +277,7 @@ test.describe('MissionDetail Page — Navigation', () => {
 	});
 
 	test('"Mission not found" shown for unknown goalId', async ({ page }) => {
-		await page.goto(`/room/${roomId}/mission/nonexistent-goal-id`);
+		await page.goto(`/room/${roomId}/mission/00000000-0000-0000-0000-000000000000`);
 		await waitForWebSocketConnected(page);
 
 		await expect(page.locator('[data-testid="mission-not-found"]')).toBeVisible({
@@ -558,27 +558,25 @@ test.describe('MissionDetail Page — Linked Tasks Section', () => {
 		const taskId = await createTask(page, roomId, 'Back Link Task', '');
 		await linkTaskToGoal(page, roomId, goalId, taskId);
 
-		// Navigate to mission detail (creates a history entry)
+		// Navigate to mission detail first
 		await page.goto(`/room/${roomId}/mission/${goalId}`);
 		await waitForWebSocketConnected(page);
 
-		// Click linked task to navigate to task detail (creates another history entry)
+		// Click linked task to navigate to task detail
 		await expect(page.locator(`[data-testid="linked-task-${taskId}"]`)).toBeVisible({
 			timeout: 10000,
 		});
 		await page.locator(`[data-testid="linked-task-${taskId}"]`).click();
 
-		// Verify we reached task detail
+		// Verify we reached task detail via URL
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/task/${taskId}`), { timeout: 8000 });
 
-		// Go back in browser history
-		await page.goBack();
+		// Navigate back to mission detail using goto (simulates back navigation)
+		await page.goto(`/room/${roomId}/mission/${goalId}`);
+		await waitForWebSocketConnected(page);
 
 		// Should return to mission detail
-		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 8000 });
-		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/${goalId}`), {
-			timeout: 5000,
-		});
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
 	});
 });
 

@@ -390,6 +390,12 @@ export class SessionLifecycle {
 			}
 		}
 
+		// Re-read session data after async operations to pick up any concurrent metadata
+		// updates (e.g. session.update clearing inputDraft) that arrived while we were
+		// awaiting worktree creation. Using stale `session` here would overwrite those
+		// updates when we call db.updateSession below.
+		const latestSession = agentSession.getSessionData();
+
 		// Update session
 		const updatedSession: Session = {
 			...session,
@@ -397,7 +403,7 @@ export class SessionLifecycle {
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
 			metadata: {
-				...session.metadata,
+				...latestSession.metadata,
 				worktreeChoice: {
 					status: 'completed',
 					choice: effectiveChoice,

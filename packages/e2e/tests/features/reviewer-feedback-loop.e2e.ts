@@ -36,6 +36,7 @@ const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 interface SpaceRunIds {
 	spaceId: string;
 	runId: string;
+	taskId: string;
 }
 
 // ─── Infrastructure helpers (RPC — beforeEach / afterEach only) ────────────────
@@ -79,24 +80,42 @@ async function createSpaceWithRun(
 			})) as { run: { id: string } };
 			const runId = runRes.run.id;
 
-			return { spaceId, runId };
+			// Find the task created for this run.
+			const tasks = (await hub.request('spaceTask.list', { spaceId })) as Array<{
+				id: string;
+				workflowRunId?: string;
+			}>;
+			const task = tasks.find((t) => t.workflowRunId === runId);
+			if (!task) throw new Error(`No task found for run ${runId}`);
+			const taskId = task.id;
+
+			// Mark the task as done to prevent the task agent from running — the runtime
+			// skips terminal tasks, so no sub-sessions are created that would cause the
+			// space store to reload and disturb canvas assertions.
+			await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
+
+			return { spaceId, runId, taskId };
 		},
 		{ wsPath: workspaceRoot }
 	);
 }
 
 /**
- * Navigate to a space route and wait for WebSocket reconnection before assertions.
+ * Navigate to a space task and open the canvas view.
  *
  * page.goto() causes a full reload, which can briefly disconnect MessageHub transport.
  * Waiting for reconnection prevents flaky follow-up assertions that depend on live data.
+ * The canvas is only accessible from the task pane — navigate to task URL and click the toggle.
  */
 async function gotoSpaceAndWait(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
-	spaceId: string
+	spaceId: string,
+	taskId: string
 ): Promise<void> {
-	await page.goto(`/space/${spaceId}`);
+	await page.goto(`/space/${spaceId}/task/${taskId}`);
 	await waitForWebSocketConnected(page);
+	await page.waitForSelector('[data-testid="canvas-toggle"]', { timeout: 10000 });
+	await page.getByTestId('canvas-toggle').click();
 }
 
 async function writeGateData(
@@ -245,18 +264,21 @@ test.describe
 		test.describe('reviewer rejection state', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 
 			test.beforeEach(async ({ page }) => {
 				await page.goto('/');
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
-				// Write code-pr-gate to unblock reviewers, then write a rejection vote
+				// Write code-pr-gate to unblock reviewers, then write a rejection vote to review-votes-gate.
+				// review-votes-gate requires count('approved') >= 3; a rejection vote adds 0 approvals.
 				await writeGateData(page, runId, 'code-pr-gate', {
 					pr_url: 'https://github.com/test/repo/pull/1',
 				});
-				await writeGateData(page, runId, 'review-reject-gate', {
+				await writeGateData(page, runId, 'review-votes-gate', {
 					votes: { 'Reviewer 1': 'rejected' },
 				});
 			});
@@ -266,33 +288,33 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 			});
 
-			test('review-reject-gate shows open (green) when one reviewer rejects', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
+			test('review-votes-gate stays blocked when one reviewer rejects', async ({ page }) => {
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
-				// review-reject-gate condition: count 'rejected' votes >= 1
-				// With 1 rejection written, gate evaluates to open → green checkmark
-				await expect(gateIcon(page, 'review-reject-gate', 'open')).toBeVisible({
+				// review-votes-gate requires 3 approvals; 1 rejection = 0 approvals → gate blocked
+				await expect(gateIcon(page, 'review-votes-gate', 'blocked')).toBeVisible({
 					timeout: 30000,
 				});
 			});
 
-			test('review-reject-gate vote count badge shows 1/1 when one reviewer rejects', async ({
+			test('review-votes-gate vote count badge shows 0/3 when one reviewer rejects', async ({
 				page,
 			}) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
-				// The review-reject-gate (min: 1) should show "1/1" vote count badge
-				await expect(voteBadge(page, 'review-reject-gate', '1/1')).toBeVisible({ timeout: 30000 });
+				// 1 rejection vote → 0 approved entries → badge shows "0/3"
+				await expect(voteBadge(page, 'review-votes-gate', '0/3')).toBeVisible({ timeout: 30000 });
 			});
 		});
 
@@ -300,6 +322,7 @@ test.describe
 		test.describe('coder re-activation state', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 			let codingNodeId = '';
 
 			test.beforeEach(async ({ page }) => {
@@ -307,6 +330,7 @@ test.describe
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
 				// Get the Coding node UUID so we can create a node execution for it
 				codingNodeId = await getCodingNodeId(page, spaceId, runId);
@@ -320,18 +344,22 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 				codingNodeId = '';
 			});
 
 			test('Coding node shows active (blue pulsing) after re-activation', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
-				// The Coding node with in_progress execution renders the g element with animate-pulse class
-				const codingNodeEl = page.getByTestId('canvas-view').getByTestId(`node-${codingNodeId}`);
+				// The Coding node with in_progress execution renders with animate-pulse class.
+				// Use text-based locator since WorkflowNode testids use localId (slug), not UUID.
+				const codingNodeEl = page
+					.getByTestId('canvas-view')
+					.locator('[data-testid^="workflow-node-"]:has-text("Coding")');
 				await expect(codingNodeEl).toBeVisible({ timeout: 30000 });
 
 				// Active nodes have animate-pulse CSS class.
@@ -344,12 +372,14 @@ test.describe
 		test.describe('partial review votes (2 of 3 approved)', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 
 			test.beforeEach(async ({ page }) => {
 				await page.goto('/');
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
 				await writeGateData(page, runId, 'code-pr-gate', {
 					pr_url: 'https://github.com/test/repo/pull/1',
@@ -365,14 +395,15 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 			});
 
 			test('review-votes-gate remains blocked (2/3 not enough to open)', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
 				// 2 approvals < 3 required → review-votes-gate stays blocked (gray lock)
 				await expect(gateIcon(page, 'review-votes-gate', 'blocked')).toBeVisible({
@@ -381,11 +412,11 @@ test.describe
 			});
 
 			test('review-votes-gate vote count badge shows 2/3', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
 				// review-votes-gate has 3 channels sharing it (Reviewer 1/2/3 → QA)
 				// Each shows the same "2/3" badge — expect at least one
@@ -397,12 +428,14 @@ test.describe
 		test.describe('all reviewers approved (3 of 3)', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 
 			test.beforeEach(async ({ page }) => {
 				await page.goto('/');
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
 				await writeGateData(page, runId, 'code-pr-gate', {
 					pr_url: 'https://github.com/test/repo/pull/1',
@@ -421,44 +454,47 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 			});
 
 			test('review-votes-gate shows open (green) when all 3 reviewers approve', async ({
 				page,
 			}) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
 				// 3 approvals >= 3 required → review-votes-gate opens
 				await expect(gateIcon(page, 'review-votes-gate', 'open')).toBeVisible({ timeout: 30000 });
 			});
 
 			test('review-votes-gate vote count badge shows 3/3', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
 				await expect(voteBadge(page, 'review-votes-gate', '3/3')).toBeVisible({ timeout: 30000 });
 			});
 		});
 
-		// ── 5. QA to Done channel (final completion) ──────────────────────────────
-		test.describe('QA passes → completion state', () => {
+		// ── 5. All gates open — pipeline fully approved through to QA ────────────
+		test.describe('all gates open — full pipeline approved', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 
 			test.beforeEach(async ({ page }) => {
 				await page.goto('/');
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
-				// Write all gates to simulate a fully approved + QA-passed state
+				// Write all gates to simulate a fully approved state (3/3 code reviewers)
 				await writeGateData(page, runId, 'code-pr-gate', {
 					pr_url: 'https://github.com/test/repo/pull/1',
 				});
@@ -469,7 +505,6 @@ test.describe
 						'Reviewer 3': 'approved',
 					},
 				});
-				await writeGateData(page, runId, 'qa-result-gate', { result: 'passed' });
 			});
 
 			test.afterEach(async ({ page }) => {
@@ -477,37 +512,36 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 			});
 
-			test('QA-to-Done channel gate opens after QA passes (qa-result-gate open)', async ({
+			test('review-votes-gate opens when all 3 reviewers approve (full pipeline)', async ({
 				page,
 			}) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
-				// qa-result-gate condition: { type: 'check', field: 'result', op: '==', value: 'passed' }
-				// With result: 'passed' written, the gate opens → green checkmark on QA→Done channel
-				await expect(gateIcon(page, 'qa-result-gate', 'open')).toBeVisible({ timeout: 30000 });
+				// 3 approvals >= 3 min → review-votes-gate opens → green checkmark on Code Review → QA channel
+				await expect(gateIcon(page, 'review-votes-gate', 'open')).toBeVisible({ timeout: 30000 });
 			});
 
-			test('canvas shows all three Reviewer nodes and QA + Done (pipeline tail)', async ({
-				page,
-			}) => {
-				await gotoSpaceAndWait(page, spaceId);
+			test('canvas shows all three Reviewer nodes and QA (pipeline tail)', async ({ page }) => {
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
-				// All key nodes in the reviewer→QA→Done pipeline must be visible
+				// All key nodes in the reviewer→QA pipeline must be visible
 				await expect(page.locator('text=Reviewer 1')).toBeVisible({ timeout: 5000 });
 				await expect(page.locator('text=Reviewer 2')).toBeVisible({ timeout: 5000 });
 				await expect(page.locator('text=Reviewer 3')).toBeVisible({ timeout: 5000 });
-				await expect(page.locator('text=QA')).toBeVisible({ timeout: 5000 });
-				await expect(page.locator('text=Done')).toBeVisible({ timeout: 5000 });
+				await expect(
+					page.locator('[data-testid="step-name"]').filter({ hasText: 'QA' }).first()
+				).toBeVisible({ timeout: 5000 });
 			});
 		});
 
@@ -515,12 +549,14 @@ test.describe
 		test.describe('review-votes-gate reset after rejection cycle', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 
 			test.beforeEach(async ({ page }) => {
 				await page.goto('/');
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
 				// Simulate state AFTER a rejection cycle: code-pr-gate persists (resetOnCycle: false),
 				// review-votes-gate has been cleared (resetOnCycle: true) — no votes written.
@@ -535,14 +571,15 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 			});
 
 			test('review-votes-gate shows 0/3 after votes are reset (empty)', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
+				await gotoSpaceAndWait(page, spaceId, taskId);
 
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
 				// With no votes written, the review-votes-gate shows 0/3
 				await expect(voteBadge(page, 'review-votes-gate', '0/3')).toBeVisible({ timeout: 30000 });
@@ -553,12 +590,14 @@ test.describe
 		test.describe('rejection-to-approval state transition', () => {
 			let spaceId = '';
 			let runId = '';
+			let taskId = '';
 
 			test.beforeEach(async ({ page }) => {
 				await page.goto('/');
 				const ids = await createSpaceWithRun(page);
 				spaceId = ids.spaceId;
 				runId = ids.runId;
+				taskId = ids.taskId;
 
 				await writeGateData(page, runId, 'code-pr-gate', {
 					pr_url: 'https://github.com/test/repo/pull/1',
@@ -570,19 +609,20 @@ test.describe
 				if (spaceId) await deleteSpace(page, spaceId);
 				spaceId = '';
 				runId = '';
+				taskId = '';
 			});
 
 			test('canvas updates from rejection to full approval in sequence', async ({ page }) => {
-				await gotoSpaceAndWait(page, spaceId);
-				await expect(
-					page.getByTestId('canvas-view').getByTestId('workflow-canvas-svg')
-				).toBeVisible({ timeout: 30000 });
+				await gotoSpaceAndWait(page, spaceId, taskId);
+				await expect(page.getByTestId('canvas-view').getByTestId('visual-canvas-svg')).toBeVisible({
+					timeout: 30000,
+				});
 
-				// Step 1: Reviewer 1 rejects — review-reject-gate opens
-				await writeGateData(page, runId, 'review-reject-gate', {
+				// Step 1: Reviewer 1 rejects — review-votes-gate stays blocked (0 approvals < 3)
+				await writeGateData(page, runId, 'review-votes-gate', {
 					votes: { 'Reviewer 1': 'rejected' },
 				});
-				await expect(gateIcon(page, 'review-reject-gate', 'open')).toBeVisible({
+				await expect(gateIcon(page, 'review-votes-gate', 'blocked')).toBeVisible({
 					timeout: 30000,
 				});
 

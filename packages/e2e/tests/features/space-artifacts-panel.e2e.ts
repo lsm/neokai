@@ -114,8 +114,14 @@ async function createSpaceWithRunAndChanges(
 			}>;
 			const task = tasks.find((t) => t.workflowRunId === runId);
 			if (!task) throw new Error(`No task found for run ${runId}`);
+			const taskId = task.id;
 
-			return { spaceId, runId, taskId: task.id };
+			// Mark task as done to prevent the task agent from running — the runtime
+			// skips terminal tasks, so no sub-sessions are created that would cause the
+			// space store to reload and make SpaceIsland show a loading spinner during tests.
+			await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
+
+			return { spaceId, runId, taskId };
 		},
 		{ wsPath }
 	);

@@ -47,6 +47,10 @@ test.describe('Room Creation with Workspace Path', () => {
 		await page.locator('button:has-text("Create Room"):not([disabled])').click();
 		// Wait for the modal title to appear (specific to the Create Room modal)
 		await expect(page.locator('h2:has-text("Create Room")')).toBeVisible({ timeout: 5000 });
+		// Give the systemState signal time to deliver the workspace root to the modal's input.
+		// The modal subscribes to systemState on mount, but the callback may not fire
+		// immediately with the current value in all timing scenarios.
+		await page.waitForTimeout(500);
 	}
 
 	// ─── Modal Opens ─────────────────────────────────────────────────────────────

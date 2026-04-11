@@ -120,14 +120,21 @@ export async function showArchivedSessions(page: Page): Promise<void> {
 /**
  * Click on a session in the sidebar to select it
  * Useful after archiving when the session view might have changed
- * Will show archived sessions if the session is not immediately visible
+ * Navigates home first to ensure the Chats panel is in a clean state,
+ * then shows archived sessions if needed.
  */
 export async function selectSessionInSidebar(page: Page, sessionId: string): Promise<void> {
-	// First check if session is visible
+	// Navigate home to get into a known state with the Chats panel open.
+	// After archiving, the app redirects to Lobby (Rooms nav). If we try to click
+	// the Chats button while still on the archived session URL, the routing can
+	// reset navSection back to 'rooms'. Navigating home first avoids this race.
+	await goToHomePage(page);
+
+	// Check if session is visible (archived sessions are hidden when showArchived=false)
 	const sessionButton = page.locator(`[data-session-id="${sessionId}"]`);
 	const isVisible = await sessionButton.isVisible().catch(() => false);
 
-	// If not visible, try showing archived sessions
+	// If not visible, enable the "Show archived" toggle so archived sessions appear
 	if (!isVisible) {
 		await showArchivedSessions(page);
 		await page.waitForTimeout(500);

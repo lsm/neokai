@@ -100,7 +100,7 @@ test.describe('Comprehensive Space Navigation', () => {
 		// SpaceDetailPanel requires the "Open space" arrow button (calls onSpaceNavigate).
 		// The arrow is opacity-0 until hover, so hover the space name first to reveal it,
 		// then scope to the parent row div to avoid clicking a different space's arrow.
-		const spaceNameBtn = page.getByText(spaceName, { exact: true });
+		const spaceNameBtn = page.getByText(spaceName, { exact: true }).first();
 		await spaceNameBtn.hover();
 		await spaceNameBtn.locator('..').getByTitle('Open space').click();
 
@@ -112,7 +112,9 @@ test.describe('Comprehensive Space Navigation', () => {
 
 		// Back button present and space name in header
 		await expect(page.getByTitle('Back to Spaces')).toBeVisible({ timeout: 5000 });
-		await expect(page.getByRole('heading', { name: spaceName })).toBeVisible({ timeout: 5000 });
+		await expect(page.getByRole('heading', { name: spaceName }).first()).toBeVisible({
+			timeout: 5000,
+		});
 	});
 
 	// ---------------------------------------------------------------------------
@@ -169,14 +171,21 @@ test.describe('Comprehensive Space Navigation', () => {
 		// SpaceOverview overview is visible again
 		await expect(page.locator(OVERVIEW_VIEW)).toBeVisible({ timeout: 5000 });
 
+		// Wait for space data to load — verify space name heading appears in context panel
+		// and "Space not found" is not shown in SpaceOverview
+		await expect(page.getByRole('heading', { name: spaceName })).toBeVisible({ timeout: 10000 });
+		await expect(page.locator(OVERVIEW_VIEW).locator('text="Space not found"')).not.toBeAttached({
+			timeout: 10000,
+		});
+
 		// All 3 SpaceOverview tab buttons should be visible and clickable.
 		// These tabs live inside the space-overview-view and are unique to SpaceOverview.
-		// OverviewTabButton renders <button><span>{label}</span><span>{count}</span></button>;
-		// Playwright computes accessible name as "Active 1" (label + count). Use a regex
-		// prefix match to handle any count value rather than requiring exact: true.
+		// StatCard renders <button><span>{count}</span><span>{label}</span></button>;
+		// Playwright computes accessible name as "0 Active" (count + label). Use .test() to
+		// match label anywhere in the accessible name rather than anchoring to start.
 		const overviewView = page.locator(OVERVIEW_VIEW);
 		for (const tabName of ['Active', 'Review', 'Done']) {
-			const tab = overviewView.getByRole('button', { name: new RegExp(`^${tabName}`) });
+			const tab = overviewView.getByRole('button', { name: new RegExp(tabName) });
 			await expect(tab).toBeVisible({ timeout: 5000 });
 			await tab.click();
 			await expect(tab).toBeVisible({ timeout: 2000 });
@@ -256,7 +265,9 @@ test.describe('Comprehensive Space Navigation', () => {
 		await waitForWebSocketConnected(page);
 
 		// ContextPanel at Level 2 — space name in header
-		await expect(page.getByRole('heading', { name: spaceName })).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: spaceName }).first()).toBeVisible({
+			timeout: 10000,
+		});
 
 		// SpaceDetailPanel sidebar items visible
 		await expect(page.locator('[data-testid="space-detail-agent"]')).toBeVisible({ timeout: 5000 });

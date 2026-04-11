@@ -67,14 +67,11 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
 		// Verify collapsible group headers.
-		// "App MCP Servers" renders as a <button> (via GroupHeader) when app skills exist, but
-		// falls back to a plain <span> when no skills are configured. The button's full text is
-		// "App MCP Servers (N)" (includes the item count), so { exact: true } matches only the
-		// inner <span> (text is exactly "App MCP Servers") in both DOM states.
-		await expect(page.getByText('App MCP Servers', { exact: true })).toBeVisible();
-		// "Project MCP Servers" and "NeoKai Tools" always render as GroupHeader buttons.
+		// "App Skills & MCP Servers" renders as a <button> (via GroupHeader) when app skills exist,
+		// but falls back to a plain <span> when no skills are configured. In both cases the text is present.
+		await expect(page.getByText('App Skills & MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" always renders as a GroupHeader button.
 		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
-		await expect(page.locator('button:has-text("NeoKai Tools")')).toBeVisible();
 
 		// Advanced section is collapsed by default — only the toggle button is visible, not its children
 		await expect(page.getByRole('button', { name: /Advanced/i })).toBeVisible();
@@ -447,13 +444,6 @@ test.describe('MCP Toggle - Edge Cases', () => {
 			.first();
 		const claudeCodeEnabled = await claudeCodeCheckbox.isChecked();
 
-		// Get Memory checkbox state (in NeoKai Tools section, always visible)
-		const memoryCheckbox = page
-			.locator('label:has-text("Memory")')
-			.locator('input[type="checkbox"]')
-			.first();
-		const memoryEnabled = await memoryCheckbox.isChecked();
-
 		// Toggle MCP server (if available)
 		const serverNames = await getMcpServerNames(page);
 		if (serverNames.length > 0) {
@@ -467,12 +457,9 @@ test.describe('MCP Toggle - Edge Cases', () => {
 				.click();
 		}
 
-		// Verify other settings weren't affected
+		// Verify Claude Code Preset wasn't affected by MCP toggle
 		const claudeCodeEnabledAfter = await claudeCodeCheckbox.isChecked();
 		expect(claudeCodeEnabledAfter).toBe(claudeCodeEnabled);
-
-		const memoryEnabledAfter = await memoryCheckbox.isChecked();
-		expect(memoryEnabledAfter).toBe(memoryEnabled);
 	});
 
 	test('should handle individual server toggle correctly', async ({ page }) => {

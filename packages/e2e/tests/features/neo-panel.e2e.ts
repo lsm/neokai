@@ -12,6 +12,7 @@
 import { test, expect } from '../../fixtures';
 import type { Page } from '@playwright/test';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { isNeoPanelRendered } from '../helpers/neo-helpers';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,6 +57,11 @@ test.describe('Neo Panel — Core Interaction', () => {
 		// do NOT re-clear localStorage — the persistence test depends on this.
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// NeoPanel may not be rendered in all environments (e.g., when Neo is disabled).
+		// Skip tests if the panel is not present in the DOM.
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 		await page.evaluate(() => localStorage.removeItem('neo:panelOpen'));
 		// Reload so the app initialises with the cleared localStorage value
 		await page.reload();

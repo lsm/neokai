@@ -72,11 +72,23 @@ type PanelView =
 // Subcomponents
 // ============================================================================
 
-function SectionHeader({ label, meta }: { label: string; meta?: preact.ComponentChildren }) {
+function SectionHeader({
+	label,
+	meta,
+	metaTestId,
+}: {
+	label: string;
+	meta?: preact.ComponentChildren;
+	metaTestId?: string;
+}) {
 	return (
 		<div class="px-4 py-2 flex items-center justify-between border-b border-dark-800">
 			<span class="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</span>
-			{meta && <span class="text-xs text-gray-600 font-mono">{meta}</span>}
+			{meta && (
+				<span class="text-xs text-gray-600 font-mono" data-testid={metaTestId}>
+					{meta}
+				</span>
+			)}
 		</div>
 	);
 }
@@ -572,7 +584,11 @@ export function TaskArtifactsPanel({
 
 							{/* ── Uncommitted Changes ────────────────────────────── */}
 							<div>
-								<SectionHeader label="Uncommitted Changes" meta={uncommittedMeta} />
+								<SectionHeader
+									label="Uncommitted Changes"
+									meta={uncommittedMeta}
+									metaTestId="artifacts-summary"
+								/>
 								{uncommittedLoading && (
 									<div class="flex items-center justify-center h-16">
 										<div class="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />

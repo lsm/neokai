@@ -296,7 +296,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	}
 
 	// Initialize workspace file index (non-blocking — init runs in the background)
-	const fileIndex = new FileIndex(undefined);
+	const fileIndex = new FileIndex(config.workspaceRoot);
 	void fileIndex.init();
 
 	// Setup RPC handlers (returns cleanup function + exposed services)

@@ -15,6 +15,7 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomGoalIdSignal,
 	currentRoomAgentActiveSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
@@ -32,6 +33,7 @@ import {
 	navigateToRoomAgent,
 	navigateToRoomSession,
 	navigateToRoomTask,
+	navigateToRoomMission,
 	navigateToHome,
 	navigateToSpacesPage,
 	navigateToSpace,
@@ -44,6 +46,7 @@ import {
 	createRoomAgentPath,
 	createRoomSessionPath,
 	createRoomTaskPath,
+	createRoomMissionPath,
 	createSpacePath,
 	createSpaceConfigurePath,
 	createSpaceAgentPath,
@@ -112,6 +115,7 @@ export function App() {
 			const roomId = currentRoomIdSignal.value;
 			const roomSessionId = currentRoomSessionIdSignal.value;
 			const roomTaskId = currentRoomTaskIdSignal.value;
+			const roomGoalId = currentRoomGoalIdSignal.value;
 			const spaceId = currentSpaceIdSignal.value;
 			const spaceSessionId = currentSpaceSessionIdSignal.value;
 			const spaceTaskId = currentSpaceTaskIdSignal.value;
@@ -146,13 +150,15 @@ export function App() {
 											? createRoomAgentPath(roomId)
 											: roomSessionId && roomId
 												? createRoomSessionPath(roomId, roomSessionId)
-												: roomId
-													? createRoomPath(roomId)
-													: navSection === 'spaces'
-														? '/spaces'
-														: navSection === 'chats'
-															? '/sessions'
-															: '/';
+												: roomGoalId && roomId
+													? createRoomMissionPath(roomId, roomGoalId)
+													: roomId
+														? createRoomPath(roomId)
+														: navSection === 'spaces'
+															? '/spaces'
+															: navSection === 'chats'
+																? '/sessions'
+																: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -175,6 +181,8 @@ export function App() {
 					navigateToRoomAgent(roomId, true);
 				} else if (roomSessionId && roomId) {
 					navigateToRoomSession(roomId, roomSessionId, true);
+				} else if (roomGoalId && roomId) {
+					navigateToRoomMission(roomId, roomGoalId, true);
 				} else if (roomId) {
 					navigateToRoom(roomId, true);
 				} else if (navSection === 'spaces') {
@@ -198,7 +206,7 @@ export function App() {
 				<ContextPanel />
 
 				{/* Main Content — bottom padding matches actual BottomTabBar height via --bottom-bar-height */}
-				<div class="flex-1 flex flex-col overflow-hidden min-w-0">
+				<div class="flex-1 flex flex-col overflow-hidden min-w-0 pb-bottom-bar">
 					<MainContent />
 				</div>
 			</div>

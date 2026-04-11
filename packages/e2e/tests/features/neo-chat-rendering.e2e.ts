@@ -31,6 +31,7 @@ import {
 	waitForNeoUserMessage,
 	waitForNeoAssistantResponse,
 	isNeoAvailable,
+	isNeoPanelRendered,
 } from '../helpers/neo-helpers';
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -46,6 +47,10 @@ test.describe('Neo Chat Rendering', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// NeoPanel may not be rendered in all environments. Skip tests if not rendered.
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 		// Clear persisted panel state so tests start with panel closed
 		await page.evaluate(() => localStorage.removeItem('neo:panelOpen'));
 		// Clear the Neo session so each test starts with an empty chat history.

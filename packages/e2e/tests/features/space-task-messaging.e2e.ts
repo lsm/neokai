@@ -197,9 +197,7 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 
 		// The inline composer renders because taskAgentSessionId is set and the
 		// task is non-terminal (in_progress).
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const composerTextarea = page.getByPlaceholder('Message task agent...');
 		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
 	});
 
@@ -209,9 +207,7 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const composerTextarea = page.getByPlaceholder('Message task agent...');
 		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
 
 		// Use pressSequentially to type the message character by character.
@@ -248,9 +244,7 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const composerTextarea = page.getByPlaceholder('Message task agent...');
 		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
 
 		await composerTextarea.click();
@@ -275,9 +269,7 @@ test.describe('Space Task Messaging & @mention Autocomplete', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		const composerTextarea = page.getByPlaceholder(
-			'Message the task agent (Enter to send, Shift+Enter for newline)'
-		);
+		const composerTextarea = page.getByPlaceholder('Message task agent...');
 		await expect(composerTextarea).toBeVisible({ timeout: 10000 });
 
 		// Type "@" to attempt to trigger mention autocomplete.

@@ -38,6 +38,7 @@ import {
 	waitForNeoUserMessage,
 	waitForNeoAssistantResponse,
 	isNeoAvailable,
+	isNeoPanelRendered,
 } from '../helpers/neo-helpers';
 
 /**
@@ -90,7 +91,7 @@ async function getSkillEnabledStateViaUI(page: Page, displayName: string): Promi
 	const toggle = skillRow.locator('[role="switch"]').first();
 	const checked = await toggle.getAttribute('aria-checked', { timeout: 5000 });
 	// Navigate home to close settings before returning
-	await page.getByRole('button', { name: 'Home', exact: true }).click();
+	await page.getByRole('button', { name: 'Rooms', exact: true }).click();
 	return checked === 'true';
 }
 
@@ -204,6 +205,10 @@ test.describe('Neo Panel – UI mechanics', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 	});
 
 	test('opens via NavRail Neo button and shows Chat tab by default', async ({ page }) => {
@@ -308,6 +313,10 @@ test.describe('Neo – Query flow', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 		// Create a test room so Neo can answer "what rooms do I have?"
 		roomId = await createTestRoom(page, roomName);
 		await openNeoPanel(page);
@@ -364,6 +373,10 @@ test.describe('Neo Settings – Security mode', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 		await openSettingsModal(page);
 		await navigateToNeoSettings(page);
 	});
@@ -448,6 +461,10 @@ test.describe('Neo – Action flow with confirmation (conservative mode)', () =>
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 
 		// Create a skill to enable/disable (starts disabled)
 		skillId = await createTestSkill(page, skillName);
@@ -538,6 +555,10 @@ test.describe('Neo – Activity feed', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 		await openNeoPanel(page);
 	});
 
@@ -615,6 +636,10 @@ test.describe('Neo Settings – Clear session', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 	});
 
 	test('clear session button shows confirmation dialog and cancels cleanly', async ({ page }) => {
@@ -663,7 +688,7 @@ test.describe('Neo Settings – Clear session', () => {
 		await expect(page.locator('text=Neo session cleared')).toBeVisible();
 
 		// Navigate home and reopen Neo panel — chat should be empty
-		await page.getByRole('button', { name: 'Home', exact: true }).click();
+		await page.getByRole('button', { name: 'Rooms', exact: true }).click();
 		await openNeoPanel(page);
 
 		// No user or assistant message bubbles remain
@@ -685,6 +710,10 @@ test.describe('Neo – Undo flow', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
+		// Skip if NeoPanel is not rendered (disabled in App.tsx)
+		if (!(await isNeoPanelRendered(page))) {
+			test.skip();
+		}
 
 		// Create a skill to enable (starts disabled)
 		skillId = await createTestSkill(page, skillName);
