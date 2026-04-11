@@ -3,10 +3,10 @@
  *
  * Tests customizable badge label and color on workflow gate badges:
  * - Create a gate on a channel via the visual editor
- * - Verify heuristic badge label when no custom label is set
+ * - Verify badge shows "Gate" when no custom label is set
  * - Set a custom label and verify the badge text updates on the canvas
  * - Set a custom color and verify the badge fill updates on the canvas
- * - Remove the custom label and verify heuristic fallback
+ * - Remove the custom label and verify it falls back to "Gate"
  * - Create a script-only gate (no fields) and verify the editor works
  *
  * Setup: creates a Space via RPC in beforeEach.
@@ -196,18 +196,17 @@ test.describe('Gate Custom Badges', () => {
 		const nodePanel = editor.getByTestId('node-config-panel');
 		const gatePanel = nodePanel.getByTestId('gate-editor-panel');
 
-		// ── Step 1: Verify initial badge shows heuristic "Check" ──────────────
-		// A newly created gate has fields:[], so resolveSemanticGateType returns 'check'.
-		// The heuristic label for 'check' is "Check".
+		// ── Step 1: Verify initial badge shows "Gate" ────────────────────────
+		// A newly created gate has no custom label, so it falls back to "Gate".
 		const gateBadge = getFirstGateBadge(page);
 		await expect(gateBadge).toBeVisible({ timeout: 5000 });
-		await expect(gateBadge).toContainText('Check');
+		await expect(gateBadge).toContainText('Gate');
 
 		// ── Step 2: Add Human Approval preset → gate type becomes 'human' ───
 		await gatePanel.getByTestId('gate-editor-preset-human').click();
 
-		// Badge should now show heuristic "Human" label
-		await expect(gateBadge).toContainText('Human', { timeout: 5000 });
+		// Badge still shows "Gate" (no heuristic fallback - label is authoritative)
+		await expect(gateBadge).toContainText('Gate', { timeout: 5000 });
 
 		// ── Step 3: Set custom label "Approve" ───────────────────────────────
 		const labelInput = gatePanel.getByTestId('gate-editor-label');
@@ -239,14 +238,13 @@ test.describe('Gate Custom Badges', () => {
 		// Color hex display should update next to the picker
 		await expect(gatePanel.locator('text=#ff5500')).toBeVisible({ timeout: 2000 });
 
-		// ── Step 5: Remove custom label → verify heuristic fallback ──────────
+		// ── Step 5: Remove custom label → verify fallback to "Gate" ─────────
 		await labelInput.fill('');
 
-		// Badge should fall back to heuristic "Human" label
-		await expect(gateBadge).toContainText('Human', { timeout: 3000 });
+		// Badge falls back to "Gate" (no heuristic fallback)
+		await expect(gateBadge).toContainText('Gate', { timeout: 3000 });
 
-		// Badge preview falls back to "Gate" (raw default: gate.label ?? 'Gate')
-		// whereas the canvas badge uses the heuristic from gateType ("Human" for type 'human').
+		// Badge preview also falls back to "Gate"
 		await expect(badgePreview).toContainText('Gate');
 	});
 
@@ -291,12 +289,12 @@ test.describe('Gate Custom Badges', () => {
 		await expect(gateError).not.toBeVisible({ timeout: 2000 });
 
 		// ── Step 6: Verify badge shows on canvas ────────────────────────────
-		// Gate has fields:[] (type='check') + script enabled → badge renders
+		// Gate has fields:[] + script enabled → badge renders with "Gate" fallback
 		const gateBadge = getFirstGateBadge(page);
 		await expect(gateBadge).toBeVisible({ timeout: 5000 });
 
-		// Badge should show heuristic "Check" label
-		await expect(gateBadge).toContainText('Check');
+		// Badge shows "Gate" (no heuristic fallback)
+		await expect(gateBadge).toContainText('Gate');
 
 		// ── Step 7: Verify script icon ⚡ appears in the badge ──────────
 		// The script icon is a separate <text> element containing the lightning bolt
