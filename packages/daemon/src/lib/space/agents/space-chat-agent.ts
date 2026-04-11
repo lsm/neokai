@@ -26,6 +26,9 @@
  *       - retry_task
  *       - cancel_task
  *       - reassign_task
+ *     Task agent communication tools:
+ *       - send_message_to_task
+ *       - list_task_members
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
@@ -284,6 +287,26 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(
 		`- **\`reassign_task\`** — Change the assigned agent for a task. Valid for tasks in \`pending\`, ` +
 			`\`needs_attention\`, or \`cancelled\` status. Use when a different agent would be better suited.`
+	);
+
+	// Task agent communication tools section
+	sections.push(`\n## Task Agent Communication\n`);
+	sections.push(
+		`Use these tools to directly interact with running task agents and inspect their workflow execution state:\n`
+	);
+	sections.push(
+		`- **\`send_message_to_task\`** — Inject a message into a running task agent session. ` +
+			`Use this to provide real-time guidance, corrections, or new context to a task agent ` +
+			`that is currently executing. Call \`get_task_detail\` first to confirm the task is \`in_progress\`. ` +
+			`The message is delivered asynchronously to the agent's session.`
+	);
+	sections.push('');
+	sections.push(
+		`- **\`list_task_members\`** — List all node executions (workflow member agents) for a task. ` +
+			`Returns each node's name, execution status (\`pending\`, \`in_progress\`, \`idle\`, \`blocked\`, ` +
+			`\`cancelled\`), result summary, and saved data. Use this when you need more granular insight ` +
+			`into a running workflow than \`get_task_detail\` provides — for example, to see which specific ` +
+			`node is stuck or to read intermediate outputs from individual agents.`
 	);
 
 	return sections.join('\n');

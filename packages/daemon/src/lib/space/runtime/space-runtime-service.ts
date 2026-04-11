@@ -265,6 +265,7 @@ export class SpaceRuntimeService {
 			workflowRunRepo,
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
+			taskAgentManager: this.taskAgentManager ?? undefined,
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.
