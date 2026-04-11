@@ -43,13 +43,24 @@ mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isUserVisibleMessage: (msg: { type: string }) => msg.type === 'assistant' || msg.type === 'user',
 }));
 
-// Mock provider-service so generateTitleAndRenameBranch tests don't hit real credentials
+// Mock provider-service so generateTitleAndRenameBranch tests don't hit real credentials.
+// getProviderApiKey reads from process.env at call time so that:
+//   - This file's own tests (ANTHROPIC_API_KEY cleared by setup.ts) get undefined → fallback path.
+//   - session-lifecycle-sdk-title tests (ANTHROPIC_API_KEY='test-api-key' in beforeEach) get a
+//     truthy key and proceed to generateTitleWithSdk. All methods needed by that path are
+//     included here so that bun's module-cache sharing across files never causes a TypeError.
 mock.module('../../../../src/lib/provider-service', () => ({
 	getProviderService: () => ({
 		getDefaultProvider: async () => 'anthropic',
-		getProviderApiKey: () => undefined, // no key → fallback title path
+		getProviderApiKey: (_provider: string) => process.env.ANTHROPIC_API_KEY || undefined,
 		isProviderAvailable: async () => false,
 		mergeProviderEnvVars: (s: object) => s,
+		applyEnvVarsToProcessForProvider: (_provider: string, _modelId: string) => ({}),
+		getTitleGenerationConfig: async (_provider: string) => ({
+			modelId: 'claude-sonnet-4-20250514',
+		}),
+		getEnvVarsForModel: (_modelId: string, _provider: string) => ({}),
+		restoreEnvVars: (_originalEnv: Record<string, string | undefined>) => {},
 	}),
 	mergeProviderEnvVars: (session: object) => session,
 }));

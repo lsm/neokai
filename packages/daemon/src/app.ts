@@ -166,10 +166,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const authManager = new AuthManager(db, config);
 	await authManager.initialize();
 
-	// Initialize settings manager using homedir() so it discovers MCP config from
-	// ~/.claude/.mcp.json. Room-scoped sessions use their own defaultPath for
-	// project-level MCP resolution.
-	const settingsManager = new SettingsManager(db, homedir());
+	// Initialize settings manager.
+	// When NEOKAI_WORKSPACE_PATH is set (e.g., in tests via createDaemonServer), use
+	// that directory so each test instance writes file-only settings to its own temp
+	// workspace, preventing state leakage across tests.
+	// Otherwise fall back to homedir() so global MCP config (~/.claude/.mcp.json) is
+	// discovered. Room-scoped sessions use their own defaultPath for project-level
+	// MCP resolution and are not affected by this global instance.
+	const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
