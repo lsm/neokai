@@ -105,7 +105,7 @@ export function WorkspaceSelector({
 	};
 
 	return (
-		<div class="border-t border-dark-700 bg-dark-850/60 px-4 py-3">
+		<div class="relative z-20 border-t border-dark-700 bg-dark-850/60 px-4 py-3">
 			<div class="max-w-4xl mx-auto">
 				<div class="flex items-start gap-3">
 					<div class="flex-1 min-w-0">
