@@ -978,7 +978,7 @@ jobs:
           PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
-          ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
+          ./dist/bin/kai-linux-x64 --port "$PORT" &
           BINARY_PID=$!
           trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
 
@@ -1121,7 +1121,7 @@ jobs:
           PORT=$(python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("",0)); print(s.getsockname()[1])')
           echo "Reserved port $PORT for binary"
 
-          ./dist/bin/kai-linux-x64 --port "$PORT" "$WORKSPACE" &
+          ./dist/bin/kai-linux-x64 --port "$PORT" &
           BINARY_PID=$!
           trap 'kill $BINARY_PID 2>/dev/null; rm -rf "$WORKSPACE"' EXIT
 
