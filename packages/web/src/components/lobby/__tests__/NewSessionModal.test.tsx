@@ -1,6 +1,10 @@
 // @ts-nocheck
 /**
  * Tests for NewSessionModal — provider-aware session creation
+ *
+ * Note: Workspace path selection was moved out of this modal into the inline
+ * WorkspaceSelector component in ChatContainer. The modal now only handles
+ * model and room selection.
  */
 
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
@@ -25,7 +29,6 @@ const DEFAULT_PROPS = {
 	isOpen: true,
 	onClose: vi.fn(),
 	onSubmit: vi.fn().mockResolvedValue(undefined),
-	recentPaths: [],
 	rooms: [],
 };
 
@@ -125,10 +128,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			const onSubmit = vi.fn().mockResolvedValue(undefined);
 			render(<NewSessionModal {...DEFAULT_PROPS} onSubmit={onSubmit} />);
 
-			// Set workspace path
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
 			// Submit without changing model selection
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -136,7 +135,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith(
 					expect.objectContaining({
-						workspacePath: '/home/user/project',
 						model: undefined,
 					})
 				);
@@ -163,10 +161,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 				target: { value: 'anthropic-copilot:copilot-claude-sonnet' },
 			});
 
-			// Set workspace path
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
 			// Submit
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -174,7 +168,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith(
 					expect.objectContaining({
-						workspacePath: '/home/user/project',
 						model: expect.objectContaining({
 							id: 'copilot-claude-sonnet',
 							provider: 'anthropic-copilot',
@@ -201,16 +194,12 @@ describe('NewSessionModal — provider-aware session creation', () => {
 				target: { value: 'anthropic-codex:codex-claude-sonnet' },
 			});
 
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
 
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith(
 					expect.objectContaining({
-						workspacePath: '/home/user/project',
 						model: expect.objectContaining({
 							id: 'codex-claude-sonnet',
 							provider: 'anthropic-codex',
@@ -236,9 +225,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			fireEvent.change(modelSelect!, {
 				target: { value: 'anthropic:claude-opus-4-6' },
 			});
-
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -277,9 +263,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			expect((modelSelect as HTMLSelectElement).value).toBe(
 				'anthropic-copilot:copilot-claude-sonnet'
 			);
-
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
 
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
@@ -350,7 +333,6 @@ describe('NewSessionModal — provider-aware session creation', () => {
 
 		it('does not show stale models from previous open when auth fails on re-open', async () => {
 			// First open: both succeed — models populate
-			let resolveAuth!: (v: unknown) => void;
 			mockRequest.mockImplementation((method: string) => {
 				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
 				if (method === 'auth.providers') return Promise.resolve(ALL_AUTH_OK);

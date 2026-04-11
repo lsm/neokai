@@ -2,12 +2,13 @@
  * NewSessionModal Component
  *
  * Modal for creating a new session with:
- * - Recent paths dropdown (top 5-10 recent paths with timestamps)
+ * - Optional model selector (provider-grouped)
  * - Optional room assignment dropdown (shows room name + allowedPaths count)
  * - "Create new room" option that opens inline form
- * - "Browse for folder" button
- * - Optional model selector (provider-grouped)
  * - Form validation and error handling
+ *
+ * Note: Workspace selection has been moved out of this modal into the inline
+ * WorkspaceSelector component shown in the chat container after session creation.
  */
 
 import { useState, useEffect } from 'preact/hooks';
