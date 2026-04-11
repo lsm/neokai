@@ -33,7 +33,7 @@ import type {
 	AgentDefinition,
 } from '@neokai/shared';
 
-const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-6';
 
 const PLANNER_FEATURES: SessionFeatures = {
 	rewind: false,

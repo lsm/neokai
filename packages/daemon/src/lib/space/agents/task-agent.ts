@@ -493,7 +493,7 @@ export function buildTaskAgentInitialMessage(context: TaskAgentContext): string 
 // Session init factory
 // ---------------------------------------------------------------------------
 
-const DEFAULT_TASK_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_TASK_AGENT_MODEL = 'claude-sonnet-4-6';
 
 const TASK_AGENT_FEATURES: SessionFeatures = {
 	rewind: false,

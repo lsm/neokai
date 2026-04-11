@@ -277,11 +277,11 @@ describe('MessageInfoDropdown', () => {
 	});
 
 	describe('Styling', () => {
-		it('should have indigo color scheme', () => {
+		it('should have sky color scheme', () => {
 			const sessionInfo = createSessionInfo();
 			const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
-			expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/70')).toBeTruthy();
+			expect(container.querySelector('.bg-sky-50, .dark\\:bg-sky-900\\/70')).toBeTruthy();
 		});
 
 		it('should have fixed width', () => {

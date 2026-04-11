@@ -31,7 +31,7 @@ import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import { createLeaderContextMcpServer } from '../tools/room-agent-tools';
 
-const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-6';
 
 const LEADER_FEATURES: SessionFeatures = {
 	rewind: false,
