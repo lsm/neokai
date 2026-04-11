@@ -105,7 +105,11 @@ export function registerMcpHandlers(
 		}
 
 		const session = agentSession.getSessionData();
-		const mcpConfigPath = join(session.workspacePath, '.mcp.json');
+		const workspacePath = session.worktree?.worktreePath ?? session.workspacePath;
+		if (!workspacePath) {
+			throw new Error(`Session ${sessionId} has no bound workspace path`);
+		}
+		const mcpConfigPath = join(workspacePath, '.mcp.json');
 
 		try {
 			const content = await readFile(mcpConfigPath, 'utf-8');

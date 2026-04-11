@@ -895,7 +895,7 @@ export default function ChatContainer({
 					}}
 				>
 					{/* Worktree Choice Inline */}
-					{showWorktreeChoice && session && (
+					{showWorktreeChoice && session?.workspacePath && (
 						<WorktreeChoiceInline
 							sessionId={sessionId}
 							workspacePath={session.workspacePath}

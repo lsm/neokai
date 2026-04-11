@@ -10,6 +10,37 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 // Mock SDK type-guards at the top level
 mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
+	isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
+		msg.type === 'user' && (!('isReplay' in msg) || msg.isReplay === false),
+	isSDKUserMessageReplay: (msg: { type: string; isReplay?: boolean }) =>
+		msg.type === 'user' && 'isReplay' in msg && msg.isReplay === true,
+	isSDKResultMessage: (msg: { type: string }) => msg.type === 'result',
+	isSDKResultSuccess: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'result' && msg.subtype === 'success',
+	isSDKResultError: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'result' && msg.subtype !== 'success',
+	isSDKSystemMessage: (msg: { type: string }) => msg.type === 'system',
+	isSDKSystemInit: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'init',
+	isSDKCompactBoundary: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'compact_boundary',
+	isSDKStatusMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'status',
+	isSDKHookResponse: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'hook_response',
+	isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'api_retry',
+	isSDKStreamEvent: (msg: { type: string }) => msg.type === 'stream_event',
+	isSDKToolProgressMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'tool_progress',
+	isSDKAuthStatusMessage: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'auth_status',
+	isSDKRateLimitEvent: (msg: { type: string; subtype?: string }) =>
+		msg.type === 'system' && msg.subtype === 'rate_limit',
+	isToolUseBlock: (block: { type: string }) => block.type === 'tool_use',
+	isTextBlock: (block: { type: string }) => block.type === 'text',
+	isThinkingBlock: (block: { type: string }) => block.type === 'thinking',
+	isUserVisibleMessage: (msg: { type: string }) => msg.type === 'assistant' || msg.type === 'user',
 }));
 
 import {

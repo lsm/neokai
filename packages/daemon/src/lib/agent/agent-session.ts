@@ -255,7 +255,10 @@ export class AgentSession
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
-		this.settingsManager = new SettingsManager(this.db, this.session.workspacePath);
+		this.settingsManager = new SettingsManager(
+			this.db,
+			this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined
+		);
 
 		// Initialize core components (order matters - some handlers depend on earlier ones)
 		this.messageQueue = new MessageQueue();

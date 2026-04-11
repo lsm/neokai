@@ -60,7 +60,6 @@ describe('Daemon App Cleanup', () => {
 			dbPath: ':memory:',
 			maxSessions: 10,
 			nodeEnv: 'test',
-			workspaceRoot: `${tmpDir}/neokai-test-daemon-cleanup-${Date.now()}`,
 			disableWorktrees: true,
 		};
 	});
@@ -277,16 +276,10 @@ describe('Daemon App Cleanup', () => {
 		});
 	});
 
-	describe('daemon startup without --workspace (workspaceRoot: undefined)', () => {
-		test('should start successfully without a workspaceRoot', async () => {
-			// Omit workspaceRoot entirely — daemon must start without it
-			const noWorkspaceConfig: Config = {
-				...config,
-				workspaceRoot: undefined,
-			};
-
+	describe('daemon startup (no workspace required)', () => {
+		test('should start successfully with default config', async () => {
 			const daemonContext = await createDaemonApp({
-				config: noWorkspaceConfig,
+				config,
 				verbose: true,
 				standalone: false,
 			});
@@ -299,59 +292,11 @@ describe('Daemon App Cleanup', () => {
 			expect(daemonContext.settingsManager).toBeDefined();
 			expect(daemonContext.fileIndex).toBeDefined();
 
-			// FileIndex should be ready=false (init() was a no-op since no workspace)
+			// FileIndex should be ready=false (no workspace path provided)
 			expect(daemonContext.fileIndex.isReady()).toBe(false);
 
 			// Cleanup
 			await daemonContext.cleanup();
-		});
-
-		test('should warn about sentinel rooms when workspaceRoot is undefined', async () => {
-			// Use a real file-based DB so the pre-seeded sentinel row persists into the daemon.
-			const tmpDir = process.env.TMPDIR || '/tmp';
-			const sentinelDbPath = `${tmpDir}/neokai-sentinel-test-${Date.now()}.db`;
-
-			const noWorkspaceConfig: Config = {
-				...config,
-				dbPath: sentinelDbPath,
-				workspaceRoot: undefined,
-			};
-
-			// Seed the sentinel row before the daemon opens the database.
-			const { Database } = await import('../../../../src/storage/database');
-			const db = new Database(sentinelDbPath);
-			const { createReactiveDatabase } = await import('../../../../src/storage/reactive-database');
-			const reactiveDb = createReactiveDatabase(db);
-			await db.initialize(reactiveDb);
-			const rawDb = db.getDatabase();
-			rawDb
-				.prepare(
-					`INSERT OR IGNORE INTO rooms
-						(id, name, default_path, allowed_paths, status, created_at, updated_at)
-					VALUES ('test-room-sentinel', 'Test', '__NEEDS_WORKSPACE_PATH__', '[]', 'active', datetime('now'), datetime('now'))`
-				)
-				.run();
-			db.close(); // Close so the daemon can open it
-
-			// Daemon should start (non-fatal warning, not an error)
-			const daemonContext = await createDaemonApp({
-				config: noWorkspaceConfig,
-				verbose: true,
-				standalone: false,
-			});
-
-			// Warning must have been logged
-			const warnLog = logs.find((log) => log.includes('__NEEDS_WORKSPACE_PATH__'));
-			expect(warnLog).toBeTruthy();
-
-			await daemonContext.cleanup();
-
-			// Clean up the temp DB file
-			try {
-				await import('fs/promises').then((fs) => fs.unlink(sentinelDbPath));
-			} catch {
-				// Ignore cleanup errors
-			}
 		});
 	});
 });

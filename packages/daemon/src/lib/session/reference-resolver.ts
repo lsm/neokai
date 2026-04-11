@@ -22,7 +22,7 @@ const log = new Logger('ReferenceResolver');
 // ============================================================================
 
 export interface ResolutionContext {
-	workspacePath: string;
+	workspacePath: string | null;
 	roomId: string | null;
 }
 
@@ -90,9 +90,11 @@ export class ReferenceResolver {
 					return this.resolveGoal(mention.id, context.roomId);
 
 				case 'file':
+					if (!context.workspacePath) return null;
 					return resolveFile(mention.id, context.workspacePath);
 
 				case 'folder':
+					if (!context.workspacePath) return null;
 					return resolveFolder(mention.id, context.workspacePath);
 
 				default: {

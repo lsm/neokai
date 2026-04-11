@@ -388,10 +388,11 @@ export class QueryOptionsBuilder {
 	/**
 	 * Get the current working directory for the SDK
 	 */
-	getCwd(): string {
-		return this.ctx.session.worktree
-			? this.ctx.session.worktree.worktreePath
-			: this.ctx.session.workspacePath;
+	getCwd(): string | undefined {
+		if (this.ctx.session.worktree) {
+			return this.ctx.session.worktree.worktreePath;
+		}
+		return this.ctx.session.workspacePath ?? undefined;
 	}
 
 	/**

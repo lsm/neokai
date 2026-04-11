@@ -250,12 +250,10 @@ describe('Session RPC Handlers - Extended', () => {
 			expect(result.message).toContain('orphaned worktree');
 		});
 
-		test('should work without workspacePath', async () => {
-			const result = (await daemon.messageHub.request('worktree.cleanup', {})) as {
-				success: boolean;
-			};
-
-			expect(result.success).toBe(true);
+		test('should throw an error without workspacePath', async () => {
+			await expect(daemon.messageHub.request('worktree.cleanup', {})).rejects.toThrow(
+				'workspacePath is required'
+			);
 		});
 	});
 

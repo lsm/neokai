@@ -45,7 +45,8 @@ function InfoSection({ title, children }: InfoSectionProps) {
  * Compute SDK project directory path from workspace path
  * SDK replaces both / and . with - (e.g., /.neokai/ -> --neokai-)
  */
-function getSDKProjectDir(workspacePath: string): string {
+function getSDKProjectDir(workspacePath: string | null): string | undefined {
+	if (!workspacePath) return undefined;
 	const projectKey = workspacePath.replace(/[/.]/g, '-');
 	return `~/.claude/projects/${projectKey}`;
 }
@@ -101,7 +102,7 @@ export function SessionInfoModal({ isOpen, onClose, session }: SessionInfoModalP
 
 				{/* Workspace Info */}
 				<InfoSection title="Workspace">
-					<InfoRow label="Workspace Path" value={session.workspacePath} />
+					<InfoRow label="Workspace Path" value={session.workspacePath ?? undefined} />
 					<InfoRow label="SDK Folder" value={sdkProjectDir} />
 					<InfoRow label="SDK Session ID" value={session.sdkSessionId} />
 					{session.gitBranch && <InfoRow label="Git Branch" value={session.gitBranch} />}

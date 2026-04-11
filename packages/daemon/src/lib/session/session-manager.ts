@@ -439,14 +439,6 @@ export class SessionManager {
 	}
 
 	/**
-	 * Get the daemon's global workspace root, if configured.
-	 * Used by RPC handlers to apply a fallback before calling cleanupOrphanedWorktrees.
-	 */
-	getWorkspaceRoot(): string | undefined {
-		return this.config.workspaceRoot;
-	}
-
-	/**
 	 * Get the database instance
 	 * Used by RPC handlers that need direct DB access for query mode operations
 	 */

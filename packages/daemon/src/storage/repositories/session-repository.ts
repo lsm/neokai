@@ -102,9 +102,9 @@ export class SessionRepository {
 			fields.push('title = ?');
 			values.push(updates.title);
 		}
-		if (updates.workspacePath) {
+		if ('workspacePath' in updates) {
 			fields.push('workspace_path = ?');
-			values.push(updates.workspacePath);
+			values.push(updates.workspacePath ?? null);
 		}
 		if (updates.status) {
 			fields.push('status = ?');
@@ -260,7 +260,7 @@ export class SessionRepository {
 		return {
 			id: row.id as string,
 			title: row.title as string,
-			workspacePath: row.workspace_path as string,
+			workspacePath: (row.workspace_path as string | null) ?? null,
 			createdAt: row.created_at as string,
 			lastActiveAt: row.last_active_at as string,
 			status: row.status as 'active' | 'paused' | 'ended' | 'archived',

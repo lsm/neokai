@@ -149,7 +149,7 @@ export function setupSessionHandlers(
 			// File/workspace context (for display purposes)
 			context: {
 				files: [],
-				workingDirectory: session.workspacePath,
+				workingDirectory: session.worktree?.worktreePath ?? session.workspacePath ?? null,
 			},
 			// Context info is in session.metadata.lastContextInfo
 		};
@@ -292,12 +292,10 @@ export function setupSessionHandlers(
 
 		// No worktree - direct archive
 		if (!session.worktree) {
-			// Archive SDK session files
-			const archiveResult = archiveSDKSessionFiles(
-				session.workspacePath,
-				session.sdkSessionId ?? null,
-				targetSessionId
-			);
+			const sdkWorkspacePath = session.workspacePath;
+			const archiveResult = sdkWorkspacePath
+				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
+				: { archivedFiles: [], totalSize: 0, archivePath: null };
 
 			const updatedMetadata = {
 				...session.metadata,
@@ -352,11 +350,10 @@ export function setupSessionHandlers(
 			await worktreeManager.removeWorktree(session.worktree, true);
 
 			// Archive SDK session files
-			const archiveResult = archiveSDKSessionFiles(
-				session.workspacePath,
-				session.sdkSessionId ?? null,
-				targetSessionId
-			);
+			const sdkWorkspacePath = session.worktree?.worktreePath ?? session.workspacePath;
+			const archiveResult = sdkWorkspacePath
+				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
+				: { archivedFiles: [], totalSize: 0, archivePath: null };
 
 			const updatedMetadata = {
 				...session.metadata,
@@ -710,11 +707,9 @@ export function setupSessionHandlers(
 
 	// Handle manual cleanup of orphaned worktrees
 	messageHub.onRequest('worktree.cleanup', async (data) => {
-		const { workspacePath: payloadPath } = data as { workspacePath?: string };
-		// Apply fallback at the RPC boundary so cleanupOrphanedWorktrees always receives an explicit path.
-		const resolvedPath = payloadPath ?? sessionManager.getWorkspaceRoot();
+		const { workspacePath: resolvedPath } = data as { workspacePath?: string };
 		if (!resolvedPath) {
-			throw new Error('workspacePath is required when daemon has no default workspace');
+			throw new Error('workspacePath is required');
 		}
 		const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(resolvedPath);
 

@@ -117,9 +117,10 @@ export function registerSettingsHandlers(
 			// This ensures we read .mcp.json and settings files from the correct location:
 			// - Worktree sessions: .worktrees/{sessionId}/.mcp.json
 			// - Non-worktree sessions: {workspaceRoot}/.mcp.json
+			const workspacePath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
 			effectiveSettings = new (await import('../settings-manager')).SettingsManager(
 				db,
-				session.workspacePath
+				workspacePath
 			);
 		}
 

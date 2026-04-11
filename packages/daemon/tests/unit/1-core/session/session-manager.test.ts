@@ -528,12 +528,6 @@ describe('SessionManager', () => {
 		});
 	});
 
-	describe('getWorkspaceRoot', () => {
-		it('should return the configured workspaceRoot', () => {
-			expect(sessionManager.getWorkspaceRoot()).toBe('/default/workspace');
-		});
-	});
-
 	describe('getDatabase', () => {
 		it('should return the database instance', () => {
 			const db = sessionManager.getDatabase();

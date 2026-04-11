@@ -228,9 +228,11 @@ export class QueryRunner {
 				}
 			}
 
-			// Ensure workspace exists
-			const fs = await import('fs/promises');
-			await fs.mkdir(session.workspacePath, { recursive: true });
+			// Ensure workspace exists when the session is bound to a concrete workspace path.
+			if (session.workspacePath) {
+				const fs = await import('fs/promises');
+				await fs.mkdir(session.workspacePath, { recursive: true });
+			}
 
 			// Build query options
 			optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
@@ -282,7 +284,7 @@ export class QueryRunner {
 					const elapsed = Date.now() - queryStartTime;
 					const isRootWorkspace = !session.worktree;
 					const workspaceDesc = isRootWorkspace
-						? `root workspace: ${session.workspacePath}`
+						? `root workspace: ${session.workspacePath ?? 'unbound'}`
 						: `worktree: ${session.worktree!.worktreePath}`;
 					logger.error(
 						`SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
@@ -523,14 +525,14 @@ export class QueryRunner {
 					// missing/corrupt session file — the session ID was already cleared above,
 					// so the next message will automatically start a fresh session.
 					const startupTimeoutUserMessage = isStartupTimeout
-						? `The AI session failed to start (workspace: ${session.workspacePath}). ` +
+						? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
 							`Common causes: another Claude Code session is using the same workspace, ` +
 							`a stale lock file in .claude/, or the workspace is under heavy load. ` +
 							`Try: closing other Claude sessions on this workspace, ` +
 							`then resend your message. ` +
 							`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
 						: isConversationNotFound
-							? `The AI session could not be resumed (workspace: ${session.workspacePath}). ` +
+							? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
 								`The previous session file could not be found or is corrupt. ` +
 								`The session has been reset automatically — please resend your message to start fresh.`
 							: undefined;
@@ -545,7 +547,7 @@ export class QueryRunner {
 							errorMessage,
 							queueSize: messageQueue.size(),
 							providerId: providerId ?? 'anthropic',
-							workspacePath: session.workspacePath,
+							workspacePath: session.workspacePath ?? undefined,
 							isRootWorkspace: !session.worktree,
 							startupTimeoutMs: STARTUP_TIMEOUT_MS,
 						}

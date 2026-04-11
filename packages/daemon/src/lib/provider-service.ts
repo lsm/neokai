@@ -392,7 +392,7 @@ export class ProviderService {
 		// workspacePath is always forwarded so the embedded Copilot server can use
 		// the correct cwd per request (encoded in ANTHROPIC_AUTH_TOKEN by the provider).
 		const sessionConfig = {
-			workspacePath: session.workspacePath,
+			workspacePath: session.workspacePath ?? undefined,
 			sessionId: session.id,
 			...(session.config.providerConfig
 				? {

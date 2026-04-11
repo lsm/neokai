@@ -8,6 +8,16 @@ import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@neo
 import { FileManager } from '../file-manager';
 
 export function setupFileHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
+	const getBoundWorkspacePath = (targetSessionId: string): string => {
+		const session = sessionManager.getSessionFromDB(targetSessionId);
+		if (!session) throw new Error('Session not found');
+		const workspacePath = session.worktree?.worktreePath ?? session.workspacePath;
+		if (!workspacePath) {
+			throw new Error('Session has no bound workspace path');
+		}
+		return workspacePath;
+	};
+
 	messageHub.onRequest('file.read', async (data) => {
 		const {
 			sessionId: targetSessionId,
@@ -20,7 +30,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
 			throw new Error('Session not found');
 		}
 
-		const fileManager = new FileManager(agentSession.getSessionData().workspacePath);
+		const fileManager = new FileManager(getBoundWorkspacePath(targetSessionId));
 		const fileData = await fileManager.readFile(path, encoding as 'utf-8' | 'base64');
 
 		return fileData;
@@ -38,7 +48,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
 			throw new Error('Session not found');
 		}
 
-		const fileManager = new FileManager(agentSession.getSessionData().workspacePath);
+		const fileManager = new FileManager(getBoundWorkspacePath(targetSessionId));
 		const files = await fileManager.listDirectory(path || '.', recursive);
 
 		return { files };
@@ -56,7 +66,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
 			throw new Error('Session not found');
 		}
 
-		const fileManager = new FileManager(agentSession.getSessionData().workspacePath);
+		const fileManager = new FileManager(getBoundWorkspacePath(targetSessionId));
 		const tree = await fileManager.getFileTree(path || '.', maxDepth || 3);
 
 		return { tree };
