@@ -149,12 +149,14 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	// Wait for the server round-trip: run transitions to needs_attention + gate becomes blocked.
 	// Use data-gate-id to target the specific plan-approval-gate — after rejection ALL gates
 	// may show as blocked (run enters blocked status), causing strict mode violations.
+	// Use 30s timeout — the space store may briefly reload after rejection, causing canvas-view
+	// to temporarily disappear and reappear once the space data is fetched again.
 	await expect(
 		page
 			.getByTestId('canvas-view')
 			.locator('[data-gate-id="plan-approval-gate"][data-testid="gate-icon-blocked"]')
 	).toBeVisible({
-		timeout: 10000,
+		timeout: 30000,
 	});
 }
 
@@ -236,12 +238,14 @@ test.describe('Approval Gate Rejection', () => {
 		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
 
 		// The gate should now show as "blocked" (red lock) on the canvas.
+		// Use 30s — the space store may briefly reload after rejection, causing canvas-view
+		// to temporarily disappear and reappear once the space data is fetched again.
 		await expect(
 			page
 				.getByTestId('canvas-view')
 				.locator('[data-gate-id="plan-approval-gate"][data-testid="gate-icon-blocked"]')
 		).toBeVisible({
-			timeout: 10000,
+			timeout: 30000,
 		});
 
 		// Canvas banner: "Workflow paused — awaiting approval" (run.failureReason === 'humanRejected').
