@@ -57,12 +57,7 @@ export class SpaceTaskManager {
 	async createTask(params: Omit<CreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
 		// Validate dependency task IDs exist in this space
 		if (params.dependsOn && params.dependsOn.length > 0) {
-			for (const depId of params.dependsOn) {
-				const dep = await this.getTask(depId);
-				if (!dep) {
-					throw new Error(`Dependency task not found in space: ${depId}`);
-				}
-			}
+			await this.validateDependencyIds(params.dependsOn);
 		}
 
 		return this.taskRepo.createTask({ ...params, spaceId: this.spaceId });
@@ -315,6 +310,11 @@ export class SpaceTaskManager {
 			throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
 		}
 
+		// Validate dependency IDs if being updated
+		if (params.dependsOn !== undefined) {
+			await this.validateDependencyIds(params.dependsOn, taskId);
+		}
+
 		// Strip status from the update params so the repo call is clean
 		const { status: _status, ...repoParams } = params;
 		const updated = this.taskRepo.updateTask(taskId, repoParams);
@@ -403,5 +403,92 @@ export class SpaceTaskManager {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Block all open tasks that depend on the given task with 'dependency_failed'.
+	 * Recurses: if task B depends on A and task C depends on B, blocking A
+	 * cascades to both B and C.
+	 */
+	async blockDependentTasks(taskId: string): Promise<SpaceTask[]> {
+		return this.doBlockCascade(taskId, []);
+	}
+
+	private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
+		const openTasks = await this.listTasksByStatus('open');
+		for (const t of openTasks) {
+			if (t.dependsOn?.includes(taskId)) {
+				const blocked = await this.setTaskStatus(t.id, 'blocked', {
+					blockReason: 'dependency_failed',
+					result: `Dependency task ${taskId} failed or was cancelled`,
+				});
+				acc.push(blocked);
+				await this.doBlockCascade(t.id, acc);
+			}
+		}
+		return acc;
+	}
+
+	/**
+	 * Validate that dependency IDs exist in this space and don't create cycles.
+	 * @param depIds - dependency task IDs to validate
+	 * @param taskId - the task being created/updated (omit for new tasks)
+	 */
+	private async validateDependencyIds(depIds: string[], taskId?: string): Promise<void> {
+		for (const depId of depIds) {
+			if (taskId && depId === taskId) {
+				throw new Error('A task cannot depend on itself');
+			}
+			const dep = await this.getTask(depId);
+			if (!dep) {
+				throw new Error(`Dependency task not found in space: ${depId}`);
+			}
+		}
+
+		// Cycle detection: build adjacency from existing tasks + proposed deps
+		if (taskId) {
+			const allTasks = await this.listTasks(true);
+			const adj = new Map<string, string[]>();
+			for (const t of allTasks) {
+				if (t.id === taskId) {
+					adj.set(t.id, [...depIds]); // use proposed deps
+				} else {
+					adj.set(t.id, [...(t.dependsOn ?? [])]);
+				}
+			}
+			if (this.hasCycle(adj)) {
+				throw new Error('Adding these dependencies would create a circular dependency');
+			}
+		}
+	}
+
+	/**
+	 * DFS cycle detection on a directed graph.
+	 * Returns true if any cycle exists.
+	 */
+	private hasCycle(adj: Map<string, string[]>): boolean {
+		const WHITE = 0;
+		const GRAY = 1;
+		const BLACK = 2;
+		const color = new Map<string, number>();
+		for (const id of adj.keys()) {
+			color.set(id, WHITE);
+		}
+
+		const dfs = (node: string): boolean => {
+			color.set(node, GRAY);
+			for (const neighbor of adj.get(node) ?? []) {
+				const c = color.get(neighbor);
+				if (c === GRAY) return true; // back edge → cycle
+				if (c === WHITE && dfs(neighbor)) return true;
+			}
+			color.set(node, BLACK);
+			return false;
+		};
+
+		for (const id of adj.keys()) {
+			if (color.get(id) === WHITE && dfs(id)) return true;
+		}
+		return false;
 	}
 }
