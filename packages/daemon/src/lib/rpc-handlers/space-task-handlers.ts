@@ -152,6 +152,10 @@ export function setupSpaceTaskHandlers(
 				// Status is changing — validate via setTaskStatus (enforces transitions)
 				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
 					result: updateParams.result ?? undefined,
+					// Human-initiated approval when transitioning from review → done
+					approvalSource:
+						currentTask.status === 'review' && updateParams.status === 'done' ? 'human' : undefined,
+					approvalReason: updateParams.approvalReason ?? undefined,
 				});
 
 				// When a status transition is combined with other field updates

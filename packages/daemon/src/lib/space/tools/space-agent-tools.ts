@@ -28,9 +28,11 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
+import type { DaemonHub } from '../../daemon-hub';
 import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
@@ -61,6 +63,12 @@ export interface SpaceAgentToolsConfig {
 	 * When provided, enables the `send_message_to_task` and `list_task_members` tools.
 	 */
 	taskAgentManager?: TaskAgentManager;
+	/** Gate data repository for approve_gate tool. */
+	gateDataRepo?: GateDataRepository;
+	/** DaemonHub for emitting gate/task events. */
+	daemonHub?: DaemonHub;
+	/** Callback to trigger channel re-evaluation after gate data changes. */
+	onGateChanged?: (runId: string, gateId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +90,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		taskManager,
 		spaceAgentManager,
 		taskAgentManager,
+		gateDataRepo,
+		daemonHub,
+		onGateChanged,
 	} = config;
 
 	return {
@@ -481,6 +492,185 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
 			return jsonResult({ success: true, task_id: args.task_id, executions });
 		},
+
+		/**
+		 * Approve or reject a workflow gate.
+		 * Requires gateDataRepo to be configured.
+		 */
+		async approve_gate(args: {
+			run_id: string;
+			gate_id: string;
+			approved: boolean;
+			reason?: string;
+		}): Promise<ToolResult> {
+			if (!gateDataRepo) {
+				return jsonResult({ success: false, error: 'Gate operations are not available' });
+			}
+
+			const run = workflowRunRepo.getRun(args.run_id);
+			if (!run) {
+				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
+			}
+			if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+				return jsonResult({
+					success: false,
+					error: `Cannot modify gate on a ${run.status} workflow run`,
+				});
+			}
+
+			const existing = gateDataRepo.get(args.run_id, args.gate_id);
+
+			if (args.approved) {
+				if (existing?.data?.approved === true) {
+					return jsonResult({
+						success: true,
+						runId: args.run_id,
+						gateId: args.gate_id,
+						gateData: existing.data,
+						message: 'Gate already approved',
+					});
+				}
+
+				const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
+					approved: true,
+					approvedAt: Date.now(),
+					approvalSource: 'space_agent',
+				});
+
+				// If previously rejected, transition back to in_progress
+				let currentRun = run;
+				if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
+					currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
+					currentRun =
+						workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
+				}
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.workflowRun.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: run.id,
+							run: currentRun,
+						})
+						.catch(() => {});
+					void daemonHub
+						.emit('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: args.run_id,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
+				onGateChanged?.(args.run_id, args.gate_id);
+
+				return jsonResult({
+					success: true,
+					runId: args.run_id,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			} else {
+				if (existing?.data?.approved === false) {
+					return jsonResult({
+						success: true,
+						runId: args.run_id,
+						gateId: args.gate_id,
+						gateData: existing.data,
+						message: 'Gate already rejected',
+					});
+				}
+
+				const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
+					approved: false,
+					rejectedAt: Date.now(),
+					reason: args.reason ?? null,
+					approvalSource: 'space_agent',
+				});
+
+				if (run.status !== 'blocked') {
+					workflowRunRepo.transitionStatus(args.run_id, 'blocked');
+				}
+				const updatedRun =
+					workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.workflowRun.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: run.id,
+							run: updatedRun,
+						})
+						.catch(() => {});
+					void daemonHub
+						.emit('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: args.run_id,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({
+					success: true,
+					runId: args.run_id,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			}
+		},
+
+		/**
+		 * Approve a task that is in 'review' status, transitioning it to 'done'.
+		 * Records approval audit trail with space_agent as the source.
+		 */
+		async approve_task(args: { task_id: string; reason?: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (task.status !== 'review') {
+				return jsonResult({
+					success: false,
+					error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
+				});
+			}
+
+			try {
+				const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
+					result: task.result ?? undefined,
+					approvalSource: 'space_agent',
+					approvalReason: args.reason,
+				});
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.updated', {
+							sessionId: 'global',
+							spaceId,
+							taskId: args.task_id,
+							task: updated,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -680,6 +870,26 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 				task_id: z.string().describe('ID of the task to inspect'),
 			},
 			(args) => handlers.list_task_members(args)
+		),
+		tool(
+			'approve_gate',
+			'Approve or reject a workflow gate. Use this to control workflow progression by opening or closing gates on workflow runs.',
+			{
+				run_id: z.string().describe('ID of the workflow run'),
+				gate_id: z.string().describe('ID of the gate to approve or reject'),
+				approved: z.boolean().describe('true to approve (open gate), false to reject (block)'),
+				reason: z.string().optional().describe('Reason for approval or rejection'),
+			},
+			(args) => handlers.approve_gate(args)
+		),
+		tool(
+			'approve_task',
+			"Approve a task in 'review' status, transitioning it to 'done'. Use this after reviewing a completed task's output to mark it as approved.",
+			{
+				task_id: z.string().describe('ID of the task to approve'),
+				reason: z.string().optional().describe('Reason for approval'),
+			},
+			(args) => handlers.approve_task(args)
 		),
 	];
 

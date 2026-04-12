@@ -1,0 +1,192 @@
+# Space Autonomy & Human-in-the-Loop Gap Analysis
+
+Date: 2026-04-12
+
+## Architecture Summary
+
+The space/task/workflow system has three orthogonal control layers:
+
+| Layer | Scope | Mechanism | Key File |
+|-------|-------|-----------|----------|
+| **Gates** | Per-channel in workflow | Field checks + scripts block message delivery | `runtime/gate-evaluator.ts` |
+| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) | `runtime/space-runtime.ts:1177` |
+| **Task Status Machine** | Per-task | `open -> in_progress -> review -> done` | `managers/space-task-manager.ts` |
+
+### How Autonomy Works Today
+
+Autonomy has exactly **one decision point** — at `space-runtime.ts:1177`:
+
+```
+supervised:       workflow completes -> task status = 'review' (human must approve)
+semi_autonomous:  workflow completes -> task status = 'done' (auto-completed)
+```
+
+During execution, both modes behave identically.
+
+---
+
+## Gap List
+
+### 1. PR Auto-Merge for Semi-Autonomous
+
+**Status:** Documented but unimplemented
+
+CLAUDE.md states: *"Semi-autonomous: Worker can merge approved PRs without human confirmation"*
+
+Tasks track `prUrl`, `prNumber`, `prCreatedAt` but:
+- No merge logic exists
+- No gate script template for "wait for N approvals + CI green"
+- No differentiation between supervised (human must merge) and semi-autonomous (agent can merge approved PRs)
+
+**Impact:** High — core promised feature  
+**Effort:** Medium
+
+---
+
+### 2. Approval Notification/Queue UI
+
+Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists. However:
+- No notification to tell humans a gate is waiting
+- No inbox/queue of pending approvals in the UI
+- No webhook/Slack/email integration for approval requests
+- Human must manually check the workflow run state to discover pending gates
+
+**Impact:** Medium — humans don't know when approval is needed  
+**Effort:** Medium
+
+---
+
+### 3. Approval Audit Trail
+
+When a human approves a gate or transitions a task from `review` -> `done`:
+- No record of **who** approved or **when**
+- No approval comment/reason field
+- Room system tracks `approvalSource` (`"human"` vs `"leader_semi_auto"`) but space system doesn't
+- No audit log for gate state changes
+
+**Impact:** Medium — no accountability  
+**Effort:** Low
+
+---
+
+### 4. Execution-Time Autonomy Differentiation
+
+Semi-autonomous is identical to supervised during execution. Missing:
+- Autonomy-aware retry behavior (semi-autonomous retries more aggressively)
+- Auto-skipping of lower-priority gates
+- Autonomous decision-making at workflow branch points
+- The "semi" in semi-autonomous implies graduated control but none exists during execution
+
+**Impact:** High — defeats purpose of autonomy levels  
+**Effort:** High
+
+---
+
+### 5. Task Dependency Enforcement
+
+`SpaceTask.dependsOn` stores dependency IDs but is **not enforced at runtime**:
+- Tasks with unmet deps can be started
+- No auto-blocking when dependencies incomplete
+- No auto-unblocking when dependencies complete
+- `cancelTaskCascade()` exists for cancellation propagation but no `completionCascade()` for unblocking
+
+**Impact:** Medium  
+**Effort:** Medium
+
+---
+
+### 6. Tiered Retry by Autonomy Level
+
+Current behavior when a node agent crashes (same for both modes):
+- Runtime detects via liveness check
+- Resets node to `pending` for retry
+- After max retries, escalates to `blocked`
+
+Missing autonomy-aware retry policies:
+- **Semi-autonomous:** Auto-retry more aggressively (higher retry count, auto-restart)
+- **Supervised:** Block immediately and notify human on first failure
+
+**Impact:** Medium  
+**Effort:** Medium
+
+---
+
+### 7. Room/Space Autonomy Unification
+
+Two parallel autonomy systems exist with different capabilities:
+
+| System | Table | Check Point | Behavior |
+|--------|-------|-------------|----------|
+| Space | `spaces.autonomy_level` | Workflow task completion | Binary: review vs done |
+| Room/Goal | `goals.autonomy_level` | `submit_for_review()` | Richer: planner always needs human, coder auto-approves with `leader_semi_auto` |
+
+No cross-pollination of patterns between the two systems.
+
+**Impact:** High — confusing dual systems  
+**Effort:** High
+
+---
+
+### 8. `needs_attention` Status for Space Tasks
+
+Room tasks have `needs_attention` status. Space tasks only have `blocked`. This means:
+- Can't distinguish "blocked by technical issue" from "blocked, human input needed"
+- No priority escalation for stale blocked tasks
+
+**Impact:** Low-Medium  
+**Effort:** Low
+
+---
+
+### 9. Human Review SLA/Timeout
+
+Tasks can sit in `review` indefinitely:
+- No configurable SLA per space
+- No auto-escalation after timeout
+- No auto-approve option for semi-autonomous after timeout period
+
+**Impact:** Low  
+**Effort:** Low
+
+---
+
+### 10. Conditional Branching by Autonomy
+
+Workflow topology is fixed regardless of autonomy level:
+- Can't express "if supervised, route to human-review node; if semi-autonomous, skip to merge node"
+- Would need conditional node type or autonomy-aware channel routing
+
+**Impact:** Medium  
+**Effort:** High
+
+---
+
+## Priority Matrix
+
+| # | Gap | Impact | Effort | Priority |
+|---|-----|--------|--------|----------|
+| 1 | PR auto-merge for semi-autonomous | High | Medium | **P0** |
+| 2 | Approval notification/queue UI | Medium | Medium | **P1** |
+| 3 | Approval audit trail | Medium | Low | **P1** |
+| 4 | Execution-time autonomy differentiation | High | High | **P2** |
+| 5 | Task dependency enforcement | Medium | Medium | **P2** |
+| 6 | Tiered retry by autonomy level | Medium | Medium | **P2** |
+| 7 | Room/Space autonomy unification | High | High | **P3** |
+| 8 | `needs_attention` status for space tasks | Low-Medium | Low | **P2** |
+| 9 | Human review SLA/timeout | Low | Low | **P3** |
+| 10 | Conditional branching by autonomy | Medium | High | **P3** |
+
+## Key Files Reference
+
+| Component | Path |
+|-----------|------|
+| Space types | `packages/shared/src/types/space.ts` |
+| Space runtime | `packages/daemon/src/lib/space/runtime/space-runtime.ts` |
+| Gate evaluator | `packages/daemon/src/lib/space/runtime/gate-evaluator.ts` |
+| Channel router | `packages/daemon/src/lib/space/runtime/channel-router.ts` |
+| Task manager | `packages/daemon/src/lib/space/managers/space-task-manager.ts` |
+| Node agent tools | `packages/daemon/src/lib/space/tools/node-agent-tools.ts` |
+| Workflow executor | `packages/daemon/src/lib/space/runtime/workflow-executor.ts` |
+| Space RPC handlers | `packages/daemon/src/lib/rpc-handlers/space-*.ts` |
+| Room runtime (comparison) | `packages/daemon/src/lib/room/runtime/room-runtime.ts` |
+| Room agent tools (comparison) | `packages/daemon/src/lib/room/tools/room-agent-tools.ts` |

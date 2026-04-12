@@ -496,6 +496,11 @@ export class TaskAgentManager {
 				messageInjector: (subSessionId, message) =>
 					this.injectSubSessionMessage(subSessionId, message),
 				daemonHub: this.config.daemonHub,
+				gateDataRepo: this.config.gateDataRepo,
+				workflowRunRepo: this.config.workflowRunRepo,
+				onGateChanged: (runId, gateId) => {
+					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
+				},
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -1685,6 +1690,11 @@ export class TaskAgentManager {
 			messageInjector: (subSessionId, message) =>
 				this.injectSubSessionMessage(subSessionId, message),
 			daemonHub: this.config.daemonHub,
+			gateDataRepo: this.config.gateDataRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			onGateChanged: (runId, gateId) => {
+				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
+			},
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,

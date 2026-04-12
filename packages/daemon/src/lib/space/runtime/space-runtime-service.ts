@@ -266,6 +266,11 @@ export class SpaceRuntimeService {
 			taskManager: new SpaceTaskManager(db, space.id, this.config.reactiveDb),
 			spaceAgentManager,
 			taskAgentManager: this.taskAgentManager ?? undefined,
+			gateDataRepo: this.config.gateDataRepo,
+			daemonHub: this.config.daemonHub,
+			onGateChanged: (runId, gateId) => {
+				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
+			},
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

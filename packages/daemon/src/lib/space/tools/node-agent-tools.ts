@@ -315,7 +315,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							}
 
 							if (Object.keys(authorizedData).length > 0) {
-								const updated = gateDataRepo.merge(workflowRunId, gateId, authorizedData);
+								const updated = gateDataRepo.merge(workflowRunId, gateId, {
+									...authorizedData,
+									approvalSource: 'node_agent',
+								});
 								const evalResult = await evaluateGate(
 									gateDef,
 									updated.data,

@@ -28,6 +28,24 @@ export type SpaceStatus = 'active' | 'archived';
 export type SpaceAutonomyLevel = 'supervised' | 'semi_autonomous';
 
 /**
+ * Who approved a task or gate — used for audit trail tracking.
+ *
+ * - `human`       — User approved via UI / RPC
+ * - `neo_agent`   — Global Neo agent approved via tool call
+ * - `space_agent` — Per-space orchestrator agent approved
+ * - `task_agent`  — Task Agent (gates only — cannot self-approve task completion)
+ * - `node_agent`  — Node agent wrote gate data via send_message
+ * - `semi_auto`   — Runtime auto-approved in semi_autonomous mode
+ */
+export type SpaceApprovalSource =
+	| 'human'
+	| 'neo_agent'
+	| 'space_agent'
+	| 'task_agent'
+	| 'node_agent'
+	| 'semi_auto';
+
+/**
  * Typed runtime configuration for a Space.
  */
 export interface SpaceConfig {
@@ -233,6 +251,12 @@ export interface SpaceTask {
 	completedAt: number | null;
 	/** Timestamp when task was archived (milliseconds since epoch); null until archived */
 	archivedAt: number | null;
+	/** Who approved this task (set when transitioning from review → done or via semi_auto) */
+	approvalSource: SpaceApprovalSource | null;
+	/** Optional reason/comment for the approval or rejection */
+	approvalReason: string | null;
+	/** Timestamp when approval occurred (milliseconds since epoch); null until approved */
+	approvedAt: number | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -346,6 +370,12 @@ export interface UpdateSpaceTaskParams {
 	completedAt?: number | null;
 	/** Timestamp when task was archived; null to clear */
 	archivedAt?: number | null;
+	/** Who approved this task */
+	approvalSource?: SpaceApprovalSource | null;
+	/** Optional approval reason/comment */
+	approvalReason?: string | null;
+	/** Timestamp when approval occurred; null to clear */
+	approvedAt?: number | null;
 }
 
 // ============================================================================

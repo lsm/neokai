@@ -496,6 +496,10 @@ export class SpaceRuntime {
 					completedAt: isSupervised
 						? null
 						: (canonicalTask.completedAt ?? run.completedAt ?? Date.now()),
+					// Stamp approval audit trail for semi-autonomous auto-completion
+					...(completionStatus === 'done'
+						? { approvalSource: 'semi_auto' as const, approvedAt: Date.now() }
+						: {}),
 				});
 			} else if (nextResult && canonicalTask.result !== nextResult) {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
@@ -1182,6 +1186,10 @@ export class SpaceRuntime {
 						status: completionStatus,
 						result: nextTaskResult,
 						completedAt: isSupervised ? null : Date.now(),
+						// Stamp approval audit trail for semi-autonomous auto-completion
+						...(completionStatus === 'done'
+							? { approvalSource: 'semi_auto' as const, approvedAt: Date.now() }
+							: {}),
 					});
 				} else if (summary && canonicalTask.result !== summary) {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
