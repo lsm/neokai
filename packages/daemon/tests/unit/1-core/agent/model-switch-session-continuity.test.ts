@@ -381,6 +381,9 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 			queryObject: null,
 			queryPromise: null,
 			firstMessageReceived: true,
+			processExitedPromise: null,
+			startupTimeoutTimer: null,
+			queryAbortController: null,
 			pendingRestartReason: null,
 			startStreamingQuery: async () => {
 				startStreamingCalled = true;
@@ -432,7 +435,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 	// ---- Test 6 ----
 
 	it(
-		'restart() clears sdkSessionId when session file is missing',
+		'restart() preserves sdkSessionId when session file is missing — SDK will attempt recovery',
 		async () => {
 			const sdkId = 'sdk-continuity-missing';
 			// Do NOT create the session file — simulate a stale/missing file
@@ -442,11 +445,8 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 
 			await manager.restart();
 
-			expect(mockContext.session.sdkSessionId).toBeUndefined();
-			expect(updateSessionSpy).toHaveBeenCalledWith(
-				'test-session',
-				expect.objectContaining({ sdkSessionId: undefined })
-			);
+			// sdkSessionId is preserved — SDK may recreate the file on resume
+			expect(mockContext.session.sdkSessionId).toBe(sdkId);
 		},
 		{ timeout: 5000 }
 	);

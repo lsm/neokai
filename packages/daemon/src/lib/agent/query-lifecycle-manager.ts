@@ -50,6 +50,10 @@ export interface QueryLifecycleManagerContext {
 	firstMessageReceived: boolean;
 	/** Resolves when the SDK subprocess exits. Used by stop() to wait deterministically. */
 	processExitedPromise: Promise<void> | null;
+	/** SDK startup timeout timer — must be cleared during stop() to prevent stale timers. */
+	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
+	/** Abort controller for the current query — must be cleared during stop(). */
+	queryAbortController: AbortController | null;
 
 	// Mutable session state
 	pendingRestartReason: 'settings.local.json' | null;
@@ -168,7 +172,25 @@ export class QueryLifecycleManager {
 			this.ctx.processExitedPromise = null;
 		}
 
-		// 6. Clear references
+		// 6. Clear stale startup timer and abort controller.
+		// The old runQuery()'s finally block normally clears these, but if stop()
+		// timed out waiting for queryPromise, finally hasn't run yet. Leaving them
+		// alive is dangerous: the old timer's closure reads this.ctx.firstMessageReceived
+		// and this.ctx.queryAbortController at fire time. When restart() starts a new
+		// query that resets firstMessageReceived=false and creates a new abort controller,
+		// the stale timer fires, sees firstMessageReceived=false, and ABORTS THE NEW
+		// QUERY'S controller — causing immediate startup-timeout errors after model switch.
+		const staleTimer = this.ctx.startupTimeoutTimer;
+		if (staleTimer) {
+			clearTimeout(staleTimer);
+			this.ctx.startupTimeoutTimer = null;
+		}
+		const staleAbort = this.ctx.queryAbortController;
+		if (staleAbort) {
+			this.ctx.queryAbortController = null;
+		}
+
+		// 7. Clear references
 		this.ctx.queryObject = null;
 		this.ctx.queryPromise = null;
 	}
@@ -194,6 +216,12 @@ export class QueryLifecycleManager {
 			// guaranteed to have exited before we proceed. No arbitrary delay needed.
 			await this.stop();
 
+			// Explicitly reset to idle after stop(). If stop() timed out waiting for
+			// the old queryPromise, the old query's finally block may run AFTER the
+			// new query increments the generation — triggering the stale-query guard
+			// and skipping setIdle(). This explicit call guarantees clean state.
+			await this.ctx.stateManager.setIdle();
+
 			// Validate and repair SDK session file before restarting.
 			// The interrupted query may have left the session file in an inconsistent state
 			// (e.g., orphaned tool_results from interrupted SDK context compaction).
@@ -206,11 +234,13 @@ export class QueryLifecycleManager {
 					db
 				);
 				if (!isValid) {
+					// Session file missing — log but keep sdkSessionId. The SDK may
+					// recreate the file on resume, and clearing it loses the ability
+					// to continue conversation history across model switches.
 					this.logger.warn(
-						`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+						`SDK session file missing for ${session.sdkSessionId}, ` +
+							'keeping sdkSessionId — SDK will attempt recovery on next query'
 					);
-					session.sdkSessionId = undefined;
-					db.updateSession(session.id, { sdkSessionId: undefined });
 				}
 			}
 
@@ -305,10 +335,9 @@ export class QueryLifecycleManager {
 					);
 					if (!isValid) {
 						this.logger.warn(
-							`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+							`SDK session file missing for ${session.sdkSessionId}, ` +
+								'keeping sdkSessionId — SDK will attempt recovery on next query'
 						);
-						session.sdkSessionId = undefined;
-						db.updateSession(session.id, { sdkSessionId: undefined });
 					}
 				}
 
@@ -392,10 +421,9 @@ export class QueryLifecycleManager {
 			);
 			if (!isValid) {
 				this.logger.warn(
-					`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+					`SDK session file missing for ${session.sdkSessionId}, ` +
+						'keeping sdkSessionId — SDK will attempt recovery on next query'
 				);
-				session.sdkSessionId = undefined;
-				db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 		}
 

@@ -205,6 +205,9 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const sendResult = await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
 			expect(sendResult.messageId).toBeTruthy();
 
+			// Wait for first message to complete before switching model
+			await waitForIdle(daemon, sessionId, 45000);
+
 			// Switch to GLM
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
@@ -226,7 +229,10 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Send message to GLM - verify it doesn't crash
 			const glmSendResult = await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
 			expect(glmSendResult.messageId).toBeTruthy();
-		}, 30000);
+
+			// Verify message completes on new provider
+			await waitForIdle(daemon, sessionId, 45000);
+		}, 90000);
 
 		test('should send message after model switch to MiniMax', async () => {
 			// Create session with GLM
@@ -245,6 +251,9 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Send message to GLM
 			const glmSendResult = await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
 			expect(glmSendResult.messageId).toBeTruthy();
+
+			// Wait for first message to complete before switching model
+			await waitForIdle(daemon, sessionId, 45000);
 
 			// Switch to MiniMax
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -271,7 +280,10 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 				'Reply with just the word "ok"'
 			);
 			expect(minimaxSendResult.messageId).toBeTruthy();
-		}, 30000);
+
+			// Verify message completes on new provider
+			await waitForIdle(daemon, sessionId, 45000);
+		}, 90000);
 	});
 
 	describe('3. Fallback Settings Configuration', () => {
@@ -670,7 +682,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 120000);
+			await waitForIdle(daemon, sessionId, 45000);
 
 			// --- Phase 2: Switch model (cross-provider MiniMax → GLM) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -688,7 +700,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 120000);
+			await waitForIdle(daemon, sessionId, 45000);
 
 			// Verify models are different — this proves the SDK used the new model
 			expect(postSwitchModel).toBeDefined();
@@ -696,7 +708,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Initial: MiniMax-M2.5, Post-switch: glm-5
 			expect(initialModel).toBe('MiniMax-M2.5');
 			expect(postSwitchModel).toBe('glm-5');
-		}, 300000);
+		}, 90000);
 
 		/**
 		 * Cross-provider test: GLM → MiniMax
@@ -740,7 +752,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 150000);
+			await waitForIdle(daemon, sessionId, 45000);
 
 			// --- Phase 2: Switch model (cross-provider GLM → MiniMax) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -757,13 +769,13 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 150000);
+			await waitForIdle(daemon, sessionId, 45000);
 
 			expect(postSwitchModel).toBeDefined();
 			expect(postSwitchModel).not.toBe(initialModel);
 			// Initial: glm-5, Post-switch: MiniMax-M2.5
 			expect(initialModel).toBe('glm-5');
 			expect(postSwitchModel).toBe('MiniMax-M2.5');
-		}, 300000);
+		}, 90000);
 	});
 });

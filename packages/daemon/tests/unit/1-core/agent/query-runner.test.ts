@@ -804,7 +804,7 @@ describe('QueryRunner', () => {
 				'test-session-id',
 				expect.any(Error),
 				expect.any(String),
-				expect.stringContaining('session has been reset automatically'), // actionable hint
+				expect.stringContaining('SDK will attempt to recover'), // actionable hint
 				expect.anything(),
 				expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
 			);
