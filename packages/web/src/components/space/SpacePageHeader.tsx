@@ -11,7 +11,7 @@ export function SpacePageHeader({ spaceName, pageTitle }: SpacePageHeaderProps) 
 		<div
 			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center relative z-10`}
 		>
-			<div class="flex items-center gap-3">
+			<div class="flex-1 flex items-center gap-3">
 				<button
 					onClick={() => (contextPanelOpenSignal.value = true)}
 					class="md:hidden p-1.5 bg-dark-850 border border-dark-700 rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
