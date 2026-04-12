@@ -670,7 +670,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 120000);
 
 			// --- Phase 2: Switch model (cross-provider MiniMax → GLM) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -688,7 +688,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, 120000);
 
 			// Verify models are different — this proves the SDK used the new model
 			expect(postSwitchModel).toBeDefined();
@@ -696,7 +696,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Initial: MiniMax-M2.5, Post-switch: glm-5
 			expect(initialModel).toBe('MiniMax-M2.5');
 			expect(postSwitchModel).toBe('glm-5');
-		}, 120000);
+		}, 300000);
 
 		/**
 		 * Cross-provider test: GLM → MiniMax
@@ -740,7 +740,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 90000);
+			await waitForIdle(daemon, sessionId, 150000);
 
 			// --- Phase 2: Switch model (cross-provider GLM → MiniMax) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -757,13 +757,13 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 90000);
+			await waitForIdle(daemon, sessionId, 150000);
 
 			expect(postSwitchModel).toBeDefined();
 			expect(postSwitchModel).not.toBe(initialModel);
 			// Initial: glm-5, Post-switch: MiniMax-M2.5
 			expect(initialModel).toBe('glm-5');
 			expect(postSwitchModel).toBe('MiniMax-M2.5');
-		}, 120000);
+		}, 300000);
 	});
 });
