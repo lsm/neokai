@@ -25,6 +25,43 @@ During execution, both modes behave identically.
 
 ---
 
+## Room vs Space: Architectural Guidelines for Gap Fixes
+
+Room and Space both orchestrate agent work, but their architectures differ in a way
+that must guide every implementation decision in this gap list.
+
+| | Room | Space |
+|---|------|-------|
+| **Workflow model** | Static, hardcoded in code — the code *is* the workflow (leader/worker/planner roles wired directly in `room-runtime.ts`) | Framework — users define workflow topology (nodes, channels, gates) as data; the runtime executes it generically |
+| **Boundary** | No clear boundary between execution logic and workflow definition | Clean separation: workflow definition (data) vs. workflow executor (runtime) |
+| **Extension point** | Add a new role → modify runtime code | Add a new node/channel → modify workflow data, runtime unchanged |
+
+### Implications for gap fixes
+
+1. **Keep execution details out of the workflow executor.** The workflow executor
+   (`workflow-executor.ts`, `channel-router.ts`, `gate-evaluator.ts`) is generic
+   infrastructure. Gap fixes that add scheduling logic, retry policies, or
+   autonomy-aware behavior belong at the **task scheduling layer**
+   (`space-runtime.ts` tick loop, `space-task-manager.ts`), not inside the executor.
+
+2. **Prefer passive re-evaluation over explicit cascading.** Space already has a
+   5-second tick loop that re-evaluates all open tasks. When possible, let the tick
+   naturally discover state changes (e.g., dependencies met) rather than building
+   explicit unblock/notify cascades. This keeps the system simpler and idempotent.
+
+3. **Don't copy Room patterns verbatim.** Room's tight coupling (e.g., role-specific
+   logic in `submit_for_review()`, hardcoded `leader_semi_auto` approval source)
+   works *because* Room's workflow is static. Space must express the same intent
+   through its existing extensibility primitives (gates, channels, task metadata)
+   rather than hardcoding role-specific behavior.
+
+4. **Cross-pollinate concepts, not code.** Room's richer autonomy model (planner
+   always needs human, coder auto-approves) is a useful *design reference* for
+   Gap #4 and #7. But the implementation should use Space's gate/channel system
+   to express these policies declaratively, not replicate Room's imperative checks.
+
+---
+
 ## Gap List
 
 ### 1. PR Auto-Merge for Semi-Autonomous
