@@ -2,7 +2,11 @@
 
 # Development server - uses random available port by default
 # Usage: make dev
+#        make dev PORT=8080
+#        make dev DB_PATH=/tmp/mydb.db           # isolated DB (avoids lock conflicts)
+#        make dev PORT=8080 DB_PATH=/tmp/mydb.db
 dev:
+	@mkdir -p tmp
 	@if [ -n "$(PORT)" ]; then \
 		PORT=$(PORT); \
 		echo "$(PORT)" > tmp/.dev-server-running; \
@@ -10,13 +14,15 @@ dev:
 		echo "Finding available port..."; \
 		PORT=$$(node -e "const net = require('net'); const s = net.createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });"); \
 	fi; \
+	if [ -n "$(DB_PATH)" ]; then DB_FLAGS="--db-path $(DB_PATH)"; else DB_FLAGS=""; fi; \
 	echo "Starting development server on port $$PORT..."; \
 	echo ""; \
 	echo "================================================"; \
 	echo "🚀 Development server starting on http://localhost:$$PORT"; \
+	if [ -n "$(DB_PATH)" ]; then echo "   Database: $(DB_PATH)"; fi; \
 	echo "================================================"; \
 	echo ""; \
-	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --port $$PORT
+	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --port $$PORT $$DB_FLAGS
 
 # Alias for dev-random (deprecated, use make dev)
 dev-random:
@@ -40,7 +46,7 @@ self-test:
 	@PLAYWRIGHT_BASE_URL=http://localhost:9983 cd packages/e2e && bunx playwright test $(TEST)
 
 # Run production server
-# Usage: make run [PORT=8080]
+# Usage: make run [PORT=8080] [DB_PATH=/tmp/mydb.db]
 run:
 	@mkdir -p tmp
 	@if [ -n "$(PORT)" ]; then \
@@ -51,10 +57,11 @@ run:
 		echo "   Listening on port $(PORT)"; \
 	fi
 	@$(MAKE) build
-	@if [ -n "$(PORT)" ]; then \
-		NODE_ENV=production bun run packages/cli/main.ts --port $(PORT); \
+	@DB_FLAGS=""; if [ -n "$(DB_PATH)" ]; then DB_FLAGS="--db-path $(DB_PATH)"; fi; \
+	if [ -n "$(PORT)" ]; then \
+		NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) $$DB_FLAGS; \
 	else \
-		NODE_ENV=production bun run packages/cli/main.ts; \
+		NODE_ENV=production bun run packages/cli/main.ts $$DB_FLAGS; \
 	fi
 
 # Run E2E tests with an auto-started server on a random port (self-contained, no server needed)

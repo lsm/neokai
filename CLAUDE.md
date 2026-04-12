@@ -39,8 +39,9 @@ Each package's `tsconfig.json` defines path aliases that resolve to source files
 
 ```bash
 # Development
-make dev                          # Start dev server on random available port
-make dev PORT=8080               # Start dev server on specific port
+make dev                                    # Start dev server on random available port
+make dev PORT=8080                          # Start dev server on specific port
+make dev PORT=8080 DB_PATH=/tmp/mydb.db    # Isolated DB (avoids lock conflicts)
 
 # Production
 make serve-random                 # Production server on random port
@@ -171,10 +172,24 @@ The daemon uses a file-based SQLite database with a PID lock file (`~/.neokai/da
 Another NeoKai daemon is already running with this database (PID XXXX).
 ```
 
+**Starting a dev server in a worktree (agents must do this):**
+
+When working in a worktree, always start the dev server with an isolated `DB_PATH` so it does not conflict with any already-running production or development daemon:
+
+```bash
+# In the worktree root — picks a random port, uses an isolated DB
+make dev PORT=8383 DB_PATH=/tmp/neokai-$(basename $PWD).db
+
+# Or with a fully random temp path
+make dev DB_PATH=$(mktemp -u /tmp/neokai-XXXXXX.db)
+```
+
+Never run `make dev` without `DB_PATH` in a worktree — it will fail with "Another NeoKai daemon is already running" if the main daemon is active.
+
 **For testing scenarios that start a dev server:**
-- Use `--db-path` to specify a temporary database location
+- Pass `DB_PATH=<path>` to `make dev` or `make run`
 - This prevents conflicts with any running production daemon instance
-- Example: `make dev PORT=8484 --db-path /tmp/test-db`
+- Example: `make dev PORT=8484 DB_PATH=/tmp/test-db.db`
 
 **For E2E tests:**
 - E2E tests use `make run-e2e` which handles database isolation automatically (uses temp directories)
