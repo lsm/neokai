@@ -366,7 +366,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
@@ -470,7 +470,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
@@ -530,7 +530,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
@@ -595,7 +595,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
@@ -763,7 +763,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
@@ -925,7 +925,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
@@ -1065,7 +1065,7 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list 2>/dev/null || true
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 

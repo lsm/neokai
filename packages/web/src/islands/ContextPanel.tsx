@@ -403,7 +403,7 @@ export function ContextPanel() {
 										/>
 									</svg>
 								</button>
-								<h2 class="min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate">
+								<h2 class="min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate pointer-events-none">
 									{headerTitle}
 								</h2>
 								<button

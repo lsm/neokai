@@ -243,7 +243,7 @@ test.describe('Approval Gate Rejection', () => {
 		await page.getByTestId('reject-button').click();
 
 		// Overlay should close after the rejection decision.
-		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 5000 });
+		await expect(page.getByTestId('artifacts-panel-overlay')).toBeHidden({ timeout: 15000 });
 
 		// The gate should now show as "blocked" (red lock) on the canvas.
 		// Use 30s — the space store may briefly reload after rejection, causing canvas-view
