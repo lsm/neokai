@@ -205,6 +205,9 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const sendResult = await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
 			expect(sendResult.messageId).toBeTruthy();
 
+			// Wait for first message to complete before switching model
+			await waitForIdle(daemon, sessionId, 60000);
+
 			// Switch to GLM
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
@@ -226,7 +229,10 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Send message to GLM - verify it doesn't crash
 			const glmSendResult = await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
 			expect(glmSendResult.messageId).toBeTruthy();
-		}, 30000);
+
+			// Verify message completes on new provider
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 120000);
 
 		test('should send message after model switch to MiniMax', async () => {
 			// Create session with GLM
@@ -245,6 +251,9 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Send message to GLM
 			const glmSendResult = await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
 			expect(glmSendResult.messageId).toBeTruthy();
+
+			// Wait for first message to complete before switching model
+			await waitForIdle(daemon, sessionId, 60000);
 
 			// Switch to MiniMax
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -271,7 +280,10 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 				'Reply with just the word "ok"'
 			);
 			expect(minimaxSendResult.messageId).toBeTruthy();
-		}, 30000);
+
+			// Verify message completes on new provider
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 120000);
 	});
 
 	describe('3. Fallback Settings Configuration', () => {
