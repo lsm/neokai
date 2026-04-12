@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'preact/hooks';
 import { InputTextarea } from '../InputTextarea';
+import { isAgentWorking } from '../../lib/state.ts';
+import { useInterrupt } from '../../hooks';
 import MentionAutocomplete from './MentionAutocomplete';
 
 interface MentionAgent {
@@ -8,6 +10,7 @@ interface MentionAgent {
 }
 
 interface ThreadedChatComposerProps {
+	taskSessionId: string;
 	mentionCandidates: MentionAgent[];
 	hasTaskAgentSession: boolean;
 	canSend: boolean;
@@ -17,6 +20,7 @@ interface ThreadedChatComposerProps {
 }
 
 export function ThreadedChatComposer({
+	taskSessionId,
 	mentionCandidates,
 	hasTaskAgentSession,
 	canSend,
@@ -29,6 +33,8 @@ export function ThreadedChatComposer({
 	const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const lastCursorRef = useRef(0);
+	const agentWorking = isAgentWorking.value;
+	const { handleInterrupt } = useInterrupt({ sessionId: taskSessionId });
 
 	const mentionAgents = useMemo(() => {
 		if (mentionQuery === null) return [];
@@ -161,6 +167,8 @@ export function ThreadedChatComposer({
 						}
 						textareaRef={textareaRef}
 						transparent={true}
+						isAgentWorking={agentWorking}
+						onStop={handleInterrupt}
 					/>
 				</div>
 			</form>

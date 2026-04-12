@@ -27,9 +27,9 @@ import type { DaemonAppContext } from '../../../src/app';
 // Temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// MiniMax API can be slow (>60s) in CI; use a generous idle timeout to avoid false failures.
-// Each test has a 90s budget, so 80s leaves 10s for teardown.
-const PROVIDER_IDLE_TIMEOUT = 80000;
+// MiniMax/GLM APIs can be slow (>90s) from CI runners; use a generous idle timeout.
+// Each test has a 200s budget, so 120s leaves 80s for switch + restart + teardown.
+const PROVIDER_IDLE_TIMEOUT = 120000;
 
 /**
  * Hard-fail if credentials are absent — per CLAUDE.md policy.
@@ -158,7 +158,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Re-read sdkSessionId — it should be the same
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(sdkIdBefore);
-	}, 120000);
+	}, 200000);
 
 	test('sdkSessionId is preserved after cross-provider model switch (GLM -> MiniMax)', async () => {
 		// Create session with GLM
@@ -192,7 +192,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// sdkSessionId should be preserved
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(sdkIdBefore);
-	}, 120000);
+	}, 200000);
 
 	test('message count does not reset after model switch', async () => {
 		// Create session with GLM
@@ -226,7 +226,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// Get message count after switch — should not reset
 		const countAfter = await getMessageCount(daemon, sessionId);
 		expect(countAfter).toBeGreaterThanOrEqual(countBefore);
-	}, 120000);
+	}, 200000);
 
 	test('sdkSessionId unchanged after post-switch message completes (cross-provider)', async () => {
 		// Create session with MiniMax
@@ -274,7 +274,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 
 		// Same ID proves the SDK session was resumed, not recreated
 		expect(idAfter).toBe(idBefore);
-	}, 120000);
+	}, 200000);
 
 	test('sdkSessionId preserved across multiple rapid switches', async () => {
 		// Create session with GLM
@@ -316,7 +316,7 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		// sdkSessionId should still be the same after all switches
 		const sdkIdAfter = getAgentSdkSessionId(daemon, sessionId);
 		expect(sdkIdAfter).toBe(originalSdkId);
-	}, 120000);
+	}, 200000);
 
 	test('DB persists sdkSessionId correctly after model switch', async () => {
 		// Create session with MiniMax
@@ -353,5 +353,5 @@ describe('Cross-Provider Conversation Continuity After Model Switch', () => {
 		})) as { session: { sdkSessionId?: string } };
 
 		expect(sessionResult.session.sdkSessionId).toBe(sdkIdBefore);
-	}, 120000);
+	}, 200000);
 });
