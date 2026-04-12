@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/preact';
-import { signal, type Signal } from '@preact/signals';
+import { computed, signal, type Signal } from '@preact/signals';
 import type { SpaceTask, Space } from '@neokai/shared';
 
 const {
@@ -34,6 +34,7 @@ let mockCurrentSpaceSessionIdSignal!: Signal<string | null>;
 let mockCurrentSpaceTaskIdSignal!: Signal<string | null>;
 let mockSpaceOverlaySessionIdSignal!: Signal<string | null>;
 let mockSpaceOverlayAgentNameSignal!: Signal<string | null>;
+let mockAttentionCountSignal!: ReturnType<typeof computed<number>>;
 
 function initSignals() {
 	mockTasksSignal = signal([]);
@@ -41,6 +42,7 @@ function initSignals() {
 	mockLoadingSignal = signal(false);
 	mockSpaceIdSignal = signal('space-1');
 	mockSessionsSignal = signal([]);
+	mockAttentionCountSignal = computed(() => 0);
 	mockCurrentSpaceSessionIdSignal = signal(null);
 	mockCurrentSpaceTaskIdSignal = signal(null);
 	mockSpaceOverlaySessionIdSignal = signal(null);
@@ -57,6 +59,7 @@ vi.mock('../../lib/space-store.ts', () => ({
 			loading: mockLoadingSignal,
 			spaceId: mockSpaceIdSignal,
 			sessions: mockSessionsSignal,
+			attentionCount: mockAttentionCountSignal,
 		};
 	},
 }));
@@ -195,7 +198,7 @@ describe('SpaceDetailPanel', () => {
 		expect(button?.className).toContain('bg-dark-700');
 	});
 
-	it('shows Review tasks by default and includes counters on task tabs', () => {
+	it('shows Action tasks by default and includes counters on task tabs', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Queued Task', 'open'),
 			makeTask('t2', 'In Progress Task', 'in_progress'),
@@ -206,7 +209,7 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.getByText('Blocked Task')).toBeTruthy();
 		expect(screen.queryByText('Queued Task')).toBeNull();
 		expect(screen.getByText('Active')).toBeTruthy();
-		expect(screen.getByText('Review')).toBeTruthy();
+		expect(screen.getByText('Action')).toBeTruthy();
 		expect(screen.getByText('2')).toBeTruthy();
 		expect(screen.getByText('1')).toBeTruthy();
 	});
@@ -298,7 +301,7 @@ describe('SpaceDetailPanel', () => {
 			];
 			render(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Default tab is "review" — shows blocked tasks
+			// Default tab is "action" — shows blocked tasks
 			expect(screen.getByText('Blocked Task')).toBeTruthy();
 			expect(screen.queryByText('Open Task')).toBeNull();
 			expect(screen.queryByText('In Progress Task')).toBeNull();
@@ -331,7 +334,7 @@ describe('SpaceDetailPanel', () => {
 			mockTasksSignal.value = [makeTask('t1', 'Task A', 'open')];
 			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Active: 1, Review: 0
+			// Active: 1, Action: 0
 			expect(screen.getByText('1')).toBeTruthy();
 			expect(screen.getByText('0')).toBeTruthy();
 
@@ -342,7 +345,7 @@ describe('SpaceDetailPanel', () => {
 			];
 			rerender(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Active: 1, Review: 1
+			// Active: 1, Action: 1
 			const badges = screen.getAllByText('1');
 			expect(badges.length).toBe(2);
 		});
@@ -354,7 +357,7 @@ describe('SpaceDetailPanel', () => {
 			];
 			const { rerender } = render(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Review tab (default): shows blocked task
+			// Action tab (default): shows blocked task
 			expect(screen.getByText('Task Two')).toBeTruthy();
 
 			// Simulate task status change: t1 becomes blocked, t2 becomes done
@@ -364,7 +367,7 @@ describe('SpaceDetailPanel', () => {
 			];
 			rerender(<SpaceDetailPanel spaceId="space-1" />);
 
-			// Review tab should now show Task One (blocked) but not Task Two (done)
+			// Action tab should now show Task One (blocked) but not Task Two (done)
 			expect(screen.getByText('Task One')).toBeTruthy();
 			expect(screen.queryByText('Task Two')).toBeNull();
 		});

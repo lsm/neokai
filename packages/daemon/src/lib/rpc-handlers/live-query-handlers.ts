@@ -908,6 +908,25 @@ function mapSessionRow(row: Record<string, unknown>): Record<string, unknown> {
 	};
 }
 
+const SPACE_TASKS_NEEDING_ATTENTION_SQL = `
+SELECT
+  st.id AS id,
+  st.title AS title,
+  st.status AS status,
+  st.block_reason AS blockReason,
+  st.result AS result,
+  st.task_number AS taskNumber,
+  st.space_id AS spaceId,
+  st.updated_at AS updatedAt
+FROM space_tasks st
+WHERE st.space_id = ?
+  AND (
+    st.status = 'review'
+    OR (st.status = 'blocked' AND st.block_reason IN ('human_input_requested', 'gate_rejected'))
+  )
+ORDER BY st.updated_at DESC, st.id DESC
+`.trim();
+
 const SPACE_SESSIONS_BY_SPACE_SQL = `
 SELECT
   s.id as id,
@@ -1021,6 +1040,13 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		'nodeExecutions.byRun',
 		{
 			sql: NODE_EXECUTIONS_BY_RUN_SQL,
+			paramCount: 1,
+		},
+	],
+	[
+		'spaceTasks.needingAttention',
+		{
+			sql: SPACE_TASKS_NEEDING_ATTENTION_SQL,
 			paramCount: 1,
 		},
 	],

@@ -23,7 +23,7 @@ import {
 } from '../lib/signals';
 import { cn } from '../lib/utils';
 
-type TaskTab = 'active' | 'review';
+type TaskTab = 'active' | 'action';
 
 const sessionStatusColors: Record<string, string> = {
 	active: 'bg-green-500',
@@ -101,7 +101,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const selectedTaskId = currentSpaceTaskIdSignal.value;
 	const spaceAgentSessionId = `space:chat:${spaceId}`;
 
-	const [taskTab, setTaskTab] = useState<TaskTab>('review');
+	const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
 	// Auto-switch tab when selectedTaskId or task status changes
 	useEffect(() => {
@@ -109,9 +109,9 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		const task = tasks.find((t) => t.id === selectedTaskId);
 		if (!task) return;
 		const isActive = task.status === 'open' || task.status === 'in_progress';
-		const isReview = task.status === 'blocked' || task.status === 'review';
+		const isAction = task.status === 'blocked' || task.status === 'review';
 		if (isActive && taskTab !== 'active') setTaskTab('active');
-		else if (isReview && taskTab !== 'review') setTaskTab('review');
+		else if (isAction && taskTab !== 'action') setTaskTab('action');
 	}, [selectedTaskId, tasks]);
 
 	const isOverviewSelected =
@@ -121,21 +121,23 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
 
-	const { activeCount, reviewCount } = useMemo(() => {
+	const attentionCount = spaceStore.attentionCount.value;
+
+	const { activeCount, actionCount } = useMemo(() => {
 		let active = 0;
-		let review = 0;
+		let action = 0;
 		for (const task of tasks) {
 			if (task.status === 'open' || task.status === 'in_progress') active++;
-			else if (task.status === 'blocked' || task.status === 'review') review++;
+			else if (task.status === 'blocked' || task.status === 'review') action++;
 		}
-		return { activeCount: active, reviewCount: review };
+		return { activeCount: active, actionCount: action };
 	}, [tasks]);
 
 	const tasksForTab = useMemo(() => {
 		const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
 		let filtered: typeof sorted;
 
-		if (taskTab === 'review') {
+		if (taskTab === 'action') {
 			filtered = sorted.filter((task) => task.status === 'blocked' || task.status === 'review');
 		} else {
 			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
@@ -294,6 +296,11 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					</svg>
 				</div>
 				<span class="flex-1 text-sm text-gray-200 text-left truncate">Tasks</span>
+				{attentionCount > 0 && (
+					<span class="flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-600 text-white text-xs font-medium flex items-center justify-center tabular-nums">
+						{attentionCount}
+					</span>
+				)}
 			</button>
 
 			<div class="border-t border-dark-700 mx-3 my-3" />
@@ -308,10 +315,10 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 							onClick={() => setTaskTab('active')}
 						/>
 						<TaskTabButton
-							label="Review"
-							count={reviewCount}
-							active={taskTab === 'review'}
-							onClick={() => setTaskTab('review')}
+							label="Action"
+							count={actionCount}
+							active={taskTab === 'action'}
+							onClick={() => setTaskTab('action')}
 						/>
 					</div>
 					{tasksForTab.length === 0 ? (
