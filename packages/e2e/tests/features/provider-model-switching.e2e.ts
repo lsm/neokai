@@ -57,7 +57,17 @@ async function createSessionViaNewSessionButton(page: Page): Promise<string> {
 	// Submit the form — workspace is set inline after session creation.
 	await dialog.getByRole('button', { name: 'Create Session' }).click();
 
-	return waitForSessionCreated(page);
+	const sessionId = await waitForSessionCreated(page);
+
+	// Dismiss the inline WorkspaceSelector if it appears — it overlays the chat
+	// controls (including the Switch Model button) and blocks pointer events.
+	const skipBtn = page.getByRole('button', { name: 'Skip' });
+	if (await skipBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+		await skipBtn.click();
+		await expect(page.getByText('Select a workspace')).toBeHidden({ timeout: 3000 });
+	}
+
+	return sessionId;
 }
 
 /**

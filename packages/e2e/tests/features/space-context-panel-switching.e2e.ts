@@ -58,7 +58,8 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		});
 
 		// SpacesPage header "New Space" button should be visible
-		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
+		// Use .first() — the page now has two "New Space" buttons (header + dashed card).
+		await expect(page.getByRole('button', { name: 'New Space', exact: true }).first()).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -104,7 +105,7 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		});
 
 		// SpacesPage "New Space" button should be visible
-		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: 'New Space', exact: true }).first()).toBeVisible({
 			timeout: 5000,
 		});
 

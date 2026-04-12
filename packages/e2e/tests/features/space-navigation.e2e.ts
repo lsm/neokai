@@ -85,7 +85,9 @@ test.describe('Comprehensive Space Navigation', () => {
 		await page.getByRole('button', { name: 'Spaces', exact: true }).click();
 
 		// SpacesPage header: "New Space" button and heading visible
-		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
+		// Use .first() because the page now renders two "New Space" buttons:
+		// the header button and the dashed empty-state card.
+		await expect(page.getByRole('button', { name: 'New Space', exact: true }).first()).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
@@ -235,7 +237,7 @@ test.describe('Comprehensive Space Navigation', () => {
 		await page.getByTitle('Back to Spaces').click();
 
 		// Level 1 restored
-		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
+		await expect(page.getByRole('button', { name: 'New Space', exact: true }).first()).toBeVisible({
 			timeout: 5000,
 		});
 		await expect(page.getByRole('heading', { name: 'Spaces', exact: true })).toBeVisible({
