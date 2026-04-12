@@ -157,8 +157,11 @@ class SessionStore {
 	 * Internal selection logic (called within promise chain)
 	 */
 	private async doSelect(sessionId: string | null): Promise<void> {
-		// Skip if already on this session
-		if (this.activeSessionId.value === sessionId) {
+		// Skip if already on this session and it loaded successfully (no error, not stuck loading).
+		// Allow re-selection when there is an error or when the session is still loading
+		// (e.g. timed out) so that the Retry button can restart the load.
+		const alreadyLoaded = this.sessionState.value !== null && !this.sessionState.value?.error;
+		if (this.activeSessionId.value === sessionId && alreadyLoaded) {
 			return;
 		}
 

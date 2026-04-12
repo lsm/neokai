@@ -793,8 +793,13 @@ export default function ChatContainer({
 		);
 	}
 
-	// Render error state (with retry via sessionStore re-selection)
-	if (error && !session) {
+	// Render error state (with retry via sessionStore re-selection).
+	// Also catches the case where session state was cleared (sessionInfo null in the store)
+	// but the local `session` copy is still stale from a previous successful load.
+	const storeHasNoSessionInfo =
+		sessionStore.sessionState.value !== null &&
+		sessionStore.sessionState.value?.sessionInfo === null;
+	if (error && (!session || storeHasNoSessionInfo)) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
