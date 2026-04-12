@@ -927,6 +927,7 @@ export class SpaceRuntime {
 				await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
 					status: 'blocked',
 					result: 'Workflow is missing endNodeId and cannot be executed safely.',
+					blockReason: 'workflow_invalid',
 					completedAt: null,
 				});
 			}
@@ -993,6 +994,7 @@ export class SpaceRuntime {
 				await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
 					status: 'blocked',
 					result: blockedReason,
+					blockReason: 'execution_failed',
 					completedAt: null,
 				});
 			}
@@ -1116,6 +1118,7 @@ export class SpaceRuntime {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
 						status: 'blocked',
 						result: blockedReason,
+						blockReason: 'agent_crashed',
 						completedAt: null,
 					});
 				}

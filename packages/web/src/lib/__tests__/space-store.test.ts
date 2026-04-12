@@ -68,6 +68,7 @@ function makeTask(id: string, status = 'open', workflowRunId?: string): SpaceTas
 		startedAt: null,
 		completedAt: null,
 		archivedAt: null,
+		blockReason: null,
 		approvalSource: null,
 		approvalReason: null,
 		approvedAt: null,

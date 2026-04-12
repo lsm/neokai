@@ -13,6 +13,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	SpaceTask,
 	SpaceTaskStatus,
+	SpaceBlockReason,
 	SpaceApprovalSource,
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
@@ -114,6 +115,7 @@ export class SpaceTaskManager {
 		newStatus: SpaceTaskStatus,
 		options?: {
 			result?: string;
+			blockReason?: SpaceBlockReason;
 			approvalSource?: SpaceApprovalSource;
 			approvalReason?: string;
 		}
@@ -136,6 +138,11 @@ export class SpaceTaskManager {
 			if (options?.result) updates.result = options.result;
 		}
 
+		// Stamp blockReason when entering blocked, clear when leaving
+		if (newStatus === 'blocked') {
+			updates.blockReason = options?.blockReason ?? null;
+		}
+
 		// Stamp approval metadata when transitioning from review → done
 		if (task.status === 'review' && newStatus === 'done') {
 			updates.approvalSource = options?.approvalSource ?? null;
@@ -152,7 +159,8 @@ export class SpaceTaskManager {
 			(task.status === 'in_progress' && newStatus === 'open')
 		) {
 			updates.result = null;
-			// Clear approval metadata on reactivation
+			// Clear block reason and approval metadata on reactivation
+			updates.blockReason = null;
 			updates.approvalSource = null;
 			updates.approvalReason = null;
 			updates.approvedAt = null;
@@ -185,8 +193,15 @@ export class SpaceTaskManager {
 	/**
 	 * Fail a task (mark as blocked)
 	 */
-	async failTask(taskId: string, error?: string): Promise<SpaceTask> {
-		return this.setTaskStatus(taskId, 'blocked', error ? { result: error } : undefined);
+	async failTask(
+		taskId: string,
+		error?: string,
+		blockReason?: SpaceBlockReason
+	): Promise<SpaceTask> {
+		return this.setTaskStatus(taskId, 'blocked', {
+			...(error ? { result: error } : {}),
+			blockReason,
+		});
 	}
 
 	/**

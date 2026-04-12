@@ -348,6 +348,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - approval_reason: optional comment/reason for the approval
 	//   - approved_at: timestamp when approval occurred
 	runMigration82(db);
+
+	// Migration 83: Add block_reason column to space_tasks.
+	//   Records *why* a task is blocked (agent_crashed, workflow_invalid, etc.).
+	runMigration83(db);
 }
 
 /**
@@ -5578,4 +5582,11 @@ function runMigration82(db: BunDatabase): void {
 	db.exec(`ALTER TABLE space_tasks ADD COLUMN approval_source TEXT`);
 	db.exec(`ALTER TABLE space_tasks ADD COLUMN approval_reason TEXT`);
 	db.exec(`ALTER TABLE space_tasks ADD COLUMN approved_at INTEGER`);
+}
+
+function runMigration83(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	if (tableHasColumn(db, 'space_tasks', 'block_reason')) return;
+
+	db.exec(`ALTER TABLE space_tasks ADD COLUMN block_reason TEXT`);
 }

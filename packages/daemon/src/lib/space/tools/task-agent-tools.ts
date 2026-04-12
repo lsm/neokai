@@ -141,6 +141,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				await taskManager.setTaskStatus(taskId, status, {
 					result: summary,
+					...(status === 'blocked' ? { blockReason: 'execution_failed' as const } : {}),
 				});
 
 				// Emit DaemonHub event so the Space Agent is notified of task completion/failure.
@@ -376,6 +377,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				await taskManager.setTaskStatus(taskId, 'blocked', {
 					result: questionContext ? `${question}\n\nContext: ${questionContext}` : question,
+					blockReason: 'human_input_requested',
 				});
 
 				return jsonResult({

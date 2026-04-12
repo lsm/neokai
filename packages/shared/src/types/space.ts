@@ -170,6 +170,18 @@ export type SpaceTaskStatus =
 	| 'archived';
 
 /**
+ * Why a task is blocked — set when status transitions to `blocked`,
+ * cleared when the task leaves `blocked`.
+ */
+export type SpaceBlockReason =
+	| 'agent_crashed'
+	| 'workflow_invalid'
+	| 'execution_failed'
+	| 'human_input_requested'
+	| 'gate_rejected'
+	| 'dependency_failed';
+
+/**
  * Space task priority
  *
  * Numeric priority values P0–P3 where lower number = higher priority.
@@ -251,6 +263,8 @@ export interface SpaceTask {
 	completedAt: number | null;
 	/** Timestamp when task was archived (milliseconds since epoch); null until archived */
 	archivedAt: number | null;
+	/** Why this task is blocked; null when status is not `blocked` */
+	blockReason: SpaceBlockReason | null;
 	/** Who approved this task (set when transitioning from review → done or via semi_auto) */
 	approvalSource: SpaceApprovalSource | null;
 	/** Optional reason/comment for the approval or rejection */
@@ -370,6 +384,8 @@ export interface UpdateSpaceTaskParams {
 	completedAt?: number | null;
 	/** Timestamp when task was archived; null to clear */
 	archivedAt?: number | null;
+	/** Why this task is blocked; null to clear */
+	blockReason?: SpaceBlockReason | null;
 	/** Who approved this task */
 	approvalSource?: SpaceApprovalSource | null;
 	/** Optional approval reason/comment */
