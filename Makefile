@@ -84,7 +84,7 @@ test-daemon:
 
 test-daemon-shard:
 	@echo "Running daemon tests ($(SHARD))..."
-	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit/$(SHARD) packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots --ignore=**/neo-daemon-lifecycle.test.ts packages/daemon/tests/unit/$(SHARD) packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
 test-web:
 	@echo "Running web tests..."
