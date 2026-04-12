@@ -368,6 +368,15 @@ export class SpaceRuntime {
 		const updated = this.config.taskRepo.updateTask(taskId, params);
 		if (updated) {
 			await this.safeOnTaskUpdated(spaceId, updated);
+
+			// Cascade dependency_failed to open tasks that depend on this one
+			if (params.status === 'blocked' || params.status === 'cancelled') {
+				const taskManager = this.getOrCreateTaskManager(spaceId);
+				const cascaded = await taskManager.blockDependentTasks(taskId);
+				for (const blocked of cascaded) {
+					await this.safeOnTaskUpdated(spaceId, blocked);
+				}
+			}
 		}
 		return updated;
 	}
@@ -1613,11 +1622,17 @@ export class SpaceRuntime {
 				.listStandaloneBySpace(space.id, false)
 				.filter((task) => task.status === 'open');
 
+			const taskManager = this.getOrCreateTaskManager(space.id);
+
 			for (const task of standaloneOpenTasks) {
 				// Re-read to avoid racing with external updates between list and attach.
 				const fresh = this.config.taskRepo.getTask(task.id);
 				if (!fresh || fresh.workflowRunId) continue;
 				if (fresh.status !== 'open') continue;
+
+				// Skip tasks whose dependencies aren't met yet — they'll be
+				// re-evaluated on the next tick when upstream tasks complete.
+				if (!(await taskManager.areDependenciesMet(fresh))) continue;
 
 				// Prefer the caller-specified workflow; fall back to heuristic selection.
 				let selectedWorkflow: ReturnType<typeof this.selectFallbackWorkflowForStandaloneTask>;

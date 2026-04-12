@@ -179,7 +179,7 @@ export type SpaceBlockReason =
 	| 'execution_failed'
 	| 'human_input_requested'
 	| 'gate_rejected'
-	| 'dependency_failed'; // reserved — wired up when Gap #5 (task dependency enforcement) ships
+	| 'dependency_failed';
 
 /**
  * Space task priority
