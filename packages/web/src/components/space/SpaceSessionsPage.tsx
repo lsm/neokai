@@ -12,28 +12,31 @@ import { getRelativeTime } from '../../lib/utils';
 
 const STATUS_BORDER: Record<string, string> = {
 	active: 'border-l-green-500',
-	paused: 'border-l-amber-500',
+	paused: 'border-l-green-500',
 	pending_worktree_choice: 'border-l-amber-500',
 	ended: 'border-l-gray-600',
 };
 
 const STATUS_LABEL: Record<string, string> = {
 	active: 'Active',
-	paused: 'Paused',
+	paused: 'Pending',
 	pending_worktree_choice: 'Pending',
 	ended: 'Ended',
 };
+
+const ARCHIVED_LIMIT = 5;
 
 interface StatusGroupDef {
 	statuses: string[];
 	title: string;
 	variant: 'green' | 'yellow' | 'gray';
+	limit?: number;
 }
 
 const SESSION_GROUPS: StatusGroupDef[] = [
-	{ statuses: ['active'], title: 'Active', variant: 'green' },
-	{ statuses: ['paused', 'pending_worktree_choice'], title: 'Paused', variant: 'yellow' },
-	{ statuses: ['ended'], title: 'Ended', variant: 'gray' },
+	{ statuses: ['pending_worktree_choice'], title: 'Pending', variant: 'yellow' },
+	{ statuses: ['active', 'paused'], title: 'Active', variant: 'green' },
+	{ statuses: ['ended'], title: 'Archived', variant: 'gray', limit: ARCHIVED_LIMIT },
 ];
 
 function SessionGroup({
@@ -42,13 +45,17 @@ function SessionGroup({
 	variant,
 	sessions,
 	spaceId,
+	limit,
 }: {
 	title: string;
 	count: number;
 	variant: 'green' | 'yellow' | 'gray';
 	sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
 	spaceId: string;
+	limit?: number;
 }) {
+	const displayed = limit ? sessions.slice(0, limit) : sessions;
+	const hidden = limit ? Math.max(0, sessions.length - limit) : 0;
 	const headerStyles: Record<string, string> = {
 		green: 'bg-green-900/20',
 		yellow: 'bg-yellow-900/20',
@@ -77,9 +84,12 @@ function SessionGroup({
 				</h3>
 			</div>
 			<div class="divide-y divide-dark-700">
-				{sessions.map((session) => (
+				{displayed.map((session) => (
 					<SessionItem key={session.id} session={session} spaceId={spaceId} />
 				))}
+				{hidden > 0 && (
+					<div class="px-4 py-2 text-xs text-gray-600 text-center">+{hidden} more not shown</div>
+				)}
 			</div>
 		</div>
 	);
@@ -172,6 +182,7 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 							variant={group.variant}
 							sessions={groupSessions}
 							spaceId={spaceId}
+							limit={group.limit}
 						/>
 					);
 				})}
