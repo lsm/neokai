@@ -127,11 +127,33 @@ No cross-pollination of patterns between the two systems.
 
 ---
 
-### 8. `needs_attention` Status for Space Tasks
+### 8. Block Reason Tagging for Space Tasks
 
-Room tasks have `needs_attention` status. Space tasks only have `blocked`. This means:
-- Can't distinguish "blocked by technical issue" from "blocked, human input needed"
-- No priority escalation for stale blocked tasks
+Space tasks use a single `blocked` status for all failure modes. Once a task is blocked,
+nothing in the system knows *why* — the UI, notifications, retry logic, and Space Agent
+all see the same opaque state.
+
+**Approach:** Keep `blocked` as the only status. Add a `blockReason` field that records
+the specific cause. Downstream systems (notifications, retry, autonomy) branch on the
+reason, not the status.
+
+**Block reasons (by code path):**
+
+| Reason | Trigger | Who resolves | Auto-recoverable? |
+|--------|---------|-------------|-------------------|
+| `agent_crashed` | Agent session died after 2 retries | Space Agent `retry_task()` → human | No (retries exhausted) |
+| `workflow_invalid` | Missing endNodeId or broken topology | Human (fix workflow definition) | No |
+| `execution_failed` | Node hit unrecoverable error | Space Agent → human | No |
+| `human_input_requested` | Task Agent called `request_human_input` | Human (answer the question) | No (by design) |
+| `gate_rejected` | Human or agent rejected a gate | Human (re-approve or revise) | No |
+| `dependency_failed` | Upstream task failed (future, Gap 5) | Depends on upstream fix | No |
+
+**Why not a separate `needs_attention` status?**
+- No status machine changes, no migration of existing tasks
+- Block reasons are more informative than a binary status split
+- The runtime auto-retry (2 agent crashes, 1 run retry) happens *before* `blocked` — by the
+  time a task is blocked, auto-recovery already failed regardless of reason
+- UI/notifications can filter on reason directly (e.g. show badge only for `human_input_requested` + `gate_rejected`)
 
 **Impact:** Low-Medium  
 **Effort:** Low
@@ -172,7 +194,7 @@ Workflow topology is fixed regardless of autonomy level:
 | 5 | Task dependency enforcement | Medium | Medium | **P2** |
 | 6 | Tiered retry by autonomy level | Medium | Medium | **P2** |
 | 7 | Room/Space autonomy unification | High | High | **P3** |
-| 8 | `needs_attention` status for space tasks | Low-Medium | Low | **P2** |
+| 8 | Block reason tagging for space tasks | Low-Medium | Low | **P2** |
 | 9 | Human review SLA/timeout | Low | Low | **P3** |
 | 10 | Conditional branching by autonomy | Medium | High | **P3** |
 
@@ -181,7 +203,7 @@ Workflow topology is fixed regardless of autonomy level:
 ```
 Gap 3 (Audit Trail) ──────┐
                            ├──► Gap 2 (Notification UI) ──► Gap 1 (PR Auto-Merge)
-Gap 8 (needs_attention) ──┘         │
+Gap 8 (block reasons) ────┘         │
                                     ▼
 Gap 5 (Dependency Enforcement)  Gap 9 (Review SLA)
                                     │
@@ -201,7 +223,7 @@ Gap 6 (Tiered Retry) ──────────────┤
 | Step | Gap | Why this order | Effort | Status |
 |------|-----|----------------|--------|--------|
 | 1 | **#3 Audit trail** | Foundation — everything else needs to record who/when/why | Low | **Done** (PR #1481) |
-| 2 | **#8 `needs_attention`** | Foundation — distinguishes block types for notifications & retry | Low | |
+| 2 | **#8 Block reason tagging** | Foundation — distinguishes block types for notifications & retry | Low | |
 | 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | |
 | 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | |
 | 5 | **#9 Review SLA** | Small, builds on audit trail | Low | |
