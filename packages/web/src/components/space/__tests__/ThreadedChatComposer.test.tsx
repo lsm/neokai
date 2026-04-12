@@ -1,6 +1,28 @@
 // @ts-nocheck
+import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+
+const mockAgentWorking = signal(false);
+const mockHandleInterrupt = vi.fn(async () => {});
+
+vi.mock('../../../lib/state.ts', () => ({
+	get isAgentWorking() {
+		return {
+			get value() {
+				return mockAgentWorking.value;
+			},
+		};
+	},
+}));
+
+vi.mock('../../../hooks', () => ({
+	useInterrupt: () => ({
+		interrupting: false,
+		handleInterrupt: mockHandleInterrupt,
+	}),
+}));
+
 import { ThreadedChatComposer } from '../ThreadedChatComposer';
 
 const mentionCandidates = [
@@ -12,6 +34,7 @@ function renderComposer(overrides: Partial<Parameters<typeof ThreadedChatCompose
 	const onSend = vi.fn().mockResolvedValue(true);
 	const view = render(
 		<ThreadedChatComposer
+			taskSessionId="test-session-id"
 			mentionCandidates={mentionCandidates}
 			hasTaskAgentSession={true}
 			canSend={true}
@@ -35,6 +58,8 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
 describe('ThreadedChatComposer', () => {
 	beforeEach(() => {
 		cleanup();
+		mockAgentWorking.value = false;
+		mockHandleInterrupt.mockClear();
 	});
 
 	afterEach(() => {
@@ -95,5 +120,24 @@ describe('ThreadedChatComposer', () => {
 		setTextareaValue(textarea as HTMLTextAreaElement, 'line one');
 		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it('should show stop button when agent is working and textarea is empty', () => {
+		mockAgentWorking.value = true;
+		const { getByTestId, queryByTestId } = renderComposer();
+
+		expect(getByTestId('stop-button')).toBeTruthy();
+		expect(queryByTestId('send-button')).toBeNull();
+	});
+
+	it('should show send button when agent is working but has content', () => {
+		mockAgentWorking.value = true;
+		const { getByPlaceholderText, getByTestId, queryByTestId } = renderComposer();
+		const textarea = getByPlaceholderText('Message task agent...') as HTMLTextAreaElement;
+
+		setTextareaValue(textarea, 'Queued follow-up');
+
+		expect(getByTestId('send-button')).toBeTruthy();
+		expect(queryByTestId('stop-button')).toBeNull();
 	});
 });

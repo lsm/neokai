@@ -468,6 +468,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						{showInlineComposer && (
 							<div class="absolute bottom-0 left-0 right-0 z-10">
 								<ThreadedChatComposer
+									taskSessionId={agentSessionId ?? ''}
 									mentionCandidates={mentionCandidates}
 									hasTaskAgentSession={!!agentSessionId}
 									canSend={canSendThreadMessage}
