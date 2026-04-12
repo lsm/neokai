@@ -242,6 +242,19 @@ export class NodeExecutionRepository {
 	}
 
 	/**
+	 * Find a node execution by its agent session ID.
+	 * Returns the first match or null if none exists.
+	 */
+	getByAgentSessionId(agentSessionId: string): NodeExecution | null {
+		const row = this.db
+			.prepare(`SELECT * FROM node_executions WHERE agent_session_id = ? LIMIT 1`)
+			.get(agentSessionId) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+		return this.rowToNodeExecution(row);
+	}
+
+	/**
 	 * Delete all node executions for a workflow run
 	 */
 	deleteByWorkflowRun(workflowRunId: string): void {

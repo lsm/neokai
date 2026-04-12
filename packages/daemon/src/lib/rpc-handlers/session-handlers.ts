@@ -122,6 +122,40 @@ export function setupSessionHandlers(
 		return { success: true, session: updatedSession };
 	});
 
+	/**
+	 * Set workspace on an existing session (inline workspace selector flow)
+	 * Called when user selects a workspace via the inline WorkspaceSelector in chat
+	 */
+	messageHub.onRequest('session.setWorkspace', async (data) => {
+		const { sessionId, workspacePath, worktreeMode } = data as {
+			sessionId: string;
+			workspacePath: string;
+			worktreeMode: 'worktree' | 'direct';
+		};
+
+		if (!sessionId || !workspacePath || !worktreeMode) {
+			throw new Error('Missing required fields: sessionId, workspacePath, and worktreeMode');
+		}
+
+		if (worktreeMode !== 'worktree' && worktreeMode !== 'direct') {
+			throw new Error(`Invalid worktreeMode: ${worktreeMode}. Must be 'worktree' or 'direct'`);
+		}
+
+		const sessionLifecycle = sessionManager.getSessionLifecycle();
+		const updatedSession = await sessionLifecycle.setWorkspace(
+			sessionId,
+			workspacePath,
+			worktreeMode
+		);
+
+		// Broadcast update to all clients
+		messageHub.event('session.updated', updatedSession, {
+			channel: `session:${sessionId}`,
+		});
+
+		return { success: true, session: updatedSession };
+	});
+
 	messageHub.onRequest(
 		'session.list',
 		async (data: { status?: string; includeArchived?: boolean } | undefined) => {

@@ -39,11 +39,13 @@ Each package's `tsconfig.json` defines path aliases that resolve to source files
 
 ```bash
 # Development
-make dev WORKSPACE=/path/to/workspace    # Start dev server on random available port
+make dev                                    # Start dev server on random available port
+make dev PORT=8080                          # Start dev server on specific port
+make dev PORT=8080 DB_PATH=/tmp/mydb.db    # Isolated DB (avoids lock conflicts)
 
 # Production
-make serve-random WORKSPACE=/path/to/workspace   # Production server on random port
-make run WORKSPACE=/path/to/workspace [PORT=8080] # Production server (PORT optional)
+make serve-random                 # Production server on random port
+make run [PORT=8080]             # Production server (PORT optional)
 
 # Testing
 make test-daemon       # Daemon tests only (bun test) with coverage
@@ -159,6 +161,49 @@ See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documen
 - `packages/e2e/tests/` — Browser automation tests
 
 Unit tests preload `packages/daemon/tests/unit/setup.ts` which sets `NODE_ENV='test'`, clears all API keys (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, GLM_API_KEY, ZHIPU_API_KEY), and suppresses console output. This ensures unit tests never make real API calls.
+
+#### Database Configuration for Tests
+
+**⚠️ Important: Database Lock Conflicts**
+
+The daemon uses a file-based SQLite database with a PID lock file (`~/.neokai/data/daemon.db.lock`). Running multiple daemons with the same database path will fail with:
+
+```
+Another NeoKai daemon is already running with this database (PID XXXX).
+```
+
+**Starting a dev server in a worktree (agents must do this):**
+
+When working in a worktree, always start the dev server with an isolated `DB_PATH` so it does not conflict with any already-running production or development daemon:
+
+```bash
+# In the worktree root — picks a random port, uses an isolated DB
+make dev PORT=8383 DB_PATH=/tmp/neokai-$(basename $PWD).db
+
+# Or with a fully random temp path
+make dev DB_PATH=$(mktemp -u /tmp/neokai-XXXXXX.db)
+```
+
+Never run `make dev` without `DB_PATH` in a worktree — it will fail with "Another NeoKai daemon is already running" if the main daemon is active.
+
+**For testing scenarios that start a dev server:**
+- Pass `DB_PATH=<path>` to `make dev` or `make run`
+- This prevents conflicts with any running production daemon instance
+- Example: `make dev PORT=8484 DB_PATH=/tmp/test-db.db`
+
+**For E2E tests:**
+- E2E tests use `make run-e2e` which handles database isolation automatically (uses temp directories)
+- Do NOT run a separate `make dev` or `make run` while E2E tests are running
+
+**In-memory database (preferred for unit tests):**
+- Unit tests should use in-memory SQLite databases where possible
+- This avoids filesystem conflicts and improves test speed
+- See `packages/daemon/tests/unit/helpers/` for test database helpers
+
+**Real filesystem database (for integration tests):**
+- Use temporary directories (e.g., `/tmp/neokai-test-XXXXXX`)
+- Clean up after tests complete
+- E2E tests already follow this pattern via `e2e/` test isolation
 
 #### Dev Proxy Mode for Online Tests
 

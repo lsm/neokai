@@ -916,6 +916,13 @@ export class TaskAgentManager {
 				return;
 			}
 		}
+
+		// Not in memory — attempt lazy rehydration from DB
+		const rehydrated = await this.rehydrateSubSession(subSessionId);
+		if (rehydrated) {
+			await this.injectMessageIntoSession(rehydrated, message);
+			return;
+		}
 		throw new Error(`Sub-session not found: ${subSessionId}`);
 	}
 
@@ -1752,6 +1759,132 @@ export class TaskAgentManager {
 		log.info(
 			`TaskAgentManager.rehydrate: rehydrated task agent for task ${taskId} (session ${sessionId})`
 		);
+	}
+
+	/**
+	 * Lazily rehydrate a node-agent sub-session from DB when a message arrives for
+	 * a session that is no longer in the in-memory maps (e.g., after a daemon restart).
+	 *
+	 * Steps:
+	 * 1. Look up the NodeExecution by agentSessionId.
+	 * 2. Find the parent SpaceTask via the execution's workflowRunId.
+	 * 3. Load Space, WorkflowRun, and Workflow from DB.
+	 * 4. Restore the AgentSession from DB via AgentSession.restore().
+	 * 5. Re-inject the node-agent MCP server (runtime-only, not persisted).
+	 * 6. Register the session in in-memory maps and SessionManager.
+	 * 7. Register a completion callback so handleSubSessionComplete fires normally.
+	 * 8. Restart the streaming query (idempotent if already running).
+	 *
+	 * Returns the rehydrated AgentSession, or null if the session cannot be found
+	 * in the DB or its parent context is missing.
+	 */
+	private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
+		log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
+
+		// --- Look up the NodeExecution by agentSessionId
+		const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+		if (!execution) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: no NodeExecution found with agentSessionId=${subSessionId}`
+			);
+			return null;
+		}
+
+		// --- Find the parent SpaceTask via workflowRunId
+		const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
+		// The parent task is the one that owns the workflow run (not a sub-task created by it).
+		// We identify it by having a task_agent_session_id set (the orchestrating task agent).
+		// Fall back to the first task in the run if none has a task agent session.
+		const parentTask = tasks.find((t) => t.taskAgentSessionId != null) ?? tasks[0] ?? null;
+		if (!parentTask) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: no parent task found for workflowRunId=${execution.workflowRunId}`
+			);
+			return null;
+		}
+
+		const taskId = parentTask.id;
+		const spaceId = parentTask.spaceId;
+
+		// --- Load Space
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: space ${spaceId} not found for task ${taskId}`
+			);
+			return null;
+		}
+
+		// --- Load WorkflowRun and Workflow
+		const workflowRun = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+		const workflow = workflowRun?.workflowId
+			? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+			: null;
+		const workflowRunId = execution.workflowRunId;
+
+		// --- Restore the AgentSession from DB
+		const agentSession = AgentSession.restore(
+			subSessionId,
+			this.config.db,
+			this.config.messageHub,
+			this.config.daemonHub,
+			this.config.getApiKey,
+			this.config.skillsManager,
+			this.config.appMcpServerRepo
+		);
+		if (!agentSession) {
+			log.warn(
+				`TaskAgentManager.rehydrateSubSession: AgentSession.restore() returned null for ${subSessionId} — session not in DB`
+			);
+			return null;
+		}
+
+		// --- Determine workspace path
+		const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+
+		// --- Re-build and attach node-agent MCP server (runtime-only, not persisted)
+		const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+			taskId,
+			subSessionId,
+			execution.agentName,
+			spaceId,
+			workflowRunId,
+			workspacePath,
+			execution.workflowNodeId
+		);
+
+		// Merge registry-sourced MCP servers, letting node-agent server take precedence.
+		const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+		const mergedMcpServers: Record<string, McpServerConfig> = {
+			...registryMcpServers,
+			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+		};
+		agentSession.setRuntimeMcpServers(mergedMcpServers);
+
+		// --- Register in in-memory maps
+		if (!this.subSessions.has(taskId)) {
+			this.subSessions.set(taskId, new Map());
+		}
+		this.subSessions.get(taskId)!.set(subSessionId, agentSession);
+		this.agentSessionIndex.set(subSessionId, agentSession);
+
+		// --- Register in SessionManager cache to prevent duplicate AgentSession creation
+		this.config.sessionManager.registerSession(agentSession);
+
+		// --- Register completion callback so the workflow continues normally after this turn
+		this.registerCompletionCallback(subSessionId, async () => {
+			await this.handleSubSessionComplete(taskId, execution.workflowNodeId, subSessionId);
+		});
+
+		// --- Restart the streaming query (idempotent if already running)
+		await agentSession.startStreamingQuery();
+
+		log.info(
+			`TaskAgentManager.rehydrateSubSession: rehydrated sub-session ${subSessionId} for task ${taskId} (node ${execution.workflowNodeId})`
+		);
+
+		void workflow; // Loaded for context but not needed directly; suppresses unused-var lint.
+		return agentSession;
 	}
 
 	// -------------------------------------------------------------------------

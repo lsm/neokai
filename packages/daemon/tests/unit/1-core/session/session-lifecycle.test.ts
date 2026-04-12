@@ -1323,3 +1323,282 @@ describe('SessionLifecycle - session creation with worktree', () => {
 		);
 	});
 });
+
+describe('SessionLifecycle - setWorkspace', () => {
+	const SESSION_ID = 'test-session-id';
+
+	let lifecycle: SessionLifecycle;
+	let mockDb: Database;
+	let mockWorktreeManager: WorktreeManager;
+	let mockSessionCache: SessionCache;
+	let mockEventBus: DaemonHub;
+	let mockMessageHub: MessageHub;
+	let mockToolsConfigManager: ToolsConfigManager;
+	let mockAgentSessionFactory: AgentSessionFactory;
+	let config: SessionLifecycleConfig;
+
+	beforeEach(() => {
+		mockDb = {
+			createSession: mock(() => {}),
+			updateSession: mock(() => {}),
+			deleteSession: mock(() => {}),
+			getSession: mock(() => null),
+			getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
+		} as unknown as Database;
+
+		mockWorktreeManager = {
+			detectGitSupport: mock(async () => ({ isGitRepo: false, gitRoot: null })),
+			createWorktree: mock(async () => null),
+			removeWorktree: mock(async () => {}),
+			getCurrentBranch: mock(async () => 'main'),
+		} as unknown as WorktreeManager;
+
+		mockSessionCache = {
+			set: mock(() => {}),
+			get: mock(() => undefined),
+			has: mock(() => false),
+			remove: mock(() => {}),
+			clear: mock(() => {}),
+			getAsync: mock(async () => undefined),
+		} as unknown as SessionCache;
+
+		mockEventBus = {
+			on: mock(() => () => {}),
+			emit: mock(async () => {}),
+		} as unknown as DaemonHub;
+
+		mockMessageHub = {
+			event: mock(async () => {}),
+			onRequest: mock((_method: string, _handler: Function) => () => {}),
+		} as unknown as MessageHub;
+
+		mockToolsConfigManager = {
+			getDefaultForNewSession: mock(() => ({
+				useClaudeCodePreset: true,
+				settingSources: ['project', 'local'],
+				disabledMcpServers: [],
+			})),
+		} as unknown as ToolsConfigManager;
+
+		mockAgentSessionFactory = mock(() => ({}));
+
+		config = {
+			defaultModel: 'claude-sonnet-4-20250514',
+			maxTokens: 8192,
+			temperature: 1.0,
+			disableWorktrees: true,
+		};
+
+		lifecycle = new SessionLifecycle(
+			mockDb,
+			mockWorktreeManager,
+			mockSessionCache,
+			mockEventBus,
+			mockMessageHub,
+			config,
+			mockToolsConfigManager,
+			mockAgentSessionFactory
+		);
+	});
+
+	function makeAgentSession(overrides: Record<string, unknown> = {}) {
+		return {
+			cleanup: mock(async () => {}),
+			updateMetadata: mock(() => {}),
+			getSessionData: mock(() => ({
+				id: SESSION_ID,
+				title: 'New Session',
+				workspacePath: null,
+				status: 'active',
+				type: 'worker',
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+					titleGenerated: false,
+					workspaceInitialized: false,
+				},
+				config: {},
+				worktree: undefined,
+				...overrides,
+			})),
+		};
+	}
+
+	it('sets workspace path and marks as initialized for direct mode', async () => {
+		const agentSession = makeAgentSession();
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+		expect(mockDb.updateSession).toHaveBeenCalledWith(
+			SESSION_ID,
+			expect.objectContaining({
+				workspacePath: '/some/workspace',
+				metadata: expect.objectContaining({
+					workspaceInitialized: true,
+					worktreeChoice: expect.objectContaining({
+						status: 'completed',
+						choice: 'direct',
+					}),
+				}),
+			})
+		);
+	});
+
+	it('creates a worktree when worktreeMode is worktree and worktrees enabled', async () => {
+		// Enable worktrees for this test
+		const lifecycleWithWorktrees = new SessionLifecycle(
+			mockDb,
+			mockWorktreeManager,
+			mockSessionCache,
+			mockEventBus,
+			mockMessageHub,
+			{ ...config, disableWorktrees: false },
+			mockToolsConfigManager,
+			mockAgentSessionFactory
+		);
+
+		const worktreeResult = {
+			isWorktree: true as const,
+			worktreePath: '/worktrees/test-session-id',
+			mainRepoPath: '/some/workspace',
+			branch: `session/${SESSION_ID}`,
+		};
+		(mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockResolvedValue(
+			worktreeResult
+		);
+
+		const agentSession = makeAgentSession();
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await lifecycleWithWorktrees.setWorkspace(SESSION_ID, '/some/workspace', 'worktree');
+
+		expect(mockWorktreeManager.createWorktree).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: SESSION_ID,
+				repoPath: '/some/workspace',
+				branchName: `session/${SESSION_ID}`,
+			})
+		);
+
+		expect(mockDb.updateSession).toHaveBeenCalledWith(
+			SESSION_ID,
+			expect.objectContaining({
+				workspacePath: '/some/workspace',
+				worktree: worktreeResult,
+				metadata: expect.objectContaining({
+					workspaceInitialized: true,
+					worktreeChoice: expect.objectContaining({
+						status: 'completed',
+						choice: 'worktree',
+					}),
+				}),
+			})
+		);
+	});
+
+	it('skips worktree creation when worktrees are globally disabled', async () => {
+		// config has disableWorktrees: true
+		const agentSession = makeAgentSession();
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'worktree');
+
+		expect(mockWorktreeManager.createWorktree).not.toHaveBeenCalled();
+
+		expect(mockDb.updateSession).toHaveBeenCalledWith(
+			SESSION_ID,
+			expect.objectContaining({
+				workspacePath: '/some/workspace',
+				worktree: undefined,
+			})
+		);
+	});
+
+	it('emits session.updated event after setting workspace', async () => {
+		const agentSession = makeAgentSession();
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+		expect(mockEventBus.emit).toHaveBeenCalledWith(
+			'session.updated',
+			expect.objectContaining({
+				sessionId: SESSION_ID,
+				session: expect.objectContaining({
+					workspacePath: '/some/workspace',
+				}),
+			})
+		);
+	});
+
+	it('throws when session is not found', async () => {
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(undefined);
+
+		await expect(lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct')).rejects.toThrow(
+			`Session ${SESSION_ID} not found`
+		);
+	});
+
+	it('throws when session is not a worker type', async () => {
+		const agentSession = makeAgentSession({ type: 'room_chat' });
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await expect(lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct')).rejects.toThrow(
+			'is not a worker session'
+		);
+	});
+
+	it('throws when session status is not active', async () => {
+		const agentSession = makeAgentSession({ status: 'pending_worktree_choice' });
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await expect(lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct')).rejects.toThrow(
+			'must be active to set workspace'
+		);
+	});
+
+	it('throws when workspace path is empty', async () => {
+		const agentSession = makeAgentSession();
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await expect(lifecycle.setWorkspace(SESSION_ID, '   ', 'direct')).rejects.toThrow(
+			'Workspace path cannot be empty'
+		);
+	});
+
+	it('throws when session already has a workspace (prevents silent overwrite)', async () => {
+		const agentSession = makeAgentSession({ workspacePath: '/existing/workspace' });
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await expect(lifecycle.setWorkspace(SESSION_ID, '/new/workspace', 'direct')).rejects.toThrow(
+			'already has a workspace'
+		);
+	});
+
+	it('detects git branch for direct mode on git repos', async () => {
+		(mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
+			isGitRepo: true,
+			gitRoot: '/some/workspace',
+		});
+		(mockWorktreeManager.getCurrentBranch as ReturnType<typeof mock>).mockResolvedValue('main');
+
+		const agentSession = makeAgentSession();
+		(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+		await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+		expect(mockWorktreeManager.getCurrentBranch).toHaveBeenCalledWith('/some/workspace');
+
+		expect(mockDb.updateSession).toHaveBeenCalledWith(
+			SESSION_ID,
+			expect.objectContaining({
+				gitBranch: 'main',
+			})
+		);
+	});
+});
