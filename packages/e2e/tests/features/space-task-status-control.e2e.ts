@@ -80,13 +80,13 @@ test.describe('Space Task Blocked Status & Manual Status Control', () => {
 		await page.waitForURL(`/space/${spaceId}/tasks`, { timeout: 5000 });
 		await expect(page.locator(TASKS_VIEW)).toBeVisible({ timeout: 10000 });
 
-		// Click the "Review" tab which shows blocked + review tasks
+		// Click the "Action" tab which shows blocked + review tasks
 		const tasksView = page.locator(TASKS_VIEW);
-		const reviewTab = tasksView.getByRole('button', { name: 'Review' });
-		await expect(reviewTab).toBeVisible({ timeout: 10000 });
-		await reviewTab.click();
+		const actionTab = tasksView.getByRole('button', { name: 'Action' });
+		await expect(actionTab).toBeVisible({ timeout: 10000 });
+		await actionTab.click();
 
-		// The task title should appear in the Review group
+		// The task title should appear in the Action group
 		await expect(tasksView.getByText(taskTitle, { exact: true })).toBeVisible({ timeout: 5000 });
 
 		// The blocked reason should appear as amber text below the task title

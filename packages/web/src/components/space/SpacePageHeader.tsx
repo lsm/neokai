@@ -9,7 +9,7 @@ interface SpacePageHeaderProps {
 export function SpacePageHeader({ spaceName, pageTitle }: SpacePageHeaderProps) {
 	return (
 		<div
-			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center relative z-10`}
+			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center`}
 		>
 			<div class="flex-1 flex items-center gap-3">
 				<button
