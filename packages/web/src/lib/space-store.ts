@@ -583,10 +583,18 @@ class SpaceStore {
 			space: Space;
 		}>('space.archived', (event) => {
 			if (event.spaceId === spaceId) {
-				// Space archived externally — clear selection
-				this.clearSpace().catch((err) => {
-					logger.error('Failed to clear space after external archive:', err);
-				});
+				// Conditional clear: only clear if still on this space when the promise chain
+				// executes. A late-arriving event for a previous space can otherwise clear the
+				// newly-selected space (race between selectSpace chain and delayed WS events).
+				this.selectPromise = this.selectPromise
+					.then(() => {
+						if (this.spaceId.value === spaceId) {
+							return this.doSelect(null);
+						}
+					})
+					.catch((err) => {
+						logger.error('Failed to clear space after external archive:', err);
+					});
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceArchived);
@@ -597,10 +605,18 @@ class SpaceStore {
 			spaceId: string;
 		}>('space.deleted', (event) => {
 			if (event.spaceId === spaceId) {
-				// Space deleted externally — clear selection
-				this.clearSpace().catch((err) => {
-					logger.error('Failed to clear space after external delete:', err);
-				});
+				// Conditional clear: only clear if still on this space when the promise chain
+				// executes. A late-arriving event for a previous space can otherwise clear the
+				// newly-selected space (race between selectSpace chain and delayed WS events).
+				this.selectPromise = this.selectPromise
+					.then(() => {
+						if (this.spaceId.value === spaceId) {
+							return this.doSelect(null);
+						}
+					})
+					.catch((err) => {
+						logger.error('Failed to clear space after external delete:', err);
+					});
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceDeleted);

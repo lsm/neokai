@@ -238,6 +238,7 @@ export default defineConfig({
 			DEFAULT_MODEL: 'sonnet', // Maps to GLM-4.7 for E2E tests
 			// Isolated paths for this test run
 			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
+			NEOKAI_WORKSPACE_ROOT: e2eWorkspaceDir,
 			DB_PATH: e2eDatabasePath,
 			// Enable Neo agent for E2E tests (bypasses test-mode guard in app.ts)
 			NEOKAI_ENABLE_NEO_AGENT: '1',

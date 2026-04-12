@@ -149,10 +149,10 @@ async function rejectViaPopup(page: Page): Promise<void> {
 	// state, which causes Playwright's stability checks to time out. Use force:true to bypass
 	// the actionability checks and click immediately.
 	await waitingGate.click({ force: true });
-	await expect(page.locator('button:has-text("Reject")').first()).toBeVisible({ timeout: 5000 });
+	await expect(page.getByTestId('popup-reject-btn')).toBeVisible({ timeout: 5000 });
 
 	// Click Reject in the popup.
-	await page.locator('button:has-text("Reject")').first().click();
+	await page.getByTestId('popup-reject-btn').click();
 
 	// Wait for the server round-trip: run transitions to needs_attention + gate becomes blocked.
 	// Use data-gate-id to target the specific plan-approval-gate — after rejection ALL gates
@@ -335,10 +335,12 @@ test.describe('Approval Gate Rejection', () => {
 			timeout: 10000,
 		});
 
-		// Tab bar should still be navigable — clicking Agents shows agent content.
+		// Space configure page should still be navigable — clicking Agents shows agent content.
 		// SpaceAgentList does NOT depend on spaceStore.space being non-null (unlike
 		// WorkflowList / SpaceSettings), so it's a more reliable navigation target.
-		await page.locator('button:has-text("Agents")').click();
+		await page.goto(`/space/${spaceId}/configure`);
+		await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
+		await page.getByTestId('space-configure-tab-agents').click();
 		await expect(page.locator('text=Planner')).toBeVisible({ timeout: 30000 });
 		await expect(page.locator('text=Coder')).toBeVisible({ timeout: 10000 });
 
