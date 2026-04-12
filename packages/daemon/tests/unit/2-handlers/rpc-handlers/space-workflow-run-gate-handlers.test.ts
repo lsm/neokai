@@ -332,6 +332,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'gate-approval', {
 				approved: true,
 				approvedAt: expect.any(Number),
+				approvalSource: 'human',
 			});
 			expect(result.gateData.data.approved).toBe(true);
 			expect(daemonHub.emit).toHaveBeenCalledWith(
@@ -365,6 +366,7 @@ describe('space-workflow-run gate handlers', () => {
 				approved: false,
 				rejectedAt: expect.any(Number),
 				reason: 'Not ready',
+				approvalSource: 'human',
 			});
 			// State machine transition to blocked (in_progress→blocked is valid)
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'blocked');
@@ -386,6 +388,7 @@ describe('space-workflow-run gate handlers', () => {
 				approved: false,
 				rejectedAt: expect.any(Number),
 				reason: null,
+				approvalSource: 'human',
 			});
 		});
 
@@ -429,6 +432,7 @@ describe('space-workflow-run gate handlers', () => {
 			expect(gateDataRepo.merge).toHaveBeenCalledWith('run-1', 'gate-approval', {
 				approved: true,
 				approvedAt: expect.any(Number),
+				approvalSource: 'human',
 			});
 			// State machine transition back to in_progress
 			expect(runRepo.transitionStatus).toHaveBeenCalledWith('run-1', 'in_progress');

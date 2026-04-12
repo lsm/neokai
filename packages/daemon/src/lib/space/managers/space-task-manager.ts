@@ -13,6 +13,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	SpaceTask,
 	SpaceTaskStatus,
+	SpaceApprovalSource,
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
@@ -111,7 +112,11 @@ export class SpaceTaskManager {
 	async setTaskStatus(
 		taskId: string,
 		newStatus: SpaceTaskStatus,
-		options?: { result?: string }
+		options?: {
+			result?: string;
+			approvalSource?: SpaceApprovalSource;
+			approvalReason?: string;
+		}
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
@@ -131,6 +136,13 @@ export class SpaceTaskManager {
 			if (options?.result) updates.result = options.result;
 		}
 
+		// Stamp approval metadata when transitioning from review → done
+		if (task.status === 'review' && newStatus === 'done') {
+			updates.approvalSource = options?.approvalSource ?? null;
+			updates.approvalReason = options?.approvalReason ?? null;
+			updates.approvedAt = Date.now();
+		}
+
 		// Clear result when restarting or deprioritizing.
 		// Covers blocked, cancelled, done → reactivation, and in_progress → open (pause).
 		if (
@@ -140,6 +152,10 @@ export class SpaceTaskManager {
 			(task.status === 'in_progress' && newStatus === 'open')
 		) {
 			updates.result = null;
+			// Clear approval metadata on reactivation
+			updates.approvalSource = null;
+			updates.approvalReason = null;
+			updates.approvedAt = null;
 		}
 
 		const updated = this.taskRepo.updateTask(taskId, updates);

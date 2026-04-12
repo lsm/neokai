@@ -504,6 +504,7 @@ export function setupSpaceWorkflowRunHandlers(
 			const gateData = gateDataRepo.merge(params.runId, params.gateId, {
 				approved: true,
 				approvedAt: Date.now(),
+				approvalSource: 'human',
 			});
 
 			// If the run was previously rejected (blocked + humanRejected),
@@ -553,6 +554,7 @@ export function setupSpaceWorkflowRunHandlers(
 				approved: false,
 				rejectedAt: Date.now(),
 				reason: params.reason ?? null,
+				approvalSource: 'human',
 			});
 
 			// Enforce the state machine: only call transitionStatus when the run is

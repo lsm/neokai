@@ -788,10 +788,11 @@ describe('createTaskAgentMcpServer', () => {
 		expect(server.name).toBe('task-agent');
 	});
 
-	test('registers the 4 externally exposed task-agent tools', async () => {
+	test('registers the 5 externally exposed task-agent tools', async () => {
 		const { server } = await makeServerCtx();
 		const registered = Object.keys(server.instance._registeredTools).sort();
 		expect(registered).toEqual([
+			'approve_gate',
 			'list_group_members',
 			'report_result',
 			'request_human_input',
@@ -892,9 +893,9 @@ describe('createTaskAgentMcpServer', () => {
 
 		// Each call returns a distinct server instance
 		expect(server1.instance).not.toBe(server2.instance);
-		// Both register the same 4 externally exposed tools
-		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(4);
-		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(4);
+		// Both register the same 5 externally exposed tools
+		expect(Object.keys(server1.instance._registeredTools)).toHaveLength(5);
+		expect(Object.keys(server2.instance._registeredTools)).toHaveLength(5);
 	});
 });
 

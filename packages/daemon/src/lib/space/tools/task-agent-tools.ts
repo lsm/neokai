@@ -18,11 +18,14 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { Space } from '@neokai/shared';
+import { z } from 'zod';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -87,6 +90,12 @@ export interface TaskAgentToolsConfig {
 	 * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
 	 */
 	daemonHub?: DaemonHub;
+	/** Gate data repository for approve_gate tool. Optional — gate tools disabled when absent. */
+	gateDataRepo?: GateDataRepository;
+	/** Workflow run repository for approve_gate tool. Optional — gate tools disabled when absent. */
+	workflowRunRepo?: SpaceWorkflowRunRepository;
+	/** Callback to trigger channel re-evaluation after gate data changes. */
+	onGateChanged?: (runId: string, gateId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +116,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		taskManager,
 		messageInjector,
 		daemonHub,
+		gateDataRepo,
+		workflowRunRepo,
+		onGateChanged,
 	} = config;
 
 	return {
@@ -382,6 +394,117 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		/**
+		 * Approve or reject a workflow gate within this task's workflow run.
+		 * Used to control flow between nodes by opening or blocking gates.
+		 */
+		async approve_gate(args: {
+			gate_id: string;
+			approved: boolean;
+			reason?: string;
+		}): Promise<ToolResult> {
+			if (!gateDataRepo || !workflowRunRepo) {
+				return jsonResult({ success: false, error: 'Gate operations are not available' });
+			}
+
+			const run = workflowRunRepo.getRun(workflowRunId);
+			if (!run) {
+				return jsonResult({
+					success: false,
+					error: `Workflow run not found: ${workflowRunId}`,
+				});
+			}
+			if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+				return jsonResult({
+					success: false,
+					error: `Cannot modify gate on a ${run.status} workflow run`,
+				});
+			}
+
+			const existing = gateDataRepo.get(workflowRunId, args.gate_id);
+
+			if (args.approved) {
+				if (existing?.data?.approved === true) {
+					return jsonResult({
+						success: true,
+						gateId: args.gate_id,
+						gateData: existing.data,
+						message: 'Gate already approved',
+					});
+				}
+
+				const gateData = gateDataRepo.merge(workflowRunId, args.gate_id, {
+					approved: true,
+					approvedAt: Date.now(),
+					approvalSource: 'task_agent',
+				});
+
+				// If previously rejected, transition back to in_progress
+				if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
+					workflowRunRepo.transitionStatus(workflowRunId, 'in_progress');
+					workflowRunRepo.updateRun(workflowRunId, { failureReason: null });
+				}
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: space.id,
+							runId: workflowRunId,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
+				onGateChanged?.(workflowRunId, args.gate_id);
+
+				return jsonResult({
+					success: true,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			} else {
+				if (existing?.data?.approved === false) {
+					return jsonResult({
+						success: true,
+						gateId: args.gate_id,
+						gateData: existing.data,
+						message: 'Gate already rejected',
+					});
+				}
+
+				const gateData = gateDataRepo.merge(workflowRunId, args.gate_id, {
+					approved: false,
+					rejectedAt: Date.now(),
+					reason: args.reason ?? null,
+					approvalSource: 'task_agent',
+				});
+
+				if (run.status !== 'blocked') {
+					workflowRunRepo.transitionStatus(workflowRunId, 'blocked');
+				}
+				workflowRunRepo.updateRun(workflowRunId, { failureReason: 'humanRejected' });
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: space.id,
+							runId: workflowRunId,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({
+					success: true,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			}
+		},
 	};
 }
 
@@ -427,6 +550,17 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				'The Task Agent has default bidirectional channels to all node agents.',
 			SendMessageSchema.shape,
 			(args) => handlers.send_message(args)
+		),
+		tool(
+			'approve_gate',
+			"Approve or reject a workflow gate within this task's workflow run. " +
+				'Use this to control flow between nodes by opening or blocking gates.',
+			{
+				gate_id: z.string().describe('ID of the gate to approve or reject'),
+				approved: z.boolean().describe('true to approve (open gate), false to reject (block)'),
+				reason: z.string().optional().describe('Reason for approval or rejection'),
+			},
+			(args) => handlers.approve_gate(args)
 		),
 	];
 

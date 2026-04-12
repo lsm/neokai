@@ -342,6 +342,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Stores the caller-specified workflow template ID for standalone task attachment.
 	//   - When set, the runtime uses this workflow instead of heuristic auto-selection.
 	runMigration81(db);
+
+	// Migration 82: Add approval audit trail columns to space_tasks.
+	//   - approval_source: who approved (human, neo_agent, space_agent, task_agent, node_agent, semi_auto)
+	//   - approval_reason: optional comment/reason for the approval
+	//   - approved_at: timestamp when approval occurred
+	runMigration82(db);
 }
 
 /**
@@ -5563,4 +5569,13 @@ function runMigration81(db: BunDatabase): void {
 	if (tableHasColumn(db, 'space_tasks', 'preferred_workflow_id')) return;
 
 	db.exec(`ALTER TABLE space_tasks ADD COLUMN preferred_workflow_id TEXT`);
+}
+
+function runMigration82(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+	if (tableHasColumn(db, 'space_tasks', 'approval_source')) return;
+
+	db.exec(`ALTER TABLE space_tasks ADD COLUMN approval_source TEXT`);
+	db.exec(`ALTER TABLE space_tasks ADD COLUMN approval_reason TEXT`);
+	db.exec(`ALTER TABLE space_tasks ADD COLUMN approved_at INTEGER`);
 }

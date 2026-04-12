@@ -243,6 +243,18 @@ export class SpaceTaskRepository {
 			fields.push('archived_at = ?');
 			values.push(params.archivedAt ?? null);
 		}
+		if (params.approvalSource !== undefined) {
+			fields.push('approval_source = ?');
+			values.push(params.approvalSource ?? null);
+		}
+		if (params.approvalReason !== undefined) {
+			fields.push('approval_reason = ?');
+			values.push(params.approvalReason ?? null);
+		}
+		if (params.approvedAt !== undefined) {
+			fields.push('approved_at = ?');
+			values.push(params.approvedAt ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -379,6 +391,9 @@ export class SpaceTaskRepository {
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? null,
+			approvalSource: (row.approval_source as SpaceTask['approvalSource']) ?? null,
+			approvalReason: (row.approval_reason as string | null) ?? null,
+			approvedAt: (row.approved_at as number | null) ?? null,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? null,
 			completedAt: (row.completed_at as number | null) ?? null,
