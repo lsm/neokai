@@ -242,6 +242,46 @@ describe('SpaceTaskManager', () => {
 			expect(failed.status).toBe('blocked');
 			expect(failed.result).toBeNull();
 		});
+
+		it('failTask stamps blockReason when provided', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			const failed = await manager.failTask(task.id, 'crash msg', 'agent_crashed');
+			expect(failed.blockReason).toBe('agent_crashed');
+		});
+
+		it('failTask without blockReason sets it to null', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			const failed = await manager.failTask(task.id);
+			expect(failed.blockReason).toBeNull();
+		});
+
+		it('setTaskStatus stamps blockReason when transitioning to blocked', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			const blocked = await manager.setTaskStatus(task.id, 'blocked', {
+				result: 'Needs human input',
+				blockReason: 'human_input_requested',
+			});
+			expect(blocked.blockReason).toBe('human_input_requested');
+		});
+
+		it('blockReason is cleared when reactivating from blocked to in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.failTask(task.id, 'crash', 'agent_crashed');
+			const reactivated = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(reactivated.blockReason).toBeNull();
+		});
+
+		it('blockReason is cleared when reactivating from blocked to open', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.startTask(task.id);
+			await manager.failTask(task.id, 'invalid', 'workflow_invalid');
+			const restarted = await manager.setTaskStatus(task.id, 'open');
+			expect(restarted.blockReason).toBeNull();
+		});
 	});
 
 	describe('cancelTask', () => {

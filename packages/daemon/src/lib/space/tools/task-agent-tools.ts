@@ -488,6 +488,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				}
 				workflowRunRepo.updateRun(workflowRunId, { failureReason: 'humanRejected' });
 
+				// Block the canonical task with gate_rejected reason
+				const mainTask = taskRepo.getTask(taskId);
+				if (mainTask && mainTask.status !== 'blocked') {
+					await taskManager.setTaskStatus(taskId, 'blocked', {
+						result: args.reason ?? 'Gate rejected',
+						blockReason: 'gate_rejected',
+					});
+				}
+
 				if (daemonHub) {
 					void daemonHub
 						.emit('space.gateData.updated', {
