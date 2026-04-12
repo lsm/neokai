@@ -23,6 +23,9 @@ import ChatContainer from './ChatContainer';
 const SpaceConfigurePage = lazy(() =>
 	import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
 );
+const SpaceSessionsPage = lazy(() =>
+	import('../components/space/SpaceSessionsPage').then((m) => ({ default: m.SpaceSessionsPage }))
+);
 const SpaceTasks = lazy(() =>
 	import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
 );
@@ -147,6 +150,31 @@ export default function SpaceIsland({
 								spaceId={spaceId}
 								onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
 							/>
+						</Suspense>
+					</div>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
+	}
+
+	if (viewMode === 'sessions' && space) {
+		return (
+			<>
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					data-testid="space-sessions-view"
+				>
+					<SpacePageHeader spaceName={space.name} pageTitle="Sessions" />
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<Suspense fallback={lazyFallback}>
+							<SpaceSessionsPage spaceId={spaceId} />
 						</Suspense>
 					</div>
 				</div>

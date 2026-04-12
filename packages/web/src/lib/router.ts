@@ -14,6 +14,7 @@
  * - Clean URLs: Uses History API for clean URLs without hash
  */
 
+import { batch } from '@preact/signals';
 import {
 	currentSessionIdSignal,
 	currentRoomIdSignal,
@@ -53,6 +54,7 @@ const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-fA-F0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
+const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 
 /**
  * Router state and configuration
@@ -177,7 +179,10 @@ export function getSpaceIdFromPath(path: string): string | null {
 	if (spaceSessionMatch) return spaceSessionMatch[1];
 
 	const spaceTaskMatch = path.match(SPACE_TASK_ROUTE_PATTERN);
-	return spaceTaskMatch ? spaceTaskMatch[1] : null;
+	if (spaceTaskMatch) return spaceTaskMatch[1];
+
+	const spaceSessionsMatch = path.match(SPACE_SESSIONS_ROUTE_PATTERN);
+	return spaceSessionsMatch ? spaceSessionsMatch[1] : null;
 }
 
 /**
@@ -204,6 +209,15 @@ export function getSpaceConfigureFromPath(path: string): string | null {
  */
 export function getSpaceTasksFromPath(path: string): string | null {
 	const match = path.match(SPACE_TASKS_ROUTE_PATTERN);
+	return match ? match[1] : null;
+}
+
+/**
+ * Extract space ID from /space/:id/sessions route
+ * Returns null if not on a space sessions list route
+ */
+export function getSpaceSessionsListFromPath(path: string): string | null {
+	const match = path.match(SPACE_SESSIONS_ROUTE_PATTERN);
 	return match ? match[1] : null;
 }
 
@@ -362,6 +376,13 @@ export function createSpaceSessionPath(spaceId: string, sessionId: string): stri
  */
 export function createSpaceTaskPath(spaceId: string, taskId: string): string {
 	return `/space/${spaceId}/task/${taskId}`;
+}
+
+/**
+ * Create space sessions list URL path
+ */
+export function createSpaceSessionsPath(spaceId: string): string {
+	return `/space/${spaceId}/sessions`;
 }
 
 /**
@@ -1203,6 +1224,59 @@ export function navigateToSpaceTasks(spaceId: string, replace = false): void {
 }
 
 /**
+ * Navigate to the Space sessions list view
+ * Updates URL to /space/:spaceId/sessions and keeps the space context panel active
+ */
+export function navigateToSpaceSessions(spaceId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createSpaceSessionsPath(spaceId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceViewModeSignal.value = 'sessions';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		navSectionSignal.value = 'spaces';
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ spaceId, path: targetPath }, '', targetPath);
+
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceViewModeSignal.value = 'sessions';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Navigate to a session within a space layout
  */
 export function navigateToSpaceSession(spaceId: string, sessionId: string, replace = false): void {
@@ -1215,7 +1289,6 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 
 	if (currentPath === targetPath) {
 		currentSpaceIdSignal.value = spaceId;
-		currentSpaceViewModeSignal.value = 'overview';
 		currentSpaceSessionIdSignal.value = sessionId;
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -1236,7 +1309,6 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		window.history[historyMethod]({ spaceId, sessionId, path: targetPath }, '', targetPath);
 
 		currentSpaceIdSignal.value = spaceId;
-		currentSpaceViewModeSignal.value = 'overview';
 		currentSpaceSessionIdSignal.value = sessionId;
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -1380,233 +1452,252 @@ function handlePopState(_event: PopStateEvent): void {
 	const roomTask = getRoomTaskIdFromPath(path);
 	const spaceConfigure = getSpaceConfigureFromPath(path);
 	const spaceTasks = getSpaceTasksFromPath(path);
+	const spaceSessions = getSpaceSessionsListFromPath(path);
 	const spaceTask = getSpaceTaskIdFromPath(path);
 	const spaceSession = getSpaceSessionIdFromPath(path);
 	const spaceAgent = getSpaceAgentFromPath(path);
 	const spaceId = getSpaceIdFromPath(path);
 
-	// Update the signals to match the URL
-	// Space routes take priority over room routes
+	// Update the signals to match the URL.
+	// Wrapped in batch() so the App.tsx URL-sync effect fires exactly once with the final
+	// consistent signal state, rather than once per individual signal write (which would
+	// cause the effect to see stale in-between state and trigger incorrect re-navigations).
+	// Space routes take priority over room routes.
 	// IMPORTANT: Order is load-bearing — roomAgent must be checked before roomTab/roomMission/roomTask/roomSession/roomId
 	// because getRoomIdFromPath also matches agent/tab paths. If reordered, those routes silently
 	// fall through to the plain room handler, losing the synthetic session ID or tab state.
-	if (spaceTask) {
-		currentSpaceIdSignal.value = spaceTask.spaceId;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceTaskIdSignal.value = spaceTask.taskId;
-		currentSpaceSessionIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else if (spaceSession) {
-		currentSpaceIdSignal.value = spaceSession.spaceId;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = spaceSession.sessionId;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else if (spaceAgent) {
-		currentSpaceIdSignal.value = spaceAgent;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = `space:chat:${spaceAgent}`;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else if (spaceTasks) {
-		currentSpaceIdSignal.value = spaceTasks;
-		currentSpaceViewModeSignal.value = 'tasks';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else if (spaceConfigure) {
-		currentSpaceIdSignal.value = spaceConfigure;
-		currentSpaceViewModeSignal.value = 'configure';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else if (spaceId) {
-		currentSpaceIdSignal.value = spaceId;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else if (roomAgent) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = roomAgent;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = true;
-		currentRoomActiveTabSignal.value = 'chat';
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (roomTab) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = roomTab.roomId;
-		currentRoomActiveTabSignal.value = roomTab.tab;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (roomMission) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = roomMission.roomId;
-		currentRoomGoalIdSignal.value = roomMission.goalId;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (roomTask) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = roomTask.roomId;
-		currentRoomTaskIdSignal.value = roomTask.taskId;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (roomSession) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = roomSession.roomId;
-		currentRoomSessionIdSignal.value = roomSession.sessionId;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (roomId) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = roomId;
-		currentRoomActiveTabSignal.value = 'overview';
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-		// Normalize legacy /room/:id/chat URL → /room/:id so the address bar stays clean
-		if (ROOM_CHAT_COMPAT_PATTERN.test(path)) {
-			const canonicalPath = createRoomPath(roomId);
-			window.history.replaceState({ roomId, path: canonicalPath }, '', canonicalPath);
-		}
-	} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'chats';
-	} else if (INBOX_ROUTE_PATTERN.test(path)) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'inbox';
-	} else if (SPACES_ROUTE_PATTERN.test(path)) {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'spaces';
-	} else {
-		currentSpaceIdSignal.value = null;
-		currentSpaceViewModeSignal.value = 'overview';
-		currentSpaceSessionIdSignal.value = null;
-		currentSpaceTaskIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomActiveTabSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomGoalIdSignal.value = null;
-		currentRoomAgentActiveSignal.value = false;
-		currentRoomActiveTabSignal.value = null;
-		currentSessionIdSignal.value = sessionId;
-		if (!sessionId) {
+	batch(() => {
+		if (spaceTask) {
+			currentSpaceIdSignal.value = spaceTask.spaceId;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceTaskIdSignal.value = spaceTask.taskId;
+			currentSpaceSessionIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceSession) {
+			currentSpaceIdSignal.value = spaceSession.spaceId;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = spaceSession.sessionId;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceAgent) {
+			currentSpaceIdSignal.value = spaceAgent;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = `space:chat:${spaceAgent}`;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceTasks) {
+			currentSpaceIdSignal.value = spaceTasks;
+			currentSpaceViewModeSignal.value = 'tasks';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceSessions) {
+			currentSpaceIdSignal.value = spaceSessions;
+			currentSpaceViewModeSignal.value = 'sessions';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceConfigure) {
+			currentSpaceIdSignal.value = spaceConfigure;
+			currentSpaceViewModeSignal.value = 'configure';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (spaceId) {
+			currentSpaceIdSignal.value = spaceId;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else if (roomAgent) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = roomAgent;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = true;
+			currentRoomActiveTabSignal.value = 'chat';
+			currentSessionIdSignal.value = null;
 			navSectionSignal.value = 'rooms';
+		} else if (roomTab) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = roomTab.roomId;
+			currentRoomActiveTabSignal.value = roomTab.tab;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		} else if (roomMission) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = roomMission.roomId;
+			currentRoomGoalIdSignal.value = roomMission.goalId;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		} else if (roomTask) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = roomTask.roomId;
+			currentRoomTaskIdSignal.value = roomTask.taskId;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		} else if (roomSession) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = roomSession.roomId;
+			currentRoomSessionIdSignal.value = roomSession.sessionId;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		} else if (roomId) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = roomId;
+			currentRoomActiveTabSignal.value = 'overview';
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+			// Normalize legacy /room/:id/chat URL → /room/:id so the address bar stays clean
+			if (ROOM_CHAT_COMPAT_PATTERN.test(path)) {
+				const canonicalPath = createRoomPath(roomId);
+				window.history.replaceState({ roomId, path: canonicalPath }, '', canonicalPath);
+			}
+		} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'chats';
+		} else if (INBOX_ROUTE_PATTERN.test(path)) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'inbox';
+		} else if (SPACES_ROUTE_PATTERN.test(path)) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'spaces';
+		} else {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomActiveTabSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = sessionId;
+			if (!sessionId) {
+				navSectionSignal.value = 'rooms';
+			}
 		}
-	}
+	}); // end batch()
 }
 
 /**
@@ -1633,6 +1724,7 @@ export function initializeRouter(): string | null {
 	const initialRoomTask = getRoomTaskIdFromPath(initialPath);
 	const initialSpaceConfigure = getSpaceConfigureFromPath(initialPath);
 	const initialSpaceTasks = getSpaceTasksFromPath(initialPath);
+	const initialSpaceSessions = getSpaceSessionsListFromPath(initialPath);
 	const initialSpaceTask = getSpaceTaskIdFromPath(initialPath);
 	const initialSpaceSession = getSpaceSessionIdFromPath(initialPath);
 	const initialSpaceAgent = getSpaceAgentFromPath(initialPath);
@@ -1695,6 +1787,19 @@ export function initializeRouter(): string | null {
 	} else if (initialSpaceTasks) {
 		currentSpaceIdSignal.value = initialSpaceTasks;
 		currentSpaceViewModeSignal.value = 'tasks';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (initialSpaceSessions) {
+		currentSpaceIdSignal.value = initialSpaceSessions;
+		currentSpaceViewModeSignal.value = 'sessions';
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;

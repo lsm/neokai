@@ -13,6 +13,7 @@ import {
 	navigateToSpace,
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
+	navigateToSpaceSessions,
 	navigateToSpaceTask,
 	navigateToSpaceTasks,
 } from '../lib/router';
@@ -120,6 +121,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		currentSpaceViewModeSignal.value === 'overview';
 	const isSpaceAgentSelected = selectedSessionId === spaceAgentSessionId;
 	const isTasksSelected = currentSpaceViewModeSignal.value === 'tasks';
+	const isSessionsSelected = currentSpaceViewModeSignal.value === 'sessions';
 
 	const attentionCount = spaceStore.attentionCount.value;
 
@@ -173,6 +175,11 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const handleTasksClick = useCallback(() => {
 		navigateToSpaceTasks(spaceId);
+		onNavigate?.();
+	}, [spaceId, onNavigate]);
+
+	const handleSessionsClick = useCallback(() => {
+		navigateToSpaceSessions(spaceId);
 		onNavigate?.();
 	}, [spaceId, onNavigate]);
 
@@ -300,6 +307,38 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 					<span class="flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-600 text-white text-xs font-medium flex items-center justify-center tabular-nums">
 						{attentionCount}
 					</span>
+				)}
+			</button>
+
+			<button
+				onClick={handleSessionsClick}
+				data-testid="space-detail-sessions"
+				data-active={isSessionsSelected ? 'true' : 'false'}
+				class={cn(
+					'mx-3 mt-2 w-auto rounded-xl px-3 py-2.5 flex items-center gap-2.5 transition-colors border',
+					isSessionsSelected
+						? 'bg-dark-700 border-dark-600'
+						: 'bg-transparent border-transparent hover:bg-dark-800 hover:border-dark-700'
+				)}
+			>
+				<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-amber-900/40 rounded">
+					<svg
+						class="w-3.5 h-3.5 text-amber-400"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+						/>
+					</svg>
+				</div>
+				<span class="flex-1 text-sm text-gray-200 text-left truncate">Sessions</span>
+				{sessions.length > 0 && (
+					<span class="text-xs text-gray-500 flex-shrink-0">{sessions.length}</span>
 				)}
 			</button>
 
