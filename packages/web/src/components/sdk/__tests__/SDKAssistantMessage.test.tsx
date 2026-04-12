@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { SDKAssistantMessage } from '../SDKAssistantMessage';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -242,19 +242,23 @@ describe('SDKAssistantMessage', () => {
 	});
 
 	describe('Text Content', () => {
-		it('should render text content', () => {
+		it('should render text content', async () => {
 			const message = createTextOnlyMessage('Hello world');
 			const { container } = render(<SDKAssistantMessage message={message} />);
 
-			expect(container.textContent).toContain('Hello world');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Hello world');
+			});
 		});
 
-		it('should render multiple text blocks', () => {
+		it('should render multiple text blocks', async () => {
 			const message = createMixedContentMessage();
 			const { container } = render(<SDKAssistantMessage message={message} />);
 
-			expect(container.textContent).toContain('I will read the file');
-			expect(container.textContent).toContain('The file has been read');
+			await waitFor(() => {
+				expect(container.textContent).toContain('I will read the file');
+				expect(container.textContent).toContain('The file has been read');
+			});
 		});
 
 		it('should show timestamp', () => {
@@ -1056,7 +1060,7 @@ describe('SDKAssistantMessage', () => {
 			expect(onMessageCheckboxChange).toHaveBeenCalledWith(message.uuid, true);
 		});
 
-		it('should render tool use blocks in rewind mode', () => {
+		it('should render tool use blocks in rewind mode', async () => {
 			const message = createMixedContentMessage();
 			const selectedMessages = new Set<string>();
 
@@ -1072,7 +1076,9 @@ describe('SDKAssistantMessage', () => {
 			// Should render the tool use block
 			expect(container.textContent).toContain('Read');
 			// Should also render text
-			expect(container.textContent).toContain('I will read the file');
+			await waitFor(() => {
+				expect(container.textContent).toContain('I will read the file');
+			});
 		});
 
 		it('should render thinking blocks in rewind mode', () => {

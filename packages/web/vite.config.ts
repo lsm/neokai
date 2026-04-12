@@ -17,6 +17,16 @@ export default defineConfig({
 			input: {
 				main: resolve(__dirname, 'src/index.html'),
 			},
+			output: {
+				manualChunks(id) {
+					if (id.includes('node_modules/marked')) {
+						return 'vendor-marked';
+					}
+					if (id.includes('node_modules/highlight.js')) {
+						return 'vendor-hljs';
+					}
+				},
+			},
 		},
 	},
 

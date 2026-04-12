@@ -1,12 +1,30 @@
 import { useEffect, useState } from 'preact/hooks';
+import { lazy, Suspense } from 'preact/compat';
 import type { Space } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
-import { SpaceAgentList } from './SpaceAgentList';
-import { SpaceSettings } from './SpaceSettings';
-import { WorkflowList } from './WorkflowList';
-import { VisualWorkflowEditor } from './visual-editor/VisualWorkflowEditor';
+
+const SpaceAgentList = lazy(() =>
+	import('./SpaceAgentList').then((m) => ({ default: m.SpaceAgentList }))
+);
+const SpaceSettings = lazy(() =>
+	import('./SpaceSettings').then((m) => ({ default: m.SpaceSettings }))
+);
+const WorkflowList = lazy(() =>
+	import('./WorkflowList').then((m) => ({ default: m.WorkflowList }))
+);
+const VisualWorkflowEditor = lazy(() =>
+	import('./visual-editor/VisualWorkflowEditor').then((m) => ({
+		default: m.VisualWorkflowEditor,
+	}))
+);
+
+const lazyFallback = (
+	<div class="flex-1 flex items-center justify-center py-12">
+		<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+	</div>
+);
 
 type ConfigureTab = 'agents' | 'workflows' | 'settings';
 
@@ -92,36 +110,44 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 
 						<TabPanels class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
 							<TabPanel>
-								<div class="h-full min-h-[calc(100%+1px)] overflow-y-auto p-4 sm:p-5 lg:p-6">
-									<SpaceAgentList />
-								</div>
+								<Suspense fallback={lazyFallback}>
+									<div class="h-full min-h-[calc(100%+1px)] overflow-y-auto p-4 sm:p-5 lg:p-6">
+										<SpaceAgentList />
+									</div>
+								</Suspense>
 							</TabPanel>
 							<TabPanel>
-								<WorkflowList
-									spaceId={space.id}
-									spaceName={space.name}
-									workflows={workflows}
-									onCreateWorkflow={() => setWorkflowEditId('new')}
-									onEditWorkflow={(id) => setWorkflowEditId(id)}
-								/>
+								<Suspense fallback={lazyFallback}>
+									<WorkflowList
+										spaceId={space.id}
+										spaceName={space.name}
+										workflows={workflows}
+										onCreateWorkflow={() => setWorkflowEditId('new')}
+										onEditWorkflow={(id) => setWorkflowEditId(id)}
+									/>
+								</Suspense>
 							</TabPanel>
 							<TabPanel>
-								<SpaceSettings space={space} />
+								<Suspense fallback={lazyFallback}>
+									<SpaceSettings space={space} />
+								</Suspense>
 							</TabPanel>
 						</TabPanels>
 					</TabGroup>
 				)}
 
 				{showWorkflowEditor && (
-					<div class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
-						<VisualWorkflowEditor
-							key={workflowEditId}
-							workflow={editingWorkflow}
-							// Keep editor open after save; exit is explicit via Back/Cancel.
-							onSave={() => undefined}
-							onCancel={() => setWorkflowEditId(null)}
-						/>
-					</div>
+					<Suspense fallback={lazyFallback}>
+						<div class="min-h-0 flex-1 overflow-hidden rounded-3xl border border-dark-700 bg-dark-950/70 lg:rounded-[28px]">
+							<VisualWorkflowEditor
+								key={workflowEditId}
+								workflow={editingWorkflow}
+								// Keep editor open after save; exit is explicit via Back/Cancel.
+								onSave={() => undefined}
+								onCancel={() => setWorkflowEditId(null)}
+							/>
+						</div>
+					</Suspense>
 				)}
 			</div>
 		</div>

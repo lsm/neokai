@@ -11,17 +11,34 @@
  */
 
 import { useCallback, useEffect } from 'preact/hooks';
+import { lazy, Suspense } from 'preact/compat';
 import type { SpaceViewMode } from '../lib/signals';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
-import { SpaceConfigurePage } from '../components/space/SpaceConfigurePage';
-import { SpaceTasks } from '../components/space/SpaceTasks';
-import { SpaceOverview } from '../components/space/SpaceOverview';
-import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
 import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
 import ChatContainer from './ChatContainer';
+
+const SpaceConfigurePage = lazy(() =>
+	import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
+);
+const SpaceTasks = lazy(() =>
+	import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
+);
+const SpaceOverview = lazy(() =>
+	import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
+);
+const SpaceTaskPane = lazy(() =>
+	import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
+);
+
+/** Shared Suspense fallback for lazy-loaded space views. */
+const lazyFallback = (
+	<div class="flex-1 flex items-center justify-center bg-dark-900">
+		<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+	</div>
+);
 
 interface SpaceIslandProps {
 	spaceId: string;
@@ -101,7 +118,9 @@ export default function SpaceIsland({
 		return (
 			<>
 				<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
-					<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+					<Suspense fallback={lazyFallback}>
+						<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+					</Suspense>
 				</div>
 				{overlaySessionId && (
 					<AgentOverlayChat
@@ -123,10 +142,12 @@ export default function SpaceIsland({
 				>
 					<SpacePageHeader spaceName={space.name} pageTitle="Tasks" />
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<SpaceTasks
-							spaceId={spaceId}
-							onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-						/>
+						<Suspense fallback={lazyFallback}>
+							<SpaceTasks
+								spaceId={spaceId}
+								onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+							/>
+						</Suspense>
 					</div>
 				</div>
 				{overlaySessionId && (
@@ -149,7 +170,9 @@ export default function SpaceIsland({
 				>
 					<SpacePageHeader spaceName={space.name} pageTitle="Settings" />
 					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-						<SpaceConfigurePage space={space} />
+						<Suspense fallback={lazyFallback}>
+							<SpaceConfigurePage space={space} />
+						</Suspense>
 					</div>
 				</div>
 				{overlaySessionId && (
@@ -178,10 +201,12 @@ export default function SpaceIsland({
 			>
 				<SpacePageHeader spaceName={space?.name ?? ''} pageTitle="Overview" />
 				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-					<SpaceOverview
-						spaceId={spaceId}
-						onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
-					/>
+					<Suspense fallback={lazyFallback}>
+						<SpaceOverview
+							spaceId={spaceId}
+							onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+						/>
+					</Suspense>
 				</div>
 			</div>
 		</>

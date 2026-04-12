@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -323,13 +323,15 @@ describe('SDKUserMessage', () => {
 	});
 
 	describe('Replay Messages (Slash Commands)', () => {
-		it('should render command output with SlashCommandOutput', () => {
+		it('should render command output with SlashCommandOutput', async () => {
 			const message = createReplayMessage(
 				'<local-command-stdout>Command executed successfully</local-command-stdout>'
 			);
 			const { container } = render(<SDKUserMessage message={message} isReplay={true} />);
 
-			expect(container.textContent).toContain('Command executed successfully');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Command executed successfully');
+			});
 		});
 
 		it('should hide "Compacted" output (shown in CompactBoundaryMessage)', () => {
