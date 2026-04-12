@@ -132,18 +132,10 @@ vi.mock('../../lib/space-store.ts', () => ({
 }));
 
 // Mock space components
-vi.mock('../../components/space/SpaceContextPanel.tsx', () => ({
-	SpaceContextPanel: () => <div data-testid="space-context-panel">SpaceContextPanel</div>,
-}));
-
 vi.mock('../../islands/SpaceDetailPanel.tsx', () => ({
 	SpaceDetailPanel: ({ spaceId }: { spaceId: string }) => (
 		<div data-testid="space-detail-panel">SpaceDetailPanel:{spaceId}</div>
 	),
-}));
-
-vi.mock('../../components/space/SpaceCreateDialog.tsx', () => ({
-	SpaceCreateDialog: () => null,
 }));
 
 // Mock the design-tokens module
@@ -612,16 +604,6 @@ describe('ContextPanel', () => {
 			expect(screen.getByRole('heading', { name: 'Spaces' })).toBeTruthy();
 		});
 
-		it('should render SpaceContextPanel when navSection is spaces and no space selected', () => {
-			mockNavSectionSignal.value = 'spaces';
-			mockCurrentSpaceIdSignal.value = null;
-
-			render(<ContextPanel />);
-
-			expect(screen.getByTestId('space-context-panel')).toBeTruthy();
-			expect(screen.queryByTestId('space-detail-panel')).toBeNull();
-		});
-
 		it('should render SpaceDetailPanel when navSection is spaces and a space is selected', () => {
 			mockNavSectionSignal.value = 'spaces';
 			mockCurrentSpaceIdSignal.value = 'space-abc';
@@ -629,7 +611,6 @@ describe('ContextPanel', () => {
 			render(<ContextPanel />);
 
 			expect(screen.getByTestId('space-detail-panel')).toBeTruthy();
-			expect(screen.queryByTestId('space-context-panel')).toBeNull();
 		});
 
 		it('should pass spaceId to SpaceDetailPanel', () => {
@@ -672,7 +653,7 @@ describe('ContextPanel', () => {
 			expect(mockNavigateToSpaces).toHaveBeenCalled();
 		});
 
-		it('should switch from SpaceDetailPanel to SpaceContextPanel when space is deselected', () => {
+		it('should hide SpaceDetailPanel when space is deselected', () => {
 			mockNavSectionSignal.value = 'spaces';
 			mockCurrentSpaceIdSignal.value = 'space-abc';
 
@@ -683,7 +664,6 @@ describe('ContextPanel', () => {
 			rerender(<ContextPanel />);
 
 			expect(screen.queryByTestId('space-detail-panel')).toBeNull();
-			expect(screen.getByTestId('space-context-panel')).toBeTruthy();
 		});
 	});
 });

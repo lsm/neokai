@@ -36,11 +36,11 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 	const displayTools = isRoomSession ? ROOM_AGENT_TOOLS : (sessionInfo.tools ?? []);
 
 	return (
-		<div class="w-80 max-h-[70vh] overflow-y-auto bg-indigo-50 dark:bg-indigo-900/70 rounded-lg border border-indigo-200 dark:border-indigo-800 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
+		<div class="w-80 max-h-[60vh] overflow-y-scroll bg-sky-50 dark:bg-sky-900/70 rounded-lg border border-sky-200 dark:border-sky-800 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
 			{/* Header */}
-			<div class="flex items-center gap-2 pb-2 border-b border-indigo-200 dark:border-indigo-800">
+			<div class="flex items-center gap-2 pb-2 border-b border-sky-200 dark:border-sky-800">
 				<svg
-					class="w-4 h-4 text-indigo-600 dark:text-indigo-400"
+					class="w-4 h-4 text-sky-600 dark:text-sky-400"
 					fill="none"
 					viewBox="0 0 24 24"
 					stroke="currentColor"
@@ -53,8 +53,8 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 					/>
 				</svg>
 				<div class="text-sm">
-					<span class="font-medium text-indigo-900 dark:text-indigo-100">Session Started</span>
-					<span class="text-indigo-600 dark:text-indigo-400 ml-2">
+					<span class="font-medium text-sky-900 dark:text-sky-100">Session Started</span>
+					<span class="text-sky-600 dark:text-sky-400 ml-2">
 						{simplifiedModel} • {sessionInfo.permissionMode}
 					</span>
 				</div>
@@ -63,10 +63,10 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			{/* Working Directory */}
 			{sessionInfo.cwd && (
 				<div>
-					<div class="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">
+					<div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
 						Working Directory
 					</div>
-					<div class="font-mono text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/30 rounded px-2 py-1 break-all">
+					<div class="font-mono text-xs text-sky-700 dark:text-sky-300 bg-sky-100 dark:bg-sky-900/30 rounded px-2 py-1 break-all">
 						{sessionInfo.cwd}
 					</div>
 				</div>
@@ -75,14 +75,14 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			{/* Tools */}
 			{displayTools.length > 0 && (
 				<div>
-					<div class="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">
+					<div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
 						Tools ({displayTools.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
 						{displayTools.map((tool: string) => (
 							<span
 								key={tool}
-								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs"
+								class="px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 rounded text-xs"
 							>
 								{tool}
 							</span>
@@ -94,7 +94,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			{/* MCP Servers */}
 			{sessionInfo.mcp_servers && sessionInfo.mcp_servers.length > 0 && (
 				<div>
-					<div class="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">
+					<div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
 						MCP Servers ({sessionInfo.mcp_servers.length})
 					</div>
 					<div class="space-y-1">
@@ -106,8 +106,8 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 									}`}
 									title={server.status}
 								/>
-								<span class="text-xs text-indigo-700 dark:text-indigo-300">{server.name}</span>
-								<span class="text-xs text-indigo-500 dark:text-indigo-400">({server.status})</span>
+								<span class="text-xs text-sky-700 dark:text-sky-300">{server.name}</span>
+								<span class="text-xs text-sky-500 dark:text-sky-400">({server.status})</span>
 							</div>
 						))}
 					</div>
@@ -117,14 +117,14 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			{/* Slash Commands */}
 			{sessionInfo.slash_commands && sessionInfo.slash_commands.length > 0 && (
 				<div>
-					<div class="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">
+					<div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
 						Slash Commands ({sessionInfo.slash_commands.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
 						{sessionInfo.slash_commands.map((cmd: string) => (
 							<span
 								key={cmd}
-								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-mono"
+								class="px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 rounded text-xs font-mono"
 							>
 								/{cmd}
 							</span>
@@ -136,14 +136,14 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			{/* Agents */}
 			{sessionInfo.agents && sessionInfo.agents.length > 0 && (
 				<div>
-					<div class="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">
+					<div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
 						Agents ({sessionInfo.agents.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
 						{sessionInfo.agents.map((agent: string) => (
 							<span
 								key={agent}
-								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs"
+								class="px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 rounded text-xs"
 							>
 								{agent}
 							</span>
@@ -153,7 +153,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			)}
 
 			{/* Other details */}
-			<div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-indigo-600 dark:text-indigo-400 pt-2 border-t border-indigo-200 dark:border-indigo-800">
+			<div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-sky-600 dark:text-sky-400 pt-2 border-t border-sky-200 dark:border-sky-800">
 				<div>
 					<span class="font-medium">API Key:</span> {sessionInfo.apiKeySource}
 				</div>

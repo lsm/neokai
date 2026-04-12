@@ -23,7 +23,7 @@ import type {
 	SubagentConfig,
 } from '@neokai/shared';
 
-const DEFAULT_CODER_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_CODER_MODEL = 'claude-sonnet-4-6';
 
 const CODER_FEATURES: SessionFeatures = {
 	rewind: false,

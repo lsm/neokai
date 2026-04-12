@@ -325,7 +325,7 @@ describe('Coder Agent', () => {
 
 		it('should use default model when not specified', () => {
 			const init = createCoderAgentInit(makeConfig());
-			expect(init.model).toBe('claude-sonnet-4-5-20250929');
+			expect(init.model).toBe('claude-sonnet-4-6');
 		});
 
 		it('should use custom model when specified', () => {

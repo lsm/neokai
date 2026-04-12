@@ -49,9 +49,18 @@ import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:spacestore');
 
-/** Space enriched with active tasks for the sidebar list */
+export interface SpaceSessionSummary {
+	id: string;
+	title: string;
+	status: string;
+	type: string;
+	lastActiveAt: number;
+}
+
+/** Space enriched with active tasks and recent sessions for the global list */
 export interface SpaceWithTasks extends Space {
 	tasks: SpaceTask[];
+	sessions: SpaceSessionSummary[];
 }
 
 export interface SpaceAgentTemplate {
@@ -322,7 +331,9 @@ class SpaceStore {
 		try {
 			const hub = await connectionManager.getHub();
 			const enriched = await hub.request<SpaceWithTasks[]>('space.listWithTasks', {});
-			const spaces = (enriched ?? []).map(({ tasks: _tasks, ...space }) => space);
+			const spaces = (enriched ?? []).map(
+				({ tasks: _tasks, sessions: _sessions, ...space }) => space
+			);
 			this.spaces.value = spaces;
 			this.spacesWithTasks.value = enriched ?? [];
 
@@ -335,7 +346,7 @@ class SpaceStore {
 							this.spaces.value = [...this.spaces.value, event.space];
 							this.spacesWithTasks.value = [
 								...this.spacesWithTasks.value,
-								{ ...event.space, tasks: [] },
+								{ ...event.space, tasks: [], sessions: [] },
 							];
 						}
 					}
@@ -359,7 +370,9 @@ class SpaceStore {
 						s.id === event.spaceId ? event.space : s
 					);
 					this.spacesWithTasks.value = this.spacesWithTasks.value.map((s) =>
-						s.id === event.spaceId ? ({ ...event.space, tasks: s.tasks } as SpaceWithTasks) : s
+						s.id === event.spaceId
+							? ({ ...event.space, tasks: s.tasks, sessions: s.sessions } as SpaceWithTasks)
+							: s
 					);
 				})
 			);

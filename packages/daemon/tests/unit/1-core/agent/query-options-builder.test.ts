@@ -456,6 +456,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.additionalDirectories).toEqual([
 				homedir() + '/.claude',
 				homedir() + '/.neokai',
+				'/tmp',
 				'/tmp/claude',
 				expect.stringContaining('/tmp/zsh-'),
 			]);

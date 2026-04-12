@@ -11,7 +11,7 @@
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type { Room, RoomGoal, NeoTask, SessionFeatures } from '@neokai/shared';
 
-const DEFAULT_GENERAL_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_GENERAL_MODEL = 'claude-sonnet-4-6';
 
 const GENERAL_FEATURES: SessionFeatures = {
 	rewind: false,

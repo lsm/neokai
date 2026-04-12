@@ -21,7 +21,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
 import { SUB_SESSION_FEATURES } from './seed-agents';
 
-const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
 /**
  * Per-slot overrides from a `WorkflowNodeAgent` entry.

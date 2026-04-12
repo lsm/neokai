@@ -1,9 +1,9 @@
 /**
- * Space ContextPanel Switching E2E Tests
+ * Space Navigation Switching E2E Tests
  *
- * Verifies the Level 1 ↔ Level 2 switching in the ContextPanel:
- * - Level 1 (spaces list): SpaceContextPanel visible, "Spaces" header title
- * - Level 2 (space detail): SpaceDetailPanel visible, space name in header, back button present
+ * Verifies the Level 1 ↔ Level 2 switching in the Spaces section:
+ * - Level 1 (spaces list): SpacesPage renders full-width, "New Space" button in header
+ * - Level 2 (space detail): SpaceDetailPanel visible in sidebar, space name in header, back button present
  * - Back button navigates from detail back to list
  *
  * Setup: creates a space via RPC in beforeEach (infrastructure)
@@ -57,8 +57,8 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 			timeout: 5000,
 		});
 
-		// SpaceContextPanel should be visible (Create Space button is inside it)
-		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
+		// SpacesPage header "New Space" button should be visible
+		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -103,8 +103,8 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 			timeout: 5000,
 		});
 
-		// SpaceContextPanel (Create Space button) should be visible
-		await expect(page.getByRole('button', { name: 'Create Space', exact: true })).toBeVisible({
+		// SpacesPage "New Space" button should be visible
+		await expect(page.getByRole('button', { name: 'New Space', exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -122,10 +122,8 @@ test.describe('ContextPanel Space Switching (Level 1 ↔ Level 2)', () => {
 		// Wait for the space to appear in the list (LiveQuery may need a moment to load)
 		await expect(page.getByText(spaceName)).toBeVisible({ timeout: 5000 });
 
-		// The space name button in the list only toggles expand/collapse.
-		// Navigation requires clicking the "Open space" button that appears on hover.
-		await page.getByText(spaceName).hover();
-		await page.getByTitle('Open space').click();
+		// SpacesPage renders each space as a card button — clicking navigates directly.
+		await page.getByText(spaceName).first().click();
 
 		// Should now be inside the space — SpaceDetailPanel pinned items visible
 		await expect(page.getByTestId('space-detail-dashboard')).toBeVisible({ timeout: 10000 });
