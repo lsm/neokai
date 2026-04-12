@@ -224,7 +224,7 @@ Gap 6 (Tiered Retry) ──────────────┤
 |------|-----|----------------|--------|--------|
 | 1 | **#3 Audit trail** | Foundation — everything else needs to record who/when/why | Low | **Done** (PR #1481) |
 | 2 | **#8 Block reason tagging** | Foundation — distinguishes block types for notifications & retry | Low | **Done** (PR #1486) |
-| 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | **Done** (PR #TBD) |
+| 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | **Done** (PR #1488) |
 | 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | |
 | 5 | **#9 Review SLA** | Small, builds on audit trail | Low | |
 | 6 | **#6 Tiered retry** | Standalone, but informed by needs_attention distinction | Medium | |

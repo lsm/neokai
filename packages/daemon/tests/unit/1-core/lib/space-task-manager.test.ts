@@ -867,6 +867,26 @@ describe('SpaceTaskManager', () => {
 			expect((await manager.getTask(c.id))!.status).toBe('done');
 		});
 
+		it('does not double-block in diamond dependency graph', async () => {
+			const a = await manager.createTask({ title: 'A', description: '' });
+			const b = await manager.createTask({ title: 'B', description: '', dependsOn: [a.id] });
+			// D depends on both A (direct) and B (indirect via A)
+			const d = await manager.createTask({
+				title: 'D',
+				description: '',
+				dependsOn: [a.id, b.id],
+			});
+
+			await manager.startTask(a.id);
+			await manager.failTask(a.id, 'crashed');
+
+			// Should not throw; both B and D should end up blocked
+			const cascaded = await manager.blockDependentTasks(a.id);
+			expect(cascaded.map((t) => t.id)).toContain(b.id);
+			expect(cascaded.map((t) => t.id)).toContain(d.id);
+			expect((await manager.getTask(d.id))!.status).toBe('blocked');
+		});
+
 		it('returns empty array when no dependents exist', async () => {
 			const a = await manager.createTask({ title: 'A', description: '' });
 			const cascaded = await manager.blockDependentTasks(a.id);

@@ -417,6 +417,8 @@ export class SpaceTaskManager {
 	private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
 		const openTasks = await this.listTasksByStatus('open');
 		for (const t of openTasks) {
+			// Skip tasks already blocked by a prior recursive path in this cascade
+			if (acc.some((a) => a.id === t.id)) continue;
 			if (t.dependsOn?.includes(taskId)) {
 				const blocked = await this.setTaskStatus(t.id, 'blocked', {
 					blockReason: 'dependency_failed',
@@ -446,7 +448,7 @@ export class SpaceTaskManager {
 		}
 
 		// Cycle detection: build adjacency from existing tasks + proposed deps
-		if (taskId) {
+		if (taskId && depIds.length > 0) {
 			const allTasks = await this.listTasks(true);
 			const adj = new Map<string, string[]>();
 			for (const t of allTasks) {
