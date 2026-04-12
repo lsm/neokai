@@ -3,12 +3,18 @@
  *
  * Sessions are grouped by status in cards matching the SpaceTasks style.
  * Excludes system sessions (task worker sessions, workflow sessions).
+ *
+ * Navigation: clicking a session calls navigateToSpaceSession() which uses
+ * pushState, so the browser back button naturally returns to /space/:id/sessions
+ * where handlePopState restores spaceViewMode = 'sessions'.
  */
 
-import { useMemo } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceSession } from '../../lib/router';
 import { getRelativeTime } from '../../lib/utils';
+
+type Session = { id: string; title: string; status: string; lastActiveAt: number };
 
 const STATUS_BORDER: Record<string, string> = {
 	active: 'border-l-green-500',
@@ -24,20 +30,91 @@ const STATUS_LABEL: Record<string, string> = {
 	ended: 'Ended',
 };
 
+const ACTIVE_PAGE_SIZE = 10;
 const ARCHIVED_LIMIT = 5;
 
 interface StatusGroupDef {
 	statuses: string[];
 	title: string;
 	variant: 'green' | 'yellow' | 'gray';
-	limit?: number;
+	/** Hard cap with "+N more" footer — used for Archived */
+	hardLimit?: number;
+	/** Paginated with prev/next controls — used for Active */
+	paginated?: boolean;
 }
 
 const SESSION_GROUPS: StatusGroupDef[] = [
 	{ statuses: ['pending_worktree_choice'], title: 'Pending', variant: 'yellow' },
-	{ statuses: ['active', 'paused'], title: 'Active', variant: 'green' },
-	{ statuses: ['ended'], title: 'Archived', variant: 'gray', limit: ARCHIVED_LIMIT },
+	{ statuses: ['active', 'paused'], title: 'Active', variant: 'green', paginated: true },
+	{ statuses: ['ended'], title: 'Archived', variant: 'gray', hardLimit: ARCHIVED_LIMIT },
 ];
+
+function PaginatedSessionGroup({
+	title,
+	count,
+	variant,
+	sessions,
+	spaceId,
+}: {
+	title: string;
+	count: number;
+	variant: 'green' | 'yellow' | 'gray';
+	sessions: Session[];
+	spaceId: string;
+}) {
+	const [page, setPage] = useState(0);
+	const totalPages = Math.ceil(sessions.length / ACTIVE_PAGE_SIZE);
+	const displayed = sessions.slice(page * ACTIVE_PAGE_SIZE, (page + 1) * ACTIVE_PAGE_SIZE);
+
+	const headerStyles: Record<string, string> = {
+		green: 'bg-green-900/20',
+		yellow: 'bg-yellow-900/20',
+		gray: 'bg-dark-800',
+	};
+	const titleStyles: Record<string, string> = {
+		green: 'text-green-400',
+		yellow: 'text-yellow-400',
+		gray: 'text-gray-500',
+	};
+
+	return (
+		<div class="bg-dark-850 border border-dark-700 rounded-xl overflow-hidden">
+			<div
+				class={`px-4 py-3 border-b border-dark-700 ${headerStyles[variant]} flex items-center gap-1`}
+			>
+				<h3 class={`font-semibold ${titleStyles[variant]}`}>
+					{title} ({count})
+				</h3>
+			</div>
+			<div class="divide-y divide-dark-700">
+				{displayed.map((session) => (
+					<SessionItem key={session.id} session={session} spaceId={spaceId} />
+				))}
+			</div>
+			{totalPages > 1 && (
+				<div class="px-4 py-2 border-t border-dark-700 flex items-center justify-between">
+					<button
+						onClick={() => setPage((p) => Math.max(0, p - 1))}
+						disabled={page === 0}
+						class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-700 disabled:cursor-not-allowed transition-colors"
+					>
+						← Prev
+					</button>
+					<span class="text-xs text-gray-600">
+						{page + 1} / {totalPages}
+					</span>
+					<button
+						onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+						disabled={page === totalPages - 1}
+						class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-700 disabled:cursor-not-allowed transition-colors"
+					>
+						Next →
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
 
 function SessionGroup({
 	title,
@@ -45,39 +122,33 @@ function SessionGroup({
 	variant,
 	sessions,
 	spaceId,
-	limit,
+	hardLimit,
 }: {
 	title: string;
 	count: number;
 	variant: 'green' | 'yellow' | 'gray';
-	sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
+	sessions: Session[];
 	spaceId: string;
-	limit?: number;
+	hardLimit?: number;
 }) {
-	const displayed = limit ? sessions.slice(0, limit) : sessions;
-	const hidden = limit ? Math.max(0, sessions.length - limit) : 0;
+	const displayed = hardLimit ? sessions.slice(0, hardLimit) : sessions;
+	const hidden = hardLimit ? Math.max(0, sessions.length - hardLimit) : 0;
+
 	const headerStyles: Record<string, string> = {
 		green: 'bg-green-900/20',
 		yellow: 'bg-yellow-900/20',
 		gray: 'bg-dark-800',
 	};
-
 	const titleStyles: Record<string, string> = {
 		green: 'text-green-400',
 		yellow: 'text-yellow-400',
 		gray: 'text-gray-500',
 	};
 
-	const borderStyles: Record<string, string> = {
-		green: 'border-dark-700',
-		yellow: 'border-dark-700',
-		gray: 'border-dark-700',
-	};
-
 	return (
-		<div class={`bg-dark-850 border rounded-xl overflow-hidden ${borderStyles[variant]}`}>
+		<div class="bg-dark-850 border border-dark-700 rounded-xl overflow-hidden">
 			<div
-				class={`px-4 py-3 border-b ${borderStyles[variant]} ${headerStyles[variant]} flex items-center gap-1`}
+				class={`px-4 py-3 border-b border-dark-700 ${headerStyles[variant]} flex items-center gap-1`}
 			>
 				<h3 class={`font-semibold ${titleStyles[variant]}`}>
 					{title} ({count})
@@ -95,13 +166,7 @@ function SessionGroup({
 	);
 }
 
-function SessionItem({
-	session,
-	spaceId,
-}: {
-	session: { id: string; title: string; status: string; lastActiveAt: number };
-	spaceId: string;
-}) {
+function SessionItem({ session, spaceId }: { session: Session; spaceId: string }) {
 	const borderColor = STATUS_BORDER[session.status] ?? 'border-l-transparent';
 
 	return (
@@ -174,6 +239,18 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 				{SESSION_GROUPS.map((group) => {
 					const groupSessions = sessions.filter((s) => group.statuses.includes(s.status));
 					if (groupSessions.length === 0) return null;
+					if (group.paginated) {
+						return (
+							<PaginatedSessionGroup
+								key={group.title}
+								title={group.title}
+								count={groupSessions.length}
+								variant={group.variant}
+								sessions={groupSessions}
+								spaceId={spaceId}
+							/>
+						);
+					}
 					return (
 						<SessionGroup
 							key={group.title}
@@ -182,7 +259,7 @@ export function SpaceSessionsPage({ spaceId }: SpaceSessionsPageProps) {
 							variant={group.variant}
 							sessions={groupSessions}
 							spaceId={spaceId}
-							limit={group.limit}
+							hardLimit={group.hardLimit}
 						/>
 					);
 				})}
