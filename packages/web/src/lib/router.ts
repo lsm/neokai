@@ -53,6 +53,7 @@ const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_AGENT_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/agent$/;
 const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/session\/([a-fA-F0-9-]+)$/;
 const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/task\/([a-fA-F0-9-]+|[a-z]-[1-9]\d*)$/;
+const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 
 /**
  * Router state and configuration
@@ -177,7 +178,10 @@ export function getSpaceIdFromPath(path: string): string | null {
 	if (spaceSessionMatch) return spaceSessionMatch[1];
 
 	const spaceTaskMatch = path.match(SPACE_TASK_ROUTE_PATTERN);
-	return spaceTaskMatch ? spaceTaskMatch[1] : null;
+	if (spaceTaskMatch) return spaceTaskMatch[1];
+
+	const spaceSessionsMatch = path.match(SPACE_SESSIONS_ROUTE_PATTERN);
+	return spaceSessionsMatch ? spaceSessionsMatch[1] : null;
 }
 
 /**
@@ -204,6 +208,15 @@ export function getSpaceConfigureFromPath(path: string): string | null {
  */
 export function getSpaceTasksFromPath(path: string): string | null {
 	const match = path.match(SPACE_TASKS_ROUTE_PATTERN);
+	return match ? match[1] : null;
+}
+
+/**
+ * Extract space ID from /space/:id/sessions route
+ * Returns null if not on a space sessions list route
+ */
+export function getSpaceSessionsListFromPath(path: string): string | null {
+	const match = path.match(SPACE_SESSIONS_ROUTE_PATTERN);
 	return match ? match[1] : null;
 }
 
@@ -362,6 +375,13 @@ export function createSpaceSessionPath(spaceId: string, sessionId: string): stri
  */
 export function createSpaceTaskPath(spaceId: string, taskId: string): string {
 	return `/space/${spaceId}/task/${taskId}`;
+}
+
+/**
+ * Create space sessions list URL path
+ */
+export function createSpaceSessionsPath(spaceId: string): string {
+	return `/space/${spaceId}/sessions`;
 }
 
 /**
@@ -1203,6 +1223,59 @@ export function navigateToSpaceTasks(spaceId: string, replace = false): void {
 }
 
 /**
+ * Navigate to the Space sessions list view
+ * Updates URL to /space/:spaceId/sessions and keeps the space context panel active
+ */
+export function navigateToSpaceSessions(spaceId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createSpaceSessionsPath(spaceId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceViewModeSignal.value = 'sessions';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		navSectionSignal.value = 'spaces';
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ spaceId, path: targetPath }, '', targetPath);
+
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceViewModeSignal.value = 'sessions';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Navigate to a session within a space layout
  */
 export function navigateToSpaceSession(spaceId: string, sessionId: string, replace = false): void {
@@ -1380,6 +1453,7 @@ function handlePopState(_event: PopStateEvent): void {
 	const roomTask = getRoomTaskIdFromPath(path);
 	const spaceConfigure = getSpaceConfigureFromPath(path);
 	const spaceTasks = getSpaceTasksFromPath(path);
+	const spaceSessions = getSpaceSessionsListFromPath(path);
 	const spaceTask = getSpaceTaskIdFromPath(path);
 	const spaceSession = getSpaceSessionIdFromPath(path);
 	const spaceAgent = getSpaceAgentFromPath(path);
@@ -1432,6 +1506,19 @@ function handlePopState(_event: PopStateEvent): void {
 	} else if (spaceTasks) {
 		currentSpaceIdSignal.value = spaceTasks;
 		currentSpaceViewModeSignal.value = 'tasks';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (spaceSessions) {
+		currentSpaceIdSignal.value = spaceSessions;
+		currentSpaceViewModeSignal.value = 'sessions';
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
@@ -1633,6 +1720,7 @@ export function initializeRouter(): string | null {
 	const initialRoomTask = getRoomTaskIdFromPath(initialPath);
 	const initialSpaceConfigure = getSpaceConfigureFromPath(initialPath);
 	const initialSpaceTasks = getSpaceTasksFromPath(initialPath);
+	const initialSpaceSessions = getSpaceSessionsListFromPath(initialPath);
 	const initialSpaceTask = getSpaceTaskIdFromPath(initialPath);
 	const initialSpaceSession = getSpaceSessionIdFromPath(initialPath);
 	const initialSpaceAgent = getSpaceAgentFromPath(initialPath);
@@ -1695,6 +1783,19 @@ export function initializeRouter(): string | null {
 	} else if (initialSpaceTasks) {
 		currentSpaceIdSignal.value = initialSpaceTasks;
 		currentSpaceViewModeSignal.value = 'tasks';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (initialSpaceSessions) {
+		currentSpaceIdSignal.value = initialSpaceSessions;
+		currentSpaceViewModeSignal.value = 'sessions';
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
