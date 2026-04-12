@@ -121,14 +121,16 @@ export function ReadOnlyWorkflowCanvas({
 			if (!gatePopup || !runId) return;
 			setApproving(true);
 			try {
-				const hub = connectionManager.getHubIfConnected();
-				if (!hub) return;
+				const hub = await connectionManager.getHub();
 				await hub.request('spaceWorkflowRun.approveGate', {
 					runId,
 					gateId: gatePopup.gateId,
 					approved,
 				});
 				setGatePopup(null);
+			} catch (err) {
+				// eslint-disable-next-line no-console
+				console.error('[handlePopupDecision] approveGate error:', err);
 			} finally {
 				setApproving(false);
 			}
@@ -232,6 +234,7 @@ export function ReadOnlyWorkflowCanvas({
 									Approve
 								</button>
 								<button
+									data-testid="popup-reject-btn"
 									onClick={() => void handlePopupDecision(false)}
 									disabled={approving}
 									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 transition-colors"

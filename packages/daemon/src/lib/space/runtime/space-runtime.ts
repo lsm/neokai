@@ -1220,7 +1220,20 @@ export class SpaceRuntime {
 				(execution) => execution.status === 'pending' && !execution.agentSessionId
 			);
 
-			if (pendingExecutions.length > 0) {
+			// Skip spawning when the canonical task is terminal (done/cancelled/archived).
+			// The task was externally resolved while the run was in_progress — spawning new
+			// agent sub-sessions would conflict with the caller's intent and disturb tests
+			// that mark the task done to prevent agent interference.
+			const canonicalTaskIsTerminal =
+				canonicalTask.status === 'done' ||
+				canonicalTask.status === 'cancelled' ||
+				canonicalTask.status === 'archived';
+
+			if (pendingExecutions.length > 0 && canonicalTaskIsTerminal) {
+				log.info(
+					`SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} is terminal (${canonicalTask.status})`
+				);
+			} else if (pendingExecutions.length > 0) {
 				if (!space) {
 					log.warn(
 						`SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
