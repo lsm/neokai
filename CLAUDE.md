@@ -160,6 +160,35 @@ See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documen
 
 Unit tests preload `packages/daemon/tests/unit/setup.ts` which sets `NODE_ENV='test'`, clears all API keys (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, GLM_API_KEY, ZHIPU_API_KEY), and suppresses console output. This ensures unit tests never make real API calls.
 
+#### Database Configuration for Tests
+
+**⚠️ Important: Database Lock Conflicts**
+
+The daemon uses a file-based SQLite database with a PID lock file (`~/.neokai/data/daemon.db.lock`). Running multiple daemons with the same database path will fail with:
+
+```
+Another NeoKai daemon is already running with this database (PID XXXX).
+```
+
+**For testing scenarios that start a dev server:**
+- Use `--db-path` to specify a temporary database location
+- This prevents conflicts with any running production daemon instance
+- Example: `make dev WORKSPACE=/tmp/test PORT=8484 --db-path /tmp/test-db`
+
+**For E2E tests:**
+- E2E tests use `make run-e2e` which handles database isolation automatically (uses temp directories)
+- Do NOT run a separate `make dev` or `make run` while E2E tests are running
+
+**In-memory database (preferred for unit tests):**
+- Unit tests should use in-memory SQLite databases where possible
+- This avoids filesystem conflicts and improves test speed
+- See `packages/daemon/tests/unit/helpers/` for test database helpers
+
+**Real filesystem database (for integration tests):**
+- Use temporary directories (e.g., `/tmp/neokai-test-XXXXXX`)
+- Clean up after tests complete
+- E2E tests already follow this pattern via `e2e/` test isolation
+
 #### Dev Proxy Mode for Online Tests
 
 Use `NEOKAI_USE_DEV_PROXY=1` for mocked online tests:
