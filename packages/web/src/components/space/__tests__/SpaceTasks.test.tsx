@@ -9,10 +9,11 @@ import { signal } from '@preact/signals';
 import type { SpaceTask } from '@neokai/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+let mockAttentionCount: ReturnType<typeof signal<number>>;
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
-		return { tasks: mockTasks };
+		return { tasks: mockTasks, attentionCount: mockAttentionCount };
 	},
 }));
 
@@ -22,6 +23,7 @@ vi.mock('../../../lib/utils', () => ({
 }));
 
 mockTasks = signal<SpaceTask[]>([]);
+mockAttentionCount = signal<number>(0);
 
 import { SpaceTasks } from '../SpaceTasks';
 
@@ -54,6 +56,7 @@ describe('SpaceTasks', () => {
 	beforeEach(() => {
 		cleanup();
 		mockTasks.value = [];
+		mockAttentionCount.value = 0;
 	});
 
 	afterEach(() => {
@@ -63,8 +66,8 @@ describe('SpaceTasks', () => {
 	it('renders all four tabs', () => {
 		mockTasks.value = [makeTask('t1', 'open')];
 		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
+		expect(getByText('Action')).toBeTruthy();
 		expect(getByText('Active')).toBeTruthy();
-		expect(getByText('Review')).toBeTruthy();
 		expect(getByText('Completed')).toBeTruthy();
 		expect(getByText('Archived')).toBeTruthy();
 	});
@@ -75,11 +78,11 @@ describe('SpaceTasks', () => {
 		expect(getByText('Create a task to get started')).toBeTruthy();
 	});
 
-	it('shows empty state for review tab', () => {
+	it('shows empty state for action tab', () => {
 		mockTasks.value = [makeTask('t1', 'open')];
 		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
-		fireEvent.click(getByText('Review'));
-		expect(getByText('No tasks to review')).toBeTruthy();
+		fireEvent.click(getByText('Action'));
+		expect(getByText('No tasks needing action')).toBeTruthy();
 	});
 
 	it('shows empty state for completed tab', () => {
@@ -104,10 +107,10 @@ describe('SpaceTasks', () => {
 		expect(queryByText('No active tasks')).toBeNull();
 	});
 
-	it('displays tasks in review tab (blocked + review)', () => {
+	it('displays tasks in action tab (blocked + review)', () => {
 		mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'review')];
 		const { getByText } = render(<SpaceTasks spaceId="space-1" />);
-		fireEvent.click(getByText('Review'));
+		fireEvent.click(getByText('Action'));
 		expect(getByText('Task t1')).toBeTruthy();
 		expect(getByText('Task t2')).toBeTruthy();
 	});
@@ -142,7 +145,7 @@ describe('SpaceTasks', () => {
 		const text = Array.from(buttons).map((b) => b.textContent ?? '');
 
 		expect(text.some((t) => t?.includes('Active') && t?.includes('2'))).toBe(true);
-		expect(text.some((t) => t?.includes('Review') && t?.includes('2'))).toBe(true);
+		expect(text.some((t) => t?.includes('Action') && t?.includes('2'))).toBe(true);
 		expect(text.some((t) => t?.includes('Completed') && t?.includes('2'))).toBe(true);
 		expect(text.some((t) => t?.includes('Archived') && t?.includes('1'))).toBe(true);
 	});

@@ -59,9 +59,17 @@ function SessionRow({ session }: { session: SpaceSessionSummary }) {
 	);
 }
 
+/** Block reasons that indicate a task needs human attention */
+const ATTENTION_REASONS = ['human_input_requested', 'gate_rejected'];
+
 function SpaceCard({ space }: { space: SpaceWithTasks }) {
 	const activeTasks = space.tasks.filter(
 		(t) => t.status === 'open' || t.status === 'in_progress' || t.status === 'review'
+	);
+	const attentionTasks = space.tasks.filter(
+		(t) =>
+			t.status === 'review' ||
+			(t.status === 'blocked' && ATTENTION_REASONS.includes(t.blockReason ?? ''))
 	);
 	const recentTasks = [...space.tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3);
 	const activeSessions = (space.sessions ?? []).filter((s) => s.status === 'active').slice(0, 3);
@@ -80,11 +88,18 @@ function SpaceCard({ space }: { space: SpaceWithTasks }) {
 						<p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{space.description}</p>
 					)}
 				</div>
-				{activeTasks.length > 0 && (
-					<span class="flex-shrink-0 rounded-full bg-blue-900/50 border border-blue-800/40 px-2 py-0.5 text-xs font-medium text-blue-300 tabular-nums">
-						{activeTasks.length} active
-					</span>
-				)}
+				<div class="flex items-center gap-1.5 flex-shrink-0">
+					{attentionTasks.length > 0 && (
+						<span class="rounded-full bg-amber-900/50 border border-amber-800/40 px-2 py-0.5 text-xs font-medium text-amber-300 tabular-nums">
+							{attentionTasks.length} action
+						</span>
+					)}
+					{activeTasks.length > 0 && (
+						<span class="rounded-full bg-blue-900/50 border border-blue-800/40 px-2 py-0.5 text-xs font-medium text-blue-300 tabular-nums">
+							{activeTasks.length} active
+						</span>
+					)}
+				</div>
 			</div>
 
 			{/* Active sessions */}

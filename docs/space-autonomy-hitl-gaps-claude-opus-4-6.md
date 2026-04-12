@@ -80,15 +80,37 @@ Tasks track `prUrl`, `prNumber`, `prCreatedAt` but:
 
 ---
 
-### 2. Approval Notification/Queue UI
+### 2. Approval Notification/Queue UI ✅ PR #TBD
 
 Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists. However:
-- No notification to tell humans a gate is waiting
-- No inbox/queue of pending approvals in the UI
+- ~~No notification to tell humans a gate is waiting~~
+- ~~No inbox/queue of pending approvals in the UI~~
 - No webhook/Slack/email integration for approval requests
-- Human must manually check the workflow run state to discover pending gates
+- ~~Human must manually check the workflow run state to discover pending gates~~
+
+**Implemented:**
+- LiveQuery `spaceTasks.needingAttention` — real-time attention task tracking (review + human-blocked)
+- "Action" tab in SpaceTasks — groups tasks by reason: Needs Input, Gate Pending, Awaiting Review, Blocked
+- Amber attention badge on Tasks sidebar button and SpacesPage cards
+- LiveQuery-backed counts survive reconnect (no missed notifications)
 
 **Impact:** Medium — humans don't know when approval is needed  
+**Effort:** Medium
+
+---
+
+### 2b. Action UI (Approve/Reject/Resolve)
+
+Gap #2 surfaces *that* tasks need human attention, but there is no UI for *taking* that action.
+
+Missing:
+- Approve/reject buttons for gate-pending tasks (`spaceWorkflowRun.approveGate` RPC exists but has no UI)
+- Input form for `human_input_requested` tasks (agent asked a question, human has no way to answer)
+- "Mark done" / "Re-open" actions for tasks in `review` status
+- Contextual display of *why* the task is blocked (gate message, agent's question, dependency chain)
+
+**Depends on:** Gap #2 (notification/queue), Gap #8 (block reasons)  
+**Impact:** High — without action UI, the notification queue is informational only  
 **Effort:** Medium
 
 ---
@@ -226,6 +248,7 @@ Workflow topology is fixed regardless of autonomy level:
 |---|-----|--------|--------|----------|
 | 1 | PR auto-merge for semi-autonomous | High | Medium | **P0** |
 | 2 | Approval notification/queue UI | Medium | Medium | **P1** |
+| 2b | Action UI (approve/reject/resolve) | High | Medium | **P1** |
 | 3 | Approval audit trail | Medium | Low | **P1** |
 | 4 | Execution-time autonomy differentiation | High | High | **P2** |
 | 5 | Task dependency enforcement | Medium | Medium | **P2** |
@@ -239,20 +262,20 @@ Workflow topology is fixed regardless of autonomy level:
 
 ```
 Gap 3 (Audit Trail) ──────┐
-                           ├──► Gap 2 (Notification UI) ──► Gap 1 (PR Auto-Merge)
-Gap 8 (block reasons) ────┘         │
-                                    ▼
-Gap 5 (Dependency Enforcement)  Gap 9 (Review SLA)
-                                    │
-Gap 6 (Tiered Retry) ──────────────┤
-                                    ▼
-                            Gap 4 (Execution-Time Autonomy)
-                                    │
-                                    ▼
-                            Gap 10 (Conditional Branching)
-                                    │
-                                    ▼
-                            Gap 7 (Room/Space Unification)
+                           ├──► Gap 2 (Notification UI) ──► Gap 2b (Action UI) ──► Gap 1 (PR Auto-Merge)
+Gap 8 (block reasons) ────┘                                       │
+                                                                  ▼
+Gap 5 (Dependency Enforcement)                              Gap 9 (Review SLA)
+                                                                  │
+Gap 6 (Tiered Retry) ────────────────────────────────────────────┤
+                                                                  ▼
+                                                          Gap 4 (Execution-Time Autonomy)
+                                                                  │
+                                                                  ▼
+                                                          Gap 10 (Conditional Branching)
+                                                                  │
+                                                                  ▼
+                                                          Gap 7 (Room/Space Unification)
 ```
 
 ### Recommended Implementation Sequence
@@ -263,12 +286,13 @@ Gap 6 (Tiered Retry) ──────────────┤
 | 2 | **#8 Block reason tagging** | Foundation — distinguishes block types for notifications & retry | Low | **Done** (PR #1486) |
 | 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | **Done** (PR #1488) |
 | 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | |
-| 5 | **#9 Review SLA** | Small, builds on audit trail | Low | |
-| 6 | **#6 Tiered retry** | Standalone, but informed by needs_attention distinction | Medium | |
-| 7 | **#1 PR auto-merge** | Needs audit trail + notification infra in place | Medium | |
-| 8 | **#4 Execution-time autonomy** | Builds on retry + needs_attention + audit | High | |
-| 9 | **#10 Conditional branching** | Extends execution-time autonomy into workflow topology | High | |
-| 10 | **#7 Room/Space unification** | Last — needs both systems mature before merging patterns | High | |
+| 5 | **#2b Action UI** | Builds on #2, makes notification queue actionable | Medium | |
+| 6 | **#9 Review SLA** | Small, builds on audit trail | Low | |
+| 7 | **#6 Tiered retry** | Standalone, but informed by needs_attention distinction | Medium | |
+| 8 | **#1 PR auto-merge** | Needs audit trail + notification + action UI in place | Medium | |
+| 9 | **#4 Execution-time autonomy** | Builds on retry + needs_attention + audit | High | |
+| 10 | **#10 Conditional branching** | Extends execution-time autonomy into workflow topology | High | |
+| 11 | **#7 Room/Space unification** | Last — needs both systems mature before merging patterns | High | |
 
 ## Key Files Reference
 

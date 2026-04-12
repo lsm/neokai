@@ -1,23 +1,26 @@
 /**
  * SpaceTasks — tabbed task list for a space.
  *
- * Tabs: Active (open + in_progress), Review (blocked + review),
+ * Tabs: Action (review + blocked, grouped by reason), Active (open + in_progress),
  *       Completed (done + cancelled), Archived.
  *
- * Within each tab, tasks are grouped by status in TaskGroup cards,
+ * Within each tab, tasks are grouped by status/reason in TaskGroup cards,
  * matching the RoomTasks component style.
  */
 
 import { useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import type { SpaceTask, SpaceTaskStatus } from '@neokai/shared';
+import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
 import { getRelativeTime } from '../../lib/utils';
 
-type TaskFilterTab = 'active' | 'review' | 'completed' | 'archived';
+type TaskFilterTab = 'action' | 'active' | 'completed' | 'archived';
+
+/** Block reasons that indicate a task needs human attention */
+const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
 
 const TAB_GROUPS: Record<TaskFilterTab, SpaceTaskStatus[]> = {
+	action: ['review', 'blocked'],
 	active: ['open', 'in_progress'],
-	review: ['blocked', 'review'],
 	completed: ['done', 'cancelled'],
 	archived: ['archived'],
 };
@@ -47,16 +50,39 @@ interface StatusGroupDef {
 	status: SpaceTaskStatus;
 	title: string;
 	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
+	/** Optional filter override; when provided, used instead of status-only matching */
+	filterFn?: (task: SpaceTask) => boolean;
 }
+
+const ACTION_GROUPS: StatusGroupDef[] = [
+	{
+		status: 'blocked',
+		title: 'Needs Input',
+		variant: 'red',
+		filterFn: (t) =>
+			t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'human_input_requested',
+	},
+	{
+		status: 'blocked',
+		title: 'Gate Pending',
+		variant: 'red',
+		filterFn: (t) =>
+			t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'gate_rejected',
+	},
+	{ status: 'review', title: 'Awaiting Review', variant: 'purple' },
+	{
+		status: 'blocked',
+		title: 'Blocked',
+		variant: 'yellow',
+		filterFn: (t) =>
+			t.status === 'blocked' &&
+			!ATTENTION_BLOCK_REASONS.includes(t.blockReason as SpaceBlockReason),
+	},
+];
 
 const ACTIVE_GROUPS: StatusGroupDef[] = [
 	{ status: 'in_progress', title: 'In Progress', variant: 'yellow' },
 	{ status: 'open', title: 'Open', variant: 'default' },
-];
-
-const REVIEW_GROUPS: StatusGroupDef[] = [
-	{ status: 'blocked', title: 'Blocked', variant: 'red' },
-	{ status: 'review', title: 'Awaiting Review', variant: 'purple' },
 ];
 
 const COMPLETED_GROUPS: StatusGroupDef[] = [
@@ -69,8 +95,8 @@ const ARCHIVED_GROUPS: StatusGroupDef[] = [
 ];
 
 const TAB_GROUPS_DEF: Record<TaskFilterTab, StatusGroupDef[]> = {
+	action: ACTION_GROUPS,
 	active: ACTIVE_GROUPS,
-	review: REVIEW_GROUPS,
 	completed: COMPLETED_GROUPS,
 	archived: ARCHIVED_GROUPS,
 };
@@ -86,7 +112,7 @@ function TabButton({
 	count: number;
 	isActive: boolean;
 	onClick: () => void;
-	variant?: 'default' | 'purple' | 'green' | 'red' | 'gray';
+	variant?: 'default' | 'amber' | 'purple' | 'green' | 'red' | 'gray';
 }) {
 	const baseClasses =
 		'px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5';
@@ -94,6 +120,9 @@ function TabButton({
 	const variantClasses: Record<string, string> = {
 		default: isActive
 			? 'text-blue-400 border-b-2 border-blue-400'
+			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
+		amber: isActive
+			? 'text-amber-400 border-b-2 border-amber-400'
 			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
 		purple: isActive
 			? 'text-purple-400 border-b-2 border-purple-400'
@@ -115,15 +144,17 @@ function TabButton({
 			{count > 0 && (
 				<span
 					class={`text-xs px-1.5 py-0.5 rounded ${
-						variant === 'purple'
-							? 'bg-purple-900/30'
-							: variant === 'green'
-								? 'bg-green-900/30'
-								: variant === 'red'
-									? 'bg-red-900/30'
-									: variant === 'gray'
-										? 'bg-dark-800'
-										: 'bg-dark-700'
+						variant === 'amber'
+							? 'bg-amber-900/30'
+							: variant === 'purple'
+								? 'bg-purple-900/30'
+								: variant === 'green'
+									? 'bg-green-900/30'
+									: variant === 'red'
+										? 'bg-red-900/30'
+										: variant === 'gray'
+											? 'bg-dark-800'
+											: 'bg-dark-700'
 					}`}
 				>
 					{count}
@@ -135,8 +166,11 @@ function TabButton({
 
 function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 	const messages: Record<TaskFilterTab, { title: string; description: string }> = {
+		action: {
+			title: 'No tasks needing action',
+			description: 'Tasks requiring human input, review, or unblocking will appear here',
+		},
 		active: { title: 'No active tasks', description: 'Active tasks will appear here' },
-		review: { title: 'No tasks to review', description: 'Tasks needing review will appear here' },
 		completed: { title: 'No completed tasks', description: 'Completed tasks will appear here' },
 		archived: { title: 'No archived tasks', description: 'Archived tasks will appear here' },
 	};
@@ -258,7 +292,12 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	const [activeTab, setActiveTab] = useState<TaskFilterTab>('active');
 
 	const counts = useMemo(() => {
-		const c: Record<TaskFilterTab, number> = { active: 0, review: 0, completed: 0, archived: 0 };
+		const c: Record<TaskFilterTab, number> = {
+			action: 0,
+			active: 0,
+			completed: 0,
+			archived: 0,
+		};
 		for (const task of tasks) {
 			for (const [tab, statuses] of Object.entries(TAB_GROUPS) as [
 				TaskFilterTab,
@@ -307,17 +346,17 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 			<div class="min-h-[calc(100%+1px)] space-y-6">
 				<div class="flex border-b border-dark-700">
 					<TabButton
+						label="Action"
+						count={counts.action}
+						isActive={activeTab === 'action'}
+						onClick={() => setActiveTab('action')}
+						variant="amber"
+					/>
+					<TabButton
 						label="Active"
 						count={counts.active}
 						isActive={activeTab === 'active'}
 						onClick={() => setActiveTab('active')}
-					/>
-					<TabButton
-						label="Review"
-						count={counts.review}
-						isActive={activeTab === 'review'}
-						onClick={() => setActiveTab('review')}
-						variant="purple"
 					/>
 					<TabButton
 						label="Completed"
@@ -360,11 +399,12 @@ function TaskGroupList({
 	return (
 		<div class="space-y-4">
 			{groups.map((group) => {
-				const groupTasks = tasks.filter((t) => t.status === group.status);
+				const filterFn = group.filterFn ?? ((t: SpaceTask) => t.status === group.status);
+				const groupTasks = tasks.filter(filterFn);
 				if (groupTasks.length === 0) return null;
 				return (
 					<TaskGroup
-						key={group.status}
+						key={group.title}
 						title={group.title}
 						count={groupTasks.length}
 						variant={group.variant}
