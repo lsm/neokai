@@ -383,7 +383,7 @@ export function ContextPanel() {
 				<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>
 					<div
 						class={cn(
-							'flex items-center justify-between',
+							'flex-1 flex items-center justify-between',
 							!isRoomDetail && !isSpaceDetail && 'mb-3'
 						)}
 					>

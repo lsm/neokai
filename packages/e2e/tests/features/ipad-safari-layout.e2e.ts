@@ -88,22 +88,14 @@ test.describe('iPad Mini portrait (744×1133)', () => {
 		await expect(bottomTabBar).toBeVisible();
 	});
 
-	test('main content area has non-zero computed padding-bottom', async ({ page }) => {
-		// Wait for the BottomTabBar's ResizeObserver to fire and update --bottom-bar-height
+	test('main content area is above bottom tab bar (BottomTabBar is inline)', async ({ page }) => {
 		const bottomTabBar = page.getByRole('tablist', { name: 'Main navigation' });
 		await expect(bottomTabBar).toBeVisible();
 
-		const paddingBottom = await page.evaluate(() => {
-			const el = document.querySelector('.pb-bottom-bar');
-			if (!el) return '0px';
-			return getComputedStyle(el).paddingBottom;
-		});
-
-		// The BottomTabBar is rendered at this width, so padding-bottom should be > 0
-		expect(paddingBottom).not.toBe('0px');
-		// Sanity check: padding-bottom should be a reasonable pixel value
-		const px = parseFloat(paddingBottom);
-		expect(px).toBeGreaterThan(0);
+		// BottomTabBar is an inline flex-shrink-0 element, not fixed/absolute.
+		// Content is naturally laid out above it without needing padding-bottom.
+		const position = await bottomTabBar.evaluate((el) => getComputedStyle(el).position);
+		expect(position).toBe('static');
 	});
 });
 
@@ -133,14 +125,12 @@ test.describe('Desktop (1280×800)', () => {
 		await expect(bottomTabBar).not.toBeVisible();
 	});
 
-	test('main content area has 0px computed padding-bottom', async ({ page }) => {
-		const paddingBottom = await page.evaluate(() => {
-			const el = document.querySelector('.pb-bottom-bar');
-			if (!el) return null;
-			return getComputedStyle(el).paddingBottom;
-		});
-
-		expect(paddingBottom).not.toBeNull();
-		expect(paddingBottom).toBe('0px');
+	test('main content area has no bottom padding (BottomTabBar is not present)', async ({
+		page,
+	}) => {
+		// BottomTabBar is hidden via md:hidden at desktop width and the main content
+		// flex container no longer uses a pb-bottom-bar padding element.
+		const hasPbBottomBar = await page.evaluate(() => !!document.querySelector('.pb-bottom-bar'));
+		expect(hasPbBottomBar).toBe(false);
 	});
 });
