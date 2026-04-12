@@ -23,7 +23,6 @@ import {
 	cleanupTestSession,
 	waitForAssistantResponse,
 	waitForSessionCreated,
-	getWorkspaceRoot,
 	waitForWebSocketConnected,
 	getModal,
 } from '../helpers/wait-helpers';
@@ -33,65 +32,31 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a new session by clicking the "New Session" button in the Lobby UI,
- * filling in the workspace path, and submitting the form.
- *
- * NOTE: `getWorkspaceRoot` uses an RPC call for infrastructure purposes only
- * (fetching the test workspace path).  The session itself is created through
- * the UI form — no `session.create` RPC is called directly.
+ * Create a new session by clicking the "New Session" button in the Lobby UI
+ * and submitting the form. Workspace selection has been moved out of the modal
+ * into the inline WorkspaceSelector shown in the chat container after creation.
  */
 async function createSessionViaNewSessionButton(page: Page): Promise<string> {
 	await waitForWebSocketConnected(page);
-	const workspaceRoot = await getWorkspaceRoot(page);
 
-	// Close any stale modal left open from a previous test.  When the SPA does not
-	// fully reset component state across tests, the backdrop blocks the "New Session"
-	// button.  The SPA may keep hidden dialog elements in the DOM — use :visible to
-	// only match dialogs that are actually shown.
-	//
+	// Close any stale modal left open from a previous test.
 	// getModal() excludes the NeoPanel (data-testid="neo-panel") which has role="dialog"
-	// and is permanently in the DOM even when closed (just off-screen via CSS
-	// transform: -translate-x-full).  Playwright considers it "visible" because CSS
-	// transforms do not affect layout boxes; pressing Escape would not close it, so
-	// including it in the stale-dialog check causes a guaranteed toBeHidden() failure.
+	// and is permanently in the DOM even when closed.
 	const anyDialog = getModal(page).locator(':visible');
 	if (await anyDialog.isVisible({ timeout: 500 }).catch(() => false)) {
 		await page.keyboard.press('Escape');
 		await expect(anyDialog).toBeHidden({ timeout: 3000 });
 	}
 
-	// Click the desktop "New Session" button.  There are two buttons with accessible
-	// name "New Session" (desktop text button + mobile icon-only button), so use
-	// :has-text to match only the one with visible text content.
+	// Click the desktop "New Session" button.
 	await page.locator('button:has-text("New Session")').first().click();
 
-	// Wait for the modal dialog to appear and scope all subsequent lookups to the
-	// VISIBLE dialog.  getModal() excludes the NeoPanel (always in DOM with
-	// role="dialog") to avoid strict-mode violations and incorrect element matching.
 	const dialog = getModal(page);
 	await expect(dialog).toBeVisible({ timeout: 5000 });
 
-	// Fill in the workspace path — scoped to the visible dialog.
-	const pathInput = dialog.getByTestId('new-session-workspace-input');
-	await expect(pathInput).toBeVisible({ timeout: 5000 });
-
-	// Wait for the modal's async model fetch to settle before filling the path.
-	// NewSessionModal calls fetchAvailableModels() on open; when the cache is warm
-	// (tests 2+) the promise resolves instantly and triggers a Preact re-render that
-	// resets selectedPath to '' — overwriting a fill that happened too early.
-	// Waiting for the "Model (optional)" label confirms the async render completed.
-	await dialog
-		.getByText('Model (optional)')
-		.isVisible({ timeout: 1500 })
-		.catch(() => {});
-
-	await pathInput.fill(workspaceRoot);
-
-	// Submit the form — scoped to the visible dialog to avoid ambiguity.
+	// Submit the form — workspace is set inline after session creation.
 	await dialog.getByRole('button', { name: 'Create Session' }).click();
 
-	// waitForSessionCreated handles the rest: it waits for navigation away from the
-	// lobby and confirms the chat view is ready.
 	return waitForSessionCreated(page);
 }
 
