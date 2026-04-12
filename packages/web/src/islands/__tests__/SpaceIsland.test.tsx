@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceWorkflow, SpaceAgent, Space } from '@neokai/shared';
 
@@ -150,31 +150,36 @@ afterEach(() => {
 });
 
 describe('SpaceIsland — route-driven views', () => {
-	it('renders the overview view without the legacy top tab bar', () => {
+	it('renders the overview view without the legacy top tab bar', async () => {
 		const { getByTestId, queryByTestId } = render(
 			<SpaceIsland spaceId="space-1" viewMode="overview" />
 		);
+		// Wait for lazy SpaceOverview to load through Suspense
+		await waitFor(() => {
+			expect(getByTestId('space-dashboard')).toBeTruthy();
+		});
 		// Outer wrapper
 		expect(getByTestId('space-overview-view')).toBeTruthy();
 		// Legacy tab bar is removed from overview
 		expect(queryByTestId('space-tab-bar')).toBeNull();
-		// SpaceOverview renders directly for overview
-		expect(getByTestId('space-dashboard')).toBeTruthy();
 	});
 
-	it('renders the configure view when requested', () => {
+	it('renders the configure view when requested', async () => {
 		const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
+		// Wait for lazy SpaceConfigurePage to load through Suspense
+		await waitFor(() => {
+			expect(getByTestId('space-agent-list')).toBeTruthy();
+		});
 		expect(getByTestId('space-configure-view')).toBeTruthy();
-		expect(getByTestId('space-agent-list')).toBeTruthy();
 	});
 });
 
 describe('SpaceIsland — overview content', () => {
-	it('renders the task dashboard directly and removes legacy canvas wrappers', () => {
-		const { getByTestId, queryByTestId } = render(
+	it('renders the task dashboard directly and removes legacy canvas wrappers', async () => {
+		const { findByTestId, queryByTestId } = render(
 			<SpaceIsland spaceId="space-1" viewMode="overview" />
 		);
-		expect(getByTestId('space-dashboard')).toBeTruthy();
+		await findByTestId('space-dashboard');
 		expect(queryByTestId('canvas-panel')).toBeNull();
 		expect(queryByTestId('workflow-canvas')).toBeNull();
 		expect(queryByTestId('dashboard-fallback')).toBeNull();
@@ -182,44 +187,65 @@ describe('SpaceIsland — overview content', () => {
 });
 
 describe('SpaceIsland — configure workflow editor', () => {
-	function renderConfigure() {
-		return render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
+	async function renderConfigure() {
+		const result = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
+		// Wait for lazy SpaceConfigurePage to load through Suspense
+		await waitFor(() => {
+			expect(result.getByTestId('space-configure-tab-bar')).toBeTruthy();
+		});
+		return result;
 	}
 
-	it('renders configure sub-tabs', () => {
-		const { getByTestId } = renderConfigure();
+	it('renders configure sub-tabs', async () => {
+		const { getByTestId } = await renderConfigure();
 		expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
 		expect(getByTestId('space-configure-tab-agents')).toBeTruthy();
 		expect(getByTestId('space-configure-tab-workflows')).toBeTruthy();
 		expect(getByTestId('space-configure-tab-settings')).toBeTruthy();
 	});
 
-	it('opens the visual editor when creating a workflow', () => {
-		const result = renderConfigure();
+	it('opens the visual editor when creating a workflow', async () => {
+		const result = await renderConfigure();
 		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+		await waitFor(() => {
+			expect(result.getByTestId('create-workflow-btn')).toBeTruthy();
+		});
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
-		expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+		await waitFor(() => {
+			expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+		});
 		expect(capturedVisualEditorProps.workflow).toBeUndefined();
 	});
 
-	it('opens the visual editor when editing a workflow', () => {
-		const result = renderConfigure();
+	it('opens the visual editor when editing a workflow', async () => {
+		const result = await renderConfigure();
 		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+		await waitFor(() => {
+			expect(result.getByTestId('edit-workflow-btn')).toBeTruthy();
+		});
 		fireEvent.click(result.getByTestId('edit-workflow-btn'));
-		expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+		await waitFor(() => {
+			expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
+		});
 		expect((capturedVisualEditorProps.workflow as SpaceWorkflow)?.id).toBe('wf-existing');
 	});
 
-	it('hides configure sub-tabs while editing a workflow', () => {
-		const result = renderConfigure();
+	it('hides configure sub-tabs while editing a workflow', async () => {
+		const result = await renderConfigure();
 		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+		await waitFor(() => {
+			expect(result.getByTestId('create-workflow-btn')).toBeTruthy();
+		});
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
 		expect(result.queryByTestId('space-configure-tab-bar')).toBeNull();
 	});
 
-	it('keeps workflow editor open after save', () => {
-		const result = renderConfigure();
+	it('keeps workflow editor open after save', async () => {
+		const result = await renderConfigure();
 		fireEvent.click(result.getByTestId('space-configure-tab-workflows'));
+		await waitFor(() => {
+			expect(result.getByTestId('create-workflow-btn')).toBeTruthy();
+		});
 		fireEvent.click(result.getByTestId('create-workflow-btn'));
 		fireEvent.click(result.getByTestId('visual-editor-save'));
 		expect(result.getByTestId('visual-workflow-editor')).toBeTruthy();
@@ -228,23 +254,24 @@ describe('SpaceIsland — configure workflow editor', () => {
 });
 
 describe('SpaceIsland — content priority chain', () => {
-	it('renders ChatContainer when sessionViewId is set', () => {
-		const { getByTestId } = render(
+	it('renders ChatContainer when sessionViewId is set', async () => {
+		const { findByTestId } = render(
 			<SpaceIsland spaceId="space-1" viewMode="overview" sessionViewId="session-abc" />
 		);
-		expect(getByTestId('chat-container')).toBeTruthy();
+		await findByTestId('chat-container');
 	});
 
-	it('renders SpaceTaskPane when taskViewId is set', () => {
-		const { getByTestId } = render(
+	it('renders SpaceTaskPane when taskViewId is set', async () => {
+		const { getByTestId, findByTestId } = render(
 			<SpaceIsland spaceId="space-1" viewMode="overview" taskViewId="task-xyz" />
 		);
+		await findByTestId('space-task-pane-inner');
 		expect(getByTestId('space-task-pane')).toBeTruthy();
 		expect(getByTestId('space-task-pane-inner').getAttribute('data-task-id')).toBe('task-xyz');
 	});
 
-	it('sessionViewId takes priority over taskViewId', () => {
-		const { getByTestId, queryByTestId } = render(
+	it('sessionViewId takes priority over taskViewId', async () => {
+		const { findByTestId, queryByTestId } = render(
 			<SpaceIsland
 				spaceId="space-1"
 				viewMode="overview"
@@ -252,7 +279,7 @@ describe('SpaceIsland — content priority chain', () => {
 				taskViewId="task-xyz"
 			/>
 		);
-		expect(getByTestId('chat-container')).toBeTruthy();
+		await findByTestId('chat-container');
 		expect(queryByTestId('space-task-pane')).toBeNull();
 	});
 });

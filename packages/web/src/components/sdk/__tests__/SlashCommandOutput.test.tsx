@@ -6,16 +6,18 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { render } from '@testing-library/preact';
+import { render, waitFor } from '@testing-library/preact';
 import { SlashCommandOutput, isHiddenCommandOutput } from '../SlashCommandOutput';
 
 describe('SlashCommandOutput', () => {
 	describe('Basic Rendering', () => {
-		it('should render command output content', () => {
+		it('should render command output content', async () => {
 			const content = '<local-command-stdout>Command executed successfully</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Command executed successfully');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Command executed successfully');
+			});
 		});
 
 		it('should show "Command Output" header', () => {
@@ -35,30 +37,36 @@ describe('SlashCommandOutput', () => {
 	});
 
 	describe('Parsing', () => {
-		it('should extract content from local-command-stdout tags', () => {
+		it('should extract content from local-command-stdout tags', async () => {
 			const content = '<local-command-stdout>Extracted content here</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Extracted content here');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Extracted content here');
+			});
 		});
 
-		it('should handle multiline content', () => {
+		it('should handle multiline content', async () => {
 			const content = `<local-command-stdout>Line 1
 Line 2
 Line 3</local-command-stdout>`;
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Line 1');
-			expect(container.textContent).toContain('Line 2');
-			expect(container.textContent).toContain('Line 3');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Line 1');
+				expect(container.textContent).toContain('Line 2');
+				expect(container.textContent).toContain('Line 3');
+			});
 		});
 
-		it('should trim whitespace from extracted content', () => {
+		it('should trim whitespace from extracted content', async () => {
 			const content = '<local-command-stdout>  Trimmed content  </local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
 			// Content should be trimmed
-			expect(container.textContent).toContain('Trimmed content');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Trimmed content');
+			});
 		});
 
 		it('should return null for content without stdout tags', () => {
@@ -75,12 +83,14 @@ Line 3</local-command-stdout>`;
 			expect(container.innerHTML).toBe('');
 		});
 
-		it('should handle content with both stdout and surrounding text', () => {
+		it('should handle content with both stdout and surrounding text', async () => {
 			const content = 'Before <local-command-stdout>Output</local-command-stdout> After';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
 			// Should extract only the stdout content
-			expect(container.textContent).toContain('Output');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Output');
+			});
 		});
 	});
 
@@ -92,11 +102,13 @@ Line 3</local-command-stdout>`;
 			expect(container.innerHTML).toBe('');
 		});
 
-		it('should render other outputs normally', () => {
+		it('should render other outputs normally', async () => {
 			const content = '<local-command-stdout>Not hidden</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Not hidden');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Not hidden');
+			});
 		});
 	});
 
@@ -155,30 +167,36 @@ Line 3</local-command-stdout>`;
 	});
 
 	describe('Markdown Rendering', () => {
-		it('should render markdown content', () => {
+		it('should render markdown content', async () => {
 			const content =
 				'<local-command-stdout># Heading\n\nSome **bold** text.</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
 			// MarkdownRenderer should process the content
-			expect(container.textContent).toContain('Heading');
-			expect(container.textContent).toContain('bold');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Heading');
+				expect(container.textContent).toContain('bold');
+			});
 		});
 
-		it('should render code blocks in output', () => {
+		it('should render code blocks in output', async () => {
 			const content = '<local-command-stdout>```\ncode here\n```</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('code here');
+			await waitFor(() => {
+				expect(container.textContent).toContain('code here');
+			});
 		});
 
-		it('should render lists', () => {
+		it('should render lists', async () => {
 			const content = '<local-command-stdout>- Item 1\n- Item 2\n- Item 3</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Item 1');
-			expect(container.textContent).toContain('Item 2');
-			expect(container.textContent).toContain('Item 3');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Item 1');
+				expect(container.textContent).toContain('Item 2');
+				expect(container.textContent).toContain('Item 3');
+			});
 		});
 	});
 
@@ -239,57 +257,69 @@ Line 3</local-command-stdout>`;
 			expect(container.innerHTML).not.toContain('undefined');
 		});
 
-		it('should handle special characters in output', () => {
+		it('should handle special characters in output', async () => {
 			const content =
 				'<local-command-stdout>Special chars: <>&"\' and unicode</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Special chars');
-			expect(container.textContent).toContain('<>&');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Special chars');
+				expect(container.textContent).toContain('<>&');
+			});
 		});
 
-		it('should handle very long output', () => {
+		it('should handle very long output', async () => {
 			const longOutput = 'x'.repeat(10000);
 			const content = `<local-command-stdout>${longOutput}</local-command-stdout>`;
 			const { container } = render(<SlashCommandOutput content={content} />);
 
 			// Should render without error
-			expect(container.textContent).toContain('x');
+			await waitFor(() => {
+				expect(container.textContent).toContain('x');
+			});
 		});
 
-		it('should handle output with nested angle brackets', () => {
+		it('should handle output with nested angle brackets', async () => {
 			const content = '<local-command-stdout>Result: {count: 5}</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Result');
-			expect(container.textContent).toContain('count');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Result');
+				expect(container.textContent).toContain('count');
+			});
 		});
 	});
 
 	describe('Command Types', () => {
-		it('should render /help command output', () => {
+		it('should render /help command output', async () => {
 			const content =
 				'<local-command-stdout>Available commands:\n- /help\n- /clear\n- /compact</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Available commands');
-			expect(container.textContent).toContain('/help');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Available commands');
+				expect(container.textContent).toContain('/help');
+			});
 		});
 
-		it('should render /context command output', () => {
+		it('should render /context command output', async () => {
 			const content = '<local-command-stdout>Context: 50,000 tokens used</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Context');
-			expect(container.textContent).toContain('50,000 tokens');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Context');
+				expect(container.textContent).toContain('50,000 tokens');
+			});
 		});
 
-		it('should render /cost command output', () => {
+		it('should render /cost command output', async () => {
 			const content = '<local-command-stdout>Total cost: $0.0125</local-command-stdout>';
 			const { container } = render(<SlashCommandOutput content={content} />);
 
-			expect(container.textContent).toContain('Total cost');
-			expect(container.textContent).toContain('$0.0125');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Total cost');
+				expect(container.textContent).toContain('$0.0125');
+			});
 		});
 	});
 });
