@@ -596,6 +596,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const updatedRun =
 					workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;
 
+				// Block the canonical task with gate_rejected reason
+				const runTasks = taskRepo.listByWorkflowRun(args.run_id);
+				const canonicalTask = runTasks[0];
+				if (canonicalTask && canonicalTask.status !== 'blocked') {
+					await taskManager.setTaskStatus(canonicalTask.id, 'blocked', {
+						result: args.reason ?? 'Gate rejected',
+						blockReason: 'gate_rejected',
+					});
+				}
+
 				if (daemonHub) {
 					void daemonHub
 						.emit('space.workflowRun.updated', {

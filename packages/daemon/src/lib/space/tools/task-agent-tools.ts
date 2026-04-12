@@ -141,6 +141,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				await taskManager.setTaskStatus(taskId, status, {
 					result: summary,
+					...(status === 'blocked' ? { blockReason: 'execution_failed' as const } : {}),
 				});
 
 				// Emit DaemonHub event so the Space Agent is notified of task completion/failure.
@@ -376,6 +377,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			try {
 				await taskManager.setTaskStatus(taskId, 'blocked', {
 					result: questionContext ? `${question}\n\nContext: ${questionContext}` : question,
+					blockReason: 'human_input_requested',
 				});
 
 				return jsonResult({
@@ -485,6 +487,15 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					workflowRunRepo.transitionStatus(workflowRunId, 'blocked');
 				}
 				workflowRunRepo.updateRun(workflowRunId, { failureReason: 'humanRejected' });
+
+				// Block the canonical task with gate_rejected reason
+				const mainTask = taskRepo.getTask(taskId);
+				if (mainTask && mainTask.status !== 'blocked') {
+					await taskManager.setTaskStatus(taskId, 'blocked', {
+						result: args.reason ?? 'Gate rejected',
+						blockReason: 'gate_rejected',
+					});
+				}
 
 				if (daemonHub) {
 					void daemonHub

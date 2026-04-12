@@ -107,6 +107,8 @@ describe('QueryLifecycleManager', () => {
 				startStreamingCalled = true;
 			},
 			processExitedPromise: null,
+			startupTimeoutTimer: null,
+			queryAbortController: null,
 			// Cleanup support methods
 			setCleaningUp: mock(() => {}),
 			cleanupEventSubscriptions: mock(() => {}),
@@ -1200,7 +1202,7 @@ describe('QueryLifecycleManager', () => {
 			);
 
 			test(
-				'clears sdkSessionId when file is at workspacePath but session has worktree (pre-fix bug scenario)',
+				'preserves sdkSessionId when file is at workspacePath but session has worktree',
 				async () => {
 					const sdkSessionId = 'sdk-restart-wrong-dir';
 					// File is at workspacePath, NOT at worktreePath
@@ -1217,12 +1219,8 @@ describe('QueryLifecycleManager', () => {
 
 					await manager.restart();
 
-					// File NOT found at worktree path → sdkSessionId cleared, fresh start
-					expect(mockContext.session.sdkSessionId).toBeUndefined();
-					expect(updateSessionSpy).toHaveBeenCalledWith(
-						'test-session',
-						expect.objectContaining({ sdkSessionId: undefined })
-					);
+					// sdkSessionId preserved — SDK will attempt recovery on next query
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
 				},
 				{ timeout: 5000 }
 			);
@@ -1257,7 +1255,7 @@ describe('QueryLifecycleManager', () => {
 			);
 
 			test(
-				'clears sdkSessionId when file is at workspacePath but session has worktree (pre-fix bug scenario)',
+				'preserves sdkSessionId when file is at workspacePath but session has worktree',
 				async () => {
 					const sdkSessionId = 'sdk-reset-wrong-dir';
 					createSdkFile('/test/workspace', sdkSessionId);
@@ -1277,11 +1275,8 @@ describe('QueryLifecycleManager', () => {
 
 					await manager.reset({ restartAfter: true });
 
-					expect(mockContext.session.sdkSessionId).toBeUndefined();
-					expect(updateSessionSpy).toHaveBeenCalledWith(
-						'test-session',
-						expect.objectContaining({ sdkSessionId: undefined })
-					);
+					// sdkSessionId preserved — SDK will attempt recovery on next query
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
 				},
 				{ timeout: 5000 }
 			);
@@ -1312,7 +1307,7 @@ describe('QueryLifecycleManager', () => {
 			);
 
 			test(
-				'clears sdkSessionId when file is at workspacePath but session has worktree (pre-fix bug scenario)',
+				'preserves sdkSessionId when file is at workspacePath but session has worktree',
 				async () => {
 					const sdkSessionId = 'sdk-ensure-wrong-dir';
 					createSdkFile('/test/workspace', sdkSessionId);
@@ -1328,11 +1323,8 @@ describe('QueryLifecycleManager', () => {
 
 					await manager.ensureQueryStarted();
 
-					expect(mockContext.session.sdkSessionId).toBeUndefined();
-					expect(updateSessionSpy).toHaveBeenCalledWith(
-						'test-session',
-						expect.objectContaining({ sdkSessionId: undefined })
-					);
+					// sdkSessionId preserved — SDK will attempt recovery on next query
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
 				},
 				{ timeout: 5000 }
 			);

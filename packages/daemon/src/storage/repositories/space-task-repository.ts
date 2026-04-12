@@ -243,6 +243,10 @@ export class SpaceTaskRepository {
 			fields.push('archived_at = ?');
 			values.push(params.archivedAt ?? null);
 		}
+		if (params.blockReason !== undefined) {
+			fields.push('block_reason = ?');
+			values.push(params.blockReason ?? null);
+		}
 		if (params.approvalSource !== undefined) {
 			fields.push('approval_source = ?');
 			values.push(params.approvalSource ?? null);
@@ -391,6 +395,7 @@ export class SpaceTaskRepository {
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? null,
+			blockReason: (row.block_reason as SpaceTask['blockReason']) ?? null,
 			approvalSource: (row.approval_source as SpaceTask['approvalSource']) ?? null,
 			approvalReason: (row.approval_reason as string | null) ?? null,
 			approvedAt: (row.approved_at as number | null) ?? null,

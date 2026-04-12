@@ -190,6 +190,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			pr_url TEXT,
 			pr_number INTEGER,
 			pr_created_at INTEGER,
+			block_reason TEXT,
 			approval_source TEXT,
 			approval_reason TEXT,
 			approved_at INTEGER,

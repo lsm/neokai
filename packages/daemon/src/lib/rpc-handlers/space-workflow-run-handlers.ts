@@ -567,6 +567,17 @@ export function setupSpaceWorkflowRunHandlers(
 			const updated =
 				workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;
 
+			// Block the canonical task with gate_rejected reason
+			const runTasks = spaceTaskRepo.listByWorkflowRun(params.runId);
+			const canonicalTask = runTasks[0];
+			if (canonicalTask && canonicalTask.status !== 'blocked') {
+				const taskMgr = taskManagerFactory(run.spaceId);
+				await taskMgr.setTaskStatus(canonicalTask.id, 'blocked', {
+					result: params.reason ?? 'Gate rejected',
+					blockReason: 'gate_rejected',
+				});
+			}
+
 			daemonHub
 				.emit('space.workflowRun.updated', {
 					sessionId: 'global',
