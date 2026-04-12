@@ -39,11 +39,12 @@ Each package's `tsconfig.json` defines path aliases that resolve to source files
 
 ```bash
 # Development
-make dev WORKSPACE=/path/to/workspace    # Start dev server on random available port
+make dev                          # Start dev server on random available port
+make dev PORT=8080               # Start dev server on specific port
 
 # Production
-make serve-random WORKSPACE=/path/to/workspace   # Production server on random port
-make run WORKSPACE=/path/to/workspace [PORT=8080] # Production server (PORT optional)
+make serve-random                 # Production server on random port
+make run [PORT=8080]             # Production server (PORT optional)
 
 # Testing
 make test-daemon       # Daemon tests only (bun test) with coverage
@@ -173,7 +174,7 @@ Another NeoKai daemon is already running with this database (PID XXXX).
 **For testing scenarios that start a dev server:**
 - Use `--db-path` to specify a temporary database location
 - This prevents conflicts with any running production daemon instance
-- Example: `make dev WORKSPACE=/tmp/test PORT=8484 --db-path /tmp/test-db`
+- Example: `make dev PORT=8484 --db-path /tmp/test-db`
 
 **For E2E tests:**
 - E2E tests use `make run-e2e` which handles database isolation automatically (uses temp directories)
