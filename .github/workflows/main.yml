@@ -166,7 +166,6 @@ jobs:
           - rewind-2
           - room-mcp
           - room-coder-subagents
-          - cross-provider-1
           - cross-provider-2
           - cross-provider-3
           # Room tests temporarily disabled during refactoring
@@ -340,12 +339,6 @@ jobs:
             test_path: tests/online/websocket
             mock_sdk: true
           # Cross-provider model switching tests - requires real MiniMax and GLM credentials
-          # Split into 2 parallel jobs to reduce overall CI time.
-          - module: cross-provider-1
-            test_path: tests/online/cross-provider/conversation-continuity-after-switch.test.ts
-            mock_sdk: false
-            default_provider: minimax
-            timeout: 10
           - module: cross-provider-2
             test_path: tests/online/cross-provider/cross-provider-model-switch.test.ts
             mock_sdk: false

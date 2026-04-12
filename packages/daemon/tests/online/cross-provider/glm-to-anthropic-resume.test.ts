@@ -99,11 +99,11 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		daemon.trackSession(sessionId);
 
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		const sdkId = await waitForSDKSessionEstablished(daemon, sessionId);
 		expect(sdkId).toBeTruthy();
-	}, 150000);
+	}, 60000);
 
 	/**
 	 * Test 2: Baseline — verify Anthropic session works
@@ -117,11 +117,11 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		daemon.trackSession(sessionId);
 
 		await sendMessage(daemon, sessionId, 'Reply with just the word "ok"');
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		const sdkId = await waitForSDKSessionEstablished(daemon, sessionId);
 		expect(sdkId).toBeTruthy();
-	}, 150000);
+	}, 60000);
 
 	/**
 	 * Test 3: THE KEY TEST — GLM → Anthropic switch with message after switch
@@ -149,7 +149,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 
 		// Phase 1: Establish GLM session with a message
 		await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
 		expect(sdkIdBefore).toBeTruthy();
@@ -196,13 +196,13 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		}
 
 		// Wait for the restart to settle
-		await waitForIdle(daemon, sessionId, 60000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		// Phase 3: Send message on Anthropic — this is where the timeout occurs
 		const systemInitPromise = waitForSystemInit(daemon, sessionId);
 		await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 		const systemInit = await systemInitPromise;
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		// Verify system:init arrived (no timeout)
 		expect(systemInit.type).toBe('system');
@@ -222,7 +222,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 				`✗ sdkSessionId CHANGED — resume failed. Before: ${sdkIdBefore}, After: ${sdkIdAfter}`
 			);
 		}
-	}, 300000);
+	}, 90000);
 
 	/**
 	 * Test 4: GLM → Anthropic opus (the exact scenario from the bug report)
@@ -241,7 +241,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 
 		// Phase 1: Establish GLM session
 		await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
 		expect(sdkIdBefore).toBeTruthy();
@@ -261,7 +261,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		const systemInitPromise = waitForSystemInit(daemon, sessionId);
 		await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 		const systemInit = await systemInitPromise;
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		expect(systemInit.type).toBe('system');
 		expect(systemInit.subtype).toBe('init');
@@ -278,7 +278,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 				`✗ sdkSessionId CHANGED for GLM→Opus. Before: ${sdkIdBefore}, After: ${sdkIdAfter}`
 			);
 		}
-	}, 300000);
+	}, 90000);
 
 	/**
 	 * Test 5: Anthropic → GLM (reverse direction)
@@ -298,7 +298,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 
 		// Phase 1: Establish Anthropic session
 		await sendMessage(daemon, sessionId, 'Say "hello" in one word.');
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		const sdkIdBefore = await waitForSDKSessionEstablished(daemon, sessionId);
 		expect(sdkIdBefore).toBeTruthy();
@@ -317,7 +317,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		const systemInitPromise = waitForSystemInit(daemon, sessionId);
 		await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 		const systemInit = await systemInitPromise;
-		await waitForIdle(daemon, sessionId, 180000);
+		await waitForIdle(daemon, sessionId, 30000);
 
 		expect(systemInit.type).toBe('system');
 		expect(systemInit.subtype).toBe('init');
@@ -334,7 +334,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 				`✗ sdkSessionId CHANGED for Anthropic→GLM. Before: ${sdkIdBefore}, After: ${sdkIdAfter}`
 			);
 		}
-	}, 300000);
+	}, 90000);
 
 	/**
 	 * Test 6: SDK model ID observation
@@ -354,7 +354,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		const glmInitPromise = waitForSystemInit(daemon, glmSessionId);
 		await sendMessage(daemon, glmSessionId, 'Say "ok"');
 		const glmInit = await glmInitPromise;
-		await waitForIdle(daemon, glmSessionId, 60000);
+		await waitForIdle(daemon, glmSessionId, 30000);
 
 		// Anthropic session
 		const { sessionId: anthSessionId } = (await daemon.messageHub.request('session.create', {
@@ -367,7 +367,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		const anthInitPromise = waitForSystemInit(daemon, anthSessionId);
 		await sendMessage(daemon, anthSessionId, 'Say "ok"');
 		const anthInit = await anthInitPromise;
-		await waitForIdle(daemon, anthSessionId, 60000);
+		await waitForIdle(daemon, anthSessionId, 30000);
 
 		// biome-ignore lint/suspicious/noConsole: test diagnostic
 		console.log(`GLM system:init model = "${glmInit.model}"`);
@@ -381,5 +381,5 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		// GLM should route via ANTHROPIC_DEFAULT_*_MODEL env vars
 		// Anthropic should use the actual model name
 		// The key observation: are these different enough to cause resume issues?
-	}, 300000);
+	}, 90000);
 });
