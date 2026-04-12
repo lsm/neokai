@@ -2,7 +2,6 @@ import { describe, test, expect } from 'bun:test';
 import {
 	parseArgs,
 	getHelpText,
-	resolveDefaultWorkspace,
 	CORS_HEADERS,
 	createCorsPreflightResponse,
 	shouldHaveImmutableCache,
@@ -66,23 +65,6 @@ describe('parseArgs', () => {
 		expect(result.error).toBe('Invalid port value: undefined');
 	});
 
-	test('parses --workspace with valid path', () => {
-		const result = parseArgs(['--workspace', '/path/to/workspace']);
-		expect(result.options.workspace).toBe('/path/to/workspace');
-		expect(result.error).toBeUndefined();
-	});
-
-	test('parses -w with valid path', () => {
-		const result = parseArgs(['-w', '/my/workspace']);
-		expect(result.options.workspace).toBe('/my/workspace');
-		expect(result.error).toBeUndefined();
-	});
-
-	test('returns error for missing workspace value', () => {
-		const result = parseArgs(['--workspace']);
-		expect(result.error).toBe('--workspace requires a path');
-	});
-
 	test('parses --host with valid value', () => {
 		const result = parseArgs(['--host', '127.0.0.1']);
 		expect(result.options.host).toBe('127.0.0.1');
@@ -115,56 +97,15 @@ describe('parseArgs', () => {
 		const result = parseArgs([
 			'--port',
 			'9999',
-			'--workspace',
-			'/my/ws',
 			'--host',
 			'localhost',
 			'--db-path',
 			'/my/db.sqlite',
 		]);
 		expect(result.options.port).toBe(9999);
-		expect(result.options.workspace).toBe('/my/ws');
 		expect(result.options.host).toBe('localhost');
 		expect(result.options.dbPath).toBe('/my/db.sqlite');
 		expect(result.error).toBeUndefined();
-	});
-
-	test('parses short options mixed with long options', () => {
-		const result = parseArgs(['-p', '8080', '-w', '/workspace', '--host', '0.0.0.0']);
-		expect(result.options.port).toBe(8080);
-		expect(result.options.workspace).toBe('/workspace');
-		expect(result.options.host).toBe('0.0.0.0');
-		expect(result.error).toBeUndefined();
-	});
-
-	test('parses positional path as workspace', () => {
-		const result = parseArgs(['/path/to/project']);
-		expect(result.options.workspace).toBe('/path/to/project');
-		expect(result.error).toBeUndefined();
-	});
-
-	test('parses positional path with options', () => {
-		const result = parseArgs(['/my/project', '-p', '8080']);
-		expect(result.options.workspace).toBe('/my/project');
-		expect(result.options.port).toBe(8080);
-		expect(result.error).toBeUndefined();
-	});
-
-	test('parses dot as workspace', () => {
-		const result = parseArgs(['.']);
-		expect(result.options.workspace).toBe('.');
-		expect(result.error).toBeUndefined();
-	});
-
-	test('returns error for duplicate workspace (positional + flag)', () => {
-		const result = parseArgs(['/first', '-w', '/second']);
-		expect(result.options.workspace).toBe('/first');
-		expect(result.error).toContain('Workspace already set');
-	});
-
-	test('returns error for two positional arguments', () => {
-		const result = parseArgs(['/first', '/second']);
-		expect(result.error).toContain('workspace already set');
 	});
 });
 
@@ -180,8 +121,6 @@ describe('getHelpText', () => {
 		const helpText = getHelpText();
 		expect(helpText).toContain('--port');
 		expect(helpText).toContain('-p');
-		expect(helpText).toContain('--workspace');
-		expect(helpText).toContain('-w');
 		expect(helpText).toContain('--host');
 		expect(helpText).toContain('--db-path');
 		expect(helpText).toContain('--version');
@@ -190,47 +129,9 @@ describe('getHelpText', () => {
 		expect(helpText).toContain('-h');
 	});
 
-	test('includes environment variable documentation', () => {
-		const helpText = getHelpText();
-		expect(helpText).toContain('NEOKAI_WORKSPACE_PATH');
-	});
-
 	test('includes examples', () => {
 		const helpText = getHelpText();
 		expect(helpText).toContain('Examples:');
-		expect(helpText).toContain('kai .');
-	});
-});
-
-describe('resolveDefaultWorkspace', () => {
-	test('returns env workspace path when provided', () => {
-		const result = resolveDefaultWorkspace('development', '/project', '/cwd', '/env/workspace');
-		expect(result).toBe('/env/workspace');
-	});
-
-	test('returns project tmp/workspace in development mode without env', () => {
-		const result = resolveDefaultWorkspace('development', '/project', '/cwd', undefined);
-		expect(result).toBe('/project/tmp/workspace');
-	});
-
-	test('returns cwd in production mode without env', () => {
-		const result = resolveDefaultWorkspace('production', '/project', '/cwd', undefined);
-		expect(result).toBe('/cwd');
-	});
-
-	test('returns cwd in test mode without env', () => {
-		const result = resolveDefaultWorkspace('test', '/project', '/cwd', undefined);
-		expect(result).toBe('/cwd');
-	});
-
-	test('env workspace takes priority over development default', () => {
-		const result = resolveDefaultWorkspace('development', '/project', '/cwd', '/custom');
-		expect(result).toBe('/custom');
-	});
-
-	test('env workspace takes priority over production default', () => {
-		const result = resolveDefaultWorkspace('production', '/project', '/cwd', '/custom');
-		expect(result).toBe('/custom');
 	});
 });
 
