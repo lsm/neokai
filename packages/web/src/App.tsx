@@ -205,8 +205,8 @@ export function App() {
 				{/* Context Panel - always visible */}
 				<ContextPanel />
 
-				{/* Main Content — bottom padding matches actual BottomTabBar height via --bottom-bar-height */}
-				<div class="flex-1 flex flex-col overflow-hidden min-w-0 pb-bottom-bar">
+				{/* Main Content — BottomTabBar is inline (flex-shrink-0) so no extra padding needed */}
+				<div class="flex-1 flex flex-col overflow-hidden min-w-0">
 					<MainContent />
 				</div>
 			</div>

@@ -380,7 +380,7 @@ export function ContextPanel() {
 				</div>
 
 				{/* Header */}
-				<div class={`p-4 border-b ${borderColors.ui.default}`}>
+				<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>
 					<div
 						class={cn(
 							'flex items-center justify-between',
