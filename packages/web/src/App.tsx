@@ -39,6 +39,7 @@ import {
 	navigateToSpace,
 	navigateToSpaceConfigure,
 	navigateToSpaceSessions,
+	navigateToSpaceTasks,
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
@@ -51,6 +52,7 @@ import {
 	createSpacePath,
 	createSpaceConfigurePath,
 	createSpaceSessionsPath,
+	createSpaceTasksPath,
 	createSpaceAgentPath,
 	createSpaceSessionPath,
 	createSpaceTaskPath,
@@ -144,25 +146,27 @@ export function App() {
 							? createSpaceSessionPath(spaceId, spaceSessionId)
 							: spaceId && spaceViewMode === 'sessions'
 								? createSpaceSessionsPath(spaceId)
-								: spaceId && spaceViewMode === 'configure'
-									? createSpaceConfigurePath(spaceId)
-									: spaceId
-										? createSpacePath(spaceId)
-										: roomTaskId && roomId
-											? createRoomTaskPath(roomId, roomTaskId)
-											: isAgentRoute
-												? createRoomAgentPath(roomId)
-												: roomSessionId && roomId
-													? createRoomSessionPath(roomId, roomSessionId)
-													: roomGoalId && roomId
-														? createRoomMissionPath(roomId, roomGoalId)
-														: roomId
-															? createRoomPath(roomId)
-															: navSection === 'spaces'
-																? '/spaces'
-																: navSection === 'chats'
-																	? '/sessions'
-																	: '/';
+								: spaceId && spaceViewMode === 'tasks'
+									? createSpaceTasksPath(spaceId)
+									: spaceId && spaceViewMode === 'configure'
+										? createSpaceConfigurePath(spaceId)
+										: spaceId
+											? createSpacePath(spaceId)
+											: roomTaskId && roomId
+												? createRoomTaskPath(roomId, roomTaskId)
+												: isAgentRoute
+													? createRoomAgentPath(roomId)
+													: roomSessionId && roomId
+														? createRoomSessionPath(roomId, roomSessionId)
+														: roomGoalId && roomId
+															? createRoomMissionPath(roomId, roomGoalId)
+															: roomId
+																? createRoomPath(roomId)
+																: navSection === 'spaces'
+																	? '/spaces'
+																	: navSection === 'chats'
+																		? '/sessions'
+																		: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -177,6 +181,8 @@ export function App() {
 					navigateToSpaceSession(spaceId, spaceSessionId, true);
 				} else if (spaceId && spaceViewMode === 'sessions') {
 					navigateToSpaceSessions(spaceId, true);
+				} else if (spaceId && spaceViewMode === 'tasks') {
+					navigateToSpaceTasks(spaceId, true);
 				} else if (spaceId && spaceViewMode === 'configure') {
 					navigateToSpaceConfigure(spaceId, true);
 				} else if (spaceId) {
