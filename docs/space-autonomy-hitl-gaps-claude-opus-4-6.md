@@ -176,6 +176,41 @@ Workflow topology is fixed regardless of autonomy level:
 | 9 | Human review SLA/timeout | Low | Low | **P3** |
 | 10 | Conditional branching by autonomy | Medium | High | **P3** |
 
+## Dependency Graph & Implementation Order
+
+```
+Gap 3 (Audit Trail) ──────┐
+                           ├──► Gap 2 (Notification UI) ──► Gap 1 (PR Auto-Merge)
+Gap 8 (needs_attention) ──┘         │
+                                    ▼
+Gap 5 (Dependency Enforcement)  Gap 9 (Review SLA)
+                                    │
+Gap 6 (Tiered Retry) ──────────────┤
+                                    ▼
+                            Gap 4 (Execution-Time Autonomy)
+                                    │
+                                    ▼
+                            Gap 10 (Conditional Branching)
+                                    │
+                                    ▼
+                            Gap 7 (Room/Space Unification)
+```
+
+### Recommended Implementation Sequence
+
+| Step | Gap | Why this order | Effort | Status |
+|------|-----|----------------|--------|--------|
+| 1 | **#3 Audit trail** | Foundation — everything else needs to record who/when/why | Low | **Done** (PR #1481) |
+| 2 | **#8 `needs_attention`** | Foundation — distinguishes block types for notifications & retry | Low | |
+| 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | |
+| 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | |
+| 5 | **#9 Review SLA** | Small, builds on audit trail | Low | |
+| 6 | **#6 Tiered retry** | Standalone, but informed by needs_attention distinction | Medium | |
+| 7 | **#1 PR auto-merge** | Needs audit trail + notification infra in place | Medium | |
+| 8 | **#4 Execution-time autonomy** | Builds on retry + needs_attention + audit | High | |
+| 9 | **#10 Conditional branching** | Extends execution-time autonomy into workflow topology | High | |
+| 10 | **#7 Room/Space unification** | Last — needs both systems mature before merging patterns | High | |
+
 ## Key Files Reference
 
 | Component | Path |
