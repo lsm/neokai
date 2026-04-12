@@ -37,7 +37,13 @@ export default defineConfig({
 		port: 9283,
 		strictPort: true,
 		host: true,
-		allowedHosts: ['localhost', '127.0.0.1', 'ai0.tailcd822a.ts.net', 'tts.tailcd822a.ts.net'],
+		allowedHosts: [
+			'localhost',
+			'127.0.0.1',
+			'ai0.tailcd822a.ts.net',
+			'tts.tailcd822a.ts.net',
+			'tts',
+		],
 		hmr: {
 			overlay: true,
 			protocol: 'ws',
