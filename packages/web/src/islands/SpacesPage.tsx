@@ -170,7 +170,7 @@ export function SpacesPage() {
 			<div class="flex-1 min-h-0 overflow-y-auto">
 				<div class="max-w-5xl mx-auto px-4 sm:px-6 py-6">
 					{activeSpaces.length === 0 ? (
-						<div class="flex flex-col items-center justify-center py-20 text-center">
+						<div class="flex flex-col items-center justify-center py-20 text-center max-w-md mx-auto">
 							<svg
 								class="w-12 h-12 text-gray-700 mb-4"
 								fill="none"
@@ -184,14 +184,58 @@ export function SpacesPage() {
 									d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
 								/>
 							</svg>
-							<p class="text-sm text-gray-500">No spaces yet</p>
-							<p class="text-xs text-gray-600 mt-1">Create a space to get started</p>
+							<h2 class="text-base font-semibold text-gray-200 mb-2">No spaces yet</h2>
+							<p class="text-sm text-gray-500 leading-relaxed">
+								Spaces are isolated project environments where AI agents collaborate on tasks. Each
+								space maps to a codebase directory with its own sessions, tasks, and workflows.
+							</p>
+							<button
+								type="button"
+								onClick={() => setCreateSpaceOpen(true)}
+								class="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-medium text-white transition-colors"
+							>
+								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M12 4v16m8-8H4"
+									/>
+								</svg>
+								Create Your First Space
+							</button>
 						</div>
 					) : (
-						<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-							{activeSpaces.map((space) => (
-								<SpaceCard key={space.id} space={space} />
-							))}
+						<div class="flex flex-col gap-6">
+							<p class="text-sm text-gray-500">
+								Spaces are isolated project environments where AI agents collaborate on tasks. Each
+								space maps to a codebase directory with its own sessions, tasks, and workflows.
+							</p>
+							<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+								{activeSpaces.map((space) => (
+									<SpaceCard key={space.id} space={space} />
+								))}
+								<button
+									type="button"
+									onClick={() => setCreateSpaceOpen(true)}
+									class="w-full rounded-xl border border-dashed border-dark-600 hover:border-dark-500 bg-transparent hover:bg-dark-900/40 transition-all p-5 flex flex-col items-center justify-center gap-2 min-h-[120px]"
+								>
+									<svg
+										class="w-8 h-8 text-gray-600"
+										fill="none"
+										viewBox="0 0 24 24"
+										stroke="currentColor"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={1.5}
+											d="M12 4v16m8-8H4"
+										/>
+									</svg>
+									<span class="text-xs text-gray-500">New Space</span>
+								</button>
+							</div>
 						</div>
 					)}
 				</div>
