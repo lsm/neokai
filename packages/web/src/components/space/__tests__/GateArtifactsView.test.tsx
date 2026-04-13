@@ -36,6 +36,7 @@ const mockHub = { request: mockRequest };
 vi.mock('../../../lib/connection-manager', () => ({
 	connectionManager: {
 		getHubIfConnected: vi.fn(() => mockHub),
+		getHub: vi.fn(() => Promise.resolve(mockHub)),
 	},
 }));
 
