@@ -144,7 +144,7 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 
 	return (
 		<div
-			class={`mx-4 mt-2 rounded-lg border ${config.border} ${config.bg} px-3 py-2`}
+			class={`mx-4 mt-2 mb-2 rounded-lg border ${config.border} ${config.bg} px-3 py-2`}
 			data-testid="task-blocked-banner"
 		>
 			<div class="flex items-start justify-between gap-2">
@@ -177,7 +177,7 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 						<button
 							type="button"
 							onClick={() => onStatusTransition?.('in_progress')}
-							class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 transition-colors"
+							class="px-2 py-1 text-xs font-medium text-blue-300 hover:text-blue-200 bg-dark-700 hover:bg-dark-600 rounded transition-colors"
 							data-testid="gate-resume-btn"
 						>
 							Resume
