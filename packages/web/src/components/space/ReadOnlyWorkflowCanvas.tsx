@@ -256,7 +256,7 @@ export function ReadOnlyWorkflowCanvas({
 						if (e.target === e.currentTarget) setArtifactsOverlay(null);
 					}}
 				>
-					<div class="w-full max-w-2xl max-h-[80vh] bg-dark-900 border border-dark-600 rounded-xl shadow-2xl overflow-hidden">
+					<div class="w-full max-w-2xl max-h-[80vh] bg-dark-900 border border-dark-600 rounded-xl shadow-2xl overflow-hidden flex flex-col">
 						<GateArtifactsView
 							runId={runId}
 							gateId={artifactsOverlay.gateId}
@@ -264,6 +264,7 @@ export function ReadOnlyWorkflowCanvas({
 							gateData={gateDataMap.get(artifactsOverlay.gateId)}
 							onClose={() => setArtifactsOverlay(null)}
 							onDecision={handleArtifactsDecision}
+							class="flex-1 min-h-0"
 						/>
 					</div>
 				</div>
