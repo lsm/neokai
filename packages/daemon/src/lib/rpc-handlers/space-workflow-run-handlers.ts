@@ -568,9 +568,12 @@ export function setupSpaceWorkflowRunHandlers(
 				workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;
 
 			// Block the canonical task with gate_rejected reason
+			// Skip terminal tasks (done, cancelled, archived) — their status
+			// cannot transition back to blocked.
+			const TERMINAL_TASK_STATUSES = new Set(['done', 'cancelled', 'archived']);
 			const runTasks = spaceTaskRepo.listByWorkflowRun(params.runId);
 			const canonicalTask = runTasks[0];
-			if (canonicalTask && canonicalTask.status !== 'blocked') {
+			if (canonicalTask && !TERMINAL_TASK_STATUSES.has(canonicalTask.status)) {
 				const taskMgr = taskManagerFactory(run.spaceId);
 				await taskMgr.setTaskStatus(canonicalTask.id, 'blocked', {
 					result: params.reason ?? 'Gate rejected',

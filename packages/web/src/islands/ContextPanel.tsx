@@ -348,9 +348,10 @@ export function ContextPanel() {
 					flex flex-col
 					pt-safe md:pt-0
 					z-40 md:z-auto
-					transition-transform duration-300 ease-in-out
-					${isPanelOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+					max-md:transition-transform max-md:duration-300 max-md:ease-in-out
+					${isPanelOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
 					${hideDesktopPanel ? 'md:hidden' : ''}
+					overflow-hidden
 				`}
 			>
 				{/* Mobile nav strip - replaces NavRail on mobile */}
