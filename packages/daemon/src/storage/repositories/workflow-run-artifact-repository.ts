@@ -1,0 +1,137 @@
+/**
+ * Workflow Run Artifact Repository
+ *
+ * Persistence layer for typed artifacts produced by workflow node executions.
+ * Artifacts are keyed by `(run_id, node_id, artifact_type, artifact_key)` and
+ * support upsert semantics — writing the same key twice updates the data.
+ *
+ * Each write calls reactiveDb.notifyChange('workflow_run_artifacts') so that
+ * LiveQuery subscriptions push updates to the frontend in real time.
+ */
+
+import type { Database as BunDatabase } from 'bun:sqlite';
+import type { ReactiveDatabase } from '../reactive-database';
+import { Logger } from '../../lib/logger';
+
+const log = new Logger('workflow-run-artifact-repo');
+
+export interface WorkflowRunArtifactRecord {
+	id: string;
+	runId: string;
+	nodeId: string;
+	artifactType: string;
+	artifactKey: string;
+	data: Record<string, unknown>;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export class WorkflowRunArtifactRepository {
+	constructor(
+		private db: BunDatabase,
+		private reactiveDb?: ReactiveDatabase
+	) {}
+
+	/**
+	 * Upsert an artifact. On conflict (same run + node + type + key),
+	 * updates data and updatedAt.
+	 */
+	upsert(params: {
+		id: string;
+		runId: string;
+		nodeId: string;
+		artifactType: string;
+		artifactKey: string;
+		data: Record<string, unknown>;
+	}): WorkflowRunArtifactRecord {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(run_id, node_id, artifact_type, artifact_key) DO UPDATE SET
+				   data = excluded.data, updated_at = excluded.updated_at`
+			)
+			.run(
+				params.id,
+				params.runId,
+				params.nodeId,
+				params.artifactType,
+				params.artifactKey,
+				JSON.stringify(params.data),
+				now,
+				now
+			);
+
+		this.reactiveDb?.notifyChange('workflow_run_artifacts');
+
+		return {
+			id: params.id,
+			runId: params.runId,
+			nodeId: params.nodeId,
+			artifactType: params.artifactType,
+			artifactKey: params.artifactKey,
+			data: params.data,
+			createdAt: now,
+			updatedAt: now,
+		};
+	}
+
+	/** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
+	listByRun(
+		runId: string,
+		filters?: { nodeId?: string; artifactType?: string }
+	): WorkflowRunArtifactRecord[] {
+		let sql = 'SELECT * FROM workflow_run_artifacts WHERE run_id = ?';
+		const params: string[] = [runId];
+
+		if (filters?.nodeId) {
+			sql += ' AND node_id = ?';
+			params.push(filters.nodeId);
+		}
+		if (filters?.artifactType) {
+			sql += ' AND artifact_type = ?';
+			params.push(filters.artifactType);
+		}
+		sql += ' ORDER BY created_at ASC';
+
+		const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+		return rows
+			.map((r) => this.rowToRecord(r))
+			.filter((r): r is WorkflowRunArtifactRecord => r !== null);
+	}
+
+	/** Delete all artifacts for a workflow run. Returns the number deleted. */
+	deleteByRun(runId: string): number {
+		const result = this.db
+			.prepare('DELETE FROM workflow_run_artifacts WHERE run_id = ?')
+			.run(runId);
+		if (result.changes > 0) {
+			this.reactiveDb?.notifyChange('workflow_run_artifacts');
+		}
+		return result.changes;
+	}
+
+	private rowToRecord(row: Record<string, unknown>): WorkflowRunArtifactRecord | null {
+		const raw = row.data as string;
+		try {
+			const data = JSON.parse(raw) as Record<string, unknown>;
+			return {
+				id: row.id as string,
+				runId: row.run_id as string,
+				nodeId: row.node_id as string,
+				artifactType: row.artifact_type as string,
+				artifactKey: row.artifact_key as string,
+				data,
+				createdAt: row.created_at as number,
+				updatedAt: row.updated_at as number,
+			};
+		} catch (err) {
+			log.error(
+				`Corrupted artifact data for id=${row.id} — ` +
+					`JSON.parse failed (${err instanceof Error ? err.message : String(err)})`
+			);
+			return null;
+		}
+	}
+}

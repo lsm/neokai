@@ -179,6 +179,53 @@ export const ReadGateSchema = z.object({
 export type ReadGateInput = z.infer<typeof ReadGateSchema>;
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// write_artifact
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `write_artifact` input.
+ * Writes a typed artifact (PR, commit set, test result, etc.) to the workflow run.
+ * Uses upsert semantics — writing the same (type, key) pair overwrites previous data.
+ */
+export const WriteArtifactSchema = z.object({
+	/** Type of artifact: pr, commit_set, test_result, deployment */
+	artifactType: z.string().describe('Type of artifact: pr, commit_set, test_result, deployment'),
+	/** Unique key within (node, type) for dedup. Defaults to empty string. */
+	artifactKey: z
+		.string()
+		.describe(
+			'Unique key within (node, type) for dedup — e.g. "main" for the primary PR. Defaults to empty.'
+		)
+		.default(''),
+	/** Artifact payload. Shape depends on artifactType. */
+	data: z
+		.record(z.string(), z.unknown())
+		.describe(
+			'Artifact payload. For pr: { url, number, title, state, headBranch }. For commit_set: { commits: [...] }.'
+		),
+});
+
+export type WriteArtifactInput = z.infer<typeof WriteArtifactSchema>;
+
+// ---------------------------------------------------------------------------
+// list_artifacts
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_artifacts` input.
+ * Lists artifacts for the current workflow run, optionally filtered.
+ */
+export const ListArtifactsSchema = z.object({
+	/** Filter by originating node ID. */
+	nodeId: z.string().describe('Filter by node ID').optional(),
+	/** Filter by artifact type. */
+	artifactType: z.string().describe('Filter by artifact type').optional(),
+});
+
+export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -193,6 +240,8 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_channels: ListChannelsSchema,
 	list_gates: ListGatesSchema,
 	read_gate: ReadGateSchema,
+	write_artifact: WriteArtifactSchema,
+	list_artifacts: ListArtifactsSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

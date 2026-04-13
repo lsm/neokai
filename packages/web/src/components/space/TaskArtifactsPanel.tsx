@@ -11,6 +11,8 @@ import { useState, useEffect, useMemo } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
 import { FileDiffView } from './FileDiffView';
+import { ArtifactCard } from './ArtifactCard';
+import type { WorkflowRunArtifact } from '@neokai/shared';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import {
 	parseThreadRow,
@@ -302,6 +304,9 @@ export function TaskArtifactsPanel({
 	const [commitsError, setCommitsError] = useState<string | null>(null);
 	const [commitsData, setCommitsData] = useState<CommitsResult | null>(null);
 
+	// ── Run artifacts ───────────────────────────────────────────────────────
+	const [artifacts, setArtifacts] = useState<WorkflowRunArtifact[]>([]);
+
 	// ── Todos (from message thread) ──────────────────────────────────────────
 	const { rows: messageRows } = useSpaceTaskMessages(taskId ?? null);
 
@@ -377,6 +382,15 @@ export function TaskArtifactsPanel({
 				setCommitsError(err instanceof Error ? err.message : 'Failed to load commits');
 			})
 			.finally(() => setCommitsLoading(false));
+
+		hub
+			.request<{ artifacts: WorkflowRunArtifact[] }>('spaceWorkflowRun.listArtifacts', {
+				runId,
+			})
+			.then((r) => setArtifacts(r?.artifacts ?? []))
+			.catch(() => {
+				// Artifact fetch is best-effort — component works without them
+			});
 	}, [runId, taskId]);
 
 	// ── View routing ─────────────────────────────────────────────────────────
@@ -506,6 +520,21 @@ export function TaskArtifactsPanel({
 											</div>
 										))}
 									</div>
+								))}
+							</div>
+						</div>
+					)}
+
+					{/* ── Run Artifacts ──────────────────────────────────── */}
+					{artifacts.length > 0 && (
+						<div class="mb-2">
+							<SectionHeader
+								label="Run Artifacts"
+								meta={`${artifacts.length} artifact${artifacts.length === 1 ? '' : 's'}`}
+							/>
+							<div class="px-3 py-2 space-y-1.5" data-testid="artifacts-run-artifacts">
+								{artifacts.map((a) => (
+									<ArtifactCard key={a.id} artifact={a} />
 								))}
 							</div>
 						</div>

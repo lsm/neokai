@@ -242,12 +242,6 @@ export interface SpaceTask {
 	 * Cleared when the session reaches a terminal state.
 	 */
 	activeSession?: 'worker' | 'leader' | null;
-	/** Pull request URL (when task has associated PR) */
-	prUrl?: string | null;
-	/** Pull request number (extracted from URL for display) */
-	prNumber?: number | null;
-	/** When PR was created/submitted (milliseconds since epoch) */
-	prCreatedAt?: number | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when the task transitions from `open` to `in_progress` and a Task Agent
@@ -370,9 +364,6 @@ export interface UpdateSpaceTaskParams {
 	preferredWorkflowId?: string | null;
 	createdByTaskId?: string | null;
 	activeSession?: 'worker' | 'leader' | null;
-	prUrl?: string | null;
-	prNumber?: number | null;
-	prCreatedAt?: number | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when spawning a Task Agent; null to clear the reference.
@@ -1212,4 +1203,21 @@ export interface SpaceExportBundle {
 	exportedAt: number;
 	/** Source Space identifier (name or workspace path) for informational purposes */
 	exportedFrom?: string;
+}
+
+// ── Workflow Run Artifacts ──────────────────────────────────────────────────
+
+/** Artifact types that node agents can produce. Extensible union. */
+export type ArtifactType = 'pr' | 'commit_set' | 'test_result' | 'deployment';
+
+/** A typed artifact produced by a workflow node execution. */
+export interface WorkflowRunArtifact {
+	id: string;
+	runId: string;
+	nodeId: string;
+	artifactType: ArtifactType;
+	artifactKey: string;
+	data: Record<string, unknown>;
+	createdAt: number;
+	updatedAt: number;
 }
