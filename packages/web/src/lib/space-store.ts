@@ -1642,6 +1642,32 @@ class SpaceStore {
 		});
 	}
 
+	// ========================================
+	// Gate Methods
+	// ========================================
+
+	/**
+	 * List all gate data records for a workflow run.
+	 */
+	async listGateData(
+		runId: string
+	): Promise<
+		Array<{ runId: string; gateId: string; data: Record<string, unknown>; updatedAt: number }>
+	> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{
+			gateData: Array<{
+				runId: string;
+				gateId: string;
+				data: Record<string, unknown>;
+				updatedAt: number;
+			}>;
+		}>('spaceWorkflowRun.listGateData', { runId });
+		return result?.gateData ?? [];
+	}
+
 	/**
 	 * Fetch a paginated snapshot of task-thread messages.
 	 */

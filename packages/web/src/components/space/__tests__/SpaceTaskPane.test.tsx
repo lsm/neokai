@@ -62,6 +62,7 @@ vi.mock('../../../lib/space-store', () => ({
 			unsubscribeTaskActivity: mockUnsubscribeTaskActivity,
 			ensureConfigData: vi.fn().mockResolvedValue(undefined),
 			ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
+			listGateData: vi.fn().mockResolvedValue([]),
 		};
 	},
 }));
@@ -631,12 +632,12 @@ describe('SpaceTaskPane — blocked reason banner', () => {
 		expect(banner.textContent).toContain('Waiting for API key configuration');
 	});
 
-	it('does not show blocked reason banner when task is blocked without result', () => {
+	it('shows blocked banner even when task has no result text', () => {
 		mockTasks.value = [
 			makeTask({ status: 'blocked', result: null, taskAgentSessionId: 'session-abc' }),
 		];
-		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" />);
-		expect(queryByTestId('task-blocked-banner')).toBeNull();
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		expect(getByTestId('task-blocked-banner')).toBeTruthy();
 	});
 
 	it('does not show blocked banner for non-blocked tasks', () => {
