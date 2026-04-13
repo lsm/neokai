@@ -168,6 +168,7 @@ jobs:
           - room-coder-subagents
           - cross-provider-2
           - cross-provider-3
+          - cross-provider-4
           # Room tests temporarily disabled during refactoring
           # - room-1
           # - room-multi-agent
@@ -349,6 +350,11 @@ jobs:
             mock_sdk: false
             default_provider: glm
             timeout: 10
+          - module: cross-provider-4
+            test_path: tests/online/cross-provider/thinking-block-signatures.test.ts
+            mock_sdk: false
+            default_provider: glm
+            timeout: 10
 
     steps:
       - uses: actions/checkout@v6
@@ -398,9 +404,9 @@ jobs:
           NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3') && secrets.ANTHROPIC_API_KEY || '') }}
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3' || matrix.module == 'cross-provider-4') && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'cross-provider-3' || matrix.module == 'cross-provider-4') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ""
           # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
           # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
