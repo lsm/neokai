@@ -67,8 +67,9 @@ describe('scope-config', () => {
 				'space_worktrees',
 				'gate_data',
 				'channel_cycles',
+				'workflow_run_artifacts',
 			]);
-			expect(names).toHaveLength(8);
+			expect(names).toHaveLength(9);
 		});
 
 		it('all table configs have a description', () => {

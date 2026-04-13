@@ -66,6 +66,7 @@ import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
@@ -158,6 +159,8 @@ export interface TaskAgentManagerConfig {
 	/** Absolute path to the SQLite database file. When provided, a space-scoped db-query MCP
 	 * server is attached to each task agent session. */
 	dbPath?: string;
+	/** Workflow run artifact repository — for write_artifact / list_artifacts node agent tools */
+	artifactRepo?: WorkflowRunArtifactRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -2158,6 +2161,7 @@ export class TaskAgentManager {
 			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId })
 			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
 			onReportResult,
+			artifactRepo: this.config.artifactRepo,
 		});
 	}
 }

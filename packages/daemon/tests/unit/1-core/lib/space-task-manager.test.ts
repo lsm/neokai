@@ -300,18 +300,6 @@ describe('SpaceTaskManager', () => {
 		});
 	});
 
-	describe('reviewTask', () => {
-		it('records PR metadata without changing status', async () => {
-			const task = await manager.createTask({ title: 'T', description: '' });
-			await manager.startTask(task.id);
-			const updated = await manager.reviewTask(task.id, 'https://github.com/org/repo/pull/42');
-			// reviewTask no longer changes status — task remains in_progress
-			expect(updated.status).toBe('in_progress');
-			expect(updated.prUrl).toBe('https://github.com/org/repo/pull/42');
-			expect(updated.prNumber).toBe(42);
-		});
-	});
-
 	describe('archiveTask', () => {
 		it('archives a done task and sets both status and archivedAt', async () => {
 			const task = await manager.createTask({ title: 'T', description: '' });

@@ -24,6 +24,7 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../storage/repositories/gate-data-repository';
+import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
@@ -231,7 +232,8 @@ export function setupSpaceWorkflowRunHandlers(
 	taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
 	daemonHub: DaemonHub,
 	spaceTaskRepo: SpaceTaskRepository,
-	spaceWorktreeManager: SpaceWorktreeManager
+	spaceWorktreeManager: SpaceWorktreeManager,
+	artifactRepo: WorkflowRunArtifactRepository
 ): void {
 	/**
 	 * Helper: notify the channel router that gate data has changed.
@@ -928,5 +930,22 @@ export function setupSpaceWorkflowRunHandlers(
 		}
 
 		return { diff, additions, deletions, filePath: params.filePath };
+	});
+
+	// ─── spaceWorkflowRun.listArtifacts ─────────────────────────────────────
+	messageHub.onRequest('spaceWorkflowRun.listArtifacts', async (data) => {
+		const params = data as {
+			runId: string;
+			nodeId?: string;
+			artifactType?: string;
+		};
+		if (!params.runId) throw new Error('runId is required');
+		const run = workflowRunRepo.getRun(params.runId);
+		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+		const artifacts = artifactRepo.listByRun(params.runId, {
+			nodeId: params.nodeId,
+			artifactType: params.artifactType,
+		});
+		return { artifacts };
 	});
 }

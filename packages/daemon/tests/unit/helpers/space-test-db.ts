@@ -187,9 +187,6 @@ export function createSpaceTables(db: BunDatabase): void {
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
 			task_agent_session_id TEXT,
-			pr_url TEXT,
-			pr_number INTEGER,
-			pr_created_at INTEGER,
 			block_reason TEXT,
 			approval_source TEXT,
 			approval_reason TEXT,
@@ -211,4 +208,21 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
 	);
+
+	// Workflow run artifacts
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
+			id TEXT PRIMARY KEY NOT NULL,
+			run_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			artifact_type TEXT NOT NULL,
+			artifact_key TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(run_id, node_id, artifact_type, artifact_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
 }

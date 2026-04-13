@@ -59,6 +59,7 @@ import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager'
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
+import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
@@ -359,6 +360,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
+	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
@@ -490,6 +492,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		appMcpServerRepo: deps.reactiveDb.db.appMcpServers,
 		nodeExecutionRepo,
 		dbPath: deps.db.getDatabasePath(),
+		artifactRepo,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn
@@ -628,7 +631,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowRunTaskManagerFactory,
 		deps.daemonHub,
 		spaceTaskRepo,
-		spaceWorktreeManager
+		spaceWorktreeManager,
+		artifactRepo
 	);
 
 	// Node execution handlers

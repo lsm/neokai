@@ -135,11 +135,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 		}
 	}
 
-	if (task.prUrl) {
-		sections.push(`\n## Existing Pull Request\n`);
-		sections.push(`**PR URL:** ${task.prUrl}`);
-	}
-
 	if (previousTaskSummaries && previousTaskSummaries.length > 0) {
 		sections.push(`\n## Previous Work on This Goal\n`);
 		for (const summary of previousTaskSummaries) {

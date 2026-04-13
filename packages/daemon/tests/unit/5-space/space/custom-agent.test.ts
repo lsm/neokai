@@ -131,7 +131,6 @@ describe('buildCustomAgentTaskMessage', () => {
 					title: 'Ship auth flow',
 					description: 'Implement auth flow',
 					priority: 'high',
-					prUrl: 'https://github.com/org/repo/pull/42',
 				}),
 				workflowRun: makeWorkflowRun({ title: 'Auth rollout', description: 'Production' }),
 				workflow: makeWorkflow(),
@@ -152,7 +151,6 @@ describe('buildCustomAgentTaskMessage', () => {
 		expect(message).toContain('Plan');
 		expect(message).toContain('Monorepo project');
 		expect(message).toContain('Run tests before finishing.');
-		expect(message).toContain('https://github.com/org/repo/pull/42');
 		expect(message).toContain('Task 0: added login page');
 	});
 

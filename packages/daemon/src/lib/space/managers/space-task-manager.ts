@@ -229,29 +229,6 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Submit PR for a task (records PR metadata while keeping task in_progress).
-	 * Note: 'review' status no longer exists — PR submission is now tracked via prUrl/prNumber fields.
-	 */
-	async reviewTask(taskId: string, prUrl?: string): Promise<SpaceTask> {
-		// Apply PR metadata
-		const prUpdates: Parameters<SpaceTaskRepository['updateTask']>[1] = {};
-
-		if (prUrl !== undefined) {
-			prUpdates.prUrl = prUrl;
-			const match = prUrl.match(/\/pull\/(\d+)/);
-			prUpdates.prNumber = match ? parseInt(match[1], 10) : null;
-			prUpdates.prCreatedAt = Date.now();
-		}
-
-		const updated = this.taskRepo.updateTask(taskId, prUpdates);
-		if (!updated) {
-			throw new Error(`Failed to update task: ${taskId}`);
-		}
-
-		return updated;
-	}
-
-	/**
 	 * Promote draft tasks created by a planning task to pending
 	 */
 	async promoteDraftTasks(creatorTaskId: string): Promise<number> {

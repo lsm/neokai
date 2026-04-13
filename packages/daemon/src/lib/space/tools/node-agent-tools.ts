@@ -51,6 +51,8 @@ import {
 	ListChannelsSchema,
 	ListGatesSchema,
 	ReadGateSchema,
+	WriteArtifactSchema,
+	ListArtifactsSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -60,7 +62,10 @@ import type {
 	ListChannelsInput,
 	ListGatesInput,
 	ReadGateInput,
+	WriteArtifactInput,
+	ListArtifactsInput,
 } from './node-agent-tool-schemas';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -156,6 +161,11 @@ export interface NodeAgentToolsConfig {
 	 * When absent, `report_result` is not available to this node agent.
 	 */
 	onReportResult?: (args: ReportResultInput) => Promise<ToolResult>;
+	/**
+	 * Workflow run artifact repository for write_artifact / list_artifacts tools.
+	 * Optional — when absent, artifact tools are not registered.
+	 */
+	artifactRepo?: WorkflowRunArtifactRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +683,67 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		// ── Artifact tools ────────────────────────────────────────────────
+
+		async write_artifact(args: WriteArtifactInput): Promise<ToolResult> {
+			const { artifactRepo } = config;
+			if (!artifactRepo) {
+				return jsonResult({ success: false, error: 'Artifact repository not available.' });
+			}
+			try {
+				const record = artifactRepo.upsert({
+					id: crypto.randomUUID(),
+					runId: workflowRunId,
+					nodeId: workflowNodeId,
+					artifactType: args.artifactType,
+					artifactKey: args.artifactKey,
+					data: args.data,
+				});
+				return jsonResult({
+					success: true,
+					artifact: {
+						id: record.id,
+						runId: record.runId,
+						nodeId: record.nodeId,
+						artifactType: record.artifactType,
+						artifactKey: record.artifactKey,
+					},
+					message: `Artifact "${args.artifactType}" written successfully.`,
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_artifacts(args: ListArtifactsInput): Promise<ToolResult> {
+			const { artifactRepo } = config;
+			if (!artifactRepo) {
+				return jsonResult({ success: false, error: 'Artifact repository not available.' });
+			}
+			try {
+				const artifacts = artifactRepo.listByRun(workflowRunId, {
+					nodeId: args.nodeId,
+					artifactType: args.artifactType,
+				});
+				return jsonResult({
+					success: true,
+					artifacts: artifacts.map((a) => ({
+						id: a.id,
+						nodeId: a.nodeId,
+						artifactType: a.artifactType,
+						artifactKey: a.artifactKey,
+						data: a.data,
+						createdAt: a.createdAt,
+						updatedAt: a.updatedAt,
+					})),
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
 	};
 }
 
@@ -752,6 +823,25 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			SaveSchema.shape,
 			(args) => handlers.save(args)
 		),
+		...(config.artifactRepo
+			? [
+					tool(
+						'write_artifact',
+						'Write a typed artifact (PR, commit set, test result, deployment) to the workflow run. ' +
+							'Artifacts are visible in the UI and to downstream nodes. ' +
+							'Uses upsert — writing the same (type, key) pair updates the existing artifact.',
+						WriteArtifactSchema.shape,
+						(args) => handlers.write_artifact(args)
+					),
+					tool(
+						'list_artifacts',
+						'List artifacts for the current workflow run. ' +
+							'Optionally filter by nodeId or artifactType.',
+						ListArtifactsSchema.shape,
+						(args) => handlers.list_artifacts(args)
+					),
+				]
+			: []),
 		...(onReportResult
 			? [
 					tool(

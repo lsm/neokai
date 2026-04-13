@@ -352,6 +352,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 83: Add block_reason column to space_tasks.
 	//   Records *why* a task is blocked (agent_crashed, workflow_invalid, etc.).
 	runMigration83(db);
+
+	// Migration 84: Workflow Run Artifacts.
+	//   - Creates workflow_run_artifacts table for typed node outputs (PRs, commits, etc.).
+	//   - Drops pr_url, pr_number, pr_created_at from space_tasks (replaced by artifacts).
+	runMigration84(db);
 }
 
 /**
@@ -4783,6 +4788,10 @@ function runMigration73(db: BunDatabase): void {
 		}
 
 		if (needsTasksUpdate) {
+			// pr_url/pr_number/pr_created_at may already be removed by M84.
+			// Conditionally include them so this rebuild works on re-run.
+			const hasPrCols = tableHasColumn(db, 'space_tasks', 'pr_url');
+
 			db.exec('PRAGMA foreign_keys = OFF');
 			db.exec('BEGIN');
 			try {
@@ -4808,9 +4817,13 @@ function runMigration73(db: BunDatabase): void {
 						active_session TEXT
 							CHECK(active_session IN ('worker', 'leader')),
 						task_agent_session_id TEXT,
-						pr_url TEXT,
+						${
+							hasPrCols
+								? `pr_url TEXT,
 						pr_number INTEGER,
-						pr_created_at INTEGER,
+						pr_created_at INTEGER,`
+								: ''
+						}
 						archived_at INTEGER,
 						created_at INTEGER NOT NULL,
 						started_at INTEGER,
@@ -4823,11 +4836,13 @@ function runMigration73(db: BunDatabase): void {
 
 				// Use CASE WHEN to map old status values inline so we never write
 				// an old→new value into the still-constrained old table.
+				const prInsertCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
+				const prSelectCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
 				db.exec(`
 					INSERT INTO space_tasks_m71_new
 					  (id, space_id, task_number, title, description, status, priority, labels,
 					   workflow_run_id, created_by_task_id, result, depends_on,
-					   active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+					   active_session, task_agent_session_id${prInsertCols},
 					   archived_at, created_at, started_at, completed_at, updated_at)
 					SELECT
 					  id, space_id, task_number, title, description,
@@ -4843,7 +4858,7 @@ function runMigration73(db: BunDatabase): void {
 					  END,
 					  priority, '[]',
 					  workflow_run_id, created_by_task_id, result, depends_on,
-					  active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+					  active_session, task_agent_session_id${prSelectCols},
 					  archived_at, created_at, started_at, completed_at, updated_at
 					FROM space_tasks
 				`);
@@ -5288,6 +5303,9 @@ function runMigration76(db: BunDatabase): void {
 
 	if (!needsUpdate) return;
 
+	// pr_url/pr_number/pr_created_at may already be removed by M84.
+	const hasPrCols = tableHasColumn(db, 'space_tasks', 'pr_url');
+
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.exec('BEGIN');
 	try {
@@ -5310,9 +5328,13 @@ function runMigration76(db: BunDatabase): void {
 				active_session TEXT
 					CHECK(active_session IN ('worker', 'leader')),
 				task_agent_session_id TEXT,
-				pr_url TEXT,
+				${
+					hasPrCols
+						? `pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER,
+				pr_created_at INTEGER,`
+						: ''
+				}
 				archived_at INTEGER,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
@@ -5323,16 +5345,18 @@ function runMigration76(db: BunDatabase): void {
 			)
 		`);
 
+		const prInsertCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
+		const prSelectCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
 		db.exec(`
 			INSERT INTO space_tasks_m76_new
 			  (id, space_id, task_number, title, description, status, priority, labels,
 			   workflow_run_id, created_by_task_id, result, depends_on,
-			   active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+			   active_session, task_agent_session_id${prInsertCols},
 			   archived_at, created_at, started_at, completed_at, updated_at)
 			SELECT
 			  id, space_id, task_number, title, description, status, priority, labels,
 			  workflow_run_id, created_by_task_id, result, depends_on,
-			  active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+			  active_session, task_agent_session_id${prSelectCols},
 			  archived_at, created_at, started_at, completed_at, updated_at
 			FROM space_tasks
 		`);
@@ -5589,4 +5613,107 @@ function runMigration83(db: BunDatabase): void {
 	if (tableHasColumn(db, 'space_tasks', 'block_reason')) return;
 
 	db.exec(`ALTER TABLE space_tasks ADD COLUMN block_reason TEXT`);
+}
+
+/**
+ * Migration 84: Workflow Run Artifacts + drop pr_* from space_tasks.
+ *
+ * Creates `workflow_run_artifacts` — a general-purpose typed artifact store
+ * for workflow node outputs (PRs, commits, test results, etc.).
+ *
+ * Removes `pr_url`, `pr_number`, `pr_created_at` from `space_tasks` since
+ * PR metadata is now tracked as artifacts on the workflow run, not on the task.
+ */
+function runMigration84(db: BunDatabase): void {
+	// 1. Create workflow_run_artifacts table
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
+			id TEXT PRIMARY KEY NOT NULL,
+			run_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			artifact_type TEXT NOT NULL,
+			artifact_key TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(run_id, node_id, artifact_type, artifact_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_node ON workflow_run_artifacts(run_id, node_id)`);
+
+	// 2. Drop pr_* columns from space_tasks (SQLite requires table rebuild)
+	if (!tableExists(db, 'space_tasks')) return;
+	if (!tableHasColumn(db, 'space_tasks', 'pr_url')) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	db.exec('BEGIN');
+	try {
+		db.exec(`
+			CREATE TABLE space_tasks_m84_new (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'open'
+					CHECK(status IN ('open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				labels TEXT NOT NULL DEFAULT '[]',
+				workflow_run_id TEXT,
+				preferred_workflow_id TEXT,
+				created_by_task_id TEXT,
+				result TEXT,
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				active_session TEXT
+					CHECK(active_session IN ('worker', 'leader')),
+				task_agent_session_id TEXT,
+				approval_source TEXT,
+				approval_reason TEXT,
+				approved_at INTEGER,
+				block_reason TEXT,
+				archived_at INTEGER,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				updated_at INTEGER NOT NULL,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+			)
+		`);
+
+		db.exec(`
+			INSERT INTO space_tasks_m84_new
+			  (id, space_id, task_number, title, description, status, priority, labels,
+			   workflow_run_id, preferred_workflow_id, created_by_task_id, result, depends_on,
+			   active_session, task_agent_session_id,
+			   approval_source, approval_reason, approved_at, block_reason,
+			   archived_at, created_at, started_at, completed_at, updated_at)
+			SELECT
+			  id, space_id, task_number, title, description, status, priority, labels,
+			  workflow_run_id, preferred_workflow_id, created_by_task_id, result, depends_on,
+			  active_session, task_agent_session_id,
+			  approval_source, approval_reason, approved_at, block_reason,
+			  archived_at, created_at, started_at, completed_at, updated_at
+			FROM space_tasks
+		`);
+
+		db.exec(`DROP TABLE space_tasks`);
+		db.exec(`ALTER TABLE space_tasks_m84_new RENAME TO space_tasks`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+		);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_task_number ON space_tasks(space_id, task_number)`
+		);
+		db.exec('COMMIT');
+	} catch (err) {
+		db.exec('ROLLBACK');
+		throw err;
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
 }

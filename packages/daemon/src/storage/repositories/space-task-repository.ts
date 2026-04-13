@@ -215,18 +215,6 @@ export class SpaceTaskRepository {
 			fields.push('active_session = ?');
 			values.push(null);
 		}
-		if (params.prUrl !== undefined) {
-			fields.push('pr_url = ?');
-			values.push(params.prUrl ?? null);
-		}
-		if (params.prNumber !== undefined) {
-			fields.push('pr_number = ?');
-			values.push(params.prNumber ?? null);
-		}
-		if (params.prCreatedAt !== undefined) {
-			fields.push('pr_created_at = ?');
-			values.push(params.prCreatedAt ?? null);
-		}
 		if (params.taskAgentSessionId !== undefined) {
 			fields.push('task_agent_session_id = ?');
 			values.push(params.taskAgentSessionId ?? null);
@@ -391,9 +379,6 @@ export class SpaceTaskRepository {
 			dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
 			taskAgentSessionId: (row.task_agent_session_id as string | null) ?? undefined,
-			prUrl: (row.pr_url as string | null) ?? undefined,
-			prNumber: (row.pr_number as number | null) ?? undefined,
-			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? null,
 			blockReason: (row.block_reason as SpaceTask['blockReason']) ?? null,
 			approvalSource: (row.approval_source as SpaceTask['approvalSource']) ?? null,

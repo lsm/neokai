@@ -41,6 +41,7 @@ import type {
 	UpdateSpaceParams,
 	UpdateSpaceTaskParams,
 	UpdateSpaceWorkflowParams,
+	WorkflowRunArtifact,
 } from '@neokai/shared';
 import { isUUID, Logger } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
@@ -1666,6 +1667,20 @@ class SpaceStore {
 			}>;
 		}>('spaceWorkflowRun.listGateData', { runId });
 		return result?.gateData ?? [];
+	}
+
+	/**
+	 * List all artifacts for a workflow run.
+	 */
+	async listArtifacts(runId: string): Promise<WorkflowRunArtifact[]> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{ artifacts: WorkflowRunArtifact[] }>(
+			'spaceWorkflowRun.listArtifacts',
+			{ runId }
+		);
+		return result?.artifacts ?? [];
 	}
 
 	/**
