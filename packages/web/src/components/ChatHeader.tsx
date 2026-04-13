@@ -188,7 +188,7 @@ export function ChatHeader({
 		<div
 			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center relative z-10`}
 		>
-			<div class="flex items-center gap-3">
+			<div class="flex-1 min-w-0 flex items-center gap-3">
 				<MobileMenuButton />
 
 				{/* Session title and stats */}

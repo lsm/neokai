@@ -149,7 +149,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !isTerminalTask;
 	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
-	const showHeaderSessionAction = !!runtimeSpaceId && (!!agentSessionId || !isTerminalTask);
+	const showHeaderSessionAction = !!runtimeSpaceId && !!agentSessionId;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
 	const floatingToggleTopClass = activeView === 'artifacts' ? 'top-14' : 'top-3';
@@ -301,7 +301,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					<div class="flex items-center gap-2 text-sm text-gray-400 flex-shrink-0">
 						<span data-testid="task-status-label">{activitySummary}</span>
 						{task.priority !== 'normal' && (
-							<span class="text-xs uppercase tracking-[0.12em] text-gray-500">
+							<span class="hidden sm:inline text-xs uppercase tracking-[0.12em] text-gray-500">
 								{PRIORITY_LABELS[task.priority]} Priority
 							</span>
 						)}
