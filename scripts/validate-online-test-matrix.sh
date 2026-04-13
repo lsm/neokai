@@ -81,6 +81,7 @@ PROVIDERS_FILES=(
 CROSS_PROVIDER_FILES=(
   cross-provider-model-switch.test.ts
   glm-to-anthropic-resume.test.ts
+  thinking-block-signatures.test.ts
 )
 
 REWIND_FILES=(

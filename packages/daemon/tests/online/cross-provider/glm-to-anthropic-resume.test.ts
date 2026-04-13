@@ -24,7 +24,9 @@ import { GlmProvider } from '../../../src/lib/providers/glm-provider';
 import { MinimaxProvider } from '../../../src/lib/providers/minimax-provider';
 import type { DaemonAppContext } from '../../../src/app';
 import { getSDKSessionFilePath } from '../../../src/lib/sdk-session-file-manager';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 // Use realpath to resolve macOS symlinks (/var → /private/var).
 // The SDK subprocess resolves CWD via realpath, so our path must match.
