@@ -234,13 +234,17 @@ export class QueryLifecycleManager {
 					db
 				);
 				if (!isValid) {
-					// Session file missing — log but keep sdkSessionId. The SDK may
-					// recreate the file on resume, and clearing it loses the ability
-					// to continue conversation history across model switches.
+					// Session file missing or unrepairably corrupted — clear sdkSessionId.
+					// The SDK always fails with "No conversation found" when --resume is
+					// given a non-existent or corrupt file; it cannot recreate the file.
+					// Clearing sdkSessionId lets the next query start fresh instead of
+					// looping on a dead session ID.
 					this.logger.warn(
-						`SDK session file missing for ${session.sdkSessionId}, ` +
-							'keeping sdkSessionId — SDK will attempt recovery on next query'
+						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+							'Clearing sdkSessionId — next query will start a fresh session.'
 					);
+					session.sdkSessionId = undefined;
+					db.updateSession(session.id, { sdkSessionId: undefined });
 				}
 			}
 
@@ -335,9 +339,11 @@ export class QueryLifecycleManager {
 					);
 					if (!isValid) {
 						this.logger.warn(
-							`SDK session file missing for ${session.sdkSessionId}, ` +
-								'keeping sdkSessionId — SDK will attempt recovery on next query'
+							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+								'Clearing sdkSessionId — next query will start a fresh session.'
 						);
+						session.sdkSessionId = undefined;
+						db.updateSession(session.id, { sdkSessionId: undefined });
 					}
 				}
 
@@ -421,9 +427,11 @@ export class QueryLifecycleManager {
 			);
 			if (!isValid) {
 				this.logger.warn(
-					`SDK session file missing for ${session.sdkSessionId}, ` +
-						'keeping sdkSessionId — SDK will attempt recovery on next query'
+					`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+						'Clearing sdkSessionId — next query will start a fresh session.'
 				);
+				session.sdkSessionId = undefined;
+				db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 		}
 

@@ -148,6 +148,7 @@ export class ModelSwitchHandler {
 			}
 
 			const previousModel = session.config.model;
+			const previousProvider = session.config.provider;
 
 			// Emit model switching event
 			messageHub.event(
@@ -172,6 +173,22 @@ export class ModelSwitchHandler {
 				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${newProvider}' is not registered.`;
 				logger.error(errMsg);
 				return { success: false, model: session.config.model, error: errMsg };
+			}
+
+			// Cross-provider switches are incompatible with session resume:
+			// each provider uses a different model routing ID in the SDK session file
+			// (e.g. GLM writes "default", MiniMax writes "MiniMax-M2.5", Anthropic
+			// writes "claude-sonnet-4-6"). When the new provider's subprocess reads
+			// the old provider's session file and sees a model ID it doesn't recognize,
+			// it hits a startup timeout. Clear sdkSessionId proactively so the restart
+			// starts a fresh SDK subprocess without trying to resume an incompatible file.
+			if (previousProvider !== newProviderInstance.id && session.sdkSessionId) {
+				logger.debug(
+					`Cross-provider switch (${previousProvider} → ${newProviderInstance.id}): ` +
+						`clearing sdkSessionId (${session.sdkSessionId}) — session file is provider-specific.`
+				);
+				session.sdkSessionId = undefined;
+				db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 
 			if (!queryObject) {
