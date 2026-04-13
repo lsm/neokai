@@ -114,8 +114,7 @@ export function GateArtifactsView({
 			setApproving(true);
 			setApproveError(null);
 			try {
-				const hub = connectionManager.getHubIfConnected();
-				if (!hub) throw new Error('Not connected');
+				const hub = await connectionManager.getHub();
 				await hub.request('spaceWorkflowRun.approveGate', { runId, gateId, approved });
 				onDecision?.();
 				onClose?.();

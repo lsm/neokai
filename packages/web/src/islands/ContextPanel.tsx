@@ -388,10 +388,10 @@ export function ContextPanel() {
 						)}
 					>
 						{isSpaceDetail ? (
-							<div class="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
+							<div class="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pointer-events-none">
 								<button
 									onClick={() => navigateToSpaces()}
-									class="p-1 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+									class="p-1 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
 									title="Back to Spaces"
 								>
 									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -409,7 +409,7 @@ export function ContextPanel() {
 								<button
 									onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
 									class={cn(
-										'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0',
+										'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0 pointer-events-auto',
 										currentSpaceViewMode === 'configure'
 											? 'bg-dark-800 text-gray-100'
 											: 'text-gray-400 hover:bg-dark-800 hover:text-gray-100'
@@ -439,7 +439,7 @@ export function ContextPanel() {
 						{/* Close button for mobile */}
 						<button
 							onClick={handlePanelClose}
-							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
 							title="Close panel"
 						>
 							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
