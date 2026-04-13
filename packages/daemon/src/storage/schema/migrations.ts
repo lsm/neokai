@@ -5618,7 +5618,7 @@ function runMigration84(db: BunDatabase): void {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			UNIQUE(run_id, node_id, artifact_type, artifact_key),
-		FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
 		)
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
