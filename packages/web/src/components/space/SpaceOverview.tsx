@@ -8,14 +8,11 @@
  * - Recent sessions (latest active sessions)
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useCallback } from 'preact/hooks';
 import type { RuntimeState, SpaceTask } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
-import {
-	navigateToSpaceTask,
-	navigateToSpaceAgent,
-	navigateToSpaceSession,
-} from '../../lib/router';
+import { navigateToSpaceTask, navigateToSpaceSession } from '../../lib/router';
+import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 
@@ -146,6 +143,13 @@ interface SpaceOverviewProps {
 
 export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const [showCreateTask, setShowCreateTask] = useState(false);
+
+	const handleNewSession = useCallback(async () => {
+		const space = spaceStore.space.value;
+		const response = await createSession({ spaceId, workspacePath: space?.workspacePath });
+		navigateToSpaceSession(spaceId, response.sessionId);
+	}, [spaceId]);
+
 	const loading = spaceStore.loading.value;
 	const space = spaceStore.space.value;
 	const tasks = spaceStore.tasks.value;
@@ -269,7 +273,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 							</h3>
 							<button
 								type="button"
-								onClick={() => navigateToSpaceAgent(spaceId)}
+								onClick={() => void handleNewSession()}
 								class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
 							>
 								New Session

@@ -25,7 +25,7 @@ export class GlmProvider implements Provider {
 
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
-		extendedThinking: false, // GLM doesn't support extended thinking
+		extendedThinking: true,
 		maxContextWindow: 200000,
 		functionCalling: true,
 		vision: true,

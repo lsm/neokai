@@ -47,9 +47,22 @@ export function useChatComposerController({
 				);
 				if (!confirmed) return;
 			}
+
+			// Warn when switching from non-Anthropic to Anthropic provider
+			const currentProvider = currentModelInfo?.provider ?? '';
+			const targetProvider = model.provider ?? '';
+			const isCrossProviderToAnthropic =
+				targetProvider.startsWith('anthropic') && !currentProvider.startsWith('anthropic');
+			if (isCrossProviderToAnthropic) {
+				const confirmed = confirm(
+					'Switching to an Anthropic model will remove thinking blocks from the conversation history to ensure API compatibility. Your messages and tool outputs will be preserved. Continue?'
+				);
+				if (!confirmed) return;
+			}
+
 			await switchModel(model);
 		},
-		[switchModel, isProcessing]
+		[switchModel, isProcessing, currentModelInfo]
 	);
 
 	const handleCoordinatorModeChange = useCallback(

@@ -234,12 +234,12 @@ export class QueryLifecycleManager {
 					db
 				);
 				if (!isValid) {
-					// Session file missing — log but keep sdkSessionId. The SDK may
-					// recreate the file on resume, and clearing it loses the ability
-					// to continue conversation history across model switches.
+					// Session file missing or unrepairably corrupted — log but keep sdkSessionId.
+					// The SDK may recreate the file on resume, or "No conversation found" will
+					// be caught in query-runner and cleared there as a last resort.
 					this.logger.warn(
-						`SDK session file missing for ${session.sdkSessionId}, ` +
-							'keeping sdkSessionId — SDK will attempt recovery on next query'
+						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+							'Will attempt resume anyway — SDK may recover.'
 					);
 				}
 			}
@@ -335,8 +335,8 @@ export class QueryLifecycleManager {
 					);
 					if (!isValid) {
 						this.logger.warn(
-							`SDK session file missing for ${session.sdkSessionId}, ` +
-								'keeping sdkSessionId — SDK will attempt recovery on next query'
+							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+								'Will attempt resume anyway — SDK may recover.'
 						);
 					}
 				}
@@ -421,8 +421,8 @@ export class QueryLifecycleManager {
 			);
 			if (!isValid) {
 				this.logger.warn(
-					`SDK session file missing for ${session.sdkSessionId}, ` +
-						'keeping sdkSessionId — SDK will attempt recovery on next query'
+					`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+						'Will attempt resume anyway — SDK may recover.'
 				);
 			}
 		}

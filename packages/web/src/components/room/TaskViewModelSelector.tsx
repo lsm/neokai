@@ -17,6 +17,7 @@ import {
 	mapRawModelsToModelInfos,
 	PROVIDER_LABELS,
 } from '../../hooks/useModelSwitcher.ts';
+import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Spinner } from '../ui/Spinner';
 import { listProviderAuthStatus } from '../../lib/api-helpers.ts';
 
@@ -54,6 +55,7 @@ export function TaskViewModelSelector({
 	const [loading, setLoading] = useState(true);
 	const [switching, setSwitching] = useState(false);
 	const [dropdownOpen, setDropdownOpen] = useState(false);
+	const [crossProviderConfirm, setCrossProviderConfirm] = useState<ModelInfo | null>(null);
 
 	// Fetch available models and provider auth statuses
 	useEffect(() => {
@@ -224,6 +226,19 @@ export function TaskViewModelSelector({
 											model.id === currentModelInfo?.id &&
 											model.provider === currentModelInfo?.provider;
 
+										const handleModelClick = (m: ModelInfo) => {
+											const targetProvider = m.provider ?? '';
+											const isCrossProviderToAnthropic =
+												targetProvider.startsWith('anthropic') &&
+												!currentProvider?.startsWith('anthropic');
+											if (isCrossProviderToAnthropic) {
+												setDropdownOpen(false);
+												setCrossProviderConfirm(m);
+											} else {
+												switchModel(m);
+											}
+										};
+
 										return (
 											<button
 												key={`${model.provider}:${model.id}`}
@@ -232,7 +247,7 @@ export function TaskViewModelSelector({
 														? 'text-blue-400 bg-dark-700/50'
 														: 'text-gray-200 hover:bg-dark-700'
 												}`}
-												onClick={() => switchModel(model)}
+												onClick={() => handleModelClick(model)}
 												disabled={switching}
 											>
 												<span class="text-base">{getModelFamilyIcon(model.family)}</span>
@@ -256,6 +271,23 @@ export function TaskViewModelSelector({
 			{dropdownOpen && (
 				<div class="fixed inset-0 z-40 cursor-pointer" onClick={() => setDropdownOpen(false)} />
 			)}
+
+			{/* Cross-provider switch confirmation modal */}
+			<ConfirmModal
+				isOpen={crossProviderConfirm !== null}
+				onClose={() => setCrossProviderConfirm(null)}
+				onConfirm={() => {
+					if (crossProviderConfirm) {
+						switchModel(crossProviderConfirm);
+						setCrossProviderConfirm(null);
+					}
+				}}
+				title="Cross-Provider Model Switch"
+				message="Switching to an Anthropic model will remove thinking blocks from the conversation history to ensure API compatibility. Your messages and tool outputs will be preserved."
+				confirmText="Switch Model"
+				confirmButtonVariant="warning"
+				isLoading={switching}
+			/>
 		</div>
 	);
 }

@@ -104,7 +104,7 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 
 	const [taskTab, setTaskTab] = useState<TaskTab>('action');
 
-	// Auto-switch tab when selectedTaskId or task status changes
+	// Auto-switch tab when the selected task changes (not on every task update)
 	useEffect(() => {
 		if (!selectedTaskId) return;
 		const task = tasks.find((t) => t.id === selectedTaskId);
@@ -113,7 +113,8 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 		const isAction = task.status === 'blocked' || task.status === 'review';
 		if (isActive && taskTab !== 'active') setTaskTab('active');
 		else if (isAction && taskTab !== 'action') setTaskTab('action');
-	}, [selectedTaskId, tasks]);
+		// Only re-run when the selected task changes, not on every task list update.
+	}, [selectedTaskId]);
 
 	const isOverviewSelected =
 		selectedSessionId === null &&
@@ -143,12 +144,6 @@ export function SpaceDetailPanel({ spaceId, onNavigate }: SpaceDetailPanelProps)
 			filtered = sorted.filter((task) => task.status === 'blocked' || task.status === 'review');
 		} else {
 			filtered = sorted.filter((task) => task.status === 'open' || task.status === 'in_progress');
-		}
-
-		// Always include the selected task even if it doesn't match the current tab filter
-		if (selectedTaskId && !filtered.some((t) => t.id === selectedTaskId)) {
-			const selected = sorted.find((t) => t.id === selectedTaskId);
-			if (selected) filtered.push(selected);
 		}
 
 		return filtered;

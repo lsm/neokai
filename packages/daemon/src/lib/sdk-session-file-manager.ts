@@ -904,6 +904,91 @@ export function identifyOrphanedSDKFiles(
 }
 
 /**
+ * Result of thinking block stripping
+ */
+export interface StripThinkingBlocksResult {
+	stripped: boolean;
+	thinkingBlocksRemoved: number;
+	backupPath: string | null;
+}
+
+/**
+ * Strip thinking blocks from the SDK session JSONL file
+ *
+ * When switching from a non-Anthropic provider to Anthropic, the JSONL may contain
+ * thinking blocks with provider-specific signatures (e.g., GLM's empty string or
+ * MiniMax's hex hash) that Anthropic's API rejects with "400: Invalid signature
+ * in thinking block". Removing these blocks before resume preserves conversation
+ * context (text + tool usage) while avoiding the signature validation error.
+ *
+ * Without this, the SDK recovers by starting a fresh conversation — sdkSessionId
+ * is preserved but all conversation context is lost.
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID
+ * @returns Result with count of removed thinking blocks
+ */
+export function stripThinkingBlocksFromSessionFile(
+	workspacePath: string,
+	sdkSessionId: string
+): StripThinkingBlocksResult {
+	const result: StripThinkingBlocksResult = {
+		stripped: false,
+		thinkingBlocksRemoved: 0,
+		backupPath: null,
+	};
+
+	try {
+		const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+
+		if (!existsSync(sessionFile)) {
+			return result;
+		}
+
+		const content = readFileSync(sessionFile, 'utf-8');
+		const lines = content.split('\n').filter((line) => line.trim());
+
+		let modified = false;
+		const updatedLines = lines.map((line) => {
+			try {
+				const message = JSON.parse(line) as SDKFileMessage;
+
+				if (
+					message.type === 'assistant' &&
+					message.message?.content &&
+					Array.isArray(message.message.content)
+				) {
+					const original = message.message.content;
+					const filtered = original.filter((block: { type: string }) => block.type !== 'thinking');
+
+					if (filtered.length < original.length) {
+						result.thinkingBlocksRemoved += original.length - filtered.length;
+						message.message.content = filtered;
+						modified = true;
+						return JSON.stringify(message);
+					}
+				}
+			} catch {
+				// Skip unparseable lines — preserve them as-is
+			}
+			return line;
+		});
+
+		if (modified) {
+			// Backup before modifying
+			result.backupPath = backupSDKSessionFile(sessionFile);
+
+			writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
+			result.stripped = true;
+		}
+	} catch {
+		// Best-effort — if stripping fails, the SDK will recover by starting fresh
+	}
+
+	return result;
+}
+
+/**
  * Truncate the SDK session JSONL file at a specific message
  *
  * Removes the message with the given UUID and all subsequent messages from the JSONL file.
