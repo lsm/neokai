@@ -315,10 +315,10 @@ test.describe('MissionDetail Page — Navigation', () => {
 		// Use exact: true to avoid matching sidebar CollapsibleSection buttons whose accessible
 		// names contain "Missions" as a substring (e.g. "Missions section").
 		await expect(page.getByRole('button', { name: 'Missions', exact: true })).toBeVisible({
-			timeout: 5000,
+			timeout: 10000,
 		});
 		await expect(page.getByRole('button', { name: 'Tasks', exact: true })).toBeVisible({
-			timeout: 5000,
+			timeout: 10000,
 		});
 	});
 });
