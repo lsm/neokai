@@ -493,39 +493,40 @@ describe('ContextPanel', () => {
 			expect(panel?.className).toContain('md:relative');
 		});
 
-		it('should have -translate-x-full when closed on mobile', () => {
+		it('should have max-md:-translate-x-full when closed on mobile', () => {
 			mockContextPanelOpenSignal.value = false;
 
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('-translate-x-full');
+			expect(panel?.className).toContain('max-md:-translate-x-full');
 		});
 
-		it('should have translate-x-0 when open on mobile', () => {
+		it('should have max-md:translate-x-0 when open on mobile', () => {
 			mockContextPanelOpenSignal.value = true;
 
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('translate-x-0');
+			expect(panel?.className).toContain('max-md:translate-x-0');
 		});
 
-		it('should have md:translate-x-0 to always show on desktop', () => {
+		it('should not have transform classes on desktop', () => {
 			mockContextPanelOpenSignal.value = false;
 
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('md:translate-x-0');
+			expect(panel?.className).not.toContain('translate-x-0');
+			expect(panel?.className).not.toContain('md:translate-x-0');
 		});
 
-		it('should have transition classes for smooth animation', () => {
+		it('should have max-md:transition classes for smooth mobile animation', () => {
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('transition-transform');
-			expect(panel?.className).toContain('duration-300');
+			expect(panel?.className).toContain('max-md:transition-transform');
+			expect(panel?.className).toContain('max-md:duration-300');
 		});
 
 		it('should have z-40 for mobile stacking', () => {
