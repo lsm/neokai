@@ -226,7 +226,7 @@ describe('SpaceDetailPanel', () => {
 		expect(screen.queryByText('Blocked Task')).toBeNull();
 	});
 
-	it('keeps the selected task visible even when it does not match the current tab', () => {
+	it('does not show a terminal (done) task in the active or action tab', () => {
 		mockTasksSignal.value = [
 			makeTask('t1', 'Queued Task', 'open'),
 			makeTask('t2', 'Done Task', 'done'),
@@ -234,7 +234,8 @@ describe('SpaceDetailPanel', () => {
 		mockCurrentSpaceTaskIdSignal.value = 't2';
 		render(<SpaceDetailPanel spaceId="space-1" />);
 
-		expect(screen.getByText('Done Task')).toBeTruthy();
+		// Done tasks belong to neither tab; selecting one should not make it appear in the list
+		expect(screen.queryByText('Done Task')).toBeNull();
 	});
 
 	it('navigates to a task on click and calls onNavigate', () => {

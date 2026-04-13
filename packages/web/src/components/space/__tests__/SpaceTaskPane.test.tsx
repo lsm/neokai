@@ -206,11 +206,10 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
 	});
 
-	it('opens Space Agent via header button when no task session exists', () => {
+	it('does not show header session button when no task session exists', () => {
 		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		fireEvent.click(getByTestId('view-agent-session-btn'));
-		expect(mockNavigateToSpaceAgent).toHaveBeenCalledWith('space-1');
+		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+		expect(queryByTestId('view-agent-session-btn')).toBeNull();
 	});
 
 	it('opens overlay via header button when task session exists', () => {
