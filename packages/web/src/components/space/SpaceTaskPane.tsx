@@ -13,6 +13,7 @@ import { borderColors } from '../../lib/design-tokens';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { getTransitionActions, TaskStatusActions } from './TaskStatusActions';
+import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { ThreadedChatComposer } from './ThreadedChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -432,14 +433,12 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					/>
 				) : (
 					<div class="h-full flex flex-col relative">
-						{task.status === 'blocked' && task.result && (
-							<div
-								class="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2"
-								data-testid="task-blocked-banner"
-							>
-								<p class="text-xs font-medium text-amber-300">Blocked</p>
-								<p class="mt-0.5 text-sm text-amber-200/90">{task.result}</p>
-							</div>
+						{task.status === 'blocked' && (
+							<TaskBlockedBanner
+								task={task}
+								spaceId={runtimeSpaceId}
+								onStatusTransition={handleStatusTransition}
+							/>
 						)}
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (
