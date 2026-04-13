@@ -10,6 +10,7 @@
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
+import { spaceStore } from '../../lib/space-store';
 import { FileDiffView } from './FileDiffView';
 import { ArtifactCard } from './ArtifactCard';
 import type { WorkflowRunArtifact } from '@neokai/shared';
@@ -383,11 +384,9 @@ export function TaskArtifactsPanel({
 			})
 			.finally(() => setCommitsLoading(false));
 
-		hub
-			.request<{ artifacts: WorkflowRunArtifact[] }>('spaceWorkflowRun.listArtifacts', {
-				runId,
-			})
-			.then((r) => setArtifacts(r?.artifacts ?? []))
+		spaceStore
+			.listArtifacts(runId)
+			.then(setArtifacts)
 			.catch(() => {
 				// Artifact fetch is best-effort — component works without them
 			});

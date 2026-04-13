@@ -550,7 +550,7 @@ function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
 		try {
 			data = JSON.parse(raw) as Record<string, unknown>;
 		} catch {
-			// corrupted JSON — return empty
+			log.warn(`Corrupted artifact JSON for id=${row.id} — returning empty data`);
 		}
 	}
 	return { ...row, data };

@@ -190,7 +190,9 @@ export type ReadGateInput = z.infer<typeof ReadGateSchema>;
  */
 export const WriteArtifactSchema = z.object({
 	/** Type of artifact: pr, commit_set, test_result, deployment */
-	artifactType: z.string().describe('Type of artifact: pr, commit_set, test_result, deployment'),
+	artifactType: z
+		.enum(['pr', 'commit_set', 'test_result', 'deployment'])
+		.describe('Type of artifact: pr, commit_set, test_result, deployment'),
 	/** Unique key within (node, type) for dedup. Defaults to empty string. */
 	artifactKey: z
 		.string()

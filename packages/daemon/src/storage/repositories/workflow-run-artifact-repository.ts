@@ -45,14 +45,15 @@ export class WorkflowRunArtifactRepository {
 		data: Record<string, unknown>;
 	}): WorkflowRunArtifactRecord {
 		const now = Date.now();
-		this.db
+		const row = this.db
 			.prepare(
 				`INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(run_id, node_id, artifact_type, artifact_key) DO UPDATE SET
-				   data = excluded.data, updated_at = excluded.updated_at`
+				   data = excluded.data, updated_at = excluded.updated_at
+				 RETURNING *`
 			)
-			.run(
+			.get(
 				params.id,
 				params.runId,
 				params.nodeId,
@@ -61,20 +62,11 @@ export class WorkflowRunArtifactRepository {
 				JSON.stringify(params.data),
 				now,
 				now
-			);
+			) as Record<string, unknown>;
 
 		this.reactiveDb?.notifyChange('workflow_run_artifacts');
 
-		return {
-			id: params.id,
-			runId: params.runId,
-			nodeId: params.nodeId,
-			artifactType: params.artifactType,
-			artifactKey: params.artifactKey,
-			data: params.data,
-			createdAt: now,
-			updatedAt: now,
-		};
+		return this.rowToRecord(row)!;
 	}
 
 	/** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
