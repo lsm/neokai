@@ -405,13 +405,17 @@ export class QueryRunner {
 				);
 			}
 			if (isConversationNotFound && session.sdkSessionId) {
-				// Never clear sdkSessionId — the session file may still exist on disk
-				// and the SDK can recover on retry. Clearing it loses the ability to
-				// resume conversation history across model switches.
+				// Clear sdkSessionId — the conversation is gone (provider-switched, deleted,
+				// or expired). Keeping it would cause every subsequent attempt to fail with
+				// the same "No conversation found" error. Cross-provider switches are the
+				// most common trigger: the old provider's sdkSessionId is meaningless to the
+				// new provider. Clearing it lets the next message start a fresh conversation.
 				logger.error(
 					`No conversation found for sdkSessionId (${session.sdkSessionId}). ` +
-						'Keeping sdkSessionId — SDK will attempt recovery on next message.'
+						'Clearing sdkSessionId — next message will start a fresh conversation.'
 				);
+				session.sdkSessionId = undefined;
+				this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 
 			// Auto-retry once on startup timeout — the user shouldn't have to resend.
@@ -534,8 +538,8 @@ export class QueryRunner {
 							`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
 						: isConversationNotFound
 							? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-								`The previous session file could not be found. ` +
-								`Please resend your message — the SDK will attempt to recover.`
+								`The previous session was not found (this can happen after a provider switch). ` +
+								`Please resend your message — a fresh session will be started automatically.`
 							: undefined;
 
 					await errorManager.handleError(
