@@ -234,17 +234,13 @@ export class QueryLifecycleManager {
 					db
 				);
 				if (!isValid) {
-					// Session file missing or unrepairably corrupted — clear sdkSessionId.
-					// The SDK always fails with "No conversation found" when --resume is
-					// given a non-existent or corrupt file; it cannot recreate the file.
-					// Clearing sdkSessionId lets the next query start fresh instead of
-					// looping on a dead session ID.
+					// Session file missing or unrepairably corrupted — log but keep sdkSessionId.
+					// The SDK may recreate the file on resume, or "No conversation found" will
+					// be caught in query-runner and cleared there as a last resort.
 					this.logger.warn(
 						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-							'Clearing sdkSessionId — next query will start a fresh session.'
+							'Will attempt resume anyway — SDK may recover.'
 					);
-					session.sdkSessionId = undefined;
-					db.updateSession(session.id, { sdkSessionId: undefined });
 				}
 			}
 
@@ -340,10 +336,8 @@ export class QueryLifecycleManager {
 					if (!isValid) {
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-								'Clearing sdkSessionId — next query will start a fresh session.'
+								'Will attempt resume anyway — SDK may recover.'
 						);
-						session.sdkSessionId = undefined;
-						db.updateSession(session.id, { sdkSessionId: undefined });
 					}
 				}
 
@@ -428,10 +422,8 @@ export class QueryLifecycleManager {
 			if (!isValid) {
 				this.logger.warn(
 					`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-						'Clearing sdkSessionId — next query will start a fresh session.'
+						'Will attempt resume anyway — SDK may recover.'
 				);
-				session.sdkSessionId = undefined;
-				db.updateSession(session.id, { sdkSessionId: undefined });
 			}
 		}
 

@@ -31,6 +31,7 @@ import { ErrorCategory } from '../error-manager';
 import type { Logger } from '../logger';
 import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
+import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager';
 import type { ContextTracker } from './context-tracker';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
@@ -68,6 +69,46 @@ export interface ModelSwitchResult {
  */
 export class ModelSwitchHandler {
 	constructor(private ctx: ModelSwitchHandlerContext) {}
+
+	/**
+	 * Get the effective workspace path for SDK session file lookups.
+	 * Must match QueryLifecycleManager.getSDKWorkspacePath().
+	 */
+	private getSDKWorkspacePath(): string {
+		const { session } = this.ctx;
+		return session.worktree
+			? session.worktree.worktreePath
+			: (session.workspacePath ?? process.cwd());
+	}
+
+	/**
+	 * Strip thinking blocks from JSONL when switching to Anthropic from a non-Anthropic provider.
+	 *
+	 * Non-Anthropic providers produce thinking block signatures (GLM: empty string,
+	 * MiniMax: hex hash) that Anthropic rejects with "400: Invalid signature in thinking block".
+	 * Stripping preserves conversation text + tool usage while avoiding context loss.
+	 */
+	private stripThinkingBlocksIfNeeded(previousProvider: string, newProvider: string): void {
+		const { session, logger } = this.ctx;
+
+		// Only strip when switching TO an Anthropic provider FROM a non-Anthropic provider
+		const isTargetAnthropic = newProvider.startsWith('anthropic');
+		const isSourceAnthropic = previousProvider.startsWith('anthropic');
+
+		if (!isTargetAnthropic || isSourceAnthropic) return;
+		if (!session.sdkSessionId) return;
+
+		const workspacePath = this.getSDKWorkspacePath();
+		const result = stripThinkingBlocksFromSessionFile(workspacePath, session.sdkSessionId);
+
+		if (result.stripped) {
+			logger.info(
+				`Stripped ${result.thinkingBlocksRemoved} thinking block(s) from JSONL ` +
+					`for cross-provider switch ${previousProvider} → ${newProvider}` +
+					(result.backupPath ? ` (backup: ${result.backupPath})` : '')
+			);
+		}
+	}
 
 	/**
 	 * Get current model ID for this session
@@ -175,22 +216,6 @@ export class ModelSwitchHandler {
 				return { success: false, model: session.config.model, error: errMsg };
 			}
 
-			// Cross-provider switches are incompatible with session resume:
-			// each provider uses a different model routing ID in the SDK session file
-			// (e.g. GLM writes "default", MiniMax writes "MiniMax-M2.5", Anthropic
-			// writes "claude-sonnet-4-6"). When the new provider's subprocess reads
-			// the old provider's session file and sees a model ID it doesn't recognize,
-			// it hits a startup timeout. Clear sdkSessionId proactively so the restart
-			// starts a fresh SDK subprocess without trying to resume an incompatible file.
-			if (previousProvider !== newProviderInstance.id && session.sdkSessionId) {
-				logger.debug(
-					`Cross-provider switch (${previousProvider} → ${newProviderInstance.id}): ` +
-						`clearing sdkSessionId (${session.sdkSessionId}) — session file is provider-specific.`
-				);
-				session.sdkSessionId = undefined;
-				db.updateSession(session.id, { sdkSessionId: undefined });
-			}
-
 			if (!queryObject) {
 				// Query hasn't been created yet OR query was already completed/interrupted.
 				// In both cases, we must call restart() to ensure the new model takes effect:
@@ -219,6 +244,9 @@ export class ModelSwitchHandler {
 					source: 'model-switch',
 					session: { config: session.config },
 				});
+
+				// Strip thinking blocks from JSONL if switching to Anthropic from another provider
+				this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
 				// Always restart to ensure new model takes effect, even when queryObject is null.
 				// This validates the session file and starts a fresh query with the new model.
@@ -259,6 +287,9 @@ export class ModelSwitchHandler {
 					source: 'model-switch',
 					session: { config: session.config },
 				});
+
+				// Strip thinking blocks from JSONL if switching to Anthropic from another provider
+				this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
 				// Restart the query via lifecycle manager
 				// This spawns a new SDK subprocess with the new model configuration
