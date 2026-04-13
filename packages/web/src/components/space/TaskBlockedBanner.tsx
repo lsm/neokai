@@ -28,9 +28,11 @@ interface PendingGate {
 	data: Record<string, unknown>;
 }
 
-const REASON_CONFIG: Record<
-	string,
-	{ label: string; border: string; bg: string; title: string; icon: string }
+const REASON_CONFIG: Partial<
+	Record<
+		SpaceBlockReason,
+		{ label: string; border: string; bg: string; title: string; icon: string }
+	>
 > = {
 	human_input_requested: {
 		label: 'Waiting for Input',
@@ -85,7 +87,7 @@ const FALLBACK_CONFIG = {
 };
 
 export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlockedBannerProps) {
-	const reason = task.blockReason as SpaceBlockReason | null;
+	const reason = task.blockReason;
 	const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
 
 	const [showGateReview, setShowGateReview] = useState(false);
@@ -165,8 +167,7 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 						<button
 							type="button"
 							onClick={() => setShowGateReview(true)}
-							disabled={gateLoading}
-							class="px-2 py-1 text-xs font-medium text-purple-300 hover:text-purple-200 bg-purple-900/30 hover:bg-purple-900/50 rounded transition-colors disabled:opacity-50"
+							class="px-2 py-1 text-xs font-medium text-purple-300 hover:text-purple-200 bg-purple-900/30 hover:bg-purple-900/50 rounded transition-colors"
 							data-testid="gate-review-btn"
 						>
 							Review & Approve

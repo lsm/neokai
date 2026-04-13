@@ -28,10 +28,6 @@ vi.mock('../../../lib/space-store', () => ({
 	},
 }));
 
-vi.mock('../../../lib/utils', () => ({
-	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
-}));
-
 // Mock GateArtifactsView to avoid pulling in connection-manager and its deps
 vi.mock('../GateArtifactsView', () => ({
 	GateArtifactsView: (props: Record<string, unknown>) => (
