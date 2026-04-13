@@ -1669,26 +1669,6 @@ class SpaceStore {
 	}
 
 	/**
-	 * Approve or reject a gate on a workflow run.
-	 */
-	async approveGate(
-		runId: string,
-		gateId: string,
-		approved: boolean,
-		reason?: string
-	): Promise<void> {
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		await hub.request('spaceWorkflowRun.approveGate', {
-			runId,
-			gateId,
-			approved,
-			reason,
-		});
-	}
-
-	/**
 	 * Fetch a paginated snapshot of task-thread messages.
 	 */
 	async getTaskMessages(

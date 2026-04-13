@@ -51,28 +51,28 @@ const REASON_CONFIG: Record<
 		border: 'border-red-500/30',
 		bg: 'bg-red-500/10',
 		title: 'text-red-300',
-		icon: '⚠',
+		icon: '⚠️',
 	},
 	agent_crashed: {
 		label: 'Agent Crashed',
 		border: 'border-red-500/30',
 		bg: 'bg-red-500/10',
 		title: 'text-red-300',
-		icon: '⚠',
+		icon: '⚠️',
 	},
 	dependency_failed: {
 		label: 'Blocked by Dependency',
 		border: 'border-gray-500/30',
 		bg: 'bg-gray-500/10',
 		title: 'text-gray-300',
-		icon: '⛓',
+		icon: '⛓️',
 	},
 	workflow_invalid: {
 		label: 'Invalid Workflow',
 		border: 'border-red-500/30',
 		bg: 'bg-red-500/10',
 		title: 'text-red-300',
-		icon: '⚠',
+		icon: '⚠️',
 	},
 };
 
@@ -81,7 +81,7 @@ const FALLBACK_CONFIG = {
 	border: 'border-amber-500/30',
 	bg: 'bg-amber-500/10',
 	title: 'text-amber-300',
-	icon: '⚠',
+	icon: '⚠️',
 };
 
 export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlockedBannerProps) {
@@ -90,17 +90,24 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 
 	const [showGateReview, setShowGateReview] = useState(false);
 	const [pendingGate, setPendingGate] = useState<PendingGate | null>(null);
-	const [gateLoading, setGateLoading] = useState(false);
+	const [gateLoading, setGateLoading] = useState(
+		reason === 'gate_rejected' && !!task.workflowRunId
+	);
 
 	// For gate_rejected tasks, fetch the pending gate data on mount
 	useEffect(() => {
 		if (reason !== 'gate_rejected' || !task.workflowRunId) return;
 
+		let cancelled = false;
 		setGateLoading(true);
 		spaceStore
 			.listGateData(task.workflowRunId)
 			.then((records) => {
-				// Find the rejected/unapproved gate
+				if (cancelled) return;
+				// Pick the first rejected/waiting gate. Note: in multi-gate workflows
+				// this may not be the gate that actually blocked the task. A future
+				// improvement would store `blockingGateId` on SpaceTask to remove
+				// ambiguity.
 				const rejected = records.find(
 					(r) => r.data?.approved === false || r.data?.waiting === true
 				);
@@ -111,7 +118,12 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 			.catch(() => {
 				// Gate data fetch is best-effort
 			})
-			.finally(() => setGateLoading(false));
+			.finally(() => {
+				if (!cancelled) setGateLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, [reason, task.workflowRunId]);
 
 	// If showing full gate review, render GateArtifactsView

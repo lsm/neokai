@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Unit tests for TaskBlockedBanner
  *
@@ -40,6 +39,9 @@ vi.mock('../GateArtifactsView', () => ({
 			GateArtifactsView
 			<button data-testid="gate-close" onClick={props.onClose as () => void}>
 				Close
+			</button>
+			<button data-testid="gate-decide" onClick={props.onDecision as () => void}>
+				Decide
 			</button>
 		</div>
 	),
@@ -254,5 +256,54 @@ describe('TaskBlockedBanner', () => {
 			expect(queryByTestId('gate-review-btn')).toBeNull();
 		});
 		expect(getByTestId('gate-resume-btn')).toBeTruthy();
+	});
+
+	it('shows Resume immediately when gate_rejected with no workflowRunId', () => {
+		const task = makeTask({
+			blockReason: 'gate_rejected',
+			workflowRunId: null,
+		});
+		const { getByTestId, queryByTestId } = render(
+			<TaskBlockedBanner task={task} spaceId="space-1" />
+		);
+		// No fetch attempted, no loading, so Resume fallback renders immediately
+		expect(getByTestId('gate-resume-btn')).toBeTruthy();
+		expect(queryByTestId('gate-review-btn')).toBeNull();
+		expect(mockListGateData).not.toHaveBeenCalled();
+	});
+
+	it('does not flash Resume button while gate data is loading', () => {
+		// Never resolve — simulates in-flight fetch
+		mockListGateData.mockReturnValue(new Promise(() => {}));
+		const task = makeTask({
+			blockReason: 'gate_rejected',
+			workflowRunId: 'run-1',
+		});
+		const { queryByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
+		// Neither button should show while loading
+		expect(queryByTestId('gate-resume-btn')).toBeNull();
+		expect(queryByTestId('gate-review-btn')).toBeNull();
+	});
+
+	it('GateArtifactsView onDecision callback closes the review', async () => {
+		mockListGateData.mockResolvedValue([
+			{ runId: 'run-1', gateId: 'gate-1', data: { approved: false }, updatedAt: 0 },
+		]);
+		const task = makeTask({
+			blockReason: 'gate_rejected',
+			workflowRunId: 'run-1',
+		});
+		const { getByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('gate-review-btn')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('gate-review-btn'));
+		expect(getByTestId('gate-artifacts-view')).toBeTruthy();
+
+		// onDecision should also close the review view
+		fireEvent.click(getByTestId('gate-decide'));
+		expect(getByTestId('task-blocked-banner')).toBeTruthy();
 	});
 });
