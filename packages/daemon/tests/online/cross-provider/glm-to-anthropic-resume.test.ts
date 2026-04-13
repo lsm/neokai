@@ -354,7 +354,7 @@ describe('GLM → Anthropic Resume Investigation', () => {
 		// Phase 2: Switch to GLM
 		const switchResult = (await daemon.messageHub.request('session.model.switch', {
 			sessionId,
-			model: 'sonnet',
+			model: 'glm-5',
 			provider: 'glm',
 		})) as { success: boolean; model: string };
 		expect(switchResult.success).toBe(true);

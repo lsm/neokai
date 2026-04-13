@@ -34,7 +34,7 @@ describe('GlmProvider', () => {
 		it('should have correct capabilities', () => {
 			expect(provider.capabilities).toEqual({
 				streaming: true,
-				extendedThinking: false, // GLM doesn't support extended thinking
+				extendedThinking: true,
 				maxContextWindow: 200000,
 				functionCalling: true,
 				vision: true,
