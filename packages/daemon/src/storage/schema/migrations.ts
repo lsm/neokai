@@ -4788,6 +4788,10 @@ function runMigration73(db: BunDatabase): void {
 		}
 
 		if (needsTasksUpdate) {
+			// pr_url/pr_number/pr_created_at may already be removed by M84.
+			// Conditionally include them so this rebuild works on re-run.
+			const hasPrCols = tableHasColumn(db, 'space_tasks', 'pr_url');
+
 			db.exec('PRAGMA foreign_keys = OFF');
 			db.exec('BEGIN');
 			try {
@@ -4813,9 +4817,13 @@ function runMigration73(db: BunDatabase): void {
 						active_session TEXT
 							CHECK(active_session IN ('worker', 'leader')),
 						task_agent_session_id TEXT,
-						pr_url TEXT,
+						${
+							hasPrCols
+								? `pr_url TEXT,
 						pr_number INTEGER,
-						pr_created_at INTEGER,
+						pr_created_at INTEGER,`
+								: ''
+						}
 						archived_at INTEGER,
 						created_at INTEGER NOT NULL,
 						started_at INTEGER,
@@ -4828,11 +4836,13 @@ function runMigration73(db: BunDatabase): void {
 
 				// Use CASE WHEN to map old status values inline so we never write
 				// an old→new value into the still-constrained old table.
+				const prInsertCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
+				const prSelectCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
 				db.exec(`
 					INSERT INTO space_tasks_m71_new
 					  (id, space_id, task_number, title, description, status, priority, labels,
 					   workflow_run_id, created_by_task_id, result, depends_on,
-					   active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+					   active_session, task_agent_session_id${prInsertCols},
 					   archived_at, created_at, started_at, completed_at, updated_at)
 					SELECT
 					  id, space_id, task_number, title, description,
@@ -4848,7 +4858,7 @@ function runMigration73(db: BunDatabase): void {
 					  END,
 					  priority, '[]',
 					  workflow_run_id, created_by_task_id, result, depends_on,
-					  active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+					  active_session, task_agent_session_id${prSelectCols},
 					  archived_at, created_at, started_at, completed_at, updated_at
 					FROM space_tasks
 				`);
@@ -5293,6 +5303,9 @@ function runMigration76(db: BunDatabase): void {
 
 	if (!needsUpdate) return;
 
+	// pr_url/pr_number/pr_created_at may already be removed by M84.
+	const hasPrCols = tableHasColumn(db, 'space_tasks', 'pr_url');
+
 	db.exec('PRAGMA foreign_keys = OFF');
 	db.exec('BEGIN');
 	try {
@@ -5315,9 +5328,13 @@ function runMigration76(db: BunDatabase): void {
 				active_session TEXT
 					CHECK(active_session IN ('worker', 'leader')),
 				task_agent_session_id TEXT,
-				pr_url TEXT,
+				${
+					hasPrCols
+						? `pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER,
+				pr_created_at INTEGER,`
+						: ''
+				}
 				archived_at INTEGER,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
@@ -5328,16 +5345,18 @@ function runMigration76(db: BunDatabase): void {
 			)
 		`);
 
+		const prInsertCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
+		const prSelectCols = hasPrCols ? ', pr_url, pr_number, pr_created_at' : '';
 		db.exec(`
 			INSERT INTO space_tasks_m76_new
 			  (id, space_id, task_number, title, description, status, priority, labels,
 			   workflow_run_id, created_by_task_id, result, depends_on,
-			   active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+			   active_session, task_agent_session_id${prInsertCols},
 			   archived_at, created_at, started_at, completed_at, updated_at)
 			SELECT
 			  id, space_id, task_number, title, description, status, priority, labels,
 			  workflow_run_id, created_by_task_id, result, depends_on,
-			  active_session, task_agent_session_id, pr_url, pr_number, pr_created_at,
+			  active_session, task_agent_session_id${prSelectCols},
 			  archived_at, created_at, started_at, completed_at, updated_at
 			FROM space_tasks
 		`);

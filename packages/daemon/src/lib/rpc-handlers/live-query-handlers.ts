@@ -540,7 +540,7 @@ SELECT
   updated_at    AS updatedAt
 FROM workflow_run_artifacts
 WHERE run_id = ?
-ORDER BY created_at ASC
+ORDER BY created_at ASC, id ASC
 `.trim();
 
 function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {

@@ -262,6 +262,18 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		blacklistedColumns: [],
 		description: 'Cycle counters for workflow channels to prevent infinite loop execution.',
 	},
+	{
+		tableName: 'workflow_run_artifacts',
+		scopeJoin: {
+			localColumn: 'run_id',
+			joinTable: 'space_workflow_runs',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description:
+			'Typed artifacts produced by workflow node agents (PRs, commit sets, test results, deployments).',
+	},
 ];
 
 /**

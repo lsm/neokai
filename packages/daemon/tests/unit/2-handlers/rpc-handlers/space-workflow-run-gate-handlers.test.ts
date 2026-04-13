@@ -28,6 +28,7 @@ import type {
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
 
 // ─── Mock module for execFile (async) ─────────────────────────────────────────
@@ -261,7 +262,10 @@ describe('space-workflow-run gate handlers', () => {
 			taskManagerFactory,
 			daemonHub,
 			createMockSpaceTaskRepo(),
-			createMockSpaceWorktreeManager()
+			createMockSpaceWorktreeManager(),
+			{
+				listByRun: mock(() => []),
+			} as unknown as WorkflowRunArtifactRepository
 		);
 	}
 
