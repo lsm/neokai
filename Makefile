@@ -1,4 +1,4 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
 
 # Development server - uses random available port by default
 # Usage: make dev
@@ -79,12 +79,10 @@ build:
 test: test-daemon test-web
 
 test-daemon:
-	@echo "Running daemon tests..."
-	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots --only-failures packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@./scripts/test-daemon.sh --coverage
 
 test-daemon-shard:
-	@echo "Running daemon tests ($(SHARD))..."
-	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots --ignore=**/neo-daemon-lifecycle.test.ts packages/daemon/tests/unit/$(SHARD) packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@./scripts/test-daemon.sh $(SHARD) --coverage
 
 test-web:
 	@echo "Running web tests..."

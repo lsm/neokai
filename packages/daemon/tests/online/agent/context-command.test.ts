@@ -24,7 +24,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 // Bun automatically loads .env from project root when running tests
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, getSession } from '../../helpers/daemon-actions';
+import {
+	sendMessage,
+	waitForIdle,
+	getSession,
+	waitForSdkMessages,
+} from '../../helpers/daemon-actions';
 import type { ContextInfo } from '@neokai/shared';
 
 // Detect mock mode for faster timeouts (Dev Proxy)
@@ -80,12 +85,16 @@ describe('Context Command Online Tests', () => {
 			// doesn't work well either. Skip detailed assertions in mock mode but verify
 			// basic session functionality works.
 			if (IS_MOCK) {
-				const session = await getSession(daemon, sessionId);
-				// Basic sanity check - session exists and has messages
-				expect(session).toBeDefined();
-				expect(session.metadata).toBeDefined();
-				const metadata = session.metadata as { messageCount?: number };
-				expect(metadata.messageCount).toBeGreaterThan(0);
+				// In mock mode, waitForIdle can resolve before the query starts (race
+				// between fire-and-forget event handler and idle polling). Poll for SDK
+				// messages in the DB as the ground-truth indicator that the query ran.
+				// Don't check session.metadata.messageCount — it's updated in-memory by
+				// handleResultMessage which may not fire in mock mode.
+				const sdkResult = await waitForSdkMessages(daemon, sessionId, {
+					minCount: 2,
+					timeout: IDLE_TIMEOUT,
+				});
+				expect(sdkResult.sdkMessages.length).toBeGreaterThan(0);
 				return;
 			}
 

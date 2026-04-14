@@ -48,8 +48,15 @@ make serve-random                 # Production server on random port
 make run [PORT=8080]             # Production server (PORT optional)
 
 # Testing
-make test-daemon       # Daemon tests only (bun test) with coverage
+make test-daemon       # Daemon tests (all shards in parallel, with coverage)
 make test-web          # Web tests only (vitest run) with coverage
+
+# Daemon test runner (scripts/test-daemon.sh)
+./scripts/test-daemon.sh                # All 7 shards in parallel (fast, no coverage)
+./scripts/test-daemon.sh --coverage     # All shards with coverage
+./scripts/test-daemon.sh 2-handlers     # Run a single shard
+./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
+./scripts/test-daemon.sh --show-failures # Show failure details from last run
 
 # Run a single test file
 cd packages/daemon && bun test tests/unit/some-test.test.ts
