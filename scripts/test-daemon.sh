@@ -15,7 +15,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-SHARDS=(1-core 2-handlers 4-space-storage 5-space-agent 5-space-runtime 5-space-workflow 5-space-other)
+SHARDS=(0-shared 1-core 2-handlers 4-space-storage 5-space-agent 5-space-runtime 5-space-workflow 5-space-other)
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
 PRELOAD="$REPO_ROOT/packages/daemon/tests/unit/setup.ts"
@@ -111,32 +111,42 @@ fi
 # --- Run shards in parallel ---
 PIDS=()
 
+WALL_START=$(date +%s)
+
 echo "Running daemon unit tests (${#RUN_SHARDS[@]} shard(s))..."
 echo ""
 
 for shard in "${RUN_SHARDS[@]}"; do
-	SHARD_PATH=$(shard_path "$shard")
 	JUNIT_FILE="$RESULTS_DIR/junit-${shard}.xml"
 	LOG_FILE="$RESULTS_DIR/output-${shard}.log"
 
-	# Only run shared tests in 1-core shard to avoid duplication
-	SHARED_TESTS=""
-	if [ "$shard" = "1-core" ]; then
-		SHARED_TESTS="packages/shared/tests"
-	fi
+	# 0-shared runs packages/shared/tests (separate process to avoid mock pollution)
+	if [ "$shard" = "0-shared" ]; then
+		# shellcheck disable=SC2086
+		NODE_ENV=test bun test \
+			--preload="$PRELOAD" \
+			--jobs=1 \
+			--dots \
+			--reporter=junit \
+			--reporter-outfile="$JUNIT_FILE" \
+			$COV_FLAGS \
+			"$REPO_ROOT/packages/shared/tests" \
+			>"$LOG_FILE" 2>&1 &
+	else
+		SHARD_PATH=$(shard_path "$shard")
 
-	# shellcheck disable=SC2086
-	NODE_ENV=test bun test \
-		--preload="$PRELOAD" \
-		--jobs=1 \
-		--dots \
-		--reporter=junit \
-		--reporter-outfile="$JUNIT_FILE" \
-		--ignore='**/neo-daemon-lifecycle.test.ts' \
-		$COV_FLAGS \
-		"$TEST_ROOT/$SHARD_PATH" \
-		$SHARED_TESTS \
-		>"$LOG_FILE" 2>&1 &
+		# shellcheck disable=SC2086
+		NODE_ENV=test bun test \
+			--preload="$PRELOAD" \
+			--jobs=1 \
+			--dots \
+			--reporter=junit \
+			--reporter-outfile="$JUNIT_FILE" \
+			--ignore='**/neo-daemon-lifecycle.test.ts' \
+			$COV_FLAGS \
+			"$TEST_ROOT/$SHARD_PATH" \
+			>"$LOG_FILE" 2>&1 &
+	fi
 
 	PIDS+=($!)
 done
@@ -206,6 +216,9 @@ fmt_total=$(awk "BEGIN {printf \"%.1f\", $TOTAL_TIME_MS / 1000}")
 printf "%-22s %8s %8s %8s %8s\n" "----------------------" "--------" "--------" "--------" "--------"
 printf "%-22s %8s %8s %8s %7ss\n" "TOTAL" "$TOTAL_TESTS" "$((TOTAL_TESTS - TOTAL_FAILS - TOTAL_SKIPS))" "$TOTAL_FAILS" "$fmt_total"
 
+WALL_END=$(date +%s)
+WALL_SECS=$((WALL_END - WALL_START))
+
 if [ "$HAD_FAILURE" -eq 1 ]; then
 	echo ""
 	FAIL_COUNT=$(sort -u "$FAILURES_FILE" | wc -l | tr -d ' ')
@@ -220,5 +233,7 @@ else
 	echo ""
 	echo "All tests passed!"
 fi
+
+echo "Wall time: ${WALL_SECS}s"
 
 exit "$HAD_FAILURE"
