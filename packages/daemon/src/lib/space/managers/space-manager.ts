@@ -94,6 +94,7 @@ export class SpaceManager {
 		if (!space) {
 			throw new Error(`Space not found: ${id}`);
 		}
+		if (space.paused) return space;
 
 		const paused = this.spaceRepo.pauseSpace(id);
 		if (!paused) {
@@ -111,6 +112,7 @@ export class SpaceManager {
 		if (!space) {
 			throw new Error(`Space not found: ${id}`);
 		}
+		if (!space.paused) return space;
 
 		const resumed = this.spaceRepo.resumeSpace(id);
 		if (!resumed) {

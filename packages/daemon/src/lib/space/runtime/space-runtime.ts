@@ -905,11 +905,6 @@ export class SpaceRuntime {
 			return;
 		}
 
-		// Skip processing for paused spaces — existing agents keep running but
-		// no new scheduling, retries, or notifications are emitted.
-		const pauseCheckSpace = await this.config.spaceManager.getSpace(run.spaceId);
-		if (pauseCheckSpace?.paused) return;
-
 		// Blocked run recovery: attempt bounded automatic retry before giving up.
 		if (run.status === 'blocked') {
 			await this.attemptBlockedRunRecovery(runId, run);
@@ -1249,6 +1244,10 @@ export class SpaceRuntime {
 			}
 
 			// Step 2: Spawn workflow node agents for pending executions without sessions.
+			// Skip spawning for paused spaces — completion/timeout/crash detection above
+			// still runs so in-flight agents are monitored, but no new agents are started.
+			if (space?.paused) return;
+
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(
 				(execution) => execution.status === 'pending' && !execution.agentSessionId

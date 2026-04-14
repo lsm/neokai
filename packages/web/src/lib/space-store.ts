@@ -166,8 +166,8 @@ class SpaceStore {
 	// ========================================
 
 	/** Derive runtime state from Space fields */
-	private updateRuntimeState(space: Space | null): void {
-		if (!space || space.status === 'archived') {
+	private updateRuntimeState(space: Space): void {
+		if (space.status === 'archived') {
 			this.runtimeState.value = 'stopped';
 			return;
 		}

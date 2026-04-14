@@ -55,6 +55,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		backgroundContext: '',
 		sessionIds: [],
 		status: 'active',
+		paused: false,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
