@@ -175,6 +175,24 @@ export class SpaceRepository {
 	}
 
 	/**
+	 * Pause a space (stops runtime task scheduling without archiving)
+	 */
+	pauseSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET paused = 1, updated_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Resume a paused space
+	 */
+	resumeSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET paused = 0, updated_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
 	 * Archive a space
 	 */
 	archiveSpace(id: string): Space | null {
@@ -261,6 +279,7 @@ export class SpaceRepository {
 			allowedModels: rawModels.length > 0 ? rawModels : undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
+			paused: (row.paused as number) === 1,
 			autonomyLevel: rawAutonomyLevel as SpaceAutonomyLevel,
 			config,
 			createdAt: row.created_at as number,

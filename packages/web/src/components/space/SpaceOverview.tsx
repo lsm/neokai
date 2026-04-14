@@ -71,7 +71,17 @@ const RUNTIME_STYLES: Record<
 	},
 };
 
-function RuntimeControlBar({ state }: { state: RuntimeState }) {
+function RuntimeControlBar({
+	state,
+	actionLoading,
+	onPause,
+	onResume,
+}: {
+	state: RuntimeState;
+	actionLoading: boolean;
+	onPause: () => void;
+	onResume: () => void;
+}) {
 	const style = RUNTIME_STYLES[state];
 
 	return (
@@ -94,7 +104,30 @@ function RuntimeControlBar({ state }: { state: RuntimeState }) {
 						/>
 					)}
 				</div>
-				<span class="text-sm font-semibold text-gray-100">{style.label}</span>
+				<div>
+					<span class="text-sm font-semibold text-gray-100">{style.label}</span>
+					{actionLoading && <span class="ml-2 text-xs text-gray-500 italic">Processing...</span>}
+				</div>
+			</div>
+			<div class="flex items-center gap-2">
+				{state === 'running' && (
+					<button
+						onClick={onPause}
+						disabled={actionLoading}
+						class="px-4 py-2 text-sm font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
+					>
+						Pause
+					</button>
+				)}
+				{state === 'paused' && (
+					<button
+						onClick={onResume}
+						disabled={actionLoading}
+						class="px-4 py-2 text-sm font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+					>
+						Resume
+					</button>
+				)}
 			</div>
 		</div>
 	);
@@ -143,6 +176,25 @@ interface SpaceOverviewProps {
 
 export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const [showCreateTask, setShowCreateTask] = useState(false);
+	const [actionLoading, setActionLoading] = useState(false);
+
+	const handlePause = useCallback(async () => {
+		setActionLoading(true);
+		try {
+			await spaceStore.pauseSpace();
+		} finally {
+			setActionLoading(false);
+		}
+	}, []);
+
+	const handleResume = useCallback(async () => {
+		setActionLoading(true);
+		try {
+			await spaceStore.resumeSpace();
+		} finally {
+			setActionLoading(false);
+		}
+	}, []);
 
 	const handleNewSession = useCallback(async () => {
 		const space = spaceStore.space.value;
@@ -197,8 +249,15 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 			<div class="min-h-[calc(100%+1px)] space-y-6">
 				<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-				{/* Runtime state (shown when available) */}
-				{runtimeState && <RuntimeControlBar state={runtimeState} />}
+				{/* Runtime state with pause/resume controls */}
+				{runtimeState && (
+					<RuntimeControlBar
+						state={runtimeState}
+						actionLoading={actionLoading}
+						onPause={() => void handlePause()}
+						onResume={() => void handleResume()}
+					/>
+				)}
 
 				{/* Stats strip */}
 				<div class="grid grid-cols-3 gap-3">

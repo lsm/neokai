@@ -360,6 +360,15 @@ export class SpaceRuntime {
 		}
 	}
 
+	/**
+	 * Returns active, non-paused spaces.
+	 * Used by tick-loop methods to skip paused spaces.
+	 */
+	private async listActiveSpaces(): Promise<import('@neokai/shared').Space[]> {
+		const spaces = await this.config.spaceManager.listSpaces(false);
+		return spaces.filter((s) => !s.paused);
+	}
+
 	private async updateTaskAndEmit(
 		spaceId: string,
 		taskId: string,
@@ -531,7 +540,7 @@ export class SpaceRuntime {
 	 * where external paths marked the run terminal but left task state inconsistent.
 	 */
 	private async reconcileTerminalRunsWithoutExecutors(): Promise<void> {
-		const spaces = await this.config.spaceManager.listSpaces(false);
+		const spaces = await this.listActiveSpaces();
 		for (const space of spaces) {
 			const terminalRuns = this.config.workflowRunRepo
 				.listBySpace(space.id)
@@ -895,6 +904,11 @@ export class SpaceRuntime {
 		if (run.status === 'cancelled' || run.status === 'done') {
 			return;
 		}
+
+		// Skip processing for paused spaces — existing agents keep running but
+		// no new scheduling, retries, or notifications are emitted.
+		const pauseCheckSpace = await this.config.spaceManager.getSpace(run.spaceId);
+		if (pauseCheckSpace?.paused) return;
 
 		// Blocked run recovery: attempt bounded automatic retry before giving up.
 		if (run.status === 'blocked') {
@@ -1537,7 +1551,7 @@ export class SpaceRuntime {
 	 * of outstanding issues. See the `notifiedTaskSet` field comment for details.
 	 */
 	private async checkStandaloneTasks(): Promise<void> {
-		const spaces = await this.config.spaceManager.listSpaces(false);
+		const spaces = await this.listActiveSpaces();
 
 		for (const space of spaces) {
 			// Fetch all standalone tasks including archived ones for the dedup cleanup pass.
@@ -1612,7 +1626,7 @@ export class SpaceRuntime {
 	 * 3. Attach the original task to the run and mark it in_progress
 	 */
 	private async attachStandaloneTasksToWorkflows(): Promise<void> {
-		const spaces = await this.config.spaceManager.listSpaces(false);
+		const spaces = await this.listActiveSpaces();
 
 		for (const space of spaces) {
 			const workflows = this.config.spaceWorkflowManager.listWorkflows(space.id);

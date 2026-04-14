@@ -300,6 +300,44 @@ export function setupSpaceHandlers(
 		return space;
 	});
 
+	// ─── space.pause ───────────────────────────────────────────────────────────
+	messageHub.onRequest('space.pause', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const space = await spaceManager.pauseSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
+	// ─── space.resume ──────────────────────────────────────────────────────────
+	messageHub.onRequest('space.resume', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const space = await spaceManager.resumeSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
 	// ─── space.delete ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.delete', async (data) => {
 		const params = data as { id: string };

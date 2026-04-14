@@ -115,6 +115,8 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
 		listSpaces: mock(async () => (space ? [space] : [])),
 		updateSpace: mock(async () => space!),
 		archiveSpace: mock(async () => ({ ...space!, status: 'archived' as const })),
+		pauseSpace: mock(async () => ({ ...space!, paused: true })),
+		resumeSpace: mock(async () => ({ ...space!, paused: false })),
 		deleteSpace: mock(async () => true),
 		addSession: mock(async () => space!),
 		removeSession: mock(async () => space!),
@@ -683,6 +685,48 @@ describe('space-handlers', () => {
 			await expect(call('space.overview', { id: 'ghost' })).rejects.toThrow(
 				'Space not found: ghost'
 			);
+		});
+	});
+
+	// ─── space.pause ──────────────────────────────────────────────────────────
+	describe('space.pause', () => {
+		beforeEach(() => setup());
+
+		it('pauses a space and emits space.updated', async () => {
+			const result = (await call('space.pause', { id: 'space-1' })) as Space;
+
+			expect(result.paused).toBe(true);
+			expect(spaceManager.pauseSpace).toHaveBeenCalledWith('space-1');
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: result,
+			});
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call('space.pause', {})).rejects.toThrow('id is required');
+		});
+	});
+
+	// ─── space.resume ─────────────────────────────────────────────────────────
+	describe('space.resume', () => {
+		beforeEach(() => setup());
+
+		it('resumes a space and emits space.updated', async () => {
+			const result = (await call('space.resume', { id: 'space-1' })) as Space;
+
+			expect(result.paused).toBe(false);
+			expect(spaceManager.resumeSpace).toHaveBeenCalledWith('space-1');
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: result,
+			});
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call('space.resume', {})).rejects.toThrow('id is required');
 		});
 	});
 });

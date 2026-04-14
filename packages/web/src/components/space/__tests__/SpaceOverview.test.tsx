@@ -16,6 +16,9 @@ let mockSessions: ReturnType<
 	typeof signal<{ id: string; title?: string; status: string; lastActiveAt: number }[]>
 >;
 
+const mockPauseSpace = vi.fn().mockResolvedValue(undefined);
+const mockResumeSpace = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
 		return {
@@ -24,6 +27,8 @@ vi.mock('../../../lib/space-store', () => ({
 			tasks: mockTasks,
 			runtimeState: mockRuntimeState,
 			sessions: mockSessions,
+			pauseSpace: mockPauseSpace,
+			resumeSpace: mockResumeSpace,
 		};
 	},
 }));
@@ -88,6 +93,9 @@ describe('SpaceOverview', () => {
 		mockLoading.value = false;
 		mockTasks.value = [];
 		mockRuntimeState.value = null;
+		mockSessions.value = [];
+		mockPauseSpace.mockClear();
+		mockResumeSpace.mockClear();
 	});
 
 	afterEach(() => {
@@ -217,5 +225,84 @@ describe('SpaceOverview', () => {
 		stats = getStatText();
 		expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
 		expect(stats.some((t) => t?.includes('Review') && t?.includes('1'))).toBe(true);
+	});
+
+	describe('Runtime State Indicator', () => {
+		it('shows running state with green indicator and ping animation', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'running';
+			const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('Running')).toBeTruthy();
+			expect(container.querySelector('.bg-green-400')).toBeTruthy();
+			expect(container.querySelector('.animate-ping')).toBeTruthy();
+		});
+
+		it('shows paused state with yellow indicator and no ping', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'paused';
+			const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('Paused')).toBeTruthy();
+			expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
+			expect(container.querySelector('.animate-ping')).toBeFalsy();
+		});
+
+		it('shows stopped state with gray indicator', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'stopped';
+			const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('Stopped')).toBeTruthy();
+			expect(container.querySelector('.bg-gray-500')).toBeTruthy();
+		});
+	});
+
+	describe('Runtime Control Buttons', () => {
+		it('shows Pause button when running, no Resume button', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'running';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const buttons = Array.from(container.querySelectorAll('button'));
+			expect(buttons.find((b) => b.textContent === 'Pause')).toBeTruthy();
+			expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
+		});
+
+		it('shows Resume button when paused, no Pause button', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'paused';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const buttons = Array.from(container.querySelectorAll('button'));
+			expect(buttons.find((b) => b.textContent === 'Resume')).toBeTruthy();
+			expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
+		});
+
+		it('shows no control buttons when stopped', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'stopped';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const buttons = Array.from(container.querySelectorAll('button'));
+			expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
+			expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
+		});
+
+		it('calls pauseSpace when Pause is clicked', async () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'running';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const pauseBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Pause'
+			)!;
+			await fireEvent.click(pauseBtn);
+			expect(mockPauseSpace).toHaveBeenCalledTimes(1);
+		});
+
+		it('calls resumeSpace when Resume is clicked', async () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'paused';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const resumeBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Resume'
+			)!;
+			await fireEvent.click(resumeBtn);
+			expect(mockResumeSpace).toHaveBeenCalledTimes(1);
+		});
 	});
 });

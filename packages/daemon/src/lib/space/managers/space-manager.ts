@@ -87,6 +87,40 @@ export class SpaceManager {
 	}
 
 	/**
+	 * Pause a space (stops runtime task scheduling without archiving)
+	 */
+	async pauseSpace(id: string): Promise<Space> {
+		const space = this.spaceRepo.getSpace(id);
+		if (!space) {
+			throw new Error(`Space not found: ${id}`);
+		}
+
+		const paused = this.spaceRepo.pauseSpace(id);
+		if (!paused) {
+			throw new Error(`Failed to pause space: ${id}`);
+		}
+
+		return paused;
+	}
+
+	/**
+	 * Resume a paused space
+	 */
+	async resumeSpace(id: string): Promise<Space> {
+		const space = this.spaceRepo.getSpace(id);
+		if (!space) {
+			throw new Error(`Space not found: ${id}`);
+		}
+
+		const resumed = this.spaceRepo.resumeSpace(id);
+		if (!resumed) {
+			throw new Error(`Failed to resume space: ${id}`);
+		}
+
+		return resumed;
+	}
+
+	/**
 	 * Archive a space
 	 */
 	async archiveSpace(id: string): Promise<Space> {

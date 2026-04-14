@@ -357,6 +357,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Creates workflow_run_artifacts table for typed node outputs (PRs, commits, etc.).
 	//   - Drops pr_url, pr_number, pr_created_at from space_tasks (replaced by artifacts).
 	runMigration84(db);
+
+	// Migration 85: Add paused column to spaces.
+	//   Allows users to pause/resume space runtime execution without archiving.
+	runMigration85(db);
 }
 
 /**
@@ -5716,4 +5720,17 @@ function runMigration84(db: BunDatabase): void {
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}
+}
+
+/**
+ * Migration 85: Add paused column to spaces table.
+ *
+ * Allows users to pause/resume space runtime execution without archiving.
+ * Paused spaces skip task scheduling and workflow processing in the tick loop.
+ * Default: 0 (not paused).
+ */
+function runMigration85(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'paused')) return;
+	db.exec(`ALTER TABLE spaces ADD COLUMN paused INTEGER NOT NULL DEFAULT 0`);
 }

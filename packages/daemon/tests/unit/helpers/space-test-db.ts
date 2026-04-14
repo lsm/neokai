@@ -30,6 +30,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			session_ids TEXT NOT NULL DEFAULT '[]',
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'archived')),
+			paused INTEGER NOT NULL DEFAULT 0,
 			autonomy_level TEXT NOT NULL DEFAULT 'supervised',
 			config TEXT,
 			created_at INTEGER NOT NULL,
