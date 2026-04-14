@@ -70,7 +70,7 @@ that must guide every implementation decision in this gap list.
 
 CLAUDE.md states: *"Semi-autonomous: Worker can merge approved PRs without human confirmation"*
 
-Tasks track `prUrl`, `prNumber`, `prCreatedAt` but:
+PR tracking migrated from hardcoded `SpaceTask` fields to `workflow_run_artifacts` table (PR #1496), but:
 - No merge logic exists
 - No gate script template for "wait for N approvals + CI green"
 - No differentiation between supervised (human must merge) and semi-autonomous (agent can merge approved PRs)
@@ -80,7 +80,7 @@ Tasks track `prUrl`, `prNumber`, `prCreatedAt` but:
 
 ---
 
-### 2. Approval Notification/Queue UI ✅ PR #TBD
+### 2. Approval Notification/Queue UI ✅ PR #1491
 
 Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists. However:
 - ~~No notification to tell humans a gate is waiting~~
@@ -99,15 +99,20 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 
 ---
 
-### 2b. Action UI (Approve/Reject/Resolve)
+### 2b. Action UI (Approve/Reject/Resolve) ✅ PR #1493
 
-Gap #2 surfaces *that* tasks need human attention, but there is no UI for *taking* that action.
+~~Gap #2 surfaces *that* tasks need human attention, but there is no UI for *taking* that action.~~
 
-Missing:
-- Approve/reject buttons for gate-pending tasks (`spaceWorkflowRun.approveGate` RPC exists but has no UI)
+~~Missing:~~
+- ~~Approve/reject buttons for gate-pending tasks (`spaceWorkflowRun.approveGate` RPC exists but has no UI)~~
 - Input form for `human_input_requested` tasks (agent asked a question, human has no way to answer)
-- "Mark done" / "Re-open" actions for tasks in `review` status
-- Contextual display of *why* the task is blocked (gate message, agent's question, dependency chain)
+- ~~"Mark done" / "Re-open" actions for tasks in `review` status~~
+- ~~Contextual display of *why* the task is blocked (gate message, agent's question, dependency chain)~~
+
+**Implemented:**
+- `TaskBlockedBanner` component with distinct UI per `blockReason` (6 reason types)
+- Gate approval flow: `gate_rejected` banner → "Review & Approve" → `GateArtifactsView` inline with diff review + approve/reject
+- `listGateData` and `approveGate` wired to frontend `spaceStore`
 
 **Depends on:** Gap #2 (notification/queue), Gap #8 (block reasons)  
 **Impact:** High — without action UI, the notification queue is informational only  
@@ -115,13 +120,19 @@ Missing:
 
 ---
 
-### 3. Approval Audit Trail
+### 3. Approval Audit Trail ✅ PR #1481
 
-When a human approves a gate or transitions a task from `review` -> `done`:
-- No record of **who** approved or **when**
-- No approval comment/reason field
-- Room system tracks `approvalSource` (`"human"` vs `"leader_semi_auto"`) but space system doesn't
-- No audit log for gate state changes
+~~When a human approves a gate or transitions a task from `review` -> `done`:~~
+- ~~No record of **who** approved or **when**~~
+- ~~No approval comment/reason field~~
+- ~~Room system tracks `approvalSource` (`"human"` vs `"leader_semi_auto"`) but space system doesn't~~
+- ~~No audit log for gate state changes~~
+
+**Implemented:**
+- `SpaceApprovalSource` type (`human | neo_agent | space_agent | task_agent | node_agent | semi_auto`)
+- `approvalSource`, `approvalReason`, `approvedAt` stamped on SpaceTask and gate data at every code path
+- `approve_gate` tool added to Space Agent and Task Agent; `approve_task` tool added to Space Agent
+- Approval metadata cleared on task reactivation (done → in_progress)
 
 **Impact:** Medium — no accountability  
 **Effort:** Low
@@ -141,13 +152,19 @@ Semi-autonomous is identical to supervised during execution. Missing:
 
 ---
 
-### 5. Task Dependency Enforcement
+### 5. Task Dependency Enforcement ✅ PR #1488
 
-`SpaceTask.dependsOn` stores dependency IDs but is **not enforced at runtime**:
-- Tasks with unmet deps can be started
-- No auto-blocking when dependencies incomplete
-- No auto-unblocking when dependencies complete
-- `cancelTaskCascade()` exists for cancellation propagation but no `completionCascade()` for unblocking
+~~`SpaceTask.dependsOn` stores dependency IDs but is **not enforced at runtime**:~~
+- ~~Tasks with unmet deps can be started~~
+- ~~No auto-blocking when dependencies incomplete~~
+- ~~No auto-unblocking when dependencies complete~~
+- ~~`cancelTaskCascade()` exists for cancellation propagation but no `completionCascade()` for unblocking~~
+
+**Implemented:**
+- `areDependenciesMet()` check at scheduling time — tasks with unmet deps stay `open`
+- DFS-based circular dependency detection on create and update
+- `blockDependentTasks()` cascades `dependency_failed` block reason to open dependents on failure/cancel
+- Dependency ID validation on `updateTask()` (was only on create)
 
 **Impact:** Medium  
 **Effort:** Medium
@@ -186,17 +203,17 @@ No cross-pollination of patterns between the two systems.
 
 ---
 
-### 8. Block Reason Tagging for Space Tasks
+### 8. Block Reason Tagging for Space Tasks ✅ PR #1486
 
-Space tasks use a single `blocked` status for all failure modes. Once a task is blocked,
+~~Space tasks use a single `blocked` status for all failure modes. Once a task is blocked,
 nothing in the system knows *why* — the UI, notifications, retry logic, and Space Agent
-all see the same opaque state.
+all see the same opaque state.~~
 
 **Approach:** Keep `blocked` as the only status. Add a `blockReason` field that records
 the specific cause. Downstream systems (notifications, retry, autonomy) branch on the
 reason, not the status.
 
-**Block reasons (by code path):**
+**Implemented block reasons (by code path):**
 
 | Reason | Trigger | Who resolves | Auto-recoverable? |
 |--------|---------|-------------|-------------------|
@@ -205,7 +222,12 @@ reason, not the status.
 | `execution_failed` | Node hit unrecoverable error | Space Agent → human | No |
 | `human_input_requested` | Task Agent called `request_human_input` | Human (answer the question) | No (by design) |
 | `gate_rejected` | Human or agent rejected a gate | Human (re-approve or revise) | No |
-| `dependency_failed` | Upstream task failed (future, Gap 5) | Depends on upstream fix | No |
+| `dependency_failed` | Upstream task failed (Gap #5) | Depends on upstream fix | No |
+
+**Implemented:**
+- 6 structured `blockReason` types with `stampBlockReason()` / `clearBlockReason()` API
+- `gate_rejected` wired into approval gate rejection flow
+- `dependency_failed` wired into dependency cascade (PR #1488)
 
 **Why not a separate `needs_attention` status?**
 - No status machine changes, no migration of existing tasks
@@ -242,21 +264,62 @@ Workflow topology is fixed regardless of autonomy level:
 
 ---
 
+### 11. Runtime Lifecycle Controls (Start/Pause/Resume) ✅
+
+~~SpaceRuntime has `start()` and `stop()` methods but they are internal-only — no RPC handlers, no UI controls. There is no pause/resume concept at all.~~
+
+**Implemented:**
+- `paused` boolean field on Space (migration 85)
+- `space.pause` / `space.resume` RPC handlers with `space.updated` event emission
+- Tick loop skips paused spaces: `listActiveSpaces()` filters them out, `processRunTick` checks `space.paused`
+- `SpaceStore.pauseSpace()` / `resumeSpace()` frontend methods
+- `RuntimeControlBar` in SpaceOverview with Pause/Resume buttons
+- `runtimeState` signal derived from `space.paused` + `space.status`
+
+**Impact:** High — users cannot control execution flow  
+**Effort:** Low-Medium
+
+---
+
+### 12. Autonomy Level UI Toggle (Manual/Semi-Auto/Full-Auto)
+
+The autonomy model is binary (`supervised` / `semi_autonomous`) and has no UI toggle.
+
+Current state:
+- `SpaceAutonomyLevel = 'supervised' | 'semi_autonomous'` — set at creation, changeable via `space.update` RPC
+- `SpaceSettings.tsx` does NOT expose autonomyLevel for editing
+- No "manual" mode (human triggers each task, no auto-scheduling)
+- No "full autonomous" mode (skip all review, no escalation)
+- Autonomy only affects task terminal status (review vs done) — one decision point
+
+Missing:
+- UI toggle in SpaceSettings for autonomy level
+- "Manual" autonomy level — runtime doesn't auto-schedule tasks, human must explicitly start each one
+- "Full autonomous" level — no review step, aggressive retry, minimal escalation
+- Per-task autonomy override (some tasks need human review even in semi-auto spaces)
+
+**Impact:** Medium — users can't change autonomy through UI, can't express manual or full-auto intent  
+**Effort:** Medium
+
+---
+
 ## Priority Matrix
 
-| # | Gap | Impact | Effort | Priority |
-|---|-----|--------|--------|----------|
-| 1 | PR auto-merge for semi-autonomous | High | Medium | **P0** |
-| 2 | Approval notification/queue UI | Medium | Medium | **P1** |
-| 2b | Action UI (approve/reject/resolve) | High | Medium | **P1** |
-| 3 | Approval audit trail | Medium | Low | **P1** |
-| 4 | Execution-time autonomy differentiation | High | High | **P2** |
-| 5 | Task dependency enforcement | Medium | Medium | **P2** |
-| 6 | Tiered retry by autonomy level | Medium | Medium | **P2** |
-| 7 | Room/Space autonomy unification | High | High | **P3** |
-| 8 | Block reason tagging for space tasks | Low-Medium | Low | **P2** |
-| 9 | Human review SLA/timeout | Low | Low | **P3** |
-| 10 | Conditional branching by autonomy | Medium | High | **P3** |
+| # | Gap | Impact | Effort | Priority | Status |
+|---|-----|--------|--------|----------|--------|
+| 1 | PR auto-merge for semi-autonomous | High | Medium | **P0** | |
+| 2 | Approval notification/queue UI | Medium | Medium | **P1** | ✅ PR #1491 |
+| 2b | Action UI (approve/reject/resolve) | High | Medium | **P1** | ✅ PR #1493 |
+| 3 | Approval audit trail | Medium | Low | **P1** | ✅ PR #1481 |
+| 4 | Execution-time autonomy differentiation | High | High | **P2** | |
+| 5 | Task dependency enforcement | Medium | Medium | **P2** | ✅ PR #1488 |
+| 6 | Tiered retry by autonomy level | Medium | Medium | **P2** | |
+| 7 | Room/Space autonomy unification | High | High | **P3** | |
+| 8 | Block reason tagging for space tasks | Low-Medium | Low | **P2** | ✅ PR #1486 |
+| 9 | Human review SLA/timeout | Low | Low | **P3** | |
+| 10 | Conditional branching by autonomy | Medium | High | **P3** | |
+| 11 | Runtime lifecycle controls | High | Low-Medium | **P1** | ✅ |
+| 12 | Autonomy level UI toggle | Medium | Medium | **P2** | |
 
 ## Dependency Graph & Implementation Order
 
@@ -285,14 +348,21 @@ Gap 6 (Tiered Retry) ───────────────────�
 | 1 | **#3 Audit trail** | Foundation — everything else needs to record who/when/why | Low | **Done** (PR #1481) |
 | 2 | **#8 Block reason tagging** | Foundation — distinguishes block types for notifications & retry | Low | **Done** (PR #1486) |
 | 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | **Done** (PR #1488) |
-| 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | |
-| 5 | **#2b Action UI** | Builds on #2, makes notification queue actionable | Medium | |
+| 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | **Done** (PR #1491) |
+| 5 | **#2b Action UI** | Builds on #2, makes notification queue actionable | Medium | **Done** (PR #1493) |
 | 6 | **#9 Review SLA** | Small, builds on audit trail | Low | |
-| 7 | **#6 Tiered retry** | Standalone, but informed by needs_attention distinction | Medium | |
+| 7 | **#6 Tiered retry** | Standalone, but informed by block reason distinction | Medium | |
 | 8 | **#1 PR auto-merge** | Needs audit trail + notification + action UI in place | Medium | |
-| 9 | **#4 Execution-time autonomy** | Builds on retry + needs_attention + audit | High | |
+| 9 | **#4 Execution-time autonomy** | Builds on retry + block reasons + audit | High | |
 | 10 | **#10 Conditional branching** | Extends execution-time autonomy into workflow topology | High | |
 | 11 | **#7 Room/Space unification** | Last — needs both systems mature before merging patterns | High | |
+
+### Related Infrastructure Changes
+
+| PR | Change | Gaps affected |
+|----|--------|---------------|
+| #1464 | Replace `done`/`report_done`/`write_gate` with `idle`/`save`/auto-gate-write | #2b (gate flow) |
+| #1496 | Workflow run artifacts — typed node outputs replacing task-level PR fields | #1 (PR auto-merge prerequisite) |
 
 ## Key Files Reference
 

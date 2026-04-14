@@ -162,6 +162,19 @@ class SpaceStore {
 	private activeAttentionTasksSubscriptionId: string | null = null;
 
 	// ========================================
+	// Private Helpers
+	// ========================================
+
+	/** Derive runtime state from Space fields */
+	private updateRuntimeState(space: Space): void {
+		if (space.status === 'archived') {
+			this.runtimeState.value = 'stopped';
+			return;
+		}
+		this.runtimeState.value = space.paused ? 'paused' : 'running';
+	}
+
+	// ========================================
 	// Computed Signals
 	// ========================================
 
@@ -594,7 +607,9 @@ class SpaceStore {
 			space?: Partial<Space>;
 		}>('space.updated', (event) => {
 			if (event.spaceId === spaceId && event.space && this.space.value) {
-				this.space.value = { ...this.space.value, ...event.space } as Space;
+				const updated = { ...this.space.value, ...event.space } as Space;
+				this.space.value = updated;
+				this.updateRuntimeState(updated);
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceUpdated);
@@ -831,6 +846,7 @@ class SpaceStore {
 		}
 
 		this.space.value = overview.space;
+		this.updateRuntimeState(overview.space);
 		this.workflowRuns.value = overview.workflowRuns ?? [];
 		// Server already returns collapsed tasks via collapseToCanonicalTasks — use directly
 		this.tasks.value = overview.tasks ?? [];
@@ -1532,6 +1548,7 @@ class SpaceStore {
 		const space = await hub.request<Space>('space.update', { id: spaceId, ...params });
 		if (space) {
 			this.space.value = space;
+			this.updateRuntimeState(space);
 		}
 	}
 
@@ -1548,6 +1565,40 @@ class SpaceStore {
 		await hub.request('space.archive', { id: spaceId });
 		// Clear selection after archive
 		await this.clearSpace();
+	}
+
+	/**
+	 * Pause the current space (stops task scheduling without archiving)
+	 */
+	async pauseSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.pause', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
+	}
+
+	/**
+	 * Resume a paused space
+	 */
+	async resumeSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.resume', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
 	}
 
 	/**

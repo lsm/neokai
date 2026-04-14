@@ -83,6 +83,8 @@ export interface Space {
 	sessionIds: string[];
 	/** Current status of the Space */
 	status: SpaceStatus;
+	/** Whether the space runtime is paused (no new tasks scheduled or executed) */
+	paused: boolean;
 	/** Autonomy level — controls how much the Space Agent can act without human approval */
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */

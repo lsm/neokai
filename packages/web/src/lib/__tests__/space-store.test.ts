@@ -47,6 +47,7 @@ function makeSpace(id = 'space-1'): Space {
 		instructions: '',
 		sessionIds: [],
 		status: 'active',
+		paused: false,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -169,6 +170,8 @@ function makeMockHub() {
 			if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
 			// Daemon returns Space directly (not wrapped)
+			if (method === 'space.pause') return { ...makeSpace(), paused: true };
+			if (method === 'space.resume') return { ...makeSpace(), paused: false };
 			if (method === 'space.update') return makeSpace();
 			// Daemon returns SpaceTask directly (not wrapped)
 			if (method === 'spaceTask.create') return makeTask('new-task');
@@ -1088,6 +1091,119 @@ describe('SpaceStore — CRUD methods', () => {
 		await expect(spaceStore.deleteSpace()).rejects.toThrow('No space selected');
 		await expect(spaceStore.createAgent({ name: 'A' })).rejects.toThrow('No space selected');
 		await expect(spaceStore.createWorkflow({ name: 'W' })).rejects.toThrow('No space selected');
+	});
+
+	it('pauseSpace calls space.pause RPC and updates space + runtimeState', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.pauseSpace();
+
+		expect(mockHub.request).toHaveBeenCalledWith('space.pause', { id: 'space-1' });
+		expect(spaceStore.space.value?.paused).toBe(true);
+		expect(spaceStore.runtimeState.value).toBe('paused');
+	});
+
+	it('resumeSpace calls space.resume RPC and updates space + runtimeState', async () => {
+		await spaceStore.selectSpace('space-1');
+		// First pause, then resume
+		await spaceStore.pauseSpace();
+		expect(spaceStore.runtimeState.value).toBe('paused');
+
+		await spaceStore.resumeSpace();
+
+		expect(mockHub.request).toHaveBeenCalledWith('space.resume', { id: 'space-1' });
+		expect(spaceStore.space.value?.paused).toBe(false);
+		expect(spaceStore.runtimeState.value).toBe('running');
+	});
+
+	it('pauseSpace throws when no space selected', async () => {
+		await spaceStore.clearSpace();
+		await expect(spaceStore.pauseSpace()).rejects.toThrow('No space selected');
+	});
+
+	it('resumeSpace throws when no space selected', async () => {
+		await spaceStore.clearSpace();
+		await expect(spaceStore.resumeSpace()).rejects.toThrow('No space selected');
+	});
+});
+
+describe('SpaceStore — runtimeState', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('runtimeState is "running" for active non-paused space', async () => {
+		await spaceStore.selectSpace('space-1');
+		// makeSpace() returns status: 'active', no paused field → running
+		expect(spaceStore.runtimeState.value).toBe('running');
+	});
+
+	it('runtimeState is "stopped" for archived space', async () => {
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview') {
+				return {
+					space: { ...makeSpace(), status: 'archived' },
+					tasks: [],
+					workflowRuns: [],
+					sessions: [],
+				};
+			}
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.runtimeState.value).toBe('stopped');
+	});
+
+	it('runtimeState is "paused" for paused space', async () => {
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview') {
+				return {
+					space: { ...makeSpace(), paused: true },
+					tasks: [],
+					workflowRuns: [],
+					sessions: [],
+				};
+			}
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.runtimeState.value).toBe('paused');
+	});
+
+	it('runtimeState is null when no space is selected', async () => {
+		await spaceStore.clearSpace();
+		expect(spaceStore.runtimeState.value).toBeNull();
+	});
+
+	it('space.updated event with paused: true updates runtimeState to paused', async () => {
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.runtimeState.value).toBe('running');
+
+		fireMockEvent('space.updated', {
+			spaceId: 'space-1',
+			space: { paused: true },
+		});
+
+		expect(spaceStore.runtimeState.value).toBe('paused');
+		expect(spaceStore.space.value?.paused).toBe(true);
+	});
+
+	it('space.updated event with paused: false updates runtimeState to running', async () => {
+		await spaceStore.selectSpace('space-1');
+		// Set to paused first
+		fireMockEvent('space.updated', {
+			spaceId: 'space-1',
+			space: { paused: true },
+		});
+		expect(spaceStore.runtimeState.value).toBe('paused');
+
+		// Now resume via event
+		fireMockEvent('space.updated', {
+			spaceId: 'space-1',
+			space: { paused: false },
+		});
+
+		expect(spaceStore.runtimeState.value).toBe('running');
 	});
 });
 
