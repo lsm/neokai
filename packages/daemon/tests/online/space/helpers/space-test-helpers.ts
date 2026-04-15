@@ -351,7 +351,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 					{
 						name: 'approved',
 						type: 'boolean',
-						writers: ['reviewer', 'human'],
+						writers: [],
 						check: { op: '==', value: true },
 					},
 				],
@@ -370,7 +370,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 					{
 						name: 'votes',
 						type: 'map',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: 'count', match: 'approved', min: 3 },
 					},
 				],
@@ -383,7 +383,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 					{
 						name: 'votes',
 						type: 'map',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: 'count', match: 'rejected', min: 1 },
 					},
 				],

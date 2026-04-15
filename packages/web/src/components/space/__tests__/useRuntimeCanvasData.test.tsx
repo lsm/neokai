@@ -92,9 +92,14 @@ function makeGate(overrides: Partial<Gate> = {}): Gate {
 	return {
 		id: 'gate-1',
 		fields: [
-			{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+			{
+				name: 'approved',
+				type: 'boolean',
+				writers: [],
+				check: { op: '==', value: true },
+			},
 		],
-		description: 'Human approval',
+		description: 'Reviewer approval',
 		resetOnCycle: false,
 		...overrides,
 	};

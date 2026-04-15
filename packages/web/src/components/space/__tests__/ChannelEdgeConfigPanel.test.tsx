@@ -199,7 +199,12 @@ describe('ChannelEdgeConfigPanel — gate summary', () => {
 	it('renders field rows when gate has both fields and script', () => {
 		const gate = makeGate({
 			fields: [
-				{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: '==', value: true } },
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: [],
+					check: { op: '==', value: true },
+				},
 				{ name: 'score', type: 'number', writers: ['*'], check: { op: 'exists' } },
 			],
 			script: { interpreter: 'bash', source: 'true' },

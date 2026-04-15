@@ -228,7 +228,7 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]):
  * Authorization rules:
  * - `writers` absent or empty  → authorized iff `agentNodeName === channel.from`
  * - `writers` includes `'*'`   → always authorized
- * - `writers` includes `'human'` only → never authorized (human-only gate)
+ * - `writers` is empty `[]`   → never authorized (external-only gate, written by human via RPC or auto-approval)
  * - `writers` includes node names → authorized iff `agentNodeName` is in the list
  *
  * @param agentNodeName - The name of the node this agent belongs to.
@@ -240,13 +240,11 @@ export function isGateWriterAuthorized(
 	channel: WorkflowChannel,
 	writers: string[]
 ): boolean {
-	if (!writers || writers.length === 0) {
+	if (!writers) {
 		// Inferred: FROM node agents can write
 		return agentNodeName === channel.from;
 	}
+	if (writers.length === 0) return false; // external-only gate
 	if (writers.includes('*')) return true;
-	// All remaining entries are treated as explicit node names
-	const nonHuman = writers.filter((w) => w !== 'human');
-	if (nonHuman.length === 0) return false; // human-only gate
-	return nonHuman.includes(agentNodeName);
+	return writers.includes(agentNodeName);
 }

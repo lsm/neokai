@@ -648,7 +648,7 @@ export interface GateField {
 	name: string;
 	/** Field type. */
 	type: GateFieldType;
-	/** Who can write this field — agent names/slot names, node names, 'human', or '*'. */
+	/** Who can write this field — node names, '*' (any agent), or [] (external-only: human via RPC or auto-approval). */
 	writers: string[];
 	/** Check that must pass for this field to be satisfied. */
 	check: GateFieldCheck;

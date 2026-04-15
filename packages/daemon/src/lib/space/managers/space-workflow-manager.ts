@@ -212,11 +212,6 @@ export class SpaceWorkflowManager {
 
 		for (let i = 0; i < nodes.length; i++) {
 			const node = nodes[i];
-			if (node.name && node.name.trim().toLowerCase() === 'human') {
-				throw new WorkflowValidationError(
-					`node[${i}]: "human" is a reserved keyword and cannot be used as a node name`
-				);
-			}
 			this.validateNodeAgentRef(spaceId, node, i);
 		}
 	}
@@ -249,11 +244,6 @@ export class SpaceWorkflowManager {
 			if (!entry.name || !entry.name.trim()) {
 				throw new WorkflowValidationError(
 					`node[${index}].agents[${j}]: name must be a non-empty string`
-				);
-			}
-			if (entry.name.trim().toLowerCase() === 'human') {
-				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: "human" is a reserved keyword and cannot be used as an agent name`
 				);
 			}
 			if (seenNames.has(entry.name)) {

@@ -445,7 +445,7 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		expect(gate.fields[0].name).toBe('approved');
 		expect(gate.fields[0].check).toMatchObject({ op: '==', value: true });
-		expect(gate.fields[0].writers).toEqual(['reviewer']);
+		expect(gate.fields[0].writers).toEqual([]);
 		expect(gate.label).toBe('Approval');
 		expect(gate.requiredLevel).toBe(3);
 		expect(gate.resetOnCycle).toBe(true);
@@ -1343,18 +1343,18 @@ describe('seedBuiltInWorkflows()', () => {
 	test('FULL_CYCLE_CODING_WORKFLOW plan-approval-gate uses requiredLevel instead of human writer', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(approvedField.writers).toEqual([]);
 		expect(gate.requiredLevel).toBe(3);
 	});
 
-	test('seeded plan-approval-gate preserves requiredLevel and reviewer writer', () => {
+	test('seeded plan-approval-gate preserves requiredLevel and external-only writers', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(approvedField.writers).toEqual([]);
 		expect(gate.requiredLevel).toBe(3);
 	});
 

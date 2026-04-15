@@ -442,7 +442,7 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(task.pendingActionIndex).toBeNull();
 	});
 
-	test('completion action script timeout → task still transitions to done', async () => {
+	test('completion action script non-zero exit → task still transitions to done', async () => {
 		setAutonomyLevel(5);
 		const rt = makeRuntime();
 

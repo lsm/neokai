@@ -352,7 +352,7 @@ describe('GateEditorPanel — Existing functionality preserved', () => {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['human'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -763,7 +763,7 @@ describe('GateEditorPanel — Gate-level validation', () => {
 
 	it('does not show gate error when fields are present', () => {
 		const gate = makeGate({
-			fields: [{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: 'exists' } }],
+			fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
 		});
 		const { queryByTestId } = render(<GateEditorPanel {...makeProps(gate)} />);
 
@@ -823,7 +823,7 @@ describe('GateEditorPanel — Empty-fields message context', () => {
 
 	it('does not show empty-fields message when fields are present', () => {
 		const gate = makeGate({
-			fields: [{ name: 'approved', type: 'boolean', writers: ['human'], check: { op: 'exists' } }],
+			fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
 		});
 		const { queryByText } = render(<GateEditorPanel {...makeProps(gate)} />);
 

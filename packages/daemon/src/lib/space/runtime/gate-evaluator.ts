@@ -105,13 +105,6 @@ export function validateGateFields(fields: unknown, path = 'fields'): string[] {
 
 		if (!Array.isArray(f.writers)) {
 			errors.push(`${fp}.writers: expected array, got ${typeof f.writers}`);
-		} else if (
-			f.writers.includes('human') &&
-			f.writers.some((w: unknown) => typeof w === 'string' && w !== 'human')
-		) {
-			errors.push(
-				`${fp}.writers: "human" is a reserved keyword and must be the sole writer — cannot be mixed with other writers`
-			);
 		}
 
 		// Validate check

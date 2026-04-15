@@ -258,11 +258,8 @@ describe('validateChannels', () => {
 describe('isGateWriterAuthorized', () => {
 	const channel = makeChannel({ from: 'Code', to: 'Review' });
 
-	test('empty writers → FROM node agent authorized', () => {
-		expect(isGateWriterAuthorized('Code', channel, [])).toBe(true);
-	});
-
-	test('empty writers → non-FROM node agent NOT authorized', () => {
+	test('empty writers → external-only gate, no agent authorized', () => {
+		expect(isGateWriterAuthorized('Code', channel, [])).toBe(false);
 		expect(isGateWriterAuthorized('Review', channel, [])).toBe(false);
 	});
 
@@ -272,19 +269,9 @@ describe('isGateWriterAuthorized', () => {
 		expect(isGateWriterAuthorized('SomeOtherNode', channel, ['*'])).toBe(true);
 	});
 
-	test("writers: ['human'] → never authorized (human-only gate)", () => {
-		expect(isGateWriterAuthorized('Code', channel, ['human'])).toBe(false);
-		expect(isGateWriterAuthorized('Review', channel, ['human'])).toBe(false);
-	});
-
 	test('writers with explicit node name → that node authorized', () => {
 		expect(isGateWriterAuthorized('Code', channel, ['Code'])).toBe(true);
 		expect(isGateWriterAuthorized('Review', channel, ['Code'])).toBe(false);
-	});
-
-	test('writers with explicit node name + human → only explicit node authorized', () => {
-		expect(isGateWriterAuthorized('Code', channel, ['Code', 'human'])).toBe(true);
-		expect(isGateWriterAuthorized('Review', channel, ['Code', 'human'])).toBe(false);
 	});
 
 	test('writers with multiple node names → listed nodes authorized', () => {

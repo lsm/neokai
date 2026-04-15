@@ -200,7 +200,7 @@ export function makeBuiltInTemplateWorkflows(
 						{
 							name: 'approved',
 							type: 'boolean',
-							writers: ['reviewer'],
+							writers: [],
 							check: { op: '==', value: true },
 						},
 					],
@@ -294,7 +294,7 @@ export function makeBuiltInTemplateWorkflows(
 						{
 							name: 'approved',
 							type: 'boolean',
-							writers: ['reviewer'],
+							writers: [],
 							check: { op: '==', value: true },
 						},
 					],

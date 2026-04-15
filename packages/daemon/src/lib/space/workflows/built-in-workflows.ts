@@ -736,7 +736,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -945,7 +945,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],

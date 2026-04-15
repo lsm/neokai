@@ -202,8 +202,8 @@ test.describe('Gate Custom Badges', () => {
 		await expect(gateBadge).toBeVisible({ timeout: 5000 });
 		await expect(gateBadge).toContainText('Gate');
 
-		// ── Step 2: Add Human Approval preset → gate type becomes 'human' ───
-		await gatePanel.getByTestId('gate-editor-preset-human').click();
+		// ── Step 2: Add Approval preset → gate requires external approval ───
+		await gatePanel.getByTestId('gate-editor-preset-approval').click();
 
 		// Badge still shows "Gate" (no heuristic fallback - label is authoritative)
 		await expect(gateBadge).toContainText('Gate', { timeout: 5000 });

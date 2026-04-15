@@ -55,7 +55,7 @@ function humanGate(id: string, overrides?: Partial<Gate>): Gate {
 			{
 				name: 'approved',
 				type: 'boolean',
-				writers: ['human'],
+				writers: [],
 				check: { op: '==', value: true },
 			},
 		],

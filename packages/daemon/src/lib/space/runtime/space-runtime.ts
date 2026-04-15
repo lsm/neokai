@@ -859,8 +859,24 @@ export class SpaceRuntime {
 			return null;
 		}
 
+		// Validate that the task belongs to this space
+		if (task.spaceId !== spaceId) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: task ${taskId} belongs to space ${task.spaceId}, not ${spaceId}`
+			);
+			return null;
+		}
+
 		const spaceLevel = (space.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 		const startIndex = task.pendingActionIndex;
+
+		// Guard against workflow edits that removed actions between pause and resume
+		if (startIndex >= actions.length) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: pendingActionIndex ${startIndex} >= actions.length ${actions.length} (workflow edited?)`
+			);
+			return null;
+		}
 
 		// Execute the approved action and continue with remaining
 		for (let i = startIndex; i < actions.length; i++) {
@@ -869,11 +885,12 @@ export class SpaceRuntime {
 				// First action was human-approved; subsequent ones auto-execute if autonomy permits
 				await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
 			} else {
-				// Pause at this action
+				// Pause at this action — clear stale approvedAt from previous cycle
 				return await this.updateTaskAndEmit(spaceId, taskId, {
 					status: 'review',
 					pendingActionIndex: i,
 					pendingCheckpointType: 'completion_action',
+					approvedAt: null,
 				});
 			}
 		}

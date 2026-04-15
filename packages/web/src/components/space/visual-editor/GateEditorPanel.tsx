@@ -174,11 +174,11 @@ export function GateEditorPanel({
 		else if (expandedField !== null && expandedField > index) setExpandedField(expandedField - 1);
 	}
 
-	function addHumanApprovalPreset() {
+	function addApprovalPreset() {
 		const preset: GateField = {
 			name: 'approved',
 			type: 'boolean',
-			writers: ['human'],
+			writers: [],
 			check: { op: '==', value: true },
 		};
 		updateGate({ fields: [...(gate.fields ?? []), preset] });
@@ -432,11 +432,11 @@ export function GateEditorPanel({
 				<div class="flex gap-2">
 					<button
 						type="button"
-						data-testid="gate-editor-preset-human"
-						onClick={addHumanApprovalPreset}
+						data-testid="gate-editor-preset-approval"
+						onClick={addApprovalPreset}
 						class={`flex-1 rounded border px-2 py-1.5 text-xs transition-colors ${modeButtonClass(false)}`}
 					>
-						Human Approval
+						Approval
 					</button>
 					<button
 						type="button"

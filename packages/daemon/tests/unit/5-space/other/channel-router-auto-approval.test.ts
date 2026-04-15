@@ -131,7 +131,7 @@ describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -303,7 +303,7 @@ describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 				{
