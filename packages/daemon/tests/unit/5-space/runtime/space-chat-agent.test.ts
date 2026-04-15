@@ -259,9 +259,9 @@ describe('buildSpaceChatSystemPrompt — event handling', () => {
 		expect(prompt).toContain('[TASK_EVENT]');
 	});
 
-	test('includes task_needs_attention event kind', () => {
+	test('includes task_blocked event kind', () => {
 		const prompt = buildSpaceChatSystemPrompt();
-		expect(prompt).toContain('task_needs_attention');
+		expect(prompt).toContain('task_blocked');
 	});
 
 	test('includes workflow_run_needs_attention event kind', () => {
@@ -284,7 +284,7 @@ describe('buildSpaceChatSystemPrompt — event handling', () => {
 		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		const empty = buildSpaceChatSystemPrompt({});
 		for (const prompt of [supervised, semi, empty]) {
-			expect(prompt).toContain('task_needs_attention');
+			expect(prompt).toContain('task_blocked');
 			expect(prompt).toContain('workflow_run_completed');
 		}
 	});

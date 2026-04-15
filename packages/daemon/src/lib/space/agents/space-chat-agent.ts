@@ -182,7 +182,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(`**Event kinds and how to handle them:**`);
 	sections.push('');
 	sections.push(
-		`- **\`task_needs_attention\`** — A task has entered the \`needs_attention\` state and cannot proceed automatically.\n` +
+		`- **\`task_blocked\`** — A task is blocked and cannot proceed automatically.\n` +
 			`  Payload fields: \`taskId\`, \`reason\`, \`autonomyLevel\`\n` +
 			`  Action: Investigate with \`get_task_detail\`, then retry, reassign, or escalate per your autonomy level.`
 	);

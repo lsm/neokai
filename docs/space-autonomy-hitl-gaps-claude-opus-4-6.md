@@ -282,23 +282,22 @@ Workflow topology is fixed regardless of autonomy level:
 
 ### 12. Autonomy Level UI Toggle (Manual/Semi-Auto/Full-Auto)
 
-The autonomy model is binary (`supervised` / `semi_autonomous`) and has no UI toggle.
+**Status:** Partially implemented (PR #1502)
+
+The autonomy model has been upgraded from binary (`supervised` / `semi_autonomous`) to a 5-level numeric scale (`SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5`). Types, DB schema (migration 86), runtime, and agent tools are updated.
 
 Current state:
-- `SpaceAutonomyLevel = 'supervised' | 'semi_autonomous'` — set at creation, changeable via `space.update` RPC
-- `SpaceSettings.tsx` does NOT expose autonomyLevel for editing
-- No "manual" mode (human triggers each task, no auto-scheduling)
-- No "full autonomous" mode (skip all review, no escalation)
-- Autonomy only affects task terminal status (review vs done) — one decision point
+- `SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5` — numeric levels with operator-assigned semantics
+- Runtime auto-completes tasks at level >= 2; agent prompt grants autonomous corrective actions at level >= 3
+- `SpaceSettings.tsx` does NOT yet expose autonomyLevel for editing
+- No per-task autonomy override
 
-Missing:
-- UI toggle in SpaceSettings for autonomy level
-- "Manual" autonomy level — runtime doesn't auto-schedule tasks, human must explicitly start each one
-- "Full autonomous" level — no review step, aggressive retry, minimal escalation
-- Per-task autonomy override (some tasks need human review even in semi-auto spaces)
+Remaining:
+- UI toggle in SpaceSettings for autonomy level (1–5 slider or dropdown)
+- Per-task autonomy override (some tasks need human review even in higher-autonomy spaces)
 
-**Impact:** Medium — users can't change autonomy through UI, can't express manual or full-auto intent  
-**Effort:** Medium
+**Impact:** Medium — backend is ready, UI still needed  
+**Effort:** Low (UI-only)
 
 ---
 

@@ -52,7 +52,7 @@ const mockTask: SpaceTask = {
 	taskNumber: 1,
 	title: 'Test Task',
 	description: 'desc',
-	status: 'pending',
+	status: 'open',
 	priority: 'normal',
 	dependsOn: [],
 	createdAt: NOW,

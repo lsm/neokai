@@ -187,6 +187,104 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Migration 86: TEXT → INTEGER autonomy_level conversion
+	// -------------------------------------------------------------------------
+
+	test('migration 86: supervised text value converts to 1', () => {
+		// Create pre-M86 spaces table with TEXT autonomy_level
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active',
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+				config TEXT,
+				paused INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`CREATE UNIQUE INDEX idx_spaces_slug ON spaces(slug)`);
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, autonomy_level, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('s1', 'supervised-space', '/ws/a', 'Supervised', 'supervised', now, now);
+
+		runMigrations(db, () => {});
+
+		const row = db.prepare(`SELECT autonomy_level FROM spaces WHERE id = 's1'`).get() as {
+			autonomy_level: number;
+		};
+		expect(row.autonomy_level).toBe(1);
+	});
+
+	test('migration 86: semi_autonomous text value converts to 3', () => {
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active',
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+				config TEXT,
+				paused INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`CREATE UNIQUE INDEX idx_spaces_slug ON spaces(slug)`);
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, autonomy_level, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		).run('s1', 'semi-space', '/ws/a', 'Semi', 'semi_autonomous', now, now);
+
+		runMigrations(db, () => {});
+
+		const row = db.prepare(`SELECT autonomy_level FROM spaces WHERE id = 's1'`).get() as {
+			autonomy_level: number;
+		};
+		expect(row.autonomy_level).toBe(3);
+	});
+
+	test('migration 86: CHECK constraint rejects invalid autonomy levels', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		expect(() => {
+			db.prepare(
+				`INSERT INTO spaces (id, slug, workspace_path, name, autonomy_level, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			).run('s1', 'bad', '/ws/a', 'Bad', 6, now, now);
+		}).toThrow();
+
+		expect(() => {
+			db.prepare(
+				`INSERT INTO spaces (id, slug, workspace_path, name, autonomy_level, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`
+			).run('s2', 'bad2', '/ws/b', 'Bad2', 0, now, now);
+		}).toThrow();
+	});
+
+	// -------------------------------------------------------------------------
 	// Migration 86: approval_source collapse
 	// -------------------------------------------------------------------------
 
