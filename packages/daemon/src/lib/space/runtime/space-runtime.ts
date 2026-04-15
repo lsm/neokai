@@ -21,6 +21,8 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
+	CompletionAction,
+	SpaceAutonomyLevel,
 	SpaceTask,
 	UpdateSpaceTaskParams,
 	SpaceWorkflow,
@@ -40,7 +42,9 @@ import { SpaceTaskManager } from '../managers/space-task-manager';
 import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
+import { buildRestrictedEnv } from './gate-script-executor';
 import { CompletionDetector } from './completion-detector';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import {
@@ -141,6 +145,12 @@ export interface SpaceRuntimeConfig {
 	 * Defaults to `new CompletionDetector(nodeExecutionRepo)` if not provided.
 	 */
 	completionDetector?: CompletionDetector;
+	/**
+	 * Optional artifact repository for resolving completion action context.
+	 * When provided, completion actions with `artifactType` can resolve
+	 * artifact data from the workflow run for script env injection.
+	 */
+	artifactRepo?: WorkflowRunArtifactRepository;
 	/**
 	 * Optional callback emitted when runtime mutates a SpaceTask internally.
 	 * Used to fan out `space.task.updated` events for UI synchronization.
@@ -501,23 +511,20 @@ export class SpaceRuntime {
 				.find((task) => !!task.result)?.result;
 			const nextResult = summaryFromWorkflow ?? canonicalTask.result ?? summaryFromSibling ?? null;
 
-			// At autonomy level 1 (supervised), the task should land in 'review'
-			// (not 'done') so a human can approve. Skip if already in 'review' or 'done'.
+			// Resolve completion status via completion actions (if defined on end node)
+			// or fall back to binary autonomy check.
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
-			const spaceLevel = space?.autonomyLevel ?? 1;
-			const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
+			const spaceLevel = (space?.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 
 			if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
-				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
-					status: completionStatus,
-					result: nextResult,
-					completedAt:
-						spaceLevel >= 2 ? (canonicalTask.completedAt ?? run.completedAt ?? Date.now()) : null,
-					// Stamp approval audit trail for semi-autonomous auto-completion
-					...(completionStatus === 'done'
-						? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
-						: {}),
-				});
+				const params = await this.resolveCompletionWithActions(
+					run.spaceId,
+					run.id,
+					workflow,
+					nextResult,
+					spaceLevel
+				);
+				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, params);
 			} else if (nextResult && canonicalTask.result !== nextResult) {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
 			}
@@ -1195,22 +1202,19 @@ export class SpaceRuntime {
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
 				const nextTaskResult = summary ?? canonicalTask.result ?? null;
 
-				// At autonomy level 1 (supervised), transition the task to 'review'
-				// so a human can approve the output before it's marked done. At
-				// level >= 2, go directly to 'done'.
-				const spaceLevel = space?.autonomyLevel ?? 1;
-				const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
+				// Resolve completion status via completion actions (if defined on end node)
+				// or fall back to binary autonomy check.
+				const spaceLevel = (space?.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 
 				if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
-					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-						status: completionStatus,
-						result: nextTaskResult,
-						completedAt: spaceLevel >= 2 ? Date.now() : null,
-						// Stamp approval audit trail for semi-autonomous auto-completion
-						...(completionStatus === 'done'
-							? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
-							: {}),
-					});
+					const params = await this.resolveCompletionWithActions(
+						meta.spaceId,
+						runId,
+						meta.workflow,
+						nextTaskResult,
+						spaceLevel
+					);
+					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
 				} else if (summary && canonicalTask.result !== summary) {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
 				}
@@ -1471,6 +1475,160 @@ export class SpaceRuntime {
 		}
 
 		return undefined;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Completion Action Execution
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Resolve the task completion status, executing completion actions if the
+	 * end node defines them.
+	 *
+	 * Flow:
+	 * 1. If the end node has no completionActions → fall back to binary autonomy check.
+	 * 2. For each action in definition order:
+	 *    - If `space.autonomyLevel >= action.requiredLevel` → execute immediately.
+	 *    - Otherwise → pause the task at this action (status='review',
+	 *      pendingActionIndex, pendingCheckpointType='completion_action').
+	 * 3. If all actions executed → task status = 'done'.
+	 *
+	 * Returns the params to use for updateTaskAndEmit, or null if the task
+	 * was already paused at a completion action (caller should skip the update).
+	 */
+	private async resolveCompletionWithActions(
+		spaceId: string,
+		runId: string,
+		workflow: SpaceWorkflow | null,
+		taskResult: string | null,
+		spaceLevel: SpaceAutonomyLevel
+	): Promise<UpdateSpaceTaskParams> {
+		// Find end node's completion actions
+		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
+		const actions = endNode?.completionActions;
+
+		if (!actions || actions.length === 0) {
+			// No completion actions — use simple autonomy check
+			const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
+			return {
+				status: completionStatus,
+				result: taskResult,
+				completedAt: spaceLevel >= 2 ? Date.now() : null,
+				...(completionStatus === 'done'
+					? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
+					: {}),
+			};
+		}
+
+		// Resolve workspace path once for all actions
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		const workspacePath = space?.workspacePath ?? process.cwd();
+
+		// Execute completion actions in order
+		for (let i = 0; i < actions.length; i++) {
+			const action = actions[i];
+			if (spaceLevel >= action.requiredLevel) {
+				// Auto-execute
+				await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+			} else {
+				// Pause at this action — task goes to 'review' with pending action metadata
+				return {
+					status: 'review' as const,
+					result: taskResult,
+					pendingActionIndex: i,
+					pendingCheckpointType: 'completion_action' as const,
+				};
+			}
+		}
+
+		// All actions executed — task is done
+		return {
+			status: 'done' as const,
+			result: taskResult,
+			completedAt: Date.now(),
+			approvalSource: 'auto_policy' as const,
+			approvedAt: Date.now(),
+			pendingActionIndex: null,
+			pendingCheckpointType: null,
+		};
+	}
+
+	/**
+	 * Execute a single completion action.
+	 *
+	 * Currently supports `script` type only. `instruction` and `mcp_call` types
+	 * log a warning and are skipped (future implementation).
+	 */
+	private async executeCompletionAction(
+		action: CompletionAction,
+		spaceId: string,
+		runId: string,
+		workspacePath: string
+	): Promise<void> {
+		if (action.type !== 'script') {
+			log.warn(
+				`SpaceRuntime: completion action type "${action.type}" not yet implemented ` +
+					`(action: ${action.id}, space: ${spaceId})`
+			);
+			return;
+		}
+
+		// Resolve artifact data for script env injection
+		let artifactData: Record<string, unknown> = {};
+		if (action.artifactType && this.config.artifactRepo) {
+			const artifacts = this.config.artifactRepo.listByRun(runId, {
+				artifactType: action.artifactType,
+			});
+			if (action.artifactKey) {
+				const match = artifacts.find((a) => a.artifactKey === action.artifactKey);
+				if (match) artifactData = match.data;
+			} else if (artifacts.length > 0) {
+				artifactData = artifacts[0].data;
+			}
+		}
+
+		// Reuse gate script executor's restricted env builder
+		const env = buildRestrictedEnv({
+			workspacePath,
+			gateId: action.id,
+			runId,
+			gateData: artifactData,
+		});
+		// Override gate-specific vars with completion action context
+		env['NEOKAI_COMPLETION_ACTION_ID'] = action.id;
+		try {
+			env['NEOKAI_ARTIFACT_DATA_JSON'] = JSON.stringify(artifactData);
+		} catch {
+			env['NEOKAI_ARTIFACT_DATA_JSON'] = '{}';
+		}
+
+		log.info(
+			`SpaceRuntime: executing completion action "${action.name}" (${action.id}) ` +
+				`for space ${spaceId}, run ${runId}`
+		);
+
+		try {
+			const proc = Bun.spawn(['bash', '-c', action.script], {
+				cwd: workspacePath,
+				env,
+				stdout: 'pipe',
+				stderr: 'pipe',
+			});
+
+			const exitCode = await proc.exited;
+			if (exitCode !== 0) {
+				const stderr = await new Response(proc.stderr).text();
+				log.warn(
+					`SpaceRuntime: completion action "${action.name}" failed ` +
+						`(exit ${exitCode}): ${stderr.trim().slice(0, 500)}`
+				);
+			}
+		} catch (err) {
+			log.warn(
+				`SpaceRuntime: completion action "${action.name}" error: ` +
+					`${err instanceof Error ? err.message : String(err)}`
+			);
+		}
 	}
 
 	/**

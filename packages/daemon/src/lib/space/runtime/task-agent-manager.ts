@@ -2057,6 +2057,7 @@ export class TaskAgentManager {
 
 		// Build a ChannelRouter so write_gate can trigger onGateDataChanged, which
 		// re-evaluates gated channels and lazily activates target nodes when a gate opens.
+		const spaceManager = this.config.spaceManager;
 		const nodeAgentChannelRouter = new ChannelRouter({
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -2067,6 +2068,10 @@ export class TaskAgentManager {
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db.getDatabase(),
 			workspacePath,
+			getSpaceAutonomyLevel: async (spaceId) => {
+				const s = await spaceManager.getSpace(spaceId);
+				return s?.autonomyLevel ?? 1;
+			},
 		});
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: this.config.nodeExecutionRepo,

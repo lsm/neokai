@@ -32,7 +32,13 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@neokai/shared';
+import type {
+	SpaceAutonomyLevel,
+	SpaceTask,
+	SpaceWorkflow,
+	WorkflowChannel,
+	WorkflowNode,
+} from '@neokai/shared';
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@neokai/shared';
 import type { NodeExecution } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -180,6 +186,15 @@ export interface ChannelRouterConfig {
 	 * @default 4
 	 */
 	maxConcurrentScripts?: number;
+	/**
+	 * Resolves the space's autonomy level for a given space ID.
+	 * Used by gate auto-approval: when `gate.requiredLevel` is set and
+	 * `spaceLevel >= requiredLevel`, the gate is auto-approved after
+	 * script validation passes.
+	 * When omitted, gate auto-approval is disabled (gates with `requiredLevel`
+	 * always require manual approval).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<SpaceAutonomyLevel>;
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +688,27 @@ export class ChannelRouter {
 		const record = this.config.gateDataRepo?.get(runId, gateId);
 		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
 
+		// --- Auto-approval: if gate has requiredLevel and space level is high enough,
+		// pre-write approval data before evaluation so the approval field passes.
+		// Script validation still runs and can block regardless of autonomy level.
+		if (gateDef.requiredLevel && this.config.getSpaceAutonomyLevel && this.config.gateDataRepo) {
+			const run = this.config.workflowRunRepo.getRun(runId);
+			if (run) {
+				const spaceLevel = await this.config.getSpaceAutonomyLevel(run.spaceId);
+				if (spaceLevel >= gateDef.requiredLevel) {
+					const approvalData = this.buildAutoApprovalData(gateDef);
+					if (approvalData) {
+						this.config.gateDataRepo.merge(runId, gateId, approvalData);
+						// Re-load merged data for evaluation
+						const merged = this.config.gateDataRepo.get(runId, gateId);
+						if (merged) {
+							Object.assign(runtimeData, merged.data);
+						}
+					}
+				}
+			}
+		}
+
 		// Field-only gates skip the semaphore entirely
 		if (!gateDef.script) {
 			return evaluateGate(gateDef, runtimeData);
@@ -690,6 +726,30 @@ export class ChannelRouter {
 		return this.withScriptSemaphore(async () => {
 			return evaluateGate(gateDef, runtimeData, scriptExecutor, scriptContext);
 		});
+	}
+
+	/**
+	 * Builds auto-approval gate data for gates with requiredLevel.
+	 * Only generates data for boolean fields with `check: { op: '==', value: true }` —
+	 * these are the standard approval pattern. Complex fields (maps, counts) are not
+	 * auto-approved.
+	 *
+	 * Returns null if no fields can be auto-approved.
+	 */
+	private buildAutoApprovalData(gateDef: {
+		fields?: Array<{ name: string; type: string; check?: { op: string; value?: unknown } }>;
+	}): Record<string, unknown> | null {
+		const data: Record<string, unknown> = {};
+		let hasApprovalField = false;
+
+		for (const field of gateDef.fields ?? []) {
+			if (field.type === 'boolean' && field.check?.op === '==' && field.check.value === true) {
+				data[field.name] = true;
+				hasApprovalField = true;
+			}
+		}
+
+		return hasApprovalField ? data : null;
 	}
 
 	/**

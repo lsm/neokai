@@ -396,6 +396,7 @@ export class SpaceRuntimeService {
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
 			workspacePath = space?.workspacePath;
 		}
+		const spaceManager = this.config.spaceManager;
 		const router = new ChannelRouter({
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -406,6 +407,10 @@ export class SpaceRuntimeService {
 			channelCycleRepo: this.config.channelCycleRepo,
 			db: this.config.db,
 			workspacePath,
+			getSpaceAutonomyLevel: async (spaceId) => {
+				const s = await spaceManager.getSpace(spaceId);
+				return s?.autonomyLevel ?? 1;
+			},
 		});
 		return router.onGateDataChanged(runId, gateId);
 	}

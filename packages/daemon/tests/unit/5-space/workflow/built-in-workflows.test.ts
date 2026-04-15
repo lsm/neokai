@@ -441,12 +441,13 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(false);
 	});
 
-	test('plan-approval-gate has boolean == true field with exclusive human writer', () => {
+	test('plan-approval-gate has boolean == true field with requiredLevel for auto-approval', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		expect(gate.fields[0].name).toBe('approved');
 		expect(gate.fields[0].check).toMatchObject({ op: '==', value: true });
-		expect(gate.fields[0].writers).toEqual(['human']);
-		expect(gate.label).toBe('Human');
+		expect(gate.fields[0].writers).toEqual(['reviewer']);
+		expect(gate.label).toBe('Approval');
+		expect(gate.requiredLevel).toBe(3);
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
@@ -1337,25 +1338,24 @@ describe('seedBuiltInWorkflows()', () => {
 		// direction field removed from WorkflowChannel schema
 	});
 
-	// ─── plan-approval-gate human writers ────────────────────────────────────
+	// ─── plan-approval-gate auto-approval via requiredLevel ──────────────────
 
-	test("FULL_CYCLE_CODING_WORKFLOW plan-approval-gate includes 'human' in writers", () => {
-		// 'human' makes this a human-approval gate so the UI shows waiting_human state
-		// and displays the Reject/Approve buttons. Required for human plan review flow.
+	test('FULL_CYCLE_CODING_WORKFLOW plan-approval-gate uses requiredLevel instead of human writer', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toContain('human');
+		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(gate.requiredLevel).toBe(3);
 	});
 
-	test('seeded plan-approval-gate preserves human writer in approved field', () => {
+	test('seeded plan-approval-gate preserves requiredLevel and reviewer writer', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		// 'human' must be the sole writer — human approval gates are exclusive
-		expect(approvedField.writers).toEqual(['human']);
+		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(gate.requiredLevel).toBe(3);
 	});
 
 	// ─── getBuiltInWorkflows ordering ────────────────────────────────────────
