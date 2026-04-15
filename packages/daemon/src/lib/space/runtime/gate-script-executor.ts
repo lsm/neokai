@@ -49,7 +49,7 @@ export interface GateScriptContext {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Maximum stdout/stderr buffer size (1 MB). */
-const MAX_BUFFER_BYTES = 1_048_576;
+export const MAX_BUFFER_BYTES = 1_048_576;
 
 /**
  * Environment variable prefixes that are stripped from the restricted env.
@@ -260,7 +260,7 @@ export function parseJsonStdout(raw: string): Record<string, unknown> | null {
  * Once the limit is exceeded, the stream continues draining to avoid pipe
  * deadlock, but no further data is appended.
  */
-async function collectWithMaxBuffer(
+export async function collectWithMaxBuffer(
 	stream: ReadableStream<Uint8Array> | null,
 	maxBytes: number
 ): Promise<{ text: string; truncated: boolean }> {

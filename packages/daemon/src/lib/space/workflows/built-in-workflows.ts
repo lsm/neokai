@@ -21,7 +21,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow, CompletionAction } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 
 // ---------------------------------------------------------------------------
@@ -82,6 +82,61 @@ const PR_READY_BASH_SCRIPT = [
 	'fi',
 	'jq -n --arg url "$PR_URL" \'{"pr_url":$url}\'',
 ].join('\n');
+
+/**
+ * Merge PR completion action script.
+ *
+ * Used as a `script` completion action on short workflows (Coding, Research).
+ * Resolves the PR URL from the artifact env var or the current branch,
+ * then squash-merges with branch deletion. Exits non-zero on failure.
+ *
+ * Environment variables injected by the completion action executor:
+ *   NEOKAI_ARTIFACT_DATA_JSON — artifact data (contains pr_url for 'pr' artifacts)
+ *   NEOKAI_WORKSPACE_PATH — workspace root (used as cwd)
+ */
+const PR_MERGE_BASH_SCRIPT = [
+	'# Resolve PR URL from artifact data or current branch',
+	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -z "$PR_URL" ]; then',
+	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+	'fi',
+	'if [ -z "$PR_URL" ]; then',
+	'  echo "No PR URL found — cannot merge" >&2',
+	'  exit 1',
+	'fi',
+	'# Idempotency guard: skip merge if PR is already merged',
+	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
+	'if [ "$PR_STATE" = "MERGED" ]; then',
+	'  echo "PR already merged: $PR_URL"',
+	'  BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
+	'  git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
+	'  jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"already_merged"}\'',
+	'  exit 0',
+	'fi',
+	'echo "Merging PR: $PR_URL"',
+	'if ! gh pr merge "$PR_URL" --squash --delete-branch; then',
+	'  echo "Failed to merge PR: $PR_URL" >&2',
+	'  exit 1',
+	'fi',
+	'# Sync worktree with base branch after merge',
+	'BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
+	'git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
+	'echo "PR merged and worktree synced"',
+	'jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"merged"}\'',
+].join('\n');
+
+/**
+ * Standard "Merge PR" completion action for short workflows.
+ * Attached to the end node's completionActions[].
+ */
+const MERGE_PR_COMPLETION_ACTION: CompletionAction = {
+	id: 'merge-pr',
+	name: 'Merge PR',
+	type: 'script',
+	requiredLevel: 4,
+	artifactType: 'pr',
+	script: PR_MERGE_BASH_SCRIPT,
+};
 
 const V2_PLANNING_PROMPT =
 	'You are the Planning node in a Full-Cycle Coding Workflow. Your role is to turn the task into a ' +
@@ -257,6 +312,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
+			completionActions: [MERGE_PR_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: CODING_CODE_NODE,
@@ -377,6 +433,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 					},
 				},
 			],
+			completionActions: [MERGE_PR_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: RESEARCH_RESEARCH_NODE,
@@ -635,14 +692,16 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							V2_QA_PROMPT +
 							'\n\n' +
 							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
-							'Expected outputs: report_done() on pass, or detailed feedback to Coding on fail.\n\n' +
+							'Expected outputs: PR merged and worktree synced, or detailed feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run the full test suite and record results\n' +
 							'2. Check CI pipeline status on the PR\n' +
 							'3. Verify the PR is mergeable (no conflicts)\n' +
 							'4. Confirm changes match the approved plan\n' +
-							'5. If all green: call report_done() with validation summary\n' +
-							'6. If issues found: send detailed feedback to Coding via QA → Coding channel\n\n' +
+							'5. If issues found: send detailed feedback to Coding via QA → Coding channel\n' +
+							'6. If all green: merge the PR with `gh pr merge <URL> --squash --delete-branch`\n' +
+							'7. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
+							'8. Call report_done() confirming merge and sync\n\n' +
 							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
 					},
 				},
@@ -669,19 +728,19 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 		},
 		{
 			id: 'plan-approval-gate',
-			label: 'Human',
-			description: 'Plan has been reviewed and approved by a human.',
+			label: 'Approval',
+			description:
+				'Plan has been reviewed and approved. Auto-approved at autonomy level ≥ 3; ' +
+				'pauses for human sign-off below that.',
 			fields: [
 				{
 					name: 'approved',
 					type: 'boolean',
-					// 'human' is a reserved writer keyword — makes this a human-approval gate
-					// (UI shows waiting_human state and the Approve/Reject buttons).
-					// Human approval gates must use writers: ['human'] exclusively.
-					writers: ['human'],
+					writers: ['reviewer'],
 					check: { op: '==', value: true },
 				},
 			],
+			requiredLevel: 3,
 			resetOnCycle: true,
 		},
 		{
@@ -846,13 +905,15 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							FULLSTACK_QA_PROMPT +
 							'\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
-							'Expected outputs: report_done() on pass or QA feedback to Coding.\n\n' +
+							'Expected outputs: PR merged and worktree synced, or QA feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run backend and frontend test suites\n' +
 							'2. Run browser-based critical-path validation\n' +
 							'3. Validate CI and mergeability\n' +
-							'4. If pass: call report_done() with QA summary\n' +
-							'5. If fail: send detailed failures and repro steps to Coding',
+							'4. If fail: send detailed failures and repro steps to Coding\n' +
+							'5. If all green: merge the PR with `gh pr merge <URL> --squash --delete-branch`\n' +
+							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
+							'7. Call report_done() confirming merge and sync',
 					},
 				},
 			],

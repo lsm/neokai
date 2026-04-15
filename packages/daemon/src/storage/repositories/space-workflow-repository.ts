@@ -20,6 +20,7 @@ import type {
 	WorkflowNode,
 	WorkflowNodeInput,
 	WorkflowNodeAgent,
+	CompletionAction,
 	WorkflowChannel,
 	Gate,
 	CreateSpaceWorkflowParams,
@@ -59,6 +60,8 @@ interface NodeRow {
 interface NodeConfigJson {
 	/** Multi-agent array */
 	agents?: WorkflowNodeAgent[];
+	/** Completion actions for end-node post-completion execution */
+	completionActions?: CompletionAction[];
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +93,9 @@ function rowToNode(row: NodeRow): WorkflowNode {
 		id: row.id,
 		name: row.name,
 		agents,
+		...(cfg.completionActions && cfg.completionActions.length > 0
+			? { completionActions: cfg.completionActions }
+			: {}),
 	};
 }
 
@@ -343,6 +349,9 @@ export class SpaceWorkflowRepository {
 		}
 		if (resolvedAgents && resolvedAgents.length > 0) {
 			nodeCfg.agents = resolvedAgents;
+		}
+		if (input.completionActions && input.completionActions.length > 0) {
+			nodeCfg.completionActions = input.completionActions;
 		}
 
 		this.db

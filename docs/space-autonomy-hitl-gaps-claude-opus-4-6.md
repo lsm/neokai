@@ -65,14 +65,19 @@ that must guide every implementation decision in this gap list.
 
 ## Gap List
 
-### 1. PR Auto-Merge for Semi-Autonomous
+### 1. PR Auto-Merge for Semi-Autonomous ✅
 
-**Status:** Not implemented
+**Status:** Implemented (completion actions + workflow templates)
 
-PR tracking migrated from hardcoded `SpaceTask` fields to `workflow_run_artifacts` table (PR #1496), but:
-- No merge logic exists
-- No gate script template for "wait for N approvals + CI green"
-- No differentiation between supervised (human must merge) and semi-autonomous (agent can merge approved PRs)
+PR merge is now handled via two complementary mechanisms:
+- **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash --delete-branch` and syncs the worktree
+- **Long workflows** (Full-Cycle, Fullstack QA): QA node prompt includes merge + worktree sync steps (merge is part of the QA validation, not a separate node)
+- **Completion action execution loop** in `SpaceRuntime.resolveCompletionWithActions()` — iterates actions in order, auto-executes when `space.autonomyLevel >= action.requiredLevel`, pauses task at `review` with `pendingActionIndex` otherwise
+- **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` migrated from `writers: ['human']` to `writers: ['reviewer']` + `requiredLevel: 3`
+
+Remaining:
+- `artifactRepo` not yet wired in SpaceRuntime construction (completion actions work but can't resolve artifact data for env injection)
+- No gate script template for "wait for N approvals + CI green" (separate from merge logic)
 
 **Impact:** High  
 **Effort:** Medium
@@ -140,14 +145,15 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 
 ### 4. Execution-Time Autonomy Differentiation
 
-Semi-autonomous is identical to supervised during execution. Missing:
+~~Semi-autonomous is identical to supervised during execution.~~ Partially addressed:
+- ✅ Gate auto-approval: gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` (channel-router)
+- ✅ Completion actions: end-node actions auto-execute or pause based on `requiredLevel` vs space level
+- ✅ Agent prompt differentiation: level ≥ 3 grants autonomous retry/reassign (space-chat-agent)
 - Autonomy-aware retry behavior (semi-autonomous retries more aggressively)
-- Auto-skipping of lower-priority gates
 - Autonomous decision-making at workflow branch points
-- The "semi" in semi-autonomous implies graduated control but none exists during execution
 
-**Impact:** High — defeats purpose of autonomy levels  
-**Effort:** High
+**Impact:** High — partially addressed by gate auto-approval and completion actions  
+**Effort:** High (remaining items)
 
 ---
 
@@ -416,11 +422,11 @@ Missing:
 
 | # | Gap | Impact | Effort | Priority | Status |
 |---|-----|--------|--------|----------|--------|
-| 1 | PR auto-merge for semi-autonomous | High | Medium | **P0** | |
+| 1 | PR auto-merge for semi-autonomous | High | Medium | **P0** | ✅ |
 | 2 | Approval notification/queue UI | Medium | Medium | **P1** | ✅ PR #1491 |
 | 2b | Action UI (approve/reject/resolve) | High | Medium | **P1** | ✅ PR #1493 |
 | 3 | Approval audit trail | Medium | Low | **P1** | ✅ PR #1481 |
-| 4 | Execution-time autonomy differentiation | High | High | **P2** | |
+| 4 | Execution-time autonomy differentiation | High | High | **P2** | Partial |
 | 5 | Task dependency enforcement | Medium | Medium | **P2** | ✅ PR #1488 |
 | 6 | Tiered retry by autonomy level | Medium | Medium | **P2** | |
 | 7 | Room/Space autonomy unification | High | High | **P3** | |
@@ -478,7 +484,7 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 | 9 | **#6 Tiered retry** | Builds on #17, informed by block reason distinction | Medium | |
 | 10 | **#13 Dead loop detection** | Builds on #17, prevents stuck workflows | Medium | |
 | 11 | **#14 PR merge validation** | Correctness — tasks shouldn't complete without verifying PR state | Medium | |
-| 12 | **#1 PR auto-merge** | Builds on #14, needs merge verification + audit trail + action UI | Medium | |
+| 12 | **#1 PR auto-merge** | Builds on #14, needs merge verification + audit trail + action UI | Medium | **Done** |
 | 13 | **#15 Unified inbox** | Cross-space discoverability, builds on notification UI pattern | Low-Medium | |
 | 14 | **#9 Review SLA** | Small, builds on audit trail | Low | |
 | 15 | **#4 Execution-time autonomy** | Builds on retry + block reasons + failure escalation | High | |
