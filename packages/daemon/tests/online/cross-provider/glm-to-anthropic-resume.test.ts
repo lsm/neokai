@@ -113,7 +113,8 @@ async function waitForSDKSessionEstablished(
 	throw new Error(`SDK session not established within ${timeout}ms.`);
 }
 
-describe('GLM → Anthropic Resume Investigation', () => {
+// Skipped: all tests send real messages across providers — too slow and flaky in CI
+describe.skip('GLM → Anthropic Resume Investigation', () => {
 	let daemon: DaemonServerContext & { daemonContext: DaemonAppContext };
 
 	beforeEach(async () => {

@@ -145,7 +145,8 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 		});
 	});
 
-	describe('2. Cross-Provider Message Delivery', () => {
+	// Skipped: sends real messages to MiniMax/GLM — too slow and flaky in CI
+	describe.skip('2. Cross-Provider Message Delivery', () => {
 		test('should send message after model switch to GLM', async () => {
 			// Create session with MiniMax
 			const createResult = (await daemon.messageHub.request('session.create', {
@@ -597,7 +598,8 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 	 * REQUIREMENT: Both MINIMAX_API_KEY and (GLM_API_KEY or ZHIPU_API_KEY) must be set.
 	 * (This is enforced by requireProvidersOrFail() in beforeEach).
 	 */
-	describe('6. SDK Session Model Observation (Bug 2 investigation)', () => {
+	// Skipped: sends real messages to MiniMax/GLM — too slow and flaky in CI
+	describe.skip('6. SDK Session Model Observation (Bug 2 investigation)', () => {
 		/**
 		 * Cross-provider test: MiniMax-M2.7 → glm-5
 		 *
