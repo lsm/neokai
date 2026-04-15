@@ -8,12 +8,14 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { Space, SpaceExportBundle } from '@neokai/shared';
+import type { Space, SpaceExportBundle, SpaceAutonomyLevel } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
+import { cn } from '../../lib/utils.ts';
 import { downloadBundle } from './export-import-utils.ts';
 import { navigateToSpaces } from '../../lib/router.ts';
 import { Button } from '../ui/Button.tsx';
+import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 
 interface SpaceSettingsProps {
 	space: Space;
@@ -25,6 +27,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 	const [description, setDescription] = useState(space.description ?? '');
 	const [instructions, setInstructions] = useState(space.instructions ?? '');
 	const [backgroundContext, setBackgroundContext] = useState(space.backgroundContext ?? '');
+	const [autonomyLevel, setAutonomyLevel] = useState<SpaceAutonomyLevel>(space.autonomyLevel ?? 1);
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -36,13 +39,23 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setDescription(space.description ?? '');
 		setInstructions(space.instructions ?? '');
 		setBackgroundContext(space.backgroundContext ?? '');
-	}, [space.id, space.name, space.description, space.instructions, space.backgroundContext]);
+		setAutonomyLevel(space.autonomyLevel ?? 1);
+		setSaveError(null);
+	}, [
+		space.id,
+		space.name,
+		space.description,
+		space.instructions,
+		space.backgroundContext,
+		space.autonomyLevel,
+	]);
 
 	const isDirty =
 		name !== space.name ||
 		description !== (space.description ?? '') ||
 		instructions !== (space.instructions ?? '') ||
-		backgroundContext !== (space.backgroundContext ?? '');
+		backgroundContext !== (space.backgroundContext ?? '') ||
+		autonomyLevel !== (space.autonomyLevel ?? 1);
 
 	async function handleSave(e: Event) {
 		e.preventDefault();
@@ -64,6 +77,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 				description: description.trim() || undefined,
 				instructions: instructions.trim() || undefined,
 				backgroundContext: backgroundContext.trim() || undefined,
+				autonomyLevel,
 			});
 			toast.success('Space updated');
 		} catch (err) {
@@ -226,6 +240,45 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 							</div>
 						</div>
 
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1">Autonomy Level</label>
+							<p class="text-xs text-gray-500 mb-2">
+								Controls how much authority agents have. Higher levels auto-approve more actions;
+								lower levels require human sign-off.
+							</p>
+							<div class="space-y-1">
+								{AUTONOMY_LEVELS.map(({ level, label, description }) => (
+									<button
+										key={level}
+										type="button"
+										onClick={() => setAutonomyLevel(level)}
+										data-testid={`autonomy-level-${level}`}
+										class={cn(
+											'w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors',
+											autonomyLevel === level
+												? 'border-blue-500/60 bg-blue-500/10 text-gray-100'
+												: 'border-dark-700 bg-dark-800 text-gray-400 hover:border-dark-600 hover:text-gray-300'
+										)}
+									>
+										<span
+											class={cn(
+												'flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold',
+												autonomyLevel === level
+													? 'bg-blue-500/20 text-blue-400'
+													: 'bg-dark-700 text-gray-500'
+											)}
+										>
+											{level}
+										</span>
+										<div class="min-w-0">
+											<div class="text-sm font-medium">{label}</div>
+											<div class="text-xs text-gray-500">{description}</div>
+										</div>
+									</button>
+								))}
+							</div>
+						</div>
+
 						{isDirty && (
 							<div class="flex gap-2 justify-end">
 								<Button
@@ -237,6 +290,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										setDescription(space.description ?? '');
 										setInstructions(space.instructions ?? '');
 										setBackgroundContext(space.backgroundContext ?? '');
+										setAutonomyLevel(space.autonomyLevel ?? 1);
 										setSaveError(null);
 									}}
 								>

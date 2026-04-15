@@ -9,11 +9,13 @@
  */
 
 import { useState, useCallback } from 'preact/hooks';
-import type { RuntimeState, SpaceTask } from '@neokai/shared';
+import type { RuntimeState, SpaceTask, SpaceAutonomyLevel } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { navigateToSpaceTask, navigateToSpaceSession } from '../../lib/router';
 import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
+import { toast } from '../../lib/toast';
+import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
@@ -133,6 +135,47 @@ function RuntimeControlBar({
 	);
 }
 
+// ─── Autonomy Level ─────────────────────────────────────────────────────────
+
+function AutonomyLevelBar({
+	level,
+	onChange,
+}: {
+	level: SpaceAutonomyLevel;
+	onChange: (level: SpaceAutonomyLevel) => void;
+}) {
+	return (
+		<div class="rounded-xl border border-dark-700 bg-dark-850/80 px-5 py-4">
+			<div class="flex items-center justify-between mb-2.5">
+				<span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Autonomy</span>
+				<span class="text-xs text-gray-500">{AUTONOMY_LABELS[level]}</span>
+			</div>
+			<div class="flex gap-1.5">
+				{([1, 2, 3, 4, 5] as SpaceAutonomyLevel[]).map((l) => (
+					<button
+						key={l}
+						type="button"
+						onClick={() => onChange(l)}
+						data-testid={`overview-autonomy-${l}`}
+						title={`Level ${l}: ${AUTONOMY_LABELS[l]}`}
+						aria-label={AUTONOMY_LABELS[l]}
+						class={cn(
+							'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none',
+							l <= level
+								? l <= 2
+									? 'bg-blue-500'
+									: l <= 4
+										? 'bg-amber-500'
+										: 'bg-red-500'
+								: 'bg-dark-600 hover:bg-dark-500'
+						)}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
 // ─── Recent Tasks ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
@@ -193,6 +236,16 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 			await spaceStore.resumeSpace();
 		} finally {
 			setActionLoading(false);
+		}
+	}, []);
+
+	const handleAutonomyChange = useCallback(async (level: SpaceAutonomyLevel) => {
+		if (level === spaceStore.space.value?.autonomyLevel) return;
+		try {
+			await spaceStore.updateSpace({ autonomyLevel: level });
+			toast.success(`Autonomy: ${AUTONOMY_LABELS[level]}`);
+		} catch {
+			toast.error('Failed to update autonomy level');
 		}
 	}, []);
 
@@ -258,6 +311,12 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 						onResume={() => void handleResume()}
 					/>
 				)}
+
+				{/* Autonomy level */}
+				<AutonomyLevelBar
+					level={space.autonomyLevel ?? 1}
+					onChange={(l) => void handleAutonomyChange(l)}
+				/>
 
 				{/* Stats strip */}
 				<div class="grid grid-cols-3 gap-3">

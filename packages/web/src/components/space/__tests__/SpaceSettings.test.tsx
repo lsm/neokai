@@ -78,6 +78,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		description: 'Original description',
 		instructions: 'Use TypeScript strict mode',
 		backgroundContext: '',
+		autonomyLevel: 1,
 		sessionIds: [],
 		status: 'active',
 		createdAt: Date.now(),
@@ -150,6 +151,7 @@ describe('SpaceSettings', () => {
 				description: 'Original description',
 				instructions: 'Use TypeScript strict mode',
 				backgroundContext: undefined,
+				autonomyLevel: 1,
 			});
 		});
 	});
@@ -364,6 +366,7 @@ describe('SpaceSettings', () => {
 				description: 'Original description',
 				instructions: 'Use strict mode',
 				backgroundContext: 'Bun + Hono',
+				autonomyLevel: 1,
 			});
 		});
 	});
