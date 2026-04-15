@@ -388,6 +388,10 @@ export interface UpdateSpaceTaskParams {
 	approvalReason?: string | null;
 	/** Timestamp when approval occurred; null to clear */
 	approvedAt?: number | null;
+	/** Index of the completion action awaiting approval; null to clear */
+	pendingActionIndex?: number | null;
+	/** Type of checkpoint the task is paused at; null to clear */
+	pendingCheckpointType?: 'completion_action' | 'gate' | null;
 }
 
 // ============================================================================

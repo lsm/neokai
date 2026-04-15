@@ -1081,7 +1081,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
 						approved: true,
 						approvedAt: Date.now(),
-						approvalSource: 'neo_agent',
+						approvalSource: 'agent',
 					});
 
 					// If previously rejected, transition back to in_progress and clear failure reason
@@ -1561,7 +1561,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					approved: false,
 					rejectedAt: Date.now(),
 					reason: args.reason ?? null,
-					approvalSource: 'neo_agent',
+					approvalSource: 'agent',
 				});
 
 				if (run.status !== 'blocked') {

@@ -186,6 +186,60 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 		expect(columnExists(db, 'spaces', 'autonomy_level')).toBe(true);
 	});
 
+	// -------------------------------------------------------------------------
+	// Migration 86: approval_source collapse
+	// -------------------------------------------------------------------------
+
+	test('migration 86: approval_source values are collapsed', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		// Insert a space first
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+		).run('space-1', 'test', '/workspace/project', 'Test', now, now);
+
+		// Insert tasks with old approval_source values
+		const taskBase = {
+			space_id: 'space-1',
+			task_number: 0,
+			title: 'T',
+			created_at: now,
+			updated_at: now,
+		};
+
+		const insertTask = db.prepare(`
+			INSERT INTO space_tasks (id, space_id, task_number, title, approval_source, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`);
+
+		insertTask.run('t1', taskBase.space_id, 1, 'T1', 'agent', now, now);
+		insertTask.run('t2', taskBase.space_id, 2, 'T2', 'auto_policy', now, now);
+		insertTask.run('t3', taskBase.space_id, 3, 'T3', 'human', now, now);
+		insertTask.run('t4', taskBase.space_id, 4, 'T4', null, now, now);
+
+		const rows = db
+			.prepare(`SELECT id, approval_source FROM space_tasks ORDER BY id`)
+			.all() as Array<{ id: string; approval_source: string | null }>;
+
+		expect(rows).toEqual([
+			{ id: 't1', approval_source: 'agent' },
+			{ id: 't2', approval_source: 'auto_policy' },
+			{ id: 't3', approval_source: 'human' },
+			{ id: 't4', approval_source: null },
+		]);
+	});
+
+	test('migration 86: pending_action_index and pending_checkpoint_type columns exist', () => {
+		runMigrations(db, () => {});
+		expect(columnExists(db, 'space_tasks', 'pending_action_index')).toBe(true);
+		expect(columnExists(db, 'space_tasks', 'pending_checkpoint_type')).toBe(true);
+	});
+
+	// -------------------------------------------------------------------------
+	// Idempotency
+	// -------------------------------------------------------------------------
+
 	test('idempotency: data is not duplicated on second migration run', () => {
 		runMigrations(db, () => {});
 

@@ -193,6 +193,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			approval_source TEXT,
 			approval_reason TEXT,
 			approved_at INTEGER,
+			pending_action_index INTEGER DEFAULT NULL,
+			pending_checkpoint_type TEXT DEFAULT NULL
+				CHECK(pending_checkpoint_type IN ('completion_action', 'gate')),
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,

@@ -247,6 +247,14 @@ export class SpaceTaskRepository {
 			fields.push('approved_at = ?');
 			values.push(params.approvedAt ?? null);
 		}
+		if (params.pendingActionIndex !== undefined) {
+			fields.push('pending_action_index = ?');
+			values.push(params.pendingActionIndex ?? null);
+		}
+		if (params.pendingCheckpointType !== undefined) {
+			fields.push('pending_checkpoint_type = ?');
+			values.push(params.pendingCheckpointType ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
