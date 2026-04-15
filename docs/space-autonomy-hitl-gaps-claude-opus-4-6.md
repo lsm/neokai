@@ -1,7 +1,7 @@
 # Space Autonomy & Human-in-the-Loop Gap Analysis
 
 Date: 2026-04-12  
-Last updated: 2026-04-13
+Last updated: 2026-04-15
 
 ## Architecture Summary
 
@@ -280,23 +280,23 @@ Workflow topology is fixed regardless of autonomy level:
 
 ---
 
-### 12. Autonomy Level UI Toggle (Manual/Semi-Auto/Full-Auto)
+### 12. Autonomy Level UI Toggle (Manual/Semi-Auto/Full-Auto) ✅
 
-**Status:** Partially implemented (PR #1502)
+**Status:** Implemented (backend: PR #1502, UI: PR #1503)
 
-The autonomy model has been upgraded from binary (`supervised` / `semi_autonomous`) to a 5-level numeric scale (`SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5`). Types, DB schema (migration 86), runtime, and agent tools are updated.
+The autonomy model has been upgraded from binary (`supervised` / `semi_autonomous`) to a 5-level numeric scale (`SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5`). Types, DB schema (migration 86), runtime, agent tools, and UI are all implemented.
 
-Current state:
+**Implemented:**
 - `SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5` — numeric levels with operator-assigned semantics
 - Runtime auto-completes tasks at level >= 2; agent prompt grants autonomous corrective actions at level >= 3
-- `SpaceSettings.tsx` does NOT yet expose autonomyLevel for editing
-- No per-task autonomy override
+- `SpaceSettings.tsx` — 5-option button group with level descriptions, part of the save/discard form
+- `SpaceOverview.tsx` — compact 5-segment bar with color coding (blue/amber/red), instant save via `spaceStore.updateSpace()`
+- Backend validation via `VALID_AUTONOMY_LEVELS` in `space.update` and `space.create` RPC handlers
 
-Remaining:
-- UI toggle in SpaceSettings for autonomy level (1–5 slider or dropdown)
+Remaining (out of scope, tracked separately):
 - Per-task autonomy override (some tasks need human review even in higher-autonomy spaces)
 
-**Impact:** Medium — backend is ready, UI still needed  
+**Impact:** Medium  
 **Effort:** Low (UI-only)
 
 ---
@@ -428,7 +428,7 @@ Missing:
 | 9 | Human review SLA/timeout | Low | Low | **P3** | |
 | 10 | Conditional branching by autonomy | Medium | High | **P3** | |
 | 11 | Runtime lifecycle controls | High | Low-Medium | **P1** | ✅ |
-| 12 | Autonomy level UI toggle | Medium | Medium | **P2** | |
+| 12 | Autonomy level UI toggle | Medium | Medium | **P2** | ✅ |
 | 13 | Dead loop detection in spaces | Medium | Medium | **P2** | |
 | 14 | PR merge validation in spaces | High | Medium | **P1** | |
 | 15 | Unified inbox for space approvals | Medium | Low-Medium | **P2** | |
@@ -473,7 +473,7 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 | 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | **Done** (PR #1491) |
 | 5 | **#2b Action UI** | Builds on #2, makes notification queue actionable | Medium | **Done** (PR #1493) |
 | 6 | **#16 Multi-gate ambiguity** | Small fix, improves gate_rejected UX accuracy | Low | |
-| 7 | **#12 Autonomy UI toggle** | Quick win — users can't configure autonomy without this | Medium | |
+| 7 | **#12 Autonomy UI toggle** | Quick win — users can't configure autonomy without this | Medium | **Done** |
 | 8 | **#17 Consecutive failure escalation** | Foundation for smarter retry/escalation, low effort | Low-Medium | |
 | 9 | **#6 Tiered retry** | Builds on #17, informed by block reason distinction | Medium | |
 | 10 | **#13 Dead loop detection** | Builds on #17, prevents stuck workflows | Medium | |
