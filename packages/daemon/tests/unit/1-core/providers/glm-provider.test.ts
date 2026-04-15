@@ -111,11 +111,11 @@ describe('GlmProvider', () => {
 	});
 
 	describe('getModelForTier', () => {
-		it('should map all tiers to glm-5', () => {
-			expect(provider.getModelForTier('haiku')).toBe('glm-5');
-			expect(provider.getModelForTier('sonnet')).toBe('glm-5');
-			expect(provider.getModelForTier('opus')).toBe('glm-5');
-			expect(provider.getModelForTier('default')).toBe('glm-5');
+		it('should map all tiers to glm-5-turbo', () => {
+			expect(provider.getModelForTier('haiku')).toBe('glm-5-turbo');
+			expect(provider.getModelForTier('sonnet')).toBe('glm-5-turbo');
+			expect(provider.getModelForTier('opus')).toBe('glm-5-turbo');
+			expect(provider.getModelForTier('default')).toBe('glm-5-turbo');
 		});
 	});
 
@@ -137,14 +137,24 @@ describe('GlmProvider', () => {
 			expect(config.isAnthropicCompatible).toBe(true);
 		});
 
-		it('should route sdk tiers with opus pinned to glm-5', () => {
+		it('should fall back to glm-5-turbo for non-GLM model IDs', () => {
+			process.env.GLM_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('default');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
+		});
+
+		it('should route all sdk tiers to the selected model', () => {
 			process.env.GLM_API_KEY = 'test-key';
 
 			const config = provider.buildSdkConfig('glm-4.7');
 
 			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7');
 			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-4.7');
 		});
 
 		it('should build correct config for glm-5-turbo', () => {
@@ -154,7 +164,7 @@ describe('GlmProvider', () => {
 
 			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
 			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
 			expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
 			expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
 			expect(config.isAnthropicCompatible).toBe(true);
@@ -203,8 +213,8 @@ describe('GlmProvider', () => {
 	});
 
 	describe('getTitleGenerationModel', () => {
-		it('should return glm-5 for title generation', () => {
-			expect(provider.getTitleGenerationModel()).toBe('glm-5');
+		it('should return glm-5-turbo for title generation', () => {
+			expect(provider.getTitleGenerationModel()).toBe('glm-5-turbo');
 		});
 	});
 

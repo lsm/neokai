@@ -101,11 +101,11 @@ describe('MinimaxProvider', () => {
 	});
 
 	describe('getModelForTier', () => {
-		it('should map all tiers to MiniMax-M2.5', () => {
-			expect(provider.getModelForTier('haiku')).toBe('MiniMax-M2.5');
-			expect(provider.getModelForTier('sonnet')).toBe('MiniMax-M2.5');
-			expect(provider.getModelForTier('opus')).toBe('MiniMax-M2.5');
-			expect(provider.getModelForTier('default')).toBe('MiniMax-M2.5');
+		it('should map all tiers to MiniMax-M2.7', () => {
+			expect(provider.getModelForTier('haiku')).toBe('MiniMax-M2.7');
+			expect(provider.getModelForTier('sonnet')).toBe('MiniMax-M2.7');
+			expect(provider.getModelForTier('opus')).toBe('MiniMax-M2.7');
+			expect(provider.getModelForTier('default')).toBe('MiniMax-M2.7');
 		});
 	});
 
@@ -157,14 +157,14 @@ describe('MinimaxProvider', () => {
 			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.5-highspeed');
 		});
 
-		it('should fall back to MiniMax-M2.5 for unrecognised model IDs', () => {
+		it('should fall back to MiniMax-M2.7 for unrecognised model IDs', () => {
 			process.env.MINIMAX_API_KEY = 'test-key';
 
 			const config = provider.buildSdkConfig('unknown-model');
 
-			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('MiniMax-M2.5');
-			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('MiniMax-M2.5');
-			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.5');
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('MiniMax-M2.7');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('MiniMax-M2.7');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('MiniMax-M2.7');
 		});
 
 		it('should use session config API key override', () => {
@@ -197,14 +197,14 @@ describe('MinimaxProvider', () => {
 	});
 
 	describe('translateModelIdForSdk', () => {
-		it('should translate MiniMax-M2.5 to default', () => {
-			expect(provider.translateModelIdForSdk('MiniMax-M2.5')).toBe('default');
+		it('should translate MiniMax-M2.7 to default', () => {
+			expect(provider.translateModelIdForSdk('MiniMax-M2.7')).toBe('default');
 		});
 	});
 
 	describe('getTitleGenerationModel', () => {
-		it('should return MiniMax-M2.5 for title generation', () => {
-			expect(provider.getTitleGenerationModel()).toBe('MiniMax-M2.5');
+		it('should return MiniMax-M2.7 for title generation', () => {
+			expect(provider.getTitleGenerationModel()).toBe('MiniMax-M2.7');
 		});
 	});
 

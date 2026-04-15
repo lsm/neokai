@@ -7,7 +7,7 @@
  * Flow:
  * 1. Create a session with claude-haiku-4-5-20251001
  * 2. Send two messages (including a tool-use turn) and capture system:init.model each time
- * 3. Switch model to MiniMax-M2.5-highspeed (different provider)
+ * 3. Switch model to MiniMax-M2.7-highspeed (different provider)
  * 4. Send one more message and capture system:init.model after the switch
  * 5. Report all findings
  *
@@ -45,7 +45,7 @@ async function main() {
 	try {
 		// ── Create session with haiku ────────────────────────────────────────
 		const INITIAL_MODEL = 'claude-haiku-4-5-20251001';
-		const SWITCHED_MODEL = 'MiniMax-M2.5-highspeed';
+		const SWITCHED_MODEL = 'MiniMax-M2.7-highspeed';
 		const SWITCHED_PROVIDER = 'minimax';
 
 		console.log(`Creating session with model: ${INITIAL_MODEL}`);
