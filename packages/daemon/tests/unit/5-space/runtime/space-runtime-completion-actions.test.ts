@@ -471,6 +471,107 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(task.approvalSource).toBe('auto_policy');
 	});
 
+	// ─── Resume from pendingActionIndex ─────────────────────────────────
+
+	test('resumeCompletionActions executes pending action and transitions to done', async () => {
+		setAutonomyLevel(3);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'action-low',
+				name: 'Low-Level',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "low"',
+			},
+			{
+				id: 'action-high',
+				name: 'High-Level',
+				type: 'script',
+				requiredLevel: 5,
+				script: 'echo "high"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		// First tick: action-low auto-executes, action-high pauses
+		await rt.executeTick();
+		let task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('review');
+		expect(task.pendingActionIndex).toBe(1);
+		expect(task.pendingCheckpointType).toBe('completion_action');
+
+		// Human approves → resume from pendingActionIndex
+		const resumed = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(resumed).not.toBeNull();
+		expect(resumed!.status).toBe('done');
+		expect(resumed!.approvalSource).toBe('human');
+		expect(resumed!.pendingActionIndex).toBeNull();
+		expect(resumed!.pendingCheckpointType).toBeNull();
+	});
+
+	test('resumeCompletionActions pauses again if next action also needs approval', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'action-1',
+				name: 'Action 1',
+				type: 'script',
+				requiredLevel: 3,
+				script: 'echo "1"',
+			},
+			{
+				id: 'action-2',
+				name: 'Action 2',
+				type: 'script',
+				requiredLevel: 4,
+				script: 'echo "2"',
+			},
+			{
+				id: 'action-3',
+				name: 'Action 3',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "3"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		// Tick: pauses at action-1 (requiredLevel 3, autonomy 2)
+		await rt.executeTick();
+		let task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.pendingActionIndex).toBe(0);
+
+		// Human approves action-1 → executes it, then pauses at action-2 (index 1)
+		const resumed = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(resumed).not.toBeNull();
+		expect(resumed!.status).toBe('review');
+		expect(resumed!.pendingActionIndex).toBe(1);
+		expect(resumed!.pendingCheckpointType).toBe('completion_action');
+	});
+
+	test('resumeCompletionActions returns null for task without pending checkpoint', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager);
+
+		const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		const result = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(result).toBeNull();
+	});
+
 	// ─── completionActions DB persistence ────────────────────────────────
 
 	test('completionActions survive DB round-trip via workflow repository', () => {

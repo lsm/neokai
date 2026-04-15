@@ -19,6 +19,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { NotificationSink } from './notification-sink';
 import type { TaskAgentManager } from './task-agent-manager';
@@ -76,6 +77,12 @@ export interface SpaceRuntimeServiceConfig {
 	 * provisioned automatically.
 	 */
 	daemonHub?: DaemonHub;
+	/**
+	 * Optional artifact repository for resolving completion action context.
+	 * Passed through to SpaceRuntime so completion actions with `artifactType`
+	 * can resolve artifact data for script env injection.
+	 */
+	artifactRepo?: WorkflowRunArtifactRepository;
 }
 
 export class SpaceRuntimeService {
@@ -413,5 +420,16 @@ export class SpaceRuntimeService {
 			},
 		});
 		return router.onGateDataChanged(runId, gateId);
+	}
+
+	/**
+	 * Resume completion action execution for a task paused at a pending action.
+	 *
+	 * Delegates to SpaceRuntime.resumeCompletionActions(). Called from the
+	 * spaceTask.update RPC handler when a human approves a task that was paused
+	 * at a completion action checkpoint.
+	 */
+	async resumeCompletionActions(spaceId: string, taskId: string): Promise<SpaceTask | null> {
+		return this.runtime.resumeCompletionActions(spaceId, taskId);
 	}
 }

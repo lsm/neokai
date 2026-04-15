@@ -76,9 +76,7 @@ PR merge is now handled via two complementary mechanisms:
 - **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` migrated from `writers: ['human']` to `writers: ['reviewer']` + `requiredLevel: 3`
 
 Remaining:
-- `artifactRepo` not yet wired in SpaceRuntime construction (completion actions work but can't resolve artifact data for env injection)
 - No gate script template for "wait for N approvals + CI green" (separate from merge logic)
-- **`pendingActionIndex` resume path not wired**: When a task pauses at a completion action (`pendingCheckpointType: 'completion_action'`, `pendingActionIndex: N`), no RPC handler or runtime tick reads these fields to resume execution from that index after human sign-off. The DB columns and types exist, but the task stays in `review` permanently. Needs: a `task.approveCompletionAction` handler (or similar) that re-enters `resolveCompletionWithActions()` from `pendingActionIndex`.
 
 **Impact:** High  
 **Effort:** Medium

@@ -808,6 +808,87 @@ export class SpaceRuntime {
 		return this.executors.size;
 	}
 
+	/**
+	 * Resumes completion action execution for a task paused at a pending action.
+	 *
+	 * Called when a human approves a task that has `pendingCheckpointType === 'completion_action'`.
+	 * Executes the pending action (which the human just approved) and continues with
+	 * remaining actions. If a later action also requires higher autonomy, the task
+	 * pauses again. If all remaining actions complete, the task transitions to 'done'.
+	 *
+	 * @returns The updated task, or null if the task wasn't in a resumable state.
+	 */
+	async resumeCompletionActions(spaceId: string, taskId: string): Promise<SpaceTask | null> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task) {
+			log.warn(`SpaceRuntime.resumeCompletionActions: task ${taskId} not found`);
+			return null;
+		}
+		if (task.pendingCheckpointType !== 'completion_action' || task.pendingActionIndex == null) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: task ${taskId} is not paused at a completion action`
+			);
+			return null;
+		}
+		if (!task.workflowRunId) {
+			log.warn(`SpaceRuntime.resumeCompletionActions: task ${taskId} has no workflowRunId`);
+			return null;
+		}
+
+		const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+		if (!run) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: workflow run ${task.workflowRunId} not found`
+			);
+			return null;
+		}
+
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
+		const actions = endNode?.completionActions;
+		if (!actions || actions.length === 0) {
+			log.warn(`SpaceRuntime.resumeCompletionActions: no completion actions on end node`);
+			return null;
+		}
+
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space?.workspacePath) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: space ${spaceId} not found or has no workspacePath`
+			);
+			return null;
+		}
+
+		const spaceLevel = (space.autonomyLevel ?? 1) as SpaceAutonomyLevel;
+		const startIndex = task.pendingActionIndex;
+
+		// Execute the approved action and continue with remaining
+		for (let i = startIndex; i < actions.length; i++) {
+			const action = actions[i];
+			if (i === startIndex || spaceLevel >= action.requiredLevel) {
+				// First action was human-approved; subsequent ones auto-execute if autonomy permits
+				await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
+			} else {
+				// Pause at this action
+				return await this.updateTaskAndEmit(spaceId, taskId, {
+					status: 'review',
+					pendingActionIndex: i,
+					pendingCheckpointType: 'completion_action',
+				});
+			}
+		}
+
+		// All remaining actions executed — task is done
+		return await this.updateTaskAndEmit(spaceId, taskId, {
+			status: 'done',
+			completedAt: Date.now(),
+			approvalSource: 'human',
+			approvedAt: Date.now(),
+			pendingActionIndex: null,
+			pendingCheckpointType: null,
+		});
+	}
+
 	// -------------------------------------------------------------------------
 	// Private — rehydration
 	// -------------------------------------------------------------------------
