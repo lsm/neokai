@@ -37,7 +37,7 @@ async function createSpace(daemon: DaemonServerContext): Promise<Space> {
 		name: `Chat Session Test Space ${suffix}`,
 		description: 'Online test space for space:chat provisioning',
 		workspacePath: process.cwd(),
-		autonomyLevel: 'supervised',
+		autonomyLevel: 1,
 	})) as Space;
 }
 

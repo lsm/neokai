@@ -61,7 +61,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		name: 'Task Agent Skills Test Space',
 		description: 'Test space for skills injection online tests',
 		workspacePath: process.cwd(),
-		autonomyLevel: 'supervised',
+		autonomyLevel: 1,
 	})) as Space;
 
 	const { agents } = (await daemon.messageHub.request('spaceAgent.list', {

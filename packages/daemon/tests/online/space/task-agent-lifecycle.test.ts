@@ -87,7 +87,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		name: 'Task Agent Lifecycle Test Space',
 		description: 'Test space for task agent lifecycle online tests',
 		workspacePath: process.cwd(),
-		autonomyLevel: 'supervised',
+		autonomyLevel: 1,
 	})) as Space;
 
 	// space.create auto-seeds preset agents — look up Coder by role
