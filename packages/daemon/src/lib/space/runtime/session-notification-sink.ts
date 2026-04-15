@@ -27,7 +27,7 @@
 
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 import type { SessionFactory } from '../../room/runtime/task-group-manager';
-import type { AutonomyLevel } from '@neokai/shared';
+import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 import { Logger } from '../../logger';
 
 const log = new Logger('session-notification-sink');
@@ -44,9 +44,9 @@ export interface SessionNotificationSinkConfig {
 	 * The autonomy level for this space. Included in every notification message
 	 * so the agent has context for how much it can act without human approval.
 	 *
-	 * Defaults to `'supervised'` if not provided.
+	 * Defaults to `1` (most supervised) if not provided.
 	 */
-	autonomyLevel?: AutonomyLevel;
+	autonomyLevel?: SpaceAutonomyLevel;
 }
 
 /**
@@ -58,12 +58,12 @@ export interface SessionNotificationSinkConfig {
 export class SessionNotificationSink implements NotificationSink {
 	private readonly sessionFactory: SessionFactory;
 	private readonly sessionId: string;
-	private readonly autonomyLevel: AutonomyLevel;
+	private readonly autonomyLevel: SpaceAutonomyLevel;
 
 	constructor(config: SessionNotificationSinkConfig) {
 		this.sessionFactory = config.sessionFactory;
 		this.sessionId = config.sessionId;
-		this.autonomyLevel = config.autonomyLevel ?? 'supervised';
+		this.autonomyLevel = config.autonomyLevel ?? 1;
 	}
 
 	async notify(event: SpaceNotificationEvent): Promise<void> {
@@ -98,7 +98,7 @@ export class SessionNotificationSink implements NotificationSink {
 // Exported for use in tests that build realistic [TASK_EVENT] messages.
 export function formatEventMessage(
 	event: SpaceNotificationEvent,
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	switch (event.kind) {
 		case 'task_blocked':
@@ -128,7 +128,7 @@ function formatTaskBlocked(
 		reason: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} is blocked: ${event.reason}`;
 	const payload = {
@@ -150,7 +150,7 @@ function formatWorkflowRunBlocked(
 		reason: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} is blocked: ${event.reason}`;
 	const payload = {
@@ -172,7 +172,7 @@ function formatTaskTimeout(
 		elapsedMs: number;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const elapsedMin = Math.round(event.elapsedMs / 60000);
 	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} has been running for ${elapsedMin} minute(s) and may be stuck.`;
@@ -196,7 +196,7 @@ function formatWorkflowRunCompleted(
 		summary?: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const statusLabel =
 		event.status === 'done'
@@ -228,7 +228,7 @@ function formatAgentAutoCompleted(
 		elapsedMs: number;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
 	const humanReadable =
@@ -251,7 +251,7 @@ function formatAgentCrash(
 		taskId: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const humanReadable =
 		`Task ${event.taskId} in space ${event.spaceId} encountered an agent crash. ` +
@@ -279,7 +279,7 @@ function formatTaskRetry(
 		maxAttempts: number;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const humanReadable =
 		`Task ${event.taskId} in space ${event.spaceId} was blocked (reason: ${event.originalReason}). ` +
@@ -308,7 +308,7 @@ function formatWorkflowRunNeedsAttention(
 		retriesExhausted: number;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const humanReadable =
 		`Workflow run ${event.runId} in space ${event.spaceId} needs attention. ` +

@@ -31,7 +31,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'archived')),
 			paused INTEGER NOT NULL DEFAULT 0,
-			autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+			autonomy_level INTEGER NOT NULL DEFAULT 1
+				CHECK(autonomy_level BETWEEN 1 AND 5),
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL

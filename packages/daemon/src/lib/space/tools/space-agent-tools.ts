@@ -534,7 +534,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
 					approved: true,
 					approvedAt: Date.now(),
-					approvalSource: 'space_agent',
+					approvalSource: 'agent',
 				});
 
 				// If previously rejected, transition back to in_progress
@@ -587,7 +587,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					approved: false,
 					rejectedAt: Date.now(),
 					reason: args.reason ?? null,
-					approvalSource: 'space_agent',
+					approvalSource: 'agent',
 				});
 
 				if (run.status !== 'blocked') {
@@ -637,7 +637,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 		/**
 		 * Approve a task that is in 'review' status, transitioning it to 'done'.
-		 * Records approval audit trail with space_agent as the source.
+		 * Records approval audit trail with agent as the source.
 		 */
 		async approve_task(args: { task_id: string; reason?: string }): Promise<ToolResult> {
 			const task = taskRepo.getTask(args.task_id);
@@ -660,7 +660,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			try {
 				const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
 					result: task.result ?? undefined,
-					approvalSource: 'space_agent',
+					approvalSource: 'agent',
 					approvalReason: args.reason,
 				});
 

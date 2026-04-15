@@ -72,12 +72,12 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 		expect(columnExists(db, 'spaces', 'autonomy_level')).toBe(true);
 	});
 
-	test("fresh DB: autonomy_level has default value of 'supervised'", () => {
+	test('fresh DB: autonomy_level has default value of 1', () => {
 		runMigrations(db, () => {});
-		expect(getColumnDefault(db, 'spaces', 'autonomy_level')).toBe("'supervised'");
+		expect(getColumnDefault(db, 'spaces', 'autonomy_level')).toBe('1');
 	});
 
-	test("fresh DB: new spaces default to autonomy_level = 'supervised'", () => {
+	test('fresh DB: new spaces default to autonomy_level = 1', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
@@ -86,23 +86,23 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 		).run('space-1', 'test-space', '/workspace/project', 'Test Space', now, now);
 
 		const row = db.prepare(`SELECT autonomy_level FROM spaces WHERE id = 'space-1'`).get() as {
-			autonomy_level: string;
+			autonomy_level: number;
 		};
-		expect(row.autonomy_level).toBe('supervised');
+		expect(row.autonomy_level).toBe(1);
 	});
 
-	test("fresh DB: autonomy_level can be set to 'semi_autonomous'", () => {
+	test('fresh DB: autonomy_level can be set to 3', () => {
 		runMigrations(db, () => {});
 
 		const now = Date.now();
 		db.prepare(
 			`INSERT INTO spaces (id, slug, workspace_path, name, autonomy_level, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		).run('space-1', 'test-space', '/workspace/project', 'Test Space', 'semi_autonomous', now, now);
+		).run('space-1', 'test-space', '/workspace/project', 'Test Space', 3, now, now);
 
 		const row = db.prepare(`SELECT autonomy_level FROM spaces WHERE id = 'space-1'`).get() as {
-			autonomy_level: string;
+			autonomy_level: number;
 		};
-		expect(row.autonomy_level).toBe('semi_autonomous');
+		expect(row.autonomy_level).toBe(3);
 	});
 
 	// -------------------------------------------------------------------------
@@ -139,7 +139,7 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 		expect(columnExists(db, 'spaces', 'autonomy_level')).toBe(true);
 	});
 
-	test("legacy DB: existing space rows get 'supervised' as autonomy_level after column add", () => {
+	test('legacy DB: existing space rows get autonomy_level = 1 after column add', () => {
 		db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -170,10 +170,10 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
 		const rows = db
 			.prepare(`SELECT id, name, autonomy_level FROM spaces ORDER BY id`)
-			.all() as Array<{ id: string; name: string; autonomy_level: string }>;
+			.all() as Array<{ id: string; name: string; autonomy_level: number }>;
 		expect(rows).toHaveLength(2);
-		expect(rows[0]).toMatchObject({ id: 'space-1', name: 'Space A', autonomy_level: 'supervised' });
-		expect(rows[1]).toMatchObject({ id: 'space-2', name: 'Space B', autonomy_level: 'supervised' });
+		expect(rows[0]).toMatchObject({ id: 'space-1', name: 'Space A', autonomy_level: 1 });
+		expect(rows[1]).toMatchObject({ id: 'space-2', name: 'Space B', autonomy_level: 1 });
 	});
 
 	// -------------------------------------------------------------------------

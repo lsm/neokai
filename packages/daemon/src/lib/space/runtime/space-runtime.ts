@@ -501,22 +501,21 @@ export class SpaceRuntime {
 				.find((task) => !!task.result)?.result;
 			const nextResult = summaryFromWorkflow ?? canonicalTask.result ?? summaryFromSibling ?? null;
 
-			// In supervised mode, the task should land in 'review' (not 'done')
-			// so a human can approve. Skip if already in 'review' or 'done'.
+			// At autonomy level 1 (supervised), the task should land in 'review'
+			// (not 'done') so a human can approve. Skip if already in 'review' or 'done'.
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
-			const isSupervised = !space?.autonomyLevel || space.autonomyLevel === 'supervised';
-			const completionStatus = isSupervised ? 'review' : 'done';
+			const spaceLevel = space?.autonomyLevel ?? 1;
+			const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
 
 			if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
 					status: completionStatus,
 					result: nextResult,
-					completedAt: isSupervised
-						? null
-						: (canonicalTask.completedAt ?? run.completedAt ?? Date.now()),
+					completedAt:
+						spaceLevel >= 2 ? (canonicalTask.completedAt ?? run.completedAt ?? Date.now()) : null,
 					// Stamp approval audit trail for semi-autonomous auto-completion
 					...(completionStatus === 'done'
-						? { approvalSource: 'semi_auto' as const, approvedAt: Date.now() }
+						? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
 						: {}),
 				});
 			} else if (nextResult && canonicalTask.result !== nextResult) {
@@ -1196,20 +1195,20 @@ export class SpaceRuntime {
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
 				const nextTaskResult = summary ?? canonicalTask.result ?? null;
 
-				// In supervised mode, transition the task to 'review' so a human
-				// can approve the output before it's marked done. In
-				// semi_autonomous mode, go directly to 'done'.
-				const isSupervised = !space?.autonomyLevel || space.autonomyLevel === 'supervised';
-				const completionStatus = isSupervised ? 'review' : 'done';
+				// At autonomy level 1 (supervised), transition the task to 'review'
+				// so a human can approve the output before it's marked done. At
+				// level >= 2, go directly to 'done'.
+				const spaceLevel = space?.autonomyLevel ?? 1;
+				const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
 
 				if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
 						status: completionStatus,
 						result: nextTaskResult,
-						completedAt: isSupervised ? null : Date.now(),
+						completedAt: spaceLevel >= 2 ? Date.now() : null,
 						// Stamp approval audit trail for semi-autonomous auto-completion
 						...(completionStatus === 'done'
-							? { approvalSource: 'semi_auto' as const, approvedAt: Date.now() }
+							? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
 							: {}),
 					});
 				} else if (summary && canonicalTask.result !== summary) {

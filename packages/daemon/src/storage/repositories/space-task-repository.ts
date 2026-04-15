@@ -384,6 +384,9 @@ export class SpaceTaskRepository {
 			approvalSource: (row.approval_source as SpaceTask['approvalSource']) ?? null,
 			approvalReason: (row.approval_reason as string | null) ?? null,
 			approvedAt: (row.approved_at as number | null) ?? null,
+			pendingActionIndex: (row.pending_action_index as number | null) ?? null,
+			pendingCheckpointType:
+				(row.pending_checkpoint_type as SpaceTask['pendingCheckpointType']) ?? null,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? null,
 			completedAt: (row.completed_at as number | null) ?? null,

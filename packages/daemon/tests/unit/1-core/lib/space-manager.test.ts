@@ -100,34 +100,34 @@ describe('SpaceManager', () => {
 			);
 		});
 
-		it('creates a space with supervised autonomy level', async () => {
+		it('creates a space with autonomy level 1 (supervised)', async () => {
 			const space = await manager.createSpace({
 				workspacePath: tmpDir,
 				name: 'Supervised Space',
-				autonomyLevel: 'supervised',
+				autonomyLevel: 1,
 			});
 
-			expect(space.autonomyLevel).toBe('supervised');
+			expect(space.autonomyLevel).toBe(1);
 		});
 
-		it('creates a space with semi_autonomous autonomy level', async () => {
+		it('creates a space with autonomy level 3 (semi-autonomous)', async () => {
 			const space = await manager.createSpace({
 				workspacePath: tmpDir,
 				name: 'Semi-Auto Space',
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 			});
 
-			expect(space.autonomyLevel).toBe('semi_autonomous');
+			expect(space.autonomyLevel).toBe(3);
 		});
 
-		it('defaults autonomy level to supervised when not specified', async () => {
+		it('defaults autonomy level to 1 when not specified', async () => {
 			const space = await manager.createSpace({
 				workspacePath: tmpDir,
 				name: 'Default Autonomy Space',
 			});
 
-			// DB default is 'supervised'
-			expect(space.autonomyLevel).toBe('supervised');
+			// DB default is 1 (supervised)
+			expect(space.autonomyLevel).toBe(1);
 		});
 	});
 
@@ -173,30 +173,30 @@ describe('SpaceManager', () => {
 			await expect(manager.updateSpace('nonexistent', { name: 'X' })).rejects.toThrow('not found');
 		});
 
-		it('updates autonomy level to semi_autonomous', async () => {
+		it('updates autonomy level to 3 (semi-autonomous)', async () => {
 			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'A' });
-			const updated = await manager.updateSpace(space.id, { autonomyLevel: 'semi_autonomous' });
-			expect(updated.autonomyLevel).toBe('semi_autonomous');
+			const updated = await manager.updateSpace(space.id, { autonomyLevel: 3 });
+			expect(updated.autonomyLevel).toBe(3);
 		});
 
-		it('updates autonomy level back to supervised', async () => {
+		it('updates autonomy level back to 1 (supervised)', async () => {
 			const space = await manager.createSpace({
 				workspacePath: tmpDir,
 				name: 'A',
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 			});
-			const updated = await manager.updateSpace(space.id, { autonomyLevel: 'supervised' });
-			expect(updated.autonomyLevel).toBe('supervised');
+			const updated = await manager.updateSpace(space.id, { autonomyLevel: 1 });
+			expect(updated.autonomyLevel).toBe(1);
 		});
 
 		it('does not change autonomy level when not provided in update', async () => {
 			const space = await manager.createSpace({
 				workspacePath: tmpDir,
 				name: 'A',
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 			});
 			const updated = await manager.updateSpace(space.id, { name: 'B' });
-			expect(updated.autonomyLevel).toBe('semi_autonomous');
+			expect(updated.autonomyLevel).toBe(3);
 		});
 	});
 

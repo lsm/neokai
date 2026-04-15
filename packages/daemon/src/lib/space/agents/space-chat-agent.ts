@@ -208,22 +208,22 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	);
 
 	// Autonomy level section
-	const level = context.autonomyLevel ?? 'supervised';
+	const level = context.autonomyLevel ?? 1;
 	sections.push(`\n## Autonomy Level\n`);
-	sections.push(`This Space is configured in **\`${level}\`** mode.`);
+	sections.push(`This Space is configured at autonomy level **${level}** (scale 1–5).`);
 	sections.push('');
 
-	if (level === 'semi_autonomous') {
+	if (level >= 3) {
 		sections.push(
-			`In \`semi_autonomous\` mode you may act without human approval in these cases:\n` +
+			`At autonomy level ${level} you may act without human approval in these cases:\n` +
 				`  - **Retry a failed task once**: Call \`retry_task\` immediately when a task enters \`needs_attention\` for the first time.\n` +
 				`  - **Reassign a task**: If retrying fails or a different agent would be better suited, call \`reassign_task\`.\n` +
 				`  - After one failed retry or when genuinely uncertain, **escalate to the human** (see Escalation section below).\n` +
-				`  - Human-gated workflow steps always require human approval — never bypass them.`
+				`  - Workflow gates with \`requiredLevel\` above ${level} still require human approval — never bypass them.`
 		);
 	} else {
 		sections.push(
-			`In \`supervised\` mode you must not take autonomous action on judgment-required events:\n` +
+			`At autonomy level ${level} you must not take autonomous action on judgment-required events:\n` +
 				`  - **Notify the human** of every \`[TASK_EVENT]\` that requires a decision.\n` +
 				`  - **Provide a recommendation** (what you would do and why) but **wait for human approval** before acting.\n` +
 				`  - Do not call \`retry_task\`, \`reassign_task\`, or \`cancel_task\` without explicit human instruction.`

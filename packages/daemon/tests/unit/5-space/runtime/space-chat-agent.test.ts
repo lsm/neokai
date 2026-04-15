@@ -280,8 +280,8 @@ describe('buildSpaceChatSystemPrompt — event handling', () => {
 	});
 
 	test('event handling section present regardless of autonomy level', () => {
-		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		const empty = buildSpaceChatSystemPrompt({});
 		for (const prompt of [supervised, semi, empty]) {
 			expect(prompt).toContain('task_needs_attention');
@@ -300,55 +300,55 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
 		expect(prompt).toContain('Autonomy Level');
 	});
 
-	test('defaults to supervised mode when autonomyLevel is not set', () => {
+	test('defaults to level 1 (supervised) when autonomyLevel is not set', () => {
 		const prompt = buildSpaceChatSystemPrompt({});
-		expect(prompt).toContain('supervised');
+		expect(prompt).toContain('autonomy level **1**');
 		expect(prompt).toContain('wait for human approval');
 	});
 
-	test('supervised mode includes notify-human instruction', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+	test('level 1 includes notify-human instruction', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('Notify the human');
 	});
 
-	test('supervised mode includes wait for approval instruction', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+	test('level 1 includes wait for approval instruction', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('wait for human approval');
 	});
 
-	test('supervised mode forbids autonomous retry/reassign/cancel', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+	test('level 1 forbids autonomous retry/reassign/cancel', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('Do not call `retry_task`');
 	});
 
-	test('semi_autonomous mode shows the configured level', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
-		expect(prompt).toContain('semi_autonomous');
+	test('level 3 shows the configured level', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+		expect(prompt).toContain('autonomy level **3**');
 	});
 
-	test('semi_autonomous mode allows autonomous retry', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+	test('level 3 allows autonomous retry', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('Retry a failed task once');
 	});
 
-	test('semi_autonomous mode allows reassign', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+	test('level 3 allows reassign', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('Reassign a task');
 	});
 
-	test('semi_autonomous mode says escalate after one failed retry', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+	test('level 3 says escalate after one failed retry', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('one failed retry');
 	});
 
-	test('semi_autonomous mode still enforces human-gated steps', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
-		expect(prompt).toContain('Human-gated workflow steps always require human approval');
+	test('level 3 still enforces human-gated workflow steps', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+		expect(prompt).toContain('still require human approval');
 	});
 
-	test('supervised and semi_autonomous produce different autonomy instructions', () => {
-		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+	test('level 1 and level 3 produce different autonomy instructions', () => {
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(supervised).not.toEqual(semi);
 		expect(supervised).toContain('wait for human approval');
 		expect(semi).toContain('Retry a failed task once');
@@ -386,8 +386,8 @@ describe('buildSpaceChatSystemPrompt — escalation', () => {
 	});
 
 	test('escalation section present regardless of autonomy level', () => {
-		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		for (const prompt of [supervised, semi]) {
 			expect(prompt).toContain('Escalation');
 			expect(prompt).toContain('What happened');
@@ -438,8 +438,8 @@ describe('buildSpaceChatSystemPrompt — clarification guidance', () => {
 	});
 
 	test('clarification guidance present regardless of autonomy level', () => {
-		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		for (const prompt of [supervised, semi]) {
 			expect(prompt).toContain('Ask for clarification');
 			expect(prompt).toContain('specific enough to act on');
@@ -490,8 +490,8 @@ describe('buildSpaceChatSystemPrompt — coordination tools', () => {
 	});
 
 	test('coordination tools section present for all autonomy levels', () => {
-		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const supervised = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		const semi = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		for (const prompt of [supervised, semi]) {
 			expect(prompt).toContain('get_task_detail');
 			expect(prompt).toContain('retry_task');

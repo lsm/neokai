@@ -36,7 +36,7 @@ describe('SpaceRepository', () => {
 			expect(space.backgroundContext).toBe('');
 			expect(space.instructions).toBe('');
 			expect(space.status).toBe('active');
-			expect(space.autonomyLevel).toBe('supervised');
+			expect(space.autonomyLevel).toBe(1);
 			expect(space.sessionIds).toEqual([]);
 			expect(space.config).toBeUndefined();
 			expect(space.createdAt).toBeGreaterThan(0);
@@ -53,7 +53,7 @@ describe('SpaceRepository', () => {
 				instructions: 'Do this',
 				defaultModel: 'claude-opus',
 				allowedModels: ['claude-opus', 'claude-sonnet'],
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 				config: { maxConcurrentTasks: 3, taskTimeoutMs: 60000 },
 			});
 
@@ -62,13 +62,13 @@ describe('SpaceRepository', () => {
 			expect(space.instructions).toBe('Do this');
 			expect(space.defaultModel).toBe('claude-opus');
 			expect(space.allowedModels).toEqual(['claude-opus', 'claude-sonnet']);
-			expect(space.autonomyLevel).toBe('semi_autonomous');
+			expect(space.autonomyLevel).toBe(3);
 			expect(space.config).toEqual({ maxConcurrentTasks: 3, taskTimeoutMs: 60000 });
 		});
 
-		it("defaults autonomyLevel to 'supervised' when not specified", () => {
+		it('defaults autonomyLevel to 1 when not specified', () => {
 			const space = repo.createSpace({ workspacePath: '/workspace/project', slug: 'p', name: 'P' });
-			expect(space.autonomyLevel).toBe('supervised');
+			expect(space.autonomyLevel).toBe(1);
 		});
 
 		it('enforces unique workspace_path', () => {
@@ -212,23 +212,23 @@ describe('SpaceRepository', () => {
 			expect(updated!.defaultModel).toBe('claude-sonnet');
 		});
 
-		it("updates autonomyLevel to 'semi_autonomous'", () => {
+		it('updates autonomyLevel to 3', () => {
 			const space = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
-			expect(space.autonomyLevel).toBe('supervised');
+			expect(space.autonomyLevel).toBe(1);
 
-			const updated = repo.updateSpace(space.id, { autonomyLevel: 'semi_autonomous' });
-			expect(updated!.autonomyLevel).toBe('semi_autonomous');
+			const updated = repo.updateSpace(space.id, { autonomyLevel: 3 });
+			expect(updated!.autonomyLevel).toBe(3);
 		});
 
-		it("updates autonomyLevel back to 'supervised'", () => {
+		it('updates autonomyLevel back to 1', () => {
 			const space = repo.createSpace({
 				workspacePath: '/workspace/a',
 				slug: 'a',
 				name: 'A',
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 			});
-			const updated = repo.updateSpace(space.id, { autonomyLevel: 'supervised' });
-			expect(updated!.autonomyLevel).toBe('supervised');
+			const updated = repo.updateSpace(space.id, { autonomyLevel: 1 });
+			expect(updated!.autonomyLevel).toBe(1);
 		});
 
 		it('updates typed config fields', () => {
@@ -265,7 +265,7 @@ describe('SpaceRepository', () => {
 				instructions: 'Original instructions',
 				defaultModel: 'claude-opus',
 				allowedModels: ['claude-opus', 'claude-sonnet'],
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 				config: { maxConcurrentTasks: 3, taskTimeoutMs: 60000 },
 			});
 
@@ -278,7 +278,7 @@ describe('SpaceRepository', () => {
 			expect(updated!.instructions).toBe('Original instructions');
 			expect(updated!.defaultModel).toBe('claude-opus');
 			expect(updated!.allowedModels).toEqual(['claude-opus', 'claude-sonnet']);
-			expect(updated!.autonomyLevel).toBe('semi_autonomous');
+			expect(updated!.autonomyLevel).toBe(3);
 			expect(updated!.config).toEqual({ maxConcurrentTasks: 3, taskTimeoutMs: 60000 });
 			expect(updated!.workspacePath).toBe('/workspace/a');
 		});
@@ -317,7 +317,7 @@ describe('SpaceRepository', () => {
 				instructions: 'Follow TDD practices',
 				defaultModel: 'claude-opus',
 				allowedModels: ['claude-opus', 'claude-sonnet', 'claude-haiku'],
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 				config: { maxConcurrentTasks: 10, taskTimeoutMs: 120000 },
 			});
 
@@ -334,7 +334,7 @@ describe('SpaceRepository', () => {
 			expect(readBack!.instructions).toBe('Follow TDD practices');
 			expect(readBack!.defaultModel).toBe('claude-opus');
 			expect(readBack!.allowedModels).toEqual(['claude-opus', 'claude-sonnet', 'claude-haiku']);
-			expect(readBack!.autonomyLevel).toBe('semi_autonomous');
+			expect(readBack!.autonomyLevel).toBe(3);
 			expect(readBack!.config).toEqual({ maxConcurrentTasks: 10, taskTimeoutMs: 120000 });
 			expect(readBack!.status).toBe('active');
 			expect(readBack!.sessionIds).toEqual([]);
@@ -352,7 +352,7 @@ describe('SpaceRepository', () => {
 				instructions: 'Before instructions',
 				defaultModel: 'claude-opus',
 				allowedModels: ['claude-opus'],
-				autonomyLevel: 'supervised',
+				autonomyLevel: 1,
 			});
 
 			// Update all mutable fields
@@ -363,7 +363,7 @@ describe('SpaceRepository', () => {
 				instructions: 'After instructions',
 				defaultModel: 'claude-sonnet',
 				allowedModels: ['claude-sonnet', 'claude-haiku'],
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 				config: { maxConcurrentTasks: 5, taskTimeoutMs: 30000 },
 			});
 
@@ -376,7 +376,7 @@ describe('SpaceRepository', () => {
 			expect(readBack!.instructions).toBe('After instructions');
 			expect(readBack!.defaultModel).toBe('claude-sonnet');
 			expect(readBack!.allowedModels).toEqual(['claude-sonnet', 'claude-haiku']);
-			expect(readBack!.autonomyLevel).toBe('semi_autonomous');
+			expect(readBack!.autonomyLevel).toBe(3);
 			expect(readBack!.config).toEqual({ maxConcurrentTasks: 5, taskTimeoutMs: 30000 });
 			// Immutable fields should be unchanged
 			expect(readBack!.workspacePath).toBe('/workspace/update-roundtrip');

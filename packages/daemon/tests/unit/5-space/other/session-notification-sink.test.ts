@@ -178,13 +178,13 @@ describe('SessionNotificationSink', () => {
 			await sink.notify(event);
 
 			const { message } = factory.calls[0];
-			expect(message).toContain('supervised');
+			expect(message).toContain('Autonomy level: 1');
 			const json = extractJson(message);
-			expect(json.autonomyLevel).toBe('supervised');
+			expect(json.autonomyLevel).toBe(1);
 		});
 
 		it('message includes semi_autonomous level when configured', async () => {
-			const { sink, factory } = makeSink(undefined, { autonomyLevel: 'semi_autonomous' });
+			const { sink, factory } = makeSink(undefined, { autonomyLevel: 3 });
 			const event: SpaceNotificationEvent = {
 				kind: 'task_blocked',
 				spaceId: SPACE_ID,
@@ -196,9 +196,9 @@ describe('SessionNotificationSink', () => {
 			await sink.notify(event);
 
 			const { message } = factory.calls[0];
-			expect(message).toContain('semi_autonomous');
+			expect(message).toContain('Autonomy level: 3');
 			const json = extractJson(message);
-			expect(json.autonomyLevel).toBe('semi_autonomous');
+			expect(json.autonomyLevel).toBe(3);
 		});
 	});
 
@@ -223,7 +223,7 @@ describe('SessionNotificationSink', () => {
 			const json = extractJson(message);
 			expect(json.kind).toBe('workflow_run_blocked');
 			expect(json.runId).toBe('run-55');
-			expect(json.autonomyLevel).toBe('supervised');
+			expect(json.autonomyLevel).toBe(1);
 		});
 
 		it('uses defer delivery mode', async () => {
@@ -263,7 +263,7 @@ describe('SessionNotificationSink', () => {
 			const json = extractJson(message);
 			expect(json.kind).toBe('task_timeout');
 			expect(json.elapsedMs).toBe(3600000);
-			expect(json.autonomyLevel).toBe('supervised');
+			expect(json.autonomyLevel).toBe(1);
 		});
 
 		it('uses defer delivery mode', async () => {
@@ -304,7 +304,7 @@ describe('SessionNotificationSink', () => {
 			const json = extractJson(message);
 			expect(json.status).toBe('done');
 			expect(json.summary).toBe('All steps finished. PR #42 merged.');
-			expect(json.autonomyLevel).toBe('supervised');
+			expect(json.autonomyLevel).toBe(1);
 		});
 
 		it('formats a cancelled run', async () => {
@@ -431,8 +431,8 @@ describe('SessionNotificationSink', () => {
 				timestamp: TIMESTAMP,
 			};
 
-			const msg1 = formatEventMessage(event, 'supervised');
-			const msg2 = formatEventMessage(event, 'supervised');
+			const msg1 = formatEventMessage(event, 1);
+			const msg2 = formatEventMessage(event, 1);
 			expect(msg1).toBe(msg2);
 		});
 
@@ -445,11 +445,11 @@ describe('SessionNotificationSink', () => {
 				timestamp: TIMESTAMP,
 			};
 
-			const supervised = formatEventMessage(event, 'supervised');
-			const semiAuto = formatEventMessage(event, 'semi_autonomous');
+			const supervised = formatEventMessage(event, 1);
+			const semiAuto = formatEventMessage(event, 3);
 			expect(supervised).not.toBe(semiAuto);
-			expect(supervised).toContain('supervised');
-			expect(semiAuto).toContain('semi_autonomous');
+			expect(supervised).toContain('Autonomy level: 1');
+			expect(semiAuto).toContain('Autonomy level: 3');
 		});
 	});
 });
@@ -469,7 +469,7 @@ describe('formatEventMessage — agent_crash', () => {
 			timestamp: TIMESTAMP,
 		};
 
-		const msg = formatEventMessage(event, 'supervised');
+		const msg = formatEventMessage(event, 1);
 		expect(msg).toContain('[TASK_EVENT] agent_crash');
 	});
 
@@ -481,7 +481,7 @@ describe('formatEventMessage — agent_crash', () => {
 			timestamp: TIMESTAMP,
 		};
 
-		const msg = formatEventMessage(event, 'supervised');
+		const msg = formatEventMessage(event, 1);
 		expect(msg).toContain('task-crashed');
 		expect(msg).toContain('space-crash');
 		expect(msg).toContain('blocked');
@@ -495,13 +495,13 @@ describe('formatEventMessage — agent_crash', () => {
 			timestamp: TIMESTAMP,
 		};
 
-		const msg = formatEventMessage(event, 'supervised');
+		const msg = formatEventMessage(event, 1);
 		const json = extractJson(msg);
 		expect(json['kind']).toBe('agent_crash');
 		expect(json['failureReason']).toBe('agentCrash');
 		expect(json['taskId']).toBe('task-crashed');
 		expect(json['spaceId']).toBe('space-crash');
-		expect(json['autonomyLevel']).toBe('supervised');
+		expect(json['autonomyLevel']).toBe(1);
 	});
 
 	it('includes autonomy level in JSON payload', () => {
@@ -512,11 +512,11 @@ describe('formatEventMessage — agent_crash', () => {
 			timestamp: TIMESTAMP,
 		};
 
-		const msgSupervised = formatEventMessage(event, 'supervised');
-		const msgSemiAuto = formatEventMessage(event, 'semi_autonomous');
+		const msgSupervised = formatEventMessage(event, 1);
+		const msgSemiAuto = formatEventMessage(event, 3);
 
-		expect(extractJson(msgSupervised)['autonomyLevel']).toBe('supervised');
-		expect(extractJson(msgSemiAuto)['autonomyLevel']).toBe('semi_autonomous');
+		expect(extractJson(msgSupervised)['autonomyLevel']).toBe(1);
+		expect(extractJson(msgSemiAuto)['autonomyLevel']).toBe(3);
 	});
 
 	it('SessionNotificationSink.notify() injects agent_crash message into session', async () => {
@@ -524,7 +524,7 @@ describe('formatEventMessage — agent_crash', () => {
 		const sink = new SessionNotificationSink({
 			sessionFactory: factory,
 			sessionId: 'session:spaces:global',
-			autonomyLevel: 'supervised',
+			autonomyLevel: 1,
 		});
 
 		await sink.notify({

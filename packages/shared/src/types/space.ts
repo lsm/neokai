@@ -18,32 +18,24 @@ import type { McpServerConfig } from './sdk-config';
 export type SpaceStatus = 'active' | 'archived';
 
 /**
- * Space autonomy level — controls how much the Space Agent can act without human approval.
+ * Space autonomy level — a numeric risk-tolerance threshold (1–5).
  *
- * - `supervised` (default): Space Agent notifies human of all judgment-required events
- *   and waits for approval before acting.
- * - `semi_autonomous`: Space Agent can retry failed tasks and reassign them autonomously;
- *   escalates to human after one failed retry or when uncertain.
+ * Every checkpoint (gate or completion action) declares a `requiredLevel`.
+ * The space's autonomy level is compared: `space.autonomyLevel >= checkpoint.requiredLevel`
+ * means auto-approved; otherwise, execution pauses for human sign-off.
+ *
+ * Levels have no prescribed names — workflow authors assign meaning per their domain.
  */
-export type SpaceAutonomyLevel = 'supervised' | 'semi_autonomous';
+export type SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5;
 
 /**
  * Who approved a task or gate — used for audit trail tracking.
  *
  * - `human`       — User approved via UI / RPC
- * - `neo_agent`   — Global Neo agent approved via tool call
- * - `space_agent` — Per-space orchestrator agent approved
- * - `task_agent`  — Task Agent (gates only — cannot self-approve task completion)
- * - `node_agent`  — Node agent wrote gate data via send_message
- * - `semi_auto`   — Runtime auto-approved in semi_autonomous mode
+ * - `auto_policy` — Runtime auto-approved because space autonomy level >= required level
+ * - `agent`       — An agent approved via tool call (specific agent identity tracked in session metadata)
  */
-export type SpaceApprovalSource =
-	| 'human'
-	| 'neo_agent'
-	| 'space_agent'
-	| 'task_agent'
-	| 'node_agent'
-	| 'semi_auto';
+export type SpaceApprovalSource = 'human' | 'auto_policy' | 'agent';
 
 /**
  * Typed runtime configuration for a Space.
@@ -261,12 +253,23 @@ export interface SpaceTask {
 	archivedAt: number | null;
 	/** Why this task is blocked; null when status is not `blocked` */
 	blockReason: SpaceBlockReason | null;
-	/** Who approved this task (set when transitioning from review → done or via semi_auto) */
+	/** Who approved this task (set when transitioning from review → done or via auto_policy) */
 	approvalSource: SpaceApprovalSource | null;
 	/** Optional reason/comment for the approval or rejection */
 	approvalReason: string | null;
 	/** Timestamp when approval occurred (milliseconds since epoch); null until approved */
 	approvedAt: number | null;
+	/**
+	 * Index into the workflow node's `completionActions[]` for the action currently awaiting
+	 * human approval. Null when not paused at a completion action.
+	 */
+	pendingActionIndex: number | null;
+	/**
+	 * Type of checkpoint the task is currently paused at. Null when not paused.
+	 * - `completion_action`: paused at a node completion action
+	 * - `gate`: paused at a gate requiring human approval
+	 */
+	pendingCheckpointType: 'completion_action' | 'gate' | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -686,6 +689,13 @@ export interface Gate {
 	 * Used for cyclic workflows where gate state should be cleared each loop.
 	 */
 	resetOnCycle: boolean;
+	/**
+	 * Minimum space autonomy level required to auto-approve this gate.
+	 * When `space.autonomyLevel >= requiredLevel`, the gate is auto-approved after
+	 * validation (script + fields) passes. When below, the gate blocks for human sign-off.
+	 * Undefined = no approval needed beyond validation.
+	 */
+	requiredLevel?: SpaceAutonomyLevel;
 }
 
 /**
@@ -886,6 +896,12 @@ export interface WorkflowNode {
 	 * Must be non-empty. Each agent runs concurrently; the node completes when all agents complete.
 	 */
 	agents: WorkflowNodeAgent[];
+	/**
+	 * Actions to execute after this node's task is approved (or auto-approved).
+	 * Executed in definition order. Each action has a `requiredLevel` that determines
+	 * whether it auto-executes or pauses for human approval.
+	 */
+	completionActions?: CompletionAction[];
 }
 
 /**
@@ -902,6 +918,8 @@ export interface WorkflowNodeInput {
 	 * Agents for parallel execution within this node. Must be non-empty.
 	 */
 	agents: WorkflowNodeAgent[];
+	/** Completion actions to execute after this node's task is approved. */
+	completionActions?: CompletionAction[];
 }
 
 /**
@@ -1222,4 +1240,75 @@ export interface WorkflowRunArtifact {
 	data: Record<string, unknown>;
 	createdAt: number;
 	updatedAt: number;
+}
+
+// ── Completion Actions ────────────────────────────────────────────────────
+
+/**
+ * A completion action runs after a workflow node's task is approved.
+ * Actions execute in definition order. Each has a `requiredLevel` —
+ * if `space.autonomyLevel >= requiredLevel`, it auto-executes;
+ * otherwise, the pipeline pauses for human sign-off.
+ */
+export type CompletionAction =
+	| ScriptCompletionAction
+	| InstructionCompletionAction
+	| McpCallCompletionAction;
+
+interface CompletionActionBase {
+	/** Unique identifier within the node's completion actions */
+	id: string;
+	/** Human-readable name (shown in approval UI) */
+	name: string;
+	/** Minimum space autonomy level required to auto-execute this action */
+	requiredLevel: SpaceAutonomyLevel;
+	/** Which artifact type to resolve as context for this action */
+	artifactType?: ArtifactType;
+	/** Specific artifact key, or undefined to use all artifacts of the type */
+	artifactKey?: string;
+}
+
+/** Deterministic bash script — artifact data injected as environment variables */
+export interface ScriptCompletionAction extends CompletionActionBase {
+	type: 'script';
+	/** Shell script to execute */
+	script: string;
+}
+
+/** Agent instruction — sends a prompt to a specific node agent for execution */
+export interface InstructionCompletionAction extends CompletionActionBase {
+	type: 'instruction';
+	/** Node ID of the agent that receives the instruction */
+	targetNodeId: string;
+	/** Prompt text — supports `{{artifact.field}}` template interpolation */
+	instruction: string;
+}
+
+/** Direct MCP tool invocation — no agent reasoning needed */
+export interface McpCallCompletionAction extends CompletionActionBase {
+	type: 'mcp_call';
+	/** MCP server name (must be enabled in the space's skills config) */
+	server: string;
+	/** Tool name on the MCP server */
+	tool: string;
+	/** Tool arguments — values support `{{artifact.field}}` template interpolation */
+	args: Record<string, string>;
+}
+
+// ── Approval Records ──────────────────────────────────────────────────────
+
+/** Structured record of a checkpoint approval decision. */
+export interface ApprovalRecord {
+	/** Who/what approved */
+	source: SpaceApprovalSource;
+	/** The autonomy level the checkpoint required */
+	requiredLevel: SpaceAutonomyLevel;
+	/** The space's autonomy level at the time of the decision */
+	spaceLevel: SpaceAutonomyLevel;
+	/** When the decision was made (milliseconds since epoch) */
+	timestamp: number;
+	/** Optional reason provided by the approver */
+	reason?: string;
+	/** True if the human chose to skip this action instead of approving */
+	skipped?: boolean;
 }
