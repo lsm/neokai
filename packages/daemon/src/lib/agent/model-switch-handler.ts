@@ -82,20 +82,18 @@ export class ModelSwitchHandler {
 	}
 
 	/**
-	 * Strip thinking blocks from JSONL when switching to Anthropic from a non-Anthropic provider.
+	 * Strip thinking blocks from JSONL when switching between providers.
 	 *
-	 * Non-Anthropic providers produce thinking block signatures (GLM: empty string,
-	 * MiniMax: hex hash) that Anthropic rejects with "400: Invalid signature in thinking block".
+	 * Thinking block signatures are provider-specific and cannot be validated by a
+	 * different provider's API. Anthropic rejects GLM/MiniMax signatures; GLM/MiniMax
+	 * reject Anthropic signatures. Both fail with "400: Invalid signature in thinking block".
 	 * Stripping preserves conversation text + tool usage while avoiding context loss.
 	 */
 	private stripThinkingBlocksIfNeeded(previousProvider: string, newProvider: string): void {
 		const { session, logger } = this.ctx;
 
-		// Only strip when switching TO an Anthropic provider FROM a non-Anthropic provider
-		const isTargetAnthropic = newProvider.startsWith('anthropic');
-		const isSourceAnthropic = previousProvider.startsWith('anthropic');
-
-		if (!isTargetAnthropic || isSourceAnthropic) return;
+		// Strip when switching between different providers — signatures are provider-specific
+		if (previousProvider === newProvider) return;
 		if (!session.sdkSessionId) return;
 
 		const workspacePath = this.getSDKWorkspacePath();
