@@ -1,6 +1,7 @@
 # Space Autonomy & Human-in-the-Loop Gap Analysis
 
-Date: 2026-04-12
+Date: 2026-04-12  
+Last updated: 2026-04-13
 
 ## Architecture Summary
 
@@ -9,12 +10,12 @@ The space/task/workflow system has three orthogonal control layers:
 | Layer | Scope | Mechanism | Key File |
 |-------|-------|-----------|----------|
 | **Gates** | Per-channel in workflow | Field checks + scripts block message delivery | `runtime/gate-evaluator.ts` |
-| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) | `runtime/space-runtime.ts:1177` |
+| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) | `runtime/space-runtime.ts:507,1202` |
 | **Task Status Machine** | Per-task | `open -> in_progress -> review -> done` | `managers/space-task-manager.ts` |
 
 ### How Autonomy Works Today
 
-Autonomy has exactly **one decision point** — at `space-runtime.ts:1177`:
+Autonomy has exactly **two decision points** — at `space-runtime.ts:507` (single-node completion) and `:1202` (multi-node workflow run completion):
 
 ```
 supervised:       workflow completes -> task status = 'review' (human must approve)
@@ -66,16 +67,14 @@ that must guide every implementation decision in this gap list.
 
 ### 1. PR Auto-Merge for Semi-Autonomous
 
-**Status:** Documented but unimplemented
-
-CLAUDE.md states: *"Semi-autonomous: Worker can merge approved PRs without human confirmation"*
+**Status:** Not implemented
 
 PR tracking migrated from hardcoded `SpaceTask` fields to `workflow_run_artifacts` table (PR #1496), but:
 - No merge logic exists
 - No gate script template for "wait for N approvals + CI green"
 - No differentiation between supervised (human must merge) and semi-autonomous (agent can merge approved PRs)
 
-**Impact:** High — core promised feature  
+**Impact:** High  
 **Effort:** Medium
 
 ---
@@ -303,6 +302,117 @@ Missing:
 
 ---
 
+### 13. No Dead Loop Detection in Spaces
+
+**Status:** Not implemented
+
+Room has `dead-loop-detector.ts` (Levenshtein similarity-based, 5-fail threshold within 5-minute window)
+that detects infinite gate bounce cycles and escalates to human. Space has nothing equivalent —
+an agent can crash/retry indefinitely within the fixed retry budget, and the runtime has no
+intelligence to detect that repeated failures share the same root cause.
+
+Current Space retry behavior:
+- `MAX_TASK_AGENT_CRASH_RETRIES = 2` — fixed count, no pattern analysis
+- `MAX_BLOCKED_RUN_RETRIES = 1` — fixed count
+- After exhausting retries → `blocked` with `agent_crashed` reason — but no diagnostic of *why*
+
+Missing:
+- Similarity detection across failure reasons (are retries hitting the same error?)
+- Escalation with diagnostic summary (what was the agent trying when it failed?)
+- Configurable thresholds per space or workflow
+
+**Impact:** Medium — stuck workflows consume resources without meaningful escalation  
+**Effort:** Medium
+
+---
+
+### 14. No PR Merge Validation in Spaces
+
+**Status:** Not implemented
+
+Room has `lifecycle-hooks.ts` (400+ lines) with two gate points:
+- **Worker exit gate**: `checkNotOnBaseBranch()`, `checkPrExists()`, `checkPrSynced()`, `checkWorkerPrMerged()`
+- **Leader complete gate**: `checkLeaderPrMerged()`, `checkPrHasReviews()`, `checkPrIsMergeable()`
+
+Space has **zero PR validation**. Node agents can write PR artifacts via `write_artifact(type: 'pr')`,
+and Task Agents can call `report_result(status: 'done')`, but nothing verifies the PR was actually
+merged before the task is marked complete.
+
+This means:
+- A task can be marked `done` while its PR is still open
+- No enforcement that work was actually integrated into the base branch
+- `approve_task` transitions `review` → `done` without checking PR state
+
+**Depends on:** Gap #1 (PR auto-merge shares the same merge verification infrastructure)  
+**Impact:** High — tasks complete without verifying work was integrated  
+**Effort:** Medium
+
+---
+
+### 15. No Unified Inbox for Space Approvals
+
+**Status:** Not implemented
+
+The global `Inbox` component (`packages/web/src/components/inbox/Inbox.tsx`) aggregates room tasks
+in `review` status with approve/reject buttons. Space tasks and gate approvals are **not included**.
+
+Space approval discoverability relies on:
+- Attention badge on sidebar Tasks button (per-space only, not global)
+- SpacesPage cards showing "N action" count
+- Must navigate into the specific space → Tasks → Action tab → click task → banner
+
+For users managing multiple spaces, there is no single view of all pending approvals across spaces.
+
+**Impact:** Medium — approval discoverability scales poorly with number of spaces  
+**Effort:** Low-Medium
+
+---
+
+### 16. Multi-Gate Blocking Ambiguity
+
+**Status:** Known limitation (comment in code)
+
+`TaskBlockedBanner.tsx:111` has a TODO comment:
+> "in multi-gate workflows this may not be the gate that actually blocked the task.
+> A future improvement would store `blockingGateId` on SpaceTask to remove ambiguity."
+
+When a task is blocked with `gate_rejected`, the UI picks the first rejected/waiting gate from
+`listGateData()`. In workflows with multiple gates, this heuristic may show the wrong gate.
+
+Missing:
+- `blockingGateId` field on `SpaceTask` stamped when `gate_rejected` block reason is set
+- Runtime passes the specific gate ID that caused the rejection through to `stampBlockReason()`
+- `TaskBlockedBanner` uses the stored ID instead of heuristic search
+
+**Impact:** Low — only affects multi-gate workflows  
+**Effort:** Low
+
+---
+
+### 17. Consecutive Failure Escalation in Spaces
+
+**Status:** Not implemented
+
+Room has per-goal `consecutiveFailures` counter with `maxConsecutiveFailures` threshold (default 3).
+When the threshold is reached, the goal is escalated to `needs_human` status. On success, the
+counter resets to 0.
+
+Space has **no equivalent**. The fixed retry budget (`MAX_TASK_AGENT_CRASH_RETRIES = 2`) applies
+equally regardless of history. There is no concept of "this space/task keeps failing, escalate
+to human" beyond the per-task retry exhaustion.
+
+Missing:
+- Per-space or per-task consecutive failure counter
+- Configurable failure threshold before escalation
+- Counter reset on success
+- Escalation action (pause space? notify human? mark space as `needs_human`?)
+
+**Depends on:** Gap #6 (tiered retry), Gap #13 (dead loop detection)  
+**Impact:** Medium  
+**Effort:** Low-Medium
+
+---
+
 ## Priority Matrix
 
 | # | Gap | Impact | Effort | Priority | Status |
@@ -320,25 +430,38 @@ Missing:
 | 10 | Conditional branching by autonomy | Medium | High | **P3** | |
 | 11 | Runtime lifecycle controls | High | Low-Medium | **P1** | ✅ |
 | 12 | Autonomy level UI toggle | Medium | Medium | **P2** | |
+| 13 | Dead loop detection in spaces | Medium | Medium | **P2** | |
+| 14 | PR merge validation in spaces | High | Medium | **P1** | |
+| 15 | Unified inbox for space approvals | Medium | Low-Medium | **P2** | |
+| 16 | Multi-gate blocking ambiguity | Low | Low | **P3** | |
+| 17 | Consecutive failure escalation | Medium | Low-Medium | **P2** | |
 
 ## Dependency Graph & Implementation Order
 
 ```
 Gap 3 (Audit Trail) ──────┐
-                           ├──► Gap 2 (Notification UI) ──► Gap 2b (Action UI) ──► Gap 1 (PR Auto-Merge)
-Gap 8 (block reasons) ────┘                                       │
+                           ├──► Gap 2 (Notification UI) ──► Gap 2b (Action UI) ──► Gap 14 (PR Merge Validation) ──► Gap 1 (PR Auto-Merge)
+Gap 8 (Block Reasons) ────┘                                       │
+                                                                  ├──► Gap 15 (Unified Inbox)
+Gap 5 (Dependency Enforcement)                                    ├──► Gap 16 (Multi-Gate Ambiguity)
                                                                   ▼
-Gap 5 (Dependency Enforcement)                              Gap 9 (Review SLA)
+                                                          Gap 17 (Consecutive Failure Escalation)
                                                                   │
-Gap 6 (Tiered Retry) ────────────────────────────────────────────┤
-                                                                  ▼
-                                                          Gap 4 (Execution-Time Autonomy)
-                                                                  │
-                                                                  ▼
-                                                          Gap 10 (Conditional Branching)
-                                                                  │
-                                                                  ▼
-                                                          Gap 7 (Room/Space Unification)
+                                                    ┌─────────────┼─────────────┐
+                                                    ▼             ▼             ▼
+                                              Gap 6 (Retry)  Gap 13 (Dead Loop)  Gap 9 (Review SLA)
+                                                    │             │
+                                                    └──────┬──────┘
+                                                           ▼
+                                                    Gap 4 (Execution-Time Autonomy)
+                                                           │
+                                                           ▼
+                                                    Gap 10 (Conditional Branching)
+                                                           │
+                                                           ▼
+                                                    Gap 7 (Room/Space Unification)
+
+Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 ```
 
 ### Recommended Implementation Sequence
@@ -350,12 +473,18 @@ Gap 6 (Tiered Retry) ───────────────────�
 | 3 | **#5 Dependency enforcement** | Standalone, no deps, fixes correctness issue | Medium | **Done** (PR #1488) |
 | 4 | **#2 Notification UI** | Builds on 3+8, unlocks human-in-the-loop usability | Medium | **Done** (PR #1491) |
 | 5 | **#2b Action UI** | Builds on #2, makes notification queue actionable | Medium | **Done** (PR #1493) |
-| 6 | **#9 Review SLA** | Small, builds on audit trail | Low | |
-| 7 | **#6 Tiered retry** | Standalone, but informed by block reason distinction | Medium | |
-| 8 | **#1 PR auto-merge** | Needs audit trail + notification + action UI in place | Medium | |
-| 9 | **#4 Execution-time autonomy** | Builds on retry + block reasons + audit | High | |
-| 10 | **#10 Conditional branching** | Extends execution-time autonomy into workflow topology | High | |
-| 11 | **#7 Room/Space unification** | Last — needs both systems mature before merging patterns | High | |
+| 6 | **#16 Multi-gate ambiguity** | Small fix, improves gate_rejected UX accuracy | Low | |
+| 7 | **#12 Autonomy UI toggle** | Quick win — users can't configure autonomy without this | Medium | |
+| 8 | **#17 Consecutive failure escalation** | Foundation for smarter retry/escalation, low effort | Low-Medium | |
+| 9 | **#6 Tiered retry** | Builds on #17, informed by block reason distinction | Medium | |
+| 10 | **#13 Dead loop detection** | Builds on #17, prevents stuck workflows | Medium | |
+| 11 | **#14 PR merge validation** | Correctness — tasks shouldn't complete without verifying PR state | Medium | |
+| 12 | **#1 PR auto-merge** | Builds on #14, needs merge verification + audit trail + action UI | Medium | |
+| 13 | **#15 Unified inbox** | Cross-space discoverability, builds on notification UI pattern | Low-Medium | |
+| 14 | **#9 Review SLA** | Small, builds on audit trail | Low | |
+| 15 | **#4 Execution-time autonomy** | Builds on retry + block reasons + failure escalation | High | |
+| 16 | **#10 Conditional branching** | Extends execution-time autonomy into workflow topology | High | |
+| 17 | **#7 Room/Space unification** | Last — needs both systems mature before merging patterns | High | |
 
 ### Related Infrastructure Changes
 
@@ -373,8 +502,20 @@ Gap 6 (Tiered Retry) ───────────────────�
 | Gate evaluator | `packages/daemon/src/lib/space/runtime/gate-evaluator.ts` |
 | Channel router | `packages/daemon/src/lib/space/runtime/channel-router.ts` |
 | Task manager | `packages/daemon/src/lib/space/managers/space-task-manager.ts` |
+| Space agent tools | `packages/daemon/src/lib/space/tools/space-agent-tools.ts` |
+| Task agent tools | `packages/daemon/src/lib/space/tools/task-agent-tools.ts` |
 | Node agent tools | `packages/daemon/src/lib/space/tools/node-agent-tools.ts` |
+| Node agent tool schemas | `packages/daemon/src/lib/space/tools/node-agent-tool-schemas.ts` |
 | Workflow executor | `packages/daemon/src/lib/space/runtime/workflow-executor.ts` |
+| Session notification sink | `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` |
+| Workflow run artifacts repo | `packages/daemon/src/storage/repositories/workflow-run-artifact-repository.ts` |
 | Space RPC handlers | `packages/daemon/src/lib/rpc-handlers/space-*.ts` |
+| Task blocked banner (UI) | `packages/web/src/components/space/TaskBlockedBanner.tsx` |
+| Space tasks list (UI) | `packages/web/src/components/space/SpaceTasks.tsx` |
+| Gate artifacts view (UI) | `packages/web/src/components/space/GateArtifactsView.tsx` |
+| Space store | `packages/web/src/lib/space-store.ts` |
 | Room runtime (comparison) | `packages/daemon/src/lib/room/runtime/room-runtime.ts` |
+| Room lifecycle hooks (comparison) | `packages/daemon/src/lib/room/runtime/lifecycle-hooks.ts` |
+| Room dead loop detector (comparison) | `packages/daemon/src/lib/room/runtime/dead-loop-detector.ts` |
 | Room agent tools (comparison) | `packages/daemon/src/lib/room/tools/room-agent-tools.ts` |
+| Global inbox (room-only) | `packages/web/src/components/inbox/Inbox.tsx` |

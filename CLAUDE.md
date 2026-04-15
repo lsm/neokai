@@ -311,7 +311,7 @@ The Mission System (Goal V2) extends the room's goal tracking with structured, a
 | Level | `autonomyLevel` value | Description |
 |-------|----------------------|-------------|
 | Supervised | `supervised` | Worker submits PRs for human review before merging. Default. |
-| Semi-autonomous | `semi_autonomous` | Worker can merge approved PRs without human confirmation. |
+| Semi-autonomous | `semi_autonomous` | Tasks auto-complete without human review at workflow completion. |
 
 ### Key Terminology
 
