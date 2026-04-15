@@ -18,6 +18,14 @@ import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 
+const AUTONOMY_LABELS: Record<SpaceAutonomyLevel, string> = {
+	1: 'Supervised',
+	2: 'Mostly supervised',
+	3: 'Balanced',
+	4: 'Mostly autonomous',
+	5: 'Fully autonomous',
+};
+
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
 function StatCard({
