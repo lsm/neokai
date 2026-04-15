@@ -128,7 +128,7 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 - ~~No audit log for gate state changes~~
 
 **Implemented:**
-- `SpaceApprovalSource` type (`human | neo_agent | space_agent | task_agent | node_agent | semi_auto`)
+- `SpaceApprovalSource` type — simplified to `human | auto_policy | agent` (PR #1502 collapsed 6 sub-types into 3; agent identity tracked in session metadata)
 - `approvalSource`, `approvalReason`, `approvedAt` stamped on SpaceTask and gate data at every code path
 - `approve_gate` tool added to Space Agent and Task Agent; `approve_task` tool added to Space Agent
 - Approval metadata cleared on task reactivation (done → in_progress)

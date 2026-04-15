@@ -321,6 +321,15 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
 		expect(prompt).toContain('Do not call `retry_task`');
 	});
 
+	test('level 2 gets supervised prompt (runtime auto-completes but agent defers decisions)', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 2 });
+		expect(prompt).toContain('autonomy level **2**');
+		// Level 2 is below the >= 3 threshold for autonomous corrective actions
+		expect(prompt).toContain('wait for human approval');
+		expect(prompt).toContain('Do not call `retry_task`');
+		expect(prompt).not.toContain('Retry a failed task once');
+	});
+
 	test('level 3 shows the configured level', () => {
 		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('autonomy level **3**');

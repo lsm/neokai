@@ -288,33 +288,39 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 	// Migration 86: approval_source collapse
 	// -------------------------------------------------------------------------
 
-	test('migration 86: approval_source values are collapsed', () => {
+	test('migration 86: old approval_source values are converted', () => {
+		// Run full migration chain first to get the correct schema, then simulate
+		// pre-M86 data by writing old approval_source values and verifying the
+		// M86 UPDATE statements convert them correctly.
 		runMigrations(db, () => {});
 
 		const now = Date.now();
-		// Insert a space first
 		db.prepare(
 			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-		).run('space-1', 'test', '/workspace/project', 'Test', now, now);
-
-		// Insert tasks with old approval_source values
-		const taskBase = {
-			space_id: 'space-1',
-			task_number: 0,
-			title: 'T',
-			created_at: now,
-			updated_at: now,
-		};
+		).run('space-1', 'test', '/ws/a', 'Test', now, now);
 
 		const insertTask = db.prepare(`
 			INSERT INTO space_tasks (id, space_id, task_number, title, approval_source, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`);
+		// Simulate pre-M86 data by writing old values directly
+		insertTask.run('t1', 'space-1', 1, 'T1', 'neo_agent', now, now);
+		insertTask.run('t2', 'space-1', 2, 'T2', 'space_agent', now, now);
+		insertTask.run('t3', 'space-1', 3, 'T3', 'task_agent', now, now);
+		insertTask.run('t4', 'space-1', 4, 'T4', 'node_agent', now, now);
+		insertTask.run('t5', 'space-1', 5, 'T5', 'semi_auto', now, now);
+		insertTask.run('t6', 'space-1', 6, 'T6', 'human', now, now);
+		insertTask.run('t7', 'space-1', 7, 'T7', null, now, now);
 
-		insertTask.run('t1', taskBase.space_id, 1, 'T1', 'agent', now, now);
-		insertTask.run('t2', taskBase.space_id, 2, 'T2', 'auto_policy', now, now);
-		insertTask.run('t3', taskBase.space_id, 3, 'T3', 'human', now, now);
-		insertTask.run('t4', taskBase.space_id, 4, 'T4', null, now, now);
+		// Apply the same UPDATE statements that M86 uses
+		db.exec(`
+			UPDATE space_tasks SET approval_source = 'agent'
+			WHERE approval_source IN ('neo_agent', 'space_agent', 'task_agent', 'node_agent')
+		`);
+		db.exec(`
+			UPDATE space_tasks SET approval_source = 'auto_policy'
+			WHERE approval_source = 'semi_auto'
+		`);
 
 		const rows = db
 			.prepare(`SELECT id, approval_source FROM space_tasks ORDER BY id`)
@@ -322,9 +328,12 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
 		expect(rows).toEqual([
 			{ id: 't1', approval_source: 'agent' },
-			{ id: 't2', approval_source: 'auto_policy' },
-			{ id: 't3', approval_source: 'human' },
-			{ id: 't4', approval_source: null },
+			{ id: 't2', approval_source: 'agent' },
+			{ id: 't3', approval_source: 'agent' },
+			{ id: 't4', approval_source: 'agent' },
+			{ id: 't5', approval_source: 'auto_policy' },
+			{ id: 't6', approval_source: 'human' },
+			{ id: 't7', approval_source: null },
 		]);
 	});
 
