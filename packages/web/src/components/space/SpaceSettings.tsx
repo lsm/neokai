@@ -17,14 +17,6 @@ import { navigateToSpaces } from '../../lib/router.ts';
 import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 
-const AUTONOMY_LEVELS: { level: SpaceAutonomyLevel; label: string; description: string }[] = [
-	{ level: 1, label: 'Supervised', description: 'All actions need approval' },
-	{ level: 2, label: 'Mostly supervised', description: 'Routine actions auto-approved' },
-	{ level: 3, label: 'Balanced', description: 'Judgment calls need approval' },
-	{ level: 4, label: 'Mostly autonomous', description: 'Only high-risk needs approval' },
-	{ level: 5, label: 'Fully autonomous', description: 'All actions auto-approved' },
-];
-
 interface SpaceSettingsProps {
 	space: Space;
 }
