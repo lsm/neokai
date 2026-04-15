@@ -44,7 +44,7 @@ import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
-import { buildRestrictedEnv } from './gate-script-executor';
+import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
 import { CompletionDetector } from './completion-detector';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import {
@@ -1587,14 +1587,16 @@ export class SpaceRuntime {
 			}
 		}
 
-		// Reuse gate script executor's restricted env builder
+		// Reuse gate script executor's restricted env builder.
+		// Pass a synthetic gateId — buildRestrictedEnv sets NEOKAI_GATE_ID from it,
+		// which we immediately override with the correct action-specific var.
 		const env = buildRestrictedEnv({
 			workspacePath,
-			gateId: action.id,
+			gateId: '',
 			runId,
 			gateData: artifactData,
 		});
-		// Override gate-specific vars with completion action context
+		delete env['NEOKAI_GATE_ID'];
 		env['NEOKAI_COMPLETION_ACTION_ID'] = action.id;
 		try {
 			env['NEOKAI_ARTIFACT_DATA_JSON'] = JSON.stringify(artifactData);
@@ -1607,6 +1609,7 @@ export class SpaceRuntime {
 				`for space ${spaceId}, run ${runId}`
 		);
 
+		const COMPLETION_ACTION_TIMEOUT_MS = 120_000; // 2 minutes
 		try {
 			const proc = Bun.spawn(['bash', '-c', action.script], {
 				cwd: workspacePath,
@@ -1615,12 +1618,30 @@ export class SpaceRuntime {
 				stderr: 'pipe',
 			});
 
-			const exitCode = await proc.exited;
-			if (exitCode !== 0) {
-				const stderr = await new Response(proc.stderr).text();
+			const [_stdout, stderrResult, exitResult] = await Promise.all([
+				collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+				collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
+				(async () => {
+					let killed = false;
+					const killTimer = setTimeout(() => {
+						killed = true;
+						proc.kill('SIGKILL');
+					}, COMPLETION_ACTION_TIMEOUT_MS);
+					const code = await proc.exited;
+					clearTimeout(killTimer);
+					return { code, timedOut: killed };
+				})(),
+			]);
+
+			if (exitResult.timedOut) {
+				log.warn(
+					`SpaceRuntime: completion action "${action.name}" timed out ` +
+						`after ${COMPLETION_ACTION_TIMEOUT_MS}ms`
+				);
+			} else if (exitResult.code !== 0) {
 				log.warn(
 					`SpaceRuntime: completion action "${action.name}" failed ` +
-						`(exit ${exitCode}): ${stderr.trim().slice(0, 500)}`
+						`(exit ${exitResult.code}): ${stderrResult.text.trim().slice(0, 500)}`
 				);
 			}
 		} catch (err) {
