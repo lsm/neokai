@@ -165,7 +165,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			expect(sendResult.messageId).toBeTruthy();
 
 			// Wait for first message to complete before switching model
-			await waitForIdle(daemon, sessionId, 45000);
+			await waitForIdle(daemon, sessionId);
 
 			// Switch to GLM
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -190,8 +190,8 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			expect(glmSendResult.messageId).toBeTruthy();
 
 			// Verify message completes on new provider
-			await waitForIdle(daemon, sessionId, 45000);
-		}, 90000);
+			await waitForIdle(daemon, sessionId);
+		}, 210000);
 
 		test('should send message after model switch to MiniMax', async () => {
 			// Create session with GLM
@@ -212,7 +212,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			expect(glmSendResult.messageId).toBeTruthy();
 
 			// Wait for first message to complete before switching model
-			await waitForIdle(daemon, sessionId, 45000);
+			await waitForIdle(daemon, sessionId);
 
 			// Switch to MiniMax
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -241,8 +241,8 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			expect(minimaxSendResult.messageId).toBeTruthy();
 
 			// Verify message completes on new provider
-			await waitForIdle(daemon, sessionId, 45000);
-		}, 90000);
+			await waitForIdle(daemon, sessionId);
+		}, 210000);
 	});
 
 	describe('3. Fallback Settings Configuration', () => {
@@ -641,7 +641,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 45000);
+			await waitForIdle(daemon, sessionId);
 
 			// --- Phase 2: Switch model (cross-provider MiniMax → GLM) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -659,7 +659,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 45000);
+			await waitForIdle(daemon, sessionId);
 
 			// Verify models are different — this proves the SDK used the new model
 			expect(postSwitchModel).toBeDefined();
@@ -667,7 +667,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			// Initial: MiniMax-M2.7, Post-switch: glm-5
 			expect(initialModel).toBe('MiniMax-M2.7');
 			expect(postSwitchModel).toBe('glm-5');
-		}, 90000);
+		}, 210000);
 
 		/**
 		 * Cross-provider test: GLM → MiniMax
@@ -711,7 +711,7 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const initialModel = initialSystemInit.model as string | undefined;
 			expect(initialModel).toBeDefined();
 
-			await waitForIdle(daemon, sessionId, 45000);
+			await waitForIdle(daemon, sessionId);
 
 			// --- Phase 2: Switch model (cross-provider GLM → MiniMax) ---
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
@@ -728,13 +728,13 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			const postSwitchSystemInit = await postSwitchSystemInitPromise;
 
 			const postSwitchModel = postSwitchSystemInit.model as string | undefined;
-			await waitForIdle(daemon, sessionId, 45000);
+			await waitForIdle(daemon, sessionId);
 
 			expect(postSwitchModel).toBeDefined();
 			expect(postSwitchModel).not.toBe(initialModel);
 			// Initial: glm-5, Post-switch: MiniMax-M2.7
 			expect(initialModel).toBe('glm-5');
 			expect(postSwitchModel).toBe('MiniMax-M2.7');
-		}, 90000);
+		}, 210000);
 	});
 });

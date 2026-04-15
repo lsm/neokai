@@ -219,13 +219,13 @@ describe('Thinking Block Signatures', () => {
 		})) as { success: boolean; model: string };
 		expect(switchResult.success).toBe(true);
 
-		await waitForIdle(daemon, sessionId, 45000);
+		await waitForIdle(daemon, sessionId);
 
 		// Phase 3: Send message on Anthropic
 		const systemInitPromise = waitForSystemInit(daemon, sessionId);
 		await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 		const systemInit = await systemInitPromise;
-		await waitForIdle(daemon, sessionId, 45000);
+		await waitForIdle(daemon, sessionId);
 
 		expect(systemInit.type).toBe('system');
 		expect(systemInit.subtype).toBe('init');
@@ -279,13 +279,13 @@ describe('Thinking Block Signatures', () => {
 		})) as { success: boolean; model: string };
 		expect(switchResult.success).toBe(true);
 
-		await waitForIdle(daemon, sessionId, 45000);
+		await waitForIdle(daemon, sessionId);
 
 		// Phase 3: Send message on Anthropic
 		const systemInitPromise = waitForSystemInit(daemon, sessionId);
 		await sendMessage(daemon, sessionId, 'Say "world" in one word.');
 		const systemInit = await systemInitPromise;
-		await waitForIdle(daemon, sessionId, 45000);
+		await waitForIdle(daemon, sessionId);
 
 		expect(systemInit.type).toBe('system');
 		expect(systemInit.subtype).toBe('init');
