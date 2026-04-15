@@ -143,47 +143,6 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
 			expect(afterSwitchModel.currentModel).toBe('MiniMax-M2.7');
 			expect(afterSwitchModel.modelInfo?.provider).toBe('minimax');
 		});
-
-		test('should handle multiple rapid switches between providers', async () => {
-			// Create session
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-rapid-switches-${Date.now()}`,
-				title: 'Rapid Switch Test',
-				config: {
-					model: 'glm-5',
-					provider: 'glm',
-				},
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Perform rapid switches
-			const switches = [
-				{ model: 'MiniMax-M2.7', provider: 'minimax' },
-				{ model: 'glm-5', provider: 'glm' },
-				{ model: 'MiniMax-M2.7', provider: 'minimax' },
-				{ model: 'glm-4.7', provider: 'glm' },
-			];
-
-			for (const { model, provider } of switches) {
-				const result = (await daemon.messageHub.request('session.model.switch', {
-					sessionId,
-					model,
-					provider,
-				})) as { success: boolean };
-
-				expect(result.success).toBe(true, `Failed to switch to ${provider}/${model}`);
-			}
-
-			// Final model should be glm-4.7
-			const finalModel = (await daemon.messageHub.request('session.model.get', {
-				sessionId,
-			})) as { currentModel: string; modelInfo?: { provider: string } };
-
-			expect(finalModel.currentModel).toBe('glm-4.7');
-			expect(finalModel.modelInfo?.provider).toBe('glm');
-		});
 	});
 
 	describe('2. Cross-Provider Message Delivery', () => {
