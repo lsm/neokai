@@ -78,6 +78,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		description: 'Original description',
 		instructions: 'Use TypeScript strict mode',
 		backgroundContext: '',
+		autonomyLevel: 1,
 		sessionIds: [],
 		status: 'active',
 		createdAt: Date.now(),

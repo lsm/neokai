@@ -18,6 +18,7 @@ let mockSessions: ReturnType<
 
 const mockPauseSpace = vi.fn().mockResolvedValue(undefined);
 const mockResumeSpace = vi.fn().mockResolvedValue(undefined);
+const mockUpdateSpace = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
@@ -29,6 +30,7 @@ vi.mock('../../../lib/space-store', () => ({
 			sessions: mockSessions,
 			pauseSpace: mockPauseSpace,
 			resumeSpace: mockResumeSpace,
+			updateSpace: mockUpdateSpace,
 		};
 	},
 }));
@@ -53,6 +55,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		workspacePath: '/projects/my-space',
 		description: '',
 		backgroundContext: '',
+		autonomyLevel: 1,
 		sessionIds: [],
 		status: 'active',
 		paused: false,
@@ -97,6 +100,7 @@ describe('SpaceOverview', () => {
 		mockSessions.value = [];
 		mockPauseSpace.mockClear();
 		mockResumeSpace.mockClear();
+		mockUpdateSpace.mockClear();
 	});
 
 	afterEach(() => {
@@ -304,6 +308,44 @@ describe('SpaceOverview', () => {
 			)!;
 			await fireEvent.click(resumeBtn);
 			expect(mockResumeSpace).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('Autonomy Level Bar', () => {
+		it('renders 5 autonomy level segments', () => {
+			mockSpace.value = makeSpace({ autonomyLevel: 3 });
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const segments = container.querySelectorAll('[data-testid^="overview-autonomy-"]');
+			expect(segments.length).toBe(5);
+		});
+
+		it('shows the current autonomy label', () => {
+			mockSpace.value = makeSpace({ autonomyLevel: 3 });
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('Balanced')).toBeTruthy();
+		});
+
+		it('calls updateSpace when a different level is clicked', async () => {
+			mockSpace.value = makeSpace({ autonomyLevel: 1 });
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const segment3 = container.querySelector('[data-testid="overview-autonomy-3"]')!;
+			await fireEvent.click(segment3);
+			expect(mockUpdateSpace).toHaveBeenCalledWith({ autonomyLevel: 3 });
+		});
+
+		it('does not call updateSpace when clicking the already-selected level', async () => {
+			mockSpace.value = makeSpace({ autonomyLevel: 2 });
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const segment2 = container.querySelector('[data-testid="overview-autonomy-2"]')!;
+			await fireEvent.click(segment2);
+			expect(mockUpdateSpace).not.toHaveBeenCalled();
+		});
+
+		it('segments have aria-label for accessibility', () => {
+			mockSpace.value = makeSpace({ autonomyLevel: 1 });
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const segment1 = container.querySelector('[data-testid="overview-autonomy-1"]')!;
+			expect(segment1.getAttribute('aria-label')).toBe('Supervised');
 		});
 	});
 });
