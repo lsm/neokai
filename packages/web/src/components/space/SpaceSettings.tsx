@@ -11,17 +11,11 @@ import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle, SpaceAutonomyLevel } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
+import { cn } from '../../lib/utils.ts';
 import { downloadBundle } from './export-import-utils.ts';
 import { navigateToSpaces } from '../../lib/router.ts';
 import { Button } from '../ui/Button.tsx';
-
-const AUTONOMY_LEVELS: { level: SpaceAutonomyLevel; label: string; description: string }[] = [
-	{ level: 1, label: 'Supervised', description: 'All actions need approval' },
-	{ level: 2, label: 'Mostly supervised', description: 'Routine actions auto-approved' },
-	{ level: 3, label: 'Balanced', description: 'Judgment calls need approval' },
-	{ level: 4, label: 'Mostly autonomous', description: 'Only high-risk needs approval' },
-	{ level: 5, label: 'Fully autonomous', description: 'All actions auto-approved' },
-];
+import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 
 interface SpaceSettingsProps {
 	space: Space;
@@ -46,6 +40,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 		setInstructions(space.instructions ?? '');
 		setBackgroundContext(space.backgroundContext ?? '');
 		setAutonomyLevel(space.autonomyLevel ?? 1);
+		setSaveError(null);
 	}, [
 		space.id,
 		space.name,
@@ -258,18 +253,20 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 										type="button"
 										onClick={() => setAutonomyLevel(level)}
 										data-testid={`autonomy-level-${level}`}
-										class={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors ${
+										class={cn(
+											'w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors',
 											autonomyLevel === level
 												? 'border-blue-500/60 bg-blue-500/10 text-gray-100'
 												: 'border-dark-700 bg-dark-800 text-gray-400 hover:border-dark-600 hover:text-gray-300'
-										}`}
+										)}
 									>
 										<span
-											class={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+											class={cn(
+												'flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold',
 												autonomyLevel === level
 													? 'bg-blue-500/20 text-blue-400'
 													: 'bg-dark-700 text-gray-500'
-											}`}
+											)}
 										>
 											{level}
 										</span>

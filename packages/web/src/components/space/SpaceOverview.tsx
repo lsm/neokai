@@ -15,15 +15,8 @@ import { navigateToSpaceTask, navigateToSpaceSession } from '../../lib/router';
 import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
+import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
-
-const AUTONOMY_LABELS: Record<SpaceAutonomyLevel, string> = {
-	1: 'Supervised',
-	2: 'Mostly supervised',
-	3: 'Balanced',
-	4: 'Mostly autonomous',
-	5: 'Fully autonomous',
-};
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
@@ -166,7 +159,7 @@ function AutonomyLevelBar({
 						data-testid={`overview-autonomy-${l}`}
 						title={`Level ${l}: ${AUTONOMY_LABELS[l]}`}
 						class={cn(
-							'flex-1 h-2 rounded-full transition-colors',
+							'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none',
 							l <= level
 								? l <= 2
 									? 'bg-blue-500'
@@ -246,9 +239,10 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	}, []);
 
 	const handleAutonomyChange = useCallback(async (level: SpaceAutonomyLevel) => {
+		if (level === spaceStore.space.value?.autonomyLevel) return;
 		try {
 			await spaceStore.updateSpace({ autonomyLevel: level });
-			toast.success(`Autonomy set to level ${level}`);
+			toast.success(`Autonomy: ${AUTONOMY_LABELS[level]}`);
 		} catch {
 			toast.error('Failed to update autonomy level');
 		}
