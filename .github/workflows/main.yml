@@ -105,7 +105,6 @@ jobs:
       - name: Run Knip
         id: knip
         run: bun run knip
-        continue-on-error: true
 
       - name: Run type check
         id: typecheck

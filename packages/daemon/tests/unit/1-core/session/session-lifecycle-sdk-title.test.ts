@@ -115,16 +115,14 @@ mock.module('@neokai/shared/sdk/type-guards', () => ({
 	isSDKAPIRetryMessage: (msg: { type: string; subtype?: string }) =>
 		msg.type === 'system' && msg.subtype === 'api_retry',
 	isSDKStreamEvent: (msg: { type: string }) => msg.type === 'stream_event',
-	isSDKToolProgressMessage: (msg: { type: string; subtype?: string }) =>
-		msg.type === 'system' && msg.subtype === 'tool_progress',
-	isSDKAuthStatusMessage: (msg: { type: string; subtype?: string }) =>
-		msg.type === 'system' && msg.subtype === 'auth_status',
-	isSDKRateLimitEvent: (msg: { type: string; subtype?: string }) =>
-		msg.type === 'system' && msg.subtype === 'rate_limit',
+	isSDKToolProgressMessage: (msg: { type: string }) => msg.type === 'tool_progress',
+	isSDKAuthStatusMessage: (msg: { type: string }) => msg.type === 'auth_status',
+	isSDKRateLimitEvent: (msg: { type: string }) => msg.type === 'rate_limit_event',
 	isToolUseBlock: (block: { type: string }) => block.type === 'tool_use',
 	isTextBlock: (block: { type: string }) => block.type === 'text',
 	isThinkingBlock: (block: { type: string }) => block.type === 'thinking',
-	isUserVisibleMessage: (msg: { type: string }) => msg.type === 'assistant' || msg.type === 'user',
+	isUserVisibleMessage: (msg: { type: string }) =>
+		msg.type !== 'stream_event' && msg.type !== 'api_retry',
 }));
 
 import {
