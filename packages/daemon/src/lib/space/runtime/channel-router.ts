@@ -529,6 +529,21 @@ export class ChannelRouter {
 		const channels = (workflow.channels ?? []).filter((ch) => ch.gateId === gateId);
 		if (channels.length === 0) return [];
 
+		// --- Auto-approval: if gate has requiredLevel and space level is high enough,
+		// pre-write approval data before evaluation so the approval field passes.
+		// This runs only in onGateDataChanged (not on every deliverMessage/tryActivateChannels)
+		// to avoid redundant async space lookups on hot paths.
+		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		if (gateDef?.requiredLevel && this.config.getSpaceAutonomyLevel) {
+			const spaceLevel = await this.config.getSpaceAutonomyLevel(run.spaceId);
+			if (spaceLevel >= gateDef.requiredLevel) {
+				const approvalData = this.buildAutoApprovalData(gateDef);
+				if (approvalData) {
+					this.config.gateDataRepo.merge(runId, gateId, approvalData);
+				}
+			}
+		}
+
 		// Evaluate the gate once (shared across all channels referencing it)
 		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
 		if (!gateResult.open) return [];
@@ -687,27 +702,6 @@ export class ChannelRouter {
 		// Load runtime data from DB; fall back to computed defaults from fields
 		const record = this.config.gateDataRepo?.get(runId, gateId);
 		const runtimeData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
-
-		// --- Auto-approval: if gate has requiredLevel and space level is high enough,
-		// pre-write approval data before evaluation so the approval field passes.
-		// Script validation still runs and can block regardless of autonomy level.
-		if (gateDef.requiredLevel && this.config.getSpaceAutonomyLevel && this.config.gateDataRepo) {
-			const run = this.config.workflowRunRepo.getRun(runId);
-			if (run) {
-				const spaceLevel = await this.config.getSpaceAutonomyLevel(run.spaceId);
-				if (spaceLevel >= gateDef.requiredLevel) {
-					const approvalData = this.buildAutoApprovalData(gateDef);
-					if (approvalData) {
-						this.config.gateDataRepo.merge(runId, gateId, approvalData);
-						// Re-load merged data for evaluation
-						const merged = this.config.gateDataRepo.get(runId, gateId);
-						if (merged) {
-							Object.assign(runtimeData, merged.data);
-						}
-					}
-				}
-			}
-		}
 
 		// Field-only gates skip the semaphore entirely
 		if (!gateDef.script) {

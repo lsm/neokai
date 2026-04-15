@@ -1522,7 +1522,22 @@ export class SpaceRuntime {
 
 		// Resolve workspace path once for all actions
 		const space = await this.config.spaceManager.getSpace(spaceId);
-		const workspacePath = space?.workspacePath ?? process.cwd();
+		if (!space?.workspacePath) {
+			log.warn(
+				`SpaceRuntime: cannot execute completion actions — space ${spaceId} not found or has no workspacePath`
+			);
+			// Fall through to binary autonomy check
+			const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
+			return {
+				status: completionStatus,
+				result: taskResult,
+				completedAt: spaceLevel >= 2 ? Date.now() : null,
+				...(completionStatus === 'done'
+					? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
+					: {}),
+			};
+		}
+		const workspacePath = space.workspacePath;
 
 		// Execute completion actions in order
 		for (let i = 0; i < actions.length; i++) {
