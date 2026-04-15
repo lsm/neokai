@@ -12,10 +12,6 @@ export const AUTONOMY_LEVELS: {
 	{ level: 5, label: 'Fully autonomous', description: 'All actions auto-approved' },
 ];
 
-export const AUTONOMY_LABELS: Record<SpaceAutonomyLevel, string> = {
-	1: 'Supervised',
-	2: 'Mostly supervised',
-	3: 'Balanced',
-	4: 'Mostly autonomous',
-	5: 'Fully autonomous',
-};
+export const AUTONOMY_LABELS = Object.fromEntries(
+	AUTONOMY_LEVELS.map(({ level, label }) => [level, label])
+) as Record<SpaceAutonomyLevel, string>;

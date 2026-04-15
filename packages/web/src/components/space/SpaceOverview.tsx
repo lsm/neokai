@@ -158,6 +158,7 @@ function AutonomyLevelBar({
 						onClick={() => onChange(l)}
 						data-testid={`overview-autonomy-${l}`}
 						title={`Level ${l}: ${AUTONOMY_LABELS[l]}`}
+						aria-label={AUTONOMY_LABELS[l]}
 						class={cn(
 							'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none',
 							l <= level
