@@ -61,7 +61,7 @@ function evalFieldStatus(field: GateField, data: Record<string, unknown>): GateS
 }
 
 function isHumanApprovalGate(fields: GateField[]): boolean {
-	return fields.some((f) => f.name === 'approved' && f.writers.includes('human'));
+	return fields.some((f) => f.name === 'approved' && f.writers.includes('reviewer'));
 }
 
 function evaluateGateStatus(

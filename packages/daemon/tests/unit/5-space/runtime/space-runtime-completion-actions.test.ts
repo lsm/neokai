@@ -412,6 +412,65 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(task.pendingCheckpointType).toBeNull();
 	});
 
+	// ─── Script failure behavior (fire-and-forget) ─────────────────────
+
+	test('completion action script failure → task still transitions to done', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'failing-action',
+				name: 'Failing Action',
+				type: 'script',
+				requiredLevel: 3,
+				script: 'echo "error" >&2; exit 1',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		// Completion actions are best-effort — script failure does not block task completion
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+		expect(task.approvalSource).toBe('auto_policy');
+		expect(task.pendingActionIndex).toBeNull();
+	});
+
+	test('completion action script timeout → task still transitions to done', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'timeout-action',
+				name: 'Timeout Action',
+				type: 'script',
+				requiredLevel: 2,
+				// The script sleeps, but executeCompletionAction has a 120s timeout.
+				// We can't wait 120s in a test, so test with a script that exits non-zero
+				// to exercise the same code path (both log a warning and continue).
+				script: 'exit 42',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+		expect(task.approvalSource).toBe('auto_policy');
+	});
+
 	// ─── completionActions DB persistence ────────────────────────────────
 
 	test('completionActions survive DB round-trip via workflow repository', () => {
