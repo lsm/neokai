@@ -439,7 +439,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				const gateData = gateDataRepo.merge(workflowRunId, args.gate_id, {
 					approved: true,
 					approvedAt: Date.now(),
-					approvalSource: 'task_agent',
+					approvalSource: 'agent',
 				});
 
 				// If previously rejected, transition back to in_progress
@@ -480,7 +480,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					approved: false,
 					rejectedAt: Date.now(),
 					reason: args.reason ?? null,
-					approvalSource: 'task_agent',
+					approvalSource: 'agent',
 				});
 
 				if (run.status !== 'blocked') {

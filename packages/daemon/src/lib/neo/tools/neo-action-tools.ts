@@ -1081,7 +1081,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
 						approved: true,
 						approvedAt: Date.now(),
-						approvalSource: 'neo_agent',
+						approvalSource: 'agent',
 					});
 
 					// If previously rejected, transition back to in_progress and clear failure reason
@@ -1561,7 +1561,7 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 					approved: false,
 					rejectedAt: Date.now(),
 					reason: args.reason ?? null,
-					approvalSource: 'neo_agent',
+					approvalSource: 'agent',
 				});
 
 				if (run.status !== 'blocked') {
@@ -2278,16 +2278,26 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 					.optional()
 					.describe('Instructions for agents working in this space'),
 				autonomy_level: z
-					.enum(['supervised', 'semi_autonomous'])
+					.number()
+					.int()
+					.min(1)
+					.max(5)
 					.optional()
 					.describe(
-						'Autonomy level: "supervised" (default) waits for human approval on judgment calls; "semi_autonomous" handles simple cases independently'
+						'Autonomy level (1-5): 1 = fully supervised (all actions need approval), 2 = mostly supervised (routine actions auto-approved), 3 = balanced (default, judgment calls need approval), 4 = mostly autonomous (only high-risk actions need approval), 5 = fully autonomous (all actions auto-approved)'
 					),
 			},
 			(args) =>
-				logged('create_space', args as Record<string, unknown>, () => handlers.create_space(args), {
-					targetType: 'space',
-				})
+				logged(
+					'create_space',
+					args as Record<string, unknown>,
+					() =>
+						handlers.create_space({
+							...args,
+							autonomy_level: args.autonomy_level as SpaceAutonomyLevel | undefined,
+						}),
+					{ targetType: 'space' }
+				)
 		),
 
 		tool(
@@ -2301,15 +2311,29 @@ export function createNeoActionMcpServer(config: NeoActionToolsConfig) {
 				background_context: z.string().optional().describe('New background context'),
 				default_model: z.string().optional().describe('New default model ID'),
 				autonomy_level: z
-					.enum(['supervised', 'semi_autonomous'])
+					.number()
+					.int()
+					.min(1)
+					.max(5)
 					.optional()
-					.describe('New autonomy level'),
+					.describe(
+						'New autonomy level (1-5): 1 = fully supervised, 2 = mostly supervised, 3 = balanced, 4 = mostly autonomous, 5 = fully autonomous'
+					),
 			},
 			(args) =>
-				logged('update_space', args as Record<string, unknown>, () => handlers.update_space(args), {
-					targetType: 'space',
-					getTargetId: (a) => (a.space_id as string) ?? null,
-				})
+				logged(
+					'update_space',
+					args as Record<string, unknown>,
+					() =>
+						handlers.update_space({
+							...args,
+							autonomy_level: args.autonomy_level as SpaceAutonomyLevel | undefined,
+						}),
+					{
+						targetType: 'space',
+						getTargetId: (a) => (a.space_id as string) ?? null,
+					}
+				)
 		),
 
 		tool(

@@ -276,7 +276,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 		name: `Test Space ${suffix}`,
 		description: 'Integration test space — plan-to-approve flow',
 		workspacePath: process.cwd(),
-		autonomyLevel: 'supervised',
+		autonomyLevel: 1,
 	})) as Space;
 
 	const { agents } = (await daemon.messageHub.request('spaceAgent.list', {

@@ -73,6 +73,8 @@ function makeTask(id: string, status = 'open', workflowRunId?: string): SpaceTas
 		approvalSource: null,
 		approvalReason: null,
 		approvedAt: null,
+		pendingActionIndex: null,
+		pendingCheckpointType: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...(workflowRunId ? { workflowRunId } : {}),

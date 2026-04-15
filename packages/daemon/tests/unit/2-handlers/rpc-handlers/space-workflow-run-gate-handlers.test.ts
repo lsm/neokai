@@ -11,6 +11,10 @@
  * - Persistence: gate data written to gateDataRepo (survives daemon restart via SQLite)
  */
 
+// Ensure NODE_ENV is 'test' so the writeGateData handler is registered
+// (it is gated on NODE_ENV !== 'production'; Bun defaults to 'production').
+process.env.NODE_ENV = 'test';
+
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';

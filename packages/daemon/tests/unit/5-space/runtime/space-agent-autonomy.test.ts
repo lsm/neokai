@@ -138,38 +138,38 @@ function makeHandlers(ctx: TestCtx) {
 // 1. Prompt — supervised mode
 // ---------------------------------------------------------------------------
 
-describe('buildSpaceChatSystemPrompt — supervised autonomy level', () => {
-	test('explicitly labels the space as supervised mode', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		expect(prompt).toContain('`supervised` mode');
+describe('buildSpaceChatSystemPrompt — level 1 (supervised) autonomy', () => {
+	test('explicitly labels the space at autonomy level 1', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		expect(prompt).toContain('autonomy level **1**');
 	});
 
 	test('instructs agent to notify human of every TASK_EVENT', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('Notify the human');
 		expect(prompt).toContain('[TASK_EVENT]');
 	});
 
 	test('instructs agent to wait for human approval before acting', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('wait for human approval');
 	});
 
 	test('instructs agent NOT to call retry_task without explicit instruction', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('retry_task');
 		expect(prompt).toContain('without explicit human instruction');
 	});
 
 	test('instructs agent NOT to call reassign_task or cancel_task without explicit instruction', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
 		expect(prompt).toContain('reassign_task');
 		expect(prompt).toContain('cancel_task');
 	});
 
-	test('does NOT include semi_autonomous autonomous-action instructions', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		// The semi_autonomous section about acting without human approval should not be present
+	test('does NOT include level >= 3 autonomous-action instructions', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		// The level >= 3 section about acting without human approval should not be present
 		expect(prompt).not.toContain('act without human approval');
 	});
 });
@@ -178,38 +178,38 @@ describe('buildSpaceChatSystemPrompt — supervised autonomy level', () => {
 // 2. Prompt — semi_autonomous mode
 // ---------------------------------------------------------------------------
 
-describe('buildSpaceChatSystemPrompt — semi_autonomous autonomy level', () => {
-	test('explicitly labels the space as semi_autonomous mode', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
-		expect(prompt).toContain('`semi_autonomous` mode');
+describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', () => {
+	test('explicitly labels the space at autonomy level 3', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+		expect(prompt).toContain('autonomy level **3**');
 	});
 
 	test('allows retrying a failed task once without human approval', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('Retry a failed task once');
 		expect(prompt).toContain('retry_task');
 	});
 
 	test('allows reassigning a task without human approval', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('Reassign a task');
 		expect(prompt).toContain('reassign_task');
 	});
 
 	test('instructs agent to escalate after one failed retry', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 		expect(prompt).toContain('one failed retry');
 		expect(prompt).toContain('escalate to the human');
 	});
 
-	test('human-gated steps still require human approval even in semi_autonomous mode', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
-		expect(prompt).toContain('Human-gated workflow steps always require human approval');
+	test('workflow gates above configured level still require human approval', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+		expect(prompt).toContain('still require human approval');
 	});
 
-	test('does NOT include the supervised "wait for human approval" restriction for all events', () => {
-		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
-		// In supervised mode this restriction is present — in semi_autonomous it should not be
+	test('does NOT include the level 1 "wait for human approval" restriction for all events', () => {
+		const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
+		// At level 1 this restriction is present — at level 3 it should not be
 		expect(prompt).not.toContain('wait for human approval');
 	});
 });
@@ -218,15 +218,15 @@ describe('buildSpaceChatSystemPrompt — semi_autonomous autonomy level', () => 
 // 3. Default autonomy level — treated as supervised
 // ---------------------------------------------------------------------------
 
-describe('buildSpaceChatSystemPrompt — default autonomy level (supervised fallback)', () => {
-	test('omitting autonomyLevel defaults to supervised mode label', () => {
+describe('buildSpaceChatSystemPrompt — default autonomy level (level 1 fallback)', () => {
+	test('omitting autonomyLevel defaults to level 1', () => {
 		const prompt = buildSpaceChatSystemPrompt({});
-		expect(prompt).toContain('`supervised` mode');
+		expect(prompt).toContain('autonomy level **1**');
 	});
 
-	test('calling with no arguments defaults to supervised mode label', () => {
+	test('calling with no arguments defaults to level 1', () => {
 		const prompt = buildSpaceChatSystemPrompt();
-		expect(prompt).toContain('`supervised` mode');
+		expect(prompt).toContain('autonomy level **1**');
 	});
 
 	test('no-arg prompt includes notify-human instruction', () => {
@@ -234,15 +234,15 @@ describe('buildSpaceChatSystemPrompt — default autonomy level (supervised fall
 		expect(prompt).toContain('Notify the human');
 	});
 
-	test('no-arg prompt does not include semi_autonomous retry-autonomously instruction', () => {
+	test('no-arg prompt does not include level >= 3 retry-autonomously instruction', () => {
 		const prompt = buildSpaceChatSystemPrompt();
 		expect(prompt).not.toContain('act without human approval');
 	});
 
-	test('default prompt and explicit supervised prompt are identical', () => {
+	test('default prompt and explicit level 1 prompt are identical', () => {
 		const defaultPrompt = buildSpaceChatSystemPrompt();
-		const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		expect(defaultPrompt).toBe(supervisedPrompt);
+		const level1Prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		expect(defaultPrompt).toBe(level1Prompt);
 	});
 });
 
@@ -254,7 +254,7 @@ describe('formatEventMessage — autonomy level in message', () => {
 	const spaceId = 'space-notify-test';
 	const TIMESTAMP = '2026-03-20T10:00:00.000Z';
 
-	test('task_blocked message includes supervised autonomy level', () => {
+	test('task_blocked message includes level 1 autonomy level', () => {
 		const event: SpaceNotificationEvent = {
 			kind: 'task_blocked',
 			spaceId,
@@ -262,13 +262,13 @@ describe('formatEventMessage — autonomy level in message', () => {
 			reason: 'Build failed',
 			timestamp: TIMESTAMP,
 		};
-		const message = formatEventMessage(event, 'supervised');
-		expect(message).toContain('supervised');
+		const message = formatEventMessage(event, 1);
+		expect(message).toContain('Autonomy level: 1');
 		expect(message).toContain('[TASK_EVENT]');
 		expect(message).toContain('task_blocked');
 	});
 
-	test('task_blocked message includes semi_autonomous autonomy level', () => {
+	test('task_blocked message includes level 3 autonomy level', () => {
 		const event: SpaceNotificationEvent = {
 			kind: 'task_blocked',
 			spaceId,
@@ -276,8 +276,8 @@ describe('formatEventMessage — autonomy level in message', () => {
 			reason: 'Tests failing',
 			timestamp: TIMESTAMP,
 		};
-		const message = formatEventMessage(event, 'semi_autonomous');
-		expect(message).toContain('semi_autonomous');
+		const message = formatEventMessage(event, 3);
+		expect(message).toContain('Autonomy level: 3');
 		expect(message).toContain('[TASK_EVENT]');
 	});
 
@@ -289,16 +289,16 @@ describe('formatEventMessage — autonomy level in message', () => {
 			reason: 'Timeout',
 			timestamp: TIMESTAMP,
 		};
-		const message = formatEventMessage(event, 'supervised');
+		const message = formatEventMessage(event, 1);
 
 		// Plain text line
-		expect(message).toContain('Autonomy level: supervised');
+		expect(message).toContain('Autonomy level: 1');
 
 		// JSON payload
 		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
 		expect(jsonMatch).not.toBeNull();
 		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe('supervised');
+		expect(payload.autonomyLevel).toBe(1);
 	});
 
 	test('workflow_run_blocked message includes autonomy level in JSON payload', () => {
@@ -309,11 +309,11 @@ describe('formatEventMessage — autonomy level in message', () => {
 			reason: 'Transition condition failed',
 			timestamp: TIMESTAMP,
 		};
-		const message = formatEventMessage(event, 'semi_autonomous');
+		const message = formatEventMessage(event, 3);
 		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
 		expect(jsonMatch).not.toBeNull();
 		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe('semi_autonomous');
+		expect(payload.autonomyLevel).toBe(3);
 	});
 
 	test('task_timeout message includes autonomy level in JSON payload', () => {
@@ -324,11 +324,11 @@ describe('formatEventMessage — autonomy level in message', () => {
 			elapsedMs: 120000,
 			timestamp: TIMESTAMP,
 		};
-		const message = formatEventMessage(event, 'supervised');
+		const message = formatEventMessage(event, 1);
 		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
 		expect(jsonMatch).not.toBeNull();
 		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe('supervised');
+		expect(payload.autonomyLevel).toBe(1);
 	});
 
 	test('workflow_run_completed message includes autonomy level in JSON payload', () => {
@@ -340,11 +340,11 @@ describe('formatEventMessage — autonomy level in message', () => {
 			summary: 'All steps completed successfully',
 			timestamp: TIMESTAMP,
 		};
-		const message = formatEventMessage(event, 'semi_autonomous');
+		const message = formatEventMessage(event, 3);
 		const jsonMatch = message.match(/```json\n([\s\S]*?)```/);
 		expect(jsonMatch).not.toBeNull();
 		const payload = JSON.parse(jsonMatch![1]);
-		expect(payload.autonomyLevel).toBe('semi_autonomous');
+		expect(payload.autonomyLevel).toBe(3);
 	});
 
 	test('autonomy level in message changes when level changes — same event, different level', () => {
@@ -355,12 +355,13 @@ describe('formatEventMessage — autonomy level in message', () => {
 			reason: 'Error',
 			timestamp: TIMESTAMP,
 		};
-		const supervisedMsg = formatEventMessage(event, 'supervised');
-		const semiMsg = formatEventMessage(event, 'semi_autonomous');
-		expect(supervisedMsg).toContain('supervised');
-		expect(semiMsg).toContain('semi_autonomous');
-		expect(supervisedMsg).not.toContain('semi_autonomous');
-		expect(semiMsg).not.toContain('supervised');
+		const level1Msg = formatEventMessage(event, 1);
+		const level3Msg = formatEventMessage(event, 3);
+		expect(level1Msg).toContain('Autonomy level: 1');
+		expect(level3Msg).toContain('Autonomy level: 3');
+		// Level 1 message should not contain "Autonomy level: 3" and vice versa
+		expect(level1Msg).not.toContain('Autonomy level: 3');
+		expect(level3Msg).not.toContain('Autonomy level: 1');
 	});
 });
 
@@ -448,8 +449,8 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
-		const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'supervised' });
-		const semiPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 'semi_autonomous' });
+		const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
+		const semiPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 
 		// Both prompts reference retry_task
 		expect(supervisedPrompt).toContain('retry_task');
@@ -467,11 +468,7 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
 // ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — sections always present regardless of autonomy level', () => {
-	const levels: Array<SpaceAutonomyLevel | undefined> = [
-		'supervised',
-		'semi_autonomous',
-		undefined,
-	];
+	const levels: Array<SpaceAutonomyLevel | undefined> = [1, 3, undefined];
 
 	for (const level of levels) {
 		const label = level ?? 'undefined (default)';

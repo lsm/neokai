@@ -915,11 +915,11 @@ export interface StripThinkingBlocksResult {
 /**
  * Strip thinking blocks from the SDK session JSONL file
  *
- * When switching from a non-Anthropic provider to Anthropic, the JSONL may contain
- * thinking blocks with provider-specific signatures (e.g., GLM's empty string or
- * MiniMax's hex hash) that Anthropic's API rejects with "400: Invalid signature
- * in thinking block". Removing these blocks before resume preserves conversation
- * context (text + tool usage) while avoiding the signature validation error.
+ * Thinking block signatures are provider-specific and cannot be validated across
+ * providers. Anthropic rejects GLM/MiniMax signatures; GLM/MiniMax reject Anthropic
+ * signatures. Both directions fail with "400: Invalid signature in thinking block".
+ * Removing these blocks before resume preserves conversation context (text + tool
+ * usage) while avoiding the signature validation error.
  *
  * Without this, the SDK recovers by starting a fresh conversation — sdkSessionId
  * is preserved but all conversation context is lost.

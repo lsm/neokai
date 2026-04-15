@@ -416,7 +416,7 @@ jobs:
           # Prefer MiniMax for online tests when available; fallback to GLM.
           DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm')) || '' }}
           # Prefer MiniMax highspeed as the default model when using MiniMax.
-          DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.5-highspeed' || '' }}
+          DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.7-highspeed' || '' }}
 
       - name: Stop Dev Proxy
         if: always() && matrix.mock_sdk == true

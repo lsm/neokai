@@ -128,12 +128,12 @@ export class GlmProvider implements Provider {
 	 * Get model for a specific tier
 	 * Maps Anthropic tiers to GLM models
 	 *
-	 * Always pins to glm-5 regardless of which GLM model is active in the session.
-	 * This is an intentional policy: tier fallbacks and title generation use the
-	 * flagship model (glm-5), not the session model (which may be glm-5-turbo or glm-4.7).
+	 * Always pins to glm-5-turbo regardless of which GLM model is active in the session.
+	 * This is an intentional policy: tier fallbacks and title generation use glm-5-turbo
+	 * (optimized for agent tasks), not the session model (which may be glm-5.1 or glm-4.7).
 	 */
 	getModelForTier(_tier: ModelTier): string | undefined {
-		return 'glm-5';
+		return 'glm-5-turbo';
 	}
 
 	/**
@@ -156,8 +156,8 @@ export class GlmProvider implements Provider {
 		// Get base URL: session override > default
 		const baseUrl = sessionConfig?.baseUrl || GlmProvider.BASE_URL;
 
-		// If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5.
-		const routingModelId = modelId.toLowerCase().startsWith('glm-') ? modelId : 'glm-5';
+		// If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5-turbo.
+		const routingModelId = modelId.toLowerCase().startsWith('glm-') ? modelId : 'glm-5-turbo';
 
 		// Build environment variables
 		const envVars: Record<string, string> = {
@@ -167,10 +167,10 @@ export class GlmProvider implements Provider {
 			API_TIMEOUT_MS: '3000000',
 			// Disable non-essential traffic (telemetry, etc.)
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-			// Route Sonnet/Haiku to selected model, keep Opus on flagship glm-5
+			// Route all tiers to the selected model
 			ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
 			ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
-			ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5',
+			ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
 		};
 
 		return {
@@ -195,6 +195,6 @@ export class GlmProvider implements Provider {
 	 * Uses glm-5
 	 */
 	getTitleGenerationModel(): string {
-		return 'glm-5';
+		return 'glm-5-turbo';
 	}
 }

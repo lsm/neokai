@@ -4,7 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with the fully-migrated production schema (after M81).
+ * Keep in sync with the fully-migrated production schema (after M86).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -31,7 +31,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'archived')),
 			paused INTEGER NOT NULL DEFAULT 0,
-			autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+			autonomy_level INTEGER NOT NULL DEFAULT 1
+				CHECK(autonomy_level BETWEEN 1 AND 5),
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
@@ -192,6 +193,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			approval_source TEXT,
 			approval_reason TEXT,
 			approved_at INTEGER,
+			pending_action_index INTEGER DEFAULT NULL,
+			pending_checkpoint_type TEXT DEFAULT NULL
+				CHECK(pending_checkpoint_type IN ('completion_action', 'gate')),
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,

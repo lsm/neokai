@@ -41,7 +41,7 @@ const mockSpace: Space = {
 	instructions: '',
 	sessionIds: [],
 	status: 'active',
-	autonomyLevel: 'supervised',
+	autonomyLevel: 1,
 	createdAt: NOW,
 	updatedAt: NOW,
 };
@@ -52,7 +52,7 @@ const mockTask: SpaceTask = {
 	taskNumber: 1,
 	title: 'Test Task',
 	description: 'desc',
-	status: 'pending',
+	status: 'open',
 	priority: 'normal',
 	dependsOn: [],
 	createdAt: NOW,
@@ -297,27 +297,27 @@ describe('space-handlers', () => {
 			).rejects.toThrow('Invalid autonomyLevel: fully_autonomous');
 		});
 
-		it('passes autonomyLevel=supervised to SpaceManager', async () => {
+		it('passes autonomyLevel=1 to SpaceManager', async () => {
 			await call('space.create', {
 				workspacePath: '/tmp/x',
 				name: 'X',
-				autonomyLevel: 'supervised',
+				autonomyLevel: 1,
 			});
 
 			expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
 			const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
-			expect(params.autonomyLevel).toBe('supervised');
+			expect(params.autonomyLevel).toBe(1);
 		});
 
-		it('passes autonomyLevel=semi_autonomous to SpaceManager', async () => {
+		it('passes autonomyLevel=3 to SpaceManager', async () => {
 			await call('space.create', {
 				workspacePath: '/tmp/x',
 				name: 'X',
-				autonomyLevel: 'semi_autonomous',
+				autonomyLevel: 3,
 			});
 
 			const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
-			expect(params.autonomyLevel).toBe('semi_autonomous');
+			expect(params.autonomyLevel).toBe(3);
 		});
 
 		it('passes undefined autonomyLevel to SpaceManager when not specified', async () => {
@@ -565,19 +565,19 @@ describe('space-handlers', () => {
 			).rejects.toThrow('Invalid autonomyLevel: fully_autonomous');
 		});
 
-		it('passes autonomyLevel=semi_autonomous to SpaceManager.updateSpace', async () => {
-			await call('space.update', { id: 'space-1', autonomyLevel: 'semi_autonomous' });
+		it('passes autonomyLevel=3 to SpaceManager.updateSpace', async () => {
+			await call('space.update', { id: 'space-1', autonomyLevel: 3 });
 
 			expect(spaceManager.updateSpace).toHaveBeenCalledTimes(1);
 			const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
-			expect(params.autonomyLevel).toBe('semi_autonomous');
+			expect(params.autonomyLevel).toBe(3);
 		});
 
-		it('passes autonomyLevel=supervised to SpaceManager.updateSpace', async () => {
-			await call('space.update', { id: 'space-1', autonomyLevel: 'supervised' });
+		it('passes autonomyLevel=1 to SpaceManager.updateSpace', async () => {
+			await call('space.update', { id: 'space-1', autonomyLevel: 1 });
 
 			const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
-			expect(params.autonomyLevel).toBe('supervised');
+			expect(params.autonomyLevel).toBe(1);
 		});
 
 		it('does not set autonomyLevel in updateParams when not provided', async () => {

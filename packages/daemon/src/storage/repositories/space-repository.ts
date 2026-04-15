@@ -42,7 +42,7 @@ export class SpaceRepository {
 			JSON.stringify(params.allowedModels ?? []),
 			'[]',
 			'active',
-			params.autonomyLevel ?? 'supervised',
+			params.autonomyLevel ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
 			now,
 			now
@@ -265,8 +265,6 @@ export class SpaceRepository {
 		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
 		const rawConfig = row.config as string | null;
 		const config = rawConfig ? (JSON.parse(rawConfig) as SpaceConfig) : undefined;
-		const rawAutonomyLevel = (row.autonomy_level as string | null) ?? 'supervised';
-
 		return {
 			id: row.id as string,
 			slug: (row.slug as string) ?? '',
@@ -280,7 +278,7 @@ export class SpaceRepository {
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
 			paused: (row.paused as number) === 1,
-			autonomyLevel: rawAutonomyLevel as SpaceAutonomyLevel,
+			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
 			config,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,

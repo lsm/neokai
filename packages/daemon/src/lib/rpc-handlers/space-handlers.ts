@@ -34,7 +34,7 @@ import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
 const log = new Logger('space-handlers');
-const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = ['supervised', 'semi_autonomous'];
+const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
 
 export interface SpaceOverviewResult {
 	space: Space;
