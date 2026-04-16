@@ -266,8 +266,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
 							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
 							'Workflow context:\n' +
-							'- After you open a PR, the workflow automatically verifies it is open and mergeable ' +
-							'before the Reviewer sees it.\n' +
+							'- The Reviewer is NOT triggered automatically when you finish. You MUST hand off ' +
+							'explicitly by sending a message to the Review node with the PR URL — that send ' +
+							'is what passes the readiness gate and activates the Reviewer.\n' +
 							'- If the Reviewer requests changes, you will be re-activated with their message. ' +
 							'Pull the review comments from GitHub, evaluate each one, address the valid items, ' +
 							'and push back on any you disagree with — explain your reasoning in the reply.\n' +
@@ -277,7 +278,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'2. Implement the changes with logical, well-described commits\n' +
 							'3. Write or update tests to cover new behavior\n' +
 							'4. Run the test suite and fix any failures\n' +
-							'5. Open a PR with `gh pr create` — include a clear title and description\n\n' +
+							'5. Open a PR with `gh pr create` — include a clear title and description\n' +
+							'6. Hand off to the Reviewer: send_message(target=\"Review\", message=\"PR ready for ' +
+							'review at <url>\", data={ pr_url: \"<url>\" }). The gate runs a script that verifies ' +
+							'the PR is open and mergeable, so make sure it actually is before sending.\n\n' +
 							'If re-activated after review:\n' +
 							'1. Pull review comments from GitHub (`gh pr view` and `gh api`)\n' +
 							'2. Evaluate each comment critically — do not blindly accept feedback. Verify ' +
@@ -285,7 +289,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'3. For valid items: make the fix and reply to the comment confirming what changed\n' +
 							'4. For items you disagree with: reply explaining why, with evidence from the code ' +
 							'or tests. Do not change code you believe is correct.\n' +
-							'5. Push fixes and verify tests still pass',
+							'5. Push fixes, verify tests still pass, then send_message to Review again to ' +
+							're-trigger the review cycle',
 					},
 				},
 			],
