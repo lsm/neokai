@@ -226,10 +226,10 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceAgent[]):
  * gate field given the gate's `writers` list and the channel the gate belongs to.
  *
  * Authorization rules:
- * - `writers` absent or empty  → authorized iff `agentNodeName === channel.from`
- * - `writers` includes `'*'`   → always authorized
- * - `writers` is empty `[]`   → never authorized (external-only gate, written by human via RPC or auto-approval)
- * - `writers` includes node names → authorized iff `agentNodeName` is in the list
+ * - `writers` absent (null/undefined) → authorized iff `agentNodeName === channel.from`
+ * - `writers` is empty `[]`           → never authorized (external-only gate)
+ * - `writers` includes `'*'`          → always authorized
+ * - `writers` includes node names     → authorized iff `agentNodeName` is in the list
  *
  * @param agentNodeName - The name of the node this agent belongs to.
  * @param channel       - The channel the gate is attached to.

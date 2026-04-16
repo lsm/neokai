@@ -20,7 +20,7 @@ import type { SpaceTask } from '@neokai/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SpaceNotificationEvent } from './notification-sink';
-import { AGENT_REPORT_DONE_TIMEOUT_MS } from './constants';
+import { AGENT_REPORT_RESULT_TIMEOUT_MS } from './constants';
 export { resolveNodeTimeout } from './constants';
 import { Logger } from '../../logger';
 
@@ -57,7 +57,7 @@ export interface AutoCompletedAgent {
  * @param taskRepo       Repository for persisting task status updates.
  * @param tam            Task Agent Manager for liveness checks.
  * @param notify         Notification callback (should be the `safeNotify` wrapper).
- * @param timeoutMs      Default timeout in milliseconds (default: AGENT_REPORT_DONE_TIMEOUT_MS).
+ * @param timeoutMs      Default timeout in milliseconds (default: AGENT_REPORT_RESULT_TIMEOUT_MS).
  *                       Used when `getTimeoutMs` is not provided or returns undefined.
  * @param getTimeoutMs   Optional per-task timeout resolver. When provided, this takes
  *                       precedence over `timeoutMs` for each individual task. Useful for
@@ -70,7 +70,7 @@ export async function autoCompleteStuckAgents(
 	taskRepo: SpaceTaskRepository,
 	tam: TaskAgentManager,
 	notify: (event: SpaceNotificationEvent) => Promise<void>,
-	timeoutMs: number = AGENT_REPORT_DONE_TIMEOUT_MS,
+	timeoutMs: number = AGENT_REPORT_RESULT_TIMEOUT_MS,
 	getTimeoutMs?: (task: SpaceTask) => number
 ): Promise<AutoCompletedAgent[]> {
 	const now = Date.now();

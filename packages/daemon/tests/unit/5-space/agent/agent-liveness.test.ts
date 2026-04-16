@@ -22,7 +22,7 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { autoCompleteStuckAgents } from '../../../../src/lib/space/runtime/agent-liveness.ts';
 import {
-	AGENT_REPORT_DONE_TIMEOUT_MS,
+	AGENT_REPORT_RESULT_TIMEOUT_MS,
 	resolveNodeTimeout,
 	CODER_NODE_TIMEOUT_MS,
 	REVIEWER_NODE_TIMEOUT_MS,
@@ -156,7 +156,7 @@ describe('autoCompleteStuckAgents', () => {
 		seedTask(db, 'task-1', spaceId, {
 			status: 'in_progress',
 			taskAgentSessionId: null,
-			startedAt: Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 1000,
+			startedAt: Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 1000,
 		});
 
 		const task = taskRepo.getTask('task-1')!;
@@ -177,7 +177,7 @@ describe('autoCompleteStuckAgents', () => {
 			seedTask(db, taskId, spaceId, {
 				status,
 				taskAgentSessionId: 'session-123',
-				startedAt: Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 1000,
+				startedAt: Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 1000,
 			});
 		}
 
@@ -197,7 +197,7 @@ describe('autoCompleteStuckAgents', () => {
 		seedTask(db, 'task-dead', spaceId, {
 			status: 'in_progress',
 			taskAgentSessionId: 'session-dead',
-			startedAt: Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 1000,
+			startedAt: Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 1000,
 		});
 
 		const task = taskRepo.getTask('task-dead')!;
@@ -267,7 +267,7 @@ describe('autoCompleteStuckAgents', () => {
 	});
 
 	test('auto-completes a stuck agent (alive + timed out)', async () => {
-		const stuckStartedAt = Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 5000;
+		const stuckStartedAt = Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 5000;
 		seedTask(db, 'task-stuck', spaceId, {
 			status: 'in_progress',
 			taskAgentSessionId: 'session-stuck',
@@ -283,7 +283,7 @@ describe('autoCompleteStuckAgents', () => {
 		// Returns the auto-completed entry
 		expect(result).toHaveLength(1);
 		expect(result[0].taskId).toBe('task-stuck');
-		expect(result[0].elapsedMs).toBeGreaterThan(AGENT_REPORT_DONE_TIMEOUT_MS);
+		expect(result[0].elapsedMs).toBeGreaterThan(AGENT_REPORT_RESULT_TIMEOUT_MS);
 
 		// Task is now completed
 		const updated = taskRepo.getTask('task-stuck')!;
@@ -304,7 +304,7 @@ describe('autoCompleteStuckAgents', () => {
 		};
 		expect(event.spaceId).toBe(spaceId);
 		expect(event.taskId).toBe('task-stuck');
-		expect(event.elapsedMs).toBeGreaterThan(AGENT_REPORT_DONE_TIMEOUT_MS);
+		expect(event.elapsedMs).toBeGreaterThan(AGENT_REPORT_RESULT_TIMEOUT_MS);
 		expect(event.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 	});
 
@@ -354,7 +354,7 @@ describe('autoCompleteStuckAgents', () => {
 	});
 
 	test('falls back to createdAt when startedAt is missing', async () => {
-		const longAgoCreatedAt = Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 5000;
+		const longAgoCreatedAt = Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 5000;
 		// Insert with NULL started_at
 		seedTask(db, 'task-nostartdate', spaceId, {
 			status: 'in_progress',
@@ -381,7 +381,7 @@ describe('autoCompleteStuckAgents', () => {
 	});
 
 	test('handles multiple tasks — only completes the stuck ones', async () => {
-		const stuckStartedAt = Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 1000;
+		const stuckStartedAt = Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 1000;
 		const freshStartedAt = Date.now() - 5000;
 
 		seedTask(db, 'task-stuck-a', spaceId, {
@@ -429,7 +429,7 @@ describe('autoCompleteStuckAgents', () => {
 	});
 
 	test('auto-completes multiple stuck agents in a single call', async () => {
-		const stuckStartedAt = Date.now() - AGENT_REPORT_DONE_TIMEOUT_MS - 1000;
+		const stuckStartedAt = Date.now() - AGENT_REPORT_RESULT_TIMEOUT_MS - 1000;
 
 		for (const id of ['task-s1', 'task-s2', 'task-s3']) {
 			seedTask(db, id, spaceId, {
@@ -452,8 +452,8 @@ describe('autoCompleteStuckAgents', () => {
 		}
 	});
 
-	test('AGENT_REPORT_DONE_TIMEOUT_MS is 10 minutes', () => {
-		expect(AGENT_REPORT_DONE_TIMEOUT_MS).toBe(10 * 60 * 1000);
+	test('AGENT_REPORT_RESULT_TIMEOUT_MS is 10 minutes', () => {
+		expect(AGENT_REPORT_RESULT_TIMEOUT_MS).toBe(10 * 60 * 1000);
 	});
 
 	test('per-task timeout via getTimeoutMs overrides default timeoutMs', async () => {
@@ -487,7 +487,7 @@ describe('autoCompleteStuckAgents', () => {
 			taskRepo,
 			tam,
 			spy.notify,
-			AGENT_REPORT_DONE_TIMEOUT_MS, // default (ignored when getTimeoutMs is provided)
+			AGENT_REPORT_RESULT_TIMEOUT_MS, // default (ignored when getTimeoutMs is provided)
 			getTimeoutMs
 		);
 

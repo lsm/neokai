@@ -518,10 +518,13 @@ export class SpaceRuntime {
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
 			const spaceLevel = (space?.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 
-			// Re-resolve is safe for non-terminal statuses: resolveCompletionWithActions
-			// is idempotent — non-`done` reportedStatus values (blocked, cancelled)
-			// pass through to a matching task status without side effects.
-			if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
+			// Skip tasks already at a terminal or paused state — matches the
+			// active-tick guard (`taskAlreadyResolved`) at processRunTick.
+			if (
+				canonicalTask.status !== 'done' &&
+				canonicalTask.status !== 'review' &&
+				canonicalTask.status !== 'cancelled'
+			) {
 				const reportedStatus = canonicalTask.reportedStatus ?? 'done';
 				const params = await this.resolveCompletionWithActions(
 					run.spaceId,

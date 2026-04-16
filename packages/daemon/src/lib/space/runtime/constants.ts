@@ -14,7 +14,7 @@
  *
  * Default: 10 minutes.
  */
-export const AGENT_REPORT_DONE_TIMEOUT_MS = 10 * 60 * 1000;
+export const AGENT_REPORT_RESULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Per-node agent name timeout constants (M9.4)
