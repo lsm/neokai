@@ -70,7 +70,7 @@ that must guide every implementation decision in this gap list.
 **Status:** Implemented (completion actions + workflow templates)
 
 PR merge is now handled via two complementary mechanisms:
-- **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash --delete-branch` and syncs the worktree
+- **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash` and syncs the worktree
 - **Long workflows** (Full-Cycle, Fullstack QA): QA node prompt includes merge + worktree sync steps (merge is part of the QA validation, not a separate node)
 - **Completion action execution loop** in `SpaceRuntime.resolveCompletionWithActions()` — iterates actions in order, auto-executes when `space.autonomyLevel >= action.requiredLevel`, pauses task at `review` with `pendingActionIndex` otherwise
 - **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` migrated from `writers: ['human']` to `writers: ['reviewer']` + `requiredLevel: 3`
@@ -330,26 +330,27 @@ Missing:
 
 ---
 
-### 14. No PR Merge Validation in Spaces
+### 14. No PR Merge Validation in Spaces ✅
 
-**Status:** Not implemented
+**Status:** Implemented
 
-Room has `lifecycle-hooks.ts` (400+ lines) with two gate points:
-- **Worker exit gate**: `checkNotOnBaseBranch()`, `checkPrExists()`, `checkPrSynced()`, `checkWorkerPrMerged()`
-- **Leader complete gate**: `checkLeaderPrMerged()`, `checkPrHasReviews()`, `checkPrIsMergeable()`
+PR validation in spaces is handled via two mechanisms in the built-in workflow templates:
 
-Space has **zero PR validation**. Node agents can write PR artifacts via `write_artifact(type: 'pr')`,
-and Task Agents can call `report_result(status: 'done')`, but nothing verifies the PR was actually
-merged before the task is marked complete.
+1. **End node instructions** — Reviewer/QA prompts now include explicit PR verification steps
+   before calling `report_done()`. The agent can react if the PR isn't in the expected state
+   (e.g. resolve conflicts, re-push).
 
-This means:
-- A task can be marked `done` while its PR is still open
-- No enforcement that work was actually integrated into the base branch
-- `approve_task` transitions `review` → `done` without checking PR state
+2. **Completion action failure blocks task** — `executeCompletionAction()` now returns
+   success/failure. If a completion action script (e.g. `merge_pr`) fails, the task transitions
+   to `blocked` instead of silently completing as `done`. This is a framework-level fix that
+   applies to all completion actions, not just PR merge.
 
-**Depends on:** Gap #1 (PR auto-merge shares the same merge verification infrastructure)  
-**Impact:** High — tasks complete without verifying work was integrated  
-**Effort:** Medium
+Unlike Room's `lifecycle-hooks.ts` approach (400+ lines of imperative checks baked into the
+runtime), Space uses its existing gate/channel/completion-action primitives. PR validation is
+workflow template data, not framework code — users can customize or remove it.
+
+**Impact:** High — tasks no longer complete without verifying work was integrated  
+**Effort:** Low (workflow data + one runtime behavior change)
 
 ---
 
@@ -435,7 +436,7 @@ Missing:
 | 11 | Runtime lifecycle controls | High | Low-Medium | **P1** | ✅ |
 | 12 | Autonomy level UI toggle | Medium | Medium | **P2** | ✅ |
 | 13 | Dead loop detection in spaces | Medium | Medium | **P2** | |
-| 14 | PR merge validation in spaces | High | Medium | **P1** | |
+| 14 | PR merge validation in spaces | High | Medium | **P1** | ✅ |
 | 15 | Unified inbox for space approvals | Medium | Low-Medium | **P2** | |
 | 16 | Multi-gate blocking ambiguity | Low | Low | **P3** | |
 | 17 | Consecutive failure escalation | Medium | Low-Medium | **P2** | |
@@ -482,7 +483,7 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 | 8 | **#17 Consecutive failure escalation** | Foundation for smarter retry/escalation, low effort | Low-Medium | |
 | 9 | **#6 Tiered retry** | Builds on #17, informed by block reason distinction | Medium | |
 | 10 | **#13 Dead loop detection** | Builds on #17, prevents stuck workflows | Medium | |
-| 11 | **#14 PR merge validation** | Correctness — tasks shouldn't complete without verifying PR state | Medium | |
+| 11 | **#14 PR merge validation** | Correctness — tasks shouldn't complete without verifying PR state | Medium | **Done** |
 | 12 | **#1 PR auto-merge** | Builds on #14, needs merge verification + audit trail + action UI | Medium | **Done** |
 | 13 | **#15 Unified inbox** | Cross-space discoverability, builds on notification UI pattern | Low-Medium | |
 | 14 | **#9 Review SLA** | Small, builds on audit trail | Low | |

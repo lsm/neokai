@@ -883,7 +883,13 @@ export class SpaceRuntime {
 			const action = actions[i];
 			if (i === startIndex || spaceLevel >= action.requiredLevel) {
 				// First action was human-approved; subsequent ones auto-execute if autonomy permits
-				await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
+				const ok = await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
+				if (!ok) {
+					return await this.updateTaskAndEmit(spaceId, taskId, {
+						status: 'blocked',
+						result: `Completion action "${action.name}" failed`,
+					});
+				}
 			} else {
 				// Pause at this action — clear stale approvedAt from previous cycle
 				return await this.updateTaskAndEmit(spaceId, taskId, {
@@ -1642,7 +1648,13 @@ export class SpaceRuntime {
 			const action = actions[i];
 			if (spaceLevel >= action.requiredLevel) {
 				// Auto-execute
-				await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+				const ok = await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+				if (!ok) {
+					return {
+						status: 'blocked' as const,
+						result: `Completion action "${action.name}" failed`,
+					};
+				}
 			} else {
 				// Pause at this action — task goes to 'review' with pending action metadata
 				return {
@@ -1677,13 +1689,13 @@ export class SpaceRuntime {
 		spaceId: string,
 		runId: string,
 		workspacePath: string
-	): Promise<void> {
+	): Promise<boolean> {
 		if (action.type !== 'script') {
 			log.warn(
 				`SpaceRuntime: completion action type "${action.type}" not yet implemented ` +
 					`(action: ${action.id}, space: ${spaceId})`
 			);
-			return;
+			return false;
 		}
 
 		// Resolve artifact data for script env injection
@@ -1751,17 +1763,21 @@ export class SpaceRuntime {
 					`SpaceRuntime: completion action "${action.name}" timed out ` +
 						`after ${COMPLETION_ACTION_TIMEOUT_MS}ms`
 				);
+				return false;
 			} else if (exitResult.code !== 0) {
 				log.warn(
 					`SpaceRuntime: completion action "${action.name}" failed ` +
 						`(exit ${exitResult.code}): ${stderrResult.text.trim().slice(0, 500)}`
 				);
+				return false;
 			}
+			return true;
 		} catch (err) {
 			log.warn(
 				`SpaceRuntime: completion action "${action.name}" error: ` +
 					`${err instanceof Error ? err.message : String(err)}`
 			);
+			return false;
 		}
 	}
 

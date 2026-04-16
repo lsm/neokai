@@ -6,6 +6,7 @@
  *   - Completion actions auto-execute when space autonomy >= action.requiredLevel
  *   - Task pauses at 'review' with pendingActionIndex when autonomy < action.requiredLevel
  *   - All actions auto-executed → task goes to 'done' with 'auto_policy' approval
+ *   - Script failure → task goes to 'failed' (not fire-and-forget)
  *   - completionActions survive DB round-trip (persisted in node config)
  */
 
@@ -195,7 +196,6 @@ describe('SpaceRuntime — completion actions', () => {
 	let sink: MockNotificationSink;
 
 	const SPACE_ID = 'space-ca-1';
-	const WORKSPACE = '/tmp/ca-ws';
 	const AGENT_A = 'agent-a';
 
 	function makeRuntime(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
@@ -220,7 +220,7 @@ describe('SpaceRuntime — completion actions', () => {
 
 	beforeEach(() => {
 		({ db, dir } = makeDb());
-		seedSpaceRow(db, SPACE_ID, WORKSPACE, 1); // default level 1, overridden per test
+		seedSpaceRow(db, SPACE_ID, dir, 1); // use test dir as workspace so scripts can run
 		seedAgentRow(db, AGENT_A, SPACE_ID);
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -412,9 +412,9 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(task.pendingCheckpointType).toBeNull();
 	});
 
-	// ─── Script failure behavior (fire-and-forget) ─────────────────────
+	// ─── Script failure behavior ────────────────────────────────────────
 
-	test('completion action script failure → task still transitions to done', async () => {
+	test('completion action script failure → task fails', async () => {
 		setAutonomyLevel(5);
 		const rt = makeRuntime();
 
@@ -435,26 +435,21 @@ describe('SpaceRuntime — completion actions', () => {
 
 		await rt.executeTick();
 
-		// Completion actions are best-effort — script failure does not block task completion
 		const task = taskRepo.getTask(tasks[0].id)!;
-		expect(task.status).toBe('done');
-		expect(task.approvalSource).toBe('auto_policy');
-		expect(task.pendingActionIndex).toBeNull();
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Failing Action');
 	});
 
-	test('completion action script non-zero exit → task still transitions to done', async () => {
+	test('completion action script non-zero exit → task fails', async () => {
 		setAutonomyLevel(5);
 		const rt = makeRuntime();
 
 		const actions: CompletionAction[] = [
 			{
-				id: 'timeout-action',
-				name: 'Timeout Action',
+				id: 'exit-action',
+				name: 'Exit Action',
 				type: 'script',
 				requiredLevel: 2,
-				// The script sleeps, but executeCompletionAction has a 120s timeout.
-				// We can't wait 120s in a test, so test with a script that exits non-zero
-				// to exercise the same code path (both log a warning and continue).
 				script: 'exit 42',
 			},
 		];
@@ -467,8 +462,8 @@ describe('SpaceRuntime — completion actions', () => {
 		await rt.executeTick();
 
 		const task = taskRepo.getTask(tasks[0].id)!;
-		expect(task.status).toBe('done');
-		expect(task.approvalSource).toBe('auto_policy');
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Exit Action');
 	});
 
 	// ─── Resume from pendingActionIndex ─────────────────────────────────

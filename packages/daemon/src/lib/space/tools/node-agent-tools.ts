@@ -96,7 +96,7 @@ export interface NodeAgentToolsConfig {
 	myAgentNameAliases?: string[];
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
-	/** Space ID — used for event emission in report_done. */
+	/** Space ID — used for event emission in report_result. */
 	spaceId: string;
 	/**
 	 * Pre-built channel resolver for this sub-session's topology.
@@ -109,7 +109,7 @@ export interface NodeAgentToolsConfig {
 	/** Workflow node ID — used to query peer executions on the same node. */
 	workflowNodeId: string;
 	/**
-	 * Node execution repository for report_done, list_peers, and send_message peer resolution.
+	 * Node execution repository for report_result, list_peers, and send_message peer resolution.
 	 */
 	nodeExecutionRepo: NodeExecutionRepository;
 	/**
