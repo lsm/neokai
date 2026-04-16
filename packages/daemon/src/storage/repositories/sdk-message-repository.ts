@@ -191,8 +191,13 @@ export class SDKMessageRepository {
 
 		// Combine and return: top-level messages + their associated subagent messages
 		// hasMore is based on top-level message count only (not including subagent messages)
+		// Note: cast required because the new SDK added `origin?: SDKMessageOrigin` to SDKUserMessage,
+		// which conflicts with our augmented `origin?: MessageOrigin` field (a different type used for
+		// tracking message provenance in NeoKai). The runtime values are always correct.
 		return {
-			messages: [...topLevelMessages, ...subagentMessages],
+			messages: [...topLevelMessages, ...subagentMessages] as Array<
+				SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+			>,
 			hasMore,
 		};
 	}
