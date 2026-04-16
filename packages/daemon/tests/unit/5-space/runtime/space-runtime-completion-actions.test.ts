@@ -257,7 +257,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -273,7 +278,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -301,7 +311,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -331,7 +346,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -365,7 +385,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -400,7 +425,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -430,7 +460,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -456,7 +491,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -491,7 +531,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		// First tick: action-low auto-executes, action-high pauses
@@ -540,7 +585,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		// Tick: pauses at action-1 (requiredLevel 3, autonomy 2)

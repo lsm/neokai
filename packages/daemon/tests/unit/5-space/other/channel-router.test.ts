@@ -86,6 +86,36 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
 // Workflow builder helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * End nodes must have exactly 1 agent (validator enforced — they own the
+ * `report_result` completion signal). When the last user-provided node is
+ * multi-agent, we synthesize a separate terminal single-agent end node so the
+ * multi-agent node remains the start (or middle) and validation passes.
+ */
+function withSyntheticEndNode(
+	nodes: Array<{
+		id: string;
+		name: string;
+		agentId?: string;
+		agents?: Array<{ agentId: string; name: string }>;
+	}>
+): { nodes: typeof nodes; startNodeId: string; endNodeId: string } {
+	const last = nodes[nodes.length - 1];
+	const lastIsMultiAgent = (last.agents?.length ?? 0) > 1;
+	if (!lastIsMultiAgent) {
+		return { nodes, startNodeId: nodes[0].id, endNodeId: last.id };
+	}
+	const endAgentId =
+		nodes.find((n) => n.agentId)?.agentId ?? nodes.find((n) => n.agents)?.agents?.[0]?.agentId;
+	if (!endAgentId) throw new Error('cannot synthesize end node: no agentId found in nodes');
+	const synthetic = { id: '__test_end__', name: 'Synthetic End', agentId: endAgentId };
+	return {
+		nodes: [...nodes, synthetic],
+		startNodeId: nodes[0].id,
+		endNodeId: synthetic.id,
+	};
+}
+
 function buildWorkflow(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
@@ -97,18 +127,20 @@ function buildWorkflow(
 	}>,
 	channels?: WorkflowChannel[]
 ): SpaceWorkflow {
+	const { nodes: finalNodes, startNodeId, endNodeId } = withSyntheticEndNode(nodes);
 	return workflowManager.createWorkflow({
 		spaceId,
 		name: `Test Workflow ${Date.now()}`,
 		description: '',
-		nodes: nodes.map((n) => ({
+		nodes: finalNodes.map((n) => ({
 			id: n.id,
 			name: n.name,
 			agentId: n.agentId,
 			agents: n.agents,
 		})),
 		transitions: [],
-		startNodeId: nodes[0].id,
+		startNodeId,
+		endNodeId,
 		rules: [],
 		tags: [],
 		channels: channels ?? [],
@@ -131,18 +163,20 @@ function buildWorkflowWithGates(
 	channels: WorkflowChannel[],
 	gates: Gate[]
 ): SpaceWorkflow {
+	const { nodes: finalNodes, startNodeId, endNodeId } = withSyntheticEndNode(nodes);
 	return workflowManager.createWorkflow({
 		spaceId,
 		name: `Test Workflow With Gates ${Date.now()}`,
 		description: '',
-		nodes: nodes.map((n) => ({
+		nodes: finalNodes.map((n) => ({
 			id: n.id,
 			name: n.name,
 			agentId: n.agentId,
 			agents: n.agents,
 		})),
 		transitions: [],
-		startNodeId: nodes[0].id,
+		startNodeId,
+		endNodeId,
 		rules: [],
 		tags: [],
 		channels,

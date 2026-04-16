@@ -281,7 +281,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'5. Open a PR with `gh pr create` — include a clear title and description\n' +
 							'6. Hand off to the Reviewer: send_message(target="Review", message="PR ready for ' +
 							'review at <url>", data={ pr_url: "<url>" }). The gate runs a script that verifies ' +
-							'the PR is open and mergeable, so make sure it actually is before sending.\n\n' +
+							'the PR is open and mergeable, so make sure it actually is before sending. ' +
+							'**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+							'data resets each cycle, so even on round 2+ you must re-supply it.\n\n' +
 							'If re-activated after review:\n' +
 							'1. Pull review comments from GitHub (`gh pr view` and `gh api`)\n' +
 							'2. Evaluate each comment critically — do not blindly accept feedback. Verify ' +
@@ -289,8 +291,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'3. For valid items: make the fix and reply to the comment confirming what changed\n' +
 							'4. For items you disagree with: reply explaining why, with evidence from the code ' +
 							'or tests. Do not change code you believe is correct.\n' +
-							'5. Push fixes, verify tests still pass, then send_message to Review again to ' +
-							're-trigger the review cycle',
+							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
+							'(again with `data: { pr_url }`) to re-trigger the review cycle',
 					},
 				},
 			],
@@ -313,15 +315,21 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'might not surface (e.g. callers of changed functions, integration points).\n' +
 							'- Post all feedback as PR review comments on GitHub so the engineer can address ' +
 							'them item by item. Then send a short message to Coding summarizing the request.\n' +
-							'- If you request changes, the engineer is automatically re-activated.\n' +
-							'- When satisfied, call report_result() to complete the workflow.\n\n' +
+							'- If you request changes, the engineer is automatically re-activated.\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal ' +
+							'the runtime accepts as completion — finishing your turn without it leaves the ' +
+							'workflow stuck. Do all your review work — read files, run tests, post comments ' +
+							'to GitHub, send messages to Coding — BEFORE calling `report_result`. After it ' +
+							'returns, do not invoke any other tools.\n\n' +
 							'Review checklist:\n' +
 							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
 							'2. Check for correctness, style, test coverage, and integration impact\n' +
 							'3. Run the relevant tests yourself if uncertain\n' +
 							'4. If changes needed: post specific, actionable review comments on GitHub, then ' +
-							'send_message to Coding asking them to address the comments\n' +
-							'5. If satisfied: verify the PR is open and mergeable, then call report_result()',
+							'send_message to Coding asking them to address the comments (do NOT call ' +
+							'`report_result` — leave the workflow open for the next round)\n' +
+							'5. If satisfied: verify the PR is open and mergeable, then call ' +
+							'`report_result(status="done", summary=...)` as your final action',
 					},
 				},
 			],
@@ -342,7 +350,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'pr_url',
 					type: 'string',
-					writers: ['*'],
+					writers: ['Coding'],
 					check: { op: 'exists' },
 				},
 			],
@@ -431,9 +439,12 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'research findings for completeness, accuracy, and quality.\n\n' +
 							'Workflow context:\n' +
 							'- The Research agent has investigated and opened a PR (verified by research-ready-gate).\n' +
-							'- If you request more research, the Research agent is automatically re-activated.\n' +
-							'- When satisfied, call report_result() to complete the entire workflow.\n' +
-							'- This node is the endNodeId — your report_result() signals workflow completion.\n\n' +
+							'- If you request more research, the Research agent is automatically re-activated.\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. Do all your review work BEFORE calling `report_result`; it must be your last ' +
+							'tool call. Do not call it when requesting more research — leave the workflow open ' +
+							'for the next round in that case.\n\n' +
 							'Expected inputs: A PR containing research findings from the Research agent.\n' +
 							'Expected outputs: Either approval (report_result) or specific feedback for more research.\n\n' +
 							'Review checklist:\n' +
@@ -441,9 +452,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'2. Check completeness: does the research answer the original question?\n' +
 							'3. Check accuracy: are claims supported by evidence or sources?\n' +
 							'4. Check clarity: are findings well-organized and easy to follow?\n' +
-							'5. If more research needed: provide specific areas to investigate further\n' +
-							'6. If satisfied: verify the PR is still open and mergeable before calling report_result()\n' +
-							'7. Call report_result() with a brief summary',
+							'5. If more research needed: send_message back to Research with specific areas to ' +
+							'investigate (do NOT call `report_result`)\n' +
+							'6. If satisfied: verify the PR is still open and mergeable, then call ' +
+							'`report_result(status="done", summary=...)` as your final action',
 					},
 				},
 			],
@@ -522,6 +534,10 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'Workflow context:\n' +
 							'- This is both the start and end node — the workflow completes when you call report_result().\n' +
 							'- There are no other agents in this workflow; your review is the only node.\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. Do all review work BEFORE calling `report_result`; it must be your last tool ' +
+							'call.\n\n' +
 							'Expected inputs: A PR or code to review (specified in the task description).\n' +
 							'Expected outputs: A thorough review summary with actionable findings.\n\n' +
 							'Review checklist:\n' +
@@ -529,7 +545,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'2. Check for correctness, security, performance, and style issues\n' +
 							'3. Verify test coverage is adequate\n' +
 							'4. Summarize your findings clearly\n' +
-							'5. Call report_result() with your review summary to complete the workflow',
+							'5. Call `report_result(status="done", summary=...)` as your final action',
 					},
 				},
 			],
@@ -705,6 +721,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 						value:
 							V2_QA_PROMPT +
 							'\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. `report_result` must be your last tool call. Do not call it when sending ' +
+							'feedback to Coding — leave the workflow open for the next round in that case.\n\n' +
 							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
 							'Expected outputs: PR merged and worktree synced, or detailed feedback to Coding.\n\n' +
 							'Steps:\n' +
@@ -712,10 +732,11 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'2. Check CI pipeline status on the PR\n' +
 							'3. Verify the PR is mergeable (no conflicts)\n' +
 							'4. Confirm changes match the approved plan\n' +
-							'5. If issues found: send detailed feedback to Coding via QA → Coding channel\n' +
+							'5. If issues found: send detailed feedback to Coding via QA → Coding channel ' +
+							'(do NOT call `report_result`)\n' +
 							'6. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'7. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'8. Call report_result() confirming merge and sync\n\n' +
+							'8. Call `report_result(status="done", summary=...)` confirming merge and sync\n\n' +
 							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
 					},
 				},
@@ -918,16 +939,21 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 						value:
 							FULLSTACK_QA_PROMPT +
 							'\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. `report_result` must be your last tool call. Do not call it when sending ' +
+							'feedback to Coding — leave the workflow open for the next round in that case.\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
 							'Expected outputs: PR merged and worktree synced, or QA feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run backend and frontend test suites\n' +
 							'2. Run browser-based critical-path validation\n' +
 							'3. Validate CI and mergeability\n' +
-							'4. If fail: send detailed failures and repro steps to Coding\n' +
+							'4. If fail: send detailed failures and repro steps to Coding (do NOT call ' +
+							'`report_result`)\n' +
 							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call report_result() confirming merge and sync',
+							'7. Call `report_result(status="done", summary=...)` confirming merge and sync',
 					},
 				},
 			],

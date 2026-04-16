@@ -308,7 +308,7 @@ Remaining (out of scope, tracked separately):
 
 ### 13. No Dead Loop Detection in Spaces
 
-**Status:** Not implemented
+**Status:** Not implemented — *unblocked by completion-semantics rewrite*
 
 Room has `dead-loop-detector.ts` (Levenshtein similarity-based, 5-fail threshold within 5-minute window)
 that detects infinite gate bounce cycles and escalates to human. Space has nothing equivalent —
@@ -321,6 +321,11 @@ Current Space retry behavior:
 - After exhausting retries → `blocked` with `agent_crashed` reason — but no diagnostic of *why*
 
 Missing:
+- **Stall detection**: with the new completion model (`idle`/`cancelled` are NOT completion
+  signals; only canonical `task.status` is), the runtime can now distinguish "all nodes idle +
+  no pending activations + task still in_progress + no `reportedStatus`" → **stalled**, not
+  complete. Previously this state was misread as completion. See `completion-detector.ts` TODO
+  marker for the entry point.
 - Similarity detection across failure reasons (are retries hitting the same error?)
 - Escalation with diagnostic summary (what was the agent trying when it failed?)
 - Configurable thresholds per space or workflow
@@ -418,6 +423,53 @@ Missing:
 
 ---
 
+### 18. Task Retry RPC
+
+**Status:** Not implemented
+
+With the new completion-semantics rewrite, an unrecoverably blocked end-node leaves
+`task.status = 'blocked'` (with `blockReason='execution_failed'` or `'agent_crashed'`)
+and the workflow run is `blocked`. Humans/agents can already use `task.update` to mark
+the task `cancelled`, `done`, or `archived` — but there is no equivalent for "retry":
+re-spawn the end-node execution and flip the task back to `in_progress`.
+
+Workaround today: cancel the task and start a new workflow run from scratch. This
+discards any partial progress (other node executions, gate artifacts, send_message
+history) and forces re-planning.
+
+Missing:
+- `task.retry` RPC handler that resets blocked node executions to `pending`, clears
+  the task's blocked state, and resumes the existing workflow run
+- UI affordance on `TaskBlockedBanner` to invoke retry
+- Bound on retry attempts to prevent infinite loops (overlaps with Gap #6)
+
+**Depends on:** Gap #6 (retry semantics), Gap #13 (stall/loop detection for retry budget)  
+**Impact:** Medium — currently humans must restart workflows from scratch  
+**Effort:** Low-Medium
+
+---
+
+### 19. End-Node Single-Agent Invariant (Documented)
+
+**Status:** Implemented and enforced — *invariant for future workflow authoring*
+
+End nodes own the workflow's completion signal via `report_result` (the only signal
+the runtime accepts as workflow completion). Multi-agent end nodes create ambiguity
+about who declares the workflow done — there are no quorum semantics defined and a
+race condition would result.
+
+Enforcement: `space-workflow-manager.ts::validateEndNodeId()` rejects workflow
+definitions whose end node has anything other than exactly 1 agent. All built-in
+workflows comply (single-agent Reviewer/QA at the end).
+
+Future workflow authors must respect this invariant; consider it part of the
+"workflow design contract" alongside the reachability and channel-validity rules.
+
+**Impact:** Documentation/invariant — prevents future bugs  
+**Effort:** Done
+
+---
+
 ## Priority Matrix
 
 | # | Gap | Impact | Effort | Priority | Status |
@@ -440,6 +492,8 @@ Missing:
 | 15 | Unified inbox for space approvals | Medium | Low-Medium | **P2** | |
 | 16 | Multi-gate blocking ambiguity | Low | Low | **P3** | |
 | 17 | Consecutive failure escalation | Medium | Low-Medium | **P2** | |
+| 18 | Task retry RPC | Medium | Low-Medium | **P2** | |
+| 19 | End-node single-agent invariant | n/a | Done | n/a | ✅ |
 
 ## Dependency Graph & Implementation Order
 

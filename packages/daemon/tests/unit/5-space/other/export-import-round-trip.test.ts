@@ -75,6 +75,15 @@ function makeTestAgent(id: string, name: string, overrides: Partial<SpaceAgent> 
 	};
 }
 
+// End nodes must have exactly 1 agent (validator rule). Tests that exercise
+// multi-agent steps append a downstream single-agent end node so the
+// multi-agent step remains an intermediate node.
+const SYNTHETIC_END_NODE = {
+	id: '__test_end__',
+	name: 'Synthetic End',
+	agents: [{ agentId: 'agent-1', name: 'end' }],
+};
+
 function makeWorkflowWithOverrides(): SpaceWorkflow {
 	return {
 		id: 'wf-overrides',
@@ -102,8 +111,10 @@ function makeWorkflowWithOverrides(): SpaceWorkflow {
 					},
 				],
 			},
+			SYNTHETIC_END_NODE,
 		],
 		startNodeId: 'node-1',
+		endNodeId: SYNTHETIC_END_NODE.id,
 		tags: ['review'],
 		createdAt: 1000,
 		updatedAt: 2000,
@@ -124,8 +135,10 @@ function makeWorkflowWithoutOverrides(): SpaceWorkflow {
 					{ agentId: 'agent-2', name: 'reviewer' },
 				],
 			},
+			SYNTHETIC_END_NODE,
 		],
 		startNodeId: 'node-1',
+		endNodeId: SYNTHETIC_END_NODE.id,
 		tags: [],
 		createdAt: 1000,
 		updatedAt: 2000,
@@ -687,8 +700,10 @@ describe('full round-trip: export → import → DB read-back', () => {
 						},
 					],
 				},
+				SYNTHETIC_END_NODE,
 			],
 			startNodeId: 'node-1',
+			endNodeId: SYNTHETIC_END_NODE.id,
 			tags: [],
 			createdAt: 1000,
 			updatedAt: 2000,
@@ -765,9 +780,11 @@ describe('full round-trip: export → import → DB read-back', () => {
 						},
 					],
 				},
+				SYNTHETIC_END_NODE,
 			],
 			transitions: [],
 			startNodeId: 'node-1',
+			endNodeId: SYNTHETIC_END_NODE.id,
 			rules: [],
 			tags: [],
 			createdAt: 1000,

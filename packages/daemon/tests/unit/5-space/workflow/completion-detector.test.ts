@@ -1,38 +1,12 @@
 /**
  * Unit tests for CompletionDetector
  *
- * Scenarios (32 total):
- *   1.  No executions exist — returns false (workflow not started)
- *   2.  Single execution in_progress — returns false
- *   3.  Single execution idle — returns true
- *   4.  Single execution blocked — returns false (non-terminal)
- *   5.  Single execution cancelled — returns true (terminal)
- *   6.  Single execution pending — returns false (non-terminal)
- *   7.  Multi-node workflow — all agents terminal → true
- *   8.  Multi-node workflow — one agent non-terminal → false
- *   9.  Mixed terminal: idle + cancelled → true
- *  10.  One non-terminal execution blocks completion regardless of terminal count
- *  11.  idle + in_progress → false
- *  12.  Many idle + one blocked → false
- *  13.  All executions in_progress → false
- *  14.  All executions blocked → false
- *  15.  pending + in_progress → false
- *  16. Tasks from different workflow runs do not interfere
- *  17.  Empty run vs run with executions — no cross-contamination
- *  18.  idle + blocked → false
- *  19.  Multiple terminal (idle + cancelled) in one run → true
- *  20.  TERMINAL_NODE_EXECUTION_STATUSES — size=2 (idle, cancelled)
- *  21.  TERMINAL_NODE_EXECUTION_STATUSES — does not contain non-terminal statuses
- *  22.  End-node short-circuit: end node idle → true (other nodes still running)
- *  23.  End-node short-circuit: end node cancelled → true (other nodes still running)
- *  24.  End-node short-circuit: end node in_progress → false
- *  25.  End-node short-circuit: end node blocked → false
- *  26.  End-node short-circuit: no execution for end node → falls through to all-agents-done
- *  27.  End-node short-circuit: endNodeId not provided → all-agents-done fallback
- *  28.  All-agents-done fallback: all terminal with no endNodeId → true
- *  29.  All-agents-done fallback: some non-terminal with no endNodeId → false
- *  30.  No executions with endNodeId → false
- *  31.  End-node short-circuit: end node pending → false
+ * The detector inspects the canonical `SpaceTask` linked to a workflow run.
+ * Node-execution statuses (idle/cancelled/etc.) are NOT completion signals —
+ * they are per-execution lifecycle. Workflow completion is signalled by:
+ *   1. `task.status` being terminal (`done` | `cancelled`), OR
+ *   2. `task.reportedStatus` being non-null (agent called `report_result` —
+ *      runtime will resolve final status on next tick via completion-actions).
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -40,9 +14,8 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { CompletionDetector } from '../../../../src/lib/space/runtime/completion-detector.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../../../../src/lib/space/managers/node-execution-manager.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,55 +31,21 @@ function makeDb(): { db: BunDatabase; dir: string } {
 	mkdirSync(dir, { recursive: true });
 	const db = new BunDatabase(join(dir, 'test.db'));
 	runMigrations(db, () => {});
-	// Disable FK to allow synthetic run IDs without seeding full parent rows.
+	// Disable FK so we can insert tasks with synthetic workflow_run_id values
+	// without seeding a parent row.
 	db.exec('PRAGMA foreign_keys = OFF');
 	return { db, dir };
 }
 
-let execCounter = 0;
-function seedExecution(
-	db: BunDatabase,
-	overrides: {
-		id?: string;
-		workflowRunId?: string;
-		workflowNodeId?: string;
-		agentName?: string;
-		status?: string;
-	} = {}
-): string {
-	const id = overrides.id ?? `exec-${++execCounter}`;
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO node_executions
-	     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-	      agent_session_id, status, result, created_at, started_at,
-	      completed_at, updated_at)
-	     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
-	).run(
-		id,
-		overrides.workflowRunId ?? 'run-1',
-		overrides.workflowNodeId ?? 'node-1',
-		overrides.agentName ?? `agent-${execCounter}`,
-		overrides.status ?? 'in_progress',
-		now,
-		now
-	);
-	return id;
-}
-
-// ---------------------------------------------------------------------------
-// Test setup / teardown
-// ---------------------------------------------------------------------------
-
 let db: BunDatabase;
 let dir: string;
-let nodeExecutionRepo: NodeExecutionRepository;
+let taskRepo: SpaceTaskRepository;
 let detector: CompletionDetector;
 
 beforeEach(() => {
 	({ db, dir } = makeDb());
-	nodeExecutionRepo = new NodeExecutionRepository(db);
-	detector = new CompletionDetector(nodeExecutionRepo);
+	taskRepo = new SpaceTaskRepository(db);
+	detector = new CompletionDetector(taskRepo);
 });
 
 afterEach(() => {
@@ -120,250 +59,149 @@ afterEach(() => {
 
 describe('CompletionDetector', () => {
 	const RUN = 'run-1';
+	const SPACE = 'space-1';
 
-	// ---- Basic completion detection ----
-
-	test('1. no executions exist — returns false (workflow not started)', () => {
+	test('returns false when no task is linked to the run (workflow not started)', () => {
 		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 	});
 
-	test('2. single execution in_progress — returns false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'in_progress' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+	describe('terminal task.status short-circuit', () => {
+		test('task.status === "done" → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { status: 'done' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('task.status === "cancelled" → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { status: 'cancelled' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('task.status === "in_progress" without reportedStatus → false', () => {
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
+
+		test('task.status === "blocked" alone → false (blocked is needs-attention, not complete)', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { status: 'blocked' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
+
+		test('task.status === "review" alone → false (paused awaiting human approval)', () => {
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'review',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
 	});
 
-	test('3. single execution idle — returns true', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+	describe('reportedStatus signal', () => {
+		test('reportedStatus = "done" + task in_progress → true (runtime should resolve)', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { reportedStatus: 'done', reportedSummary: 'ok' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('reportedStatus = "blocked" + task in_progress → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { reportedStatus: 'blocked', reportedSummary: 'stuck' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('reportedStatus = "cancelled" + task in_progress → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { reportedStatus: 'cancelled', reportedSummary: 'cancelled' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('reportedStatus = null + task in_progress → false', () => {
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
 	});
-
-	test('4. single execution blocked — returns false (non-terminal)', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('5. single execution cancelled — returns true (terminal)', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'cancelled' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-	});
-
-	test('6. single execution pending — returns false (non-terminal)', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'pending' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	// ---- Multi-node workflows ----
-
-	test('7. multi-node workflow — all agents terminal → true', () => {
-		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'cancelled' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-	});
-
-	test('8. multi-node workflow — one agent non-terminal → false', () => {
-		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'in_progress' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	// ---- Mixed terminal statuses ----
-
-	test('9. mixed idle + cancelled → true', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, status: 'cancelled' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-	});
-
-	test('10. one non-terminal execution blocks completion regardless of terminal count', () => {
-		for (let i = 0; i < 5; i++) {
-			seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		}
-		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('11. idle + in_progress → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, status: 'in_progress' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('12. many idle + one blocked → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('13. all executions in_progress → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'in_progress' });
-		seedExecution(db, { workflowRunId: RUN, status: 'in_progress' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('14. all executions blocked → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
-		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('15. pending + in_progress → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'pending' });
-		seedExecution(db, { workflowRunId: RUN, status: 'in_progress' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('18. idle + blocked → false', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, status: 'blocked' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-	});
-
-	test('19. multiple terminal (idle + cancelled) in one run → true', () => {
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		seedExecution(db, { workflowRunId: RUN, status: 'cancelled' });
-		seedExecution(db, { workflowRunId: RUN, status: 'idle' });
-		expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-	});
-
-	// ---- Cross-contamination ----
 
 	describe('multiple workflow runs', () => {
-		test('16. tasks from different runs do not interfere — each run evaluated independently', () => {
+		test('runs are evaluated independently', () => {
 			const RUN_A = 'run-a';
 			const RUN_B = 'run-b';
 
-			// Run A: all terminal
-			seedExecution(db, { workflowRunId: RUN_A, status: 'idle' });
-			seedExecution(db, { workflowRunId: RUN_A, status: 'cancelled' });
+			const taskA = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'a',
+				workflowRunId: RUN_A,
+			});
+			taskRepo.updateTask(taskA.id, { status: 'done' });
 
-			// Run B: one non-terminal
-			seedExecution(db, { workflowRunId: RUN_B, status: 'idle' });
-			seedExecution(db, { workflowRunId: RUN_B, status: 'in_progress' });
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'b',
+				status: 'in_progress',
+				workflowRunId: RUN_B,
+			});
 
 			expect(detector.isComplete({ workflowRunId: RUN_A })).toBe(true);
 			expect(detector.isComplete({ workflowRunId: RUN_B })).toBe(false);
 		});
 
-		test('17. one run has no executions while the other has — no cross-contamination', () => {
-			const RUN_A = 'run-empty';
-			const RUN_B = 'run-with-tasks';
-
-			seedExecution(db, { workflowRunId: RUN_B, status: 'idle' });
-
-			expect(detector.isComplete({ workflowRunId: RUN_A })).toBe(false);
-			expect(detector.isComplete({ workflowRunId: RUN_B })).toBe(true);
-		});
-	});
-
-	// ---- TERMINAL_NODE_EXECUTION_STATUSES ----
-
-	describe('TERMINAL_NODE_EXECUTION_STATUSES', () => {
-		test('20. contains exactly two statuses: idle and cancelled', () => {
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('idle')).toBe(true);
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('cancelled')).toBe(true);
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.size).toBe(2);
-		});
-
-		test('21. does not contain non-terminal statuses', () => {
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('pending')).toBe(false);
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('in_progress')).toBe(false);
-			expect(TERMINAL_NODE_EXECUTION_STATUSES.has('blocked')).toBe(false);
-		});
-
-		// ---- End-node short-circuit ----
-
-		describe('end-node short-circuit', () => {
-			const END_NODE_ID = 'end-node';
-
-			test('22. end node idle → true (other nodes still running)', () => {
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: 'start-node',
-					status: 'in_progress',
-				});
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: END_NODE_ID,
-					status: 'idle',
-				});
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
+		test('multi-task run: any single terminal/reported task signals completion', () => {
+			const taskA = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'a',
+				status: 'in_progress',
+				workflowRunId: RUN,
 			});
-
-			test('23. end node cancelled → true (other nodes still running)', () => {
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: 'start-node',
-					status: 'in_progress',
-				});
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: END_NODE_ID,
-					status: 'cancelled',
-				});
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(true);
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'b',
+				status: 'in_progress',
+				workflowRunId: RUN,
 			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
 
-			test('24. end node in_progress → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: END_NODE_ID,
-					status: 'in_progress',
-				});
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-			});
-
-			test('25. end node blocked → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: END_NODE_ID,
-					status: 'blocked',
-				});
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-			});
-
-			test('26. no execution for end node → not complete', () => {
-				// Only a start-node execution exists; end node has none.
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-			});
-
-			test('27. endNodeId not provided → all-agents-done fallback', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: END_NODE_ID, status: 'idle' });
-				expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-			});
-
-			test('28. no executions with endNodeId → false', () => {
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-			});
-
-			test('29. end node pending → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'start-node', status: 'idle' });
-				seedExecution(db, {
-					workflowRunId: RUN,
-					workflowNodeId: END_NODE_ID,
-					status: 'pending',
-				});
-				expect(detector.isComplete({ workflowRunId: RUN, endNodeId: END_NODE_ID })).toBe(false);
-			});
-		});
-
-		// ---- All-agents-done fallback (no endNodeId) ----
-
-		describe('all-agents-done fallback', () => {
-			test('30. all terminal with no endNodeId → true', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'cancelled' });
-				expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
-			});
-
-			test('31. some non-terminal with no endNodeId → false', () => {
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-a', status: 'idle' });
-				seedExecution(db, { workflowRunId: RUN, workflowNodeId: 'node-b', status: 'blocked' });
-				expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
-			});
+			taskRepo.updateTask(taskA.id, { reportedStatus: 'done', reportedSummary: 'ok' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
 		});
 	});
 });

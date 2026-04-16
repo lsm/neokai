@@ -1613,6 +1613,12 @@ type MultiAgentStepEntry =
 			};
 	  };
 
+// End nodes must have exactly one agent. Tests below construct workflows whose
+// last meaningful node is multi-agent; we auto-append a synthetic single-agent
+// end node referencing the first agent of the last node so the workflow passes
+// validation without each test author having to wire it up.
+const SYNTHETIC_END_NODE_NAME = '__synthetic_end__';
+
 function makeMultiAgentBundle(
 	agents: BundleAgent[],
 	workflows: Array<{
@@ -1655,6 +1661,21 @@ function makeMultiAgentBundle(
 					...(s.systemPrompt ? { systemPrompt: s.systemPrompt } : {}),
 				};
 			});
+
+			const lastSrc = w.nodes[w.nodes.length - 1];
+			if (lastSrc) {
+				const endAgentRef =
+					'multiAgentStep' in lastSrc
+						? lastSrc.multiAgentStep.agents[0]?.agentRef
+						: lastSrc.agentRef;
+				if (endAgentRef) {
+					nodes.push({
+						name: SYNTHETIC_END_NODE_NAME,
+						agents: [{ agentRef: endAgentRef, name: 'end' }],
+					});
+				}
+			}
+
 			return {
 				version: 1,
 				type: 'workflow',
@@ -1855,6 +1876,13 @@ describe('full export→import round-trip', () => {
 						},
 					],
 				},
+				// Synthetic single-agent end node — end nodes own the workflow
+				// completion signal and must have exactly one agent.
+				{
+					id: 'step-end',
+					name: 'End',
+					agents: [{ agentId: 'src-coder', name: 'end' }],
+				},
 			],
 			channels: [{ id: 'ch-1', from: 'coder', to: 'reviewer', label: 'hand-off' }],
 			startNodeId: 'step-ma',
@@ -1992,6 +2020,11 @@ describe('full export→import round-trip', () => {
 						{ agentId: 'src-b', name: 'beta' },
 					],
 				},
+				{
+					id: 'step-end',
+					name: 'End',
+					agents: [{ agentId: 'src-a', name: 'end' }],
+				},
 			],
 			transitions: [],
 			startNodeId: 'step-ow',
@@ -2054,6 +2087,11 @@ describe('full export→import round-trip', () => {
 						{ agentId: 'src-spoke1', name: 'spoke1' },
 						{ agentId: 'src-spoke2', name: 'spoke2' },
 					],
+				},
+				{
+					id: 'step-end',
+					name: 'End',
+					agents: [{ agentId: 'src-hub', name: 'end' }],
 				},
 			],
 			transitions: [],
@@ -2165,6 +2203,11 @@ describe('full export→import round-trip', () => {
 						{ agentId: 'src-review', name: 'reviewer' },
 					],
 				},
+				{
+					id: 'step-end',
+					name: 'End',
+					agents: [{ agentId: 'src-coder2', name: 'end' }],
+				},
 			],
 			channels: [{ id: 'ch-1', from: 'planner', to: 'coder' }],
 			startNodeId: 'step-plan',
@@ -2184,7 +2227,8 @@ describe('full export→import round-trip', () => {
 		});
 
 		const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
-		expect(importedWf.nodes).toHaveLength(2);
+		// Two real steps + synthetic single-agent end node.
+		expect(importedWf.nodes).toHaveLength(3);
 
 		// Step 0: single-agent (plan)
 		const planStep = importedWf.nodes.find((s) => s.name === 'Plan')!;

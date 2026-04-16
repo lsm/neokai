@@ -40,13 +40,11 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { WorkflowExecutor } from '../../../../src/lib/space/runtime/workflow-executor.ts';
 import type {
 	CommandRunner,
 	ConditionContext,
 } from '../../../../src/lib/space/runtime/workflow-executor.ts';
-import { CompletionDetector } from '../../../../src/lib/space/runtime/completion-detector.ts';
 import {
 	isChannelOpen,
 	evaluateGate,
@@ -114,7 +112,6 @@ let db: BunDatabase;
 let dir: string;
 let workflowRepo: SpaceWorkflowRepository;
 let runRepo: SpaceWorkflowRunRepository;
-let nodeExecRepo: NodeExecutionRepository;
 
 const SPACE_ID = 'space-1';
 const WORKSPACE = '/tmp/ws-1';
@@ -127,7 +124,6 @@ beforeEach(() => {
 	seedAgent(db, 'agent-c', SPACE_ID, 'Agent C');
 	workflowRepo = new SpaceWorkflowRepository(db);
 	runRepo = new SpaceWorkflowRunRepository(db);
-	nodeExecRepo = new NodeExecutionRepository(db);
 });
 
 afterEach(() => {
@@ -160,24 +156,6 @@ function makeLinearWorkflow(steps: Array<{ id: string; agentId: string }>): {
 	});
 	const run = runRepo.createRun({ spaceId: SPACE_ID, workflowId: workflow.id, title: 'Test' });
 	return { workflow, run };
-}
-
-function seedNodeExecution(
-	workflowRunId: string,
-	nodeId: string,
-	agentName: string,
-	status: string
-): string {
-	const id = `exec-${nodeId}-${agentName}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-	const now = Date.now();
-	db.prepare(
-		`INSERT INTO node_executions
-     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-      agent_session_id, status, result, created_at, started_at,
-      completed_at, updated_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
-	).run(id, workflowRunId, nodeId, agentName, status, now, now);
-	return id;
 }
 
 // ===========================================================================
@@ -416,116 +394,13 @@ describe('Linear node progression — condition evaluation sequence', () => {
 });
 
 // ===========================================================================
-// C) Parallel branch execution (CompletionDetector)
+// C) Parallel branch execution — see completion-detector.test.ts
 // ===========================================================================
-
-describe('Parallel branch execution — CompletionDetector', () => {
-	let detector: CompletionDetector;
-
-	beforeEach(() => {
-		detector = new CompletionDetector(nodeExecRepo);
-	});
-
-	/**
-	 * Creates a minimal workflow with a single parallel node and returns a run ID.
-	 * The run ID is used to seed node_executions while satisfying FK constraints.
-	 */
-	function makeParallelRun(): string {
-		const { run } = makeLinearWorkflow([{ id: 'node-parallel', agentId: 'agent-a' }]);
-		return run.id;
-	}
-
-	/**
-	 * Creates a linear 2-node workflow (node-a → node-b) and returns a run ID.
-	 */
-	function makeLinearRun(): string {
-		const { run } = makeLinearWorkflow([
-			{ id: 'node-a', agentId: 'agent-a' },
-			{ id: 'node-b', agentId: 'agent-b' },
-		]);
-		return run.id;
-	}
-
-	test('2-agent parallel node: both done → workflow complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-reviewer', 'idle');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
-	});
-
-	test('2-agent parallel node: one still in_progress → not complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-reviewer', 'in_progress');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
-	});
-
-	test('2-agent parallel node: both in_progress → not complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-coder', 'in_progress');
-		seedNodeExecution(runId, 'node-parallel', 'agent-reviewer', 'in_progress');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
-	});
-
-	test('3-agent parallel node: all done → complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'idle');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
-	});
-
-	test('3-agent parallel node: 2 done, 1 in_progress → not complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'in_progress');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
-	});
-
-	test('3-agent parallel node: 2 done, 1 blocked → not complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-c', 'blocked');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
-	});
-
-	test('parallel node done + cancelled (mixed terminal) → complete', () => {
-		const runId = makeParallelRun();
-		seedNodeExecution(runId, 'node-parallel', 'agent-a', 'idle');
-		seedNodeExecution(runId, 'node-parallel', 'agent-b', 'cancelled');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
-	});
-
-	test('linear A done + parallel (B1 done, B2 in_progress) → not complete', () => {
-		const runId = makeLinearRun();
-		// Node A completes (linear)
-		seedNodeExecution(runId, 'node-a', 'agent-a', 'idle');
-		// Node B forks into 2 parallel agents; B2 still running
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-1', 'idle');
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-2', 'in_progress');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(false);
-	});
-
-	test('linear A done + parallel (B1 done, B2 done) → complete', () => {
-		const runId = makeLinearRun();
-		seedNodeExecution(runId, 'node-a', 'agent-a', 'idle');
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-1', 'idle');
-		seedNodeExecution(runId, 'node-b', 'agent-b-worker-2', 'idle');
-		expect(detector.isComplete({ workflowRunId: runId })).toBe(true);
-	});
-
-	test('end-node short-circuit: parallel end node — first agent done triggers completion', () => {
-		const runId = makeLinearRun();
-		const endNodeId = 'node-b';
-		// Start node still running
-		seedNodeExecution(runId, 'node-a', 'agent-a', 'in_progress');
-		// End node agent completes
-		seedNodeExecution(runId, endNodeId, 'agent-b', 'idle');
-		expect(detector.isComplete({ workflowRunId: runId, endNodeId })).toBe(true);
-	});
-});
+// CompletionDetector now reads the canonical SpaceTask (status / reportedStatus)
+// rather than node_executions. Comprehensive coverage lives in
+// `tests/unit/5-space/workflow/completion-detector.test.ts`. The old
+// node-execution-based block has been removed because its assumptions no
+// longer match the runtime contract.
 
 // ===========================================================================
 // D) Gated channel evaluation
