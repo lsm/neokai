@@ -1568,7 +1568,8 @@ class SpaceStore {
 	}
 
 	/**
-	 * Stop the current space (archives it, showing stopped state without navigating away)
+	 * Stop the current space: terminates all running agent sessions, cancels
+	 * in-progress tasks and workflow runs, then archives the space.
 	 */
 	async stopSpace(): Promise<void> {
 		const spaceId = this.spaceId.value;
@@ -1577,7 +1578,7 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const space = await hub.request<Space>('space.archive', { id: spaceId });
+		const space = await hub.request<Space>('space.stop', { id: spaceId });
 		if (space) {
 			this.space.value = space;
 			this.updateRuntimeState(space);

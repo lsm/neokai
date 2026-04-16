@@ -141,6 +141,53 @@ export class SpaceRuntimeService {
 		this.runtime.setTaskAgentManager(manager);
 	}
 
+	/**
+	 * Stop all active work for a space: terminates running agent sessions and
+	 * cancels all in-progress/open tasks and active workflow runs.
+	 *
+	 * Called by the `space.stop` RPC handler before archiving the space.
+	 * Does NOT archive the space itself — the caller is responsible for that.
+	 */
+	async stopActiveWork(spaceId: string): Promise<void> {
+		const { taskRepo, workflowRunRepo } = this.config;
+
+		// 1. Cancel all active tasks (in_progress or open) and their agent sessions.
+		const activeTasks = taskRepo
+			.listBySpace(spaceId)
+			.filter((t) => t.status === 'in_progress' || t.status === 'open');
+
+		await Promise.allSettled(
+			activeTasks.map(async (task) => {
+				// Stop the agent session first, then mark the task as cancelled in the DB.
+				if (this.taskAgentManager) {
+					await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
+						log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
+					});
+				}
+				taskRepo.updateTask(task.id, { status: 'cancelled' });
+			})
+		);
+
+		// 2. Cancel all active workflow runs (pending, in_progress, blocked).
+		const activeRuns = workflowRunRepo
+			.listBySpace(spaceId)
+			.filter(
+				(r) => r.status === 'pending' || r.status === 'in_progress' || r.status === 'blocked'
+			);
+
+		for (const run of activeRuns) {
+			try {
+				workflowRunRepo.transitionStatus(run.id, 'cancelled');
+			} catch (err) {
+				log.warn(`stopActiveWork: failed to cancel workflow run ${run.id}:`, err);
+			}
+		}
+
+		log.info(
+			`stopActiveWork: cancelled ${activeTasks.length} tasks and ${activeRuns.length} workflow runs for space ${spaceId}`
+		);
+	}
+
 	/** Start the underlying SpaceRuntime tick loop. */
 	start(): void {
 		if (this.started) return;

@@ -300,6 +300,34 @@ export function setupSpaceHandlers(
 		return space;
 	});
 
+	// ─── space.stop ─────────────────────────────────────────────────────────────
+	// Stops all active work (terminates running agent sessions, cancels in-progress
+	// tasks and workflow runs) and then archives the space.
+	// Unlike space.archive (which is a metadata-only flag), space.stop ensures
+	// running agents are actually terminated before archival.
+	messageHub.onRequest('space.stop', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		// Terminate all running agent sessions and cancel active tasks/workflow runs.
+		if (spaceRuntimeService) {
+			await spaceRuntimeService.stopActiveWork(params.id);
+		}
+
+		const space = await spaceManager.archiveSpace(params.id);
+
+		daemonHub
+			.emit('space.archived', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.archived:', err);
+			});
+
+		return space;
+	});
+
 	// ─── space.pause ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.pause', async (data) => {
 		const params = data as { id: string };
