@@ -18,17 +18,27 @@
  */
 
 import { z } from 'zod';
+import type { SpaceReportedStatus } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // report_result
 // ---------------------------------------------------------------------------
 
 /**
- * Possible final statuses for a task result.
+ * Possible final statuses for a task result. Mirrors `SpaceReportedStatus`
+ * (the shared type written to `space_tasks.reported_status`); the `satisfies`
+ * clause locks the two together so adding a value to one without the other
+ * fails to compile.
  */
-export const TaskResultStatusSchema = z.enum(['done', 'blocked', 'cancelled']);
+const TASK_RESULT_STATUS_VALUES = [
+	'done',
+	'blocked',
+	'cancelled',
+] as const satisfies readonly SpaceReportedStatus[];
 
-export type TaskResultStatus = z.infer<typeof TaskResultStatusSchema>;
+export const TaskResultStatusSchema = z.enum(TASK_RESULT_STATUS_VALUES);
+
+export type TaskResultStatus = SpaceReportedStatus;
 
 /**
  * Schema for `report_result` input.

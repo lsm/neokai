@@ -164,6 +164,15 @@ export type SpaceTaskStatus =
 	| 'archived';
 
 /**
+ * Outcome an end-node agent reports via `report_result`.
+ *
+ * This is the agent's claimed terminal state for the workflow — distinct from
+ * `SpaceTask.status`, which is the runtime's final decision after the report
+ * passes through completion-actions review (in supervised autonomy modes).
+ */
+export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
+
+/**
  * Why a task is blocked — set when status transitions to `blocked`,
  * cleared when the task leaves `blocked`.
  */
@@ -270,6 +279,18 @@ export interface SpaceTask {
 	 * - `gate`: paused at a gate requiring human approval
 	 */
 	pendingCheckpointType: 'completion_action' | 'gate' | null;
+	/**
+	 * Status the end-node agent reported via `report_result`. Null until the agent
+	 * reports. Recorded separately from `status` so the runtime can resolve the
+	 * final task status through completion-actions review (supervised modes) without
+	 * the agent bypassing the gate. Once recorded, this field is preserved for audit
+	 * even after `status` reaches a terminal value.
+	 */
+	reportedStatus: SpaceReportedStatus | null;
+	/**
+	 * Summary the end-node agent provided alongside `reportedStatus`. Null until reported.
+	 */
+	reportedSummary: string | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -392,6 +413,10 @@ export interface UpdateSpaceTaskParams {
 	pendingActionIndex?: number | null;
 	/** Type of checkpoint the task is paused at; null to clear */
 	pendingCheckpointType?: 'completion_action' | 'gate' | null;
+	/** Agent-reported terminal status from `report_result`; null to clear */
+	reportedStatus?: SpaceReportedStatus | null;
+	/** Agent-reported summary from `report_result`; null to clear */
+	reportedSummary?: string | null;
 }
 
 // ============================================================================

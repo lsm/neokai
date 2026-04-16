@@ -367,6 +367,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Adds pending_action_index and pending_checkpoint_type to space_tasks.
 	//   - Migrates approval_source values to simplified 3-value type.
 	runMigration86(db);
+
+	// Migration 87: Decouple `report_result` from canonical task status.
+	//   Adds `reported_status` and `reported_summary` columns to space_tasks
+	//   so the agent's report intent is recorded separately from the runtime's
+	//   final status decision (which goes through completion-actions review).
+	runMigration87(db);
 }
 
 /**
@@ -5837,5 +5843,30 @@ function runMigration86(db: BunDatabase): void {
 		throw err;
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 87: Decouple `report_result` from canonical task status.
+ *
+ * Adds `reported_status` (TEXT NULL) and `reported_summary` (TEXT NULL) columns to
+ * `space_tasks`. These record the end-node agent's claimed outcome separately from
+ * `space_tasks.status`, which is the runtime's final decision after passing through
+ * the completion-actions review gate (see `SpaceRuntime.resolveCompletionWithActions`).
+ *
+ * `reported_status` constrained to the same values as `TaskResultStatusSchema`:
+ * `'done' | 'blocked' | 'cancelled'`.
+ */
+function runMigration87(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	if (!tableHasColumn(db, 'space_tasks', 'reported_status')) {
+		db.exec(
+			`ALTER TABLE space_tasks ADD COLUMN reported_status TEXT DEFAULT NULL ` +
+				`CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled'))`
+		);
+	}
+	if (!tableHasColumn(db, 'space_tasks', 'reported_summary')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN reported_summary TEXT DEFAULT NULL`);
 	}
 }
