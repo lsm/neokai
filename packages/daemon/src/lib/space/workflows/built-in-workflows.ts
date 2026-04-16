@@ -279,8 +279,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'3. Write or update tests to cover new behavior\n' +
 							'4. Run the test suite and fix any failures\n' +
 							'5. Open a PR with `gh pr create` — include a clear title and description\n' +
-							'6. Hand off to the Reviewer: send_message(target=\"Review\", message=\"PR ready for ' +
-							'review at <url>\", data={ pr_url: \"<url>\" }). The gate runs a script that verifies ' +
+							'6. Hand off to the Reviewer: send_message(target="Review", message="PR ready for ' +
+							'review at <url>", data={ pr_url: "<url>" }). The gate runs a script that verifies ' +
 							'the PR is open and mergeable, so make sure it actually is before sending.\n\n' +
 							'If re-activated after review:\n' +
 							'1. Pull review comments from GitHub (`gh pr view` and `gh api`)\n' +
