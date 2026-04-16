@@ -240,10 +240,10 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
 /**
  * Coding Workflow
  *
- * Two-node iterative graph: Code ↔ Review (with cycle).
- * - Code → Review: gated by `code-ready-gate` — a bash script verifies that an
+ * Two-node iterative graph: Coding ↔ Review (with cycle).
+ * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
- * - Review → Code: ungated — Reviewer sends back for changes without any gate.
+ * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
  *   When satisfied, Reviewer calls `report_result()` on the Review node (endNodeId)
  *   which signals workflow completion.
  */
@@ -252,35 +252,40 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Iterative coding workflow with Code ↔ Review loop. Coder implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+		'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
 	nodes: [
 		{
 			id: CODING_CODE_NODE,
-			name: 'Code',
+			name: 'Coding',
 			agents: [
 				{
 					agentId: 'Coder',
 					name: 'coder',
 					customPrompt: {
 						value:
-							'You are the Coder in a Coder→Reviewer iterative workflow. Your job is to implement the ' +
-							'task, write tests, commit all changes, and open a pull request.\n\n' +
+							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
+							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
 							'Workflow context:\n' +
-							'- You are in the Code node. After you open a PR, the code-ready-gate verifies it is ' +
-							'open and mergeable before the Reviewer sees it.\n' +
-							'- If the Reviewer requests changes, you will be re-activated with their feedback. ' +
-							'Address all feedback, push new commits, and the gate re-checks automatically.\n' +
-							'- This cycle can repeat up to 5 times before the workflow fails.\n\n' +
-							'Expected inputs: Task description from the workflow trigger.\n' +
-							'Expected outputs: A clean, mergeable PR with passing tests.\n\n' +
+							'- After you open a PR, the workflow automatically verifies it is open and mergeable ' +
+							'before the Reviewer sees it.\n' +
+							'- If the Reviewer requests changes, you will be re-activated with their message. ' +
+							'Pull the review comments from GitHub, evaluate each one, address the valid items, ' +
+							'and push back on any you disagree with — explain your reasoning in the reply.\n' +
+							'- This cycle can repeat up to 5 times.\n\n' +
 							'Steps:\n' +
 							'1. Read and understand the task requirements\n' +
-							'2. Implement the changes with atomic, well-described commits\n' +
+							'2. Implement the changes with logical, well-described commits\n' +
 							'3. Write or update tests to cover new behavior\n' +
 							'4. Run the test suite and fix any failures\n' +
 							'5. Open a PR with `gh pr create` — include a clear title and description\n\n' +
-							'If re-activated after review feedback: read the feedback carefully, address each ' +
-							'point, push fixes, and verify tests still pass.',
+							'If re-activated after review:\n' +
+							'1. Pull review comments from GitHub (`gh pr view` and `gh api`)\n' +
+							'2. Evaluate each comment critically — do not blindly accept feedback. Verify ' +
+							'against the code and the task requirements. The Reviewer can be wrong.\n' +
+							'3. For valid items: make the fix and reply to the comment confirming what changed\n' +
+							'4. For items you disagree with: reply explaining why, with evidence from the code ' +
+							'or tests. Do not change code you believe is correct.\n' +
+							'5. Push fixes and verify tests still pass',
 					},
 				},
 			],
@@ -294,22 +299,24 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'reviewer',
 					customPrompt: {
 						value:
-							'You are the Reviewer in a Coder→Reviewer iterative workflow. You review the open PR ' +
-							'and either approve it or send it back for changes.\n\n' +
+							'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
+							'and either approve it or request changes.\n\n' +
 							'Workflow context:\n' +
-							'- The Coder has already implemented and opened a PR (verified by code-ready-gate).\n' +
-							'- If you request changes, the Coder is automatically re-activated with your feedback.\n' +
-							'- When you are satisfied, call report_result() to complete the entire workflow.\n' +
-							'- This node is the endNodeId — your report_result() signals workflow completion.\n\n' +
-							'Expected inputs: An open, mergeable PR from the Coder.\n' +
-							'Expected outputs: Either approval (report_result) or specific change requests.\n\n' +
+							'- The engineer has already implemented and opened a PR (verified automatically).\n' +
+							'- You share the same worktree as the engineer — review the codebase as a whole, ' +
+							'not just the PR diff. Read related files, run tests, check for issues the diff ' +
+							'might not surface (e.g. callers of changed functions, integration points).\n' +
+							'- Post all feedback as PR review comments on GitHub so the engineer can address ' +
+							'them item by item. Then send a short message to Coding summarizing the request.\n' +
+							'- If you request changes, the engineer is automatically re-activated.\n' +
+							'- When satisfied, call report_result() to complete the workflow.\n\n' +
 							'Review checklist:\n' +
-							'1. Read the PR diff thoroughly\n' +
-							'2. Check for correctness, style, and test coverage\n' +
-							'3. Verify the PR description accurately describes the changes\n' +
-							'4. If changes needed: provide specific, actionable feedback (the Coder will be sent back)\n' +
-							'5. If satisfied: verify the PR is still open and mergeable before calling report_result()\n' +
-							'6. Call report_result() with a brief summary of your review',
+							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
+							'2. Check for correctness, style, test coverage, and integration impact\n' +
+							'3. Run the relevant tests yourself if uncertain\n' +
+							'4. If changes needed: post specific, actionable review comments on GitHub, then ' +
+							'send_message to Coding asking them to address the comments\n' +
+							'5. If satisfied: verify the PR is open and mergeable, then call report_result()',
 					},
 				},
 			],
@@ -344,16 +351,16 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	],
 	channels: [
 		{
-			from: 'Code',
+			from: 'Coding',
 			to: 'Review',
 			gateId: 'code-ready-gate',
-			label: 'Code → Review',
+			label: 'Coding → Review',
 		},
 		{
 			from: 'Review',
-			to: 'Code',
+			to: 'Coding',
 			maxCycles: 5,
-			label: 'Review → Code (changes requested)',
+			label: 'Review → Coding (changes requested)',
 		},
 	],
 };
