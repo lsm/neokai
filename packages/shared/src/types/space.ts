@@ -75,8 +75,13 @@ export interface Space {
 	sessionIds: string[];
 	/** Current status of the Space */
 	status: SpaceStatus;
-	/** Whether the space runtime is paused (no new tasks scheduled or executed) */
+	/** Whether the space runtime is paused (no new tasks scheduled; running work continues) */
 	paused: boolean;
+	/**
+	 * Whether the space runtime is stopped (all active work killed; no auto-start on daemon restart).
+	 * A stopped space must be explicitly started again to resume. Takes precedence over `paused`.
+	 */
+	stopped: boolean;
 	/** Autonomy level — controls how much the Space Agent can act without human approval */
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */

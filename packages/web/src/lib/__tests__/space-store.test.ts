@@ -48,6 +48,7 @@ function makeSpace(id = 'space-1'): Space {
 		sessionIds: [],
 		status: 'active',
 		paused: false,
+		stopped: false,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -174,6 +175,8 @@ function makeMockHub() {
 			// Daemon returns Space directly (not wrapped)
 			if (method === 'space.pause') return { ...makeSpace(), paused: true };
 			if (method === 'space.resume') return { ...makeSpace(), paused: false };
+			if (method === 'space.stop') return { ...makeSpace(), stopped: true };
+			if (method === 'space.start') return { ...makeSpace(), stopped: false, paused: false };
 			if (method === 'space.update') return makeSpace();
 			// Daemon returns SpaceTask directly (not wrapped)
 			if (method === 'spaceTask.create') return makeTask('new-task');
@@ -1126,6 +1129,38 @@ describe('SpaceStore — CRUD methods', () => {
 		await spaceStore.clearSpace();
 		await expect(spaceStore.resumeSpace()).rejects.toThrow('No space selected');
 	});
+
+	it('stopSpace calls space.stop RPC and updates space + runtimeState to stopped', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.stopSpace();
+
+		expect(mockHub.request).toHaveBeenCalledWith('space.stop', { id: 'space-1' });
+		expect(spaceStore.space.value?.stopped).toBe(true);
+		expect(spaceStore.runtimeState.value).toBe('stopped');
+	});
+
+	it('startSpace calls space.start RPC and updates space + runtimeState to running', async () => {
+		await spaceStore.selectSpace('space-1');
+		// First stop, then start
+		await spaceStore.stopSpace();
+		expect(spaceStore.runtimeState.value).toBe('stopped');
+
+		await spaceStore.startSpace();
+
+		expect(mockHub.request).toHaveBeenCalledWith('space.start', { id: 'space-1' });
+		expect(spaceStore.space.value?.stopped).toBe(false);
+		expect(spaceStore.runtimeState.value).toBe('running');
+	});
+
+	it('stopSpace throws when no space selected', async () => {
+		await spaceStore.clearSpace();
+		await expect(spaceStore.stopSpace()).rejects.toThrow('No space selected');
+	});
+
+	it('startSpace throws when no space selected', async () => {
+		await spaceStore.clearSpace();
+		await expect(spaceStore.startSpace()).rejects.toThrow('No space selected');
+	});
 });
 
 describe('SpaceStore — runtimeState', () => {
@@ -1143,6 +1178,23 @@ describe('SpaceStore — runtimeState', () => {
 			if (method === 'space.overview') {
 				return {
 					space: { ...makeSpace(), status: 'archived' },
+					tasks: [],
+					workflowRuns: [],
+					sessions: [],
+				};
+			}
+			return {};
+		});
+
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.runtimeState.value).toBe('stopped');
+	});
+
+	it('runtimeState is "stopped" for stopped (non-archived) space', async () => {
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview') {
+				return {
+					space: { ...makeSpace(), status: 'active', stopped: true },
 					tasks: [],
 					workflowRuns: [],
 					sessions: [],

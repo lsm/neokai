@@ -193,6 +193,26 @@ export class SpaceRepository {
 	}
 
 	/**
+	 * Stop a space (kills active work; no auto-start on daemon restart)
+	 */
+	stopSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET stopped = 1, updated_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Start (or restart) a stopped space
+	 */
+	startSpace(id: string): Space | null {
+		const stmt = this.db.prepare(
+			`UPDATE spaces SET stopped = 0, paused = 0, updated_at = ? WHERE id = ?`
+		);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
 	 * Archive a space
 	 */
 	archiveSpace(id: string): Space | null {
@@ -278,6 +298,7 @@ export class SpaceRepository {
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
 			paused: (row.paused as number) === 1,
+			stopped: (row.stopped as number) === 1,
 			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
 			config,
 			createdAt: row.created_at as number,
