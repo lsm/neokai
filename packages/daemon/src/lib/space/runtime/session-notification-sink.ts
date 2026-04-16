@@ -233,7 +233,7 @@ function formatAgentAutoCompleted(
 	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
 	const humanReadable =
 		`Task ${event.taskId} in space ${event.spaceId} was auto-completed after ${elapsedMinutes} minute(s) ` +
-		`because the agent did not call report_done within the configured timeout.`;
+		`because the agent did not call report_result within the configured timeout.`;
 	return buildMessage(event.kind, humanReadable, {
 		kind: event.kind,
 		spaceId: event.spaceId,

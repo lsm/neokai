@@ -1290,7 +1290,7 @@ export class TaskAgentManager {
 	 * Called when a node agent sub-session completes (session goes idle).
 	 *
 	 * Automatically transitions the execution to `idle` when the agent's session
-	 * finishes naturally — no explicit `report_done` call needed.
+	 * finishes naturally — no explicit `report_result` call needed.
 	 * Notifies the Task Agent (when present) about workflow node session completion.
 	 */
 	private async handleSubSessionComplete(
@@ -2031,7 +2031,7 @@ export class TaskAgentManager {
 	 * at node-start (stored in the run config by SpaceRuntime.storeResolvedChannels()).
 	 *
 	 * The server gives the node agent peer communication tools (list_peers, send_message,
-	 * report_done) that are scoped to its group, channel topology, and node task.
+	 * report_result) that are scoped to its group, channel topology, and node task.
 	 */
 	private buildNodeAgentMcpServerForSession(
 		taskId: string,

@@ -15,7 +15,7 @@
  * - At Space creation time, preset SpaceAgent records are seeded for each
  *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
  *   exist so that the `agentId` values resolve correctly.
- * - Channels use node names (e.g. 'Plan', 'Code') in `from`/`to` so they
+ * - Channels use node names (e.g. 'Plan', 'Coding') in `from`/`to` so they
  *   resolve correctly at runtime without UUID translation in the seeder.
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */

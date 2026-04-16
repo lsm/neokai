@@ -5897,7 +5897,10 @@ export function runMigration88(db: BunDatabase): void {
 	if (!tableHasColumn(db, 'space_workflows', 'gates')) return;
 
 	const rows = db
-		.prepare(`SELECT id, gates FROM space_workflows WHERE gates IS NOT NULL`)
+		.prepare(
+			`SELECT id, gates FROM space_workflows ` +
+				`WHERE gates IS NOT NULL AND (gates LIKE '%"human"%' OR gates LIKE '%"reviewer"%')`
+		)
 		.all() as { id: string; gates: string }[];
 
 	const update = db.prepare(`UPDATE space_workflows SET gates = ? WHERE id = ?`);

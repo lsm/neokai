@@ -335,7 +335,7 @@ export interface SpaceTaskActivityMember {
 		agentName: string;
 		/** Execution status */
 		status: NodeExecutionStatus;
-		/** Result output from `report_done`, if set */
+		/** Result output from `report_result`, if set */
 		result?: string | null;
 	} | null;
 	/** Last update timestamp from the linked SpaceTask or backing session metadata */
@@ -503,7 +503,7 @@ export interface UpdateNodeExecutionParams {
  *
  * - `pending`     — run created, awaiting Task Agent to start nodes
  * - `in_progress` — at least one node execution is active
- * - `done`        — end node called `report_done` or all nodes completed
+ * - `done`        — end node called `report_result` or all nodes completed
  * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
  * - `cancelled`   — run was cancelled before completion
  */
@@ -979,7 +979,7 @@ export interface SpaceWorkflow {
 	startNodeId: string;
 	/**
 	 * ID of the node where execution ends.
-	 * When the end node's execution calls `report_done`, the workflow run is
+	 * When the end node's execution calls `report_result`, the workflow run is
 	 * automatically marked `done`. If absent, completion relies on the
 	 * `CompletionDetector` all-agents-done check as a safety net.
 	 */
@@ -1026,7 +1026,7 @@ export interface CreateSpaceWorkflowParams {
 	startNodeId?: string;
 	/**
 	 * ID of the node where execution ends.
-	 * When the end node's execution calls `report_done`, the workflow run auto-completes.
+	 * When the end node's execution calls `report_result`, the workflow run auto-completes.
 	 */
 	endNodeId?: string;
 	/** Workflow-level messaging channels. */
@@ -1218,7 +1218,7 @@ export interface ExportedSpaceWorkflow {
 	startNode: string;
 	/**
 	 * Name of the node where execution ends (optional — mirrors `SpaceWorkflow.endNodeId`).
-	 * When present, the end node's `report_done` call auto-completes the workflow run.
+	 * When present, the end node's `report_result` call auto-completes the workflow run.
 	 */
 	endNode?: string;
 	/** Tags for categorization */

@@ -343,7 +343,7 @@ Missing:
 PR validation in spaces is handled via two mechanisms in the built-in workflow templates:
 
 1. **End node instructions** — Reviewer/QA prompts now include explicit PR verification steps
-   before calling `report_done()`. The agent can react if the PR isn't in the expected state
+   before calling `report_result()`. The agent can react if the PR isn't in the expected state
    (e.g. resolve conflicts, re-push).
 
 2. **Completion action failure blocks task** — `executeCompletionAction()` now returns

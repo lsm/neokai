@@ -290,7 +290,7 @@ describe('autoCompleteStuckAgents', () => {
 		expect(updated.status).toBe('done');
 		expect(updated.completedAt).toBeDefined();
 		expect(updated.result).toContain('Auto-completed');
-		expect(updated.result).toContain('report_done');
+		expect(updated.result).toContain('report_result');
 
 		// Event was emitted
 		expect(spy.events).toHaveLength(1);
@@ -323,7 +323,9 @@ describe('autoCompleteStuckAgents', () => {
 		await autoCompleteStuckAgents([task], spaceId, taskRepo, tam, spy.notify, customTimeoutMs);
 
 		const updated = taskRepo.getTask('task-msg')!;
-		expect(updated.result).toBe('Auto-completed: agent did not call report_done within 5 minutes');
+		expect(updated.result).toBe(
+			'Auto-completed: agent did not call report_result within 5 minutes'
+		);
 	});
 
 	test('respects custom timeoutMs parameter', async () => {

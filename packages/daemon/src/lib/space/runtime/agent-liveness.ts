@@ -1,8 +1,8 @@
 /**
- * Agent Liveness Guard — Timeout for report_done
+ * Agent Liveness Guard — Timeout for report_result
  *
  * Detects agents that are alive (session active) but have not called
- * `report_done` within the configured timeout. Auto-completes them with a
+ * `report_result` within the configured timeout. Auto-completes them with a
  * system-generated result so the workflow can continue.
  *
  * An agent is considered "stuck" when ALL of the following are true:
@@ -45,7 +45,7 @@ export interface AutoCompletedAgent {
 // ---------------------------------------------------------------------------
 
 /**
- * Scans `nodeTasks` for alive agents that have not called `report_done` within
+ * Scans `nodeTasks` for alive agents that have not called `report_result` within
  * their configured timeout and auto-completes them.
  *
  * For each stuck agent found:
@@ -98,7 +98,7 @@ export async function autoCompleteStuckAgents(
 			continue;
 		}
 
-		// Agent is alive but has not called report_done within the timeout window.
+		// Agent is alive but has not called report_result within the timeout window.
 		//
 		// Note: no notifiedTaskSet dedup is needed here because the status transition
 		// to 'done' means this task will never satisfy the `status === 'in_progress'`
@@ -106,7 +106,7 @@ export async function autoCompleteStuckAgents(
 		// that does not change task status and thus requires dedup to avoid re-emitting
 		// on every subsequent tick while the task remains in_progress.
 		const timeoutMinutes = Math.round(effectiveTimeout / 60_000);
-		const result = `Auto-completed: agent did not call report_done within ${timeoutMinutes} minutes`;
+		const result = `Auto-completed: agent did not call report_result within ${timeoutMinutes} minutes`;
 
 		log.warn(
 			`agent-liveness: auto-completing stuck task ${task.id} ` +

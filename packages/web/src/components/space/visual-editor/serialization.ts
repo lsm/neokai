@@ -81,7 +81,7 @@ export interface VisualEditorState {
 	/**
 	 * The step key (step.id for existing, step.localId for new) of the
 	 * end node. Managed explicitly by the user. When set, the workflow
-	 * run auto-completes when the end node's execution calls `report_done`.
+	 * run auto-completes when the end node's execution calls `report_result`.
 	 */
 	endNodeId?: string;
 	tags: string[];

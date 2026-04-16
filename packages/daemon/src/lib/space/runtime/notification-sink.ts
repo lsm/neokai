@@ -53,7 +53,7 @@ export interface TaskTimeoutEvent {
 }
 
 /**
- * A stuck agent (alive but never called report_done) was auto-completed by the runtime.
+ * A stuck agent (alive but never called report_result) was auto-completed by the runtime.
  *
  * Emitted after the task is transitioned to `completed` with a system-generated result.
  * Consumers can use this to log warnings or inform the Space Agent.
