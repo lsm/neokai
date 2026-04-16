@@ -7,7 +7,8 @@
  * - space.get: happy path, missing id, not found
  * - space.update: happy path, missing id, not found
  * - space.archive: happy path (emits space.archived with full space), missing id
- * - space.stop: stops active work via runtime service, archives, emits space.archived; missing id; graceful degradation without runtime service
+ * - space.stop: stops active work via runtime service, marks stopped, emits space.updated; missing id; graceful degradation without runtime service
+ * - space.start: clears stopped flag, emits space.updated; missing id
  * - space.delete: happy path, missing id, not found
  * - space.overview: happy path, missing id, not found
  * - DaemonHub events emitted on mutations
@@ -42,6 +43,8 @@ const mockSpace: Space = {
 	instructions: '',
 	sessionIds: [],
 	status: 'active',
+	paused: false,
+	stopped: false,
 	autonomyLevel: 1,
 	createdAt: NOW,
 	updatedAt: NOW,
@@ -118,6 +121,8 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
 		archiveSpace: mock(async () => ({ ...space!, status: 'archived' as const })),
 		pauseSpace: mock(async () => ({ ...space!, paused: true })),
 		resumeSpace: mock(async () => ({ ...space!, paused: false })),
+		stopSpace: mock(async () => ({ ...space!, stopped: true })),
+		startSpace: mock(async () => ({ ...space!, stopped: false, paused: false })),
 		deleteSpace: mock(async () => true),
 		addSession: mock(async () => space!),
 		removeSession: mock(async () => space!),
@@ -644,41 +649,68 @@ describe('space-handlers', () => {
 			setup(mockSpace, undefined, mockRuntimeService);
 		});
 
-		it('stops active work via runtime service, archives the space, and emits space.archived', async () => {
-			const archivedSpace = { ...mockSpace, status: 'archived' as const };
-			(spaceManager.archiveSpace as ReturnType<typeof mock>).mockResolvedValue(archivedSpace);
+		it('stops active work via runtime service, marks space stopped, and emits space.updated', async () => {
+			const stoppedSpace = { ...mockSpace, stopped: true };
+			(spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
 
 			const result = await call('space.stop', { id: 'space-1' });
 
-			// Must call stopActiveWork before archiving
+			// Must call stopActiveWork before marking stopped
 			expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledWith('space-1');
-			expect(spaceManager.archiveSpace).toHaveBeenCalledWith('space-1');
-			expect((result as Space).status).toBe('archived');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.archived', {
+			expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
+			expect((result as Space).stopped).toBe(true);
+			// Space is NOT archived — status stays 'active'
+			expect((result as Space).status).toBe('active');
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
-				space: archivedSpace,
+				space: stoppedSpace,
 			});
 		});
 
 		it('works without runtime service (graceful degradation)', async () => {
 			// Re-setup without runtime service
 			setup(mockSpace, undefined, undefined);
-			const archivedSpace = { ...mockSpace, status: 'archived' as const };
-			(spaceManager.archiveSpace as ReturnType<typeof mock>).mockResolvedValue(archivedSpace);
+			const stoppedSpace = { ...mockSpace, stopped: true };
+			(spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
 
 			const result = await call('space.stop', { id: 'space-1' });
 
-			expect((result as Space).status).toBe('archived');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.archived', {
+			expect((result as Space).stopped).toBe(true);
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
 				sessionId: 'global',
 				spaceId: 'space-1',
-				space: archivedSpace,
+				space: stoppedSpace,
 			});
 		});
 
 		it('throws when id is missing', async () => {
 			await expect(call('space.stop', {})).rejects.toThrow('id is required');
+		});
+	});
+
+	// ─── space.start ───────────────────────────────────────────────────────────
+
+	describe('space.start', () => {
+		beforeEach(() => setup());
+
+		it('clears stopped flag and emits space.updated', async () => {
+			const startedSpace = { ...mockSpace, stopped: false, paused: false };
+			(spaceManager.startSpace as ReturnType<typeof mock>).mockResolvedValue(startedSpace);
+
+			const result = await call('space.start', { id: 'space-1' });
+
+			expect(spaceManager.startSpace).toHaveBeenCalledWith('space-1');
+			expect((result as Space).stopped).toBe(false);
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: startedSpace,
+			});
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call('space.start', {})).rejects.toThrow('id is required');
 		});
 	});
 

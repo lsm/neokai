@@ -48,6 +48,7 @@ function makeSpace(id = 'space-1'): Space {
 		sessionIds: [],
 		status: 'active',
 		paused: false,
+		stopped: false,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};

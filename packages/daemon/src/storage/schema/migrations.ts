@@ -367,6 +367,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Adds pending_action_index and pending_checkpoint_type to space_tasks.
 	//   - Migrates approval_source values to simplified 3-value type.
 	runMigration86(db);
+
+	// Migration 87: Add stopped column to spaces.
+	//   Allows users to stop/start space runtime execution without archiving.
+	//   Stopped spaces have all active work killed and will not auto-start on daemon restart.
+	runMigration87(db);
 }
 
 /**
@@ -5838,4 +5843,17 @@ function runMigration86(db: BunDatabase): void {
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}
+}
+
+/**
+ * Migration 87: Add stopped column to spaces table.
+ *
+ * Allows users to stop/start space runtime execution without archiving.
+ * Stopped spaces have all active work killed on stop and will not auto-start
+ * on daemon restart. Default: 0 (not stopped).
+ */
+function runMigration87(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'stopped')) return;
+	db.exec(`ALTER TABLE spaces ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0`);
 }

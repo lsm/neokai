@@ -123,6 +123,42 @@ export class SpaceManager {
 	}
 
 	/**
+	 * Stop a space (marks stopped=true; kills active work; no auto-start on daemon restart)
+	 */
+	async stopSpace(id: string): Promise<Space> {
+		const space = this.spaceRepo.getSpace(id);
+		if (!space) {
+			throw new Error(`Space not found: ${id}`);
+		}
+		if (space.stopped) return space;
+
+		const stopped = this.spaceRepo.stopSpace(id);
+		if (!stopped) {
+			throw new Error(`Failed to stop space: ${id}`);
+		}
+
+		return stopped;
+	}
+
+	/**
+	 * Start (or restart) a stopped space
+	 */
+	async startSpace(id: string): Promise<Space> {
+		const space = this.spaceRepo.getSpace(id);
+		if (!space) {
+			throw new Error(`Space not found: ${id}`);
+		}
+		if (!space.stopped) return space;
+
+		const started = this.spaceRepo.startSpace(id);
+		if (!started) {
+			throw new Error(`Failed to start space: ${id}`);
+		}
+
+		return started;
+	}
+
+	/**
 	 * Archive a space
 	 */
 	async archiveSpace(id: string): Promise<Space> {

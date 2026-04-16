@@ -19,6 +19,7 @@ let mockSessions: ReturnType<
 const mockPauseSpace = vi.fn().mockResolvedValue(undefined);
 const mockResumeSpace = vi.fn().mockResolvedValue(undefined);
 const mockStopSpace = vi.fn().mockResolvedValue(undefined);
+const mockStartSpace = vi.fn().mockResolvedValue(undefined);
 const mockUpdateSpace = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../lib/space-store', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../../lib/space-store', () => ({
 			pauseSpace: mockPauseSpace,
 			resumeSpace: mockResumeSpace,
 			stopSpace: mockStopSpace,
+			startSpace: mockStartSpace,
 			updateSpace: mockUpdateSpace,
 		};
 	},
@@ -61,6 +63,7 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
 		sessionIds: [],
 		status: 'active',
 		paused: false,
+		stopped: false,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
@@ -103,6 +106,7 @@ describe('SpaceOverview', () => {
 		mockPauseSpace.mockClear();
 		mockResumeSpace.mockClear();
 		mockStopSpace.mockClear();
+		mockStartSpace.mockClear();
 		mockUpdateSpace.mockClear();
 	});
 
@@ -284,11 +288,12 @@ describe('SpaceOverview', () => {
 			expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
 		});
 
-		it('shows no Pause/Resume/Stop control buttons when stopped', () => {
+		it('shows Start button when stopped, no Pause/Resume/Stop buttons', () => {
 			mockSpace.value = makeSpace();
 			mockRuntimeState.value = 'stopped';
 			const { container } = render(<SpaceOverview spaceId="space-1" />);
 			const buttons = Array.from(container.querySelectorAll('button'));
+			expect(buttons.find((b) => b.textContent === 'Start')).toBeTruthy();
 			expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
 			expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
 			expect(buttons.find((b) => b.textContent === 'Stop')).toBeFalsy();
@@ -343,6 +348,17 @@ describe('SpaceOverview', () => {
 			)!;
 			await fireEvent.click(confirmBtn);
 			expect(mockStopSpace).toHaveBeenCalledTimes(1);
+		});
+
+		it('calls startSpace when Start is clicked while stopped', async () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'stopped';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const startBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Start'
+			)!;
+			await fireEvent.click(startBtn);
+			expect(mockStartSpace).toHaveBeenCalledTimes(1);
 		});
 	});
 

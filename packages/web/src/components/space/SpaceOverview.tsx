@@ -80,12 +80,14 @@ function RuntimeControlBar({
 	onPause,
 	onResume,
 	onStop,
+	onStart,
 }: {
 	state: RuntimeState;
 	actionLoading: boolean;
 	onPause: () => void;
 	onResume: () => void;
 	onStop: () => void;
+	onStart: () => void;
 }) {
 	const style = RUNTIME_STYLES[state];
 
@@ -150,6 +152,15 @@ function RuntimeControlBar({
 							Stop
 						</button>
 					</>
+				)}
+				{state === 'stopped' && (
+					<button
+						onClick={onStart}
+						disabled={actionLoading}
+						class="px-4 py-2 text-sm font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+					>
+						Start
+					</button>
 				)}
 			</div>
 		</div>
@@ -271,6 +282,15 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		}
 	}, []);
 
+	const handleStart = useCallback(async () => {
+		setActionLoading(true);
+		try {
+			await spaceStore.startSpace();
+		} finally {
+			setActionLoading(false);
+		}
+	}, []);
+
 	const handleAutonomyChange = useCallback(async (level: SpaceAutonomyLevel) => {
 		if (level === spaceStore.space.value?.autonomyLevel) return;
 		try {
@@ -334,7 +354,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 			<div class="min-h-[calc(100%+1px)] space-y-6">
 				<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-				{/* Runtime state with pause/resume/stop controls */}
+				{/* Runtime state with pause/resume/stop/start controls */}
 				{runtimeState && (
 					<RuntimeControlBar
 						state={runtimeState}
@@ -342,6 +362,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 						onPause={() => void handlePause()}
 						onResume={() => void handleResume()}
 						onStop={() => setShowStopConfirm(true)}
+						onStart={() => void handleStart()}
 					/>
 				)}
 
@@ -459,7 +480,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 					onClose={() => setShowStopConfirm(false)}
 					onConfirm={() => void handleStop()}
 					title="Stop Space"
-					message="Stopping will archive this space and shut down all active work. You can unarchive the space later to resume."
+					message="Stopping will immediately terminate all active sessions and cancel in-progress work. The space will not restart automatically. You can start it again at any time."
 					confirmText="Stop Space"
 					isLoading={actionLoading}
 				/>
