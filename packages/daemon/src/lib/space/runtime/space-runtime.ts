@@ -935,7 +935,7 @@ export class SpaceRuntime {
 		if (!fresh) return null;
 		if (fresh.status !== 'review' || fresh.pendingCheckpointType !== 'completion_action') {
 			log.warn(
-				`SpaceRuntime.resumeCompletionActions: task ${taskId} state changed mid-resume ` +
+				`SpaceRuntime.finalizeResume: task ${taskId} state changed mid-resume ` +
 					`(now status=${fresh.status}, checkpoint=${fresh.pendingCheckpointType}); aborting write`
 			);
 			return fresh;

@@ -120,7 +120,11 @@ describe('space-task-handlers', () => {
 	let taskManager: SpaceTaskManager;
 	let taskManagerFactory: SpaceTaskManagerFactory;
 
-	function setup(space: Space | null = mockSpace, task: SpaceTask | null = mockTask) {
+	function setup(
+		space: Space | null = mockSpace,
+		task: SpaceTask | null = mockTask,
+		runtime?: SpaceRuntimeService
+	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
@@ -128,7 +132,7 @@ describe('space-task-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		taskManager = createMockTaskManager(task);
 		taskManagerFactory = mock((_spaceId: string) => taskManager);
-		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub);
+		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub, runtime);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -629,17 +633,10 @@ describe('space-task-handlers', () => {
 			task: SpaceTask | null = reviewTask,
 			resumed: SpaceTask | null = { ...reviewTask, status: 'done' as const }
 		): { runtime: SpaceRuntimeService } {
-			const mh = createMockMessageHub();
-			hub = mh.hub;
-			handlers = mh.handlers;
-			daemonHub = createMockDaemonHub();
-			spaceManager = createMockSpaceManager(mockSpace);
-			taskManager = createMockTaskManager(task);
-			taskManagerFactory = mock((_spaceId: string) => taskManager);
 			const runtime = {
 				resumeCompletionActions: mock(async () => resumed),
 			} as unknown as SpaceRuntimeService;
-			setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub, runtime);
+			setup(mockSpace, task, runtime);
 			return { runtime };
 		}
 
