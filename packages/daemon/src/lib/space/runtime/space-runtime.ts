@@ -367,12 +367,12 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Returns active, non-paused spaces.
-	 * Used by tick-loop methods to skip paused spaces.
+	 * Returns active, non-paused, non-stopped spaces.
+	 * Used by tick-loop methods to skip paused and stopped spaces.
 	 */
 	private async listActiveSpaces(): Promise<import('@neokai/shared').Space[]> {
 		const spaces = await this.config.spaceManager.listSpaces(false);
-		return spaces.filter((s) => !s.paused);
+		return spaces.filter((s) => !s.paused && !s.stopped);
 	}
 
 	private async updateTaskAndEmit(
@@ -1412,9 +1412,9 @@ export class SpaceRuntime {
 			}
 
 			// Step 2: Spawn workflow node agents for pending executions without sessions.
-			// Skip spawning for paused spaces — completion/timeout/crash detection above
+			// Skip spawning for paused or stopped spaces — completion/timeout/crash detection above
 			// still runs so in-flight agents are monitored, but no new agents are started.
-			if (space?.paused) return;
+			if (space?.paused || space?.stopped) return;
 
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 			const pendingExecutions = nodeExecutions.filter(

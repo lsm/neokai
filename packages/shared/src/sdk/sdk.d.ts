@@ -270,6 +270,7 @@ declare namespace coreTypes {
         NonNullableUsage,
         HOOK_EVENTS,
         EXIT_REASONS,
+        SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
         AccountInfo,
         AgentDefinition,
         AgentInfo,
@@ -346,9 +347,13 @@ declare namespace coreTypes {
         SDKHookResponseMessage,
         SDKHookStartedMessage,
         SDKLocalCommandOutputMessage,
+        SDKMemoryRecallMessage,
+        SDKMessageOrigin,
         SDKMessage,
+        SDKNotificationMessage,
         SDKPartialAssistantMessage,
         SDKPermissionDenial,
+        SDKPluginInstallMessage,
         SDKPromptSuggestionMessage,
         SDKRateLimitEvent,
         SDKRateLimitInfo,
@@ -364,6 +369,7 @@ declare namespace coreTypes {
         SDKTaskNotificationMessage,
         SDKTaskProgressMessage,
         SDKTaskStartedMessage,
+        SDKTaskUpdatedMessage,
         SDKToolProgressMessage,
         SDKToolUseSummaryMessage,
         SDKUserMessageReplay,
@@ -581,6 +587,7 @@ export declare type GetSessionInfoOptions = {
      * When omitted, all project directories are searched for the session file.
      */
     dir?: string;
+
 };
 
 /**
@@ -612,6 +619,7 @@ export declare type GetSessionMessagesOptions = {
      * Defaults to false for backwards compatibility.
      */
     includeSystemMessages?: boolean;
+
 };
 
 /**
@@ -637,6 +645,7 @@ export declare type GetSubagentMessagesOptions = {
     limit?: number;
     /** Number of messages to skip from the start. */
     offset?: number;
+
 };
 
 export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged"];
@@ -737,8 +746,13 @@ export declare type ListSessionsOptions = {
     /**
      * When `dir` is provided and the directory is inside a git repository,
      * include sessions from all git worktree paths. Defaults to `true`.
+     *
+     * Only applies to the local-filesystem path. Ignored when `sessionStore`
+     * is provided — worktree enumeration requires inspecting `.git/worktrees`
+     * on disk, which a SessionStore (keyed by projectKey) has no view of.
      */
     includeWorktrees?: boolean;
+
 };
 
 /**
@@ -759,6 +773,7 @@ export declare function listSubagents(_sessionId: string, _options?: ListSubagen
 export declare type ListSubagentsOptions = {
     /** Project directory to find the session in. If omitted, searches all projects. */
     dir?: string;
+
 };
 
 export declare type McpClaudeAIProxyServerConfig = {
@@ -1140,6 +1155,8 @@ export declare type Options = {
      * @default true
      */
     persistSession?: boolean;
+
+
     /**
      * Include hook lifecycle events in the output stream.
      * When true, `hook_started`, `hook_progress`, and `hook_response` system
@@ -1418,12 +1435,40 @@ export declare type Options = {
     /**
      * System prompt configuration.
      * - `string` - Use a custom system prompt
+     * - `string[]` - Use a custom system prompt as an array of blocks; include
+     *   `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` as a standalone element to mark the
+     *   split between the static (globally-cacheable) prefix and the dynamic
+     *   (session-specific) suffix. Blocks before the marker are eligible for
+     *   cross-session prompt caching; blocks after it are not.
      * - `{ type: 'preset', preset: 'claude_code' }` - Use Claude Code's default system prompt
      * - `{ type: 'preset', preset: 'claude_code', append: '...' }` - Use default prompt with appended instructions
+     * - `{ type: 'preset', preset: 'claude_code', excludeDynamicSections: true }` -
+     *   Strip per-user dynamic sections (working directory, auto-memory, git
+     *   status) from the system prompt so it stays static and cacheable across
+     *   users. The stripped content is re-injected as the first user message so
+     *   the model still has access to it.
+     *
+     *   Use this when many users in your fleet share the same system prompt and
+     *   you want the prompt-caching prefix to hit cross-user. Tradeoffs:
+     *   - The working-directory, memory-path, and git-status context is
+     *     marginally less authoritative for steering the model (it appears in
+     *     a user message instead of the system prompt).
+     *   - The first user message becomes slightly larger.
+     *   - Has no effect when `systemPrompt` is a string (custom prompt).
      *
      * @example Custom prompt
      * ```typescript
      * systemPrompt: 'You are a helpful coding assistant.'
+     * ```
+     *
+     * @example Custom prompt with cache boundary
+     * ```typescript
+     * import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-code'
+     * systemPrompt: [
+     *   staticInstructions,
+     *   SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+     *   sessionContext,
+     * ]
      * ```
      *
      * @example Default with additions
@@ -1434,11 +1479,21 @@ export declare type Options = {
      *   append: 'Always explain your reasoning.'
      * }
      * ```
+     *
+     * @example Cacheable prompt for multi-user fleets
+     * ```typescript
+     * systemPrompt: {
+     *   type: 'preset',
+     *   preset: 'claude_code',
+     *   excludeDynamicSections: true,
+     * }
+     * ```
      */
-    systemPrompt?: string | {
+    systemPrompt?: string | string[] | {
         type: 'preset';
         preset: 'claude_code';
         append?: string;
+        excludeDynamicSections?: boolean;
     };
     /**
      * Custom function to spawn the Claude Code process.
@@ -1792,7 +1847,6 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
 
 
 
-
     /**
      * Reconnect an MCP server by name.
      * Throws on failure.
@@ -1903,6 +1957,7 @@ declare const SandboxNetworkConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
     allowLocalBinding: z.ZodOptional<z.ZodBoolean>;
+    allowMachLookup: z.ZodOptional<z.ZodArray<z.ZodString>>;
     httpProxyPort: z.ZodOptional<z.ZodNumber>;
     socksProxyPort: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>>;
@@ -1923,6 +1978,7 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
         allowLocalBinding: z.ZodOptional<z.ZodBoolean>;
+        allowMachLookup: z.ZodOptional<z.ZodArray<z.ZodString>>;
         httpProxyPort: z.ZodOptional<z.ZodNumber>;
         socksProxyPort: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>>;
@@ -1986,6 +2042,8 @@ export declare type SDKCompactBoundaryMessage = {
     compact_metadata: {
         trigger: 'manual' | 'auto';
         pre_tokens: number;
+        post_tokens?: number;
+        duration_ms?: number;
         /**
          * Relink info for messagesToKeep. Loaders splice the preserved segment at anchor_uuid (summary for suffix-preserving, boundary for prefix-preserving partial compact) so resume includes preserved content. Unset when compaction summarizes everything (no messagesToKeep).
          */
@@ -2130,6 +2188,8 @@ export declare type SDKControlGetContextUsageResponse = {
         attachmentTokens: number;
         assistantMessageTokens: number;
         userMessageTokens: number;
+        redirectedContextTokens: number;
+        unattributedTokens: number;
         toolCallsByType: {
             name: string;
             callTokens: number;
@@ -2163,8 +2223,12 @@ declare type SDKControlInitializeRequest = {
     hooks?: Partial<Record<coreTypes.HookEvent, SDKHookCallbackMatcher[]>>;
     sdkMcpServers?: string[];
     jsonSchema?: Record<string, unknown>;
-    systemPrompt?: string;
+    systemPrompt?: string[];
     appendSystemPrompt?: string;
+    /**
+     * When true, omit per-user dynamic sections (working directory, auto-memory path) from the cached system prompt and re-inject them as the first user message. Lets cross-user prompt caching hit on a static system prompt prefix. Tradeoff: the model sees this context slightly later in the prompt, so steering on the working directory and memory location is marginally less authoritative. Has no effect when a custom (non-preset) system prompt is in use.
+     */
+    excludeDynamicSections?: boolean;
     agents?: Record<string, coreTypes.AgentDefinition>;
     promptSuggestions?: boolean;
     agentProgressSummaries?: boolean;
@@ -2274,13 +2338,37 @@ export declare type SDKControlReloadPluginsResponse = {
     error_count: number;
 };
 
+/**
+ * Sets the user-facing title for the current session.
+ */
+declare type SDKControlRenameSessionRequest = {
+    subtype: 'rename_session';
+    title: string;
+};
+
 export declare type SDKControlRequest = {
     type: 'control_request';
     request_id: string;
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlOAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
+
+/**
+ * Requests the SDK consumer to render a tool-driven blocking dialog and return the user choice. Used by tools that previously rendered Ink JSX via setToolJSX with an onDone callback.
+ */
+declare type SDKControlRequestUserDialogRequest = {
+    subtype: 'request_user_dialog';
+    /**
+     * Identifier for the dialog the host should render. Open string union — known kinds include "it2_setup" and "computer_use_approval"; new kinds may be added without bumping the protocol.
+     */
+    dialog_kind: string;
+    /**
+     * Dialog-specific data passed to the host renderer. Shape is defined per dialog_kind; the protocol transports it opaquely.
+     */
+    payload: Record<string, unknown>;
+    tool_use_id?: string;
+};
 
 export declare type SDKControlResponse = {
     type: 'control_response';
@@ -2464,7 +2552,65 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
+/**
+ * Emitted when the memory recall supervisor surfaces relevant memories into the turn. Mirrors the CLI relevant_memories attachment so SDK renderers can show "Recalled from memory" inline.
+ */
+export declare type SDKMemoryRecallMessage = {
+    type: 'system';
+    subtype: 'memory_recall';
+    /**
+     * How memories were surfaced: 'select' returns full file bodies chosen by the parallel selector; 'synthesize' returns a Sonnet-authored paragraph distilled from many tiny memories.
+     */
+    mode: 'select' | 'synthesize';
+    memories: {
+        /**
+         * Absolute path to the memory file, or a synthesis sentinel of the form `<synthesis:DIR>` when mode is 'synthesize'.
+         */
+        path: string;
+        scope: 'personal' | 'team';
+        /**
+         * Synthesis paragraph. Only present when mode is 'synthesize'; always absent for 'select' (renderers lazy-load from path).
+         */
+        content?: string;
+    }[];
+    uuid: UUID;
+    session_id: string;
+};
+
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKSessionStateChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
+
+/**
+ * Provenance of a user-role message (peer session, team lead, channel). Absent or `human` means keyboard input from the user.
+ */
+export declare type SDKMessageOrigin = {
+    kind: 'human';
+} | {
+    kind: 'channel';
+    server: string;
+} | {
+    kind: 'peer';
+    from: string;
+    name?: string;
+} | {
+    kind: 'task-notification';
+} | {
+    kind: 'coordinator';
+};
+
+/**
+ * Loop-side text notification. Mirrors the interactive REPL notification queue (key/priority/timeout). JSX notifications are not emitted on this channel.
+ */
+export declare type SDKNotificationMessage = {
+    type: 'system';
+    subtype: 'notification';
+    key: string;
+    text: string;
+    priority: 'low' | 'medium' | 'high' | 'immediate';
+    color?: string;
+    timeout_ms?: number;
+    uuid: UUID;
+    session_id: string;
+};
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -2472,6 +2618,7 @@ export declare type SDKPartialAssistantMessage = {
     parent_tool_use_id: string | null;
     uuid: UUID;
     session_id: string;
+    ttft_ms?: number;
 };
 
 export declare type SDKPermissionDenial = {
@@ -2492,6 +2639,19 @@ export declare type SdkPluginConfig = {
      * Absolute or relative path to the plugin directory
      */
     path: string;
+};
+
+/**
+ * Headless plugin installation progress (CLAUDE_CODE_SYNC_PLUGIN_INSTALL). started/completed bracket the whole install; installed/failed carry a per-marketplace name.
+ */
+export declare type SDKPluginInstallMessage = {
+    type: 'system';
+    subtype: 'plugin_install';
+    status: 'started' | 'installed' | 'failed' | 'completed';
+    name?: string;
+    error?: string;
+    uuid: UUID;
+    session_id: string;
 };
 
 /**
@@ -2559,6 +2719,7 @@ export declare type SDKResultSuccess = {
     duration_ms: number;
     duration_api_ms: number;
     is_error: boolean;
+    api_error_status?: number | null;
     num_turns: number;
     result: string;
     stop_reason: string | null;
@@ -2668,6 +2829,21 @@ export declare type SDKSessionOptions = {
         [envVar: string]: string | undefined;
     };
     /**
+     * Working directory for the Claude Code process. Defaults to the current
+     * process's working directory.
+     */
+    cwd?: string;
+    /**
+     * Which settings sources to load (CLAUDE.md, `.claude/settings.json`).
+     * Defaults to `[]` — no project/user settings are loaded unless specified.
+     */
+    settingSources?: SettingSource[];
+    /**
+     * Must be set to `true` when using `permissionMode: 'bypassPermissions'`.
+     * This is a safety measure to ensure intentional bypassing of permissions.
+     */
+    allowDangerouslySkipPermissions?: boolean;
+    /**
      * List of tool names that are auto-allowed without prompting for permission.
      * These tools will execute automatically without asking the user for approval.
      */
@@ -2690,6 +2866,7 @@ export declare type SDKSessionOptions = {
      * Permission mode for the session.
      * - `'default'` - Standard permission behavior, prompts for dangerous operations
      * - `'acceptEdits'` - Auto-accept file edit operations
+     * - `'bypassPermissions'` - Bypass all permission checks (requires `allowDangerouslySkipPermissions`)
      * - `'plan'` - Planning mode, no execution of tools
      * - `'dontAsk'` - Don't prompt for permissions, deny if not pre-approved
      */
@@ -2725,13 +2902,15 @@ export declare type SDKSettingsParseError = {
     message: string;
 };
 
-export declare type SDKStatus = 'compacting' | null;
+export declare type SDKStatus = 'compacting' | 'requesting' | null;
 
 export declare type SDKStatusMessage = {
     type: 'system';
     subtype: 'status';
     status: SDKStatus;
     permissionMode?: PermissionMode;
+    compact_result?: 'success' | 'failed';
+    compact_error?: string;
     uuid: UUID;
     session_id: string;
 };
@@ -2763,6 +2942,7 @@ export declare type SDKSystemMessage = {
 
     }[];
     fast_mode_state?: FastModeState;
+
     uuid: UUID;
     session_id: string;
 };
@@ -2780,6 +2960,7 @@ export declare type SDKTaskNotificationMessage = {
         tool_uses: number;
         duration_ms: number;
     };
+    skip_transcript?: boolean;
     uuid: UUID;
     session_id: string;
 };
@@ -2814,6 +2995,29 @@ export declare type SDKTaskStartedMessage = {
      */
     workflow_name?: string;
     prompt?: string;
+    /**
+     * Ambient/housekeeping task. Consumers should hide this from the inline transcript; it may still appear in a tasks panel.
+     */
+    skip_transcript?: boolean;
+    uuid: UUID;
+    session_id: string;
+};
+
+export declare type SDKTaskUpdatedMessage = {
+    type: 'system';
+    subtype: 'task_updated';
+    task_id: string;
+    /**
+     * Wire-safe subset of TaskState fields that changed. Excludes abortController, unregisterCleanup, messages, result. Clients merge into their local task map.
+     */
+    patch: {
+        status?: 'pending' | 'running' | 'completed' | 'failed' | 'killed';
+        description?: string;
+        end_time?: number;
+        total_paused_ms?: number;
+        error?: string;
+        is_backgrounded?: boolean;
+    };
     uuid: UUID;
     session_id: string;
 };
@@ -2844,6 +3048,11 @@ export declare type SDKUserMessage = {
     isSynthetic?: boolean;
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
+    origin?: SDKMessageOrigin;
+    /**
+     * When false, the message is appended to the transcript without triggering an assistant turn. It will be merged into the next user message that does query.
+     */
+    shouldQuery?: boolean;
     /**
      * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
      */
@@ -2859,6 +3068,11 @@ export declare type SDKUserMessageReplay = {
     isSynthetic?: boolean;
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
+    origin?: SDKMessageOrigin;
+    /**
+     * When false, the message is appended to the transcript without triggering an assistant turn. It will be merged into the next user message that does query.
+     */
+    shouldQuery?: boolean;
     /**
      * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
      */
@@ -2896,6 +3110,7 @@ export declare type SessionMutationOptions = {
      * When omitted, all project directories are searched for the session file.
      */
     dir?: string;
+
 };
 
 export declare type SessionStartHookInput = BaseHookInput & {
@@ -2956,6 +3171,14 @@ export declare interface Settings {
      * Number of days to retain chat transcripts before automatic cleanup (default: 30). Minimum 1. Use a large value for long retention; use --no-session-persistence to disable transcript writes entirely.
      */
     cleanupPeriodDays?: number;
+    /**
+     * Per-skill description character cap in the skill listing sent to Claude (default: 1536). Descriptions longer than this are truncated. Raise to opt in to higher per-turn context cost.
+     */
+    skillListingMaxDescChars?: number;
+    /**
+     * Fraction of the context window (in characters) reserved for the skill listing sent to Claude (default: 0.01 = 1%). When the listing exceeds this, descriptions are shortened to fit. Raise to opt in to higher per-turn context cost.
+     */
+    skillListingBudgetFraction?: number;
     /**
      * Environment variables to set for Claude Code sessions
      */
@@ -3039,6 +3262,12 @@ export declare interface Settings {
      * List of rejected MCP servers from .mcp.json
      */
     disabledMcpjsonServers?: string[];
+    /**
+     * Per-skill listing overrides keyed by skill name. "name-only" lists the skill without its description; "user-invocable-only" hides it from the model but keeps /name; "off" hides it from both. Absent = on.
+     */
+    skillOverrides?: {
+        [k: string]: 'on' | 'name-only' | 'user-invocable-only' | 'off';
+    };
     /**
      * Enterprise allowlist of MCP servers that can be used. Applies to all scopes including enterprise servers from managed-mcp.json. If undefined, all servers are allowed. If empty array, no servers are allowed. Denylist takes precedence - if a server is on both lists, it is denied.
      */
@@ -3126,6 +3355,8 @@ export declare interface Settings {
                  * If true, hook runs in background and wakes the model on exit code 2 (blocking error). Implies async.
                  */
                 asyncRewake?: boolean;
+
+
             } | {
                 /**
                  * LLM prompt hook type
@@ -3278,6 +3509,17 @@ export declare interface Settings {
         type: 'command';
         command: string;
         padding?: number;
+        /**
+         * Re-run the status line command every N seconds in addition to event-driven updates
+         */
+        refreshInterval?: number;
+    };
+    /**
+     * Custom per-subagent status line shown in the agent panel; receives row context as JSON on stdin
+     */
+    subagentStatusLine?: {
+        type: 'command';
+        command: string;
     };
     /**
      * Enabled plugins using plugin-id\@marketplace-id format. Example: { "formatter\@anthropic-tools": true }. Also supports extended format with version constraints.
@@ -3899,6 +4141,10 @@ export declare interface Settings {
      */
     outputStyle?: string;
     /**
+     * Default transcript view mode on startup
+     */
+    viewMode?: 'default' | 'verbose' | 'focus';
+    /**
      * Preferred language for Claude responses and voice dictation (e.g., "japanese", "spanish")
      */
     language?: string;
@@ -3932,6 +4178,10 @@ export declare interface Settings {
              */
             allowAllUnixSockets?: boolean;
             allowLocalBinding?: boolean;
+            /**
+             * macOS only: Additional XPC/Mach service names to allow looking up. Supports trailing-wildcard prefix matching (e.g., "com.apple.coresimulator.*"). Needed for tools that communicate via XPC such as the iOS Simulator or Playwright.
+             */
+            allowMachLookup?: string[];
             httpProxyPort?: number;
             socksProxyPort?: number;
         };
@@ -4033,6 +4283,7 @@ export declare interface Settings {
      * When false, prompt suggestions are disabled. When absent or true, prompt suggestions are enabled.
      */
     promptSuggestionEnabled?: boolean;
+
     /**
      * When true, the plan-approval dialog offers a "clear context" option. Defaults to false.
      */
@@ -4088,14 +4339,9 @@ export declare interface Settings {
      */
     plansDirectory?: string;
     /**
-     * Autonomous background operation configuration
+     * Terminal UI renderer. "fullscreen" uses the flicker-free alt-screen renderer with virtualized scrollback (equivalent to CLAUDE_CODE_NO_FLICKER=1). "default" uses the classic main-screen renderer.
      */
-    proactive?: {
-        /**
-         * When true, autonomous background operation is activated automatically at launch (if entitled). When false or null, the user must opt in via the /proactive command or --proactive flag. Existing entitlement gates (GrowthBook flag, ZDR, managed-settings) still apply.
-         */
-        autoEnable?: boolean | null;
-    };
+    tui?: 'default' | 'fullscreen';
 
     /**
      * Teams/Enterprise opt-in for channel notifications (MCP servers with the claude/channel capability pushing inbound messages). Default off. Set true to allow; users then select servers via --channels.
@@ -4270,7 +4516,7 @@ export declare interface SpawnOptions {
     signal: AbortSignal;
 }
 
-declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKPostTurnSummaryMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
+declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKPostTurnSummaryMessage | coreTypes.SDKTranscriptMirrorMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
 
 export declare type StopFailureHookInput = BaseHookInput & {
     hook_event_name: 'StopFailure';
@@ -4325,6 +4571,16 @@ export declare type SyncHookJSONOutput = {
 
     hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput;
 };
+
+/**
+ * Marker string that splits a custom `systemPrompt` into a static prefix
+ * (eligible for cross-session prompt caching) and a dynamic suffix
+ * (session-specific, not globally cached). Include this literal as a
+ * standalone element of a `string[]` `systemPrompt` to opt in; blocks
+ * before it get global cache scope, blocks after do not. See
+ * `splitSysPromptPrefix` in `src/utils/api.ts`.
+ */
+export declare const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
 /**
  * Tag a session. Pass null to clear the tag.
@@ -4446,6 +4702,13 @@ export declare interface Transport {
      * End the input stream
      */
     endInput(): void;
+    /**
+     * Optional Disposable support. All built-in transports implement this
+     * (delegating to close()), so `using transport = new ProcessTransport(...)`
+     * works. Kept optional on the interface to avoid a breaking change for
+     * external `implements Transport` consumers.
+     */
+    [Symbol.dispose]?(): void;
 }
 
 /**

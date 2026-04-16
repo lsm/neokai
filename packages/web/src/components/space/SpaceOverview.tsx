@@ -17,6 +17,7 @@ import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
+import { ConfirmModal } from '../ui/ConfirmModal';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
@@ -78,11 +79,15 @@ function RuntimeControlBar({
 	actionLoading,
 	onPause,
 	onResume,
+	onStop,
+	onStart,
 }: {
 	state: RuntimeState;
 	actionLoading: boolean;
 	onPause: () => void;
 	onResume: () => void;
+	onStop: () => void;
+	onStart: () => void;
 }) {
 	const style = RUNTIME_STYLES[state];
 
@@ -113,21 +118,48 @@ function RuntimeControlBar({
 			</div>
 			<div class="flex items-center gap-2">
 				{state === 'running' && (
-					<button
-						onClick={onPause}
-						disabled={actionLoading}
-						class="px-4 py-2 text-sm font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
-					>
-						Pause
-					</button>
+					<>
+						<button
+							onClick={onPause}
+							disabled={actionLoading}
+							class="px-4 py-2 text-sm font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
+						>
+							Pause
+						</button>
+						<button
+							onClick={onStop}
+							disabled={actionLoading}
+							class="px-4 py-2 text-sm font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
+						>
+							Stop
+						</button>
+					</>
 				)}
 				{state === 'paused' && (
+					<>
+						<button
+							onClick={onResume}
+							disabled={actionLoading}
+							class="px-4 py-2 text-sm font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+						>
+							Resume
+						</button>
+						<button
+							onClick={onStop}
+							disabled={actionLoading}
+							class="px-4 py-2 text-sm font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
+						>
+							Stop
+						</button>
+					</>
+				)}
+				{state === 'stopped' && (
 					<button
-						onClick={onResume}
+						onClick={onStart}
 						disabled={actionLoading}
 						class="px-4 py-2 text-sm font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
 					>
-						Resume
+						Start
 					</button>
 				)}
 			</div>
@@ -220,6 +252,7 @@ interface SpaceOverviewProps {
 export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const [showCreateTask, setShowCreateTask] = useState(false);
 	const [actionLoading, setActionLoading] = useState(false);
+	const [showStopConfirm, setShowStopConfirm] = useState(false);
 
 	const handlePause = useCallback(async () => {
 		setActionLoading(true);
@@ -234,6 +267,25 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		setActionLoading(true);
 		try {
 			await spaceStore.resumeSpace();
+		} finally {
+			setActionLoading(false);
+		}
+	}, []);
+
+	const handleStop = useCallback(async () => {
+		setActionLoading(true);
+		try {
+			await spaceStore.stopSpace();
+		} finally {
+			setActionLoading(false);
+			setShowStopConfirm(false);
+		}
+	}, []);
+
+	const handleStart = useCallback(async () => {
+		setActionLoading(true);
+		try {
+			await spaceStore.startSpace();
 		} finally {
 			setActionLoading(false);
 		}
@@ -260,10 +312,10 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const tasks = spaceStore.tasks.value;
 	const runtimeState = spaceStore.runtimeState.value;
 
-	// Recent sessions — sorted by lastActiveAt, top 8 (computed before early returns)
+	// Recent sessions — sorted by lastActiveAt, top 5 (computed before early returns)
 	const recentSessions = [...spaceStore.sessions.value]
 		.sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-		.slice(0, 8);
+		.slice(0, 5);
 
 	if (loading) {
 		return (
@@ -291,8 +343,8 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 		(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
 	);
 
-	// Recent tasks — sorted by updatedAt, top 8
-	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8);
+	// Recent tasks — sorted by updatedAt, top 5
+	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
 	const handleTaskClick =
 		onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
@@ -302,13 +354,15 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 			<div class="min-h-[calc(100%+1px)] space-y-6">
 				<SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-				{/* Runtime state with pause/resume controls */}
+				{/* Runtime state with pause/resume/stop/start controls */}
 				{runtimeState && (
 					<RuntimeControlBar
 						state={runtimeState}
 						actionLoading={actionLoading}
 						onPause={() => void handlePause()}
 						onResume={() => void handleResume()}
+						onStop={() => setShowStopConfirm(true)}
+						onStart={() => void handleStart()}
 					/>
 				)}
 
@@ -419,6 +473,17 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 						</div>
 					</div>
 				)}
+
+				{/* Stop Confirmation */}
+				<ConfirmModal
+					isOpen={showStopConfirm}
+					onClose={() => setShowStopConfirm(false)}
+					onConfirm={() => void handleStop()}
+					title="Stop Space"
+					message="Stopping will immediately terminate all active sessions and cancel in-progress work. The space will not restart automatically. You can start it again at any time."
+					confirmText="Stop Space"
+					isLoading={actionLoading}
+				/>
 			</div>
 		</div>
 	);

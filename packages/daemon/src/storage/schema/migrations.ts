@@ -368,18 +368,23 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   - Migrates approval_source values to simplified 3-value type.
 	runMigration86(db);
 
-	// Migration 87: Decouple `report_result` from canonical task status.
+	// Migration 87: Add stopped column to spaces.
+	//   Allows users to stop/start space runtime execution without archiving.
+	//   Stopped spaces have all active work killed and will not auto-start on daemon restart.
+	runMigration87(db);
+
+	// Migration 88: Decouple `report_result` from canonical task status.
 	//   Adds `reported_status` and `reported_summary` columns to space_tasks
 	//   so the agent's report intent is recorded separately from the runtime's
 	//   final status decision (which goes through completion-actions review).
-	runMigration87(db);
+	runMigration88(db);
 
-	// Migration 88: Drop reserved writer keywords from persisted gates.
+	// Migration 89: Drop reserved writer keywords from persisted gates.
 	//   Existing space_workflows.gates rows may contain `writers: ['human']`
 	//   or `writers: ['reviewer']` from before the structural-semantics switch.
 	//   Rewrite those `approved` fields to `writers: []` so external-approval
 	//   gates keep working under the new authorization rules.
-	runMigration88(db);
+	runMigration89(db);
 }
 
 /**
@@ -5854,7 +5859,20 @@ function runMigration86(db: BunDatabase): void {
 }
 
 /**
- * Migration 87: Decouple `report_result` from canonical task status.
+ * Migration 87: Add stopped column to spaces table.
+ *
+ * Allows users to stop/start space runtime execution without archiving.
+ * Stopped spaces have all active work killed on stop and will not auto-start
+ * on daemon restart. Default: 0 (not stopped).
+ */
+function runMigration87(db: BunDatabase): void {
+	if (!tableExists(db, 'spaces')) return;
+	if (tableHasColumn(db, 'spaces', 'stopped')) return;
+	db.exec(`ALTER TABLE spaces ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0`);
+}
+
+/**
+ * Migration 88: Decouple `report_result` from canonical task status.
  *
  * Adds `reported_status` (TEXT NULL) and `reported_summary` (TEXT NULL) columns to
  * `space_tasks`. These record the end-node agent's claimed outcome separately from
@@ -5864,7 +5882,7 @@ function runMigration86(db: BunDatabase): void {
  * `reported_status` constrained to the same values as `TaskResultStatusSchema`:
  * `'done' | 'blocked' | 'cancelled'`.
  */
-function runMigration87(db: BunDatabase): void {
+function runMigration88(db: BunDatabase): void {
 	if (!tableExists(db, 'space_tasks')) return;
 
 	if (!tableHasColumn(db, 'space_tasks', 'reported_status')) {
@@ -5879,7 +5897,7 @@ function runMigration87(db: BunDatabase): void {
 }
 
 /**
- * Migration 88: Strip reserved writer keywords from persisted gates.
+ * Migration 89: Strip reserved writer keywords from persisted gates.
  *
  * Pre-PR #1505 the gate system used magic writer strings (`'human'`,
  * `'reviewer'`) to mark external-approval fields. PR #1505 switched to
@@ -5892,7 +5910,7 @@ function runMigration87(db: BunDatabase): void {
  * keywords from `writers`. If only legacy keywords were present, the
  * resulting `writers: []` correctly preserves external-only semantics.
  */
-export function runMigration88(db: BunDatabase): void {
+export function runMigration89(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) return;
 	if (!tableHasColumn(db, 'space_workflows', 'gates')) return;
 

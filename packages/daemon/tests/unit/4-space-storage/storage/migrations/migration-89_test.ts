@@ -1,7 +1,7 @@
 /**
- * Migration 88 Tests — Strip reserved writer keywords from persisted gates.
+ * Migration 89 Tests — Strip reserved writer keywords from persisted gates.
  *
- * Migration 88 rewrites legacy `writers: ['human']` / `writers: ['reviewer']`
+ * Migration 89 rewrites legacy `writers: ['human']` / `writers: ['reviewer']`
  * on `approved` gate fields to `writers: []`, matching the structural
  * external-only semantics introduced by PR #1505.
  *
@@ -20,7 +20,7 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration88 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigration89 } from '../../../../../src/storage/schema/migrations.ts';
 
 function readGates(db: BunDatabase, id: string): unknown {
 	const row = db.prepare(`SELECT gates FROM space_workflows WHERE id = ?`).get(id) as
@@ -37,12 +37,12 @@ function insertWorkflow(db: BunDatabase, id: string, gates: unknown): void {
 	).run(id, 'sp-1', `WF ${id}`, gates === null ? null : JSON.stringify(gates), now, now);
 }
 
-describe('Migration 88: Strip reserved writer keywords from gates', () => {
+describe('Migration 89: Strip reserved writer keywords from gates', () => {
 	let testDir: string;
 	let db: BunDatabase;
 
 	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-88', `test-${Date.now()}`);
+		testDir = join(process.cwd(), 'tmp', 'test-migration-89', `test-${Date.now()}`);
 		mkdirSync(testDir, { recursive: true });
 		db = new BunDatabase(join(testDir, 'test.db'));
 		db.exec('PRAGMA foreign_keys = ON');
@@ -84,7 +84,7 @@ describe('Migration 88: Strip reserved writer keywords from gates', () => {
 			},
 		]);
 
-		runMigration88(db);
+		runMigration89(db);
 
 		const gates = readGates(db, 'wf-1') as Array<{ fields: Array<{ writers: string[] }> }>;
 		expect(gates[0].fields[0].writers).toEqual([]);
@@ -106,7 +106,7 @@ describe('Migration 88: Strip reserved writer keywords from gates', () => {
 			},
 		]);
 
-		runMigration88(db);
+		runMigration89(db);
 
 		const gates = readGates(db, 'wf-1') as Array<{ fields: Array<{ writers: string[] }> }>;
 		expect(gates[0].fields[0].writers).toEqual([]);
@@ -128,7 +128,7 @@ describe('Migration 88: Strip reserved writer keywords from gates', () => {
 			},
 		]);
 
-		runMigration88(db);
+		runMigration89(db);
 
 		const gates = readGates(db, 'wf-1') as Array<{ fields: Array<{ writers: string[] }> }>;
 		expect(gates[0].fields[0].writers).toEqual(['Coding']);
@@ -151,7 +151,7 @@ describe('Migration 88: Strip reserved writer keywords from gates', () => {
 			},
 		]);
 
-		runMigration88(db);
+		runMigration89(db);
 
 		const gates = readGates(db, 'wf-1') as Array<{
 			fields: Array<{ name: string; writers: string[] }>;
@@ -163,7 +163,7 @@ describe('Migration 88: Strip reserved writer keywords from gates', () => {
 	test('workflows with NULL gates are skipped', () => {
 		insertWorkflow(db, 'wf-1', null);
 
-		expect(() => runMigration88(db)).not.toThrow();
+		expect(() => runMigration89(db)).not.toThrow();
 
 		expect(readGates(db, 'wf-1')).toBeNull();
 	});
@@ -184,8 +184,8 @@ describe('Migration 88: Strip reserved writer keywords from gates', () => {
 			},
 		]);
 
-		runMigration88(db);
-		runMigration88(db);
+		runMigration89(db);
+		runMigration89(db);
 
 		const gates = readGates(db, 'wf-1') as Array<{ fields: Array<{ writers: string[] }> }>;
 		expect(gates[0].fields[0].writers).toEqual([]);

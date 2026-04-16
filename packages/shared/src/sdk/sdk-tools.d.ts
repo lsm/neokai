@@ -78,6 +78,15 @@ export type AgentOutput =
           ephemeral_5m_input_tokens: number;
         } | null;
       };
+      toolStats?: {
+        readCount: number;
+        searchCount: number;
+        bashCount: number;
+        editFileCount: number;
+        linesAdded: number;
+        linesRemoved: number;
+        otherToolCount: number;
+      };
       status: "completed";
       prompt: string;
     }
@@ -2143,9 +2152,13 @@ export interface ConfigInput {
 }
 export interface EnterWorktreeInput {
   /**
-   * Optional name for the worktree. Each "/"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. A random name is generated if not provided.
+   * Optional name for a new worktree. Each "/"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. A random name is generated if not provided. Mutually exclusive with `path`.
    */
   name?: string;
+  /**
+   * Path to an existing worktree of the current repository to switch into instead of creating a new one. Must appear in `git worktree list` for the current repo. Mutually exclusive with `name`.
+   */
+  path?: string;
 }
 export interface ExitWorktreeInput {
   /**
@@ -2262,7 +2275,7 @@ export interface FileEditOutput {
   /**
    * The original file contents before editing
    */
-  originalFile: string;
+  originalFile: string | null;
   /**
    * Diff patch showing the changes
    */
@@ -2333,6 +2346,10 @@ export interface FileWriteOutput {
      */
     repository?: string | null;
   };
+  /**
+   * True when the user edited the proposed content in the permission dialog before accepting
+   */
+  userModified?: boolean;
 }
 export interface GlobOutput {
   /**

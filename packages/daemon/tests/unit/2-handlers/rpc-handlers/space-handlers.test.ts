@@ -7,6 +7,8 @@
  * - space.get: happy path, missing id, not found
  * - space.update: happy path, missing id, not found
  * - space.archive: happy path (emits space.archived with full space), missing id
+ * - space.stop: stops active work via runtime service, marks stopped, emits space.updated; missing id; graceful degradation without runtime service
+ * - space.start: clears stopped flag, emits space.updated; missing id
  * - space.delete: happy path, missing id, not found
  * - space.overview: happy path, missing id, not found
  * - DaemonHub events emitted on mutations
@@ -41,6 +43,8 @@ const mockSpace: Space = {
 	instructions: '',
 	sessionIds: [],
 	status: 'active',
+	paused: false,
+	stopped: false,
 	autonomyLevel: 1,
 	createdAt: NOW,
 	updatedAt: NOW,
@@ -117,6 +121,8 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
 		archiveSpace: mock(async () => ({ ...space!, status: 'archived' as const })),
 		pauseSpace: mock(async () => ({ ...space!, paused: true })),
 		resumeSpace: mock(async () => ({ ...space!, paused: false })),
+		stopSpace: mock(async () => ({ ...space!, stopped: true })),
+		startSpace: mock(async () => ({ ...space!, stopped: false, paused: false })),
 		deleteSpace: mock(async () => true),
 		addSession: mock(async () => space!),
 		removeSession: mock(async () => space!),
@@ -627,6 +633,84 @@ describe('space-handlers', () => {
 			);
 
 			await expect(call('space.archive', { id: 'nope' })).rejects.toThrow('Space not found');
+		});
+	});
+
+	// ─── space.stop ────────────────────────────────────────────────────────────
+
+	describe('space.stop', () => {
+		let mockRuntimeService: SpaceRuntimeService;
+
+		beforeEach(() => {
+			mockRuntimeService = {
+				setupSpaceAgentSession: mock(async () => {}),
+				stopActiveWork: mock(async () => {}),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, undefined, mockRuntimeService);
+		});
+
+		it('stops active work via runtime service, marks space stopped, and emits space.updated', async () => {
+			const stoppedSpace = { ...mockSpace, stopped: true };
+			(spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
+
+			const result = await call('space.stop', { id: 'space-1' });
+
+			// Must call stopActiveWork before marking stopped
+			expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledWith('space-1');
+			expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
+			expect((result as Space).stopped).toBe(true);
+			// Space is NOT archived — status stays 'active'
+			expect((result as Space).status).toBe('active');
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: stoppedSpace,
+			});
+		});
+
+		it('works without runtime service (graceful degradation)', async () => {
+			// Re-setup without runtime service
+			setup(mockSpace, undefined, undefined);
+			const stoppedSpace = { ...mockSpace, stopped: true };
+			(spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
+
+			const result = await call('space.stop', { id: 'space-1' });
+
+			expect((result as Space).stopped).toBe(true);
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: stoppedSpace,
+			});
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call('space.stop', {})).rejects.toThrow('id is required');
+		});
+	});
+
+	// ─── space.start ───────────────────────────────────────────────────────────
+
+	describe('space.start', () => {
+		beforeEach(() => setup());
+
+		it('clears stopped flag and emits space.updated', async () => {
+			const startedSpace = { ...mockSpace, stopped: false, paused: false };
+			(spaceManager.startSpace as ReturnType<typeof mock>).mockResolvedValue(startedSpace);
+
+			const result = await call('space.start', { id: 'space-1' });
+
+			expect(spaceManager.startSpace).toHaveBeenCalledWith('space-1');
+			expect((result as Space).stopped).toBe(false);
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				space: startedSpace,
+			});
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call('space.start', {})).rejects.toThrow('id is required');
 		});
 	});
 

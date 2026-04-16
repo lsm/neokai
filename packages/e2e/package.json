@@ -16,7 +16,7 @@
 	},
 	"devDependencies": {
 		"@playwright/test": "1.59.1",
-		"@types/node": "25.5.2",
-		"monocart-reporter": "2.10.0"
+		"@types/node": "25.6.0",
+		"monocart-reporter": "2.10.1"
 	}
 }

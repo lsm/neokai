@@ -300,6 +300,54 @@ export function setupSpaceHandlers(
 		return space;
 	});
 
+	// ─── space.stop ─────────────────────────────────────────────────────────────
+	// Stops all active work (terminates running agent sessions, cancels in-progress
+	// tasks and workflow runs) and marks the space as stopped.
+	// Unlike space.archive, a stopped space remains active and can be restarted.
+	// The stopped flag persists across daemon restarts — no work auto-starts.
+	messageHub.onRequest('space.stop', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		// Terminate all running agent sessions and cancel active tasks/workflow runs.
+		if (spaceRuntimeService) {
+			await spaceRuntimeService.stopActiveWork(params.id);
+		}
+
+		const space = await spaceManager.stopSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
+	// ─── space.start ────────────────────────────────────────────────────────────
+	// Clears the stopped flag so the runtime resumes scheduling new work.
+	messageHub.onRequest('space.start', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const space = await spaceManager.startSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
 	// ─── space.pause ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.pause', async (data) => {
 		const params = data as { id: string };
