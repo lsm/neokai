@@ -2072,6 +2072,7 @@ export class TaskAgentManager {
 				const s = await spaceManager.getSpace(spaceId);
 				return s?.autonomyLevel ?? 1;
 			},
+			isSessionAlive: (sid) => this.isSessionAlive(sid),
 		});
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: this.config.nodeExecutionRepo,

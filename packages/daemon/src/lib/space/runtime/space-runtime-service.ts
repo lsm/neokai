@@ -404,6 +404,7 @@ export class SpaceRuntimeService {
 			workspacePath = space?.workspacePath;
 		}
 		const spaceManager = this.config.spaceManager;
+		const taskAgentManager = this.taskAgentManager;
 		const router = new ChannelRouter({
 			taskRepo: this.config.taskRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
@@ -418,6 +419,7 @@ export class SpaceRuntimeService {
 				const s = await spaceManager.getSpace(spaceId);
 				return s?.autonomyLevel ?? 1;
 			},
+			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
 		});
 		return router.onGateDataChanged(runId, gateId);
 	}
