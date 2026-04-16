@@ -132,16 +132,22 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-		// Parse SDK message and inject the timestamp, sendStatus, and origin from the database row
+		// Parse SDK message and inject the timestamp, sendStatus, and origin from the database row.
+		// Always explicitly set `origin` (even to undefined) so the SDK's own
+		// `origin?: SDKMessageOrigin` object field — added in SDK 0.2.110 — is stripped from the
+		// spread result. Without this, messages whose DB origin column is null would carry an
+		// SDKMessageOrigin object instead of a NeoKai MessageOrigin string, making the field's
+		// type inconsistent across messages.
 		const messages = rows.map((r) => {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
-			const extra: Record<string, unknown> = { timestamp };
+			const extra: Record<string, unknown> = {
+				timestamp,
+				// DB origin wins; undefined explicitly clears any SDK-level origin object.
+				origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
+			};
 			if (r.send_status === 'failed') {
 				extra.sendStatus = 'failed';
-			}
-			if (r.origin != null) {
-				extra.origin = r.origin as MessageOrigin;
 			}
 			return { ...sdkMessage, ...extra } as SDKMessage & { timestamp: number };
 		});
@@ -185,14 +191,23 @@ export class SDKMessageRepository {
 			subagentMessages = subagentRows.map((r) => {
 				const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 				const timestamp = new Date(r.timestamp as string).getTime();
-				return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+				// Subagent messages have no DB origin column; explicitly set undefined to strip
+				// any SDK-level origin object from the JSON blob (same reasoning as top-level).
+				return { ...sdkMessage, timestamp, origin: undefined } as SDKMessage & {
+					timestamp: number;
+				};
 			});
 		}
 
 		// Combine and return: top-level messages + their associated subagent messages
 		// hasMore is based on top-level message count only (not including subagent messages)
+		// Note: cast required because the new SDK added `origin?: SDKMessageOrigin` to SDKUserMessage,
+		// which conflicts with our augmented `origin?: MessageOrigin` field (a different type used for
+		// tracking message provenance in NeoKai). The runtime values are always correct.
 		return {
-			messages: [...topLevelMessages, ...subagentMessages],
+			messages: [...topLevelMessages, ...subagentMessages] as Array<
+				SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+			>,
 			hasMore,
 		};
 	}
