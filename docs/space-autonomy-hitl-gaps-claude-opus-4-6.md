@@ -10,19 +10,20 @@ The space/task/workflow system has three orthogonal control layers:
 | Layer | Scope | Mechanism | Key File |
 |-------|-------|-----------|----------|
 | **Gates** | Per-channel in workflow | Field checks + scripts block message delivery | `runtime/gate-evaluator.ts` |
-| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) | `runtime/space-runtime.ts:507,1202` |
+| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) and gates completion-action execution | `runtime/space-runtime.ts` → `resolveCompletionWithActions` |
 | **Task Status Machine** | Per-task | `open -> in_progress -> review -> done` | `managers/space-task-manager.ts` |
 
 ### How Autonomy Works Today
 
-Autonomy has exactly **two decision points** — at `space-runtime.ts:507` (single-node completion) and `:1202` (multi-node workflow run completion):
+Autonomy has exactly **one policy function** — `resolveCompletionWithActions` in `space-runtime.ts` — invoked from two completion paths (the single-task and multi-node-run branches of the tick loop). Levels (1–5) decide both the terminal task status and which completion actions auto-execute:
 
 ```
-supervised:       workflow completes -> task status = 'review' (human must approve)
-semi_autonomous:  workflow completes -> task status = 'done' (auto-completed)
+level 1:          workflow completes -> task status = 'review' (human must approve)
+level >= 2:       workflow completes -> task status = 'done' if autonomy >= every action's requiredLevel
+                                       else 'review' paused at first action whose requiredLevel exceeds autonomy
 ```
 
-During execution, both modes behave identically.
+During execution, all levels behave identically; only the terminal resolution differs.
 
 ---
 

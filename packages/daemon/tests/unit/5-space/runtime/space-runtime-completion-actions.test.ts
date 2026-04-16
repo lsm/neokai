@@ -604,6 +604,9 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(resumed!.status).toBe('review');
 		expect(resumed!.pendingActionIndex).toBe(1);
 		expect(resumed!.pendingCheckpointType).toBe('completion_action');
+		// Stale approval from the previous cycle must be cleared so the UI does
+		// not show the new pause as already-approved.
+		expect(resumed!.approvedAt).toBeNull();
 	});
 
 	test('resumeCompletionActions returns null for task without pending checkpoint', async () => {

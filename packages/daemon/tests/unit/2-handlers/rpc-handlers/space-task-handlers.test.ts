@@ -19,6 +19,7 @@ import type { SpaceTaskManagerFactory } from '../../../../src/lib/rpc-handlers/s
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -611,6 +612,102 @@ describe('space-task-handlers', () => {
 					title: 'X',
 				})
 			).rejects.toThrow('Task not found');
+		});
+	});
+
+	// ─── completion-action resume intercept ─────────────────────────────────────
+
+	describe('spaceTask.update — completion-action resume intercept', () => {
+		const reviewTask: SpaceTask = {
+			...mockTask,
+			status: 'review',
+			pendingCheckpointType: 'completion_action',
+			pendingActionIndex: 0,
+		};
+
+		function setupWithRuntime(
+			task: SpaceTask | null = reviewTask,
+			resumed: SpaceTask | null = { ...reviewTask, status: 'done' as const }
+		): { runtime: SpaceRuntimeService } {
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			daemonHub = createMockDaemonHub();
+			spaceManager = createMockSpaceManager(mockSpace);
+			taskManager = createMockTaskManager(task);
+			taskManagerFactory = mock((_spaceId: string) => taskManager);
+			const runtime = {
+				resumeCompletionActions: mock(async () => resumed),
+			} as unknown as SpaceRuntimeService;
+			setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub, runtime);
+			return { runtime };
+		}
+
+		it('routes review→done to resumeCompletionActions when paused at completion_action', async () => {
+			const { runtime } = setupWithRuntime();
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(runtime.resumeCompletionActions).toHaveBeenCalledWith('space-1', 'task-1');
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect((result as SpaceTask).status).toBe('done');
+		});
+
+		it('skips the secondary emit when no extra fields were merged', async () => {
+			// resumeCompletionActions emits internally via updateTaskAndEmit. The
+			// handler must NOT emit again when there are no follow-up updates,
+			// otherwise subscribers see a duplicate space.task.updated event.
+			setupWithRuntime();
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(daemonHub.emit).not.toHaveBeenCalled();
+		});
+
+		it('forwards `result` field as a follow-up updateTask and emits once', async () => {
+			// Caller-supplied audit summary (e.g. "LGTM") must be persisted
+			// alongside the runtime-determined status.
+			setupWithRuntime();
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+				result: 'LGTM',
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { result: 'LGTM' });
+			expect(daemonHub.emit).toHaveBeenCalledTimes(1);
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				task: expect.anything(),
+			});
+		});
+
+		it('falls through to setTaskStatus when not paused at completion_action', async () => {
+			// review→done without a completion_action checkpoint should follow
+			// the normal transition path.
+			const reviewNoCheckpoint = { ...reviewTask, pendingCheckpointType: undefined };
+			const { runtime } = setupWithRuntime(reviewNoCheckpoint);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(runtime.resumeCompletionActions).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).toHaveBeenCalled();
 		});
 	});
 });
