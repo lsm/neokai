@@ -889,14 +889,14 @@ export class SpaceRuntime {
 				// First action was human-approved; subsequent ones auto-execute if autonomy permits
 				const ok = await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
 				if (!ok) {
-					return await this.updateTaskAndEmit(spaceId, taskId, {
+					return await this.finalizeResume(spaceId, taskId, {
 						status: 'blocked',
 						result: `Completion action "${action.name}" failed`,
 					});
 				}
 			} else {
 				// Pause at this action — clear stale approvedAt from previous cycle
-				return await this.updateTaskAndEmit(spaceId, taskId, {
+				return await this.finalizeResume(spaceId, taskId, {
 					status: 'review',
 					pendingActionIndex: i,
 					pendingCheckpointType: 'completion_action',
@@ -906,7 +906,7 @@ export class SpaceRuntime {
 		}
 
 		// All remaining actions executed — task is done
-		return await this.updateTaskAndEmit(spaceId, taskId, {
+		return await this.finalizeResume(spaceId, taskId, {
 			status: 'done',
 			completedAt: Date.now(),
 			approvalSource: 'human',
@@ -914,6 +914,33 @@ export class SpaceRuntime {
 			pendingActionIndex: null,
 			pendingCheckpointType: null,
 		});
+	}
+
+	/**
+	 * Closes the race window between `resumeCompletionActions` and concurrent
+	 * tick processing: re-reads the task right before writing and aborts the
+	 * write if another caller has already moved it out of the resumable state
+	 * (e.g. tick saw a script timeout and flipped the task to `blocked`).
+	 *
+	 * Without this guard a long-running completion action (scripts can run for
+	 * up to two minutes) could finish, see stale state, and overwrite a
+	 * legitimate intervening transition.
+	 */
+	private async finalizeResume(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask | null> {
+		const fresh = this.config.taskRepo.getTask(taskId);
+		if (!fresh) return null;
+		if (fresh.status !== 'review' || fresh.pendingCheckpointType !== 'completion_action') {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: task ${taskId} state changed mid-resume ` +
+					`(now status=${fresh.status}, checkpoint=${fresh.pendingCheckpointType}); aborting write`
+			);
+			return fresh;
+		}
+		return await this.updateTaskAndEmit(spaceId, taskId, params);
 	}
 
 	// -------------------------------------------------------------------------

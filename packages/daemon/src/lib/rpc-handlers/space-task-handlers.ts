@@ -163,22 +163,31 @@ export function setupSpaceTaskHandlers(
 					const resumed = await spaceRuntimeService.resumeCompletionActions(spaceId, taskId);
 					if (resumed) {
 						task = resumed;
-						// Apply any additional field updates
-						const { status: _s, result: _r, ...otherFields } = updateParams;
+						// Apply additional field updates: keep `result` so a caller-provided
+						// audit summary (e.g. "LGTM") is persisted alongside the resume's
+						// runtime-determined status. Status is excluded — the resume path
+						// already set the final status (done / blocked / review).
+						const { status: _s, ...otherFields } = updateParams;
 						if (Object.keys(otherFields).length > 0) {
 							task = await taskManager.updateTask(taskId, otherFields);
 						}
 
-						daemonHub
-							.emit('space.task.updated', {
-								sessionId: 'global',
-								spaceId,
-								taskId,
-								task,
-							})
-							.catch((err) => {
-								log.warn('Failed to emit space.task.updated:', err);
-							});
+						// `resumeCompletionActions` already emitted via `updateTaskAndEmit` →
+						// `onTaskUpdated`. If the follow-up updateTask above ran, emit a
+						// fresh event so subscribers see the merged final state; otherwise
+						// the internal emission is sufficient.
+						if (Object.keys(otherFields).length > 0) {
+							daemonHub
+								.emit('space.task.updated', {
+									sessionId: 'global',
+									spaceId,
+									taskId,
+									task,
+								})
+								.catch((err) => {
+									log.warn('Failed to emit space.task.updated:', err);
+								});
+						}
 
 						return task;
 					}
