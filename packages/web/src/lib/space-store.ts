@@ -1568,6 +1568,23 @@ class SpaceStore {
 	}
 
 	/**
+	 * Stop the current space (archives it, showing stopped state without navigating away)
+	 */
+	async stopSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.archive', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
+	}
+
+	/**
 	 * Pause the current space (stops task scheduling without archiving)
 	 */
 	async pauseSpace(): Promise<void> {

@@ -18,6 +18,7 @@ let mockSessions: ReturnType<
 
 const mockPauseSpace = vi.fn().mockResolvedValue(undefined);
 const mockResumeSpace = vi.fn().mockResolvedValue(undefined);
+const mockStopSpace = vi.fn().mockResolvedValue(undefined);
 const mockUpdateSpace = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../lib/space-store', () => ({
@@ -30,6 +31,7 @@ vi.mock('../../../lib/space-store', () => ({
 			sessions: mockSessions,
 			pauseSpace: mockPauseSpace,
 			resumeSpace: mockResumeSpace,
+			stopSpace: mockStopSpace,
 			updateSpace: mockUpdateSpace,
 		};
 	},
@@ -100,6 +102,7 @@ describe('SpaceOverview', () => {
 		mockSessions.value = [];
 		mockPauseSpace.mockClear();
 		mockResumeSpace.mockClear();
+		mockStopSpace.mockClear();
 		mockUpdateSpace.mockClear();
 	});
 
@@ -197,7 +200,7 @@ describe('SpaceOverview', () => {
 		expect(queryByText('Stopped')).toBeNull();
 	});
 
-	it('limits recent tasks to 8', () => {
+	it('limits recent tasks to 5', () => {
 		mockSpace.value = makeSpace();
 		const now = Date.now();
 		mockTasks.value = Array.from({ length: 10 }, (_, i) =>
@@ -207,7 +210,7 @@ describe('SpaceOverview', () => {
 		const { container } = render(<SpaceOverview spaceId="space-1" />);
 		// Each task renders as a button inside the activity list
 		const activityButtons = container.querySelectorAll('.divide-y button');
-		expect(activityButtons.length).toBe(8);
+		expect(activityButtons.length).toBe(5);
 	});
 
 	it('stat card counts update when tasks change', () => {
@@ -261,31 +264,34 @@ describe('SpaceOverview', () => {
 	});
 
 	describe('Runtime Control Buttons', () => {
-		it('shows Pause button when running, no Resume button', () => {
+		it('shows Pause and Stop buttons when running, no Resume button', () => {
 			mockSpace.value = makeSpace();
 			mockRuntimeState.value = 'running';
 			const { container } = render(<SpaceOverview spaceId="space-1" />);
 			const buttons = Array.from(container.querySelectorAll('button'));
 			expect(buttons.find((b) => b.textContent === 'Pause')).toBeTruthy();
+			expect(buttons.find((b) => b.textContent === 'Stop')).toBeTruthy();
 			expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
 		});
 
-		it('shows Resume button when paused, no Pause button', () => {
+		it('shows Resume and Stop buttons when paused, no Pause button', () => {
 			mockSpace.value = makeSpace();
 			mockRuntimeState.value = 'paused';
 			const { container } = render(<SpaceOverview spaceId="space-1" />);
 			const buttons = Array.from(container.querySelectorAll('button'));
 			expect(buttons.find((b) => b.textContent === 'Resume')).toBeTruthy();
+			expect(buttons.find((b) => b.textContent === 'Stop')).toBeTruthy();
 			expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
 		});
 
-		it('shows no control buttons when stopped', () => {
+		it('shows no Pause/Resume/Stop control buttons when stopped', () => {
 			mockSpace.value = makeSpace();
 			mockRuntimeState.value = 'stopped';
 			const { container } = render(<SpaceOverview spaceId="space-1" />);
 			const buttons = Array.from(container.querySelectorAll('button'));
 			expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
 			expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
+			expect(buttons.find((b) => b.textContent === 'Stop')).toBeFalsy();
 		});
 
 		it('calls pauseSpace when Pause is clicked', async () => {
@@ -308,6 +314,35 @@ describe('SpaceOverview', () => {
 			)!;
 			await fireEvent.click(resumeBtn);
 			expect(mockResumeSpace).toHaveBeenCalledTimes(1);
+		});
+
+		it('opens stop confirmation dialog when Stop is clicked while running', () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'running';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const stopBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Stop'
+			)!;
+			fireEvent.click(stopBtn);
+			const dialog = document.body.querySelector('[role="dialog"]');
+			expect(dialog).toBeTruthy();
+			expect(dialog?.querySelector('h2')?.textContent).toBe('Stop Space');
+		});
+
+		it('calls stopSpace when Stop is confirmed', async () => {
+			mockSpace.value = makeSpace();
+			mockRuntimeState.value = 'running';
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const stopBtn = Array.from(container.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Stop'
+			)!;
+			fireEvent.click(stopBtn);
+			// Find and click the confirm button in the dialog
+			const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Stop Space'
+			)!;
+			await fireEvent.click(confirmBtn);
+			expect(mockStopSpace).toHaveBeenCalledTimes(1);
 		});
 	});
 
