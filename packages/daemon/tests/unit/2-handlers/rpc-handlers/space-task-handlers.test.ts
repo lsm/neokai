@@ -47,7 +47,7 @@ const mockTask: SpaceTask = {
 	taskNumber: 1,
 	title: 'Test Task',
 	description: 'A task description',
-	status: 'pending',
+	status: 'open',
 	priority: 'normal',
 	dependsOn: [],
 	createdAt: NOW,
@@ -417,24 +417,22 @@ describe('space-task-handlers', () => {
 			});
 		});
 
-		it('reactivates a cancelled task to pending', async () => {
+		it('reactivates a cancelled task to open', async () => {
 			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
 			setup(mockSpace, cancelledTask);
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
 				...cancelledTask,
-				status: 'pending' as const,
-				error: undefined,
-				progress: undefined,
+				status: 'open' as const,
 			});
 
 			const result = await call('spaceTask.update', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				status: 'pending',
+				status: 'open',
 			});
 
-			expect((result as SpaceTask).status).toBe('pending');
-			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'pending', {
+			expect((result as SpaceTask).status).toBe('open');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'open', {
 				result: undefined,
 				error: undefined,
 			});
@@ -483,17 +481,17 @@ describe('space-task-handlers', () => {
 		});
 
 		it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {
-			// mockTask has status: 'pending'; sending status: 'pending' should not call setTaskStatus
+			// mockTask has status: 'open'; sending status: 'open' should not call setTaskStatus
 			const result = await call('spaceTask.update', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				status: 'pending', // same as current
+				status: 'open', // same as current
 				title: 'New title',
 			});
 
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				status: 'pending',
+				status: 'open',
 				title: 'New title',
 			});
 			expect(result).toBeDefined();
@@ -587,19 +585,18 @@ describe('space-task-handlers', () => {
 		});
 
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {
-			// For this test, use a task that is already 'completed' to trigger an invalid transition
-			const completedTask = { ...mockTask, status: 'completed' as const };
-			setup(mockSpace, completedTask);
+			const doneTask = { ...mockTask, status: 'done' as const };
+			setup(mockSpace, doneTask);
 
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-				new Error("Invalid status transition from 'completed' to 'pending'. Allowed: none")
+				new Error("Invalid status transition from 'done' to 'review'. Allowed: none")
 			);
 
 			await expect(
 				call('spaceTask.update', {
 					spaceId: 'space-1',
 					taskId: 'task-1',
-					status: 'pending',
+					status: 'review',
 				})
 			).rejects.toThrow('Invalid status transition');
 		});
@@ -692,8 +689,6 @@ describe('space-task-handlers', () => {
 		});
 
 		it('falls through to setTaskStatus when not paused at completion_action', async () => {
-			// review→done without a completion_action checkpoint should follow
-			// the normal transition path.
 			const reviewNoCheckpoint = { ...reviewTask, pendingCheckpointType: undefined };
 			const { runtime } = setupWithRuntime(reviewNoCheckpoint);
 
@@ -705,6 +700,18 @@ describe('space-task-handlers', () => {
 
 			expect(runtime.resumeCompletionActions).not.toHaveBeenCalled();
 			expect(taskManager.setTaskStatus).toHaveBeenCalled();
+		});
+
+		it('throws when resumeCompletionActions returns null (inconsistent state)', async () => {
+			setupWithRuntime(reviewTask, null);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'done',
+				})
+			).rejects.toThrow('Cannot resume completion actions');
 		});
 	});
 });

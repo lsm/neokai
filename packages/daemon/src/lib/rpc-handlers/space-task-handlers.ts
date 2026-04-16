@@ -184,7 +184,13 @@ export function setupSpaceTaskHandlers(
 
 						return task;
 					}
-					// If resume returned null (unexpected), fall through to normal transition
+					// null = state inconsistency (task deleted, workflow edited, race).
+					// Throw rather than silently falling through to a raw setTaskStatus
+					// that would bypass completion actions.
+					throw new Error(
+						`Cannot resume completion actions for task ${taskId} — ` +
+							'task state is inconsistent (see daemon logs for details)'
+					);
 				}
 
 				// Status is changing — validate via setTaskStatus (enforces transitions)

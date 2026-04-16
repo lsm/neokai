@@ -16,7 +16,7 @@
  * - Clean up executors when runs reach terminal states
  *
  * In the agent-centric model, agents drive workflow progression via send_message
- * and report_done — SpaceRuntime no longer calls advance() directly.
+ * and report_result — SpaceRuntime no longer calls advance() directly.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -518,6 +518,9 @@ export class SpaceRuntime {
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
 			const spaceLevel = (space?.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 
+			// Re-resolve is safe for non-terminal statuses: resolveCompletionWithActions
+			// is idempotent — non-`done` reportedStatus values (blocked, cancelled)
+			// pass through to a matching task status without side effects.
 			if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
 				const reportedStatus = canonicalTask.reportedStatus ?? 'done';
 				const params = await this.resolveCompletionWithActions(
@@ -1011,7 +1014,7 @@ export class SpaceRuntime {
 	 * - Spawns Task Agent sessions for pending tasks
 	 * - Monitors agent liveness and resets dead agents
 	 *
-	 * Agents drive workflow progression themselves via send_message and report_done.
+	 * Agents drive workflow progression themselves via send_message and report_result.
 	 * This method never calls advance() directly.
 	 *
 	 * Errors from individual runs are caught and re-thrown after all runs have
@@ -1196,7 +1199,7 @@ export class SpaceRuntime {
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
 		// tasks, check liveness, and recover from crashes. Agents drive progression
-		// themselves via send_message and report_done — SpaceRuntime never calls advance().
+		// themselves via send_message and report_result — SpaceRuntime never calls advance().
 		if (this.config.taskAgentManager) {
 			const tam = this.config.taskAgentManager;
 			let blockedByCrash = false;
@@ -1478,7 +1481,7 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Agents drive workflow progression via send_message and report_done.
+			// Agents drive workflow progression via send_message and report_result.
 			return;
 		}
 	}
@@ -1769,9 +1772,9 @@ export class SpaceRuntime {
 		if (action.type !== 'script') {
 			log.warn(
 				`SpaceRuntime: completion action type "${action.type}" not yet implemented ` +
-					`(action: ${action.id}, space: ${spaceId})`
+					`(action: ${action.id}, space: ${spaceId}); treating as success`
 			);
-			return false;
+			return true;
 		}
 
 		// Resolve artifact data for script env injection
