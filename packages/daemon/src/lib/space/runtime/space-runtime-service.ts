@@ -381,6 +381,17 @@ export class SpaceRuntimeService {
 		);
 
 		log.info(`Space chat session provisioned for space ${space.id}`);
+
+		// Flush any Task Agent → Space Agent messages that were queued before
+		// this session was provisioned (handles the daemon-restart activation race).
+		if (this.taskAgentManager) {
+			const activeRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
+			for (const run of activeRuns) {
+				void this.taskAgentManager
+					.flushPendingMessagesForSpaceAgent(space.id, run.id)
+					.catch(() => {});
+			}
+		}
 	}
 
 	/**
