@@ -88,7 +88,7 @@ describe('buildWorkflowFingerprint', () => {
 		expect(fp.channels[0]).toBe('Coder->QA,Reviewer');
 	});
 
-	it('returns sorted gate IDs', () => {
+	it('returns sorted gate serializations', () => {
 		const wf = makeWorkflow({
 			gates: [
 				{ id: 'gate-z', resetOnCycle: false },
@@ -96,7 +96,10 @@ describe('buildWorkflowFingerprint', () => {
 			],
 		});
 		const fp = buildWorkflowFingerprint(wf);
-		expect(fp.gateNames).toEqual(['gate-a', 'gate-z']);
+		// Both gates serialized in sorted order by their id prefix
+		expect(fp.gates).toHaveLength(2);
+		expect(fp.gates[0]).toMatch(/^gate-a\|/);
+		expect(fp.gates[1]).toMatch(/^gate-z\|/);
 	});
 
 	it('uses empty string for missing description/instructions', () => {
@@ -110,7 +113,40 @@ describe('buildWorkflowFingerprint', () => {
 		const wf = makeWorkflow({ channels: undefined, gates: undefined });
 		const fp = buildWorkflowFingerprint(wf);
 		expect(fp.channels).toEqual([]);
-		expect(fp.gateNames).toEqual([]);
+		expect(fp.gates).toEqual([]);
+	});
+
+	it('serializes gate fields with name, type, and check op', () => {
+		const wf = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
+				},
+			],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.gates[0]).toContain('approved:boolean:exists');
+	});
+
+	it('includes requiredLevel in gate serialization', () => {
+		const wf = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false, requiredLevel: 3 }],
+		});
+		const fp = buildWorkflowFingerprint(wf);
+		expect(fp.gates[0]).toMatch(/^gate-1\|3\|/);
+	});
+
+	it('includes resetOnCycle in gate serialization', () => {
+		const wfFalse = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const wfTrue = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: true }],
+		});
+		expect(buildWorkflowFingerprint(wfFalse).gates[0]).toContain('|false|');
+		expect(buildWorkflowFingerprint(wfTrue).gates[0]).toContain('|true|');
 	});
 });
 
@@ -183,6 +219,109 @@ describe('computeWorkflowHash', () => {
 	it('DOES change when channel topology changes', () => {
 		const wf1 = makeWorkflow({ channels: [{ id: 'c1', from: 'Coder', to: 'Reviewer' }] });
 		const wf2 = makeWorkflow({ channels: [{ id: 'c1', from: 'Reviewer', to: 'Coder' }] });
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when a gate field is added', () => {
+		const wf1 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false, fields: [] }],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when a gate field check op changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [{ name: 'approved', type: 'boolean', writers: [], check: { op: 'exists' } }],
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [],
+							check: { op: '==', value: true },
+						},
+					],
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate requiredLevel changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false, requiredLevel: 3 }],
+		});
+		const wf2 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false, requiredLevel: 4 }],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate resetOnCycle changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const wf2 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: true }],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate script changes', () => {
+		const wf1 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					script: { interpreter: 'bash', source: 'echo "check A"' },
+				},
+			],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					script: { interpreter: 'bash', source: 'echo "check B"' },
+				},
+			],
+		});
+		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+	});
+
+	it('DOES change when gate script is added', () => {
+		const wf1 = makeWorkflow({
+			gates: [{ id: 'gate-1', resetOnCycle: false }],
+		});
+		const wf2 = makeWorkflow({
+			gates: [
+				{
+					id: 'gate-1',
+					resetOnCycle: false,
+					script: { interpreter: 'bash', source: 'gh pr view --json mergeable' },
+				},
+			],
+		});
 		expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
 	});
 });

@@ -4,9 +4,10 @@
  * Computes a deterministic canonical hash of a workflow's structural fingerprint
  * for template drift detection.
  *
- * The fingerprint covers node names, channel topology, gate names, description,
- * and instructions. It does NOT include agent UUIDs (which differ per-space)
- * or layout coordinates (which are cosmetic).
+ * The fingerprint covers node names, channel topology, gate internals (fields,
+ * script, requiredLevel, resetOnCycle), description, and instructions.
+ * It does NOT include agent UUIDs (which differ per-space) or layout coordinates
+ * (which are cosmetic).
  */
 
 import type { SpaceWorkflow } from '@neokai/shared';
@@ -20,7 +21,12 @@ interface WorkflowFingerprint {
 	instructions: string;
 	nodeNames: string[];
 	channels: string[];
-	gateNames: string[];
+	/**
+	 * Rich gate serialization covering id, requiredLevel, resetOnCycle,
+	 * field names/types/checks, and a script prefix. This detects changes to
+	 * gate internals (not just gate additions/removals).
+	 */
+	gates: string[];
 }
 
 /**
@@ -37,14 +43,36 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		})
 		.sort();
 
-	const gateNames = (workflow.gates ?? []).map((g) => g.id).sort();
+	// Serialize each gate including its structural internals.
+	// Format: `<id>|<requiredLevel>|<resetOnCycle>|<sorted-fields>|<script-prefix>`
+	// Fields: `<name>:<type>:<checkOp>[:<checkExtra>]` — sorted for stability.
+	// Script: first 64 chars of source (captures script identity without full content).
+	const gates = (workflow.gates ?? [])
+		.map((g) => {
+			const fields = (g.fields ?? [])
+				.map((f) => {
+					const check = f.check;
+					let checkStr = check.op;
+					if (check.op === 'count') {
+						checkStr += `:${String(check.match)}:${check.min}`;
+					} else if (check.op !== 'exists' && 'value' in check && check.value !== undefined) {
+						checkStr += `:${String(check.value)}`;
+					}
+					return `${f.name}:${f.type}:${checkStr}`;
+				})
+				.sort()
+				.join(',');
+			const scriptPrefix = g.script ? g.script.source.slice(0, 64) : '';
+			return `${g.id}|${g.requiredLevel ?? 0}|${g.resetOnCycle}|${fields}|${scriptPrefix}`;
+		})
+		.sort();
 
 	return {
 		description: workflow.description ?? '',
 		instructions: workflow.instructions ?? '',
 		nodeNames,
 		channels,
-		gateNames,
+		gates,
 	};
 }
 
