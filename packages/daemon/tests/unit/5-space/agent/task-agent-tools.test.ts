@@ -1126,7 +1126,8 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
 
-		// Active agent: coder.
+		// Coder has a live session (simulated via mock taskAgentManager backed by nodeExecutionRepo).
+		// Reviewer is declared in NodeExecution but has no live session yet.
 		ctx.nodeExecutionRepo.create({
 			workflowRunId: run.id,
 			workflowNodeId: 'active-node',
@@ -1134,7 +1135,6 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 			agentSessionId: 'session-coder',
 			status: 'in_progress',
 		});
-		// Declared but inactive: reviewer.
 		ctx.nodeExecutionRepo.create({
 			workflowRunId: run.id,
 			workflowNodeId: 'declared-node',
@@ -1147,6 +1147,15 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		);
 		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
 
+		// Mock taskAgentManager: coder has a live session, reviewer does not.
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async (_taskId: string) => ['coder'],
+			getSubSessionByAgentName: async (_taskId: string, agentName: string) => {
+				if (agentName === 'coder') return { session: { id: 'session-coder' } };
+				return null;
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
 		const delivered: Array<{ sessionId: string; message: string }> = [];
 		const config: TaskAgentToolsConfig = {
 			...makeConfig(ctx, mainTask.id, run.id, {
@@ -1155,6 +1164,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 				},
 			}),
 			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
 		};
 		const handlers = createTaskAgentToolHandlers(config);
 

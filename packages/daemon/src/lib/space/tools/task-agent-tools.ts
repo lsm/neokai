@@ -31,6 +31,7 @@ import type {
 	PendingAgentMessageRepository,
 	PendingAgentMessageRecord,
 } from '../../../storage/repositories/pending-agent-message-repository';
+import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -146,6 +147,14 @@ export interface TaskAgentToolsConfig {
 	 * assert queue behavior without touching DB.
 	 */
 	onMessageQueued?: (record: PendingAgentMessageRecord) => void;
+	/**
+	 * TaskAgentManager instance for direct session lookup by agent name.
+	 * When provided, send_message uses `getSubSessionByAgentName` and
+	 * `getAgentNamesForTask` to resolve live sessions by name rather than
+	 * filtering NodeExecution records by status. Sessions persist until the
+	 * task is archived, so status-filtered lookup is no longer needed.
+	 */
+	taskAgentManager?: TaskAgentManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +185,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		pendingMessageRepo,
 		spaceAgentInjector,
 		onMessageQueued,
+		taskAgentManager,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -350,39 +360,34 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			const idempotencyKey = args.idempotency_key ?? null;
 			let targetAgentNames: string[];
 
+			// Agent names that have a live session (DB-driven lookup).
+			// These are reachable regardless of NodeExecution status — sessions persist
+			// until the task is archived, not until the node execution completes.
+			const liveAgentNames = taskAgentManager
+				? await taskAgentManager.getAgentNamesForTask(taskId)
+				: [];
+
+			// Agent names declared in any NodeExecution for this run — used to detect
+			// "agent exists but not yet spawned" (queueable) vs "unknown agent" (hard error).
 			const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-			const activeExecutions = allExecutions.filter(
-				(execution) =>
-					execution.agentSessionId &&
-					(execution.status === 'in_progress' || execution.status === 'pending')
-			);
-			// Agents declared in the workflow run — irrespective of current activation state.
-			// Used to distinguish "not-yet-active (queueable)" from "unknown agent (hard error)".
 			const declaredAgentNames = [...new Set(allExecutions.map((e) => e.agentName))];
-			const knownActiveAgentNames = [
-				...new Set(activeExecutions.map((execution) => execution.agentName)),
-			];
 
 			if (target === '*') {
-				if (knownActiveAgentNames.length === 0) {
+				if (liveAgentNames.length === 0) {
 					return jsonResult({
 						success: false,
 						error:
 							`No active workflow agent sessions found for this run. ` +
 							`Broadcast ('*') requires at least one active target.`,
-						availableTargets: knownActiveAgentNames,
+						availableTargets: liveAgentNames,
 					});
 				}
-				targetAgentNames = knownActiveAgentNames;
+				targetAgentNames = liveAgentNames;
 			} else if (Array.isArray(target)) {
 				targetAgentNames = target;
 			} else {
 				targetAgentNames = [target];
 			}
-			const sendPeers = activeExecutions.map((execution) => ({
-				sessionId: execution.agentSessionId!,
-				agentName: execution.agentName,
-			}));
 			const delivered: Array<{ agentName: string; sessionId: string }> = [];
 			const queued: Array<{
 				agentName: string;
@@ -464,9 +469,13 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				}
 
 				// --- Node-agent path --------------------------------------------
-				const targetSessions = sendPeers.filter((m) => m.agentName === targetAgentName);
-				if (targetSessions.length === 0) {
-					// Agent is declared in the run but no session is active yet.
+				// Look up the live session directly by agent name. Sessions remain alive
+				// for the full task lifetime (until archive), so no status filter is needed.
+				const liveSession = taskAgentManager
+					? await taskAgentManager.getSubSessionByAgentName(taskId, targetAgentName)
+					: null;
+				if (!liveSession) {
+					// Agent is declared but hasn't been spawned yet (pre-first-execution).
 					// Queue the message if we have the pending-message repo, else fall back to notFound.
 					const isDeclaredInRun = declaredAgentNames.includes(targetAgentName);
 					if (isDeclaredInRun && pendingMessageRepo) {
@@ -491,18 +500,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					notFound.push(targetAgentName);
 					continue;
 				}
-				for (const targetMember of targetSessions) {
-					try {
-						await messageInjector(targetMember.sessionId, prefixedMessage);
-						delivered.push({ agentName: targetAgentName, sessionId: targetMember.sessionId });
-					} catch (err) {
-						const errMsg = err instanceof Error ? err.message : String(err);
-						failed.push({
-							agentName: targetAgentName,
-							sessionId: targetMember.sessionId,
-							error: errMsg,
-						});
-					}
+				// Deliver directly to the live session. injectSubSessionMessage calls
+				// ensureQueryStarted() so an idle session is automatically restarted.
+				try {
+					await messageInjector(liveSession.session.id, prefixedMessage);
+					delivered.push({ agentName: targetAgentName, sessionId: liveSession.session.id });
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					failed.push({
+						agentName: targetAgentName,
+						sessionId: liveSession.session.id,
+						error: errMsg,
+					});
 				}
 			}
 

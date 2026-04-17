@@ -557,6 +557,7 @@ export class TaskAgentManager {
 				},
 				pendingMessageRepo: this.config.pendingMessageRepo,
 				spaceAgentInjector: this.config.spaceAgentInjector,
+				taskAgentManager: this,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -857,6 +858,70 @@ export class TaskAgentManager {
 		init: AgentSessionInit,
 		memberInfo?: SubSessionMemberInfo
 	): Promise<string> {
+		// --- Session reuse: if this agent already has a live session, reuse it.
+		// Each named agent gets exactly one AgentSession per task lifetime; subsequent
+		// node executions inject a new message into the existing session rather than
+		// spawning a fresh one. Sessions are only torn down when the task is archived.
+		// Primary state is in DB: query nodeExecutionRepo for the most recent session ID
+		// for this agent, then check agentSessionIndex (fast path) or lazily rehydrate.
+		if (memberInfo?.agentName) {
+			const parentTask = this.config.taskRepo.getTask(taskId);
+			if (parentTask?.workflowRunId) {
+				const existingExecs = this.config.nodeExecutionRepo
+					.listByWorkflowRun(parentTask.workflowRunId)
+					.filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId);
+				const prevExec = existingExecs.at(-1);
+				if (prevExec?.agentSessionId) {
+					// Reuse existing session — get from memory or restore from DB
+					const existing =
+						this.agentSessionIndex.get(prevExec.agentSessionId) ??
+						(await this.rehydrateSubSession(prevExec.agentSessionId));
+					if (existing) {
+						const existingSessionId = prevExec.agentSessionId;
+						log.info(
+							`TaskAgentManager: reusing session ${existingSessionId} for agent "${memberInfo.agentName}" (task ${taskId}); skipping new session ${sessionId}`
+						);
+
+						// Point the new NodeExecution at the existing session ID.
+						if (memberInfo.nodeId) {
+							const nodeExecs = this.config.nodeExecutionRepo.listByNode(
+								parentTask.workflowRunId,
+								memberInfo.nodeId
+							);
+							const match = nodeExecs.find(
+								(e) => e.agentName === memberInfo.agentName && !e.agentSessionId
+							);
+							if (match) {
+								this.config.nodeExecutionRepo.updateSessionId(match.id, existingSessionId);
+							}
+						}
+
+						// Register a fresh completion callback for this execution turn.
+						if (memberInfo.nodeId) {
+							this.registerCompletionCallback(existingSessionId, async () => {
+								await this.handleSubSessionComplete(taskId, memberInfo.nodeId!, existingSessionId);
+							});
+						}
+
+						// Flush any pending messages for this agent.
+						const runId = parentTask.workflowRunId;
+						void this.flushPendingMessagesForTarget(
+							runId,
+							memberInfo.agentName,
+							existingSessionId
+						).catch((err) => {
+							log.warn(
+								`TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${existingSessionId}): ${err instanceof Error ? err.message : String(err)}`
+							);
+						});
+
+						return existingSessionId;
+					}
+				}
+			}
+		}
+
+		// --- First execution for this agent: create a new session.
 		const subSession = AgentSession.fromInit(
 			init,
 			this.config.db,
@@ -1104,6 +1169,45 @@ export class TaskAgentManager {
 			return;
 		}
 		throw new Error(`Sub-session not found: ${subSessionId}`);
+	}
+
+	/**
+	 * Find the live AgentSession for a named agent within a task.
+	 *
+	 * Queries NodeExecution records from DB to find the most recent agentSessionId
+	 * for the given agent name, then returns the live session from agentSessionIndex
+	 * (fast path) or lazily rehydrates it from DB (after daemon restart).
+	 *
+	 * Returns null if the agent has never been spawned for this task.
+	 */
+	async getSubSessionByAgentName(taskId: string, agentName: string): Promise<AgentSession | null> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task?.workflowRunId) return null;
+
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+		// Most recent execution for this agent that has a session ID assigned
+		const exec = executions.filter((e) => e.agentName === agentName && e.agentSessionId).at(-1);
+		if (!exec?.agentSessionId) return null;
+
+		// Fast path: session already live in memory
+		const cached = this.agentSessionIndex.get(exec.agentSessionId);
+		if (cached) return cached;
+
+		// Slow path: restore from DB (lazy rehydration — no explicit startup step needed)
+		return this.rehydrateSubSession(exec.agentSessionId);
+	}
+
+	/**
+	 * Return all agent names that have an assigned session in this task's workflow run.
+	 * Used by the broadcast ('*') path in send_message.
+	 * Reads from DB so it is correct after daemon restarts without any rehydration step.
+	 */
+	async getAgentNamesForTask(taskId: string): Promise<string[]> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task?.workflowRunId) return [];
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+		const names = new Set(executions.filter((e) => e.agentSessionId).map((e) => e.agentName));
+		return [...names];
 	}
 
 	// -------------------------------------------------------------------------
@@ -1917,6 +2021,7 @@ export class TaskAgentManager {
 			},
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceAgentInjector: this.config.spaceAgentInjector,
+			taskAgentManager: this,
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
