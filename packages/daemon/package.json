@@ -22,7 +22,7 @@
 		"test:online": "bun test --coverage --coverage-reporter=text ./tests/online"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "0.2.110",
+		"@anthropic-ai/claude-agent-sdk": "0.2.112",
 		"@github/copilot-sdk": "0.2.2",
 		"@neokai/shared": "workspace:*",
 		"@openai/codex": "0.121.0",
