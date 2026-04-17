@@ -52,6 +52,7 @@ export function ToolResultCard({
 	isOutputRemoved = false,
 	disableExpand = false,
 	className,
+	isRunning = false,
 }: ToolResultCardProps) {
 	// Type-safe access to input/output properties
 	const inputRecord = input as Record<string, unknown>;
@@ -217,7 +218,15 @@ export function ToolResultCard({
 
 	// Default & detailed variants - full display with expand/collapse
 	return (
-		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+		<div
+			class={cn(
+				'border rounded-lg overflow-hidden',
+				colors.bg,
+				colors.border,
+				isRunning && 'running-block',
+				className
+			)}
+		>
 			{/* Header - clickable to expand/collapse */}
 			<button
 				onClick={() => !disableExpand && setIsExpanded(!isExpanded)}

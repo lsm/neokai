@@ -79,6 +79,29 @@ interface BlockSectionProps {
 	isRunningBlock: boolean;
 }
 
+function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning = false) {
+	if (!row.message) {
+		return (
+			<div class="text-xs text-gray-500 font-mono py-1" data-testid="compact-fallback-row">
+				{row.fallbackText ?? 'Unparseable row'}
+			</div>
+		);
+	}
+	const msgUuid = (row.message as { uuid?: string }).uuid ?? '';
+	return (
+		<SDKMessageRenderer
+			message={row.message}
+			sessionId={row.sessionId ?? undefined}
+			toolResultsMap={maps.toolResultsMap}
+			toolInputsMap={maps.toolInputsMap}
+			subagentMessagesMap={maps.subagentMessagesMap}
+			sessionInfo={maps.sessionInfoMap.get(msgUuid)}
+			taskContext={true}
+			isRunning={isRunning}
+		/>
+	);
+}
+
 /**
  * Renders a single logical block as a small agent-identity header followed by
  * each row's SDK message delegated to `SDKMessageRenderer`.
@@ -92,87 +115,60 @@ interface BlockSectionProps {
  * The agent-identity header is the only space-task-specific addition — it
  * labels each logical block's agent (e.g. TASK, CODER, REVIEWER) so the
  * multi-agent context is visible at a glance.
+ *
+ * When `isRunningBlock` is true (the session is still executing and this is
+ * the last non-terminal block), only the last individual event message receives
+ * the animated running-block chrome — not the entire block wrapper.
  */
 function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	const agentColor = getAgentColor(block.agentLabel);
 	const terminalBadge = getTerminalBadge(block);
-
-	const header = (
-		<div class="flex items-center gap-2 px-1 pt-1 pb-0.5" data-testid="compact-block-header">
-			<span
-				class="w-2 h-2 rounded-full flex-shrink-0"
-				style={{ backgroundColor: agentColor }}
-				aria-hidden="true"
-			/>
-			<span
-				class="text-[11px] uppercase tracking-[0.16em] font-mono font-medium flex-shrink-0"
-				style={{ color: agentColor }}
-			>
-				{shortAgentLabel(block.agentLabel)}
-			</span>
-			{terminalBadge && (
-				<span
-					class={
-						'ml-1 text-[10px] uppercase tracking-[0.14em] font-mono border rounded px-1 py-px flex-shrink-0 ' +
-						(terminalBadge === 'ERROR'
-							? 'text-red-300 border-red-800/80 bg-red-950/30'
-							: 'text-emerald-300 border-emerald-800/80 bg-emerald-950/30')
-					}
-					data-testid="compact-block-badge"
-				>
-					{terminalBadge}
-				</span>
-			)}
-		</div>
-	);
-
-	const body = (
-		<div class="space-y-0 px-1 pb-1" data-testid="compact-block-body">
-			{block.rows.map((row) => {
-				if (!row.message) {
-					// Raw fallback — rendering something minimal keeps the row slot visible.
-					return (
-						<div
-							key={String(row.id)}
-							class="text-xs text-gray-500 font-mono py-1"
-							data-testid="compact-fallback-row"
-						>
-							{row.fallbackText ?? 'Unparseable row'}
-						</div>
-					);
-				}
-				const msgUuid = (row.message as { uuid?: string }).uuid ?? '';
-				return (
-					<SDKMessageRenderer
-						key={String(row.id)}
-						message={row.message}
-						sessionId={row.sessionId ?? undefined}
-						toolResultsMap={maps.toolResultsMap}
-						toolInputsMap={maps.toolInputsMap}
-						subagentMessagesMap={maps.subagentMessagesMap}
-						sessionInfo={maps.sessionInfoMap.get(msgUuid)}
-						taskContext={true}
-					/>
-				);
-			})}
-		</div>
-	);
-
-	if (isRunningBlock) {
-		return (
-			<div class="running-block" data-testid="compact-running-block">
-				<div class="running-block-inner">
-					{header}
-					{body}
-				</div>
-			</div>
-		);
-	}
+	const lastRowIdx = block.rows.length - 1;
 
 	return (
 		<div data-testid="compact-block">
-			{header}
-			{body}
+			<div class="flex items-center gap-2 px-1 pt-1 pb-0.5" data-testid="compact-block-header">
+				<span
+					class="w-2 h-2 rounded-full flex-shrink-0"
+					style={{ backgroundColor: agentColor }}
+					aria-hidden="true"
+				/>
+				<span
+					class="text-[11px] uppercase tracking-[0.16em] font-mono font-medium flex-shrink-0"
+					style={{ color: agentColor }}
+				>
+					{shortAgentLabel(block.agentLabel)}
+				</span>
+				{terminalBadge && (
+					<span
+						class={
+							'ml-1 text-[10px] uppercase tracking-[0.14em] font-mono border rounded px-1 py-px flex-shrink-0 ' +
+							(terminalBadge === 'ERROR'
+								? 'text-red-300 border-red-800/80 bg-red-950/30'
+								: 'text-emerald-300 border-emerald-800/80 bg-emerald-950/30')
+						}
+						data-testid="compact-block-badge"
+					>
+						{terminalBadge}
+					</span>
+				)}
+			</div>
+			<div class="space-y-0 px-1 pb-1" data-testid="compact-block-body">
+				{block.rows.map((row, rowIdx) => {
+					const isLastRow = isRunningBlock && rowIdx === lastRowIdx;
+					if (isLastRow) {
+						// Wrap with a plain testid div (no visual classes) so tests can
+						// locate this row. The running-block animation is applied inside
+						// SDKMessageRenderer directly on the component's visual element.
+						return (
+							<div key={String(row.id)} data-testid="compact-running-block">
+								{renderRow(row, maps, true)}
+							</div>
+						);
+					}
+					return <div key={String(row.id)}>{renderRow(row, maps)}</div>;
+				})}
+			</div>
 		</div>
 	);
 }
@@ -194,8 +190,8 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
  *     blocks, terminal blocks always kept).
  *   - A small agent-identity header above each logical block so multi-agent
  *     context (Task / Coder / Reviewer / …) is readable at a glance.
- *   - `.running-block` chrome wrapping the tail block while the thread is
- *     still executing (non-terminal last block).
+ *   - `.running-block` chrome wrapping the last individual event message of
+ *     the tail block while the thread is still executing (non-terminal last block).
  */
 export function SpaceTaskCardFeed({ parsedRows, taskId: _taskId, maps }: SpaceTaskCardFeedProps) {
 	const visibleBlocks = useMemo(() => {

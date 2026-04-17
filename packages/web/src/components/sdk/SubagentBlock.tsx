@@ -59,6 +59,9 @@ interface SubagentBlockProps {
 	toolResultsMap?: Map<string, unknown>;
 	/** Additional CSS classes */
 	className?: string;
+	/** When true, apply the animated `.running-block` arc to the outermost
+	 * bordered container so the running indicator traces this card's border. */
+	isRunning?: boolean;
 }
 
 /**
@@ -239,6 +242,7 @@ export function SubagentBlock({
 	nestedMessages = [],
 	toolResultsMap,
 	className,
+	isRunning = false,
 }: SubagentBlockProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
 
@@ -273,7 +277,15 @@ export function SubagentBlock({
 	}, [nestedMessages, input.prompt]);
 
 	return (
-		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
+		<div
+			class={cn(
+				'border rounded-lg overflow-hidden',
+				colors.bg,
+				colors.border,
+				isRunning && 'running-block',
+				className
+			)}
+		>
 			{/* Header */}
 			<button
 				onClick={() => setIsExpanded(!isExpanded)}

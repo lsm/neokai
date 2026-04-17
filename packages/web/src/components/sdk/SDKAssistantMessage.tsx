@@ -49,6 +49,12 @@ interface Props {
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
 	allMessages?: SDKMessage[];
+	/**
+	 * When true, applies the `.running-block` animated border directly to the
+	 * message bubble (text blocks) or outermost container (tool/thinking-only).
+	 * Set by the compact task thread renderer for the last non-terminal message.
+	 */
+	isRunning?: boolean;
 }
 
 export function SDKAssistantMessage({
@@ -63,6 +69,7 @@ export function SDKAssistantMessage({
 	selectedMessages,
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
+	isRunning,
 }: Props) {
 	const { message: apiMessage } = message;
 	const hasError = 'error' in message && message.error !== undefined;
@@ -138,7 +145,10 @@ export function SDKAssistantMessage({
 						: messageColors.assistant.background,
 					borderRadius.message.bubble,
 					messageSpacing.assistant.bubble.combined,
-					'space-y-3'
+					'space-y-3',
+					// Apply running border directly to the bubble so the animation
+					// traces exactly on the message bubble's visible boundary.
+					isRunning && 'running-block'
 				)}
 			>
 				{hasError && (
@@ -286,6 +296,19 @@ export function SDKAssistantMessage({
 	}
 
 	// Normal mode - original layout
+	//
+	// For running-block placement: the animated arc must trace the inner
+	// visible card's border (not the outer wrapper, which has padding that
+	// would leave a visible gap). When there are text blocks, the bubble
+	// itself already applies `.running-block`. Otherwise, forward `isRunning`
+	// to the LAST tool or thinking block so the class lands on its outermost
+	// bordered element.
+	const lastToolBlockIdx = toolBlocks.length - 1;
+	const lastThinkingBlockIdx = thinkingBlocks.length - 1;
+	const applyRunningToLastTool = isRunning && textBlocks.length === 0 && toolBlocks.length > 0;
+	const applyRunningToLastThinking =
+		isRunning && textBlocks.length === 0 && toolBlocks.length === 0 && thinkingBlocks.length > 0;
+
 	const messageContent = (
 		<div
 			class="py-2 space-y-3"
@@ -309,13 +332,18 @@ export function SDKAssistantMessage({
 						resolvedQuestions={resolvedQuestions}
 						pendingQuestion={pendingQuestion}
 						onQuestionResolved={onQuestionResolved}
+						isRunning={applyRunningToLastTool && idx === lastToolBlockIdx}
 					/>
 				);
 			})}
 
 			{/* Thinking blocks - visible by default with expand/collapse for long content */}
 			{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
+				<ThinkingBlock
+					key={`thinking-${idx}`}
+					content={block.thinking}
+					isRunning={applyRunningToLastThinking && idx === lastThinkingBlockIdx}
+				/>
 			))}
 
 			{/* Text blocks - bubble + actions */}
@@ -345,6 +373,7 @@ function ToolUseBlock({
 	resolvedQuestions,
 	pendingQuestion,
 	onQuestionResolved,
+	isRunning,
 }: {
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
@@ -357,6 +386,10 @@ function ToolUseBlock({
 		state: 'submitted' | 'cancelled',
 		responses: QuestionDraftResponse[]
 	) => void;
+	/** When true, apply the animated `.running-block` arc to this block's
+	 * outermost visible bordered card. Used by the compact task thread renderer
+	 * to indicate the last still-executing event message. */
+	isRunning?: boolean;
 }) {
 	// Extract content and metadata from enhanced toolResult structure
 	const resultData = toolResult as
@@ -383,6 +416,7 @@ function ToolUseBlock({
 				toolId={block.id}
 				nestedMessages={nestedMessages}
 				toolResultsMap={toolResultsMap}
+				isRunning={isRunning}
 			/>
 		);
 	}
@@ -439,6 +473,7 @@ function ToolUseBlock({
 						messageUuid={messageUuid}
 						sessionId={sessionId}
 						isOutputRemoved={isOutputRemoved}
+						isRunning={isRunning}
 					/>
 				</div>
 			);
@@ -456,6 +491,7 @@ function ToolUseBlock({
 					messageUuid={messageUuid}
 					sessionId={sessionId}
 					isOutputRemoved={isOutputRemoved}
+					isRunning={isRunning}
 				/>
 				{/* Render QuestionPrompt inline - ALWAYS show the form */}
 				{resolved ? (
@@ -494,6 +530,7 @@ function ToolUseBlock({
 			messageUuid={messageUuid}
 			sessionId={sessionId}
 			isOutputRemoved={isOutputRemoved}
+			isRunning={isRunning}
 		/>
 	);
 }

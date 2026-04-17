@@ -15,6 +15,9 @@ interface ThinkingBlockProps {
 	className?: string;
 	/** Compact mode: shows only first line with no expand/collapse button */
 	compact?: boolean;
+	/** When true, apply the animated `.running-block` arc to the outermost
+	 * bordered container so the running indicator traces this card's border. */
+	isRunning?: boolean;
 }
 
 // Number of lines to show in preview mode
@@ -31,7 +34,12 @@ const colors = {
 	lightText: 'text-amber-700 dark:text-amber-300',
 };
 
-export function ThinkingBlock({ content, className, compact = false }: ThinkingBlockProps) {
+export function ThinkingBlock({
+	content,
+	className,
+	compact = false,
+	isRunning = false,
+}: ThinkingBlockProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
 	const [needsTruncation, setNeedsTruncation] = useState(false);
 	const contentRef = useRef<HTMLPreElement>(null);
@@ -50,7 +58,13 @@ export function ThinkingBlock({ content, className, compact = false }: ThinkingB
 
 	return (
 		<div
-			class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}
+			class={cn(
+				'border rounded-lg overflow-hidden',
+				colors.bg,
+				colors.border,
+				isRunning && 'running-block',
+				className
+			)}
 			data-testid="thinking-block"
 		>
 			{/* Header */}

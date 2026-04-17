@@ -58,6 +58,13 @@ interface Props {
 	allMessages?: SDKMessage[];
 	/** When true, renders all message types without skipping (for task conversation timelines) */
 	taskContext?: boolean;
+	/**
+	 * When true, the last non-terminal event message in a compact task thread is
+	 * still executing. The receiving component applies the `.running-block` class
+	 * directly to its visible boundary element (e.g. the assistant message bubble)
+	 * so the animated border traces exactly on that element's border.
+	 */
+	isRunning?: boolean;
 }
 
 /**
@@ -171,6 +178,7 @@ export function SDKMessageRenderer({
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
 	taskContext,
+	isRunning,
 }: Props) {
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
 	if (!isUserVisibleMessage(message)) {
@@ -234,6 +242,7 @@ export function SDKMessageRenderer({
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
 				allMessages={_allMessages}
+				isRunning={isRunning}
 			/>
 		);
 	} else if (isSDKResultMessage(message)) {

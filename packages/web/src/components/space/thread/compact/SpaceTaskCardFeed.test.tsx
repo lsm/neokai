@@ -10,14 +10,23 @@ import type { ParsedThreadRow } from '../space-task-thread-events';
 // falls back to the message `type` so terminal/result rows still render
 // something detectable.
 vi.mock('../../../sdk/SDKMessageRenderer', () => ({
-	SDKMessageRenderer: ({ message, taskContext }: { message: any; taskContext?: boolean }) => {
+	SDKMessageRenderer: ({
+		message,
+		taskContext,
+		isRunning,
+	}: {
+		message: any;
+		taskContext?: boolean;
+		isRunning?: boolean;
+	}) => {
 		const content = message?.message?.content;
+		const attrs = {
+			'data-testid': 'sdk-message-renderer',
+			'data-task-context': taskContext ? '1' : '0',
+			'data-running': isRunning ? '1' : '0',
+		};
 		if (typeof content === 'string') {
-			return (
-				<div data-testid="sdk-message-renderer" data-task-context={taskContext ? '1' : '0'}>
-					{content}
-				</div>
-			);
+			return <div {...attrs}>{content}</div>;
 		}
 		if (Array.isArray(content)) {
 			const text = content
@@ -25,17 +34,9 @@ vi.mock('../../../sdk/SDKMessageRenderer', () => ({
 				.map((b: any) => b.text)
 				.join(' ')
 				.trim();
-			return (
-				<div data-testid="sdk-message-renderer" data-task-context={taskContext ? '1' : '0'}>
-					{text || message?.type || ''}
-				</div>
-			);
+			return <div {...attrs}>{text || message?.type || ''}</div>;
 		}
-		return (
-			<div data-testid="sdk-message-renderer" data-task-context={taskContext ? '1' : '0'}>
-				{message?.type || ''}
-			</div>
-		);
+		return <div {...attrs}>{message?.type || ''}</div>;
 	},
 }));
 
@@ -179,7 +180,7 @@ describe('SpaceTaskCardFeed', () => {
 		);
 
 		const blocks = container.querySelectorAll('[data-testid="compact-block"]');
-		expect(blocks.length).toBe(1); // Only the non-running block is plain `compact-block`; running tail has its own wrapper.
+		expect(blocks.length).toBe(2); // All block sections use compact-block; running-block chrome is on the last row inside the tail block.
 
 		blocks.forEach((blockEl) => {
 			const className = blockEl.getAttribute('class') ?? '';
@@ -190,14 +191,29 @@ describe('SpaceTaskCardFeed', () => {
 
 	// ── Running-block wrapper ────────────────────────────────────────────────
 
-	it('wraps the last non-terminal block in the running-block chrome', () => {
+	it('marks the last non-terminal row as running and passes isRunning to SDKMessageRenderer', () => {
 		const rows = [
 			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
 			makeAssistantTextRow('r2', 'Coder Agent', 'final — running'),
 		];
-		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
+		const { container } = render(
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+		);
 
-		expect(screen.getByTestId('compact-running-block')).toBeTruthy();
+		// The testid wrapper must exist on the last row.
+		const runningWrapper = screen.getByTestId('compact-running-block');
+		expect(runningWrapper).toBeTruthy();
+
+		// The SDKMessageRenderer inside must receive isRunning=true.
+		const rendererEl = runningWrapper.querySelector('[data-testid="sdk-message-renderer"]');
+		expect(rendererEl?.getAttribute('data-running')).toBe('1');
+
+		// Non-running rows must NOT have isRunning=true.
+		const allRenderers = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		const nonRunning = Array.from(allRenderers).filter(
+			(el) => el.getAttribute('data-running') !== '1'
+		);
+		expect(nonRunning.length).toBe(1); // only 'prior' row is non-running
 	});
 
 	it('does not wrap in running-block when the tail block is terminal', () => {
@@ -331,10 +347,10 @@ describe('SpaceTaskCardFeed', () => {
 		expect(badges.length).toBe(1);
 		expect(badges[0].textContent).toBe('ERROR');
 
-		const blockCount = container.querySelectorAll(
-			'[data-testid="compact-block"], [data-testid="compact-running-block"]'
-		).length;
-		expect(blockCount).toBe(4); // 3 recent + 1 terminal preserved.
+		// 4 compact-block wrappers (3 recent + 1 terminal preserved) plus 1 inner
+		// running-block row wrapper on the last non-terminal block's last row.
+		const compactBlocks = container.querySelectorAll('[data-testid="compact-block"]').length;
+		expect(compactBlocks).toBe(4); // 3 recent + 1 terminal preserved.
 	});
 
 	// ── Pre-filter (noise removal) ───────────────────────────────────────────

@@ -679,54 +679,70 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
    padding — the wrapper already accounts for both the tab bar and home indicator. */
 
 /* ── Space task thread — compact running-block indicator ─────────────────────
-   A clockwise-spinning gradient arc rendered as a 1-px border around the last
-   active (non-terminal) block while the task is still executing.
-   The ::before pseudo-element spins inside the clipped overflow area; the inner
-   content layer (.running-block-inner) sits above it with a solid background
-   and 1px margin so only the rotating gradient shows through as the border. */
+   A white arc of light that traces clockwise around the border of the last
+   active (non-terminal) event message while the agent session is running.
+
+   Technique (matches the @property arc-spin pattern):
+   - @property --running-angle lets CSS smoothly interpolate the conic-gradient
+     start angle so the arc rotates rather than jumps.
+   - ::before extends 2px outside the element (inset: -2px; padding: 2px) so
+     the 2px arc ring sits exactly on the element's visible border edge with
+     no gap.
+   - The mask punches out the content area (content-box) leaving only the 2px
+     padding ring visible — the card interior is untouched.
+   - z-index: -1 + isolation: isolate keeps the arc behind all card content
+     without affecting child stacking. */
+
+@property --running-angle {
+	syntax: "<angle>";
+	initial-value: 0deg;
+	inherits: false;
+}
 
 @keyframes space-task-spin-border {
 	to {
-		transform: rotate(1turn);
+		--running-angle: 360deg;
 	}
 }
 
 .running-block {
 	position: relative;
-	border-radius: 8px;
-	overflow: hidden;
+	isolation: isolate;
 }
 
 .running-block::before {
 	content: "";
 	position: absolute;
-	top: 50%;
-	left: 50%;
-	width: 200%;
-	height: 200%;
-	transform: translate(-50%, -50%);
+	inset: -2px;
+	border-radius: inherit;
+	padding: 2px;
+	/* Arc: ~40% visible (60% transparent), bright white head fading to dim tail */
 	background: conic-gradient(
-		from 0deg,
-		transparent 170deg,
-		rgba(99, 155, 255, 0.5) 215deg,
-		rgba(180, 215, 255, 0.95) 250deg,
-		rgba(99, 155, 255, 0.5) 285deg,
-		transparent 330deg
+		from var(--running-angle),
+		transparent 0%,
+		transparent 60%,
+		rgba(255, 255, 255, 0.95) 80%,
+		rgba(255, 255, 255, 0.2) 95%,
+		transparent 100%
 	);
-	animation: space-task-spin-border 2.5s linear infinite;
+	/* Mask: content-box punches a hole through the center so only the 2px
+	   padding ring (the arc) is visible — card interior stays clean */
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	animation: space-task-spin-border 4s linear infinite;
+	z-index: -1;
+	pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.running-block::before {
 		animation: none;
-		background: rgba(99, 155, 255, 0.4);
+		background: rgba(255, 255, 255, 0.25);
 	}
-}
-
-.running-block-inner {
-	position: relative;
-	z-index: 1;
-	margin: 1px;
-	border-radius: 7px;
-	background: var(--color-dark-900);
 }
