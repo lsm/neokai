@@ -10,7 +10,7 @@
  * - Real-time updates via SpaceStore
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type { SpaceWorkflow, SpaceExportBundle } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 
@@ -116,6 +116,37 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 	const [deleting, setDeleting] = useState(false);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
 
+	// Drift detection state: null = unknown/checking, true = drifted, false = in sync
+	const [driftDrifted, setDriftDrifted] = useState<boolean | null>(null);
+	const [syncing, setSyncing] = useState(false);
+	const [syncError, setSyncError] = useState<string | null>(null);
+	const [confirmSync, setConfirmSync] = useState(false);
+
+	// Check for template drift whenever workflow changes (if it came from a template)
+	useEffect(() => {
+		if (!workflow.templateName) return;
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		let cancelled = false;
+		hub
+			.request<{ drifted: boolean }>('spaceWorkflow.detectDrift', {
+				id: workflow.id,
+				spaceId,
+			})
+			.then((result) => {
+				if (!cancelled) setDriftDrifted(result.drifted);
+			})
+			.catch(() => {
+				// Ignore drift detection errors silently
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [workflow.id, workflow.updatedAt, workflow.templateName, spaceId]);
+
 	async function handleDelete() {
 		setDeleting(true);
 		setDeleteError(null);
@@ -146,6 +177,26 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 		}
 	}
 
+	async function handleSyncFromTemplate() {
+		setSyncing(true);
+		setSyncError(null);
+		try {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) throw new Error('Not connected');
+			await hub.request('spaceWorkflow.syncFromTemplate', {
+				id: workflow.id,
+				spaceId,
+			});
+			setConfirmSync(false);
+			setDriftDrifted(false); // no longer drifted after sync
+			toast.success(`"${workflow.name}" synced from template`);
+		} catch (err) {
+			setSyncError(err instanceof Error ? err.message : 'Sync failed');
+		} finally {
+			setSyncing(false);
+		}
+	}
+
 	return (
 		<div class="bg-dark-850 border border-dark-700 rounded-lg p-4 hover:border-dark-600 transition-colors group">
 			{deleteError && (
@@ -159,6 +210,35 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 					<h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
 					{workflow.description && (
 						<p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{workflow.description}</p>
+					)}
+					{/* Template badge + drift indicator */}
+					{workflow.templateName && (
+						<div class="flex items-center gap-1.5 mt-1">
+							<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-dark-800 border border-dark-600 rounded text-gray-500">
+								<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+									/>
+								</svg>
+								{workflow.templateName}
+							</span>
+							{driftDrifted === true && (
+								<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-yellow-900/30 border border-yellow-700/50 rounded text-yellow-400">
+									<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+										/>
+									</svg>
+									Outdated
+								</span>
+							)}
+						</div>
 					)}
 				</div>
 
@@ -186,6 +266,15 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 						</>
 					) : (
 						<>
+							{workflow.templateName && driftDrifted === true && (
+								<button
+									onClick={() => setConfirmSync(true)}
+									class="px-2.5 py-1 text-xs text-yellow-400 hover:text-yellow-200 bg-dark-800 hover:bg-dark-700 rounded border border-yellow-700/50 hover:border-yellow-600/70 transition-colors"
+									title="Sync from template (overwrites local changes)"
+								>
+									Sync
+								</button>
+							)}
 							<button
 								onClick={onEdit}
 								class="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-200 bg-dark-800 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 transition-colors"
@@ -249,6 +338,48 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 					</>
 				)}
 			</div>
+
+			{/* Sync from template confirmation modal */}
+			{confirmSync && (
+				<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+					<div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
+						<h3 class="text-sm font-semibold text-gray-100 mb-2">Sync from template?</h3>
+						<p class="text-xs text-gray-400 mb-1">
+							This will overwrite <span class="font-medium text-gray-200">"{workflow.name}"</span>{' '}
+							with the latest version of the{' '}
+							<span class="font-medium text-gray-200">"{workflow.templateName}"</span> template.
+						</p>
+						<p class="text-xs text-red-400 mb-4">
+							All local edits to this workflow (nodes, channels, gates, instructions) will be
+							permanently lost.
+						</p>
+						{syncError && (
+							<div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+								{syncError}
+							</div>
+						)}
+						<div class="flex items-center gap-2 justify-end">
+							<button
+								onClick={() => {
+									setConfirmSync(false);
+									setSyncError(null);
+								}}
+								disabled={syncing}
+								class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={handleSyncFromTemplate}
+								disabled={syncing}
+								class="px-3 py-1.5 text-xs font-medium text-white bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
+							>
+								{syncing ? 'Syncing…' : 'Sync from template'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
