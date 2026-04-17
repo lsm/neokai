@@ -162,6 +162,12 @@ export interface NodeAgentToolsConfig {
 	 */
 	onReportResult?: (args: ReportResultInput) => Promise<ToolResult>;
 	/**
+	 * Resolves the space's current autonomy level.
+	 * When provided, agent gate writes via send_message are blocked when
+	 * space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
+	/**
 	 * Workflow run artifact repository for write_artifact / list_artifacts tools.
 	 * Optional — when absent, artifact tools are not registered.
 	 */
@@ -193,6 +199,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		onGateDataChanged,
 		scriptExecutor,
 		scriptContext,
+		getSpaceAutonomyLevel,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -311,6 +318,23 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						const gateDef = gates.find((g) => g.id === gateId);
 
 						if (gateDef) {
+							// Autonomy-level enforcement for agent gate writes.
+							// Missing gate.requiredLevel defaults to 5 (max restriction).
+							// Human approval via spaceWorkflowRun.approveGate RPC is not affected.
+							if (getSpaceAutonomyLevel) {
+								const effectiveRequiredLevel = gateDef.requiredLevel ?? 5;
+								const spaceLevel = await getSpaceAutonomyLevel(spaceId);
+								if (spaceLevel < effectiveRequiredLevel) {
+									return jsonResult({
+										success: false,
+										error:
+											`Agent gate write blocked: gate "${gateId}" requires autonomy level ` +
+											`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+											`Increase space autonomy level or request human approval.`,
+									});
+								}
+							}
+
 							// Field-level authorization check
 							const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
 							const authorizedData: Record<string, unknown> = {};

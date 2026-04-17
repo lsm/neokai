@@ -26,6 +26,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -96,6 +97,17 @@ export interface TaskAgentToolsConfig {
 	workflowRunRepo?: SpaceWorkflowRunRepository;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
+	/**
+	 * Workflow manager for resolving gate definitions.
+	 * Required for approve_gate autonomy enforcement to look up gate.requiredLevel.
+	 */
+	workflowManager?: SpaceWorkflowManager;
+	/**
+	 * Resolves the space's current autonomy level.
+	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
+	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +131,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		gateDataRepo,
 		workflowRunRepo,
 		onGateChanged,
+		workflowManager,
+		getSpaceAutonomyLevel,
 	} = config;
 
 	return {
@@ -422,6 +436,25 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					success: false,
 					error: `Cannot modify gate on a ${run.status} workflow run`,
 				});
+			}
+
+			// Enforce autonomy level for agent-originated approvals.
+			// Missing gate.requiredLevel defaults to 5 (max restriction).
+			// Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
+			if (args.approved && workflowManager && getSpaceAutonomyLevel) {
+				const workflow = workflowManager.getWorkflow(run.workflowId);
+				const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
+				const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+				const spaceLevel = await getSpaceAutonomyLevel(space.id);
+				if (spaceLevel < effectiveRequiredLevel) {
+					return jsonResult({
+						success: false,
+						error:
+							`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+							`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+							`Increase space autonomy level or request human approval.`,
+					});
+				}
 			}
 
 			const existing = gateDataRepo.get(workflowRunId, args.gate_id);

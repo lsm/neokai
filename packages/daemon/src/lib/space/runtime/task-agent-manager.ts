@@ -501,6 +501,11 @@ export class TaskAgentManager {
 				daemonHub: this.config.daemonHub,
 				gateDataRepo: this.config.gateDataRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
+				workflowManager: this.config.spaceWorkflowManager,
+				getSpaceAutonomyLevel: async (sid) => {
+					const s = await this.config.spaceManager.getSpace(sid);
+					return s?.autonomyLevel ?? 1;
+				},
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
@@ -1703,6 +1708,11 @@ export class TaskAgentManager {
 			daemonHub: this.config.daemonHub,
 			gateDataRepo: this.config.gateDataRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
+			workflowManager: this.config.spaceWorkflowManager,
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await this.config.spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
@@ -2183,6 +2193,10 @@ export class TaskAgentManager {
 			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
 			onReportResult,
 			artifactRepo: this.config.artifactRepo,
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
 		});
 	}
 }

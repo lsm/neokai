@@ -69,6 +69,12 @@ export interface SpaceAgentToolsConfig {
 	daemonHub?: DaemonHub;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
+	/**
+	 * Resolves the space's current autonomy level.
+	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
+	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +99,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		gateDataRepo,
 		daemonHub,
 		onGateChanged,
+		getSpaceAutonomyLevel,
 	} = config;
 
 	return {
@@ -516,6 +523,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					success: false,
 					error: `Cannot modify gate on a ${run.status} workflow run`,
 				});
+			}
+
+			// Enforce autonomy level for agent-originated approvals.
+			// Missing gate.requiredLevel defaults to 5 (max restriction).
+			// Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
+			if (args.approved && getSpaceAutonomyLevel) {
+				const workflow = workflowManager.getWorkflow(run.workflowId);
+				const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
+				const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+				const spaceLevel = await getSpaceAutonomyLevel(spaceId);
+				if (spaceLevel < effectiveRequiredLevel) {
+					return jsonResult({
+						success: false,
+						error:
+							`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+							`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+							`Increase space autonomy level or request human approval.`,
+					});
+				}
 			}
 
 			const existing = gateDataRepo.get(args.run_id, args.gate_id);
