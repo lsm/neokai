@@ -18,11 +18,14 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { CreateSpaceWorkflowParams, UpdateSpaceWorkflowParams } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { getBuiltInWorkflows } from '../space/workflows/built-in-workflows';
+import { computeWorkflowHash } from '../space/workflows/template-hash';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-handlers');
@@ -31,7 +34,8 @@ export function setupSpaceWorkflowHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	workflowManager: SpaceWorkflowManager,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	spaceAgentManager: SpaceAgentManager
 ): void {
 	// ─── spaceWorkflow.create ────────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflow.create', async (data) => {
@@ -235,5 +239,183 @@ export function setupSpaceWorkflowHandlers(
 			});
 
 		return { success: true };
+	});
+
+	// ─── spaceWorkflow.detectDrift ───────────────────────────────────────────
+	messageHub.onRequest('spaceWorkflow.detectDrift', async (data) => {
+		const params = data as { id: string; spaceId?: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const workflow = workflowManager.getWorkflow(params.id);
+		if (!workflow) {
+			throw new Error(`Workflow not found: ${params.id}`);
+		}
+
+		if (params.spaceId && workflow.spaceId !== params.spaceId) {
+			throw new Error(`Workflow not found: ${params.id}`);
+		}
+
+		// If no template tracking, no drift possible
+		if (!workflow.templateName) {
+			return {
+				drifted: false,
+				templateName: null,
+				currentTemplateHash: null,
+				workflowContentHash: null,
+				storedHash: workflow.templateHash ?? null,
+			};
+		}
+
+		// Find the current template by name
+		const templates = getBuiltInWorkflows();
+		const template = templates.find((t) => t.name === workflow.templateName);
+		if (!template) {
+			// Template no longer exists — can't detect drift
+			return {
+				drifted: false,
+				templateName: workflow.templateName,
+				currentTemplateHash: null,
+				workflowContentHash: null,
+				storedHash: workflow.templateHash ?? null,
+			};
+		}
+
+		// Compute current template's hash
+		const currentTemplateHash = computeWorkflowHash(template);
+		const workflowContentHash = computeWorkflowHash(workflow);
+
+		// Drift if either:
+		// 1. The stored template_hash differs from the current template hash (template was updated)
+		// 2. The workflow content hash differs from the stored template_hash (user edited workflow)
+		const storedHash = workflow.templateHash ?? null;
+		const drifted = currentTemplateHash !== storedHash || workflowContentHash !== storedHash;
+
+		return {
+			drifted,
+			templateName: workflow.templateName,
+			currentTemplateHash,
+			workflowContentHash,
+			storedHash,
+		};
+	});
+
+	// ─── spaceWorkflow.syncFromTemplate ─────────────────────────────────────
+	messageHub.onRequest('spaceWorkflow.syncFromTemplate', async (data) => {
+		const params = data as { id: string; spaceId: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+		if (!params.spaceId) {
+			throw new Error('spaceId is required');
+		}
+
+		// Verify space exists
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		const workflow = workflowManager.getWorkflow(params.id);
+		if (!workflow) {
+			throw new Error(`Workflow not found: ${params.id}`);
+		}
+		if (workflow.spaceId !== params.spaceId) {
+			throw new Error(`Workflow not found: ${params.id}`);
+		}
+		if (!workflow.templateName) {
+			throw new Error(
+				`Workflow "${workflow.name}" is not linked to a built-in template and cannot be synced.`
+			);
+		}
+
+		// Find the template
+		const templates = getBuiltInWorkflows();
+		const template = templates.find((t) => t.name === workflow.templateName);
+		if (!template) {
+			throw new Error(
+				`Built-in template "${workflow.templateName}" not found. It may have been removed.`
+			);
+		}
+
+		// Resolve agent role names → space agent UUIDs
+		const spaceAgents = spaceAgentManager.listBySpaceId(params.spaceId);
+		function resolveAgentId(roleName: string): string | undefined {
+			return spaceAgents.find((a) => a.name.toLowerCase() === roleName.toLowerCase())?.id;
+		}
+
+		// Build new node list from template, assigning fresh UUIDs to node IDs
+		const nodeIdMap = new Map<string, string>();
+		for (const node of template.nodes) {
+			nodeIdMap.set(node.id, generateUUID());
+		}
+
+		const newNodes = template.nodes.map((node) => {
+			const resolvedAgents = node.agents.map((a) => {
+				const resolvedId = resolveAgentId(a.agentId);
+				if (!resolvedId) {
+					throw new Error(
+						`Cannot sync: no SpaceAgent found with name "${a.agentId}" in space "${params.spaceId}".`
+					);
+				}
+				return { ...a, agentId: resolvedId };
+			});
+			return {
+				id: nodeIdMap.get(node.id)!,
+				name: node.name,
+				agents: resolvedAgents,
+				...(node.completionActions ? { completionActions: node.completionActions } : {}),
+			};
+		});
+
+		const newStartNodeId = nodeIdMap.get(template.startNodeId);
+		if (!newStartNodeId) {
+			throw new Error(`Template "${template.name}" has invalid startNodeId.`);
+		}
+
+		const newEndNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId) : undefined;
+
+		const newChannels = template.channels
+			? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
+			: null;
+
+		const newGates = template.gates ? [...template.gates] : null;
+
+		// Compute the template hash for drift tracking
+		const templateHash = computeWorkflowHash(template);
+
+		// Overwrite the workflow
+		const updated = workflowManager.updateWorkflow(params.id, {
+			name: template.name,
+			description: template.description ?? null,
+			instructions: template.instructions ?? null,
+			nodes: newNodes,
+			startNodeId: newStartNodeId,
+			endNodeId: newEndNodeId ?? null,
+			channels: newChannels,
+			gates: newGates,
+			tags: [...template.tags],
+			templateName: workflow.templateName,
+			templateHash,
+		});
+
+		if (!updated) {
+			throw new Error(`Workflow not found: ${params.id}`);
+		}
+
+		daemonHub
+			.emit('spaceWorkflow.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				workflow: updated,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit spaceWorkflow.updated:', err);
+			});
+
+		return { workflow: updated };
 	});
 }

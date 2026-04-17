@@ -385,6 +385,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Rewrite those `approved` fields to `writers: []` so external-approval
 	//   gates keep working under the new authorization rules.
 	runMigration89(db);
+
+	// Migration 90: Add template_name and template_hash to space_workflows for drift detection.
+	runMigration90(db);
+
+	// Migration 91: Add instructions column to space_workflows.
+	//   Stores workflow-level instructions injected into every agent session.
+	runMigration91(db);
 }
 
 /**
@@ -5958,5 +5965,41 @@ export function runMigration89(db: BunDatabase): void {
 		if (changed) {
 			update.run(JSON.stringify(gates), row.id);
 		}
+	}
+}
+
+/**
+ * Migration 90: Add template tracking columns to space_workflows.
+ *
+ * - template_name TEXT — the stable name of the built-in template this workflow
+ *   was created from or last synced to (e.g. "Fullstack QA Loop").
+ *   NULL for user-created workflows not based on any template.
+ *
+ * - template_hash TEXT — SHA-256 hex hash of the template's canonical content
+ *   fingerprint at the time of creation or last sync. Used for drift detection.
+ *   NULL when template_name is NULL.
+ */
+function runMigration90(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	if (!tableHasColumn(db, 'space_workflows', 'template_name')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN template_name TEXT DEFAULT NULL`);
+	}
+	if (!tableHasColumn(db, 'space_workflows', 'template_hash')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN template_hash TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 91: Add instructions column to space_workflows.
+ *
+ * - instructions TEXT — workflow-level instructions injected into every agent session
+ *   in this workflow. NULL for workflows with no explicit instructions.
+ */
+function runMigration91(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	if (!tableHasColumn(db, 'space_workflows', 'instructions')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN instructions TEXT DEFAULT NULL`);
 	}
 }

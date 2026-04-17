@@ -1911,6 +1911,24 @@ class SpaceStore {
 
 		await hub.request('spaceWorkflow.delete', { id: workflowId, spaceId });
 	}
+
+	/**
+	 * Sync a workflow from its built-in template, overwriting current content.
+	 * Requires the workflow to have been created from a built-in template (templateName set).
+	 */
+	async syncWorkflowFromTemplate(workflowId: string): Promise<SpaceWorkflow> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { workflow } = await hub.request<{ workflow: SpaceWorkflow }>(
+			'spaceWorkflow.syncFromTemplate',
+			{ id: workflowId, spaceId }
+		);
+		return workflow;
+	}
 }
 
 /** Singleton space store instance */

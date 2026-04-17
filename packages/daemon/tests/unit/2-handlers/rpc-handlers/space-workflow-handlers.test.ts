@@ -11,6 +11,12 @@
  *   space-existence check, ownership check, validation error, event emission (spaceWorkflow.updated)
  * - spaceWorkflow.delete: happy path, missing id, workflow not found, optional spaceId
  *   space-existence check, ownership check, event emission (spaceWorkflow.deleted)
+ * - spaceWorkflow.detectDrift: no templateName (not drifted), template not found, no drift,
+ *   template hash mismatch (template updated), workflow content hash mismatch (user edit),
+ *   missing id
+ * - spaceWorkflow.syncFromTemplate: happy path, missing id, missing spaceId, space not found,
+ *   workflow not found, ownership mismatch, no templateName, template not found,
+ *   agent not resolved, event emission (spaceWorkflow.updated)
  * - spaceWorkflow.setDefault: NOT registered (concept removed from design)
  */
 
@@ -21,7 +27,10 @@ import { setupSpaceWorkflowHandlers } from '../../../../src/lib/rpc-handlers/spa
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash';
+import { getBuiltInWorkflows } from '../../../../src/lib/space/workflows/built-in-workflows';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -118,6 +127,14 @@ function createMockWorkflowManager(
 	} as unknown as SpaceWorkflowManager;
 }
 
+function createMockSpaceAgentManager(
+	agents: Array<{ id: string; name: string }> = []
+): SpaceAgentManager {
+	return {
+		listBySpaceId: mock(() => agents),
+	} as unknown as SpaceAgentManager;
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('space-workflow-handlers', () => {
@@ -126,15 +143,21 @@ describe('space-workflow-handlers', () => {
 	let daemonHub: DaemonHub;
 	let spaceManager: SpaceManager;
 	let workflowManager: SpaceWorkflowManager;
+	let spaceAgentManager: SpaceAgentManager;
 
-	function setup(space: Space | null = mockSpace, workflow: SpaceWorkflow | null = mockWorkflow) {
+	function setup(
+		space: Space | null = mockSpace,
+		workflow: SpaceWorkflow | null = mockWorkflow,
+		agents: Array<{ id: string; name: string }> = []
+	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
 		daemonHub = createMockDaemonHub();
 		spaceManager = createMockSpaceManager(space);
 		workflowManager = createMockWorkflowManager(workflow);
-		setupSpaceWorkflowHandlers(hub, spaceManager, workflowManager, daemonHub);
+		spaceAgentManager = createMockSpaceAgentManager(agents);
+		setupSpaceWorkflowHandlers(hub, spaceManager, workflowManager, daemonHub, spaceAgentManager);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -443,6 +466,247 @@ describe('space-workflow-handlers', () => {
 
 		it('does not register spaceWorkflow.setDefault (removed from design)', () => {
 			expect(handlers.has('spaceWorkflow.setDefault')).toBe(false);
+		});
+	});
+
+	// ─── spaceWorkflow.detectDrift ────────────────────────────────────────────
+
+	describe('spaceWorkflow.detectDrift', () => {
+		it('returns drifted=false with null hashes when workflow has no templateName', async () => {
+			const wfNoTemplate: SpaceWorkflow = {
+				...mockWorkflow,
+				templateName: undefined,
+				templateHash: undefined,
+			};
+			setup(mockSpace, wfNoTemplate);
+			const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
+				string,
+				unknown
+			>;
+			expect(result.drifted).toBe(false);
+			expect(result.templateName).toBeNull();
+			expect(result.currentTemplateHash).toBeNull();
+			expect(result.workflowContentHash).toBeNull();
+			expect(result.storedHash).toBeNull();
+		});
+
+		it('returns drifted=false when template is not found in built-ins', async () => {
+			const wfUnknownTemplate: SpaceWorkflow = {
+				...mockWorkflow,
+				templateName: 'Unknown Template',
+				templateHash: 'abc123',
+			};
+			setup(mockSpace, wfUnknownTemplate);
+			const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
+				string,
+				unknown
+			>;
+			expect(result.drifted).toBe(false);
+			expect(result.templateName).toBe('Unknown Template');
+			expect(result.storedHash).toBe('abc123');
+		});
+
+		it('returns drifted=false when workflow matches template and stored hash', async () => {
+			// Use the first built-in template and set hashes so there is no drift
+			const [template] = getBuiltInWorkflows();
+			const hash = computeWorkflowHash(template);
+			// Build a workflow that exactly matches the template's fingerprint by copying node names etc.
+			const wfMatching: SpaceWorkflow = {
+				...template,
+				id: 'wf-1',
+				spaceId: 'space-1',
+				templateName: template.name,
+				templateHash: hash,
+			};
+			setup(mockSpace, wfMatching);
+			const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
+				string,
+				unknown
+			>;
+			expect(result.drifted).toBe(false);
+			expect(result.templateName).toBe(template.name);
+			expect(result.storedHash).toBe(hash);
+		});
+
+		it('returns drifted=true when stored hash differs from current template hash (template updated)', async () => {
+			const [template] = getBuiltInWorkflows();
+			const currentHash = computeWorkflowHash(template);
+			// Stored hash is intentionally stale (template was updated after last sync)
+			const staleHash = 'stale-hash-from-old-version';
+			const wfStale: SpaceWorkflow = {
+				...template,
+				id: 'wf-1',
+				spaceId: 'space-1',
+				templateName: template.name,
+				templateHash: staleHash,
+			};
+			setup(mockSpace, wfStale);
+			const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
+				string,
+				unknown
+			>;
+			expect(result.drifted).toBe(true);
+			expect(result.currentTemplateHash).toBe(currentHash);
+			expect(result.storedHash).toBe(staleHash);
+		});
+
+		it('returns drifted=true when workflow content hash differs from stored hash (user edit)', async () => {
+			const [template] = getBuiltInWorkflows();
+			const templateHash = computeWorkflowHash(template);
+			// Workflow has extra node compared to template — content diverges
+			const wfEdited: SpaceWorkflow = {
+				...template,
+				id: 'wf-1',
+				spaceId: 'space-1',
+				nodes: [
+					...template.nodes,
+					{ id: 'extra', name: 'Extra Node', agents: [{ agentId: 'a', name: 'A' }] },
+				],
+				templateName: template.name,
+				templateHash,
+			};
+			setup(mockSpace, wfEdited);
+			const result = (await call('spaceWorkflow.detectDrift', { id: 'wf-1' })) as Record<
+				string,
+				unknown
+			>;
+			expect(result.drifted).toBe(true);
+		});
+
+		it('throws when id is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflow.detectDrift', {})).rejects.toThrow('id is required');
+		});
+
+		it('throws when workflow not found', async () => {
+			setup(mockSpace, null);
+			await expect(call('spaceWorkflow.detectDrift', { id: 'ghost' })).rejects.toThrow(
+				'Workflow not found: ghost'
+			);
+		});
+
+		it('throws when spaceId provided but workflow belongs to different space', async () => {
+			setup(mockSpace, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.detectDrift', { id: 'wf-1', spaceId: 'other-space' })
+			).rejects.toThrow('Workflow not found: wf-1');
+		});
+	});
+
+	// ─── spaceWorkflow.syncFromTemplate ───────────────────────────────────────
+
+	describe('spaceWorkflow.syncFromTemplate', () => {
+		// Build an agent list that resolves all role names used by the first built-in template
+		function agentsForTemplate(template: SpaceWorkflow): Array<{ id: string; name: string }> {
+			const names = new Set<string>();
+			for (const node of template.nodes) {
+				for (const a of node.agents) {
+					names.add(a.agentId);
+				}
+			}
+			return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, name }));
+		}
+
+		it('syncs a workflow from its template and emits spaceWorkflow.updated', async () => {
+			const [template] = getBuiltInWorkflows();
+			const agents = agentsForTemplate(template);
+			const templateHash = computeWorkflowHash(template);
+			const wfLinked: SpaceWorkflow = {
+				...mockWorkflow,
+				templateName: template.name,
+				templateHash: 'old-hash',
+			};
+			setup(mockSpace, wfLinked, agents);
+			// updateWorkflow should return a fully updated workflow
+			const updatedWf: SpaceWorkflow = { ...wfLinked, templateHash };
+			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(updatedWf);
+
+			const result = (await call('spaceWorkflow.syncFromTemplate', {
+				id: 'wf-1',
+				spaceId: 'space-1',
+			})) as { workflow: SpaceWorkflow };
+
+			expect(result.workflow).toBeDefined();
+			expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
+			const [calledId, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>)
+				.mock.calls[0] as [string, Record<string, unknown>];
+			expect(calledId).toBe('wf-1');
+			expect(calledParams.name).toBe(template.name);
+			expect(calledParams.templateName).toBe(template.name);
+			expect(calledParams.templateHash).toBe(templateHash);
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'spaceWorkflow.updated',
+				expect.objectContaining({
+					sessionId: 'global',
+					spaceId: 'space-1',
+				})
+			);
+		});
+
+		it('throws when id is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflow.syncFromTemplate', { spaceId: 'space-1' })).rejects.toThrow(
+				'id is required'
+			);
+		});
+
+		it('throws when spaceId is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflow.syncFromTemplate', { id: 'wf-1' })).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when space not found', async () => {
+			setup(null, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'ghost-space' })
+			).rejects.toThrow('Space not found: ghost-space');
+		});
+
+		it('throws when workflow not found', async () => {
+			setup(mockSpace, null);
+			await expect(
+				call('spaceWorkflow.syncFromTemplate', { id: 'ghost', spaceId: 'space-1' })
+			).rejects.toThrow('Workflow not found: ghost');
+		});
+
+		it('throws when workflow belongs to a different space', async () => {
+			const wfOtherSpace: SpaceWorkflow = {
+				...mockWorkflow,
+				spaceId: 'other-space',
+				templateName: 'X',
+			};
+			setup(mockSpace, wfOtherSpace);
+			await expect(
+				call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
+			).rejects.toThrow('Workflow not found: wf-1');
+		});
+
+		it('throws when workflow has no templateName', async () => {
+			const wfNoTemplate: SpaceWorkflow = { ...mockWorkflow, templateName: undefined };
+			setup(mockSpace, wfNoTemplate);
+			await expect(
+				call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
+			).rejects.toThrow('is not linked to a built-in template');
+		});
+
+		it('throws when template is not found in built-ins', async () => {
+			const wfUnknown: SpaceWorkflow = { ...mockWorkflow, templateName: 'Unknown Template' };
+			setup(mockSpace, wfUnknown);
+			await expect(
+				call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
+			).rejects.toThrow('Built-in template "Unknown Template" not found');
+		});
+
+		it('throws when a required agent role cannot be resolved to a SpaceAgent', async () => {
+			const [template] = getBuiltInWorkflows();
+			const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
+			// Empty agents list — none of the role names can resolve
+			setup(mockSpace, wfLinked, []);
+			await expect(
+				call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
+			).rejects.toThrow('Cannot sync: no SpaceAgent found with name');
 		});
 	});
 });
