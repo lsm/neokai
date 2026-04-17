@@ -281,6 +281,10 @@ class SessionStore {
 							.filter((m) => (m as ChatMessage & { uuid?: string }).uuid)
 							.map((m) => [(m as ChatMessage & { uuid?: string }).uuid!, m])
 					);
+					// Preserve existing messages that have no uuid (can't be keyed in the map)
+					const existingNoUuid = this.sdkMessages.value.filter(
+						(m) => !(m as ChatMessage & { uuid?: string }).uuid
+					);
 					let changed = false;
 					const trulyNew: ChatMessage[] = [];
 					for (const msg of delta.added) {
@@ -296,8 +300,9 @@ class SessionStore {
 					}
 					if (changed) {
 						const updated = [
+							...existingNoUuid,
 							...Array.from(messageMap.values()),
-							...trulyNew.filter((m) => !(m as ChatMessage & { uuid?: string }).uuid),
+							...trulyNew,
 						].sort(
 							(a, b) =>
 								((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
