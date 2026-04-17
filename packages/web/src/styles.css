@@ -677,3 +677,49 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
 /* Safe area bottom padding is handled at the app level via pb-safe + pb-bottom-bar
    on the main content wrapper. The chat footer does not need its own safe area
    padding — the wrapper already accounts for both the tab bar and home indicator. */
+
+/* ── Space task thread — compact running-block indicator ─────────────────────
+   A clockwise-spinning gradient arc rendered as a 1-px border around the last
+   active (non-terminal) block while the task is still executing.
+   The ::before pseudo-element spins inside the clipped overflow area; the inner
+   content layer (.running-block-inner) sits above it with a solid background
+   and 1px margin so only the rotating gradient shows through as the border. */
+
+@keyframes space-task-spin-border {
+	to {
+		transform: rotate(1turn);
+	}
+}
+
+.running-block {
+	position: relative;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.running-block::before {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 200%;
+	height: 200%;
+	transform: translate(-50%, -50%);
+	background: conic-gradient(
+		from 0deg,
+		transparent 170deg,
+		rgba(99, 155, 255, 0.5) 215deg,
+		rgba(180, 215, 255, 0.95) 250deg,
+		rgba(99, 155, 255, 0.5) 285deg,
+		transparent 330deg
+	);
+	animation: space-task-spin-border 2.5s linear infinite;
+}
+
+.running-block-inner {
+	position: relative;
+	z-index: 1;
+	margin: 1px;
+	border-radius: 7px;
+	background: #111113; /* --color-dark-900 */
+}

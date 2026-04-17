@@ -58,7 +58,7 @@ export function SpaceTaskThreadEventFeed({ events, taskId, maps }: SpaceTaskThre
 	const visibleEvents = events.filter(shouldRenderEvent);
 
 	return (
-		<div class="space-y-0.5" data-testid="space-task-event-feed-compact">
+		<div class="space-y-0.5" data-testid="space-task-event-feed-legacy">
 			{visibleEvents.map((event, index) => {
 				if (event.kind === 'user') {
 					return (

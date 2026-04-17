@@ -3,7 +3,9 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import { SpaceTaskThreadEventFeed } from './thread/SpaceTaskThreadEventFeed';
+import { SpaceTaskCompactFeed } from './thread/compact/SpaceTaskCompactFeed';
 import { buildThreadEvents, parseThreadRow } from './thread/space-task-thread-events';
+import { getSpaceTaskThreadRenderStyle } from '../../lib/space-task-thread-config';
 
 interface SpaceTaskUnifiedThreadProps {
 	taskId: string;
@@ -14,6 +16,9 @@ export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
 }: SpaceTaskUnifiedThreadProps) {
+	// Read render style on every render so that the value stays fresh after a
+	// localStorage write (e.g. via setSpaceTaskThreadRenderStyle in devtools).
+	const renderStyle = getSpaceTaskThreadRenderStyle();
 	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId);
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -65,7 +70,11 @@ export function SpaceTaskUnifiedThread({
 		<div class="h-full min-h-0 flex flex-col" data-testid="space-task-unified-thread">
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
-					<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
+					{renderStyle === 'compact' ? (
+						<SpaceTaskCompactFeed events={threadEvents} taskId={taskId} maps={maps} />
+					) : (
+						<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
+					)}
 				</div>
 			</div>
 		</div>
