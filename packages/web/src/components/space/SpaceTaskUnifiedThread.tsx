@@ -3,7 +3,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import { SpaceTaskThreadEventFeed } from './thread/SpaceTaskThreadEventFeed';
-import { SpaceTaskCompactFeed } from './thread/compact/SpaceTaskCompactFeed';
+import { SpaceTaskCardFeed } from './thread/compact/SpaceTaskCardFeed';
 import { buildThreadEvents, parseThreadRow } from './thread/space-task-thread-events';
 import { getSpaceTaskThreadRenderStyle } from '../../lib/space-task-thread-config';
 
@@ -71,7 +71,7 @@ export function SpaceTaskUnifiedThread({
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
 					{renderStyle === 'compact' ? (
-						<SpaceTaskCompactFeed events={threadEvents} taskId={taskId} maps={maps} />
+						<SpaceTaskCardFeed events={threadEvents} taskId={taskId} maps={maps} />
 					) : (
 						<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
 					)}
