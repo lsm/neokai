@@ -195,6 +195,20 @@ export interface ChannelRouterConfig {
 	 * always require manual approval).
 	 */
 	getSpaceAutonomyLevel?: (spaceId: string) => Promise<SpaceAutonomyLevel>;
+	/**
+	 * Optional liveness probe for an agent session ID.
+	 *
+	 * Used during cyclic re-entry: when an existing terminal node_execution is
+	 * found, the router would normally preserve its `agentSessionId` so the
+	 * same in-memory agent session is reused (preserving conversation history).
+	 * If this callback is provided and returns `false`, the session is treated
+	 * as unrecoverable and the execution falls back to fresh-spawn semantics
+	 * (`agentSessionId` cleared, status reset to `pending`).
+	 *
+	 * When omitted, the router always preserves `agentSessionId` on cyclic
+	 * re-entry — appropriate for tests and contexts without a TaskAgentManager.
+	 */
+	isSessionAlive?: (sessionId: string) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,14 +299,34 @@ export class ChannelRouter {
 			const existing = existingByAgentName.get(agentName);
 			if (existing) {
 				// Re-activation path for cyclic channels.
+				//
+				// Default: preserve `agentSessionId` and flip status to `in_progress`,
+				// so the same live agent session continues across cycles with full
+				// conversation history. Inbound messages routed by AgentMessageRouter
+				// will then deliver to the existing session via injectSubSessionMessage.
+				//
+				// Fallback: if `isSessionAlive` reports the session is no longer live
+				// (daemon restart, manual cleanup, crash), null the session id and
+				// reset to `pending` so the tick loop respawns a fresh session.
 				if (TERMINAL_NODE_EXECUTION_STATUSES.has(existing.status)) {
-					this.config.nodeExecutionRepo.update(existing.id, {
-						status: 'pending',
-						agentSessionId: null,
-						result: null,
-						startedAt: null,
-						completedAt: null,
-					});
+					const sessionId = existing.agentSessionId;
+					const probe = this.config.isSessionAlive;
+					// Preserve the session when an id exists and either no probe is
+					// configured (test/no-runtime context) or the probe says it's alive.
+					const sessionAlive = sessionId !== null && (!probe || probe(sessionId));
+					if (sessionAlive) {
+						this.config.nodeExecutionRepo.update(existing.id, {
+							status: 'in_progress',
+						});
+					} else {
+						this.config.nodeExecutionRepo.update(existing.id, {
+							status: 'pending',
+							agentSessionId: null,
+							result: null,
+							startedAt: null,
+							completedAt: null,
+						});
+					}
 				}
 				continue;
 			}

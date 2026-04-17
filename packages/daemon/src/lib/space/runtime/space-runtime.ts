@@ -16,13 +16,14 @@
  * - Clean up executors when runs reach terminal states
  *
  * In the agent-centric model, agents drive workflow progression via send_message
- * and report_done — SpaceRuntime no longer calls advance() directly.
+ * and report_result — SpaceRuntime no longer calls advance() directly.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	CompletionAction,
 	SpaceAutonomyLevel,
+	SpaceReportedStatus,
 	SpaceTask,
 	UpdateSpaceTaskParams,
 	SpaceWorkflow,
@@ -46,7 +47,6 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
 import { CompletionDetector } from './completion-detector';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import {
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
@@ -136,13 +136,10 @@ export interface SpaceRuntimeConfig {
 	 */
 	notificationSink?: NotificationSink;
 	/**
-	 * Completion detector for the all-agents-done completion model.
+	 * Completion detector — inspects the canonical `SpaceTask` to decide whether
+	 * a workflow run is complete or ready for runtime resolution.
 	 *
-	 * When provided (or defaulted from taskRepo), used in processRunTick() to
-	 * detect when all agents in a workflow run have reached a terminal status and
-	 * mark the run as completed. Replaces the old terminal-node detection model.
-	 *
-	 * Defaults to `new CompletionDetector(nodeExecutionRepo)` if not provided.
+	 * Defaults to `new CompletionDetector(taskRepo)` when not provided.
 	 */
 	completionDetector?: CompletionDetector;
 	/**
@@ -226,7 +223,7 @@ export class SpaceRuntime {
 	private notificationSink: NotificationSink;
 
 	/**
-	 * Completion detector for the all-agents-done model.
+	 * Completion detector — inspects canonical `SpaceTask` to decide completion.
 	 * Initialized from config or defaulted to `new CompletionDetector(taskRepo)`.
 	 */
 	private completionDetector: CompletionDetector;
@@ -272,8 +269,7 @@ export class SpaceRuntime {
 
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
-		this.completionDetector =
-			config.completionDetector ?? new CompletionDetector(config.nodeExecutionRepo);
+		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
 	}
 
 	/**
@@ -509,18 +505,32 @@ export class SpaceRuntime {
 			const summaryFromSibling = runTasks
 				.filter((task) => task.id !== canonicalTask.id)
 				.find((task) => !!task.result)?.result;
-			const nextResult = summaryFromWorkflow ?? canonicalTask.result ?? summaryFromSibling ?? null;
+			const reportedSummary = canonicalTask.reportedSummary ?? null;
+			const nextResult =
+				summaryFromWorkflow ??
+				reportedSummary ??
+				canonicalTask.result ??
+				summaryFromSibling ??
+				null;
 
 			// Resolve completion status via completion actions (if defined on end node)
 			// or fall back to binary autonomy check.
 			const space = await this.config.spaceManager.getSpace(run.spaceId);
 			const spaceLevel = (space?.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 
-			if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
+			// Skip tasks already at a terminal or paused state — matches the
+			// active-tick guard (`taskAlreadyResolved`) at processRunTick.
+			if (
+				canonicalTask.status !== 'done' &&
+				canonicalTask.status !== 'review' &&
+				canonicalTask.status !== 'cancelled'
+			) {
+				const reportedStatus = canonicalTask.reportedStatus ?? 'done';
 				const params = await this.resolveCompletionWithActions(
 					run.spaceId,
 					run.id,
 					workflow,
+					reportedStatus,
 					nextResult,
 					spaceLevel
 				);
@@ -808,6 +818,137 @@ export class SpaceRuntime {
 		return this.executors.size;
 	}
 
+	/**
+	 * Resumes completion action execution for a task paused at a pending action.
+	 *
+	 * Called when a human approves a task that has `pendingCheckpointType === 'completion_action'`.
+	 * Executes the pending action (which the human just approved) and continues with
+	 * remaining actions. If a later action also requires higher autonomy, the task
+	 * pauses again. If all remaining actions complete, the task transitions to 'done'.
+	 *
+	 * @returns The updated task, or null if the task wasn't in a resumable state.
+	 */
+	async resumeCompletionActions(spaceId: string, taskId: string): Promise<SpaceTask | null> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task) {
+			log.warn(`SpaceRuntime.resumeCompletionActions: task ${taskId} not found`);
+			return null;
+		}
+		if (task.pendingCheckpointType !== 'completion_action' || task.pendingActionIndex == null) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: task ${taskId} is not paused at a completion action`
+			);
+			return null;
+		}
+		if (!task.workflowRunId) {
+			log.warn(`SpaceRuntime.resumeCompletionActions: task ${taskId} has no workflowRunId`);
+			return null;
+		}
+
+		const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+		if (!run) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: workflow run ${task.workflowRunId} not found`
+			);
+			return null;
+		}
+
+		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
+		const actions = endNode?.completionActions;
+		if (!actions || actions.length === 0) {
+			log.warn(`SpaceRuntime.resumeCompletionActions: no completion actions on end node`);
+			return null;
+		}
+
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space?.workspacePath) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: space ${spaceId} not found or has no workspacePath`
+			);
+			return null;
+		}
+
+		// Validate that the task belongs to this space
+		if (task.spaceId !== spaceId) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: task ${taskId} belongs to space ${task.spaceId}, not ${spaceId}`
+			);
+			return null;
+		}
+
+		const spaceLevel = (space.autonomyLevel ?? 1) as SpaceAutonomyLevel;
+		const startIndex = task.pendingActionIndex;
+
+		// Guard against workflow edits that removed actions between pause and resume
+		if (startIndex >= actions.length) {
+			log.warn(
+				`SpaceRuntime.resumeCompletionActions: pendingActionIndex ${startIndex} >= actions.length ${actions.length} (workflow edited?)`
+			);
+			return null;
+		}
+
+		// Execute the approved action and continue with remaining
+		for (let i = startIndex; i < actions.length; i++) {
+			const action = actions[i];
+			if (i === startIndex || spaceLevel >= action.requiredLevel) {
+				// First action was human-approved; subsequent ones auto-execute if autonomy permits
+				const ok = await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
+				if (!ok) {
+					return await this.finalizeResume(spaceId, taskId, {
+						status: 'blocked',
+						result: `Completion action "${action.name}" failed`,
+					});
+				}
+			} else {
+				// Pause at this action — clear stale approvedAt from previous cycle
+				return await this.finalizeResume(spaceId, taskId, {
+					status: 'review',
+					pendingActionIndex: i,
+					pendingCheckpointType: 'completion_action',
+					approvedAt: null,
+				});
+			}
+		}
+
+		// All remaining actions executed — task is done
+		return await this.finalizeResume(spaceId, taskId, {
+			status: 'done',
+			completedAt: Date.now(),
+			approvalSource: 'human',
+			approvedAt: Date.now(),
+			pendingActionIndex: null,
+			pendingCheckpointType: null,
+		});
+	}
+
+	/**
+	 * Closes the race window between `resumeCompletionActions` and concurrent
+	 * tick processing: re-reads the task right before writing and aborts the
+	 * write if another caller has already moved it out of the resumable state
+	 * (e.g. tick saw a script timeout and flipped the task to `blocked`).
+	 *
+	 * Without this guard a long-running completion action (scripts can run for
+	 * up to two minutes) could finish, see stale state, and overwrite a
+	 * legitimate intervening transition.
+	 */
+	private async finalizeResume(
+		spaceId: string,
+		taskId: string,
+		params: UpdateSpaceTaskParams
+	): Promise<SpaceTask | null> {
+		const fresh = this.config.taskRepo.getTask(taskId);
+		if (!fresh) return null;
+		if (fresh.status !== 'review' || fresh.pendingCheckpointType !== 'completion_action') {
+			log.warn(
+				`SpaceRuntime.finalizeResume: task ${taskId} state changed mid-resume ` +
+					`(now status=${fresh.status}, checkpoint=${fresh.pendingCheckpointType}); aborting write`
+			);
+			return fresh;
+		}
+		return await this.updateTaskAndEmit(spaceId, taskId, params);
+	}
+
 	// -------------------------------------------------------------------------
 	// Private — rehydration
 	// -------------------------------------------------------------------------
@@ -876,7 +1017,7 @@ export class SpaceRuntime {
 	 * - Spawns Task Agent sessions for pending tasks
 	 * - Monitors agent liveness and resets dead agents
 	 *
-	 * Agents drive workflow progression themselves via send_message and report_done.
+	 * Agents drive workflow progression themselves via send_message and report_result.
 	 * This method never calls advance() directly.
 	 *
 	 * Errors from individual runs are caught and re-thrown after all runs have
@@ -976,28 +1117,22 @@ export class SpaceRuntime {
 			this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
 		}
 
-		// ─── End-node bypass ─────────────────────────────────────────────────
-		// When the workflow has an endNodeId and the end node's execution is
-		// terminal (done/cancelled), skip blocked/timeout notifications for
-		// sibling nodes and proceed directly to completion handling.
-		// This prevents spurious "task_blocked" notifications for nodes that
-		// are still running when the end node finishes first.
+		// ─── Completion bypass ───────────────────────────────────────────────
+		// If the canonical task is either already terminal or the end-node agent
+		// has reported a result, skip blocked/timeout notifications for sibling
+		// nodes and proceed directly to completion handling. This prevents
+		// spurious "task_blocked" notifications for sibling nodes that are still
+		// running when the end node finishes first.
+		//
+		// Cached for reuse below at the completion-detection branch — neither
+		// `task.status` nor `reportedStatus` changes between here and there.
 		const endNodeId = meta.workflow.endNodeId;
-		let endNodeBypass = false;
-		if (endNodeId) {
-			const endNodeExecs = nodeExecutions.filter((e) => e.workflowNodeId === endNodeId);
-			if (
-				endNodeExecs.length > 0 &&
-				endNodeExecs.every((e) => TERMINAL_NODE_EXECUTION_STATUSES.has(e.status))
-			) {
-				endNodeBypass = true;
-			}
-		}
+		const runIsComplete = this.completionDetector.isComplete({ workflowRunId: runId });
 
 		// Detect execution-level blocked BEFORE the all-completed guard.
-		// When end-node bypass fires, skip blocked notifications for siblings
-		// — the run will be completed imminently.
-		if (!endNodeBypass && nodeExecutions.some((execution) => execution.status === 'blocked')) {
+		// When the run is already complete, skip blocked notifications for
+		// siblings — the run will be completed imminently.
+		if (!runIsComplete && nodeExecutions.some((execution) => execution.status === 'blocked')) {
 			const blockedReason =
 				nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
 				'One or more workflow agents are blocked';
@@ -1034,9 +1169,9 @@ export class SpaceRuntime {
 		}
 
 		// Timeout detection: check in_progress tasks against Space.config.taskTimeoutMs.
-		// Skip when end-node bypass is active — the run is completing imminently.
+		// Skip when the run is already complete — it's about to finalize.
 		const space = await this.config.spaceManager.getSpace(meta.spaceId);
-		if (!endNodeBypass) {
+		if (!runIsComplete) {
 			const taskTimeoutMs = space?.config?.taskTimeoutMs;
 			if (taskTimeoutMs !== undefined) {
 				const now = Date.now();
@@ -1067,7 +1202,7 @@ export class SpaceRuntime {
 		// When a TaskAgentManager is configured, Task Agents drive the workflow.
 		// SpaceRuntime's role here is lifecycle management only: spawn for pending
 		// tasks, check liveness, and recover from crashes. Agents drive progression
-		// themselves via send_message and report_done — SpaceRuntime never calls advance().
+		// themselves via send_message and report_result — SpaceRuntime never calls advance().
 		if (this.config.taskAgentManager) {
 			const tam = this.config.taskAgentManager;
 			let blockedByCrash = false;
@@ -1192,55 +1327,85 @@ export class SpaceRuntime {
 			nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
 			// Step 1.6: Completion detection.
-			if (
-				this.completionDetector.isComplete({
-					workflowRunId: runId,
-					endNodeId: meta.workflow.endNodeId,
-				})
-			) {
+			//
+			// Reuses the `runIsComplete` snapshot from above — neither `task.status`
+			// nor `reportedStatus` is mutated between the two checks (the recovery
+			// branches that could change them all `return` before reaching here).
+			//
+			// In the reported-but-not-yet-resolved case, we resolve the final task
+			// status here through `resolveCompletionWithActions` — which respects
+			// the supervised-mode review gate. This is why `report_result` no
+			// longer calls `setTaskStatus` directly.
+			if (runIsComplete) {
 				await this.transitionRunStatusAndEmit(runId, 'done');
 				const summary = this.resolveCompletionSummary(runId, meta.workflow);
-				const nextTaskResult = summary ?? canonicalTask.result ?? null;
+				const reportedSummary = canonicalTask.reportedSummary ?? null;
+				const nextTaskResult = summary ?? reportedSummary ?? canonicalTask.result ?? null;
 
-				// Resolve completion status via completion actions (if defined on end node)
-				// or fall back to binary autonomy check.
 				const spaceLevel = (space?.autonomyLevel ?? 1) as SpaceAutonomyLevel;
 
-				if (canonicalTask.status !== 'done' && canonicalTask.status !== 'review') {
+				// Skip re-resolution when the task is already at a non-`open`/non-`in_progress`
+				// status — `done`/`cancelled` are terminal; `review` means we've already paused
+				// at a completion-action gate and are awaiting human approval.
+				const taskAlreadyResolved =
+					canonicalTask.status === 'done' ||
+					canonicalTask.status === 'review' ||
+					canonicalTask.status === 'cancelled';
+
+				// Final status drives sibling cancellation. We only kill siblings when
+				// the task reached a true terminal state (`done`/`cancelled`); `review`
+				// means we're still waiting for human approval and siblings may yet
+				// produce useful output if the human rejects completion.
+				let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
+
+				if (!taskAlreadyResolved) {
+					// Resolve final status using the agent's reported intent as the base.
+					// Defaults to 'done' when the agent did not report (legacy/fallback path);
+					// the runtime never auto-completes without a reported intent in the new
+					// model, but we tolerate the missing-report case for safety.
+					const reportedStatus = canonicalTask.reportedStatus ?? 'done';
 					const params = await this.resolveCompletionWithActions(
 						meta.spaceId,
 						runId,
 						meta.workflow,
+						reportedStatus,
 						nextTaskResult,
 						spaceLevel
 					);
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
+					finalTaskStatus = params.status ?? canonicalTask.status;
 				} else if (summary && canonicalTask.result !== summary) {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
 				}
 
 				// Sibling NodeExecution cleanup: cancel siblings still in_progress
-				// when the run completes via end-node short-circuit. For each
-				// in_progress node execution with an agentSessionId, cancel the
-				// corresponding agent session via TaskAgentManager.
-				const siblingsToCancel = this.config.nodeExecutionRepo
-					.listByWorkflowRun(runId)
-					.filter(
-						(e) =>
-							e.status === 'in_progress' &&
-							e.agentSessionId &&
-							(!endNodeId || e.workflowNodeId !== endNodeId)
-					);
-				for (const sibling of siblingsToCancel) {
-					this.config.nodeExecutionRepo.updateStatus(sibling.id, 'cancelled');
-					if (this.config.taskAgentManager) {
-						this.config.taskAgentManager.cancelBySessionId(sibling.agentSessionId!);
+				// when the canonical task reaches a terminal status. The end-node
+				// execution itself is excluded so its session can finish writing back
+				// to the agent (it produced the report_result that triggered this
+				// completion path). Skipped when the task is paused at `review` —
+				// the human may yet reject the completion, in which case sibling
+				// progress is still relevant.
+				const taskTerminal = finalTaskStatus === 'done' || finalTaskStatus === 'cancelled';
+				if (taskTerminal) {
+					const siblingsToCancel = this.config.nodeExecutionRepo
+						.listByWorkflowRun(runId)
+						.filter(
+							(e) =>
+								e.status === 'in_progress' &&
+								e.agentSessionId &&
+								(!endNodeId || e.workflowNodeId !== endNodeId)
+						);
+					for (const sibling of siblingsToCancel) {
+						this.config.nodeExecutionRepo.updateStatus(sibling.id, 'cancelled');
+						if (this.config.taskAgentManager) {
+							this.config.taskAgentManager.cancelBySessionId(sibling.agentSessionId!);
+						}
+						log.info(
+							`SpaceRuntime: cancelled sibling node execution ${sibling.id} ` +
+								`(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
+								`for completed run ${runId}`
+						);
 					}
-					log.info(
-						`SpaceRuntime: cancelled sibling node execution ${sibling.id} ` +
-							`(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
-							`for completed run ${runId}`
-					);
 				}
 
 				return;
@@ -1319,7 +1484,7 @@ export class SpaceRuntime {
 				}
 			}
 
-			// Agents drive workflow progression via send_message and report_done.
+			// Agents drive workflow progression via send_message and report_result.
 			return;
 		}
 	}
@@ -1500,9 +1665,30 @@ export class SpaceRuntime {
 		spaceId: string,
 		runId: string,
 		workflow: SpaceWorkflow | null,
+		reportedStatus: SpaceReportedStatus,
 		taskResult: string | null,
 		spaceLevel: SpaceAutonomyLevel
 	): Promise<UpdateSpaceTaskParams> {
+		// Non-success outcomes pass through directly. Completion actions are a
+		// success-path review gate ("flip to done after verifying X"); they
+		// don't apply when the agent reported `blocked` or `cancelled`.
+		if (reportedStatus === 'blocked') {
+			return {
+				status: 'blocked' as const,
+				result: taskResult,
+				blockReason: 'execution_failed',
+				completedAt: Date.now(),
+			};
+		}
+		if (reportedStatus === 'cancelled') {
+			return {
+				status: 'cancelled' as const,
+				result: taskResult,
+				completedAt: Date.now(),
+			};
+		}
+
+		// reportedStatus === 'done' — run the success-path review gate.
 		// Find end node's completion actions
 		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
 		const actions = endNode?.completionActions;
@@ -1544,7 +1730,13 @@ export class SpaceRuntime {
 			const action = actions[i];
 			if (spaceLevel >= action.requiredLevel) {
 				// Auto-execute
-				await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+				const ok = await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+				if (!ok) {
+					return {
+						status: 'blocked' as const,
+						result: `Completion action "${action.name}" failed`,
+					};
+				}
 			} else {
 				// Pause at this action — task goes to 'review' with pending action metadata
 				return {
@@ -1579,13 +1771,13 @@ export class SpaceRuntime {
 		spaceId: string,
 		runId: string,
 		workspacePath: string
-	): Promise<void> {
+	): Promise<boolean> {
 		if (action.type !== 'script') {
 			log.warn(
 				`SpaceRuntime: completion action type "${action.type}" not yet implemented ` +
-					`(action: ${action.id}, space: ${spaceId})`
+					`(action: ${action.id}, space: ${spaceId}); treating as success`
 			);
-			return;
+			return true;
 		}
 
 		// Resolve artifact data for script env injection
@@ -1653,17 +1845,21 @@ export class SpaceRuntime {
 					`SpaceRuntime: completion action "${action.name}" timed out ` +
 						`after ${COMPLETION_ACTION_TIMEOUT_MS}ms`
 				);
+				return false;
 			} else if (exitResult.code !== 0) {
 				log.warn(
 					`SpaceRuntime: completion action "${action.name}" failed ` +
 						`(exit ${exitResult.code}): ${stderrResult.text.trim().slice(0, 500)}`
 				);
+				return false;
 			}
+			return true;
 		} catch (err) {
 			log.warn(
 				`SpaceRuntime: completion action "${action.name}" error: ` +
 					`${err instanceof Error ? err.message : String(err)}`
 			);
+			return false;
 		}
 	}
 

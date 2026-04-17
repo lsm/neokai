@@ -6,6 +6,7 @@
  *   - Completion actions auto-execute when space autonomy >= action.requiredLevel
  *   - Task pauses at 'review' with pendingActionIndex when autonomy < action.requiredLevel
  *   - All actions auto-executed → task goes to 'done' with 'auto_policy' approval
+ *   - Script failure → task goes to 'failed' (not fire-and-forget)
  *   - completionActions survive DB round-trip (persisted in node config)
  */
 
@@ -195,7 +196,6 @@ describe('SpaceRuntime — completion actions', () => {
 	let sink: MockNotificationSink;
 
 	const SPACE_ID = 'space-ca-1';
-	const WORKSPACE = '/tmp/ca-ws';
 	const AGENT_A = 'agent-a';
 
 	function makeRuntime(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
@@ -220,7 +220,7 @@ describe('SpaceRuntime — completion actions', () => {
 
 	beforeEach(() => {
 		({ db, dir } = makeDb());
-		seedSpaceRow(db, SPACE_ID, WORKSPACE, 1); // default level 1, overridden per test
+		seedSpaceRow(db, SPACE_ID, dir, 1); // use test dir as workspace so scripts can run
 		seedAgentRow(db, AGENT_A, SPACE_ID);
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -257,7 +257,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -273,7 +278,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -301,7 +311,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -331,7 +346,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -365,7 +385,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -400,7 +425,12 @@ describe('SpaceRuntime — completion actions', () => {
 		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-		taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
 		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
 
 		await rt.executeTick();
@@ -410,6 +440,184 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(task.approvalSource).toBe('auto_policy');
 		expect(task.pendingActionIndex).toBeNull();
 		expect(task.pendingCheckpointType).toBeNull();
+	});
+
+	// ─── Script failure behavior ────────────────────────────────────────
+
+	test('completion action script failure → task fails', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'failing-action',
+				name: 'Failing Action',
+				type: 'script',
+				requiredLevel: 3,
+				script: 'echo "error" >&2; exit 1',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Failing Action');
+	});
+
+	test('completion action script non-zero exit → task fails', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'exit-action',
+				name: 'Exit Action',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'exit 42',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Exit Action');
+	});
+
+	// ─── Resume from pendingActionIndex ─────────────────────────────────
+
+	test('resumeCompletionActions executes pending action and transitions to done', async () => {
+		setAutonomyLevel(3);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'action-low',
+				name: 'Low-Level',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "low"',
+			},
+			{
+				id: 'action-high',
+				name: 'High-Level',
+				type: 'script',
+				requiredLevel: 5,
+				script: 'echo "high"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		// First tick: action-low auto-executes, action-high pauses
+		await rt.executeTick();
+		let task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('review');
+		expect(task.pendingActionIndex).toBe(1);
+		expect(task.pendingCheckpointType).toBe('completion_action');
+
+		// Human approves → resume from pendingActionIndex
+		const resumed = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(resumed).not.toBeNull();
+		expect(resumed!.status).toBe('done');
+		expect(resumed!.approvalSource).toBe('human');
+		expect(resumed!.pendingActionIndex).toBeNull();
+		expect(resumed!.pendingCheckpointType).toBeNull();
+	});
+
+	test('resumeCompletionActions pauses again if next action also needs approval', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'action-1',
+				name: 'Action 1',
+				type: 'script',
+				requiredLevel: 3,
+				script: 'echo "1"',
+			},
+			{
+				id: 'action-2',
+				name: 'Action 2',
+				type: 'script',
+				requiredLevel: 4,
+				script: 'echo "2"',
+			},
+			{
+				id: 'action-3',
+				name: 'Action 3',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "3"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Simulate end-node agent calling report_result — this is the new completion signal.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		// Tick: pauses at action-1 (requiredLevel 3, autonomy 2)
+		await rt.executeTick();
+		let task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.pendingActionIndex).toBe(0);
+
+		// Human approves action-1 → executes it, then pauses at action-2 (index 1)
+		const resumed = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(resumed).not.toBeNull();
+		expect(resumed!.status).toBe('review');
+		expect(resumed!.pendingActionIndex).toBe(1);
+		expect(resumed!.pendingCheckpointType).toBe('completion_action');
+		// Stale approval from the previous cycle must be cleared so the UI does
+		// not show the new pause as already-approved.
+		expect(resumed!.approvedAt).toBeNull();
+	});
+
+	test('resumeCompletionActions returns null for task without pending checkpoint', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager);
+
+		const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		const result = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(result).toBeNull();
 	});
 
 	// ─── completionActions DB persistence ────────────────────────────────

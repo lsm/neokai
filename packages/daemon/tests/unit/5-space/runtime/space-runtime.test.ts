@@ -91,6 +91,31 @@ function buildLinearWorkflow(
 	});
 }
 
+/**
+ * End-node validation requires exactly 1 agent (validator enforced — they own
+ * the `report_result` completion signal). When a test workflow has its last
+ * node as multi-agent (which used to double as start+end), append a synthetic
+ * single-agent terminal node so the multi-agent node remains the start (or
+ * middle) and validation passes. Tests that don't activate the synthetic end
+ * node continue to behave the same.
+ */
+const SYNTHETIC_END_NODE_ID = '__test_end__';
+
+function appendSyntheticEnd<T extends { id: string; agents?: unknown[] }>(
+	nodes: T[],
+	endAgentId: string
+): { nodes: Array<T | { id: string; name: string; agentId: string }>; endNodeId: string } {
+	const last = nodes[nodes.length - 1];
+	const lastIsMultiAgent = (last.agents?.length ?? 0) > 1;
+	if (!lastIsMultiAgent) {
+		return { nodes, endNodeId: last.id };
+	}
+	return {
+		nodes: [...nodes, { id: SYNTHETIC_END_NODE_ID, name: 'Synthetic End', agentId: endAgentId }],
+		endNodeId: SYNTHETIC_END_NODE_ID,
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Test suite setup
 // ---------------------------------------------------------------------------
@@ -345,22 +370,23 @@ describe('SpaceRuntime', () => {
 		});
 
 		test('multi-agent start step: creates one canonical task and node executions per agent', async () => {
+			const startNode = {
+				id: STEP_A,
+				name: 'Multi Step',
+				agents: [
+					{ agentId: AGENT_PLANNER, name: 'planner' },
+					{ agentId: AGENT_CODER, name: 'coder' },
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Start ${Date.now()}`,
 				description: '',
-				nodes: [
-					{
-						id: STEP_A,
-						name: 'Multi Step',
-						agents: [
-							{ agentId: AGENT_PLANNER, name: 'planner' },
-							{ agentId: AGENT_CODER, name: 'coder' },
-						],
-					},
-				],
+				nodes,
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId,
 				rules: [],
 				tags: [],
 			});
@@ -374,22 +400,23 @@ describe('SpaceRuntime', () => {
 		});
 
 		test('multi-agent start step with custom-role first agent: creates canonical task and executions', async () => {
+			const startNode = {
+				id: STEP_A,
+				name: 'Custom Multi Step',
+				agents: [
+					{ agentId: AGENT_CUSTOM, name: 'my-custom-role' },
+					{ agentId: AGENT_CODER, name: 'coder' },
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Custom ${Date.now()}`,
 				description: '',
-				nodes: [
-					{
-						id: STEP_A,
-						name: 'Custom Multi Step',
-						agents: [
-							{ agentId: AGENT_CUSTOM, name: 'my-custom-role' },
-							{ agentId: AGENT_CODER, name: 'coder' },
-						],
-					},
-				],
+				nodes,
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId,
 				rules: [],
 				tags: [],
 			});
@@ -1049,29 +1076,30 @@ describe('SpaceRuntime', () => {
 
 	describe('multi-agent step support', () => {
 		test('startWorkflowRun() creates one canonical task and one execution per agent', async () => {
+			const startNode = {
+				id: STEP_A,
+				name: 'Parallel Start',
+				agents: [
+					{
+						agentId: AGENT_CODER,
+						name: 'coder',
+						instructions: { mode: 'override' as const, value: 'Coder task' },
+					},
+					{
+						agentId: AGENT_PLANNER,
+						name: 'planner',
+						instructions: { mode: 'override' as const, value: 'Planner task' },
+					},
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent Start ${Date.now()}`,
-				nodes: [
-					{
-						id: STEP_A,
-						name: 'Parallel Start',
-						agents: [
-							{
-								agentId: AGENT_CODER,
-								name: 'coder',
-								instructions: { mode: 'override', value: 'Coder task' },
-							},
-							{
-								agentId: AGENT_PLANNER,
-								name: 'planner',
-								instructions: { mode: 'override', value: 'Planner task' },
-							},
-						],
-					},
-				],
+				nodes,
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId,
 				rules: [],
 				tags: [],
 			});
@@ -1099,21 +1127,22 @@ describe('SpaceRuntime', () => {
 		});
 
 		test('startWorkflowRun() creates executions for multi-agent start step', async () => {
+			const startNode = {
+				id: STEP_A,
+				name: 'Mixed Start',
+				agents: [
+					{ agentId: AGENT_PLANNER, name: 'planner' },
+					{ agentId: AGENT_CODER, name: 'coder' },
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Agent TaskType ${Date.now()}`,
-				nodes: [
-					{
-						id: STEP_A,
-						name: 'Mixed Start',
-						agents: [
-							{ agentId: AGENT_PLANNER, name: 'planner' },
-							{ agentId: AGENT_CODER, name: 'coder' },
-						],
-					},
-				],
+				nodes,
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId,
 				rules: [],
 				tags: [],
 			});
@@ -1162,21 +1191,22 @@ describe('SpaceRuntime', () => {
 		});
 
 		test('executeTick() marks run blocked when one parallel execution is blocked', async () => {
+			const startNode = {
+				id: STEP_A,
+				name: 'Parallel Fail',
+				agents: [
+					{ agentId: AGENT_CODER, name: 'coder' },
+					{ agentId: AGENT_PLANNER, name: 'planner' },
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Failure ${Date.now()}`,
-				nodes: [
-					{
-						id: STEP_A,
-						name: 'Parallel Fail',
-						agents: [
-							{ agentId: AGENT_CODER, name: 'coder' },
-							{ agentId: AGENT_PLANNER, name: 'planner' },
-						],
-					},
-				],
+				nodes,
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId,
 				rules: [],
 				tags: [],
 			});
@@ -1195,21 +1225,22 @@ describe('SpaceRuntime', () => {
 		});
 
 		test('executeTick() marks run blocked when one execution is blocked and one is in_progress', async () => {
+			const startNode = {
+				id: STEP_A,
+				name: 'Parallel Waiting',
+				agents: [
+					{ agentId: AGENT_CODER, name: 'coder' },
+					{ agentId: AGENT_PLANNER, name: 'planner' },
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Partial Terminal ${Date.now()}`,
-				nodes: [
-					{
-						id: STEP_A,
-						name: 'Parallel Waiting',
-						agents: [
-							{ agentId: AGENT_CODER, name: 'coder' },
-							{ agentId: AGENT_PLANNER, name: 'planner' },
-						],
-					},
-				],
+				nodes,
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId,
 				rules: [],
 				tags: [],
 			});
@@ -1280,20 +1311,21 @@ describe('SpaceRuntime', () => {
 			seedAgentRow(db, AGENT_CODER_2, SPACE_ID, 'Coder 2');
 
 			const stepId = `step-dedup-${Date.now()}`;
+			const startNode = {
+				id: stepId,
+				name: 'Two Coders',
+				agents: [
+					{ agentId: AGENT_CODER, name: 'coder' },
+					{ agentId: AGENT_CODER_2, name: 'coder-2' },
+				],
+			};
+			const { nodes, endNodeId } = appendSyntheticEnd([startNode], AGENT_CODER);
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'Duplicate Role Test',
-				nodes: [
-					{
-						id: stepId,
-						name: 'Two Coders',
-						agents: [
-							{ agentId: AGENT_CODER, name: 'coder' },
-							{ agentId: AGENT_CODER_2, name: 'coder-2' },
-						],
-					},
-				],
+				nodes,
 				startNodeId: stepId,
+				endNodeId,
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

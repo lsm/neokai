@@ -255,6 +255,14 @@ export class SpaceTaskRepository {
 			fields.push('pending_checkpoint_type = ?');
 			values.push(params.pendingCheckpointType ?? null);
 		}
+		if (params.reportedStatus !== undefined) {
+			fields.push('reported_status = ?');
+			values.push(params.reportedStatus ?? null);
+		}
+		if (params.reportedSummary !== undefined) {
+			fields.push('reported_summary = ?');
+			values.push(params.reportedSummary ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -395,6 +403,8 @@ export class SpaceTaskRepository {
 			pendingActionIndex: (row.pending_action_index as number | null) ?? null,
 			pendingCheckpointType:
 				(row.pending_checkpoint_type as SpaceTask['pendingCheckpointType']) ?? null,
+			reportedStatus: (row.reported_status as SpaceTask['reportedStatus']) ?? null,
+			reportedSummary: (row.reported_summary as string | null) ?? null,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? null,
 			completedAt: (row.completed_at as number | null) ?? null,

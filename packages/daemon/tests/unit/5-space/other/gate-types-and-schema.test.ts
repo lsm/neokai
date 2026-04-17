@@ -82,7 +82,7 @@ describe('Gate and Channel type validation', () => {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -153,7 +153,7 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 					{
 						name: 'approved',
 						type: 'boolean',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: '==', value: true },
 					},
 				],
@@ -242,7 +242,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 					{
 						name: 'approved',
 						type: 'boolean',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: '==', value: true },
 					},
 				],
@@ -386,7 +386,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 					{
 						name: 'done',
 						type: 'boolean',
-						writers: ['human'],
+						writers: [],
 						check: { op: '==', value: true },
 					},
 				],
@@ -743,7 +743,7 @@ describe('SpaceWorkflowRepository — script-only gate round-trip', () => {
 						{
 							name: 'approved',
 							type: 'boolean',
-							writers: ['human'],
+							writers: [],
 							check: { op: '==', value: true },
 						},
 					],
@@ -973,7 +973,7 @@ describe('Gate extended interface (label, color, script, optional fields)', () =
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -1100,7 +1100,7 @@ describe('computeGateDefaults with optional fields', () => {
 			{
 				name: 'approved',
 				type: 'boolean',
-				writers: ['reviewer'],
+				writers: [],
 				check: { op: '==', value: true },
 			},
 		];
@@ -1126,7 +1126,7 @@ describe('computeGateDefaults with optional fields', () => {
 			{
 				name: 'status',
 				type: 'string',
-				writers: ['human'],
+				writers: [],
 				check: { op: 'exists' },
 			},
 		];
@@ -1139,7 +1139,7 @@ describe('computeGateDefaults with optional fields', () => {
 			{
 				name: 'approved',
 				type: 'boolean',
-				writers: ['reviewer'],
+				writers: [],
 				check: { op: '==', value: true },
 			},
 			{
@@ -1151,7 +1151,7 @@ describe('computeGateDefaults with optional fields', () => {
 			{
 				name: 'comment',
 				type: 'string',
-				writers: ['human'],
+				writers: [],
 				check: { op: 'exists' },
 			},
 		];
@@ -1164,7 +1164,7 @@ describe('computeGateDefaults with optional fields', () => {
 			{
 				name: 'reviewer_votes',
 				type: 'map',
-				writers: ['reviewer'],
+				writers: [],
 				check: { op: 'count', match: 'approved', min: 1 },
 			},
 			{
@@ -1216,7 +1216,7 @@ describe('evaluateGate with optional fields', () => {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -1244,7 +1244,7 @@ describe('Backward compatibility — gates without new fields round-trip', () =>
 					{
 						name: 'approved',
 						type: 'boolean',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: '==', value: true },
 					},
 				],
@@ -1354,7 +1354,7 @@ describe('Backward compatibility — gates without new fields round-trip', () =>
 					{
 						name: 'done',
 						type: 'boolean',
-						writers: ['human'],
+						writers: [],
 						check: { op: 'exists' },
 					},
 				],

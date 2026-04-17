@@ -169,6 +169,15 @@ export type SpaceTaskStatus =
 	| 'archived';
 
 /**
+ * Outcome an end-node agent reports via `report_result`.
+ *
+ * This is the agent's claimed terminal state for the workflow — distinct from
+ * `SpaceTask.status`, which is the runtime's final decision after the report
+ * passes through completion-actions review (in supervised autonomy modes).
+ */
+export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
+
+/**
  * Why a task is blocked — set when status transitions to `blocked`,
  * cleared when the task leaves `blocked`.
  */
@@ -275,6 +284,18 @@ export interface SpaceTask {
 	 * - `gate`: paused at a gate requiring human approval
 	 */
 	pendingCheckpointType: 'completion_action' | 'gate' | null;
+	/**
+	 * Status the end-node agent reported via `report_result`. Null until the agent
+	 * reports. Recorded separately from `status` so the runtime can resolve the
+	 * final task status through completion-actions review (supervised modes) without
+	 * the agent bypassing the gate. Once recorded, this field is preserved for audit
+	 * even after `status` reaches a terminal value.
+	 */
+	reportedStatus: SpaceReportedStatus | null;
+	/**
+	 * Summary the end-node agent provided alongside `reportedStatus`. Null until reported.
+	 */
+	reportedSummary: string | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 }
@@ -319,7 +340,7 @@ export interface SpaceTaskActivityMember {
 		agentName: string;
 		/** Execution status */
 		status: NodeExecutionStatus;
-		/** Result output from `report_done`, if set */
+		/** Result output from `report_result`, if set */
 		result?: string | null;
 	} | null;
 	/** Last update timestamp from the linked SpaceTask or backing session metadata */
@@ -397,6 +418,10 @@ export interface UpdateSpaceTaskParams {
 	pendingActionIndex?: number | null;
 	/** Type of checkpoint the task is paused at; null to clear */
 	pendingCheckpointType?: 'completion_action' | 'gate' | null;
+	/** Agent-reported terminal status from `report_result`; null to clear */
+	reportedStatus?: SpaceReportedStatus | null;
+	/** Agent-reported summary from `report_result`; null to clear */
+	reportedSummary?: string | null;
 }
 
 // ============================================================================
@@ -483,7 +508,7 @@ export interface UpdateNodeExecutionParams {
  *
  * - `pending`     — run created, awaiting Task Agent to start nodes
  * - `in_progress` — at least one node execution is active
- * - `done`        — end node called `report_done` or all nodes completed
+ * - `done`        — end node called `report_result` or all nodes completed
  * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
  * - `cancelled`   — run was cancelled before completion
  */
@@ -653,7 +678,7 @@ export interface GateField {
 	name: string;
 	/** Field type. */
 	type: GateFieldType;
-	/** Who can write this field — agent names/slot names, node names, 'human', or '*'. */
+	/** Who can write this field — node names, '*' (any agent), or [] (external-only: human via RPC or auto-approval). */
 	writers: string[];
 	/** Check that must pass for this field to be satisfied. */
 	check: GateFieldCheck;
@@ -959,7 +984,7 @@ export interface SpaceWorkflow {
 	startNodeId: string;
 	/**
 	 * ID of the node where execution ends.
-	 * When the end node's execution calls `report_done`, the workflow run is
+	 * When the end node's execution calls `report_result`, the workflow run is
 	 * automatically marked `done`. If absent, completion relies on the
 	 * `CompletionDetector` all-agents-done check as a safety net.
 	 */
@@ -1006,7 +1031,7 @@ export interface CreateSpaceWorkflowParams {
 	startNodeId?: string;
 	/**
 	 * ID of the node where execution ends.
-	 * When the end node's execution calls `report_done`, the workflow run auto-completes.
+	 * When the end node's execution calls `report_result`, the workflow run auto-completes.
 	 */
 	endNodeId?: string;
 	/** Workflow-level messaging channels. */
@@ -1198,7 +1223,7 @@ export interface ExportedSpaceWorkflow {
 	startNode: string;
 	/**
 	 * Name of the node where execution ends (optional — mirrors `SpaceWorkflow.endNodeId`).
-	 * When present, the end node's `report_done` call auto-completes the workflow run.
+	 * When present, the end node's `report_result` call auto-completes the workflow run.
 	 */
 	endNode?: string;
 	/** Tags for categorization */

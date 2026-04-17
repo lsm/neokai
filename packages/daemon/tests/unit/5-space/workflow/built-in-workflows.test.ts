@@ -96,9 +96,9 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-	test('has two nodes: Code, Review', () => {
+	test('has two nodes: Coding, Review', () => {
 		expect(CODING_WORKFLOW.nodes).toHaveLength(2);
-		expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Code', 'Review']);
+		expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review']);
 	});
 
 	test('step agentId placeholders are correct', () => {
@@ -110,16 +110,16 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.channels).toHaveLength(2);
 	});
 
-	test('Code → Review channel is gated by code-ready-gate', () => {
-		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+	test('Coding → Review channel is gated by code-ready-gate', () => {
+		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
 		expect(ch).toBeDefined();
 		expect(ch!.gateId).toBe('code-ready-gate');
 		// direction field removed from WorkflowChannel
 		expect(ch!.maxCycles).toBeUndefined();
 	});
 
-	test('Review → Code channel is ungated with maxCycles', () => {
-		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+	test('Review → Coding channel is ungated with maxCycles', () => {
+		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(ch).toBeDefined();
 		expect(ch!.gateId).toBeUndefined();
 		// direction field removed from WorkflowChannel
@@ -147,11 +147,11 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.fields).toHaveLength(1);
 	});
 
-	test('code-ready-gate has pr_url exists field with wildcard writer', () => {
+	test('code-ready-gate has pr_url field writable only by Coding', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		const prField = gate.fields.find((f) => f.name === 'pr_url')!;
 		expect(prField.type).toBe('string');
-		expect(prField.writers).toEqual(['*']);
+		expect(prField.writers).toEqual(['Coding']);
 		expect(prField.check.op).toBe('exists');
 	});
 
@@ -179,7 +179,7 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('startNodeId points to the Code step', () => {
+	test('startNodeId points to the Coding step', () => {
 		const codeStep = CODING_WORKFLOW.nodes.find((s) => s.agents[0]?.name === 'coder');
 		expect(CODING_WORKFLOW.startNodeId).toBe(codeStep?.id);
 	});
@@ -445,7 +445,7 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		expect(gate.fields[0].name).toBe('approved');
 		expect(gate.fields[0].check).toMatchObject({ op: '==', value: true });
-		expect(gate.fields[0].writers).toEqual(['reviewer']);
+		expect(gate.fields[0].writers).toEqual([]);
 		expect(gate.label).toBe('Approval');
 		expect(gate.requiredLevel).toBe(3);
 		expect(gate.resetOnCycle).toBe(true);
@@ -570,7 +570,7 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 	test('QA node agent slot customPrompt describes pass and fail actions', () => {
 		const qa = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
 		// Node-level instructions were removed; agent slots carry the task instructions
-		expect(qa.agents[0].customPrompt?.value).toContain('report_done');
+		expect(qa.agents[0].customPrompt?.value).toContain('report_result');
 	});
 
 	test('review-votes-gate description mentions read-merge-write requirement', () => {
@@ -804,16 +804,16 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
 	});
 
-	test('CODING_WORKFLOW seeded with two channels (gated Code→Review, ungated Review→Code)', async () => {
+	test('CODING_WORKFLOW seeded with two channels (gated Coding→Review, ungated Review→Coding)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(wf.channels).toHaveLength(2);
 
-		const codeToReview = wf.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+		const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
 		expect(codeToReview).toBeDefined();
 		expect(codeToReview!.gateId).toBe('code-ready-gate');
 
-		const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.gateId).toBeUndefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
@@ -1240,10 +1240,10 @@ describe('seedBuiltInWorkflows()', () => {
 	test('CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		const codeNode = wf.nodes.find((n) => n.name === 'Code');
+		const codeNode = wf.nodes.find((n) => n.name === 'Coding');
 		expect(codeNode?.agents[0].customPrompt?.value).toContain('gh pr create');
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_done()');
+		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_result(');
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
@@ -1256,7 +1256,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
 		expect(codingNode?.agents[0].customPrompt?.value).toContain('code-pr-gate');
 		const qaNode = wf.nodes.find((n) => n.name === 'QA');
-		expect(qaNode?.agents[0].customPrompt?.value).toContain('report_done');
+		expect(qaNode?.agents[0].customPrompt?.value).toContain('report_result');
 	});
 
 	test('RESEARCH_WORKFLOW seeded nodes preserve customPrompt content', () => {
@@ -1265,7 +1265,7 @@ describe('seedBuiltInWorkflows()', () => {
 		const researchNode = wf.nodes.find((n) => n.name === 'Research');
 		expect(researchNode?.agents[0].customPrompt?.value).toContain('gh pr create');
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_done()');
+		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_result(');
 	});
 
 	// ─── Gate preservation per workflow ──────────────────────────────────────
@@ -1329,7 +1329,7 @@ describe('seedBuiltInWorkflows()', () => {
 	test('seeded channels retain all original fields plus a UUID id', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		const codeToReview = wf.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+		const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
 		expect(codeToReview).toBeDefined();
 		expect(codeToReview!.id).toMatch(
 			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -1343,18 +1343,18 @@ describe('seedBuiltInWorkflows()', () => {
 	test('FULL_CYCLE_CODING_WORKFLOW plan-approval-gate uses requiredLevel instead of human writer', () => {
 		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(approvedField.writers).toEqual([]);
 		expect(gate.requiredLevel).toBe(3);
 	});
 
-	test('seeded plan-approval-gate preserves requiredLevel and reviewer writer', () => {
+	test('seeded plan-approval-gate preserves requiredLevel and external-only writers', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual(['reviewer']);
+		expect(approvedField.writers).toEqual([]);
 		expect(gate.requiredLevel).toBe(3);
 	});
 
@@ -1622,7 +1622,7 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	test('exported Coding Workflow preserves two channels and Review→Code cycle', () => {
+	test('exported Coding Workflow preserves two channels and Review→Coding cycle', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
@@ -1631,7 +1631,7 @@ describe('Coding Workflow export/import round-trip', () => {
 		// gateId is stripped during export (gates are separate entities)
 		expect(exported.channels).toHaveLength(2);
 
-		const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
 	});
@@ -1688,12 +1688,12 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(reimported.nodes).toHaveLength(2);
 		expect(reimported.channels).toHaveLength(2);
 
-		// Code → Review channel preserved
-		const codeToReview = reimported.channels!.find((c) => c.from === 'Code' && c.to === 'Review');
+		// Coding → Review channel preserved
+		const codeToReview = reimported.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
 		expect(codeToReview).toBeDefined();
 
-		// Review → Code channel preserved with maxCycles
-		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Code');
+		// Review → Coding channel preserved with maxCycles
+		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
 	});
@@ -1738,8 +1738,8 @@ describe('all built-in workflows have non-empty agent slot prompts', () => {
 });
 
 describe('CODING_WORKFLOW agent slot customPrompt', () => {
-	test('Code node coder has non-empty customPrompt', () => {
-		const codeNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Code')!;
+	test('Coding node coder has non-empty customPrompt', () => {
+		const codeNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
 		const coder = codeNode.agents[0];
 		expect(coder.customPrompt?.value).toBeDefined();
 		expect(coder.customPrompt?.value.trim().length).toBeGreaterThan(0);
@@ -1749,7 +1749,7 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
 		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const reviewer = reviewNode.agents[0];
 		expect(reviewer.customPrompt?.value).toBeDefined();
-		expect(reviewer.customPrompt?.value).toContain('report_done');
+		expect(reviewer.customPrompt?.value).toContain('report_result');
 	});
 });
 
@@ -1765,7 +1765,7 @@ describe('RESEARCH_WORKFLOW agent slot customPrompt', () => {
 		const reviewNode = RESEARCH_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const agent = reviewNode.agents[0];
 		expect(agent.customPrompt?.value).toBeDefined();
-		expect(agent.customPrompt?.value).toContain('report_done');
+		expect(agent.customPrompt?.value).toContain('report_result');
 	});
 });
 
@@ -1774,7 +1774,7 @@ describe('REVIEW_ONLY_WORKFLOW agent slot customPrompt', () => {
 		const reviewNode = REVIEW_ONLY_WORKFLOW.nodes[0];
 		const agent = reviewNode.agents[0];
 		expect(agent.customPrompt?.value).toBeDefined();
-		expect(agent.customPrompt?.value).toContain('report_done');
+		expect(agent.customPrompt?.value).toContain('report_result');
 	});
 
 	test('Review node has agent slot customPrompt (no separate node-level instructions)', () => {
@@ -1819,6 +1819,6 @@ describe('FULL_CYCLE_CODING_WORKFLOW agent slot customPrompt', () => {
 		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
 		const agent = node.agents[0];
 		expect(agent.customPrompt?.value).toBeDefined();
-		expect(agent.customPrompt?.value).toContain('report_done');
+		expect(agent.customPrompt?.value).toContain('report_result');
 	});
 });

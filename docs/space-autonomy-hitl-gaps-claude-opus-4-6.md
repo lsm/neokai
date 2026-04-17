@@ -10,19 +10,20 @@ The space/task/workflow system has three orthogonal control layers:
 | Layer | Scope | Mechanism | Key File |
 |-------|-------|-----------|----------|
 | **Gates** | Per-channel in workflow | Field checks + scripts block message delivery | `runtime/gate-evaluator.ts` |
-| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) | `runtime/space-runtime.ts:507,1202` |
+| **Autonomy Level** | Per-space | Controls task terminal status (`review` vs `done`) and gates completion-action execution | `runtime/space-runtime.ts` → `resolveCompletionWithActions` |
 | **Task Status Machine** | Per-task | `open -> in_progress -> review -> done` | `managers/space-task-manager.ts` |
 
 ### How Autonomy Works Today
 
-Autonomy has exactly **two decision points** — at `space-runtime.ts:507` (single-node completion) and `:1202` (multi-node workflow run completion):
+Autonomy has exactly **one policy function** — `resolveCompletionWithActions` in `space-runtime.ts` — invoked from two completion paths (the single-task and multi-node-run branches of the tick loop). Levels (1–5) decide both the terminal task status and which completion actions auto-execute:
 
 ```
-supervised:       workflow completes -> task status = 'review' (human must approve)
-semi_autonomous:  workflow completes -> task status = 'done' (auto-completed)
+level 1:          workflow completes -> task status = 'review' (human must approve)
+level >= 2:       workflow completes -> task status = 'done' if autonomy >= every action's requiredLevel
+                                       else 'review' paused at first action whose requiredLevel exceeds autonomy
 ```
 
-During execution, both modes behave identically.
+During execution, all levels behave identically; only the terminal resolution differs.
 
 ---
 
@@ -70,13 +71,12 @@ that must guide every implementation decision in this gap list.
 **Status:** Implemented (completion actions + workflow templates)
 
 PR merge is now handled via two complementary mechanisms:
-- **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash --delete-branch` and syncs the worktree
+- **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash` and syncs the worktree
 - **Long workflows** (Full-Cycle, Fullstack QA): QA node prompt includes merge + worktree sync steps (merge is part of the QA validation, not a separate node)
 - **Completion action execution loop** in `SpaceRuntime.resolveCompletionWithActions()` — iterates actions in order, auto-executes when `space.autonomyLevel >= action.requiredLevel`, pauses task at `review` with `pendingActionIndex` otherwise
 - **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` migrated from `writers: ['human']` to `writers: ['reviewer']` + `requiredLevel: 3`
 
 Remaining:
-- `artifactRepo` not yet wired in SpaceRuntime construction (completion actions work but can't resolve artifact data for env injection)
 - No gate script template for "wait for N approvals + CI green" (separate from merge logic)
 
 **Impact:** High  
@@ -309,7 +309,7 @@ Remaining (out of scope, tracked separately):
 
 ### 13. No Dead Loop Detection in Spaces
 
-**Status:** Not implemented
+**Status:** Not implemented — *unblocked by completion-semantics rewrite*
 
 Room has `dead-loop-detector.ts` (Levenshtein similarity-based, 5-fail threshold within 5-minute window)
 that detects infinite gate bounce cycles and escalates to human. Space has nothing equivalent —
@@ -322,6 +322,11 @@ Current Space retry behavior:
 - After exhausting retries → `blocked` with `agent_crashed` reason — but no diagnostic of *why*
 
 Missing:
+- **Stall detection**: with the new completion model (`idle`/`cancelled` are NOT completion
+  signals; only canonical `task.status` is), the runtime can now distinguish "all nodes idle +
+  no pending activations + task still in_progress + no `reportedStatus`" → **stalled**, not
+  complete. Previously this state was misread as completion. See `completion-detector.ts` TODO
+  marker for the entry point.
 - Similarity detection across failure reasons (are retries hitting the same error?)
 - Escalation with diagnostic summary (what was the agent trying when it failed?)
 - Configurable thresholds per space or workflow
@@ -331,26 +336,27 @@ Missing:
 
 ---
 
-### 14. No PR Merge Validation in Spaces
+### 14. No PR Merge Validation in Spaces ✅
 
-**Status:** Not implemented
+**Status:** Implemented
 
-Room has `lifecycle-hooks.ts` (400+ lines) with two gate points:
-- **Worker exit gate**: `checkNotOnBaseBranch()`, `checkPrExists()`, `checkPrSynced()`, `checkWorkerPrMerged()`
-- **Leader complete gate**: `checkLeaderPrMerged()`, `checkPrHasReviews()`, `checkPrIsMergeable()`
+PR validation in spaces is handled via two mechanisms in the built-in workflow templates:
 
-Space has **zero PR validation**. Node agents can write PR artifacts via `write_artifact(type: 'pr')`,
-and Task Agents can call `report_result(status: 'done')`, but nothing verifies the PR was actually
-merged before the task is marked complete.
+1. **End node instructions** — Reviewer/QA prompts now include explicit PR verification steps
+   before calling `report_result()`. The agent can react if the PR isn't in the expected state
+   (e.g. resolve conflicts, re-push).
 
-This means:
-- A task can be marked `done` while its PR is still open
-- No enforcement that work was actually integrated into the base branch
-- `approve_task` transitions `review` → `done` without checking PR state
+2. **Completion action failure blocks task** — `executeCompletionAction()` now returns
+   success/failure. If a completion action script (e.g. `merge_pr`) fails, the task transitions
+   to `blocked` instead of silently completing as `done`. This is a framework-level fix that
+   applies to all completion actions, not just PR merge.
 
-**Depends on:** Gap #1 (PR auto-merge shares the same merge verification infrastructure)  
-**Impact:** High — tasks complete without verifying work was integrated  
-**Effort:** Medium
+Unlike Room's `lifecycle-hooks.ts` approach (400+ lines of imperative checks baked into the
+runtime), Space uses its existing gate/channel/completion-action primitives. PR validation is
+workflow template data, not framework code — users can customize or remove it.
+
+**Impact:** High — tasks no longer complete without verifying work was integrated  
+**Effort:** Low (workflow data + one runtime behavior change)
 
 ---
 
@@ -418,6 +424,53 @@ Missing:
 
 ---
 
+### 18. Task Retry RPC
+
+**Status:** Not implemented
+
+With the new completion-semantics rewrite, an unrecoverably blocked end-node leaves
+`task.status = 'blocked'` (with `blockReason='execution_failed'` or `'agent_crashed'`)
+and the workflow run is `blocked`. Humans/agents can already use `task.update` to mark
+the task `cancelled`, `done`, or `archived` — but there is no equivalent for "retry":
+re-spawn the end-node execution and flip the task back to `in_progress`.
+
+Workaround today: cancel the task and start a new workflow run from scratch. This
+discards any partial progress (other node executions, gate artifacts, send_message
+history) and forces re-planning.
+
+Missing:
+- `task.retry` RPC handler that resets blocked node executions to `pending`, clears
+  the task's blocked state, and resumes the existing workflow run
+- UI affordance on `TaskBlockedBanner` to invoke retry
+- Bound on retry attempts to prevent infinite loops (overlaps with Gap #6)
+
+**Depends on:** Gap #6 (retry semantics), Gap #13 (stall/loop detection for retry budget)  
+**Impact:** Medium — currently humans must restart workflows from scratch  
+**Effort:** Low-Medium
+
+---
+
+### 19. End-Node Single-Agent Invariant (Documented)
+
+**Status:** Implemented and enforced — *invariant for future workflow authoring*
+
+End nodes own the workflow's completion signal via `report_result` (the only signal
+the runtime accepts as workflow completion). Multi-agent end nodes create ambiguity
+about who declares the workflow done — there are no quorum semantics defined and a
+race condition would result.
+
+Enforcement: `space-workflow-manager.ts::validateEndNodeId()` rejects workflow
+definitions whose end node has anything other than exactly 1 agent. All built-in
+workflows comply (single-agent Reviewer/QA at the end).
+
+Future workflow authors must respect this invariant; consider it part of the
+"workflow design contract" alongside the reachability and channel-validity rules.
+
+**Impact:** Documentation/invariant — prevents future bugs  
+**Effort:** Done
+
+---
+
 ## Priority Matrix
 
 | # | Gap | Impact | Effort | Priority | Status |
@@ -436,10 +489,12 @@ Missing:
 | 11 | Runtime lifecycle controls | High | Low-Medium | **P1** | ✅ |
 | 12 | Autonomy level UI toggle | Medium | Medium | **P2** | ✅ |
 | 13 | Dead loop detection in spaces | Medium | Medium | **P2** | |
-| 14 | PR merge validation in spaces | High | Medium | **P1** | |
+| 14 | PR merge validation in spaces | High | Medium | **P1** | ✅ |
 | 15 | Unified inbox for space approvals | Medium | Low-Medium | **P2** | |
 | 16 | Multi-gate blocking ambiguity | Low | Low | **P3** | |
 | 17 | Consecutive failure escalation | Medium | Low-Medium | **P2** | |
+| 18 | Task retry RPC | Medium | Low-Medium | **P2** | |
+| 19 | End-node single-agent invariant | n/a | Done | n/a | ✅ |
 
 ## Dependency Graph & Implementation Order
 
@@ -483,7 +538,7 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 | 8 | **#17 Consecutive failure escalation** | Foundation for smarter retry/escalation, low effort | Low-Medium | |
 | 9 | **#6 Tiered retry** | Builds on #17, informed by block reason distinction | Medium | |
 | 10 | **#13 Dead loop detection** | Builds on #17, prevents stuck workflows | Medium | |
-| 11 | **#14 PR merge validation** | Correctness — tasks shouldn't complete without verifying PR state | Medium | |
+| 11 | **#14 PR merge validation** | Correctness — tasks shouldn't complete without verifying PR state | Medium | **Done** |
 | 12 | **#1 PR auto-merge** | Builds on #14, needs merge verification + audit trail + action UI | Medium | **Done** |
 | 13 | **#15 Unified inbox** | Cross-space discoverability, builds on notification UI pattern | Low-Medium | |
 | 14 | **#9 Review SLA** | Small, builds on audit trail | Low | |

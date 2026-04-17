@@ -403,13 +403,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId, deps.reactiveDb);
 	};
 
-	setupSpaceTaskHandlers(
-		deps.messageHub,
-		deps.spaceManager,
-		spaceTaskManagerFactory,
-		deps.daemonHub
-	);
-
 	// Space agent handlers
 	setupSpaceAgentHandlers(
 		deps.messageHub,
@@ -446,7 +439,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		channelCycleRepo,
 		sessionManager: deps.sessionManager,
 		daemonHub: deps.daemonHub,
+		artifactRepo,
 	});
+
+	// Space task handlers — registered after spaceRuntimeService so the resume
+	// path for pending completion actions can delegate to the runtime.
+	setupSpaceTaskHandlers(
+		deps.messageHub,
+		deps.spaceManager,
+		spaceTaskManagerFactory,
+		deps.daemonHub,
+		spaceRuntimeService
+	);
 
 	// Register Space RPC handlers now that spaceRuntimeService exists.
 	// spaceRuntimeService is passed so space.create can call setupSpaceAgentSession()

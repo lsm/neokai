@@ -351,7 +351,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 					{
 						name: 'approved',
 						type: 'boolean',
-						writers: ['reviewer', 'human'],
+						writers: [],
 						check: { op: '==', value: true },
 					},
 				],
@@ -370,7 +370,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 					{
 						name: 'votes',
 						type: 'map',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: 'count', match: 'approved', min: 3 },
 					},
 				],
@@ -383,7 +383,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 					{
 						name: 'votes',
 						type: 'map',
-						writers: ['reviewer'],
+						writers: [],
 						check: { op: 'count', match: 'rejected', min: 1 },
 					},
 				],
@@ -741,6 +741,46 @@ export async function mockAgentDone(
 	})) as { execution: NodeExecution };
 
 	return projectNodeExecutionAsTask(spaceId, updatedExecution);
+}
+
+/**
+ * Mark the end-node execution as idle AND set the canonical task to done.
+ *
+ * The completion detector requires `task.status` to be terminal — idle node
+ * executions alone no longer signal workflow completion. This helper wraps
+ * `mockAgentDone` for end-node call sites that expect the run to finish.
+ */
+export async function mockWorkflowComplete(
+	daemon: DaemonServerContext,
+	spaceId: string,
+	runId: string,
+	endNodeExecutionId: string,
+	result?: string
+): Promise<void> {
+	await mockAgentDone(daemon, spaceId, endNodeExecutionId, result);
+
+	// Find and transition the canonical task to done.
+	const allTasks = (await daemon.messageHub.request('spaceTask.list', {
+		spaceId,
+	})) as SpaceTask[];
+	const canonicalTask = allTasks.find(
+		(t) => t.workflowRunId === runId && t.status !== 'done' && t.status !== 'cancelled'
+	);
+	if (canonicalTask) {
+		if (canonicalTask.status === 'open') {
+			await daemon.messageHub.request('spaceTask.update', {
+				spaceId,
+				taskId: canonicalTask.id,
+				status: 'in_progress',
+			});
+		}
+		await daemon.messageHub.request('spaceTask.update', {
+			spaceId,
+			taskId: canonicalTask.id,
+			status: 'done',
+			result: result ?? 'Mock workflow complete',
+		});
+	}
 }
 
 /**

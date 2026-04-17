@@ -60,8 +60,8 @@ function evalFieldStatus(field: GateField, data: Record<string, unknown>): GateS
 	return 'blocked';
 }
 
-function isHumanApprovalGate(fields: GateField[]): boolean {
-	return fields.some((f) => f.name === 'approved' && f.writers.includes('human'));
+function isExternalApprovalGate(fields: GateField[]): boolean {
+	return fields.some((f) => f.name === 'approved' && f.writers.length === 0);
 }
 
 function evaluateGateStatus(
@@ -71,7 +71,7 @@ function evaluateGateStatus(
 ): GateStatus {
 	if (scriptFailed) return 'blocked';
 	if ((gate.fields ?? []).length === 0) return 'open';
-	if (isHumanApprovalGate(gate.fields ?? [])) {
+	if (isExternalApprovalGate(gate.fields ?? [])) {
 		const val = data['approved'];
 		if (val === true) {
 			const othersPassed = (gate.fields ?? []).every((f) => {

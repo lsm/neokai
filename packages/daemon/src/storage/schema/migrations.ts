@@ -372,6 +372,19 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Allows users to stop/start space runtime execution without archiving.
 	//   Stopped spaces have all active work killed and will not auto-start on daemon restart.
 	runMigration87(db);
+
+	// Migration 88: Decouple `report_result` from canonical task status.
+	//   Adds `reported_status` and `reported_summary` columns to space_tasks
+	//   so the agent's report intent is recorded separately from the runtime's
+	//   final status decision (which goes through completion-actions review).
+	runMigration88(db);
+
+	// Migration 89: Drop reserved writer keywords from persisted gates.
+	//   Existing space_workflows.gates rows may contain `writers: ['human']`
+	//   or `writers: ['reviewer']` from before the structural-semantics switch.
+	//   Rewrite those `approved` fields to `writers: []` so external-approval
+	//   gates keep working under the new authorization rules.
+	runMigration89(db);
 }
 
 /**
@@ -5856,4 +5869,94 @@ function runMigration87(db: BunDatabase): void {
 	if (!tableExists(db, 'spaces')) return;
 	if (tableHasColumn(db, 'spaces', 'stopped')) return;
 	db.exec(`ALTER TABLE spaces ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0`);
+}
+
+/**
+ * Migration 88: Decouple `report_result` from canonical task status.
+ *
+ * Adds `reported_status` (TEXT NULL) and `reported_summary` (TEXT NULL) columns to
+ * `space_tasks`. These record the end-node agent's claimed outcome separately from
+ * `space_tasks.status`, which is the runtime's final decision after passing through
+ * the completion-actions review gate (see `SpaceRuntime.resolveCompletionWithActions`).
+ *
+ * `reported_status` constrained to the same values as `TaskResultStatusSchema`:
+ * `'done' | 'blocked' | 'cancelled'`.
+ */
+function runMigration88(db: BunDatabase): void {
+	if (!tableExists(db, 'space_tasks')) return;
+
+	if (!tableHasColumn(db, 'space_tasks', 'reported_status')) {
+		db.exec(
+			`ALTER TABLE space_tasks ADD COLUMN reported_status TEXT DEFAULT NULL ` +
+				`CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled'))`
+		);
+	}
+	if (!tableHasColumn(db, 'space_tasks', 'reported_summary')) {
+		db.exec(`ALTER TABLE space_tasks ADD COLUMN reported_summary TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 89: Strip reserved writer keywords from persisted gates.
+ *
+ * Pre-PR #1505 the gate system used magic writer strings (`'human'`,
+ * `'reviewer'`) to mark external-approval fields. PR #1505 switched to
+ * structural semantics: `writers: []` means "external-only" (RPC or
+ * auto-approval via `requiredLevel`). Existing DBs may still contain the
+ * old keywords inside `space_workflows.gates` and would silently lose
+ * their human-approval behavior.
+ *
+ * For each gate field whose `name === 'approved'`, drop the legacy
+ * keywords from `writers`. If only legacy keywords were present, the
+ * resulting `writers: []` correctly preserves external-only semantics.
+ */
+export function runMigration89(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+	if (!tableHasColumn(db, 'space_workflows', 'gates')) return;
+
+	const rows = db
+		.prepare(
+			`SELECT id, gates FROM space_workflows ` +
+				`WHERE gates IS NOT NULL AND (gates LIKE '%"human"%' OR gates LIKE '%"reviewer"%')`
+		)
+		.all() as { id: string; gates: string }[];
+
+	const update = db.prepare(`UPDATE space_workflows SET gates = ? WHERE id = ?`);
+
+	for (const row of rows) {
+		let gates: unknown;
+		try {
+			gates = JSON.parse(row.gates);
+		} catch {
+			continue;
+		}
+		if (!Array.isArray(gates)) continue;
+
+		let changed = false;
+		for (const gate of gates) {
+			if (!gate || typeof gate !== 'object') continue;
+			const fields = (gate as { fields?: unknown }).fields;
+			if (!Array.isArray(fields)) continue;
+			for (const field of fields) {
+				if (
+					!field ||
+					typeof field !== 'object' ||
+					(field as { name?: unknown }).name !== 'approved'
+				) {
+					continue;
+				}
+				const writers = (field as { writers?: unknown }).writers;
+				if (!Array.isArray(writers)) continue;
+				const filtered = writers.filter((w) => w !== 'human' && w !== 'reviewer');
+				if (filtered.length !== writers.length) {
+					(field as { writers: unknown[] }).writers = filtered;
+					changed = true;
+				}
+			}
+		}
+
+		if (changed) {
+			update.run(JSON.stringify(gates), row.id);
+		}
+	}
 }

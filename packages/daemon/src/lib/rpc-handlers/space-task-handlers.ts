@@ -13,6 +13,7 @@ import type { CreateSpaceTaskParams, UpdateSpaceTaskParams } from '@neokai/share
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { Logger } from '../logger';
 
 const log = new Logger('space-task-handlers');
@@ -27,7 +28,8 @@ export function setupSpaceTaskHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
@@ -149,6 +151,48 @@ export function setupSpaceTaskHandlers(
 			}
 
 			if (updateParams.status !== currentTask.status) {
+				// Intercept review → done when the task is paused at a completion action.
+				// Instead of directly transitioning to done, resume the completion action
+				// loop from pendingActionIndex — the loop determines the final status.
+				if (
+					spaceRuntimeService &&
+					currentTask.status === 'review' &&
+					updateParams.status === 'done' &&
+					currentTask.pendingCheckpointType === 'completion_action'
+				) {
+					const resumed = await spaceRuntimeService.resumeCompletionActions(spaceId, taskId);
+					if (resumed) {
+						task = resumed;
+						// Status is excluded — the resume path already set the final status
+						// (done / blocked / review). Forward `result` so a caller-supplied
+						// audit summary (e.g. "LGTM") lands alongside it. The resume path
+						// emits internally, so we only emit again when extra fields merged.
+						const { status: _s, ...otherFields } = updateParams;
+						if (Object.keys(otherFields).length > 0) {
+							task = await taskManager.updateTask(taskId, otherFields);
+							daemonHub
+								.emit('space.task.updated', {
+									sessionId: 'global',
+									spaceId,
+									taskId,
+									task,
+								})
+								.catch((err) => {
+									log.warn('Failed to emit space.task.updated:', err);
+								});
+						}
+
+						return task;
+					}
+					// null = state inconsistency (task deleted, workflow edited, race).
+					// Throw rather than silently falling through to a raw setTaskStatus
+					// that would bypass completion actions.
+					throw new Error(
+						`Cannot resume completion actions for task ${taskId} — ` +
+							'task state is inconsistent (see daemon logs for details)'
+					);
+				}
+
 				// Status is changing — validate via setTaskStatus (enforces transitions)
 				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
 					result: updateParams.result ?? undefined,

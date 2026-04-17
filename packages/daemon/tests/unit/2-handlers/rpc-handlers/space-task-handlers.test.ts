@@ -19,6 +19,7 @@ import type { SpaceTaskManagerFactory } from '../../../../src/lib/rpc-handlers/s
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -46,7 +47,7 @@ const mockTask: SpaceTask = {
 	taskNumber: 1,
 	title: 'Test Task',
 	description: 'A task description',
-	status: 'pending',
+	status: 'open',
 	priority: 'normal',
 	dependsOn: [],
 	createdAt: NOW,
@@ -119,7 +120,11 @@ describe('space-task-handlers', () => {
 	let taskManager: SpaceTaskManager;
 	let taskManagerFactory: SpaceTaskManagerFactory;
 
-	function setup(space: Space | null = mockSpace, task: SpaceTask | null = mockTask) {
+	function setup(
+		space: Space | null = mockSpace,
+		task: SpaceTask | null = mockTask,
+		runtime?: SpaceRuntimeService
+	) {
 		const mh = createMockMessageHub();
 		hub = mh.hub;
 		handlers = mh.handlers;
@@ -127,7 +132,7 @@ describe('space-task-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		taskManager = createMockTaskManager(task);
 		taskManagerFactory = mock((_spaceId: string) => taskManager);
-		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub);
+		setupSpaceTaskHandlers(hub, spaceManager, taskManagerFactory, daemonHub, runtime);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -412,24 +417,22 @@ describe('space-task-handlers', () => {
 			});
 		});
 
-		it('reactivates a cancelled task to pending', async () => {
+		it('reactivates a cancelled task to open', async () => {
 			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
 			setup(mockSpace, cancelledTask);
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
 				...cancelledTask,
-				status: 'pending' as const,
-				error: undefined,
-				progress: undefined,
+				status: 'open' as const,
 			});
 
 			const result = await call('spaceTask.update', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				status: 'pending',
+				status: 'open',
 			});
 
-			expect((result as SpaceTask).status).toBe('pending');
-			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'pending', {
+			expect((result as SpaceTask).status).toBe('open');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'open', {
 				result: undefined,
 				error: undefined,
 			});
@@ -478,17 +481,17 @@ describe('space-task-handlers', () => {
 		});
 
 		it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {
-			// mockTask has status: 'pending'; sending status: 'pending' should not call setTaskStatus
+			// mockTask has status: 'open'; sending status: 'open' should not call setTaskStatus
 			const result = await call('spaceTask.update', {
 				spaceId: 'space-1',
 				taskId: 'task-1',
-				status: 'pending', // same as current
+				status: 'open', // same as current
 				title: 'New title',
 			});
 
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-				status: 'pending',
+				status: 'open',
 				title: 'New title',
 			});
 			expect(result).toBeDefined();
@@ -582,19 +585,18 @@ describe('space-task-handlers', () => {
 		});
 
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {
-			// For this test, use a task that is already 'completed' to trigger an invalid transition
-			const completedTask = { ...mockTask, status: 'completed' as const };
-			setup(mockSpace, completedTask);
+			const doneTask = { ...mockTask, status: 'done' as const };
+			setup(mockSpace, doneTask);
 
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-				new Error("Invalid status transition from 'completed' to 'pending'. Allowed: none")
+				new Error("Invalid status transition from 'done' to 'review'. Allowed: none")
 			);
 
 			await expect(
 				call('spaceTask.update', {
 					spaceId: 'space-1',
 					taskId: 'task-1',
-					status: 'pending',
+					status: 'review',
 				})
 			).rejects.toThrow('Invalid status transition');
 		});
@@ -611,6 +613,105 @@ describe('space-task-handlers', () => {
 					title: 'X',
 				})
 			).rejects.toThrow('Task not found');
+		});
+	});
+
+	// ─── completion-action resume intercept ─────────────────────────────────────
+
+	describe('spaceTask.update — completion-action resume intercept', () => {
+		const reviewTask: SpaceTask = {
+			...mockTask,
+			status: 'review',
+			pendingCheckpointType: 'completion_action',
+			pendingActionIndex: 0,
+		};
+
+		function setupWithRuntime(
+			task: SpaceTask | null = reviewTask,
+			resumed: SpaceTask | null = { ...reviewTask, status: 'done' as const }
+		): { runtime: SpaceRuntimeService } {
+			const runtime = {
+				resumeCompletionActions: mock(async () => resumed),
+			} as unknown as SpaceRuntimeService;
+			setup(mockSpace, task, runtime);
+			return { runtime };
+		}
+
+		it('routes review→done to resumeCompletionActions when paused at completion_action', async () => {
+			const { runtime } = setupWithRuntime();
+
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(runtime.resumeCompletionActions).toHaveBeenCalledWith('space-1', 'task-1');
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect((result as SpaceTask).status).toBe('done');
+		});
+
+		it('skips the secondary emit when no extra fields were merged', async () => {
+			// resumeCompletionActions emits internally via updateTaskAndEmit. The
+			// handler must NOT emit again when there are no follow-up updates,
+			// otherwise subscribers see a duplicate space.task.updated event.
+			setupWithRuntime();
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(daemonHub.emit).not.toHaveBeenCalled();
+		});
+
+		it('forwards `result` field as a follow-up updateTask and emits once', async () => {
+			// Caller-supplied audit summary (e.g. "LGTM") must be persisted
+			// alongside the runtime-determined status.
+			setupWithRuntime();
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+				result: 'LGTM',
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { result: 'LGTM' });
+			expect(daemonHub.emit).toHaveBeenCalledTimes(1);
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.task.updated', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				task: expect.anything(),
+			});
+		});
+
+		it('falls through to setTaskStatus when not paused at completion_action', async () => {
+			const reviewNoCheckpoint = { ...reviewTask, pendingCheckpointType: undefined };
+			const { runtime } = setupWithRuntime(reviewNoCheckpoint);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+			});
+
+			expect(runtime.resumeCompletionActions).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).toHaveBeenCalled();
+		});
+
+		it('throws when resumeCompletionActions returns null (inconsistent state)', async () => {
+			setupWithRuntime(reviewTask, null);
+
+			await expect(
+				call('spaceTask.update', {
+					spaceId: 'space-1',
+					taskId: 'task-1',
+					status: 'done',
+				})
+			).rejects.toThrow('Cannot resume completion actions');
 		});
 	});
 });

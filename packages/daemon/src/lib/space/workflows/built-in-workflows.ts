@@ -15,7 +15,7 @@
  * - At Space creation time, preset SpaceAgent records are seeded for each
  *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
  *   exist so that the `agentId` values resolve correctly.
- * - Channels use node names (e.g. 'Plan', 'Code') in `from`/`to` so they
+ * - Channels use node names (e.g. 'Plan', 'Coding') in `from`/`to` so they
  *   resolve correctly at runtime without UUID translation in the seeder.
  *   `resolveChannels()` matches node names via the `nodeNameToAgents` lookup.
  */
@@ -114,7 +114,7 @@ const PR_MERGE_BASH_SCRIPT = [
 	'  exit 0',
 	'fi',
 	'echo "Merging PR: $PR_URL"',
-	'if ! gh pr merge "$PR_URL" --squash --delete-branch; then',
+	'if ! gh pr merge "$PR_URL" --squash; then',
 	'  echo "Failed to merge PR: $PR_URL" >&2',
 	'  exit 1',
 	'fi',
@@ -203,7 +203,7 @@ const V2_QA_PROMPT =
 	'- Verify the PR is mergeable (no conflicts, required checks passing)\n' +
 	'- Confirm the changes match what was planned and reviewed\n' +
 	'- Spot-check critical paths manually if possible\n\n' +
-	'If QA passes, call report_done() with a concise final validation summary. ' +
+	'If QA passes, call report_result() with a concise final validation summary. ' +
 	'If QA fails, send detailed feedback to Coding so fixes can be made and re-tested.';
 
 const FULLSTACK_CODING_PROMPT =
@@ -214,7 +214,7 @@ const FULLSTACK_CODING_PROMPT =
 	'- Review may send you back for fixes.\n' +
 	'- QA may also send you back after deep verification (including browser tests).\n\n' +
 	'When implementation is ready, ensure the PR is open and mergeable, write code-pr-gate with ' +
-	'field pr_url, then call report_done() to mark Coding complete.';
+	'field pr_url, then call report_result() to mark Coding complete.';
 
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
@@ -225,7 +225,7 @@ const FULLSTACK_REVIEW_PROMPT =
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
 	'frontend tests, and browser-based checks for critical flows.\n\n' +
-	'If everything passes, call report_done() with the QA evidence summary. ' +
+	'If everything passes, call report_result() with the QA evidence summary. ' +
 	'If issues are found, send a detailed fix list to Coding via the QA → Coding channel.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
@@ -240,11 +240,11 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
 /**
  * Coding Workflow
  *
- * Two-node iterative graph: Code ↔ Review (with cycle).
- * - Code → Review: gated by `code-ready-gate` — a bash script verifies that an
+ * Two-node iterative graph: Coding ↔ Review (with cycle).
+ * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
- * - Review → Code: ungated — Reviewer sends back for changes without any gate.
- *   When satisfied, Reviewer calls `report_done()` on the Review node (endNodeId)
+ * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
+ *   When satisfied, Reviewer calls `report_result()` on the Review node (endNodeId)
  *   which signals workflow completion.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
@@ -252,35 +252,47 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Iterative coding workflow with Code ↔ Review loop. Coder implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+		'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
 	nodes: [
 		{
 			id: CODING_CODE_NODE,
-			name: 'Code',
+			name: 'Coding',
 			agents: [
 				{
 					agentId: 'Coder',
 					name: 'coder',
 					customPrompt: {
 						value:
-							'You are the Coder in a Coder→Reviewer iterative workflow. Your job is to implement the ' +
-							'task, write tests, commit all changes, and open a pull request.\n\n' +
+							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
+							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
 							'Workflow context:\n' +
-							'- You are in the Code node. After you open a PR, the code-ready-gate verifies it is ' +
-							'open and mergeable before the Reviewer sees it.\n' +
-							'- If the Reviewer requests changes, you will be re-activated with their feedback. ' +
-							'Address all feedback, push new commits, and the gate re-checks automatically.\n' +
-							'- This cycle can repeat up to 5 times before the workflow fails.\n\n' +
-							'Expected inputs: Task description from the workflow trigger.\n' +
-							'Expected outputs: A clean, mergeable PR with passing tests.\n\n' +
+							'- The Reviewer is NOT triggered automatically when you finish. You MUST hand off ' +
+							'explicitly by sending a message to the Review node with the PR URL — that send ' +
+							'is what passes the readiness gate and activates the Reviewer.\n' +
+							'- If the Reviewer requests changes, you will be re-activated with their message. ' +
+							'Pull the review comments from GitHub, evaluate each one, address the valid items, ' +
+							'and push back on any you disagree with — explain your reasoning in the reply.\n' +
+							'- This cycle can repeat up to 5 times.\n\n' +
 							'Steps:\n' +
 							'1. Read and understand the task requirements\n' +
-							'2. Implement the changes with atomic, well-described commits\n' +
+							'2. Implement the changes with logical, well-described commits\n' +
 							'3. Write or update tests to cover new behavior\n' +
 							'4. Run the test suite and fix any failures\n' +
-							'5. Open a PR with `gh pr create` — include a clear title and description\n\n' +
-							'If re-activated after review feedback: read the feedback carefully, address each ' +
-							'point, push fixes, and verify tests still pass.',
+							'5. Open a PR with `gh pr create` — include a clear title and description\n' +
+							'6. Hand off to the Reviewer: send_message(target="Review", message="PR ready for ' +
+							'review at <url>", data={ pr_url: "<url>" }). The gate runs a script that verifies ' +
+							'the PR is open and mergeable, so make sure it actually is before sending. ' +
+							'**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
+							'data resets each cycle, so even on round 2+ you must re-supply it.\n\n' +
+							'If re-activated after review:\n' +
+							'1. Pull review comments from GitHub (`gh pr view` and `gh api`)\n' +
+							'2. Evaluate each comment critically — do not blindly accept feedback. Verify ' +
+							'against the code and the task requirements. The Reviewer can be wrong.\n' +
+							'3. For valid items: make the fix and reply to the comment confirming what changed\n' +
+							'4. For items you disagree with: reply explaining why, with evidence from the code ' +
+							'or tests. Do not change code you believe is correct.\n' +
+							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
+							'(again with `data: { pr_url }`) to re-trigger the review cycle',
 					},
 				},
 			],
@@ -294,21 +306,30 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'reviewer',
 					customPrompt: {
 						value:
-							'You are the Reviewer in a Coder→Reviewer iterative workflow. You review the open PR ' +
-							'and either approve it or send it back for changes.\n\n' +
+							'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
+							'and either approve it or request changes.\n\n' +
 							'Workflow context:\n' +
-							'- The Coder has already implemented and opened a PR (verified by code-ready-gate).\n' +
-							'- If you request changes, the Coder is automatically re-activated with your feedback.\n' +
-							'- When you are satisfied, call report_done() to complete the entire workflow.\n' +
-							'- This node is the endNodeId — your report_done() signals workflow completion.\n\n' +
-							'Expected inputs: An open, mergeable PR from the Coder.\n' +
-							'Expected outputs: Either approval (report_done) or specific change requests.\n\n' +
+							'- The engineer has already implemented and opened a PR (verified automatically).\n' +
+							'- You share the same worktree as the engineer — review the codebase as a whole, ' +
+							'not just the PR diff. Read related files, run tests, check for issues the diff ' +
+							'might not surface (e.g. callers of changed functions, integration points).\n' +
+							'- Post all feedback as PR review comments on GitHub so the engineer can address ' +
+							'them item by item. Then send a short message to Coding summarizing the request.\n' +
+							'- If you request changes, the engineer is automatically re-activated.\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal ' +
+							'the runtime accepts as completion — finishing your turn without it leaves the ' +
+							'workflow stuck. Do all your review work — read files, run tests, post comments ' +
+							'to GitHub, send messages to Coding — BEFORE calling `report_result`. After it ' +
+							'returns, do not invoke any other tools.\n\n' +
 							'Review checklist:\n' +
-							'1. Read the PR diff thoroughly\n' +
-							'2. Check for correctness, style, and test coverage\n' +
-							'3. Verify the PR description accurately describes the changes\n' +
-							'4. If changes needed: provide specific, actionable feedback (the Coder will be sent back)\n' +
-							'5. If satisfied: call report_done() with a brief summary of your review',
+							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
+							'2. Check for correctness, style, test coverage, and integration impact\n' +
+							'3. Run the relevant tests yourself if uncertain\n' +
+							'4. If changes needed: post specific, actionable review comments on GitHub, then ' +
+							'send_message to Coding asking them to address the comments (do NOT call ' +
+							'`report_result` — leave the workflow open for the next round)\n' +
+							'5. If satisfied: verify the PR is open and mergeable, then call ' +
+							'`report_result(status="done", summary=...)` as your final action',
 					},
 				},
 			],
@@ -329,7 +350,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'pr_url',
 					type: 'string',
-					writers: ['*'],
+					writers: ['Coding'],
 					check: { op: 'exists' },
 				},
 			],
@@ -343,16 +364,16 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	],
 	channels: [
 		{
-			from: 'Code',
+			from: 'Coding',
 			to: 'Review',
 			gateId: 'code-ready-gate',
-			label: 'Code → Review',
+			label: 'Coding → Review',
 		},
 		{
 			from: 'Review',
-			to: 'Code',
+			to: 'Coding',
 			maxCycles: 5,
-			label: 'Review → Code (changes requested)',
+			label: 'Review → Coding (changes requested)',
 		},
 	],
 };
@@ -365,7 +386,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  *   Review → Research (ungated back-channel, max 5 cycles)
  *
  * Research agent researches thoroughly, commits findings, opens a PR.
- * Reviewer agent reviews the research PR; calls report_done() if satisfied,
+ * Reviewer agent reviews the research PR; calls report_result() if satisfied,
  * or sends back for more research via the back-channel.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
@@ -418,18 +439,23 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'research findings for completeness, accuracy, and quality.\n\n' +
 							'Workflow context:\n' +
 							'- The Research agent has investigated and opened a PR (verified by research-ready-gate).\n' +
-							'- If you request more research, the Research agent is automatically re-activated.\n' +
-							'- When satisfied, call report_done() to complete the entire workflow.\n' +
-							'- This node is the endNodeId — your report_done() signals workflow completion.\n\n' +
+							'- If you request more research, the Research agent is automatically re-activated.\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. Do all your review work BEFORE calling `report_result`; it must be your last ' +
+							'tool call. Do not call it when requesting more research — leave the workflow open ' +
+							'for the next round in that case.\n\n' +
 							'Expected inputs: A PR containing research findings from the Research agent.\n' +
-							'Expected outputs: Either approval (report_done) or specific feedback for more research.\n\n' +
+							'Expected outputs: Either approval (report_result) or specific feedback for more research.\n\n' +
 							'Review checklist:\n' +
 							'1. Read all research documents in the PR\n' +
 							'2. Check completeness: does the research answer the original question?\n' +
 							'3. Check accuracy: are claims supported by evidence or sources?\n' +
 							'4. Check clarity: are findings well-organized and easy to follow?\n' +
-							'5. If more research needed: provide specific areas to investigate further\n' +
-							'6. If satisfied: call report_done() with a brief summary',
+							'5. If more research needed: send_message back to Research with specific areas to ' +
+							'investigate (do NOT call `report_result`)\n' +
+							'6. If satisfied: verify the PR is still open and mergeable, then call ' +
+							'`report_result(status="done", summary=...)` as your final action',
 					},
 				},
 			],
@@ -506,8 +532,12 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'You are the sole Reviewer in a single-node Review-Only workflow. There is no planning ' +
 							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
 							'Workflow context:\n' +
-							'- This is both the start and end node — the workflow completes when you call report_done().\n' +
+							'- This is both the start and end node — the workflow completes when you call report_result().\n' +
 							'- There are no other agents in this workflow; your review is the only node.\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. Do all review work BEFORE calling `report_result`; it must be your last tool ' +
+							'call.\n\n' +
 							'Expected inputs: A PR or code to review (specified in the task description).\n' +
 							'Expected outputs: A thorough review summary with actionable findings.\n\n' +
 							'Review checklist:\n' +
@@ -515,7 +545,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'2. Check for correctness, security, performance, and style issues\n' +
 							'3. Verify test coverage is adequate\n' +
 							'4. Summarize your findings clearly\n' +
-							'5. Call report_done() with your review summary to complete the workflow',
+							'5. Call `report_result(status="done", summary=...)` as your final action',
 					},
 				},
 			],
@@ -532,7 +562,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  * Full-Cycle Coding Workflow
  *
  * Five-node graph with planning, plan review, coding, parallel code review, and QA.
- * QA is the terminal node and calls report_done() on success.
+ * QA is the terminal node and calls report_result() on success.
  *
  * Main progression:
  *   Planning → Plan Review (plan-pr-gate: script verifies plan PR is open/mergeable)
@@ -691,6 +721,10 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 						value:
 							V2_QA_PROMPT +
 							'\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. `report_result` must be your last tool call. Do not call it when sending ' +
+							'feedback to Coding — leave the workflow open for the next round in that case.\n\n' +
 							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
 							'Expected outputs: PR merged and worktree synced, or detailed feedback to Coding.\n\n' +
 							'Steps:\n' +
@@ -698,10 +732,11 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'2. Check CI pipeline status on the PR\n' +
 							'3. Verify the PR is mergeable (no conflicts)\n' +
 							'4. Confirm changes match the approved plan\n' +
-							'5. If issues found: send detailed feedback to Coding via QA → Coding channel\n' +
-							'6. If all green: merge the PR with `gh pr merge <URL> --squash --delete-branch`\n' +
+							'5. If issues found: send detailed feedback to Coding via QA → Coding channel ' +
+							'(do NOT call `report_result`)\n' +
+							'6. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'7. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'8. Call report_done() confirming merge and sync\n\n' +
+							'8. Call `report_result(status="done", summary=...)` confirming merge and sync\n\n' +
 							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
 					},
 				},
@@ -736,7 +771,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],
@@ -838,7 +873,7 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
  *   Review → Coding (changes requested)
  *   QA → Coding (test failures/regressions)
  *
- * QA is the end node. QA calls report_done() on success.
+ * QA is the end node. QA calls report_result() on success.
  */
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -866,7 +901,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'2. Add/update unit, integration, and UI tests as needed\n' +
 							'3. Open or update the PR and ensure it remains mergeable\n' +
 							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
-							'5. Call report_done() with a concise coding handoff summary\n' +
+							'5. Call report_result() with a concise coding handoff summary\n' +
 							'6. Share blockers clearly with Reviewer/QA when needed',
 					},
 				},
@@ -904,16 +939,21 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 						value:
 							FULLSTACK_QA_PROMPT +
 							'\n\n' +
+							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
+							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
+							'stuck. `report_result` must be your last tool call. Do not call it when sending ' +
+							'feedback to Coding — leave the workflow open for the next round in that case.\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
 							'Expected outputs: PR merged and worktree synced, or QA feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run backend and frontend test suites\n' +
 							'2. Run browser-based critical-path validation\n' +
 							'3. Validate CI and mergeability\n' +
-							'4. If fail: send detailed failures and repro steps to Coding\n' +
-							'5. If all green: merge the PR with `gh pr merge <URL> --squash --delete-branch`\n' +
+							'4. If fail: send detailed failures and repro steps to Coding (do NOT call ' +
+							'`report_result`)\n' +
+							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call report_done() confirming merge and sync',
+							'7. Call `report_result(status="done", summary=...)` confirming merge and sync',
 					},
 				},
 			],
@@ -945,7 +985,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],

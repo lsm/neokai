@@ -53,6 +53,7 @@ import {
 	waitForRunStatus,
 	getTasksForNode,
 	mockAgentDone,
+	mockWorkflowComplete,
 } from './helpers/space-test-helpers';
 
 // ---------------------------------------------------------------------------
@@ -278,7 +279,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			const completionSummary =
 				'Feature implemented: PR #99 merged, all tests pass, CI green. ' +
 				'Reviewed by 3 reviewers. QA confirmed mergeable state.';
-			await mockAgentDone(daemon, spaceId, doneTask.id, completionSummary);
+			await mockWorkflowComplete(daemon, spaceId, runId, doneTask.id, completionSummary);
 
 			const completedRun = await waitForRunStatus(daemon, runId, ['done'], RUN_STATUS_TIMEOUT);
 			expect(completedRun.status).toBe('done');
@@ -523,7 +524,7 @@ describe('Space Happy Path — Full Pipeline End-to-End', () => {
 			);
 			expect(doneTask.title).toBe('Done');
 
-			await mockAgentDone(daemon, spaceId, doneTask.id, completionSummary);
+			await mockWorkflowComplete(daemon, spaceId, runId, doneTask.id, completionSummary);
 
 			// ── Final assertions ─────────────────────────────────────────────────
 			const completedRun = await waitForRunStatus(daemon, runId, ['done'], RUN_STATUS_TIMEOUT);

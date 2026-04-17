@@ -175,6 +175,23 @@ function buildLinearWorkflow(
 	});
 }
 
+// End nodes must have exactly 1 agent (validator rule). For tests that exercise
+// a multi-agent step, append a downstream single-agent end node so the
+// multi-agent step remains an intermediate node. Returns the synthesized end
+// node id so tests can reference it.
+const SYNTHETIC_END_NODE_ID = '__test_end__';
+function withSyntheticEnd(endAgentId: string): {
+	id: string;
+	name: string;
+	agents: Array<{ agentId: string; name: string }>;
+} {
+	return {
+		id: SYNTHETIC_END_NODE_ID,
+		name: 'Synthetic End',
+		agents: [{ agentId: endAgentId, name: 'end' }],
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Test suite setup
 // ---------------------------------------------------------------------------
@@ -1083,9 +1100,11 @@ describe('SpaceRuntime — notification events', () => {
 							{ agentId: AGENT_PLANNER, name: 'planner' },
 						],
 					},
+					withSyntheticEnd(AGENT_CODER),
 				],
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
 			});
@@ -1115,9 +1134,11 @@ describe('SpaceRuntime — notification events', () => {
 							{ agentId: AGENT_PLANNER, name: 'planner' },
 						],
 					},
+					withSyntheticEnd(AGENT_CODER),
 				],
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
 			});
@@ -1165,9 +1186,11 @@ describe('SpaceRuntime — notification events', () => {
 							{ agentId: AGENT_PLANNER, name: 'planner' },
 						],
 					},
+					withSyntheticEnd(AGENT_CODER),
 				],
 				transitions: [],
 				startNodeId: STEP_A,
+				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
 			});
@@ -1285,7 +1308,7 @@ describe('SpaceRuntime — notification events', () => {
 			}
 		});
 
-		test('emits workflow_run_completed for multi-agent step when all tasks are terminal', async () => {
+		test('emits workflow_run_completed for multi-agent step when canonical task is terminal', async () => {
 			const rt = makeRuntimeWithTam();
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
@@ -1299,15 +1322,19 @@ describe('SpaceRuntime — notification events', () => {
 							{ agentId: AGENT_PLANNER2, name: 'planner' },
 						],
 					},
+					withSyntheticEnd(AGENT_CODER),
 				],
 				transitions: [],
 				startNodeId: 'step-multi-cd',
+				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 			expect(tasks).toHaveLength(1);
+			// Completion is task-status driven; flip the canonical task to done.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 			seedNodeExec(db, run.id, 'step-multi-cd', 'coder', 'idle');
 			seedNodeExec(db, run.id, 'step-multi-cd', 'planner', 'idle');
 
@@ -1320,7 +1347,7 @@ describe('SpaceRuntime — notification events', () => {
 			expect(completedEvents).toHaveLength(1);
 		});
 
-		test('does NOT emit workflow_run_completed when a task is still in_progress', async () => {
+		test('does NOT emit workflow_run_completed when canonical task is still in_progress', async () => {
 			const rt = makeRuntimeWithTam();
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
@@ -1334,14 +1361,17 @@ describe('SpaceRuntime — notification events', () => {
 							{ agentId: AGENT_PLANNER2, name: 'planner' },
 						],
 					},
+					withSyntheticEnd(AGENT_CODER),
 				],
 				transitions: [],
 				startNodeId: 'step-ip-cd',
+				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
 			});
 
 			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// Canonical task left in default in_progress; completion must not fire.
 			seedNodeExec(db, run.id, 'step-ip-cd', 'coder', 'idle');
 			seedNodeExec(db, run.id, 'step-ip-cd', 'planner', 'in_progress');
 
@@ -1414,7 +1444,7 @@ describe('SpaceRuntime — notification events', () => {
 			expect(['in_progress', 'blocked']).toContain(runAfter?.status);
 		});
 
-		test('completes when all tasks are cancelled (terminal) status', async () => {
+		test('completes when canonical task is cancelled (terminal) status', async () => {
 			const rt = makeRuntimeWithTam();
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
@@ -1428,14 +1458,18 @@ describe('SpaceRuntime — notification events', () => {
 							{ agentId: AGENT_PLANNER2, name: 'planner' },
 						],
 					},
+					withSyntheticEnd(AGENT_CODER),
 				],
 				transitions: [],
 				startNodeId: 'step-cancel-cd',
+				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
 			});
 
-			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// Cancelled at node-execution level does NOT complete; only task.status terminal does.
+			taskRepo.updateTask(tasks[0].id, { status: 'cancelled' });
 			seedNodeExec(db, run.id, 'step-cancel-cd', 'coder', 'cancelled');
 			seedNodeExec(db, run.id, 'step-cancel-cd', 'planner', 'cancelled');
 

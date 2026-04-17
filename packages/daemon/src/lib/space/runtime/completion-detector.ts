@@ -1,86 +1,67 @@
 /**
  * CompletionDetector
  *
- * Determines whether a workflow run is complete by inspecting
- * `NodeExecution` records instead of `SpaceTask` records.
+ * Determines whether a workflow run is complete by inspecting the canonical
+ * `SpaceTask` — never `NodeExecution`. Per the workflow completion contract:
  *
- * Completion conditions (all-agents-done safety net):
- * 1. At least one node execution exists — workflow has started.
- * 2. Every node execution has a terminal status (done or cancelled).
+ *   - Node-execution statuses (`idle`, `cancelled`, etc.) are about per-execution
+ *     lifecycle, NOT workflow completion. An idle end-node may still re-activate
+ *     via cyclic re-entry; a cancelled execution may be a transient error.
+ *   - The single source of truth for "this workflow is finished" is the canonical
+ *     `SpaceTask` linked to the workflow run.
  *
- * End-node short-circuit:
- * When `endNodeId` is provided, the detector checks if the end node's
- * execution has reached a terminal status. If so, the run is complete
- * regardless of other nodes' statuses (they will be cancelled by the runtime).
+ * Two completion signals — both inspected here:
  *
- * Terminal statuses: `done`, `cancelled`.
- * Non-terminal statuses (block completion): `pending`, `in_progress`, `blocked`.
+ *  1. `task.status` is terminal (`done` | `cancelled`) — the canonical task
+ *     has reached its end state, either via runtime resolution or human override.
+ *     Note: `archived` is also a terminal status but we treat it as "out of scope"
+ *     here — completion handling is for active workflow lifecycle, not soft-delete.
+ *
+ *  2. `task.reportedStatus` is non-null — the end-node agent reported its result
+ *     via `report_result`. The runtime's tick will resolve the final task status
+ *     on the next pass through `resolveCompletionWithActions` (which honors the
+ *     supervised-mode review gate). Returning true here causes that resolution
+ *     to fire.
+ *
+ * TODO: stall detection (gap #13) — once nothing is `pending`/`in_progress` and
+ * the task is still `in_progress` with no `reportedStatus`, the workflow is
+ * stalled (e.g. dead-loop, all agents idle waiting for input). That detection
+ * is out of scope for this change; see `docs/space-autonomy-hitl-gaps-claude-opus-4-6.md`.
  */
 
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 
 export interface CompletionOptions {
 	/** Workflow run to inspect */
 	workflowRunId: string;
-	/**
-	 * Optional end node ID for deterministic completion.
-	 * When provided, the run is complete when the end node's execution
-	 * reaches a terminal status, regardless of other nodes.
-	 */
-	endNodeId?: string;
 }
 
 export class CompletionDetector {
-	constructor(private readonly nodeExecutionRepo: NodeExecutionRepository) {}
+	constructor(private readonly taskRepo: SpaceTaskRepository) {}
 
 	/**
-	 * Returns true when the workflow run is complete.
+	 * Returns true when the workflow run is complete or the runtime should
+	 * resolve completion on the next tick.
 	 *
-	 * Two completion strategies:
+	 * - `true` when the canonical task's `status` is terminal (`done` | `cancelled`),
+	 *   OR when `reportedStatus` is non-null (agent has reported a result that the
+	 *   runtime should now resolve through completion-actions).
+	 * - `false` when the task is missing, in a non-terminal status, and the agent
+	 *   has not reported a result yet.
 	 *
-	 * 1. **End-node short-circuit** (when `options.endNodeId` is provided):
-	 *    The run is complete when the end node's execution reaches a terminal
-	 *    status (`done` or `cancelled`). This is the primary completion path
-	 *    for workflows with a defined end node.
-	 *
-	 * 2. **All-agents-done fallback**:
-	 *    The run is complete when every node execution in the run has a
-	 *    terminal status. This acts as a safety net for workflows without
-	 *    an end node or for edge cases.
-	 *
-	 * Both strategies require at least one node execution to exist
-	 * ("no executions" → false — workflow hasn't started).
+	 * Returns `false` when no canonical task is linked to the run — the workflow
+	 * has not started yet from the user-facing perspective.
 	 */
 	isComplete(options: CompletionOptions): boolean {
-		const { workflowRunId, endNodeId } = options;
+		const tasks = this.taskRepo.listByWorkflowRun(options.workflowRunId);
+		if (tasks.length === 0) return false;
 
-		const executions = this.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-
-		// Workflow has not started yet — no node executions created
-		if (executions.length === 0) return false;
-
-		// End-node short-circuit: if the end node's execution is terminal,
-		// the run is complete regardless of other nodes' statuses.
-		if (endNodeId) {
-			const endNodeExecutions = executions.filter((e) => e.workflowNodeId === endNodeId);
-			if (
-				endNodeExecutions.length > 0 &&
-				endNodeExecutions.every((e) => TERMINAL_NODE_EXECUTION_STATUSES.has(e.status))
-			) {
-				return true;
-			}
-
-			// When an explicit end node exists, we do NOT fall back to
-			// "all current executions terminal". Otherwise a run can complete
-			// prematurely after only early nodes execute (e.g. gated flows where
-			// later nodes have not been activated yet).
-			return false;
+		// A run can have multiple tasks (rare); any single terminal/reported task
+		// signals completion intent.
+		for (const task of tasks) {
+			if (task.status === 'done' || task.status === 'cancelled') return true;
+			if (task.reportedStatus !== null) return true;
 		}
-
-		// All-agents-done fallback: every execution must be terminal
-		if (executions.some((e) => !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status))) return false;
-
-		return true;
+		return false;
 	}
 }

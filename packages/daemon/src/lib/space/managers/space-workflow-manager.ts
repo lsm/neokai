@@ -212,11 +212,6 @@ export class SpaceWorkflowManager {
 
 		for (let i = 0; i < nodes.length; i++) {
 			const node = nodes[i];
-			if (node.name && node.name.trim().toLowerCase() === 'human') {
-				throw new WorkflowValidationError(
-					`node[${i}]: "human" is a reserved keyword and cannot be used as a node name`
-				);
-			}
 			this.validateNodeAgentRef(spaceId, node, i);
 		}
 	}
@@ -249,11 +244,6 @@ export class SpaceWorkflowManager {
 			if (!entry.name || !entry.name.trim()) {
 				throw new WorkflowValidationError(
 					`node[${index}].agents[${j}]: name must be a non-empty string`
-				);
-			}
-			if (entry.name.trim().toLowerCase() === 'human') {
-				throw new WorkflowValidationError(
-					`node[${index}].agents[${j}]: "human" is a reserved keyword and cannot be used as an agent name`
 				);
 			}
 			if (seenNames.has(entry.name)) {
@@ -326,10 +316,21 @@ export class SpaceWorkflowManager {
 		if (!endNodeId.trim()) {
 			throw new WorkflowValidationError('endNodeId must be a non-empty string');
 		}
-		const nodeIds = new Set(nodes.map((n) => n.id));
-		if (!nodeIds.has(endNodeId)) {
+		const endNode = nodes.find((n) => n.id === endNodeId);
+		if (!endNode) {
 			throw new WorkflowValidationError(
 				`endNodeId "${endNodeId}" does not match any node in this workflow`
+			);
+		}
+		// End nodes own the workflow's completion signal via `report_result`.
+		// Multi-agent end nodes create ambiguity: who declares the workflow done?
+		// Restrict to exactly one agent so there's a single unambiguous owner of
+		// the workflow's commitment.
+		const agentCount = endNode.agents?.length ?? 0;
+		if (agentCount !== 1) {
+			throw new WorkflowValidationError(
+				`endNode "${endNode.name}" must have exactly 1 agent (has ${agentCount}); ` +
+					`end nodes own the workflow completion signal via report_result`
 			);
 		}
 	}

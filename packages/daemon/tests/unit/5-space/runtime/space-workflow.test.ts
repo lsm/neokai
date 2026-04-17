@@ -797,6 +797,8 @@ describe('SpaceWorkflowManager', () => {
 						{ agentId: 'agent-b', name: 'b' },
 					],
 				},
+				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
+				{ name: 'End', agentId: 'agent-a' },
 			],
 		});
 		expect(wf.nodes[0].agents).toHaveLength(2);
@@ -1034,7 +1036,11 @@ describe('SpaceWorkflowManager', () => {
 						{ agentId: 'agent-b', name: 'b' },
 					],
 				},
+				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
+				{ id: 'step-end', name: 'End', agents: [{ agentId: 'agent-a', name: 'end' }] },
 			],
+			startNodeId: 'step-new',
+			endNodeId: 'step-end',
 		})!;
 
 		const node = updated.nodes[0];
@@ -1057,7 +1063,11 @@ describe('SpaceWorkflowManager', () => {
 						{ agentId: 'agent-b', name: 'b' },
 					],
 				},
+				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
+				{ id: 'step-end', name: 'End', agentId: 'agent-a' },
 			],
+			startNodeId: 'step-1',
+			endNodeId: 'step-end',
 		});
 
 		expect(manager.deleteWorkflow(wf.id)).toBe(true);
@@ -1083,7 +1093,11 @@ describe('SpaceWorkflowManager', () => {
 						{ agentId: 'agent-y', name: 'y' },
 					],
 				},
+				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
+				{ id: 'step-end', name: 'End', agentId: 'agent-x' },
 			],
+			startNodeId: 'step-m',
+			endNodeId: 'step-end',
 		});
 
 		const workflows = manager.listWorkflows('space-1');
@@ -1147,6 +1161,8 @@ describe('SpaceWorkflowManager', () => {
 						{ agentId: 'agent-a', name: 'quick-reviewer' },
 					],
 				},
+				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
+				{ name: 'End', agentId: 'agent-a' },
 			],
 		});
 		expect(wf.nodes[0].agents).toHaveLength(2);

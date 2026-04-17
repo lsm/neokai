@@ -1098,7 +1098,7 @@ describe('node-agent-tools: list_gates', () => {
 				{
 					name: 'approved',
 					type: 'boolean',
-					writers: ['reviewer'],
+					writers: [],
 					check: { op: '==', value: true },
 				},
 			],

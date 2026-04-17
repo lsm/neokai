@@ -1290,7 +1290,7 @@ export class TaskAgentManager {
 	 * Called when a node agent sub-session completes (session goes idle).
 	 *
 	 * Automatically transitions the execution to `idle` when the agent's session
-	 * finishes naturally — no explicit `report_done` call needed.
+	 * finishes naturally — no explicit `report_result` call needed.
 	 * Notifies the Task Agent (when present) about workflow node session completion.
 	 */
 	private async handleSubSessionComplete(
@@ -1342,6 +1342,14 @@ export class TaskAgentManager {
 	 *
 	 * This enables event-driven orchestration: Task Agent can react to failures
 	 * without polling node status.
+	 *
+	 * Task-status cascade: marking the execution `blocked` here is picked up on
+	 * the next runtime tick by `space-runtime.ts`'s blocked-execution detection,
+	 * which transitions the canonical task to `status='blocked'` with
+	 * `blockReason='execution_failed'`. End-node failures are surfaced the same
+	 * way — there's no separate end-node-specific handler because any blocked
+	 * execution that can't be auto-recovered (`attemptBlockedRunRecovery`)
+	 * leaves the workflow stuck and needs human/agent intervention.
 	 */
 	private async handleSubSessionError(subSessionId: string, error: string): Promise<void> {
 		const parentTaskId = this.findParentTaskIdForSubSession(subSessionId);
@@ -2023,7 +2031,7 @@ export class TaskAgentManager {
 	 * at node-start (stored in the run config by SpaceRuntime.storeResolvedChannels()).
 	 *
 	 * The server gives the node agent peer communication tools (list_peers, send_message,
-	 * report_done) that are scoped to its group, channel topology, and node task.
+	 * report_result) that are scoped to its group, channel topology, and node task.
 	 */
 	private buildNodeAgentMcpServerForSession(
 		taskId: string,
@@ -2072,6 +2080,7 @@ export class TaskAgentManager {
 				const s = await spaceManager.getSpace(spaceId);
 				return s?.autonomyLevel ?? 1;
 			},
+			isSessionAlive: (sid) => this.isSessionAlive(sid),
 		});
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
@@ -2093,6 +2102,12 @@ export class TaskAgentManager {
 			: this.agentNameVariants(agentName);
 
 		// Build onReportResult callback for end-node agents so they can close the workflow run.
+		//
+		// Records the agent's reported intent (status + summary) into
+		// `space_tasks.reported_status` / `reported_summary`, but does NOT directly
+		// transition `space_tasks.status`. The runtime resolves the final task status
+		// on the next tick via `resolveCompletionWithActions`, which honors the
+		// supervised-mode review gate. See `CompletionDetector.isComplete`.
 		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
 		let onReportResult:
 			| ((args: ReportResultInput) => Promise<ReturnType<typeof jsonResult>>)
@@ -2100,46 +2115,47 @@ export class TaskAgentManager {
 		if (isEndNode) {
 			const capturedTaskId = taskId;
 			const capturedSpaceId = spaceId;
-			const capturedWorkflowRunId = workflowRunId;
 			onReportResult = async (args: ReportResultInput) => {
 				const task = this.config.taskRepo.getTask(capturedTaskId);
 				if (!task)
 					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
 
-				try {
-					const taskManager = new SpaceTaskManager(
-						this.config.db.getDatabase(),
-						capturedSpaceId,
-						this.config.reactiveDb
-					);
-					await taskManager.setTaskStatus(capturedTaskId, args.status, { result: args.summary });
+				// Idempotency: if the agent re-invokes report_result with the same outcome
+				// (retry, double-call, etc.), skip the DB write and the broadcast — they
+				// would be no-ops that still wake every subscriber.
+				const successPayload = jsonResult({
+					success: true,
+					taskId: capturedTaskId,
+					status: args.status,
+					summary: args.summary,
+					message: `Result reported as "${args.status}". The runtime will resolve the final task status (supervised mode may pause for human approval).`,
+				});
+				if (task.reportedStatus === args.status && task.reportedSummary === args.summary) {
+					return successPayload;
+				}
 
-					if (this.config.daemonHub) {
-						const eventName = args.status === 'done' ? 'space.task.done' : 'space.task.failed';
+				try {
+					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
+						reportedStatus: args.status,
+						reportedSummary: args.summary,
+					});
+
+					if (this.config.daemonHub && updated) {
 						void this.config.daemonHub
-							.emit(eventName, {
+							.emit('space.task.updated', {
 								sessionId: 'global',
-								taskId: capturedTaskId,
 								spaceId: capturedSpaceId,
-								status: args.status,
-								summary: args.summary ?? '',
-								workflowRunId: capturedWorkflowRunId,
-								taskTitle: task.title,
+								taskId: capturedTaskId,
+								task: updated,
 							})
 							.catch((err) => {
 								log.warn(
-									`Failed to emit ${eventName} for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
+									`Failed to emit space.task.updated for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
 								);
 							});
 					}
 
-					return jsonResult({
-						success: true,
-						taskId: capturedTaskId,
-						status: args.status,
-						summary: args.summary,
-						message: `Task has been marked as "${args.status}". The workflow run is now closed.`,
-					});
+					return successPayload;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					return jsonResult({ success: false, error: message });

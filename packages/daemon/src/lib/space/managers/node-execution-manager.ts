@@ -3,15 +3,15 @@
  *
  * Handles:
  * - Node execution status transitions with validation
- * - Terminal status checks for completion detection
+ * - Per-execution lifecycle status checks
  * - Agent session tracking per node execution
  *
  * This separates workflow-internal state from the user-facing SpaceTask.
  *
- * TODO: Wire this class into the RPC handler layer so production code uses it
- * for status transitions instead of raw repo calls. Currently only the pure
- * functions (isValidNodeExecutionTransition, isNodeExecutionTerminal) and the
- * TERMINAL_NODE_EXECUTION_STATUSES set are imported by CompletionDetector.
+ * Note on "terminal" semantics: `TERMINAL_NODE_EXECUTION_STATUSES` describes
+ * the terminal lifecycle of a single node-execution instance, NOT workflow
+ * completion. Workflow completion is decided exclusively by `SpaceTask.status`
+ * (set by `report_result`); see `CompletionDetector`.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -39,8 +39,22 @@ export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeE
 	};
 
 /**
- * Terminal node execution statuses — these represent final states where
- * no further processing will occur.
+ * Terminal statuses for a single node-execution instance — the agent's
+ * current turn has ended and no further processing will occur for this
+ * execution row until it is reactivated (via cyclic re-entry) or replaced.
+ *
+ * IMPORTANT: This set is about the per-execution lifecycle ONLY. It does
+ * NOT imply workflow completion. A node going `idle` after sending a
+ * message back through a cyclic channel is not "done" — the workflow may
+ * continue iterating. Workflow completion is decided exclusively by
+ * `SpaceTask.status` being set to a terminal value via `report_result`;
+ * see `CompletionDetector`.
+ *
+ * Used by:
+ * - `ChannelRouter.activateNode` — to decide whether an existing execution
+ *   should be reactivated rather than replaced.
+ * - `ChannelRouter.getActiveExecutionsForNode` — to filter out finished
+ *   executions when checking whether a node is currently active.
  */
 export const TERMINAL_NODE_EXECUTION_STATUSES = new Set<NodeExecutionStatus>(['idle', 'cancelled']);
 
@@ -55,7 +69,8 @@ export function isValidNodeExecutionTransition(
 }
 
 /**
- * Check if a node execution status is terminal (done or cancelled).
+ * Check if a node execution status is terminal for the per-execution
+ * lifecycle (not workflow completion — see {@link TERMINAL_NODE_EXECUTION_STATUSES}).
  */
 export function isNodeExecutionTerminal(status: NodeExecutionStatus): boolean {
 	return TERMINAL_NODE_EXECUTION_STATUSES.has(status);
