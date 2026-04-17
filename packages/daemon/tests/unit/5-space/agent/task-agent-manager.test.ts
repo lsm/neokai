@@ -33,6 +33,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@neokai/shared';
 import type { AgentProcessingState } from '@neokai/shared';
 
@@ -1677,6 +1678,149 @@ describe('TaskAgentManager', () => {
 			}
 
 			restoreSpy.mockRestore();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// flushPendingMessagesForSpaceAgent
+	// -----------------------------------------------------------------------
+
+	describe('flushPendingMessagesForSpaceAgent', () => {
+		test('delivers queued Space Agent message via spaceAgentInjector', async () => {
+			const { db: testDb, dir: testDir } = makeDb();
+			const testSpaceId = 'space-flush-sa';
+			const testRunId = 'run-flush-sa';
+			const testWfId = 'wf-flush-sa';
+			const now = Date.now();
+
+			seedSpaceRow(testDb, testSpaceId);
+			testDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
+				)
+				.run(testWfId, testSpaceId, 'Test WF', now, now);
+			testDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(testRunId, testSpaceId, testWfId, now, now);
+
+			const pendingRepo = new PendingAgentMessageRepository(testDb);
+			pendingRepo.enqueue({
+				workflowRunId: testRunId,
+				spaceId: testSpaceId,
+				targetKind: 'space_agent',
+				targetAgentName: 'space-agent',
+				message: 'escalation: please review task',
+			});
+
+			const injectedCalls: string[] = [];
+			const flushManager = new TaskAgentManager({
+				db: ctx.mockDb as unknown as import('../../../../src/storage/database.ts').Database,
+				sessionManager: ctx.manager[
+					'config' as unknown as keyof typeof ctx.manager
+				] as unknown as import('../../../../src/lib/session/session-manager.ts').SessionManager,
+				spaceManager: ctx.spaceManager,
+				spaceAgentManager: ctx.agentManager,
+				spaceWorkflowManager: ctx.workflowManager,
+				spaceRuntimeService:
+					{} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
+				taskRepo: ctx.taskRepo,
+				workflowRunRepo: ctx.workflowRunRepo,
+				daemonHub:
+					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
+				getApiKey: async () => 'test-key',
+				defaultModel: 'claude-sonnet-4-5-20250929',
+				nodeExecutionRepo: ctx.nodeExecutionRepo,
+				pendingMessageRepo: pendingRepo,
+				spaceAgentInjector: async (_sid: string, msg: string) => {
+					injectedCalls.push(msg);
+				},
+			} as unknown as import('../../../../src/lib/space/runtime/task-agent-manager.ts').TaskAgentManagerConfig);
+
+			await flushManager.flushPendingMessagesForSpaceAgent(testSpaceId, testRunId);
+
+			expect(injectedCalls).toHaveLength(1);
+			expect(injectedCalls[0]).toContain('escalation: please review task');
+
+			// Row should be marked delivered
+			const rows = pendingRepo.listAllForRun(testRunId);
+			expect(rows).toHaveLength(1);
+			expect(rows[0].status).toBe('delivered');
+
+			try {
+				rmSync(testDir, { recursive: true, force: true });
+			} catch {
+				// ignore
+			}
+		});
+
+		test('no-op when pendingMessageRepo is absent', async () => {
+			// ctx.manager has no pendingMessageRepo — should resolve without throwing
+			await expect(
+				ctx.manager.flushPendingMessagesForSpaceAgent(ctx.spaceId, 'any-run')
+			).resolves.toBeUndefined();
+		});
+
+		test('no-op when there are no pending Space Agent messages', async () => {
+			const { db: testDb, dir: testDir } = makeDb();
+			const testSpaceId = 'space-flush-empty';
+			const testRunId = 'run-flush-empty';
+			const testWfId = 'wf-flush-empty';
+			const now = Date.now();
+
+			seedSpaceRow(testDb, testSpaceId);
+			testDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+           VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
+				)
+				.run(testWfId, testSpaceId, 'Test WF', now, now);
+			testDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+           VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(testRunId, testSpaceId, testWfId, now, now);
+
+			const pendingRepo = new PendingAgentMessageRepository(testDb);
+			let injectorCalled = false;
+
+			const emptyManager = new TaskAgentManager({
+				db: ctx.mockDb as unknown as import('../../../../src/storage/database.ts').Database,
+				sessionManager: ctx.manager[
+					'config' as unknown as keyof typeof ctx.manager
+				] as unknown as import('../../../../src/lib/session/session-manager.ts').SessionManager,
+				spaceManager: ctx.spaceManager,
+				spaceAgentManager: ctx.agentManager,
+				spaceWorkflowManager: ctx.workflowManager,
+				spaceRuntimeService:
+					{} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
+				taskRepo: ctx.taskRepo,
+				workflowRunRepo: ctx.workflowRunRepo,
+				daemonHub:
+					ctx.daemonHub as unknown as import('../../../../src/lib/daemon-hub.ts').DaemonHub,
+				messageHub: {} as unknown as import('@neokai/shared').MessageHub,
+				getApiKey: async () => 'test-key',
+				defaultModel: 'claude-sonnet-4-5-20250929',
+				nodeExecutionRepo: ctx.nodeExecutionRepo,
+				pendingMessageRepo: pendingRepo,
+				spaceAgentInjector: async () => {
+					injectorCalled = true;
+				},
+			} as unknown as import('../../../../src/lib/space/runtime/task-agent-manager.ts').TaskAgentManagerConfig);
+
+			await emptyManager.flushPendingMessagesForSpaceAgent(testSpaceId, testRunId);
+			expect(injectorCalled).toBe(false);
+
+			try {
+				rmSync(testDir, { recursive: true, force: true });
+			} catch {
+				// ignore
+			}
 		});
 	});
 });
