@@ -606,6 +606,26 @@ export type MessageDeliveryMode = 'immediate' | 'defer';
  */
 export type MessageOrigin = 'human' | 'neo' | 'system';
 
+/**
+ * A NeoKai-native action message stored alongside SDK messages in the chat.
+ *
+ * Used to present interactive prompts to the user from the daemon — for
+ * example, asking whether to start a fresh SDK session when the transcript
+ * file can no longer be found.
+ *
+ * The `type` field is intentionally distinct from all SDK message types so
+ * the frontend can identify and route it without ambiguity.
+ */
+export type NeokaiActionMessage = {
+	type: 'neokai_action';
+	uuid: string;
+	session_id: string;
+	action: 'sdk_resume_choice';
+	resolved: boolean;
+	chosenOption?: 'start_fresh' | 'leave_as_is';
+	timestamp: number;
+};
+
 // Tool types
 export interface Tool {
 	name: string;

@@ -14,6 +14,8 @@ import type {
 	InboxItem,
 	RoomGoal,
 	MessageOrigin,
+	NeokaiActionMessage,
+	ChatMessage,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
@@ -166,7 +168,7 @@ export class Database {
 		since?: number
 	): {
 		messages: Array<
-			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
 		>;
 		hasMore: boolean;
 	} {
@@ -237,6 +239,22 @@ export class Database {
 
 	countMessagesAfter(sessionId: string, afterTimestamp: number): number {
 		return this.sdkMessageRepo.countMessagesAfter(sessionId, afterTimestamp);
+	}
+
+	saveNeokaiActionMessage(sessionId: string, message: NeokaiActionMessage): string {
+		return this.sdkMessageRepo.saveNeokaiActionMessage(sessionId, message);
+	}
+
+	updateNeokaiActionMessage(rowId: string, updated: NeokaiActionMessage): void {
+		this.sdkMessageRepo.updateNeokaiActionMessage(rowId, updated);
+	}
+
+	updateNeokaiActionMessageByUuid(
+		sessionId: string,
+		messageUuid: string,
+		updated: NeokaiActionMessage
+	): void {
+		this.sdkMessageRepo.updateNeokaiActionMessageByUuid(sessionId, messageUuid, updated);
 	}
 
 	// ============================================================================

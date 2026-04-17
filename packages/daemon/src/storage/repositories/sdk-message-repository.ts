@@ -9,7 +9,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { MessageOrigin } from '@neokai/shared';
+import type { MessageOrigin, NeokaiActionMessage, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
 import type { SQLiteValue } from '../types';
@@ -83,7 +83,7 @@ export class SDKMessageRepository {
 		since?: number
 	): {
 		messages: Array<
-			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
 		>;
 		hasMore: boolean;
 	} {
@@ -101,7 +101,7 @@ export class SDKMessageRepository {
 		since?: number
 	): {
 		messages: Array<
-			SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
 		>;
 		hasMore: boolean;
 	} {
@@ -611,5 +611,63 @@ export class SDKMessageRepository {
 		);
 		const result = stmt.get(sessionId, isoTimestamp) as { count: number };
 		return result.count;
+	}
+
+	// ============================================================================
+	// NeoKai action messages (interactive prompts stored in the chat timeline)
+	// ============================================================================
+
+	/**
+	 * Save a NeoKai-native action message to the sdk_messages table.
+	 *
+	 * The message is stored in the same `sdk_message` JSON column as SDK messages,
+	 * but with `message_type = 'neokai_action'` so it can be distinguished during
+	 * fetch.  No `send_status` is needed because action messages are never queued.
+	 *
+	 * @returns The generated row ID (used later to update the resolved state).
+	 */
+	saveNeokaiActionMessage(sessionId: string, message: NeokaiActionMessage): string {
+		const id = generateUUID();
+		const timestamp = new Date(message.timestamp).toISOString();
+
+		const stmt = this.db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?)`
+		);
+
+		stmt.run(id, sessionId, 'neokai_action', message.action, JSON.stringify(message), timestamp);
+		return id;
+	}
+
+	/**
+	 * Update a NeoKai action message in-place (e.g. mark it resolved after the
+	 * user has made a choice).
+	 *
+	 * @param rowId   The ID returned by saveNeokaiActionMessage.
+	 * @param updated The full updated message object (replaces the stored JSON).
+	 */
+	updateNeokaiActionMessage(rowId: string, updated: NeokaiActionMessage): void {
+		const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
+		stmt.run(JSON.stringify(updated), rowId);
+	}
+
+	/**
+	 * Update a NeoKai action message by its uuid field (stored inside the JSON blob).
+	 *
+	 * This avoids having to carry the row ID through the RPC call.  The uuid is
+	 * unique per session (generated at emit time) so the lookup is unambiguous.
+	 */
+	updateNeokaiActionMessageByUuid(
+		sessionId: string,
+		messageUuid: string,
+		updated: NeokaiActionMessage
+	): void {
+		const stmt = this.db.prepare(
+			`UPDATE sdk_messages SET sdk_message = ?
+       WHERE session_id = ?
+         AND message_type = 'neokai_action'
+         AND json_extract(sdk_message, '$.uuid') = ?`
+		);
+		stmt.run(JSON.stringify(updated), sessionId, messageUuid);
 	}
 }

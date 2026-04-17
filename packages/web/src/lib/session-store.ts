@@ -21,7 +21,7 @@
 
 import { signal, computed } from '@preact/signals';
 import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
@@ -42,7 +42,7 @@ class SessionStore {
 	readonly sessionState = signal<SessionState | null>(null);
 
 	/** SDK messages from state.sdkMessages channel */
-	readonly sdkMessages = signal<SDKMessage[]>([]);
+	readonly sdkMessages = signal<ChatMessage[]>([]);
 
 	/** API retry attempts (populated from session.retryAttempt events) */
 	readonly retryAttempts = signal<
@@ -270,17 +270,41 @@ class SessionStore {
 			// This can happen when events are queued during reconnection and replayed,
 			// while the server also resends them after subscription re-establishment.
 			const unsubSDKMessagesDelta = hub.onEvent<{
-				added?: SDKMessage[];
+				added?: ChatMessage[];
 			}>('state.sdkMessages.delta', (delta) => {
 				if (delta.added?.length) {
-					// Deduplicate: only add messages not already in the list
-					// Use `uuid` which is common to all SDKMessage types
-					const existingIds = new Set(this.sdkMessages.value.map((m) => m.uuid));
-					const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
-					if (newMessages.length > 0) {
-						this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
-						// Sync commands from any system:init message that just arrived
-						this._syncCommandsFromSDKMessages(newMessages);
+					// Upsert by uuid: new messages are appended, but if a message with the
+					// same uuid already exists (e.g. a neokai_action being resolved), it is
+					// replaced in-place so the UI reflects the updated state.
+					const messageMap = new Map(
+						this.sdkMessages.value
+							.filter((m) => (m as ChatMessage & { uuid?: string }).uuid)
+							.map((m) => [(m as ChatMessage & { uuid?: string }).uuid!, m])
+					);
+					let changed = false;
+					const trulyNew: ChatMessage[] = [];
+					for (const msg of delta.added) {
+						const uuid = (msg as ChatMessage & { uuid?: string }).uuid;
+						if (uuid && messageMap.has(uuid)) {
+							// Update in-place (handles resolved neokai_action messages)
+							messageMap.set(uuid, msg);
+							changed = true;
+						} else {
+							trulyNew.push(msg);
+							changed = true;
+						}
+					}
+					if (changed) {
+						const updated = [
+							...Array.from(messageMap.values()),
+							...trulyNew.filter((m) => !(m as ChatMessage & { uuid?: string }).uuid),
+						].sort(
+							(a, b) =>
+								((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
+								((b as ChatMessage & { timestamp?: number }).timestamp || 0)
+						);
+						this.sdkMessages.value = updated;
+						this._syncCommandsFromSDKMessages(trulyNew);
 					}
 				}
 			});
@@ -333,7 +357,7 @@ class SessionStore {
 			// Fetch session state and messages in parallel
 			const [sessionState, messagesState] = await Promise.all([
 				hub.request<SessionState>('state.session', { sessionId }),
-				hub.request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>('state.sdkMessages', {
+				hub.request<{ sdkMessages: ChatMessage[]; hasMore: boolean }>('state.sdkMessages', {
 					sessionId,
 				}),
 			]);
@@ -400,19 +424,21 @@ class SessionStore {
 
 					if (newerMessages.length > 0) {
 						// Merge: server snapshot + newer delta messages
-						const messageMap = new Map<string, SDKMessage>();
+						const messageMap = new Map<string, ChatMessage>();
 
 						// Add snapshot messages
 						for (const msg of initialSnapshot) {
-							if (msg.uuid) {
-								messageMap.set(msg.uuid, msg);
+							const uuid = (msg as ChatMessage & { uuid?: string }).uuid;
+							if (uuid) {
+								messageMap.set(uuid, msg);
 							}
 						}
 
 						// Newer messages override (they're more recent)
 						for (const msg of newerMessages) {
-							if (msg.uuid) {
-								messageMap.set(msg.uuid, msg);
+							const uuid = (msg as ChatMessage & { uuid?: string }).uuid;
+							if (uuid) {
+								messageMap.set(uuid, msg);
 							}
 						}
 
@@ -461,7 +487,7 @@ class SessionStore {
 	 * When state.session events arrive with empty commandsData (e.g. from the
 	 * daemon fallback broadcast), this restores commands from the SDK message.
 	 */
-	private _syncCommandsFromSDKMessages(messages: SDKMessage[]): void {
+	private _syncCommandsFromSDKMessages(messages: ChatMessage[]): void {
 		for (const msg of messages) {
 			const m = msg as unknown as { type?: string; subtype?: string; slash_commands?: string[] };
 			if (
@@ -557,7 +583,7 @@ class SessionStore {
 	 * Prepend older messages (for pagination)
 	 * Used when loading older messages via RPC
 	 */
-	prependMessages(messages: SDKMessage[]): void {
+	prependMessages(messages: ChatMessage[]): void {
 		if (messages.length === 0) return;
 		this.sdkMessages.value = [...messages, ...this.sdkMessages.value];
 	}
@@ -596,13 +622,13 @@ class SessionStore {
 	async loadOlderMessages(
 		beforeTimestamp: number,
 		limit = 100
-	): Promise<{ messages: SDKMessage[]; hasMore: boolean }> {
+	): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
 		const sessionId = this.activeSessionId.value;
 		if (!sessionId) return { messages: [], hasMore: false };
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>(
+			const result = await hub.request<{ sdkMessages: ChatMessage[]; hasMore: boolean }>(
 				'message.sdkMessages',
 				{
 					sessionId,

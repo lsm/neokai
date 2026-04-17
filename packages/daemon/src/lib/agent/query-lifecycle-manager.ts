@@ -14,7 +14,8 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, Session, MessageHub } from '@neokai/shared';
+import type { MessageContent, Session, MessageHub, NeokaiActionMessage } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';
@@ -466,6 +467,35 @@ export class QueryLifecycleManager {
 	}
 
 	/**
+	 * Emit a NeoKai action message asking the user what to do when the SDK
+	 * transcript file cannot be found.
+	 *
+	 * The action message is persisted to the DB and broadcast via the
+	 * state.sdkMessages.delta event so it appears in the chat timeline.
+	 * The query stays blocked; startStreamingQuery() is NOT called here.
+	 */
+	private async emitSdkResumeChoiceMessage(): Promise<void> {
+		const { session, db, messageHub } = this.ctx;
+
+		const actionMessage: NeokaiActionMessage = {
+			type: 'neokai_action',
+			uuid: generateUUID(),
+			session_id: session.id,
+			action: 'sdk_resume_choice',
+			resolved: false,
+			timestamp: Date.now(),
+		};
+
+		db.saveNeokaiActionMessage(session.id, actionMessage);
+
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{ added: [actionMessage], timestamp: Date.now() },
+			{ channel: `session:${session.id}` }
+		);
+	}
+
+	/**
 	 * Ensure query is started
 	 *
 	 * Waits for any pending interrupt, validates SDK session file,
@@ -521,10 +551,15 @@ export class QueryLifecycleManager {
 		if (session.sdkSessionId) {
 			const isValid = this.validateAndRepairWithMigration();
 			if (!isValid) {
+				// Transcript file not found — ask the user before proceeding.
+				// Do NOT call startStreamingQuery() here; the query stays blocked until
+				// the user responds via the session.sdkResumeChoice RPC handler.
 				this.logger.warn(
-					`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-						'Will attempt resume anyway — SDK may recover.'
+					`SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
+						'Emitting sdk_resume_choice action message for user.'
 				);
+				await this.emitSdkResumeChoiceMessage();
+				return;
 			}
 		}
 

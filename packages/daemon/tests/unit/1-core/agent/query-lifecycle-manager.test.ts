@@ -34,6 +34,7 @@ describe('QueryLifecycleManager', () => {
 
 	// Mock spies
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let saveNeokaiActionMessageSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let setIdleSpy: ReturnType<typeof mock>;
@@ -59,6 +60,7 @@ describe('QueryLifecycleManager', () => {
 		};
 
 		updateSessionSpy = mock(() => {});
+		saveNeokaiActionMessageSpy = mock(() => 'row-id-mock');
 		emitSpy = mock(async () => {});
 		publishSpy = mock(async () => {});
 		setIdleSpy = mock(async () => {});
@@ -75,6 +77,7 @@ describe('QueryLifecycleManager', () => {
 			messageQueue,
 			db: {
 				updateSession: updateSessionSpy,
+				saveNeokaiActionMessage: saveNeokaiActionMessageSpy,
 			} as unknown as Database,
 			messageHub: {
 				event: publishSpy,
@@ -743,16 +746,30 @@ describe('QueryLifecycleManager', () => {
 			expect(clearModelsCacheSpy).toHaveBeenCalled();
 		});
 
-		test('validates SDK session when sdkSessionId exists', async () => {
-			// When session has sdkSessionId, validateAndRepairSDKSession should be called
-			mockContext = createMockContext();
-			mockContext.session.sdkSessionId = 'sdk-session-abc';
-			manager = new QueryLifecycleManager(mockContext);
+		test('validates SDK session when sdkSessionId exists and file is present', async () => {
+			// When session has sdkSessionId and the file exists, query starts after validation.
+			// This requires a temp dir so the file can be located by the file manager.
+			const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+			try {
+				process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+				const sdkSessionId = 'sdk-session-abc';
+				// Create file at current workspace path
+				const projectKey = '/test/workspace'.replace(/[/.]/g, '-');
+				mkdirSync(join(tmpTestDir, 'projects', projectKey), { recursive: true });
+				writeFileSync(join(tmpTestDir, 'projects', projectKey, `${sdkSessionId}.jsonl`), '');
 
-			await manager.ensureQueryStarted();
+				mockContext = createMockContext();
+				mockContext.session.sdkSessionId = sdkSessionId;
+				manager = new QueryLifecycleManager(mockContext);
 
-			// Should have started query after validation
-			expect(startStreamingCalled).toBe(true);
+				await manager.ensureQueryStarted();
+
+				// File found → query should start
+				expect(startStreamingCalled).toBe(true);
+			} finally {
+				delete process.env.TEST_SDK_SESSION_DIR;
+				rmSync(tmpTestDir, { recursive: true, force: true });
+			}
 		});
 
 		test('handles interrupt wait error gracefully', async () => {
@@ -1399,20 +1416,39 @@ describe('QueryLifecycleManager', () => {
 			);
 
 			test(
-				'clears sdkSessionId gracefully when file not found anywhere (rotation path)',
+				'blocks query and emits sdk_resume_choice action when transcript file not found anywhere',
 				async () => {
 					// sdkSessionId set but no file exists anywhere under TEST_SDK_SESSION_DIR
 					mockContext.session.sdkSessionId = 'sdk-completely-missing';
 					mockContext.session.sdkOriginPath = '/some/deleted/workspace';
 					manager = new QueryLifecycleManager(mockContext);
 
-					// Should not throw — just log warning and proceed (SDK will produce "No conversation found")
 					await manager.ensureQueryStarted();
 
-					// sdkSessionId is NOT cleared here (that's the query-runner's job after the SDK error)
-					expect(mockContext.session.sdkSessionId).toBe('sdk-completely-missing');
-					// ensureQueryStarted still starts the query (SDK handles the rotation)
-					expect(startStreamingCalled).toBe(true);
+					// Query must NOT start — user must choose first
+					expect(startStreamingCalled).toBe(false);
+
+					// A sdk_resume_choice action message must be saved to DB
+					expect(saveNeokaiActionMessageSpy).toHaveBeenCalledTimes(1);
+					const savedMsg = saveNeokaiActionMessageSpy.mock.calls[0][1];
+					expect(savedMsg.type).toBe('neokai_action');
+					expect(savedMsg.action).toBe('sdk_resume_choice');
+					expect(savedMsg.resolved).toBe(false);
+					expect(savedMsg.session_id).toBe('test-session');
+
+					// The action message must be broadcast via state.sdkMessages.delta
+					expect(publishSpy).toHaveBeenCalledWith(
+						'state.sdkMessages.delta',
+						expect.objectContaining({
+							added: expect.arrayContaining([
+								expect.objectContaining({
+									type: 'neokai_action',
+									action: 'sdk_resume_choice',
+								}),
+							]),
+						}),
+						expect.objectContaining({ channel: 'session:test-session' })
+					);
 				},
 				{ timeout: 5000 }
 			);

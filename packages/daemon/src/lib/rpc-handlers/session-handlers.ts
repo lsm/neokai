@@ -7,7 +7,13 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageDeliveryMode, MessageHub, MessageImage, Session } from '@neokai/shared';
+import type {
+	MessageDeliveryMode,
+	MessageHub,
+	MessageImage,
+	Session,
+	NeokaiActionMessage,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
@@ -972,5 +978,84 @@ export function setupSessionHandlers(
 			}));
 
 		return { messages };
+	});
+
+	/**
+	 * Handle the user's response to an sdk_resume_choice action message.
+	 *
+	 * - 'start_fresh': clears sdkSessionId and sdkOriginPath so the next
+	 *   message starts a brand new SDK session.
+	 * - 'leave_as_is': keeps the existing sdkSessionId; the SDK will handle
+	 *   the missing transcript (likely producing a "No conversation found" error
+	 *   and starting fresh on its own, but the user chose not to intervene).
+	 *
+	 * Either way, the action message is marked as resolved and re-broadcast so
+	 * the UI can update the buttons to a "done" state, and the query is started.
+	 */
+	messageHub.onRequest('session.sdkResumeChoice', async (data) => {
+		const {
+			sessionId: targetSessionId,
+			choice,
+			messageUuid,
+		} = data as {
+			sessionId: string;
+			choice: 'start_fresh' | 'leave_as_is';
+			messageUuid: string;
+		};
+
+		if (!targetSessionId || !choice || !messageUuid) {
+			throw new Error('Missing required fields: sessionId, choice, messageUuid');
+		}
+
+		if (choice !== 'start_fresh' && choice !== 'leave_as_is') {
+			throw new Error(`Invalid choice: ${choice}. Must be 'start_fresh' or 'leave_as_is'`);
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+
+		if (choice === 'start_fresh') {
+			// Clear SDK session state so next query starts a fresh SDK conversation.
+			// `undefined` causes the repository to write NULL to the DB column via `?? null`.
+			db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
+			const session = agentSession.getSessionData();
+			session.sdkSessionId = undefined;
+			session.sdkOriginPath = undefined;
+		}
+
+		// Mark the action message as resolved and re-broadcast it so the UI
+		// can update the buttons to their "answered" state.
+		const resolvedMessage: NeokaiActionMessage = {
+			type: 'neokai_action',
+			uuid: messageUuid,
+			session_id: targetSessionId,
+			action: 'sdk_resume_choice',
+			resolved: true,
+			chosenOption: choice,
+			timestamp: Date.now(),
+		};
+
+		// Update the persisted copy (we look up by uuid in sdk_message JSON).
+		// Use updateNeokaiActionMessageByUuid so we don't need to carry the rowId.
+		db.updateNeokaiActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{ added: [resolvedMessage], timestamp: Date.now() },
+			{ channel: `session:${targetSessionId}` }
+		);
+
+		// Now start (or restart) the query so the user's pending message is processed.
+		try {
+			await agentSession.restart();
+		} catch (err) {
+			log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
+		}
+
+		return { success: true };
 	});
 }
