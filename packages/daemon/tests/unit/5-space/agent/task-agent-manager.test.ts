@@ -690,6 +690,189 @@ describe('TaskAgentManager', () => {
 			expect(returnedId).toBe(subSessionId);
 		});
 
+		test('reuses existing session when same agent name is called a second time', async () => {
+			// Seed a workflow run so listByWorkflowRun can return prior NodeExecution rows.
+			// Note: node_executions has a UNIQUE(workflow_run_id, workflow_node_id, agent_name)
+			// constraint, so there is only ever ONE NodeExecution per (run, node, agent).
+			// Re-execution of the same node reuses the same NodeExecution row; createSubSession
+			// detects the pre-existing agentSessionId on that row and skips creating a new session.
+			const wfId = 'wf-reuse-session';
+			const wfRunId = 'run-reuse-session';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+         VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF Reuse', now, now);
+			const stepId = 'step-reuse-1';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, created_at, updated_at)
+         VALUES (?, ?, ?, '', ?, ?)`
+				)
+				.run(stepId, wfId, 'Step 1', now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'Reuse task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			await ctx.manager.spawnTaskAgent(
+				{ ...parentTask, workflowRunId: wfRunId },
+				ctx.space,
+				null,
+				null
+			);
+
+			// First execution: create the single NodeExecution row for (run, node, coder).
+			const exec = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: stepId,
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'in_progress',
+			});
+			const subSessionId1 = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${exec.id}`;
+			const returned1 = await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId1,
+				{
+					sessionId: subSessionId1,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, agentName: 'coder', nodeId: stepId }
+			);
+			expect(returned1).toBe(subSessionId1);
+			const sessionsBefore = ctx.createdSessions.size;
+
+			// Second execution: same NodeExecution row, different desired session ID.
+			// The UNIQUE constraint means the runtime would call createOrIgnore (existing row
+			// returned unchanged). createSubSession should detect agentSessionId is already set
+			// and reuse the first session without spawning a new one.
+			const subSessionId2 = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${exec.id}:2`;
+			const returned2 = await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId2,
+				{
+					sessionId: subSessionId2,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, agentName: 'coder', nodeId: stepId }
+			);
+
+			// Should have returned the original session ID, not created a new one.
+			expect(returned2).toBe(subSessionId1);
+			expect(ctx.createdSessions.size).toBe(sessionsBefore);
+		});
+
+		test('second createSubSession for same agent clears stale callbacks before registering new one', async () => {
+			// Seed workflow run — same pattern as the reuse test above.
+			const wfId = 'wf-cb-clear';
+			const wfRunId = 'run-cb-clear';
+			const now = Date.now();
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, tags, layout, created_at, updated_at)
+         VALUES (?, ?, ?, '', null, '[]', '{}', ?, ?)`
+				)
+				.run(wfId, ctx.spaceId, 'WF CB Clear', now, now);
+			const stepId = 'step-cb-clear';
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, created_at, updated_at)
+         VALUES (?, ?, ?, '', ?, ?)`
+				)
+				.run(stepId, wfId, 'Step CB', now, now);
+			ctx.bunDb
+				.prepare(
+					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, '', 'in_progress', ?, ?)`
+				)
+				.run(wfRunId, ctx.spaceId, wfId, now, now);
+
+			const parentTask = await ctx.taskManager.createTask({
+				title: 'CB clear task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+				workflowRunId: wfRunId,
+			});
+			await ctx.manager.spawnTaskAgent(
+				{ ...parentTask, workflowRunId: wfRunId },
+				ctx.space,
+				null,
+				null
+			);
+
+			// First execution: single NodeExecution row for (run, node, coder).
+			const exec = ctx.nodeExecutionRepo.create({
+				workflowRunId: wfRunId,
+				workflowNodeId: stepId,
+				agentName: 'coder',
+				agentId: ctx.agentId,
+				status: 'in_progress',
+			});
+			const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${exec.id}`;
+			await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId,
+				{
+					sessionId: subSessionId,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, agentName: 'coder', nodeId: stepId }
+			);
+
+			// Manually add a stale extra callback to simulate what rehydrateSubSession would add
+			// (rehydrateSubSession registers a callback with the OLD nodeId).
+			let staleCallbackFired = false;
+			ctx.manager.registerCompletionCallback(subSessionId, async () => {
+				staleCallbackFired = true;
+			});
+
+			// Second createSubSession call for the same agent (re-execution of the node).
+			// Should clear stale callbacks before registering the new one.
+			const subSessionId2 = `space:${ctx.spaceId}:task:${parentTask.id}:exec:${exec.id}:2`;
+			await ctx.manager.createSubSession(
+				parentTask.id,
+				subSessionId2,
+				{
+					sessionId: subSessionId2,
+					workspacePath: '/tmp/ws',
+				} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit,
+				{ agentId: ctx.agentId, agentName: 'coder', nodeId: stepId }
+			);
+
+			// Fire the idle event to trigger callbacks
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			subSession._sdkMessageCount = 3;
+
+			const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+			const taskAgentSession = ctx.createdSessions.get(taskAgentSessionId)!;
+			const msgsBefore = taskAgentSession._enqueuedMessages.length;
+
+			ctx.daemonHub.emit('session.updated', {
+				sessionId: subSessionId,
+				processingState: { status: 'idle' },
+			});
+			await new Promise((r) => setTimeout(r, 0));
+
+			// The stale callback registered between the two createSubSession calls should
+			// have been cleared by the second createSubSession, so it must NOT have fired.
+			expect(staleCallbackFired).toBe(false);
+			// The new callback (handleSubSessionComplete) should have fired — injecting NODE_COMPLETE
+			expect(taskAgentSession._enqueuedMessages.length).toBeGreaterThan(msgsBefore);
+		});
+
 		test('preserves init mcpServers when app MCP registry servers are injected', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);

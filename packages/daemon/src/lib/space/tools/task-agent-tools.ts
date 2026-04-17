@@ -374,6 +374,11 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			if (target === '*') {
 				if (liveAgentNames.length === 0) {
+					if (!taskAgentManager) {
+						log.warn(
+							'send_message: taskAgentManager is absent; broadcast target ("*") cannot resolve live agent names — returning empty-targets error'
+						);
+					}
 					return jsonResult({
 						success: false,
 						error:

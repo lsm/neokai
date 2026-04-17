@@ -870,6 +870,7 @@ export class TaskAgentManager {
 				const existingExecs = this.config.nodeExecutionRepo
 					.listByWorkflowRun(parentTask.workflowRunId)
 					.filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId);
+				// listByWorkflowRun returns rows ORDER BY created_at ASC, so .at(-1) is the most recent.
 				const prevExec = existingExecs.at(-1);
 				if (prevExec?.agentSessionId) {
 					// Reuse existing session — get from memory or restore from DB
@@ -897,7 +898,12 @@ export class TaskAgentManager {
 						}
 
 						// Register a fresh completion callback for this execution turn.
+						// Clear any stale callback registered by a previous execution (e.g. from
+						// rehydrateSubSession, which registers with the old nodeId). Without this,
+						// two callbacks would fire on the next idle: one for the old execution and
+						// one for the new — causing a double NODE_COMPLETE notification.
 						if (memberInfo.nodeId) {
+							this.completionCallbacks.delete(existingSessionId);
 							this.registerCompletionCallback(existingSessionId, async () => {
 								await this.handleSubSessionComplete(taskId, memberInfo.nodeId!, existingSessionId);
 							});
