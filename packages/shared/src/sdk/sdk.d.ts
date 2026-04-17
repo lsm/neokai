@@ -84,7 +84,7 @@ export declare type AgentDefinition = {
     /**
      * Reasoning effort level for this agent. Either a named level or an integer
      */
-    effort?: ('low' | 'medium' | 'high' | 'max') | number;
+    effort?: ('low' | 'medium' | 'high' | 'xhigh' | 'max') | number;
     /**
      * Permission mode controlling how tool executions are handled
      */
@@ -304,6 +304,7 @@ declare namespace coreTypes {
         McpServerConfigForProcessTransport,
         McpServerStatusConfig,
         McpServerStatus,
+        McpServerToolPolicy,
         McpSetServersResult,
         McpStdioServerConfig,
         ModelInfo,
@@ -436,9 +437,10 @@ export declare type CwdChangedHookSpecificOutput = {
  * - `'low'` — Minimal thinking, fastest responses
  * - `'medium'` — Moderate thinking
  * - `'high'` — Deep reasoning (default)
+ * - `'xhigh'` — Deeper than high (Opus 4.7 only; falls back to `'high'` elsewhere)
  * - `'max'` — Maximum effort (select models only)
  */
-export declare type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+export declare type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /**
  * Hook input for the Elicitation event. Fired when an MCP server requests user input. Hooks can auto-respond (accept/decline) instead of showing the dialog.
@@ -747,9 +749,7 @@ export declare type ListSessionsOptions = {
      * When `dir` is provided and the directory is inside a git repository,
      * include sessions from all git worktree paths. Defaults to `true`.
      *
-     * Only applies to the local-filesystem path. Ignored when `sessionStore`
-     * is provided — worktree enumeration requires inspecting `.git/worktrees`
-     * on disk, which a SessionStore (keyed by projectKey) has no view of.
+     * Only applies when reading from the local filesystem.
      */
     includeWorktrees?: boolean;
 
@@ -786,6 +786,7 @@ export declare type McpHttpServerConfig = {
     type: 'http';
     url: string;
     headers?: Record<string, string>;
+    tools?: McpServerToolPolicy[];
 };
 
 export declare type McpSdkServerConfig = {
@@ -857,6 +858,14 @@ export declare type McpServerStatus = {
 export declare type McpServerStatusConfig = McpServerConfigForProcessTransport | McpClaudeAIProxyServerConfig;
 
 /**
+ * Per-tool permission policy carried on mcp_set_servers for remote servers.
+ */
+export declare type McpServerToolPolicy = {
+    name: string;
+    permission_policy: 'always_allow' | 'always_ask' | 'always_deny';
+};
+
+/**
  * Result of a setMcpServers operation.
  */
 export declare type McpSetServersResult = {
@@ -878,6 +887,7 @@ export declare type McpSSEServerConfig = {
     type: 'sse';
     url: string;
     headers?: Record<string, string>;
+    tools?: McpServerToolPolicy[];
 };
 
 export declare type McpStdioServerConfig = {
@@ -910,7 +920,7 @@ export declare type ModelInfo = {
     /**
      * Available effort levels for this model
      */
-    supportedEffortLevels?: ('low' | 'medium' | 'high' | 'max')[];
+    supportedEffortLevels?: ('low' | 'medium' | 'high' | 'xhigh' | 'max')[];
     /**
      * Whether this model supports adaptive thinking (Claude decides when and how much to think)
      */
@@ -1048,7 +1058,11 @@ export declare type Options = {
     };
     /**
      * Environment variables to pass to the Claude Code process.
-     * Defaults to `process.env`.
+     * Merged on top of `process.env` — entries here override the parent
+     * process's variables, and anything not set here is inherited.
+     * Set a key to `undefined` to remove an inherited variable. Note:
+     * `GITHUB_ACTIONS` and a few SDK-managed vars are stripped and are
+     * not inherited unless set explicitly here.
      *
      * SDK consumers can identify their app/library to include in the User-Agent header by setting:
      * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
@@ -1192,7 +1206,8 @@ export declare type Options = {
      * - `'low'` — Minimal thinking, fastest responses
      * - `'medium'` — Moderate thinking
      * - `'high'` — Deep reasoning (default)
-     * - `'max'` — Maximum effort (Opus 4.6 only)
+     * - `'xhigh'` — Deeper than high (Opus 4.7 only)
+     * - `'max'` — Maximum effort (Opus 4.6/4.7 only)
      *
      * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
      */
@@ -1243,7 +1258,7 @@ export declare type Options = {
     mcpServers?: Record<string, McpServerConfig>;
     /**
      * Claude model to use. Defaults to the CLI default model.
-     * Examples: 'claude-sonnet-4-6', 'claude-opus-4-6'
+     * Examples: 'claude-sonnet-4-6', 'claude-opus-4-7'
      */
     model?: string;
     /**
@@ -1495,6 +1510,7 @@ export declare type Options = {
         append?: string;
         excludeDynamicSections?: boolean;
     };
+
     /**
      * Custom function to spawn the Claude Code process.
      * Use this to run Claude Code in VMs, containers, or remote environments.
@@ -1844,6 +1860,7 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param mtime - File mtime (floored ms) at the time of the observed Read
      */
     seedReadState(path: string, mtime: number): Promise<void>;
+
 
 
 
@@ -2225,6 +2242,7 @@ declare type SDKControlInitializeRequest = {
     jsonSchema?: Record<string, unknown>;
     systemPrompt?: string[];
     appendSystemPrompt?: string;
+
     /**
      * When true, omit per-user dynamic sections (working directory, auto-memory path) from the cached system prompt and re-inject them as the first user message. Lets cross-user prompt caching hit on a static system prompt prefix. Tradeoff: the model sees this context slightly later in the prompt, so steering on the working directory and memory location is marginally less authoritative. Has no effect when a custom (non-preset) system prompt is in use.
      */
@@ -2352,7 +2370,7 @@ export declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlOAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlReloadPluginsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlUltrareviewLaunchRequest | SDKControlOAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
 
 /**
  * Requests the SDK consumer to render a tool-driven blocking dialog and return the user choice. Used by tools that previously rendered Ink JSX via setToolJSX with an onDone callback.
@@ -2820,7 +2838,11 @@ export declare type SDKSessionOptions = {
     executableArgs?: string[];
     /**
      * Environment variables to pass to the Claude Code process.
-     * Defaults to `process.env`.
+     * Merged on top of `process.env` — entries here override the parent
+     * process's variables, and anything not set here is inherited.
+     * Set a key to `undefined` to remove an inherited variable. Note:
+     * `GITHUB_ACTIONS` and a few SDK-managed vars are stripped and are
+     * not inherited unless set explicitly here.
      *
      * SDK consumers can identify their app/library to include in the User-Agent header by setting:
      * - `CLAUDE_AGENT_SDK_CLIENT_APP` - Your app/library identifier (e.g., "my-app/1.0.0", "my-library/2.1")
@@ -2941,6 +2963,7 @@ export declare type SDKSystemMessage = {
         path: string;
 
     }[];
+
     fast_mode_state?: FastModeState;
 
     uuid: UUID;
@@ -3144,6 +3167,10 @@ export declare interface Settings {
      * Path to a script that outputs authentication values
      */
     apiKeyHelper?: string;
+    /**
+     * Shell command that outputs a Proxy-Authorization header value (EAP)
+     */
+    proxyAuthHelper?: string;
     /**
      * Path to a script that exports AWS credentials
      */
@@ -4262,7 +4289,7 @@ export declare interface Settings {
     /**
      * Persisted effort level for supported models.
      */
-    effortLevel?: 'low' | 'medium' | 'high';
+    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh';
     /**
      * Auto-compact window size
      */
@@ -4516,6 +4543,15 @@ export declare interface SpawnOptions {
     signal: AbortSignal;
 }
 
+/**
+ * Pre-warms the CLI subprocess so the first `query()` resolves immediately.
+ * Returns a {@link WarmQuery} handle.
+ */
+export declare function startup(_params?: {
+    options?: Options;
+    initializeTimeoutMs?: number;
+}): Promise<WarmQuery>;
+
 declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKPostTurnSummaryMessage | coreTypes.SDKTranscriptMirrorMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
 
 export declare type StopFailureHookInput = BaseHookInput & {
@@ -4750,6 +4786,25 @@ export declare type UserPromptSubmitHookSpecificOutput = {
     additionalContext?: string;
     sessionTitle?: string;
 };
+
+/**
+ * A pre-warmed query handle returned by `startup()`. The subprocess has
+ * already been spawned and completed its initialize handshake, so calling
+ * `query()` writes the prompt directly to a ready process — no startup
+ * latency.
+ */
+export declare interface WarmQuery extends AsyncDisposable {
+    /**
+     * Send a prompt to the pre-warmed subprocess and return the Query.
+     * Can only be called once per WarmQuery.
+     */
+    query(prompt: string | AsyncIterable<SDKUserMessage>): Query;
+    /**
+     * Close the subprocess without sending a prompt. Use this to discard a
+     * warm query you no longer need.
+     */
+    close(): void;
+}
 
 export declare type WorktreeCreateHookInput = BaseHookInput & {
     hook_event_name: 'WorktreeCreate';
