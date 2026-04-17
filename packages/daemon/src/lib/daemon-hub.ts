@@ -491,6 +491,33 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		data: Record<string, unknown>;
 	};
 
+	// Pending agent message events (queue-until-active)
+	// See packages/daemon/src/storage/repositories/pending-agent-message-repository.ts
+	/** Emitted when a Task Agent's send_message is queued because the target is not yet active. */
+	'space.pendingMessage.queued': {
+		sessionId: string;
+		spaceId: string;
+		workflowRunId: string;
+		taskId: string | null;
+		targetAgentName: string;
+		targetKind: 'node_agent' | 'space_agent';
+		messageId: string;
+		attempts: number;
+		maxAttempts: number;
+		expiresAt: number;
+		deduped: boolean;
+	};
+	/** Emitted when a queued pending message is flushed to the target session. */
+	'space.pendingMessage.delivered': {
+		sessionId: string;
+		spaceId: string;
+		workflowRunId: string;
+		targetAgentName: string;
+		targetKind: string;
+		messageId: string;
+		deliveredSessionId: string;
+	};
+
 	// Space Agent events (channel: 'space:${spaceId}')
 	'spaceAgent.created': {
 		sessionId: string;

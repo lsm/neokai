@@ -68,6 +68,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
@@ -161,6 +162,18 @@ export interface TaskAgentManagerConfig {
 	dbPath?: string;
 	/** Workflow run artifact repository — for write_artifact / list_artifacts node agent tools */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Persistent queue of Task Agent → peer agent messages waiting for the target
+	 * session to activate. When provided, `createSubSession` flushes all pending
+	 * messages for the newly-activated agent (by name) and `send_message` can
+	 * enqueue instead of failing when the target is declared but not yet active.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
+	/**
+	 * Callback to inject a message into the Space Agent chat session for a space.
+	 * Used for Task Agent → Space Agent escalation via `send_message`.
+	 */
+	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +555,8 @@ export class TaskAgentManager {
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
+				pendingMessageRepo: this.config.pendingMessageRepo,
+				spaceAgentInjector: this.config.spaceAgentInjector,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -914,8 +929,127 @@ export class TaskAgentManager {
 		// Start streaming query for the sub-session
 		await subSession.startStreamingQuery();
 
+		// Flush any queued messages addressed to this agent name so that the
+		// reopen/startup race doesn't drop Task Agent → node-agent messages.
+		if (memberInfo?.agentName) {
+			const parentTask = this.config.taskRepo.getTask(taskId);
+			const runId = parentTask?.workflowRunId;
+			if (runId) {
+				void this.flushPendingMessagesForTarget(runId, memberInfo.agentName, sessionId).catch(
+					(err) => {
+						log.warn(
+							`TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+						);
+					}
+				);
+			}
+		}
+
 		log.info(`TaskAgentManager: created sub-session ${sessionId} for task ${taskId}`);
 		return sessionId;
+	}
+
+	/**
+	 * Drain the pending-message queue for a specific target in a workflow run,
+	 * delivering each pending message in FIFO order to the given session.
+	 *
+	 * Called immediately after `createSubSession()` activates a sub-session, and
+	 * also invoked by rehydration paths after daemon restart. Safe to call
+	 * repeatedly — rows already marked delivered/expired/failed are ignored.
+	 *
+	 * Expired rows are swept first so they're never delivered. Each successful
+	 * injection calls `markDelivered`; each failure increments attempts via
+	 * `markAttemptFailed` and the row stays pending until `max_attempts` is hit.
+	 */
+	async flushPendingMessagesForTarget(
+		workflowRunId: string,
+		targetAgentName: string,
+		sessionId: string
+	): Promise<void> {
+		const repo = this.config.pendingMessageRepo;
+		if (!repo) return;
+
+		// Expire stale rows first so we don't deliver messages that have exceeded their TTL.
+		repo.expireStale(workflowRunId);
+
+		const pending = repo.listPendingForTarget(workflowRunId, targetAgentName);
+		if (pending.length === 0) return;
+
+		log.info(
+			`TaskAgentManager: flushing ${pending.length} pending message(s) for agent=${targetAgentName} session=${sessionId}`
+		);
+
+		for (const row of pending) {
+			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
+			try {
+				await this.injectSubSessionMessage(sessionId, prefixed);
+				repo.markDelivered(row.id, sessionId);
+				this.emitPendingDelivered(row.id, sessionId, row);
+			} catch (err) {
+				const errMsg = err instanceof Error ? err.message : String(err);
+				log.warn(
+					`TaskAgentManager: pending message ${row.id} delivery to ${sessionId} failed: ${errMsg}`
+				);
+				repo.markAttemptFailed(row.id, errMsg);
+				// Keep going — a single per-row failure must not block the rest of the queue.
+			}
+		}
+	}
+
+	/**
+	 * Drain the pending-message queue for the Space Agent target of a workflow run.
+	 * Uses the configured `spaceAgentInjector`. Called after space chat session
+	 * provisioning / rehydration so that Task Agent escalations survive restarts.
+	 */
+	async flushPendingMessagesForSpaceAgent(spaceId: string, workflowRunId: string): Promise<void> {
+		const repo = this.config.pendingMessageRepo;
+		const inject = this.config.spaceAgentInjector;
+		if (!repo || !inject) return;
+
+		repo.expireStale(workflowRunId);
+
+		const pending = repo
+			.listPendingForTarget(workflowRunId, 'space-agent')
+			.filter((r) => r.targetKind === 'space_agent');
+		if (pending.length === 0) return;
+
+		const spaceChatSessionId = `space:chat:${spaceId}`;
+		log.info(
+			`TaskAgentManager: flushing ${pending.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
+		);
+
+		for (const row of pending) {
+			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
+			try {
+				await inject(spaceId, prefixed);
+				repo.markDelivered(row.id, spaceChatSessionId);
+				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+			} catch (err) {
+				const errMsg = err instanceof Error ? err.message : String(err);
+				log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
+				repo.markAttemptFailed(row.id, errMsg);
+			}
+		}
+	}
+
+	/** Emit observability event that a queued message was delivered. */
+	private emitPendingDelivered(
+		messageId: string,
+		sessionId: string,
+		row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
+	): void {
+		if (!this.config.daemonHub) return;
+		void this.config.daemonHub
+			.emit('space.pendingMessage.delivered', {
+				sessionId: 'global',
+				spaceId: row.spaceId,
+				workflowRunId: row.workflowRunId,
+				targetAgentName: row.targetAgentName,
+				targetKind: row.targetKind,
+				messageId,
+				deliveredSessionId: sessionId,
+			})
+			.catch(() => {});
 	}
 
 	// -------------------------------------------------------------------------
@@ -1781,6 +1915,8 @@ export class TaskAgentManager {
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			pendingMessageRepo: this.config.pendingMessageRepo,
+			spaceAgentInjector: this.config.spaceAgentInjector,
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
@@ -1974,6 +2110,16 @@ export class TaskAgentManager {
 
 		// --- Restart the streaming query (idempotent if already running)
 		await agentSession.startStreamingQuery();
+
+		// Flush any pending Task Agent → this agent messages that accumulated while
+		// the sub-session was not alive in memory.
+		void this.flushPendingMessagesForTarget(workflowRunId, execution.agentName, subSessionId).catch(
+			(err) => {
+				log.warn(
+					`TaskAgentManager.rehydrateSubSession: flushPendingMessagesForTarget failed for ${execution.agentName} (session ${subSessionId}): ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		);
 
 		log.info(
 			`TaskAgentManager.rehydrateSubSession: rehydrated sub-session ${subSessionId} for task ${taskId} (node ${execution.workflowNodeId})`
