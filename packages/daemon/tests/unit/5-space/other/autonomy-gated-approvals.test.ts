@@ -48,6 +48,7 @@ import type {
 	SpaceWorkflow,
 	SpaceWorkflowRun,
 	Gate,
+	GateField,
 	SpaceAutonomyLevel,
 } from '@neokai/shared';
 
@@ -141,8 +142,10 @@ function seedSpaceTask(
 function buildGatedWorkflow(opts: {
 	gateId?: string;
 	requiredLevel?: SpaceAutonomyLevel;
+	approvedFieldWriters?: string[];
 }): SpaceWorkflow {
 	const gateId = opts.gateId ?? 'code-ready-gate';
+	const writers = opts.approvedFieldWriters ?? ['*'];
 	const gate: Gate = {
 		id: gateId,
 		resetOnCycle: false,
@@ -150,7 +153,7 @@ function buildGatedWorkflow(opts: {
 			{
 				name: 'approved',
 				type: 'boolean',
-				writers: ['*'],
+				writers,
 				check: { op: '==', value: true },
 			},
 		],
@@ -162,6 +165,45 @@ function buildGatedWorkflow(opts: {
 		id: 'wf-1',
 		spaceId: 'space-1',
 		name: 'Test Workflow',
+		nodes: [
+			{ id: coderNodeId, name: 'Code', agents: [{ agentId: 'a1', name: 'coder' }] },
+			{ id: reviewerNodeId, name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+		],
+		startNodeId: coderNodeId,
+		endNodeId: reviewerNodeId,
+		gates: [gate],
+		channels: [
+			{
+				id: 'ch-1',
+				from: 'Code',
+				to: 'Review',
+				gateId,
+			},
+		],
+		tags: [],
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	};
+}
+
+function buildGatedWorkflowMixed(opts: {
+	gateId?: string;
+	requiredLevel?: SpaceAutonomyLevel;
+	fields: GateField[];
+}): SpaceWorkflow {
+	const gateId = opts.gateId ?? 'code-ready-gate';
+	const gate: Gate = {
+		id: gateId,
+		resetOnCycle: false,
+		fields: opts.fields,
+		...(opts.requiredLevel !== undefined ? { requiredLevel: opts.requiredLevel } : {}),
+	};
+	const coderNodeId = 'node-coder';
+	const reviewerNodeId = 'node-reviewer';
+	return {
+		id: 'wf-mixed',
+		spaceId: 'space-1',
+		name: 'Test Workflow Mixed',
 		nodes: [
 			{ id: coderNodeId, name: 'Code', agents: [{ agentId: 'a1', name: 'coder' }] },
 			{ id: reviewerNodeId, name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
@@ -378,11 +420,13 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 	function makeHandlers(opts: {
 		spaceAutonomyLevel: number;
 		gateRequiredLevel?: SpaceAutonomyLevel;
+		approvedFieldWriters?: string[];
 		run?: SpaceWorkflowRun;
 	}) {
 		const workflow = buildGatedWorkflow({
 			gateId,
 			requiredLevel: opts.gateRequiredLevel,
+			approvedFieldWriters: opts.approvedFieldWriters,
 		});
 		const gateDataRepo = makeGateDataRepo();
 		const workflowRunRepo = makeWorkflowRunRepo(opts.run ?? makeWorkflowRun());
@@ -412,7 +456,11 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 	}
 
 	test('agent approve blocked when space autonomy < gate requiredLevel', async () => {
-		const { handlers } = makeHandlers({ spaceAutonomyLevel: 2, gateRequiredLevel: 3 });
+		const { handlers } = makeHandlers({
+			spaceAutonomyLevel: 2,
+			gateRequiredLevel: 3,
+			approvedFieldWriters: [],
+		});
 		const result = (await handlers.approve_gate({
 			run_id: runId,
 			gate_id: gateId,
@@ -451,7 +499,7 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 	});
 
 	test('missing requiredLevel defaults to 5 — blocked at level 4', async () => {
-		const { handlers } = makeHandlers({ spaceAutonomyLevel: 4 }); // no gateRequiredLevel
+		const { handlers } = makeHandlers({ spaceAutonomyLevel: 4, approvedFieldWriters: [] }); // no gateRequiredLevel
 		const result = (await handlers.approve_gate({
 			run_id: runId,
 			gate_id: gateId,
@@ -476,6 +524,29 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 		const parsed = JSON.parse(text) as { success: boolean };
 		expect(parsed.success).toBe(true);
 		expect(gateDataRepo.merge).toHaveBeenCalled();
+	});
+
+	test('approved field with writers bypasses autonomy check — allowed at any level', async () => {
+		// writers: ['*'] → writers path → no autonomy check → allowed even at level 1 with requiredLevel 5
+		const { handlers, gateDataRepo } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['*'],
+		});
+		const result = (await handlers.approve_gate({
+			run_id: runId,
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const text = result.content[0].text;
+		const parsed = JSON.parse(text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(gateDataRepo.merge).toHaveBeenCalledWith(
+			runId,
+			gateId,
+			expect.objectContaining({ approved: true, approvalSource: 'agent' })
+		);
 	});
 
 	test('rejection (approved=false) is not autonomy-gated — always succeeds', async () => {
@@ -561,11 +632,13 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 	function makeHandlers(opts: {
 		spaceAutonomyLevel: number;
 		gateRequiredLevel?: SpaceAutonomyLevel;
+		approvedFieldWriters?: string[];
 		run?: SpaceWorkflowRun;
 	}) {
 		const workflow = buildGatedWorkflow({
 			gateId,
 			requiredLevel: opts.gateRequiredLevel,
+			approvedFieldWriters: opts.approvedFieldWriters,
 		});
 		const gateDataRepo = makeGateDataRepo();
 		const workflowRunRepo = makeWorkflowRunRepo(opts.run ?? makeWorkflowRun());
@@ -600,7 +673,11 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 	}
 
 	test('agent approve blocked when space autonomy < gate requiredLevel', async () => {
-		const { handlers } = makeHandlers({ spaceAutonomyLevel: 1, gateRequiredLevel: 3 });
+		const { handlers } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 3,
+			approvedFieldWriters: [],
+		});
 		const result = (await handlers.approve_gate({
 			gate_id: gateId,
 			approved: true,
@@ -637,7 +714,7 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 	});
 
 	test('missing requiredLevel defaults to 5 — blocked at level 4', async () => {
-		const { handlers } = makeHandlers({ spaceAutonomyLevel: 4 }); // no gateRequiredLevel
+		const { handlers } = makeHandlers({ spaceAutonomyLevel: 4, approvedFieldWriters: [] }); // no gateRequiredLevel
 		const result = (await handlers.approve_gate({
 			gate_id: gateId,
 			approved: true,
@@ -660,6 +737,28 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 		const parsed = JSON.parse(text) as { success: boolean };
 		expect(parsed.success).toBe(true);
 		expect(gateDataRepo.merge).toHaveBeenCalled();
+	});
+
+	test('approved field with writers bypasses autonomy check — allowed at any level', async () => {
+		// writers: ['*'] → writers path → no autonomy check → allowed even at level 1 with requiredLevel 5
+		const { handlers, gateDataRepo } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['*'],
+		});
+		const result = (await handlers.approve_gate({
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const text = result.content[0].text;
+		const parsed = JSON.parse(text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(gateDataRepo.merge).toHaveBeenCalledWith(
+			workflowRunId,
+			gateId,
+			expect.objectContaining({ approved: true, approvalSource: 'agent' })
+		);
 	});
 
 	test('rejection (approved=false) is not autonomy-gated — always succeeds', async () => {
@@ -752,10 +851,12 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 	function makeHandlers(opts: {
 		spaceAutonomyLevel: number;
 		gateRequiredLevel?: SpaceAutonomyLevel;
+		approvedFieldWriters?: string[];
 	}) {
 		const workflow = buildGatedWorkflow({
 			gateId,
 			requiredLevel: opts.gateRequiredLevel,
+			approvedFieldWriters: opts.approvedFieldWriters,
 		});
 		const channelResolver = new ChannelResolver(workflow.channels ?? []);
 		// AgentMessageRouter that always succeeds delivery for the purpose of these tests
@@ -791,7 +892,11 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 	}
 
 	test('gate write blocked when space autonomy < gate requiredLevel', async () => {
-		const handlers = makeHandlers({ spaceAutonomyLevel: 2, gateRequiredLevel: 3 });
+		const handlers = makeHandlers({
+			spaceAutonomyLevel: 2,
+			gateRequiredLevel: 3,
+			approvedFieldWriters: [],
+		});
 		const result = (await handlers.send_message({
 			target: 'Review',
 			message: 'PR ready',
@@ -799,16 +904,19 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 		})) as { content: Array<{ text: string }> };
 
 		const text = result.content[0].text;
-		const parsed = JSON.parse(text) as { success: boolean; error: string };
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('requires autonomy level 3');
-		expect(parsed.error).toContain('space autonomy is 2');
-		// Gate data should not have been written
+		const parsed = JSON.parse(text) as { success: boolean; error?: string };
+		// Gate data should not have been written (field skipped, no authorized data → no gate write)
 		expect(gateDataRepo.get(runId, gateId)).toBeNull();
+		// Message still delivered, but gate was not written (success: true with no gateWrite data)
+		expect(parsed.success).toBe(true);
 	});
 
 	test('gate write succeeds when space autonomy >= gate requiredLevel', async () => {
-		const handlers = makeHandlers({ spaceAutonomyLevel: 3, gateRequiredLevel: 3 });
+		const handlers = makeHandlers({
+			spaceAutonomyLevel: 3,
+			gateRequiredLevel: 3,
+			approvedFieldWriters: [],
+		});
 		const result = (await handlers.send_message({
 			target: 'Review',
 			message: 'PR ready',
@@ -825,7 +933,7 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 	});
 
 	test('missing requiredLevel defaults to 5 — gate write blocked at level 4', async () => {
-		const handlers = makeHandlers({ spaceAutonomyLevel: 4 }); // no gateRequiredLevel
+		const handlers = makeHandlers({ spaceAutonomyLevel: 4, approvedFieldWriters: [] }); // no gateRequiredLevel
 		const result = (await handlers.send_message({
 			target: 'Review',
 			message: 'PR ready',
@@ -833,14 +941,14 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 		})) as { content: Array<{ text: string }> };
 
 		const text = result.content[0].text;
-		const parsed = JSON.parse(text) as { success: boolean; error: string };
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('requires autonomy level 5');
+		const parsed = JSON.parse(text) as { success: boolean };
+		// Field skipped (autonomy path, level 4 < 5), no authorized data → no gate write
 		expect(gateDataRepo.get(runId, gateId)).toBeNull();
+		expect(parsed.success).toBe(true);
 	});
 
 	test('missing requiredLevel defaults to 5 — gate write succeeds at level 5', async () => {
-		const handlers = makeHandlers({ spaceAutonomyLevel: 5 }); // no gateRequiredLevel
+		const handlers = makeHandlers({ spaceAutonomyLevel: 5, approvedFieldWriters: [] }); // no gateRequiredLevel
 		const result = (await handlers.send_message({
 			target: 'Review',
 			message: 'PR ready',
@@ -852,6 +960,91 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 		expect(parsed.success).toBe(true);
 		const gateRecord = gateDataRepo.get(runId, gateId);
 		expect(gateRecord?.data?.approved).toBe(true);
+	});
+
+	test('field with writers bypasses autonomy check — allowed at any level', async () => {
+		// approved field has writers: ['*'] → writers path → level 1 can write despite requiredLevel 5
+		const handlers = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['*'],
+		});
+		const result = (await handlers.send_message({
+			target: 'Review',
+			message: 'PR ready',
+			data: { approved: true },
+		})) as { content: Array<{ text: string }> };
+
+		const text = result.content[0].text;
+		const parsed = JSON.parse(text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		const gateRecord = gateDataRepo.get(runId, gateId);
+		expect(gateRecord?.data?.approved).toBe(true);
+		expect(gateRecord?.data?.approvalSource).toBe('agent');
+	});
+
+	test('mixed fields: writers-path field allowed, no-writers field requires autonomy', async () => {
+		// Build a workflow where:
+		//   - 'approved' field has writers: ['coder'] → writers path for coder
+		//   - 'extra_check' field has writers: [] → autonomy path (level 2 < 3)
+		const gatedWorkflow = buildGatedWorkflowMixed({
+			gateId,
+			requiredLevel: 3 as SpaceAutonomyLevel,
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean' as const,
+					writers: ['coder'],
+					check: { op: '==' as const, value: true },
+				},
+				{
+					name: 'extra_check',
+					type: 'boolean' as const,
+					writers: [],
+					check: { op: '==' as const, value: true },
+				},
+			],
+		});
+		const channelResolver = new ChannelResolver(gatedWorkflow.channels ?? []);
+		seedSpaceTask(db, spaceId, runId, reviewerNodeId, 'reviewer3', 'sess-reviewer3');
+		const config: NodeAgentToolsConfig = {
+			mySessionId: 'sess-coder3',
+			myAgentName: 'coder',
+			taskId: 'task-coder3',
+			spaceId,
+			channelResolver,
+			workflowRunId: runId,
+			workflowNodeId: coderNodeId,
+			nodeExecutionRepo,
+			agentMessageRouter: {
+				deliverMessage: mock(async () => ({
+					success: true as const,
+					delivered: [{ agentName: 'reviewer', sessionId: 'sess-reviewer3' }],
+					failed: [],
+					notFoundAgentNames: [],
+					permittedTargets: ['Review', 'task-agent'],
+					unauthorizedAgentNames: [],
+				})),
+			} as unknown as AgentMessageRouter,
+			workflow: gatedWorkflow,
+			gateDataRepo,
+			getSpaceAutonomyLevel: async () => 2, // below requiredLevel 3
+		};
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = (await handlers.send_message({
+			target: 'Review',
+			message: 'PR ready',
+			data: { approved: true, extra_check: true },
+		})) as { content: Array<{ text: string }> };
+
+		const text = result.content[0].text;
+		const parsed = JSON.parse(text) as { success: boolean };
+		expect(parsed.success).toBe(true); // message still delivered
+		const gateRecord = gateDataRepo.get(runId, gateId);
+		// 'approved' written via writers path (coder in writers list)
+		expect(gateRecord?.data?.approved).toBe(true);
+		// 'extra_check' skipped: empty writers + level 2 < requiredLevel 3
+		expect(gateRecord?.data?.extra_check).toBeUndefined();
 	});
 
 	test('no getSpaceAutonomyLevel in config — gate write is not autonomy-gated', async () => {
@@ -891,7 +1084,7 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 
 		const text = result.content[0].text;
 		const parsed = JSON.parse(text) as { success: boolean };
-		// Without getSpaceAutonomyLevel, the check is skipped → write proceeds
+		// Without getSpaceAutonomyLevel, the autonomy path is skipped → write proceeds via writers path
 		expect(parsed.success).toBe(true);
 	});
 });

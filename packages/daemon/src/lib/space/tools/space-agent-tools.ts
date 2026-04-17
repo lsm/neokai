@@ -525,23 +525,30 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				});
 			}
 
-			// Enforce autonomy level for agent-originated approvals.
-			// Missing gate.requiredLevel defaults to 5 (max restriction).
+			// Per-field two-path authorization for agent-originated approvals.
+			// Writers path: 'approved' field has explicit writers → workflow author granted trust → allow.
+			// Autonomy path: 'approved' field has no writers → require space.autonomyLevel >= gate.requiredLevel (default 5).
 			// Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
 			if (args.approved && getSpaceAutonomyLevel) {
 				const workflow = workflowManager.getWorkflow(run.workflowId);
 				const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
-				const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
-				const spaceLevel = await getSpaceAutonomyLevel(spaceId);
-				if (spaceLevel < effectiveRequiredLevel) {
-					return jsonResult({
-						success: false,
-						error:
-							`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
-							`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
-							`Increase space autonomy level or request human approval.`,
-					});
+				const approvedField = (gateDef?.fields ?? []).find((f) => f.name === 'approved');
+				const hasWriters = (approvedField?.writers ?? []).length > 0;
+				if (!hasWriters) {
+					// Autonomy path: no writers declared on the approved field
+					const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+					const spaceLevel = await getSpaceAutonomyLevel(spaceId);
+					if (spaceLevel < effectiveRequiredLevel) {
+						return jsonResult({
+							success: false,
+							error:
+								`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+								`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+								`Increase space autonomy level or request human approval.`,
+						});
+					}
 				}
+				// Writers path: approved field has writers → no autonomy check needed
 			}
 
 			const existing = gateDataRepo.get(args.run_id, args.gate_id);
