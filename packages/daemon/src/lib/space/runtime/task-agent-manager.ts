@@ -241,7 +241,39 @@ export class TaskAgentManager {
 	 */
 	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
 
-	constructor(private readonly config: TaskAgentManagerConfig) {}
+	/**
+	 * Unsubscribe function for the `space.task.updated` listener that triggers
+	 * full session cleanup when a task reaches `archived` state.
+	 * Populated on first cleanup subscription attempt; cleared in `cleanupAll()`.
+	 */
+	private taskArchiveListenerUnsub: (() => void) | null = null;
+
+	constructor(private readonly config: TaskAgentManagerConfig) {
+		this.subscribeToTaskArchiveEvents();
+	}
+
+	/**
+	 * Subscribe to `space.task.updated` and run full cleanup for tasks that
+	 * reach the `archived` state.
+	 *
+	 * `archived` is the only truly non-recoverable terminal state for a task —
+	 * per issue #1515, node agent sessions must remain reachable (e.g. for
+	 * cross-node `send_message` from a reviewer to a completed coder) for the
+	 * full lifetime of the parent task run, and are only torn down when the
+	 * task is archived.
+	 */
+	private subscribeToTaskArchiveEvents(): void {
+		if (this.taskArchiveListenerUnsub) return;
+		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', (event) => {
+			if (event.task?.status !== 'archived') return;
+			const taskId = event.taskId;
+			// Fire-and-forget — cleanup is idempotent and safe to skip on failure
+			// (cleanupAll still sweeps leftovers on daemon shutdown).
+			void this.cleanup(taskId, 'done').catch((err) => {
+				log.warn(`TaskAgentManager: failed to clean up sessions for archived task ${taskId}:`, err);
+			});
+		});
+	}
 
 	// -------------------------------------------------------------------------
 	// Public — Task Agent lifecycle
@@ -1030,6 +1062,33 @@ export class TaskAgentManager {
 		});
 	}
 
+	/**
+	 * Interrupt a sub-session by its agent session ID WITHOUT deleting it.
+	 *
+	 * Unlike `cancelBySessionId`, this preserves the session in memory and in
+	 * the DB, so it remains reachable via `send_message` / `injectSubSessionMessage`
+	 * while the parent task is still active.
+	 *
+	 * Use this when the workflow run completes (end node fires) but the task
+	 * is not yet `archived` — siblings should stop processing but remain
+	 * messageable in case a downstream node needs to follow up (e.g. a reviewer
+	 * sending feedback back to a coder whose node has already finished).
+	 *
+	 * No-op if the session is not found or is not in a state that can be interrupted.
+	 */
+	async interruptBySessionId(agentSessionId: string): Promise<void> {
+		const session = this.agentSessionIndex.get(agentSessionId);
+		if (!session) return;
+		try {
+			await session.handleInterrupt();
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager.interruptBySessionId: failed to interrupt session ${agentSessionId}:`,
+				err
+			);
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — rehydration
 	// -------------------------------------------------------------------------
@@ -1092,6 +1151,10 @@ export class TaskAgentManager {
 	 * Called on daemon shutdown to release all resources.
 	 */
 	async cleanupAll(): Promise<void> {
+		if (this.taskArchiveListenerUnsub) {
+			this.taskArchiveListenerUnsub();
+			this.taskArchiveListenerUnsub = null;
+		}
 		const taskIds = Array.from(this.taskAgentSessions.keys());
 		await Promise.allSettled(taskIds.map((taskId) => this.cleanup(taskId)));
 		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks cleaned up)`);

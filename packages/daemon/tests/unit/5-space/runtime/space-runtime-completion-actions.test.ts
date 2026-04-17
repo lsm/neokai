@@ -91,6 +91,7 @@ class MockTaskAgentManager {
 	cancelBySessionId(agentSessionId: string): void {
 		this.cancelledSessions.push(agentSessionId);
 	}
+	async interruptBySessionId(_agentSessionId: string): Promise<void> {}
 }
 
 // ---------------------------------------------------------------------------
