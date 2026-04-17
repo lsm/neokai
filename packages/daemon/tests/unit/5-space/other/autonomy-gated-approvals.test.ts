@@ -421,6 +421,7 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 		spaceAutonomyLevel: number;
 		gateRequiredLevel?: SpaceAutonomyLevel;
 		approvedFieldWriters?: string[];
+		myAgentName?: string;
 		run?: SpaceWorkflowRun;
 	}) {
 		const workflow = buildGatedWorkflow({
@@ -451,6 +452,7 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 			spaceAgentManager: {} as never,
 			gateDataRepo: gateDataRepo as never,
 			getSpaceAutonomyLevel: async () => opts.spaceAutonomyLevel,
+			myAgentName: opts.myAgentName ?? 'space-agent',
 		};
 		return { handlers: createSpaceAgentToolHandlers(config), gateDataRepo, workflowRunRepo };
 	}
@@ -549,6 +551,57 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 		);
 	});
 
+	test('writers include space-agent name — writers path allows at any level', async () => {
+		const { handlers, gateDataRepo } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['space-agent'],
+		});
+		const result = (await handlers.approve_gate({
+			run_id: runId,
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const parsed = JSON.parse(result.content[0].text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(gateDataRepo.merge).toHaveBeenCalled();
+	});
+
+	test('writers exist but do not include calling agent — falls through to autonomy path', async () => {
+		const { handlers } = makeHandlers({
+			spaceAutonomyLevel: 2,
+			gateRequiredLevel: 3,
+			approvedFieldWriters: ['coder'], // space-agent NOT in writers
+		});
+		const result = (await handlers.approve_gate({
+			run_id: runId,
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const parsed = JSON.parse(result.content[0].text) as { success: boolean; error: string };
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('requires autonomy level 3');
+	});
+
+	test('writers include calling agent — allowed even when other writers do not match', async () => {
+		const { handlers, gateDataRepo } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['coder', 'space-agent'],
+		});
+		const result = (await handlers.approve_gate({
+			run_id: runId,
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const parsed = JSON.parse(result.content[0].text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(gateDataRepo.merge).toHaveBeenCalled();
+	});
+
 	test('rejection (approved=false) is not autonomy-gated — always succeeds', async () => {
 		const { handlers, gateDataRepo } = makeHandlers({
 			spaceAutonomyLevel: 1,
@@ -633,6 +686,7 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 		spaceAutonomyLevel: number;
 		gateRequiredLevel?: SpaceAutonomyLevel;
 		approvedFieldWriters?: string[];
+		myAgentName?: string;
 		run?: SpaceWorkflowRun;
 	}) {
 		const workflow = buildGatedWorkflow({
@@ -668,6 +722,7 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 			workflowRunRepo: workflowRunRepo as never,
 			workflowManager: workflowManager as never,
 			getSpaceAutonomyLevel: async () => opts.spaceAutonomyLevel,
+			myAgentName: opts.myAgentName ?? 'task-agent',
 		};
 		return { handlers: createTaskAgentToolHandlers(config), gateDataRepo, workflowRunRepo };
 	}
@@ -759,6 +814,54 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 			gateId,
 			expect.objectContaining({ approved: true, approvalSource: 'agent' })
 		);
+	});
+
+	test('writers include task-agent name — writers path allows at any level', async () => {
+		const { handlers, gateDataRepo } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['task-agent'],
+		});
+		const result = (await handlers.approve_gate({
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const parsed = JSON.parse(result.content[0].text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(gateDataRepo.merge).toHaveBeenCalled();
+	});
+
+	test('writers exist but do not include calling agent — falls through to autonomy path', async () => {
+		const { handlers } = makeHandlers({
+			spaceAutonomyLevel: 2,
+			gateRequiredLevel: 3,
+			approvedFieldWriters: ['coder'], // task-agent NOT in writers
+		});
+		const result = (await handlers.approve_gate({
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const parsed = JSON.parse(result.content[0].text) as { success: boolean; error: string };
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('requires autonomy level 3');
+	});
+
+	test('writers include calling agent — allowed even when other writers do not match', async () => {
+		const { handlers, gateDataRepo } = makeHandlers({
+			spaceAutonomyLevel: 1,
+			gateRequiredLevel: 5,
+			approvedFieldWriters: ['coder', 'task-agent'],
+		});
+		const result = (await handlers.approve_gate({
+			gate_id: gateId,
+			approved: true,
+		})) as { content: Array<{ text: string }> };
+
+		const parsed = JSON.parse(result.content[0].text) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(gateDataRepo.merge).toHaveBeenCalled();
 	});
 
 	test('rejection (approved=false) is not autonomy-gated — always succeeds', async () => {

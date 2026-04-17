@@ -506,6 +506,7 @@ export class TaskAgentManager {
 					const s = await this.config.spaceManager.getSpace(sid);
 					return s?.autonomyLevel ?? 1;
 				},
+				myAgentName: 'task-agent',
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
@@ -1713,6 +1714,7 @@ export class TaskAgentManager {
 				const s = await this.config.spaceManager.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
 			},
+			myAgentName: 'task-agent',
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},

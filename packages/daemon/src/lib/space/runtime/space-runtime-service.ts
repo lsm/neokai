@@ -330,6 +330,7 @@ export class SpaceRuntimeService {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
 			},
+			myAgentName: 'space-agent',
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.
