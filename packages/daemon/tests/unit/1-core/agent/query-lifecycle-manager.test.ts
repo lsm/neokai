@@ -1329,5 +1329,118 @@ describe('QueryLifecycleManager', () => {
 				{ timeout: 5000 }
 			);
 		});
+
+		/**
+		 * Regression tests for Task #12: cross-workspace / worktree resume.
+		 *
+		 * When a session's effective CWD changes between daemon restarts (e.g. a worktree
+		 * is added after the session was created), the SDK session file lives under the
+		 * OLD project directory. The fix locates and migrates the file before resume.
+		 */
+		describe('cross-workspace resume (Task #12)', () => {
+			test(
+				'migrates session file from sdkOriginPath to current CWD when they differ',
+				async () => {
+					const sdkSessionId = 'sdk-migrate-origin-path';
+					const originWorkspace = '/origin/workspace';
+					const currentWorktree = '/current/worktree';
+
+					// File exists at the origin workspace's project dir
+					createSdkFile(originWorkspace, sdkSessionId);
+
+					// Session has sdkOriginPath = origin, but worktree CWD = current
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.sdkOriginPath = originWorkspace;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath: currentWorktree,
+						branch: 'feature/test',
+						mainRepoPath: originWorkspace,
+					};
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// sdkSessionId preserved (migration succeeded)
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+
+					// sdkOriginPath updated to current worktree path after migration
+					expect(mockContext.session.sdkOriginPath).toBe(currentWorktree);
+
+					// DB updated with new sdkOriginPath
+					expect(updateSessionSpy).toHaveBeenCalledWith('test-session', {
+						sdkOriginPath: currentWorktree,
+					});
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'finds session file via global scan when sdkOriginPath is not set (legacy sessions)',
+				async () => {
+					const sdkSessionId = 'sdk-global-scan-legacy';
+					// Simulate a legacy session: file is at workspace path, no sdkOriginPath stored
+					const legacyWorkspace = '/legacy/workspace';
+					createSdkFile(legacyWorkspace, sdkSessionId);
+
+					// Session has sdkSessionId but no sdkOriginPath (pre-fix session)
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.sdkOriginPath = undefined;
+					// No worktree — current workspace differs from where the file is
+					mockContext.session.workspacePath = '/new/different/workspace';
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// sdkSessionId preserved — global scan found and migrated the file
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'clears sdkSessionId gracefully when file not found anywhere (rotation path)',
+				async () => {
+					// sdkSessionId set but no file exists anywhere under TEST_SDK_SESSION_DIR
+					mockContext.session.sdkSessionId = 'sdk-completely-missing';
+					mockContext.session.sdkOriginPath = '/some/deleted/workspace';
+					manager = new QueryLifecycleManager(mockContext);
+
+					// Should not throw — just log warning and proceed (SDK will produce "No conversation found")
+					await manager.ensureQueryStarted();
+
+					// sdkSessionId is NOT cleared here (that's the query-runner's job after the SDK error)
+					expect(mockContext.session.sdkSessionId).toBe('sdk-completely-missing');
+					// ensureQueryStarted still starts the query (SDK handles the rotation)
+					expect(startStreamingCalled).toBe(true);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'sets sdkOriginPath for sessions that have the file at current workspace but no origin recorded',
+				async () => {
+					const sdkSessionId = 'sdk-set-origin-on-existing';
+					// File exists at the current workspace (e.g., session was created here)
+					createSdkFile('/test/workspace', sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.sdkOriginPath = undefined; // not set yet
+					// No worktree — current workspace = /test/workspace (from createMockContext)
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// sdkOriginPath should now be set to the current workspace
+					expect(mockContext.session.sdkOriginPath).toBe('/test/workspace');
+
+					// DB updated
+					expect(updateSessionSpy).toHaveBeenCalledWith('test-session', {
+						sdkOriginPath: '/test/workspace',
+					});
+				},
+				{ timeout: 5000 }
+			);
+		});
 	});
 });

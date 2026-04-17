@@ -54,6 +54,79 @@ export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: strin
 }
 
 /**
+ * Search all SDK project directories for a session file.
+ *
+ * The SDK stores session files under ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl.
+ * When the session's effective CWD changes between daemon restarts (e.g. worktree added),
+ * the file won't be found at the new CWD. This function scans all known project directories
+ * so we can locate and migrate the file before attempting resume.
+ *
+ * @param sdkSessionId - The SDK session ID to search for
+ * @returns Absolute path to the .jsonl file if found, null otherwise
+ */
+export function findSDKSessionFileGlobally(sdkSessionId: string): string | null {
+	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
+	const projectsDir = join(baseDir, 'projects');
+
+	if (!existsSync(projectsDir)) return null;
+
+	try {
+		const projectDirs = readdirSync(projectsDir);
+		for (const projectDir of projectDirs) {
+			const filePath = join(projectsDir, projectDir, `${sdkSessionId}.jsonl`);
+			if (existsSync(filePath)) {
+				return filePath;
+			}
+		}
+	} catch {
+		// Treat any scan error as "not found"
+	}
+
+	return null;
+}
+
+/**
+ * Migrate an SDK session file from one workspace path's project dir to another's.
+ *
+ * Called before session resume when the effective CWD has changed since the session
+ * was first created (e.g. a worktree was added/removed). Copies the .jsonl file to
+ * the target workspace's project dir so the SDK subprocess (which runs with cwd=target)
+ * can find it. Non-destructive: the source file is preserved.
+ *
+ * @param fromWorkspacePath - Workspace path where the file currently lives
+ * @param toWorkspacePath - Workspace path where the SDK subprocess will run
+ * @param sdkSessionId - The SDK session ID
+ * @returns true if the file was copied successfully (or already exists at target)
+ */
+export function migrateSDKSessionFile(
+	fromWorkspacePath: string,
+	toWorkspacePath: string,
+	sdkSessionId: string
+): boolean {
+	try {
+		const sourcePath = getSDKSessionFilePath(fromWorkspacePath, sdkSessionId);
+		if (!existsSync(sourcePath)) return false;
+
+		const targetPath = getSDKSessionFilePath(toWorkspacePath, sdkSessionId);
+
+		// Already at the right place — nothing to do
+		if (sourcePath === targetPath) return true;
+
+		// File already exists at target — treat as success (may have been migrated earlier)
+		if (existsSync(targetPath)) return true;
+
+		// Ensure the target project directory exists
+		const targetDir = dirname(targetPath);
+		mkdirSync(targetDir, { recursive: true });
+
+		copyFileSync(sourcePath, targetPath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Find SDK session file by searching the workspace directory
  * Useful when we don't have the SDK session ID (e.g., session not currently running)
  *

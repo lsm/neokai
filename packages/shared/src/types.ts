@@ -159,6 +159,14 @@ export interface SessionInfo {
 	worktree?: WorktreeMetadata;
 	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
 	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+	/**
+	 * The workspace path (resolved) that was used as CWD when the SDK session was first
+	 * created. The SDK stores conversation files under
+	 * ~/.claude/projects/{encoded-sdkOriginPath}/{sdkSessionId}.jsonl
+	 * Persisting this allows reliable resume even when the session's effective CWD
+	 * changes (e.g., worktree is added/removed between daemon restarts).
+	 */
+	sdkOriginPath?: string;
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
