@@ -42,6 +42,8 @@ interface WorkflowRow {
 	channels: string | null;
 	gates: string | null;
 	layout: string | null;
+	template_name: string | null;
+	template_hash: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -121,6 +123,8 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 	if (channels && channels.length > 0) wf.channels = channels;
 	if (gates && gates.length > 0) wf.gates = gates;
 	if (layout) wf.layout = layout;
+	if (row.template_name) wf.templateName = row.template_name;
+	if (row.template_hash) wf.templateHash = row.template_hash;
 	return wf;
 }
 
@@ -158,8 +162,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -172,6 +176,8 @@ export class SpaceWorkflowRepository {
 				channelsJson,
 				gatesJson,
 				layoutJson,
+				params.templateName ?? null,
+				params.templateHash ?? null,
 				now,
 				now
 			);
@@ -257,6 +263,15 @@ export class SpaceWorkflowRepository {
 		if (params.layout !== undefined) {
 			fields.push('layout = ?');
 			values.push(params.layout ? JSON.stringify(params.layout) : null);
+		}
+
+		if (params.templateName !== undefined) {
+			fields.push('template_name = ?');
+			values.push(params.templateName ?? null);
+		}
+		if (params.templateHash !== undefined) {
+			fields.push('template_hash = ?');
+			values.push(params.templateHash ?? null);
 		}
 
 		const hasNodeReplacement = params.nodes !== undefined;

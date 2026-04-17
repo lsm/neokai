@@ -415,7 +415,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.spaceManager,
 		spaceWorkflowManager,
-		deps.daemonHub
+		deps.daemonHub,
+		deps.spaceAgentManager
 	);
 
 	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
