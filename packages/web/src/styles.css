@@ -716,10 +716,17 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
 	animation: space-task-spin-border 2.5s linear infinite;
 }
 
+@media (prefers-reduced-motion: reduce) {
+	.running-block::before {
+		animation: none;
+		background: rgba(99, 155, 255, 0.4);
+	}
+}
+
 .running-block-inner {
 	position: relative;
 	z-index: 1;
 	margin: 1px;
 	border-radius: 7px;
-	background: #111113; /* --color-dark-900 */
+	background: var(--color-dark-900);
 }
