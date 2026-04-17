@@ -71,7 +71,7 @@ export function SpaceTaskUnifiedThread({
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
 					{renderStyle === 'compact' ? (
-						<SpaceTaskCardFeed events={threadEvents} taskId={taskId} maps={maps} />
+						<SpaceTaskCardFeed parsedRows={parsedRows} taskId={taskId} maps={maps} />
 					) : (
 						<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
 					)}

@@ -35,6 +35,10 @@ vi.mock('../../../hooks/useMessageMaps', () => ({
 	}),
 }));
 
+// Stub the SDK message renderer. The compact card feed now delegates ALL row
+// rendering to SDKMessageRenderer (matching normal-session rendering), so these
+// integration tests assert on the stub's output rather than the old compact
+// rail-style rows. The legacy feed does its own rendering so it's unaffected.
 vi.mock('../../sdk/SDKMessageRenderer', () => ({
 	SDKMessageRenderer: ({ message }: { message: any }) => {
 		const content = message?.message?.content;
@@ -184,7 +188,6 @@ function makeNoiseRows() {
 
 function makeMultiAgentRows() {
 	return [
-		// Task Agent message at time 0
 		{
 			id: 'multi-1',
 			sessionId: 'space:space-1:task:task-1',
@@ -204,7 +207,6 @@ function makeMultiAgentRows() {
 			}),
 			createdAt: 1_710_000_000_000,
 		},
-		// Coder Agent message at time 1
 		{
 			id: 'multi-2',
 			sessionId: 'space:space-1:task:task-1:node:coder',
@@ -224,7 +226,6 @@ function makeMultiAgentRows() {
 			}),
 			createdAt: 1_710_000_001_000,
 		},
-		// Reviewer Agent message at time 2
 		{
 			id: 'multi-3',
 			sessionId: 'space:space-1:task:task-1:node:reviewer',
@@ -244,7 +245,6 @@ function makeMultiAgentRows() {
 			}),
 			createdAt: 1_710_000_002_000,
 		},
-		// Task Agent again at time 3 (interleaved)
 		{
 			id: 'multi-4',
 			sessionId: 'space:space-1:task:task-1',
@@ -267,11 +267,8 @@ function makeMultiAgentRows() {
 	];
 }
 
-// Rows containing thinking/tool events to produce inline agent-label spans.
-// The compact mode renders agent identity via block-level headers using shortAgentLabel.
-function makeMultiAgentNonTextRows() {
+function makeMultiAgentMixedBlockRows() {
 	return [
-		// Task Agent: thinking block
 		{
 			id: 'label-1',
 			sessionId: 'space:space-1:task:task-1',
@@ -291,7 +288,6 @@ function makeMultiAgentNonTextRows() {
 			}),
 			createdAt: 1_710_000_000_000,
 		},
-		// Coder Agent: tool_use block
 		{
 			id: 'label-2',
 			sessionId: 'space:space-1:task:task-1:node:coder',
@@ -311,7 +307,6 @@ function makeMultiAgentNonTextRows() {
 			}),
 			createdAt: 1_710_000_001_000,
 		},
-		// Reviewer Agent: tool_use block
 		{
 			id: 'label-3',
 			sessionId: 'space:space-1:task:task-1:node:reviewer',
@@ -334,12 +329,8 @@ function makeMultiAgentNonTextRows() {
 	];
 }
 
-// Rows that produce a terminal result block followed by more activity —
-// used to test that the terminal block is preserved even outside the last-3 window.
 function makeTerminalPreservedRows() {
-	// 4 distinct agent blocks; result is in block 1 (outside last-3 window).
 	return [
-		// Block 1 (terminal): Task Agent sends result
 		{
 			id: 'tp-result',
 			sessionId: 'space:space-1:task:task-1',
@@ -358,7 +349,6 @@ function makeTerminalPreservedRows() {
 			}),
 			createdAt: 1_710_000_000_000,
 		},
-		// Block 2: Coder Agent
 		{
 			id: 'tp-coder',
 			sessionId: 'space:space-1:task:task-1:node:coder',
@@ -376,7 +366,6 @@ function makeTerminalPreservedRows() {
 			}),
 			createdAt: 1_710_000_001_000,
 		},
-		// Block 3: Reviewer Agent
 		{
 			id: 'tp-reviewer',
 			sessionId: 'space:space-1:task:task-1:node:reviewer',
@@ -394,7 +383,6 @@ function makeTerminalPreservedRows() {
 			}),
 			createdAt: 1_710_000_002_000,
 		},
-		// Block 4: Space Agent
 		{
 			id: 'tp-space',
 			sessionId: 'space:space-1:task:task-1:node:space',
@@ -421,7 +409,7 @@ describe('SpaceTaskUnifiedThread', () => {
 	beforeEach(() => {
 		cleanup();
 		window.localStorage.clear();
-		mockRenderStyle = 'compact'; // reset to default before each test
+		mockRenderStyle = 'compact';
 		mockRows = makeRows();
 		mockIsLoading = false;
 		mockIsReconnecting = false;
@@ -433,25 +421,21 @@ describe('SpaceTaskUnifiedThread', () => {
 
 	// ── Default compact mode ──────────────────────────────────────────────────
 
-	it('renders compact mode by default with flattened event rows', () => {
+	it('renders compact mode by default and delegates each row to SDKMessageRenderer', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
-		// makeRows() produces 1 logical block (all Task Agent events) → all 4 events rendered
-		expect(screen.getAllByTestId('space-task-event-row').length).toBeGreaterThanOrEqual(4);
-		expect(screen.getByText('Thinking')).toBeTruthy();
-		expect(
-			screen.getByText(
-				(_, element) =>
-					element?.tagName.toLowerCase() === 'span' && element?.textContent === 'Glob: *.ts'
-			)
-		).toBeTruthy();
-		expect(screen.queryByText('pattern: *.ts')).toBeNull();
-		expect(screen.queryByText('Response')).toBeNull();
+		// 2 rows total (assistant + user), both go through SDKMessageRenderer.
+		const rendered = screen.getAllByTestId('sdk-message-renderer');
+		expect(rendered.length).toBe(2);
+		// The assistant's full text block (incl. "patch next") stays visible
+		// — compact mode no longer truncates it.
 		expect(
 			screen.getByText(
 				'I found the relevant files and will patch next. This full assistant message should remain visible in compact mode without truncation.'
 			)
 		).toBeTruthy();
+		// The user message content is rendered too.
+		expect(screen.getByText('Please keep updates compact.')).toBeTruthy();
 	});
 
 	it('does not render compact/verbose toggle controls', () => {
@@ -462,40 +446,41 @@ describe('SpaceTaskUnifiedThread', () => {
 
 	// ── Noise filtering ───────────────────────────────────────────────────────
 
-	it('filters system-init and non-error rate-limit noise in compact mode', () => {
+	it('filters system-init and non-rejected rate-limit noise in compact mode', () => {
 		mockRows = makeNoiseRows();
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		// system init is filtered out
-		expect(screen.queryByText('System')).toBeNull();
-		// non-error rate-limit is filtered out
-		expect(screen.queryByText('five hour · allowed')).toBeNull();
+		// system-init and allowed rate-limit are dropped by preFilterRows;
+		// result-success (terminal) and rate-rejected (error) remain.
+		const rendered = screen.getAllByTestId('sdk-message-renderer');
+		expect(rendered.length).toBe(2);
 
-		// Compact mode preserves result blocks (terminal), so "Completed" IS visible
-		// (unlike the legacy mode which hid success results)
-		expect(screen.getByText('Completed')).toBeTruthy();
+		// The terminal block's DONE badge is rendered for the success result.
+		expect(screen.getByText('DONE')).toBeTruthy();
+	});
 
-		// Rejected rate-limit IS shown (it's an error)
-		expect(screen.getByText('Rate Limit')).toBeTruthy();
-		expect(screen.getByText('five hour · rejected')).toBeTruthy();
+	it('does not show the running indicator when the tail block is terminal', () => {
+		mockRows = makeNoiseRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		// Noise rows: after filtering we're left with result-success + rate-rejected,
+		// all Task Agent → 1 block that's terminal → no running wrapper.
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
 	});
 
 	// ── 3-block limit ─────────────────────────────────────────────────────────
 
 	it('shows only the last 3 logical blocks when more than 3 exist', () => {
-		// makeMultiAgentRows() has 4 logical blocks (Task→Coder→Reviewer→Task).
-		// Compact mode shows the last 3: Coder, Reviewer, Task (completing).
 		mockRows = makeMultiAgentRows();
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
 		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
 
-		// These 3 (last) blocks are shown
+		// Last 3 (Coder, Reviewer, Task-final) are visible.
 		expect(screen.getByText('Coder agent writing the code changes.')).toBeTruthy();
 		expect(screen.getByText('Reviewer agent checking the changes.')).toBeTruthy();
 		expect(screen.getByText('Task agent completing final steps.')).toBeTruthy();
 
-		// First block (Task Agent planning) is outside the last-3 window → hidden
+		// First block (Task Agent planning) is outside the last-3 window → hidden.
 		expect(screen.queryByText('Task agent is planning the implementation.')).toBeNull();
 	});
 
@@ -516,16 +501,13 @@ describe('SpaceTaskUnifiedThread', () => {
 	// ── Terminal block preservation ───────────────────────────────────────────
 
 	it('always shows terminal blocks even when outside the last-3 window', () => {
-		// makeTerminalPreservedRows() has 4 blocks; block 1 is a result-error
-		// (terminal). The last-3 window covers blocks 2–4, so block 1 would
-		// normally be hidden — but terminal blocks are always forced in.
 		mockRows = makeTerminalPreservedRows();
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		// Terminal block (Error) is preserved
-		expect(screen.getByText('Error')).toBeTruthy();
+		// Terminal block's ERROR badge is present (from block 1's error result).
+		expect(screen.getByText('ERROR')).toBeTruthy();
 
-		// Last-3 blocks also visible
+		// Last-3 block messages still visible.
 		expect(screen.getByText('Coder retrying.')).toBeTruthy();
 		expect(screen.getByText('Reviewer re-checking.')).toBeTruthy();
 		expect(screen.getByText('Space agent finalising.')).toBeTruthy();
@@ -533,71 +515,64 @@ describe('SpaceTaskUnifiedThread', () => {
 
 	// ── Running indicator ─────────────────────────────────────────────────────
 
-	it('shows running indicator on the last block when thread is not terminal', () => {
-		// makeRows() ends with a non-terminal block → running indicator expected
+	it('shows the running-block wrapper when the tail block is non-terminal', () => {
 		mockRows = makeRows();
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		expect(screen.getByTestId('compact-running-block')).toBeTruthy();
 	});
 
-	it('does not show running indicator when the last block is terminal', () => {
-		// makeNoiseRows() includes a result-success event; after filtering,
-		// the last visible block contains that result event (terminal).
-		mockRows = makeNoiseRows();
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.queryByTestId('compact-running-block')).toBeNull();
-	});
-
 	// ── Agent identity ────────────────────────────────────────────────────────
 
-	it('renders distinct agent identity headers for each block', () => {
-		mockRows = makeMultiAgentNonTextRows();
+	it('renders distinct agent identity headers for each visible block', () => {
+		mockRows = makeMultiAgentMixedBlockRows();
 		const { container } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		// In compact mode, each block renders a header span with shortAgentLabel.
-		// "Task Agent" → "TASK", "Coder Agent" → "CODER", "Reviewer Agent" → "REVIEWER"
-		const allSpans = container.querySelectorAll('span[style]');
-		const labelTexts = Array.from(allSpans).map((el) => el.textContent);
+		const labels = Array.from(
+			container.querySelectorAll('[data-testid="compact-block-header"] span[style*="color"]')
+		).map((el) => el.textContent);
 
-		expect(labelTexts.some((t) => t === 'TASK')).toBe(true);
-		expect(labelTexts.some((t) => t === 'CODER')).toBe(true);
-		expect(labelTexts.some((t) => t === 'REVIEWER')).toBe(true);
+		expect(labels).toContain('TASK');
+		expect(labels).toContain('CODER');
+		expect(labels).toContain('REVIEWER');
 	});
 
 	it('applies distinct colors to different agent identity headers', () => {
-		mockRows = makeMultiAgentNonTextRows();
+		mockRows = makeMultiAgentMixedBlockRows();
 		const { container } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		const allSpans = container.querySelectorAll('span[style]');
-		const taskLabelSpan = Array.from(allSpans).find((el) => el.textContent === 'TASK');
-		const coderLabelSpan = Array.from(allSpans).find((el) => el.textContent === 'CODER');
+		const colored = Array.from(
+			container.querySelectorAll('[data-testid="compact-block-header"] span[style*="color"]')
+		);
+		const taskLabelSpan = colored.find((el) => el.textContent === 'TASK') as
+			| HTMLElement
+			| undefined;
+		const coderLabelSpan = colored.find((el) => el.textContent === 'CODER') as
+			| HTMLElement
+			| undefined;
 
 		expect(taskLabelSpan).toBeTruthy();
 		expect(coderLabelSpan).toBeTruthy();
 
-		const taskColor = (taskLabelSpan as HTMLElement).style.color;
-		const coderColor = (coderLabelSpan as HTMLElement).style.color;
+		const taskColor = taskLabelSpan!.style.color;
+		const coderColor = coderLabelSpan!.style.color;
 		expect(taskColor).not.toBe('');
 		expect(coderColor).not.toBe('');
-		// Task Agent (#66A7FF) and Coder Agent (#42C7B5) must have different colors
 		expect(taskColor).not.toBe(coderColor);
 	});
 
-	it('renders event rows with colored side rails (border-color) for each event', () => {
-		// makeMultiAgentRows() has 4 blocks; compact shows last 3 (3 events, 1 per block).
+	it('renders a colored dot alongside each agent header', () => {
 		mockRows = makeMultiAgentRows();
 		const { container } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		const borderedElements = container.querySelectorAll('[style*="border-color"]');
-		expect(borderedElements.length).toBeGreaterThanOrEqual(3);
-
-		// At least 3 distinct agent border colors (Coder, Reviewer, Task)
-		const borderColors = new Set<string>();
-		borderedElements.forEach((el) => {
-			const color = (el as HTMLElement).style.borderColor;
-			if (color) borderColors.add(color);
+		const dots = container.querySelectorAll(
+			'[data-testid="compact-block-header"] span[style*="background-color"]'
+		);
+		// The feed shows at most 3 blocks; so between 1 and 3 dots.
+		expect(dots.length).toBeGreaterThanOrEqual(1);
+		expect(dots.length).toBeLessThanOrEqual(3);
+		dots.forEach((dot) => {
+			expect((dot as HTMLElement).style.backgroundColor).not.toBe('');
 		});
-		expect(borderColors.size).toBeGreaterThanOrEqual(3);
 	});
 
 	// ── Legacy mode ───────────────────────────────────────────────────────────
@@ -606,9 +581,7 @@ describe('SpaceTaskUnifiedThread', () => {
 		mockRenderStyle = 'legacy';
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		// Legacy feed has its own data-testid
 		expect(screen.getByTestId('space-task-event-feed-legacy')).toBeTruthy();
-		// New compact feed is NOT rendered in legacy mode
 		expect(screen.queryByTestId('space-task-event-feed-compact')).toBeNull();
 	});
 
@@ -617,7 +590,6 @@ describe('SpaceTaskUnifiedThread', () => {
 		mockRows = makeMultiAgentRows();
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		// Legacy feed has no block limit — all 4 messages are visible
 		expect(screen.getByText('Task agent is planning the implementation.')).toBeTruthy();
 		expect(screen.getByText('Coder agent writing the code changes.')).toBeTruthy();
 		expect(screen.getByText('Reviewer agent checking the changes.')).toBeTruthy();
@@ -629,9 +601,7 @@ describe('SpaceTaskUnifiedThread', () => {
 		mockRows = makeNoiseRows();
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
-		// Legacy mode filters success results
 		expect(screen.queryByText('Completed')).toBeNull();
-		// System init is also filtered
 		expect(screen.queryByText('System')).toBeNull();
 	});
 

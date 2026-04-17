@@ -1,16 +1,23 @@
 // @ts-nocheck
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { cleanup, render, screen } from '@testing-library/preact';
 import { SpaceTaskCardFeed } from './SpaceTaskCardFeed';
-import type { SpaceTaskThreadEvent } from '../space-task-thread-events';
+import type { ParsedThreadRow } from '../space-task-thread-events';
 
-// Stub SDKMessageRenderer so we can render text/user events without pulling in
-// the full SDK message tree — we just want to verify the card wrapper.
+// Stub SDKMessageRenderer so these tests can focus on the feed's grouping,
+// visibility, agent-header and running-block behavior without pulling in the
+// full SDK render tree. The stub echoes text/user content when available and
+// falls back to the message `type` so terminal/result rows still render
+// something detectable.
 vi.mock('../../../sdk/SDKMessageRenderer', () => ({
-	SDKMessageRenderer: ({ message }: { message: any }) => {
+	SDKMessageRenderer: ({ message, taskContext }: { message: any; taskContext?: boolean }) => {
 		const content = message?.message?.content;
 		if (typeof content === 'string') {
-			return <div data-testid="sdk-message-renderer">{content}</div>;
+			return (
+				<div data-testid="sdk-message-renderer" data-task-context={taskContext ? '1' : '0'}>
+					{content}
+				</div>
+			);
 		}
 		if (Array.isArray(content)) {
 			const text = content
@@ -18,9 +25,17 @@ vi.mock('../../../sdk/SDKMessageRenderer', () => ({
 				.map((b: any) => b.text)
 				.join(' ')
 				.trim();
-			return <div data-testid="sdk-message-renderer">{text || message?.type || ''}</div>;
+			return (
+				<div data-testid="sdk-message-renderer" data-task-context={taskContext ? '1' : '0'}>
+					{text || message?.type || ''}
+				</div>
+			);
 		}
-		return <div data-testid="sdk-message-renderer">{message?.type || ''}</div>;
+		return (
+			<div data-testid="sdk-message-renderer" data-task-context={taskContext ? '1' : '0'}>
+				{message?.type || ''}
+			</div>
+		);
 	},
 }));
 
@@ -31,315 +46,352 @@ const fakeMaps = {
 	sessionInfoMap: new Map(),
 } as const;
 
-function makeEvent(
-	id: string,
-	label: string,
-	kind: SpaceTaskThreadEvent['kind'] = 'text',
-	extra: Partial<SpaceTaskThreadEvent> = {}
-): SpaceTaskThreadEvent {
+// ── Row factories ────────────────────────────────────────────────────────────
+
+function makeAssistantTextRow(id: string, label: string, text: string): ParsedThreadRow {
 	return {
 		id,
+		sessionId: null,
 		label,
 		taskId: 'task-1',
 		taskTitle: 'Task One',
-		sessionId: null,
 		createdAt: Date.now(),
-		kind,
-		title: kind === 'tool' ? `${label}: ${kind}` : kind,
-		summary: `${label} ${kind} summary`,
-		...extra,
-	};
-}
-
-function makeTextEvent(id: string, label: string, text: string): SpaceTaskThreadEvent {
-	return makeEvent(id, label, 'text', {
 		message: {
 			type: 'assistant',
 			uuid: id,
 			message: { content: [{ type: 'text', text }] },
 		} as any,
-	});
+		fallbackText: null,
+	};
 }
 
-function makeResultEvent(
+function makeResultRow(
 	id: string,
 	label: string,
 	subtype: 'success' | 'error' = 'success'
-): SpaceTaskThreadEvent {
-	return makeEvent(id, label, 'result', {
-		resultSubtype: subtype,
-		isError: subtype !== 'success',
-	});
+): ParsedThreadRow {
+	return {
+		id,
+		sessionId: null,
+		label,
+		taskId: 'task-1',
+		taskTitle: 'Task One',
+		createdAt: Date.now(),
+		message: {
+			type: 'result',
+			subtype,
+			uuid: id,
+			usage: { input_tokens: 1, output_tokens: 1 },
+		} as any,
+		fallbackText: null,
+	};
 }
 
+function makeSystemInitRow(id: string, label: string): ParsedThreadRow {
+	return {
+		id,
+		sessionId: null,
+		label,
+		taskId: 'task-1',
+		taskTitle: 'Task One',
+		createdAt: Date.now(),
+		message: {
+			type: 'system',
+			subtype: 'init',
+			uuid: id,
+		} as any,
+		fallbackText: null,
+	};
+}
+
+function makeRateLimitRow(
+	id: string,
+	label: string,
+	status: 'allowed' | 'allowed_warning' | 'rejected'
+): ParsedThreadRow {
+	return {
+		id,
+		sessionId: null,
+		label,
+		taskId: 'task-1',
+		taskTitle: 'Task One',
+		createdAt: Date.now(),
+		message: {
+			type: 'rate_limit_event',
+			uuid: id,
+			rate_limit_info: { status, rateLimitType: 'five_hour' },
+		} as any,
+		fallbackText: null,
+	};
+}
+
+function makeEmptyUserRow(id: string, label: string): ParsedThreadRow {
+	return {
+		id,
+		sessionId: null,
+		label,
+		taskId: 'task-1',
+		taskTitle: 'Task One',
+		createdAt: Date.now(),
+		message: {
+			type: 'user',
+			uuid: id,
+			message: { content: '' },
+		} as any,
+		fallbackText: null,
+	};
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
 describe('SpaceTaskCardFeed', () => {
-	beforeEach(() => {
-		cleanup();
-	});
+	beforeEach(() => cleanup());
+	afterEach(() => cleanup());
 
-	afterEach(() => {
-		cleanup();
-	});
+	// ── Delegation to SDKMessageRenderer (the whole point of this refactor) ──
 
-	// ── Card shape ────────────────────────────────────────────────────────────
-
-	it('renders each logical block as a bordered rounded card', () => {
-		// 2 distinct agents → 2 non-running blocks (last block gets running wrapper).
-		// Give the feed 3 blocks so the last is running and the earlier two are cards.
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'block one'),
-			makeTextEvent('e2', 'Coder Agent', 'block two'),
-			makeTextEvent('e3', 'Reviewer Agent', 'block three'),
+	it('delegates every visible row to SDKMessageRenderer with taskContext=true', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'task said hello'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'coder said hi'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		// The first two blocks are non-running, non-terminal → rendered as
-		// bordered card containers with `data-testid="compact-card"`.
-		const cards = container.querySelectorAll('[data-testid="compact-card"]');
-		expect(cards.length).toBe(2);
+		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		expect(rendered.length).toBe(2);
+		expect(rendered[0].textContent).toBe('task said hello');
+		expect(rendered[1].textContent).toBe('coder said hi');
+		// taskContext must be forwarded so system-init/subagent handling is correct.
+		rendered.forEach((el) => expect(el.getAttribute('data-task-context')).toBe('1'));
+	});
 
-		// Each card has the standard bordered rounded overflow-hidden shape,
-		// matching ToolResultCard / SubagentBlock visual language.
-		cards.forEach((card) => {
-			const className = card.getAttribute('class') ?? '';
-			expect(className).toContain('border');
-			expect(className).toContain('rounded-lg');
-			expect(className).toContain('overflow-hidden');
+	it('does NOT wrap each block in an outer bordered card', () => {
+		// The whole point of this refactor: no outer per-block border — each
+		// SDK message renders its own chrome (ToolResultCard, ThinkingBlock, …).
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'a'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'b'),
+		];
+		const { container } = render(
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+		);
+
+		const blocks = container.querySelectorAll('[data-testid="compact-block"]');
+		expect(blocks.length).toBe(1); // Only the non-running block is plain `compact-block`; running tail has its own wrapper.
+
+		blocks.forEach((blockEl) => {
+			const className = blockEl.getAttribute('class') ?? '';
+			expect(className).not.toContain('border');
+			expect(className).not.toContain('rounded-lg');
 		});
 	});
 
-	it('renders the last non-terminal block with the running-block wrapper', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'prior'),
-			makeTextEvent('e2', 'Coder Agent', 'final — running'),
+	// ── Running-block wrapper ────────────────────────────────────────────────
+
+	it('wraps the last non-terminal block in the running-block chrome', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'final — running'),
 		];
-		render(<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />);
+		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
 
 		expect(screen.getByTestId('compact-running-block')).toBeTruthy();
 	});
 
-	it('does not render the running-block wrapper when the last block is terminal', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'prior'),
-			makeResultEvent('e2', 'Task Agent', 'success'),
+	it('does not wrap in running-block when the tail block is terminal', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
+			makeResultRow('r2', 'Task Agent', 'success'),
 		];
-		render(<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />);
+		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
 
 		expect(screen.queryByTestId('compact-running-block')).toBeNull();
 	});
 
-	// ── Header & chevron ──────────────────────────────────────────────────────
+	// ── Agent identity header ────────────────────────────────────────────────
 
-	it('renders the agent label in the card header using shortAgentLabel casing', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'a'),
-			makeTextEvent('e2', 'Coder Agent', 'b'),
-			makeTextEvent('e3', 'Reviewer Agent', 'c'),
+	it('renders a colored agent-identity header for each visible block', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'a'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'b'),
+			makeAssistantTextRow('r3', 'Reviewer Agent', 'c'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		const labels = Array.from(container.querySelectorAll('span[style*="color"]')).map(
-			(el) => el.textContent
-		);
-		// All three agent labels appear somewhere as colored header spans.
+		const headers = container.querySelectorAll('[data-testid="compact-block-header"]');
+		expect(headers.length).toBe(3);
+
+		const labels = Array.from(
+			container.querySelectorAll('[data-testid="compact-block-header"] span[style*="color"]')
+		).map((el) => el.textContent);
 		expect(labels).toContain('TASK');
 		expect(labels).toContain('CODER');
 		expect(labels).toContain('REVIEWER');
 	});
 
-	it('renders the event count in the header', () => {
-		const events = [
-			// 2 Coder Agent events → single block with "2 events" label
-			makeTextEvent('e1', 'Task Agent', 'a'),
-			makeTextEvent('e2', 'Coder Agent', 'b1'),
-			makeEvent('e3', 'Coder Agent', 'tool', { iconToolName: 'Bash', summary: 'ls' }),
+	it('applies distinct colors to different agent headers', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'a'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'b'),
 		];
-		render(<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />);
+		const { container } = render(
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+		);
 
-		// One block has 2 events → "2 events". Another has 1 event → "1 event".
-		expect(screen.getByText('2 events')).toBeTruthy();
-		expect(screen.getByText('1 event')).toBeTruthy();
+		const colored = Array.from(
+			container.querySelectorAll('[data-testid="compact-block-header"] span[style*="color"]')
+		);
+		const taskSpan = colored.find((el) => el.textContent === 'TASK') as HTMLElement | undefined;
+		const coderSpan = colored.find((el) => el.textContent === 'CODER') as HTMLElement | undefined;
+		expect(taskSpan).toBeTruthy();
+		expect(coderSpan).toBeTruthy();
+		expect(taskSpan!.style.color).not.toBe('');
+		expect(taskSpan!.style.color).not.toBe(coderSpan!.style.color);
 	});
 
-	it('renders a terminal badge (DONE) for success terminal blocks', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'prior'),
-			makeResultEvent('e2', 'Task Agent', 'success'),
-		];
-		render(<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />);
+	it('renders a colored dot alongside the agent label', () => {
+		const rows = [makeAssistantTextRow('r1', 'Task Agent', 'a')];
+		const { container } = render(
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+		);
 
-		// Same-agent consecutive events merge into one block → one DONE badge.
-		const badges = screen.getAllByTestId('compact-card-badge');
+		const dot = container.querySelector(
+			'[data-testid="compact-block-header"] span[style*="background-color"]'
+		);
+		expect(dot).toBeTruthy();
+		expect((dot as HTMLElement).style.backgroundColor).not.toBe('');
+	});
+
+	// ── Terminal badge ───────────────────────────────────────────────────────
+
+	it('renders a DONE badge on success terminal blocks', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
+			makeResultRow('r2', 'Task Agent', 'success'),
+		];
+		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
+
+		const badges = screen.getAllByTestId('compact-block-badge');
 		expect(badges.length).toBe(1);
 		expect(badges[0].textContent).toBe('DONE');
 	});
 
-	it('renders a terminal badge (ERROR) for error terminal blocks', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'prior'),
-			makeResultEvent('e2', 'Task Agent', 'error'),
+	it('renders an ERROR badge on error terminal blocks', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
+			makeResultRow('r2', 'Task Agent', 'error'),
 		];
-		render(<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />);
+		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
 
-		const badges = screen.getAllByTestId('compact-card-badge');
+		const badges = screen.getAllByTestId('compact-block-badge');
 		expect(badges.length).toBe(1);
 		expect(badges[0].textContent).toBe('ERROR');
 	});
 
-	// ── Expand / collapse behaviour ───────────────────────────────────────────
+	// ── Visibility: 3-block limit + terminal preservation ────────────────────
 
-	it('collapses non-running non-terminal blocks by default (body hidden)', () => {
-		// 3 blocks: T, C, R — last (R) is running, first two (T, C) are collapsed.
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'hidden task body'),
-			makeTextEvent('e2', 'Coder Agent', 'hidden coder body'),
-			makeTextEvent('e3', 'Reviewer Agent', 'visible running body'),
+	it('shows at most the last 3 logical blocks', () => {
+		// 4 distinct agents → only last 3 should survive.
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'first'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'second'),
+			makeAssistantTextRow('r3', 'Reviewer Agent', 'third'),
+			makeAssistantTextRow('r4', 'Space Agent', 'fourth'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		const bodies = container.querySelectorAll('[data-testid="compact-card-body"]');
-		expect(bodies.length).toBe(3);
-
-		// First two bodies (non-running, non-terminal) should have `hidden` class.
-		expect(bodies[0].getAttribute('class') ?? '').toContain('hidden');
-		expect(bodies[1].getAttribute('class') ?? '').toContain('hidden');
-		// Third body is running → expanded.
-		expect(bodies[2].getAttribute('class') ?? '').not.toContain('hidden');
+		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		const textSet = new Set(Array.from(rendered).map((el) => el.textContent));
+		expect(textSet.has('first')).toBe(false); // First block is outside the last-3 window.
+		expect(textSet.has('second')).toBe(true);
+		expect(textSet.has('third')).toBe(true);
+		expect(textSet.has('fourth')).toBe(true);
 	});
 
-	it('expands a collapsed block when the chevron header is clicked', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'task body'),
-			makeTextEvent('e2', 'Coder Agent', 'coder body'),
-			makeTextEvent('e3', 'Reviewer Agent', 'reviewer running'),
+	it('always keeps terminal blocks visible even when outside the last-3 window', () => {
+		// First block is terminal (an error result); it must survive even though
+		// there are 3 later non-terminal blocks.
+		const rows = [
+			makeResultRow('r1', 'Task Agent', 'error'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'second'),
+			makeAssistantTextRow('r3', 'Reviewer Agent', 'third'),
+			makeAssistantTextRow('r4', 'Space Agent', 'fourth'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		// Every card (running or not) has a clickable header.
-		const headers = container.querySelectorAll('[data-testid="compact-card-header"]');
-		expect(headers.length).toBe(3);
+		const badges = screen.getAllByTestId('compact-block-badge');
+		expect(badges.length).toBe(1);
+		expect(badges[0].textContent).toBe('ERROR');
 
-		const bodies = container.querySelectorAll('[data-testid="compact-card-body"]');
-		// Body 0 (non-running, non-terminal) is initially hidden.
-		expect(bodies[0].getAttribute('class') ?? '').toContain('hidden');
-
-		// Click the first header → it should expand.
-		fireEvent.click(headers[0]);
-		const bodiesAfter = container.querySelectorAll('[data-testid="compact-card-body"]');
-		expect(bodiesAfter[0].getAttribute('class') ?? '').not.toContain('hidden');
-
-		// Click again → collapses back.
-		fireEvent.click(headers[0]);
-		const bodiesAfterSecond = container.querySelectorAll('[data-testid="compact-card-body"]');
-		expect(bodiesAfterSecond[0].getAttribute('class') ?? '').toContain('hidden');
+		const blockCount = container.querySelectorAll(
+			'[data-testid="compact-block"], [data-testid="compact-running-block"]'
+		).length;
+		expect(blockCount).toBe(4); // 3 recent + 1 terminal preserved.
 	});
 
-	it('sets aria-expanded correctly on the header button', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'task body'),
-			makeTextEvent('e2', 'Coder Agent', 'coder running'),
+	// ── Pre-filter (noise removal) ───────────────────────────────────────────
+
+	it('filters out system-init rows', () => {
+		const rows = [
+			makeSystemInitRow('s1', 'Task Agent'),
+			makeAssistantTextRow('r1', 'Task Agent', 'visible content'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		// Only the non-running card has the compact-card testid on the wrapper.
-		const header = container.querySelector('[data-testid="compact-card-header"]');
-		expect(header).toBeTruthy();
-		expect(header?.getAttribute('aria-expanded')).toBe('false');
-
-		fireEvent.click(header as Element);
-		expect(header?.getAttribute('aria-expanded')).toBe('true');
+		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		expect(rendered.length).toBe(1);
+		expect(rendered[0].textContent).toBe('visible content');
 	});
 
-	it('expands terminal blocks by default', () => {
-		// Terminal block at position 0 (outside last-3 window when 4 blocks total),
-		// always forced into view by applyCompactVisibilityRules.
-		const events = [
-			makeResultEvent('e1', 'Task Agent', 'error'), // terminal, early
-			makeTextEvent('e2', 'Coder Agent', 'b'),
-			makeTextEvent('e3', 'Reviewer Agent', 'c'),
-			makeTextEvent('e4', 'Space Agent', 'd'), // running last
+	it('filters out non-rejected rate-limit rows', () => {
+		const rows = [
+			makeRateLimitRow('rl1', 'Task Agent', 'allowed'),
+			makeRateLimitRow('rl2', 'Task Agent', 'allowed_warning'),
+			makeAssistantTextRow('r1', 'Task Agent', 'visible content'),
+			makeRateLimitRow('rl3', 'Task Agent', 'rejected'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		// 4 blocks visible: [T-terminal, C, R, S-running]. T is terminal,
-		// C and R are collapsed, S is running (expanded).
-		const bodies = container.querySelectorAll('[data-testid="compact-card-body"]');
-		expect(bodies.length).toBe(4);
-
-		// Terminal block body (first) should be expanded.
-		expect(bodies[0].getAttribute('class') ?? '').not.toContain('hidden');
-		// Middle blocks collapsed.
-		expect(bodies[1].getAttribute('class') ?? '').toContain('hidden');
-		expect(bodies[2].getAttribute('class') ?? '').toContain('hidden');
-		// Running block expanded.
-		expect(bodies[3].getAttribute('class') ?? '').not.toContain('hidden');
+		// allowed & allowed_warning filtered; visible-content + rejected remain.
+		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		expect(rendered.length).toBe(2);
 	});
 
-	it('expands the running block by default', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'task body'),
-			makeTextEvent('e2', 'Coder Agent', 'running body'),
+	it('filters out empty user rows', () => {
+		const rows = [
+			makeEmptyUserRow('u1', 'Task Agent'),
+			makeAssistantTextRow('r1', 'Task Agent', 'visible content'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		// Running block body should be visible.
-		expect(screen.getByText('running body')).toBeTruthy();
-
-		const bodies = container.querySelectorAll('[data-testid="compact-card-body"]');
-		// The running block body is the last one and should not be hidden.
-		const lastBody = bodies[bodies.length - 1];
-		expect(lastBody.getAttribute('class') ?? '').not.toContain('hidden');
+		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		expect(rendered.length).toBe(1);
+		expect(rendered[0].textContent).toBe('visible content');
 	});
 
-	// ── Chevron rotation ──────────────────────────────────────────────────────
+	// ── Empty input ──────────────────────────────────────────────────────────
 
-	it('rotates the chevron -90deg when collapsed and 0deg when expanded', () => {
-		const events = [
-			makeTextEvent('e1', 'Task Agent', 'a'),
-			makeTextEvent('e2', 'Coder Agent', 'running'),
-		];
+	it('renders the root container and no blocks when given no rows', () => {
 		const { container } = render(
-			<SpaceTaskCardFeed events={events} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed parsedRows={[]} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		// The collapsed card's chevron svg should have `-rotate-90`.
-		const header = container.querySelector('[data-testid="compact-card-header"]');
-		const chevron = header?.querySelector('svg');
-		expect(chevron?.getAttribute('class') ?? '').toContain('-rotate-90');
-
-		// Click to expand → chevron loses the -rotate-90 class.
-		fireEvent.click(header as Element);
-		const chevronAfter = container
-			.querySelector('[data-testid="compact-card-header"]')
-			?.querySelector('svg');
-		expect(chevronAfter?.getAttribute('class') ?? '').not.toContain('-rotate-90');
-	});
-
-	// ── Empty input ───────────────────────────────────────────────────────────
-
-	it('renders nothing (empty feed container) when there are no events', () => {
-		const { container } = render(
-			<SpaceTaskCardFeed events={[]} taskId="task-1" maps={fakeMaps as any} />
-		);
-
-		// Root feed wrapper is still present for layout consistency.
 		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();
-		// But no cards inside.
-		expect(container.querySelectorAll('[data-testid="compact-card"]').length).toBe(0);
+		expect(container.querySelectorAll('[data-testid="compact-block"]').length).toBe(0);
 		expect(container.querySelectorAll('[data-testid="compact-running-block"]').length).toBe(0);
 	});
 });

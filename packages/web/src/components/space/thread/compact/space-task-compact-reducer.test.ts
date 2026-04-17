@@ -1,72 +1,84 @@
 import { describe, expect, it } from 'vitest';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
 	shouldShowRunningIndicator,
 	type CompactLogicalBlock,
 } from './space-task-compact-reducer';
-import type { SpaceTaskThreadEvent } from '../space-task-thread-events';
+import type { ParsedThreadRow } from '../space-task-thread-events';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeEvent(
+function makeRow(
 	id: string,
 	label: string,
-	kind: SpaceTaskThreadEvent['kind'] = 'text',
-	extra: Partial<SpaceTaskThreadEvent> = {}
-): SpaceTaskThreadEvent {
+	message: SDKMessage | null = makeAssistantTextMessage(id, 'hello')
+): ParsedThreadRow {
 	return {
 		id,
+		sessionId: null,
 		label,
 		taskId: 'task-1',
 		taskTitle: 'Task One',
-		sessionId: null,
 		createdAt: Date.now(),
-		kind,
-		title: kind,
-		summary: `${label} ${kind}`,
-		...extra,
+		message,
+		fallbackText: null,
 	};
 }
 
-function makeResultEvent(
+function makeAssistantTextMessage(uuid: string, text: string): SDKMessage {
+	return {
+		type: 'assistant',
+		uuid,
+		message: { content: [{ type: 'text', text }] },
+	} as unknown as SDKMessage;
+}
+
+function makeResultMessage(uuid: string, subtype: 'success' | 'error' = 'success'): SDKMessage {
+	return {
+		type: 'result',
+		subtype,
+		uuid,
+		usage: { input_tokens: 1, output_tokens: 1 },
+	} as unknown as SDKMessage;
+}
+
+function makeResultRow(
 	id: string,
 	label: string,
 	subtype: 'success' | 'error' = 'success'
-): SpaceTaskThreadEvent {
-	return makeEvent(id, label, 'result', {
-		resultSubtype: subtype,
-		isError: subtype !== 'success',
-	});
+): ParsedThreadRow {
+	return makeRow(id, label, makeResultMessage(id, subtype));
 }
 
 // ── buildLogicalBlocks ────────────────────────────────────────────────────────
 
 describe('buildLogicalBlocks', () => {
-	it('returns empty array for no events', () => {
+	it('returns empty array for no rows', () => {
 		expect(buildLogicalBlocks([])).toEqual([]);
 	});
 
-	it('groups single-agent consecutive events into one block', () => {
-		const events = [
-			makeEvent('e1', 'Task Agent', 'thinking'),
-			makeEvent('e2', 'Task Agent', 'tool'),
-			makeEvent('e3', 'Task Agent', 'text'),
+	it('groups single-agent consecutive rows into one block', () => {
+		const rows = [
+			makeRow('r1', 'Task Agent'),
+			makeRow('r2', 'Task Agent'),
+			makeRow('r3', 'Task Agent'),
 		];
-		const blocks = buildLogicalBlocks(events);
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks).toHaveLength(1);
 		expect(blocks[0].agentLabel).toBe('Task Agent');
-		expect(blocks[0].events).toHaveLength(3);
+		expect(blocks[0].rows).toHaveLength(3);
 		expect(blocks[0].isTerminal).toBe(false);
 	});
 
 	it('creates separate blocks when agents alternate', () => {
-		const events = [
-			makeEvent('e1', 'Task Agent', 'text'),
-			makeEvent('e2', 'Coder Agent', 'tool'),
-			makeEvent('e3', 'Reviewer Agent', 'text'),
+		const rows = [
+			makeRow('r1', 'Task Agent'),
+			makeRow('r2', 'Coder Agent'),
+			makeRow('r3', 'Reviewer Agent'),
 		];
-		const blocks = buildLogicalBlocks(events);
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks).toHaveLength(3);
 		expect(blocks[0].agentLabel).toBe('Task Agent');
 		expect(blocks[1].agentLabel).toBe('Coder Agent');
@@ -74,77 +86,71 @@ describe('buildLogicalBlocks', () => {
 	});
 
 	it('groups interleaved same-agent runs into separate blocks', () => {
-		// Task Agent → Coder Agent → Task Agent (different consecutive groups)
-		const events = [
-			makeEvent('e1', 'Task Agent', 'thinking'),
-			makeEvent('e2', 'Coder Agent', 'tool'),
-			makeEvent('e3', 'Task Agent', 'text'),
+		const rows = [
+			makeRow('r1', 'Task Agent'),
+			makeRow('r2', 'Coder Agent'),
+			makeRow('r3', 'Task Agent'),
 		];
-		const blocks = buildLogicalBlocks(events);
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks).toHaveLength(3);
 		expect(blocks[0].agentLabel).toBe('Task Agent');
-		expect(blocks[0].events).toHaveLength(1);
+		expect(blocks[0].rows).toHaveLength(1);
 		expect(blocks[2].agentLabel).toBe('Task Agent');
-		expect(blocks[2].events).toHaveLength(1);
+		expect(blocks[2].rows).toHaveLength(1);
 	});
 
-	it('marks a block terminal when it contains a result event', () => {
-		const events = [
-			makeEvent('e1', 'Task Agent', 'text'),
-			makeResultEvent('e2', 'Task Agent', 'success'),
-		];
-		const blocks = buildLogicalBlocks(events);
+	it('marks a block terminal when it contains a result message (success)', () => {
+		const rows = [makeRow('r1', 'Task Agent'), makeResultRow('r2', 'Task Agent', 'success')];
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks).toHaveLength(1);
 		expect(blocks[0].isTerminal).toBe(true);
 	});
 
 	it('marks block terminal for error result as well', () => {
-		const events = [makeResultEvent('e1', 'Task Agent', 'error')];
-		const blocks = buildLogicalBlocks(events);
+		const rows = [makeResultRow('r1', 'Task Agent', 'error')];
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks[0].isTerminal).toBe(true);
 	});
 
-	it('does not mark non-result events as terminal', () => {
-		const events = [
-			makeEvent('e1', 'Task Agent', 'thinking'),
-			makeEvent('e2', 'Task Agent', 'tool'),
-			makeEvent('e3', 'Task Agent', 'rate_limit', { isError: true }),
+	it('does not mark non-result rows as terminal', () => {
+		const rows = [
+			makeRow('r1', 'Task Agent'),
+			makeRow('r2', 'Task Agent'),
+			makeRow('r3', 'Task Agent'),
 		];
-		const blocks = buildLogicalBlocks(events);
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks[0].isTerminal).toBe(false);
 	});
 
-	it('assigns the first event id as the block id', () => {
-		const events = [
-			makeEvent('first-event', 'Task Agent', 'text'),
-			makeEvent('second-event', 'Task Agent', 'tool'),
-		];
-		const blocks = buildLogicalBlocks(events);
-		expect(blocks[0].id).toBe('first-event');
+	it('treats rows with null message as non-terminal', () => {
+		const rows = [makeRow('r1', 'Task Agent', null)];
+		const blocks = buildLogicalBlocks(rows);
+		expect(blocks[0].isTerminal).toBe(false);
+	});
+
+	it('uses the first row id as the block id', () => {
+		const rows = [makeRow('first-row', 'Task Agent'), makeRow('second-row', 'Task Agent')];
+		const blocks = buildLogicalBlocks(rows);
+		expect(blocks[0].id).toBe('first-row');
 	});
 
 	it('treats agent label comparison as case-insensitive and trims whitespace', () => {
-		const events = [
-			makeEvent('e1', 'Task Agent', 'thinking'),
-			makeEvent('e2', '  task agent  ', 'tool'), // extra whitespace, different case
-		];
-		const blocks = buildLogicalBlocks(events);
-		// Normalised to same key → single block
+		const rows = [makeRow('r1', 'Task Agent'), makeRow('r2', '  task agent  ')];
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks).toHaveLength(1);
-		expect(blocks[0].events).toHaveLength(2);
+		expect(blocks[0].rows).toHaveLength(2);
 	});
 
-	it('treats a subagent sequence as one block (same agent label)', () => {
-		// All Coder Agent events (spawned sub-agent) → single logical block
-		const events = [
-			makeEvent('c1', 'Coder Agent', 'thinking'),
-			makeEvent('c2', 'Coder Agent', 'tool'),
-			makeEvent('c3', 'Coder Agent', 'text'),
-			makeEvent('c4', 'Coder Agent', 'result', { resultSubtype: 'success' }),
+	it('treats a sub-agent sequence as one block (same agent label)', () => {
+		const rows = [
+			makeRow('c1', 'Coder Agent'),
+			makeRow('c2', 'Coder Agent'),
+			makeRow('c3', 'Coder Agent'),
+			makeResultRow('c4', 'Coder Agent', 'success'),
 		];
-		const blocks = buildLogicalBlocks(events);
+		const blocks = buildLogicalBlocks(rows);
 		expect(blocks).toHaveLength(1);
-		expect(blocks[0].events).toHaveLength(4);
+		expect(blocks[0].rows).toHaveLength(4);
 		expect(blocks[0].isTerminal).toBe(true);
 	});
 });
@@ -155,7 +161,7 @@ function makeBlock(id: string, agentLabel: string, isTerminal = false): CompactL
 	return {
 		id,
 		agentLabel,
-		events: [],
+		rows: [],
 		isTerminal,
 	};
 }
@@ -184,33 +190,26 @@ describe('applyCompactVisibilityRules', () => {
 	});
 
 	it('always includes terminal blocks even when outside the last-N window', () => {
-		// 5 blocks; terminal at position 0 (outside last-3 window)
 		const blocks = [
-			makeBlock('b1', 'A', true), // terminal, outside window
+			makeBlock('b1', 'A', true),
 			makeBlock('b2', 'B'),
 			makeBlock('b3', 'C'),
 			makeBlock('b4', 'D'),
 			makeBlock('b5', 'E'),
 		];
 		const result = applyCompactVisibilityRules(blocks, 3);
-		// Last 3: b3,b4,b5 PLUS terminal b1
 		expect(result.map((b) => b.id)).toEqual(['b1', 'b3', 'b4', 'b5']);
 	});
 
 	it('includes terminal block already within the last-N window (no duplication)', () => {
-		const blocks = [
-			makeBlock('b1', 'A'),
-			makeBlock('b2', 'B'),
-			makeBlock('b3', 'C', true), // terminal, inside window
-		];
+		const blocks = [makeBlock('b1', 'A'), makeBlock('b2', 'B'), makeBlock('b3', 'C', true)];
 		const result = applyCompactVisibilityRules(blocks, 3);
-		// All 3 fit in the window; no duplication
 		expect(result).toHaveLength(3);
 	});
 
 	it('preserves chronological order when terminal blocks are injected', () => {
 		const blocks = [
-			makeBlock('b1', 'A', true), // terminal, early
+			makeBlock('b1', 'A', true),
 			makeBlock('b2', 'B'),
 			makeBlock('b3', 'C'),
 			makeBlock('b4', 'D'),
@@ -218,7 +217,6 @@ describe('applyCompactVisibilityRules', () => {
 		];
 		const result = applyCompactVisibilityRules(blocks, 3);
 		const ids = result.map((b) => b.id);
-		// b1 should come before b3 (chronological order preserved)
 		expect(ids.indexOf('b1')).toBeLessThan(ids.indexOf('b3'));
 	});
 
@@ -232,7 +230,6 @@ describe('applyCompactVisibilityRules', () => {
 			makeBlock('b6', 'F'),
 		];
 		const result = applyCompactVisibilityRules(blocks, 3);
-		// Last 3: b4,b5,b6 PLUS terminals b1,b3
 		expect(result.map((b) => b.id)).toEqual(['b1', 'b3', 'b4', 'b5', 'b6']);
 	});
 
@@ -261,19 +258,12 @@ describe('shouldShowRunningIndicator', () => {
 	});
 
 	it('only considers the last block, ignoring earlier ones', () => {
-		const blocks = [
-			makeBlock('b1', 'A', false), // non-terminal
-			makeBlock('b2', 'B', true), // terminal
-		];
-		// Last block is terminal → no indicator
+		const blocks = [makeBlock('b1', 'A', false), makeBlock('b2', 'B', true)];
 		expect(shouldShowRunningIndicator(blocks)).toBe(false);
 	});
 
-	it('shows indicator when multiple blocks end with non-terminal', () => {
-		const blocks = [
-			makeBlock('b1', 'A', true), // terminal (but not last)
-			makeBlock('b2', 'B', false), // non-terminal (last)
-		];
+	it('shows indicator when earlier blocks are terminal but last is not', () => {
+		const blocks = [makeBlock('b1', 'A', true), makeBlock('b2', 'B', false)];
 		expect(shouldShowRunningIndicator(blocks)).toBe(true);
 	});
 });
