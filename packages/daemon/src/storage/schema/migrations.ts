@@ -388,6 +388,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 90: Add template_name and template_hash to space_workflows for drift detection.
 	runMigration90(db);
+
+	// Migration 91: Add instructions column to space_workflows.
+	//   Stores workflow-level instructions injected into every agent session.
+	runMigration91(db);
 }
 
 /**
@@ -5983,5 +5987,19 @@ function runMigration90(db: BunDatabase): void {
 	}
 	if (!tableHasColumn(db, 'space_workflows', 'template_hash')) {
 		db.exec(`ALTER TABLE space_workflows ADD COLUMN template_hash TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 91: Add instructions column to space_workflows.
+ *
+ * - instructions TEXT — workflow-level instructions injected into every agent session
+ *   in this workflow. NULL for workflows with no explicit instructions.
+ */
+function runMigration91(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	if (!tableHasColumn(db, 'space_workflows', 'instructions')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN instructions TEXT DEFAULT NULL`);
 	}
 }
