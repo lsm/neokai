@@ -162,6 +162,12 @@ export interface NodeAgentToolsConfig {
 	 */
 	onReportResult?: (args: ReportResultInput) => Promise<ToolResult>;
 	/**
+	 * Resolves the space's current autonomy level.
+	 * When provided, agent gate writes via send_message are blocked when
+	 * space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
+	/**
 	 * Workflow run artifact repository for write_artifact / list_artifacts tools.
 	 * Optional — when absent, artifact tools are not registered.
 	 */
@@ -193,6 +199,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		onGateDataChanged,
 		scriptExecutor,
 		scriptContext,
+		getSpaceAutonomyLevel,
 	} = config;
 
 	const agentNameAliases = new Set(
@@ -311,17 +318,35 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						const gateDef = gates.find((g) => g.id === gateId);
 
 						if (gateDef) {
-							// Field-level authorization check
+							// Per-field two-path authorization for agent gate writes:
+							//   Writers path: field has a non-empty writers list and this agent matches one
+							//     (including '*' wildcard) → workflow author made an explicit trust decision → allow,
+							//     no autonomy check.
+							//   Autonomy path: field has no writers or an empty writers list
+							//     → require space.autonomyLevel >= gate.requiredLevel (default 5 when unset).
+							// Human approval via spaceWorkflowRun.approveGate RPC is not affected.
+							const effectiveRequiredLevel = gateDef.requiredLevel ?? 5;
+							const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 0;
+
 							const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
 							const authorizedData: Record<string, unknown> = {};
 							for (const [key, value] of Object.entries(data)) {
 								const fieldDef = fieldMap.get(key);
 								if (!fieldDef) continue;
-								const isAuthorized = fieldDef.writers.some((writer) => {
-									const normalized = normalizeAgentNameToken(writer);
-									return normalized === '*' || agentNameAliases.has(normalized);
-								});
-								if (isAuthorized) authorizedData[key] = value;
+
+								let fieldAllowed = false;
+								if (fieldDef.writers.length > 0) {
+									// Writers path: check if this agent matches a declared writer
+									fieldAllowed = fieldDef.writers.some((writer) => {
+										const normalized = normalizeAgentNameToken(writer);
+										return normalized === '*' || agentNameAliases.has(normalized);
+									});
+								} else if (getSpaceAutonomyLevel) {
+									// Autonomy path: no writers declared — require sufficient space autonomy
+									fieldAllowed = spaceLevel >= effectiveRequiredLevel;
+								}
+
+								if (fieldAllowed) authorizedData[key] = value;
 							}
 
 							if (Object.keys(authorizedData).length > 0) {

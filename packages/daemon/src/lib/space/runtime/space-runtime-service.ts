@@ -310,6 +310,7 @@ export class SpaceRuntimeService {
 		const agents = spaceAgentManager.listBySpaceId(space.id);
 		const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
+		const spaceManagerForApproval = this.config.spaceManager;
 		const mcpServer = createSpaceAgentMcpServer({
 			spaceId: space.id,
 			runtime: this.runtime,
@@ -325,6 +326,11 @@ export class SpaceRuntimeService {
 			onGateChanged: (runId, gateId) => {
 				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await spaceManagerForApproval.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
+			myAgentName: 'space-agent',
 		});
 
 		// Create a space-scoped db-query server if dbPath is configured.

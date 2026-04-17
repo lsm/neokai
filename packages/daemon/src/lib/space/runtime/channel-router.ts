@@ -563,16 +563,19 @@ export class ChannelRouter {
 		const channels = (workflow.channels ?? []).filter((ch) => ch.gateId === gateId);
 		if (channels.length === 0) return [];
 
-		// --- Auto-approval: if gate has requiredLevel and space level is high enough,
-		// pre-write approval data before evaluation so the approval field passes.
+		// --- Auto-approval: pre-write approval data when the space's autonomy level meets or
+		// exceeds the gate's required level, so the approval field passes on evaluation.
+		// Missing requiredLevel defaults to 5 (maximum restriction) — agents can only
+		// auto-approve a gate without an explicit requiredLevel when space autonomy is 5.
 		// This runs only in onGateDataChanged (not on every deliverMessage/tryActivateChannels)
 		// to avoid redundant async space lookups on hot paths.
 		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
-		if (gateDef?.requiredLevel && this.config.getSpaceAutonomyLevel) {
-			const spaceLevel = await this.config.getSpaceAutonomyLevel(run.spaceId);
-			if (spaceLevel >= gateDef.requiredLevel) {
-				const approvalData = this.buildAutoApprovalData(gateDef);
-				if (approvalData) {
+		if (gateDef && this.config.getSpaceAutonomyLevel) {
+			const approvalData = this.buildAutoApprovalData(gateDef);
+			if (approvalData) {
+				const effectiveRequiredLevel = gateDef.requiredLevel ?? 5;
+				const spaceLevel = await this.config.getSpaceAutonomyLevel(run.spaceId);
+				if (spaceLevel >= effectiveRequiredLevel) {
 					this.config.gateDataRepo.merge(runId, gateId, approvalData);
 				}
 			}

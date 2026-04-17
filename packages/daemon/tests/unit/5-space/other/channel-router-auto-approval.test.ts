@@ -264,8 +264,8 @@ describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 		expect(gateData?.data.approved).not.toBe(true);
 	});
 
-	test('gate without requiredLevel never auto-approves regardless of space autonomy', async () => {
-		const gate = makeApprovalGate(undefined); // no requiredLevel
+	test('gate without requiredLevel defaults to level 5 — auto-approves only at autonomy 5', async () => {
+		const gate = makeApprovalGate(undefined); // no requiredLevel → defaults to 5
 		const channels: WorkflowChannel[] = [
 			{ id: 'ch-1', from: 'coder', to: 'reviewer', gateId: 'approval-gate' },
 		];
@@ -290,10 +290,19 @@ describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 			{ id: gate.id, data: computeGateDefaults(gate.fields) },
 		]);
 
-		// Even at max autonomy level, gate without requiredLevel stays closed
-		const router = makeRouter(5);
-		const activated = await router.onGateDataChanged(run.id, 'approval-gate');
-		expect(activated).toHaveLength(0);
+		// Space autonomy = 4 — below effective required level 5 → should NOT auto-approve
+		const router4 = makeRouter(4);
+		const activated4 = await router4.onGateDataChanged(run.id, 'approval-gate');
+		expect(activated4).toHaveLength(0);
+		const gateData4 = gateDataRepo.get(run.id, 'approval-gate');
+		expect(gateData4?.data.approved).not.toBe(true);
+
+		// Space autonomy = 5 — meets effective required level 5 → SHOULD auto-approve
+		const router5 = makeRouter(5);
+		const activated5 = await router5.onGateDataChanged(run.id, 'approval-gate');
+		expect(activated5).toHaveLength(1);
+		const gateData5 = gateDataRepo.get(run.id, 'approval-gate');
+		expect(gateData5?.data.approved).toBe(true);
 	});
 
 	test('auto-approval only writes boolean fields with check == true', async () => {
