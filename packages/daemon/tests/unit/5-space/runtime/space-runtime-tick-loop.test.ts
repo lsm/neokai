@@ -112,6 +112,7 @@ function makeMockTaskAgentManager(
 		) => Promise<string>;
 		rehydrate?: () => Promise<void>;
 		cancelBySessionId?: (sessionId: string) => void;
+		interruptBySessionId?: (sessionId: string) => Promise<void>;
 	} = {}
 ) {
 	const spawned: string[] = [];
@@ -165,6 +166,7 @@ function makeMockTaskAgentManager(
 		spawnWorkflowNodeAgentForExecution: spawnExecutionImpl,
 		rehydrate: overrides.rehydrate ?? (async () => {}),
 		cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
+		interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
 		_spawned: spawned,
 	};
 }

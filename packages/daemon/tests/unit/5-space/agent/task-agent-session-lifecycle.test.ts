@@ -952,6 +952,127 @@ describe('Task Agent Session Lifecycle', () => {
 	});
 
 	// =======================================================================
+	// 5b. Interruption — interruptBySessionId (keep-alive quiesce)
+	// =======================================================================
+	// Regression for issue #1515: node agent sessions must remain reachable
+	// via send_message until the parent task is archived. interruptBySessionId
+	// stops in-flight SDK processing (via handleInterrupt()) but must NOT
+	// delete the session record or clear it from agentSessionIndex.
+
+	describe('interruptBySessionId', () => {
+		test('interrupts the sub-session without deleting it', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:interrupt-step`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			let interruptCalls = 0;
+			subSession.handleInterrupt = async () => {
+				interruptCalls++;
+			};
+
+			await ctx.manager.interruptBySessionId(subSessionId);
+
+			// Interrupt was invoked on the underlying session.
+			expect(interruptCalls).toBe(1);
+			// Session is NOT deleted — it must remain reachable for send_message.
+			expect(subSession._cleanupCalled).toBe(false);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+		});
+
+		test('is a no-op for unknown session ID', async () => {
+			// Should not throw and should not delete anything.
+			await expect(ctx.manager.interruptBySessionId('does-not-exist')).resolves.toBeUndefined();
+			expect(ctx.sessionManagerDeleteCalls).toHaveLength(0);
+		});
+
+		test('swallows errors thrown by handleInterrupt', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:interrupt-throws`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId)!;
+			subSession.handleInterrupt = async () => {
+				throw new Error('interrupt boom');
+			};
+
+			// Error should be swallowed — caller should not need to catch.
+			await expect(ctx.manager.interruptBySessionId(subSessionId)).resolves.toBeUndefined();
+			// Session is still not deleted after a failed interrupt.
+			expect(subSession._cleanupCalled).toBe(false);
+		});
+	});
+
+	// =======================================================================
+	// 5c. Task-archive listener — full cleanup only on `archived`
+	// =======================================================================
+	// Regression for issue #1515: TaskAgentManager must retain sub-sessions
+	// while the parent task is in_progress / done. Only `archived` — the true
+	// non-recoverable terminal state — should trigger full teardown.
+
+	describe('task-archive listener', () => {
+		test('archived task triggers cleanup() which deletes sub-sessions', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:archive-test`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			// Fire `space.task.updated` with status='archived'.
+			await ctx.daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				task: { ...task, status: 'archived' },
+			});
+
+			// Cleanup is async — wait for the fire-and-forget promise to settle.
+			await new Promise((r) => setTimeout(r, 50));
+
+			// The sub-session was torn down and the DB session row was deleted.
+			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
+		});
+
+		test('non-archived status updates do NOT trigger cleanup', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:no-archive`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			// Fire a series of non-archived status events.
+			for (const status of ['in_progress', 'review', 'done', 'cancelled'] as const) {
+				await ctx.daemonHub.emit('space.task.updated', {
+					sessionId: 'global',
+					spaceId: ctx.spaceId,
+					taskId: task.id,
+					task: { ...task, status },
+				});
+			}
+			await new Promise((r) => setTimeout(r, 50));
+
+			// Sub-session must remain alive — send_message targeting it must still work.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+		});
+	});
+
+	// =======================================================================
 	// 6. Error handling — handleSubSessionError
 	// =======================================================================
 
