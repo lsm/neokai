@@ -677,3 +677,14 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
 /* Safe area bottom padding is handled at the app level via pb-safe + pb-bottom-bar
    on the main content wrapper. The chat footer does not need its own safe area
    padding — the wrapper already accounts for both the tab bar and home indicator. */
+
+/* ── Space task thread — compact running-block indicator ─────────────────────
+   The animated border-light for running (non-terminal) event messages is now
+   rendered by the <RunningBorder> Preact component in
+   packages/web/src/components/sdk/RunningBorder.tsx. It uses an inline SVG
+   with <animateMotion> and a radial-gradient mask to trace the element's
+   rounded-rectangle border exactly.
+
+   No global CSS class is needed for the effect; consumers (ThinkingBlock,
+   ToolResultCard, SubagentBlock) wrap themselves in <RunningBorder> when
+   `isRunning` is true. */

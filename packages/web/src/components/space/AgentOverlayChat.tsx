@@ -2,8 +2,10 @@
  * AgentOverlayChat — slide-over panel that renders a ChatContainer on top of
  * the current view without replacing it.
  *
- * Triggered by spaceOverlaySessionIdSignal.  Closes when the user clicks the
- * backdrop, the ✕ button, or presses Escape.
+ * Triggered by `spaceOverlaySessionIdSignal`. The embedded `ChatContainer`
+ * owns the only header; its left-slot back button (opted in via `onBack`)
+ * doubles as the overlay dismiss control. Escape and backdrop-click also
+ * dismiss for consistency with other modals.
  */
 
 import { useEffect, useRef } from 'preact/hooks';
@@ -15,7 +17,11 @@ import { cn } from '../../lib/utils';
 interface AgentOverlayChatProps {
 	/** Session ID to display inside the overlay. */
 	sessionId: string;
-	/** Human-readable label shown in the header (e.g. agent name or session short-ID). */
+	/**
+	 * Human-readable label for the agent (e.g. "Task Agent"). Used only on the
+	 * wrapper dialog's aria-label so screen readers identify which agent is
+	 * open; the visible title comes from `ChatContainer`'s session title.
+	 */
 	agentName?: string;
 	/** Called when the overlay should be closed. */
 	onClose: () => void;
@@ -41,6 +47,82 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 			return setupFocusTrap(panelRef.current);
 		}
 	}, []);
+
+	// Swipe-to-close: dragging the panel rightward dismisses it. We also
+	// call preventDefault on horizontal touchmove so the browser's native
+	// swipe-back gesture (which navigates the underlying page) is suppressed
+	// while the user is clearly swiping the overlay away.
+	useEffect(() => {
+		const panel = panelRef.current;
+		if (!panel) return;
+
+		let startX = 0;
+		let startY = 0;
+		let dragging = false;
+		let currentDx = 0;
+
+		const CLOSE_THRESHOLD = 80; // px right to commit close
+
+		const onTouchStart = (e: TouchEvent) => {
+			const t = e.touches[0];
+			startX = t.clientX;
+			startY = t.clientY;
+			currentDx = 0;
+			dragging = true;
+			// Remove transition so drag follows finger immediately
+			panel.style.transition = 'none';
+		};
+
+		const onTouchMove = (e: TouchEvent) => {
+			if (!dragging) return;
+			const t = e.touches[0];
+			const dx = t.clientX - startX;
+			const dy = t.clientY - startY;
+
+			// Only track right-ward swipes that are more horizontal than vertical
+			if (dx > 0 && Math.abs(dx) > Math.abs(dy)) {
+				currentDx = dx;
+				panel.style.transform = `translateX(${dx}px)`;
+				// Block the browser back-gesture and underlying scroll
+				e.preventDefault();
+			}
+		};
+
+		const finish = () => {
+			if (!dragging) return;
+			dragging = false;
+			if (currentDx > CLOSE_THRESHOLD) {
+				// Slide off-screen then close
+				panel.style.transition = 'transform 200ms ease-out';
+				panel.style.transform = 'translateX(100%)';
+				setTimeout(onClose, 200);
+			} else {
+				// Spring back to original position
+				panel.style.transition = 'transform 200ms ease-out';
+				panel.style.transform = '';
+				// Clean up inline style after animation
+				const tid = setTimeout(() => {
+					panel.style.transition = '';
+					panel.style.transform = '';
+				}, 200);
+				return () => clearTimeout(tid);
+			}
+			currentDx = 0;
+		};
+
+		panel.addEventListener('touchstart', onTouchStart, { passive: true });
+		// passive: false so we can call preventDefault to suppress browser back gesture
+		panel.addEventListener('touchmove', onTouchMove, { passive: false });
+		panel.addEventListener('touchend', finish, { passive: true });
+		panel.addEventListener('touchcancel', finish, { passive: true });
+
+		return () => {
+			panel.removeEventListener('touchstart', onTouchStart);
+			panel.removeEventListener('touchmove', onTouchMove);
+			panel.removeEventListener('touchend', finish);
+			panel.removeEventListener('touchcancel', finish);
+		};
+	}, [onClose]);
 
 	return (
 		<Portal into="body">
@@ -68,39 +150,9 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 						'animate-slideInRight'
 					)}
 				>
-					{/* Header */}
-					<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0 bg-dark-900">
-						<div class="flex-1 min-w-0">
-							<p
-								class="text-sm font-medium text-gray-200 truncate"
-								data-testid="agent-overlay-name"
-							>
-								{agentName ?? sessionId.slice(0, 8)}
-							</p>
-							<p class="text-xs text-gray-500 truncate">{sessionId}</p>
-						</div>
-						<button
-							type="button"
-							onClick={onClose}
-							class="flex-shrink-0 p-1.5 rounded text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors"
-							aria-label="Close overlay"
-							data-testid="agent-overlay-close"
-						>
-							<svg
-								class="w-4 h-4"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								stroke-width={2}
-							>
-								<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-							</svg>
-						</button>
-					</div>
-
-					{/* Chat content */}
+					{/* Chat content — ChatHeader owns the single header; back button replaces the mobile-menu toggle */}
 					<div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-						<ChatContainer key={sessionId} sessionId={sessionId} />
+						<ChatContainer key={sessionId} sessionId={sessionId} onBack={onClose} />
 					</div>
 				</div>
 			</div>

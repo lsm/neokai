@@ -1145,7 +1145,9 @@ export class TaskAgentManager {
 		if (!session) {
 			throw new Error(`Task Agent session not found for task ${taskId}`);
 		}
-		await this.injectMessageIntoSession(session, message);
+		// Human-initiated message — not synthetic. isSyntheticMessage=false so the
+		// compact thread feed can distinguish this from agent→agent task injections.
+		await this.injectMessageIntoSession(session, message, 'immediate', undefined, false);
 	}
 
 	/**
@@ -2252,7 +2254,8 @@ export class TaskAgentManager {
 		session: AgentSession,
 		message: string,
 		deliveryMode: 'immediate' | 'defer' = 'immediate',
-		origin?: MessageOrigin
+		origin?: MessageOrigin,
+		isSyntheticMessage = true
 	): Promise<void> {
 		const sessionId = session.session.id;
 		const state = session.getProcessingState();
@@ -2277,7 +2280,7 @@ export class TaskAgentManager {
 			uuid: messageId as UUID,
 			session_id: sessionId,
 			parent_tool_use_id: null,
-			isSynthetic: true,
+			isSynthetic: isSyntheticMessage,
 			message: {
 				role: 'user' as const,
 				content: [{ type: 'text' as const, text: message }],

@@ -75,12 +75,20 @@ interface ChatContainerProps {
 	readonly?: boolean;
 	/** When true, suppress the room breadcrumb in ChatHeader (used when embedded in Room tab) */
 	hideRoomBreadcrumb?: boolean;
+	/**
+	 * When provided, the header's left slot renders a back-arrow button that
+	 * invokes this callback instead of the default mobile-menu button. Used
+	 * by `AgentOverlayChat` (the agent slide-over) to collapse the wrapper
+	 * header into a single `ChatHeader` with a back affordance.
+	 */
+	onBack?: () => void;
 }
 
 export default function ChatContainer({
 	sessionId,
 	readonly = false,
 	hideRoomBreadcrumb = false,
+	onBack,
 }: ChatContainerProps) {
 	// ========================================
 	// Refs
@@ -859,6 +867,7 @@ export default function ChatContainer({
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
+				onBack={onBack}
 			/>
 
 			{/* Messages */}

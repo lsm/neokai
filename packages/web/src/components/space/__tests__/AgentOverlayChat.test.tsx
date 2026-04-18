@@ -2,23 +2,34 @@
 /**
  * Unit tests for AgentOverlayChat
  *
- * Tests:
- * - Renders with session ID — outer wrapper has data-testid="agent-overlay-chat"
- * - Shows agent name in header when agentName prop is provided
- * - Falls back to short session ID when agentName is not provided
- * - Close button calls onClose when clicked
- * - Escape key press calls onClose
- * - Backdrop click calls onClose
- * - Renders the session ID text in the header
+ * The overlay no longer renders its own header — the embedded `ChatContainer`
+ * owns the single header, with its left-slot back button (opted in via
+ * `onBack`) acting as the dismiss control. These tests verify:
+ * - The outer wrapper dialog renders with `data-testid="agent-overlay-chat"`.
+ * - The aria-label reflects `agentName` (or falls back to "Agent chat") so
+ *   screen readers identify which agent is open.
+ * - `ChatContainer` receives both `sessionId` and an `onBack` callback.
+ * - Clicking the back button surfaced by ChatContainer invokes `onClose`.
+ * - Escape key press invokes `onClose` (only once, only on Escape).
+ * - Backdrop click invokes `onClose`.
+ * - Escape listener is removed on unmount.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 
-// Mock ChatContainer — it relies on WebSocket/stores not available in unit tests
+// Mock ChatContainer — it relies on WebSocket/stores not available in unit
+// tests. Expose `onBack` via a data-attribute so tests can assert it was
+// forwarded, and render a button that invokes it so the dismiss path through
+// ChatContainer's header is covered end-to-end.
 vi.mock('../../../islands/ChatContainer', () => ({
-	default: ({ sessionId }: { sessionId: string }) => (
-		<div data-testid="mock-chat-container">{sessionId}</div>
+	default: ({ sessionId, onBack }: { sessionId: string; onBack?: () => void }) => (
+		<div data-testid="mock-chat-container" data-has-on-back={onBack ? '1' : '0'}>
+			<button type="button" data-testid="mock-chat-header-back" onClick={onBack}>
+				back
+			</button>
+			{sessionId}
+		</div>
 	),
 }));
 
@@ -48,32 +59,22 @@ describe('AgentOverlayChat', () => {
 		expect(getByTestId('agent-overlay-chat')).toBeTruthy();
 	});
 
-	it('shows agentName in the header when agentName prop is provided', () => {
+	it('reflects agentName in the dialog aria-label for screen readers', () => {
 		const { getByTestId } = render(
 			<AgentOverlayChat sessionId={SESSION_ID} agentName="My Agent" onClose={onClose} />
 		);
-		const nameEl = getByTestId('agent-overlay-name');
-		expect(nameEl.textContent).toBe('My Agent');
+		expect(getByTestId('agent-overlay-chat').getAttribute('aria-label')).toBe('My Agent chat');
 	});
 
-	it('falls back to short session ID (first 8 chars) when agentName is not provided', () => {
+	it('falls back to a generic "Agent chat" aria-label when agentName is not provided', () => {
 		const { getByTestId } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
-		const nameEl = getByTestId('agent-overlay-name');
-		expect(nameEl.textContent).toBe(SESSION_ID.slice(0, 8));
+		expect(getByTestId('agent-overlay-chat').getAttribute('aria-label')).toBe('Agent chat');
 	});
 
-	it('renders the full session ID text in the header', () => {
-		const { getAllByText } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
-		// The session ID appears in the header <p> element (and also in the mock chat container)
-		const matches = getAllByText(SESSION_ID);
-		// At minimum one <p> element in the header should show the session ID
-		const headerP = matches.find((el) => el.tagName.toLowerCase() === 'p');
-		expect(headerP).toBeTruthy();
-	});
-
-	it('calls onClose when the close button is clicked', () => {
+	it('forwards onBack to ChatContainer so its header back button dismisses the overlay', () => {
 		const { getByTestId } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
-		fireEvent.click(getByTestId('agent-overlay-close'));
+		expect(getByTestId('mock-chat-container').getAttribute('data-has-on-back')).toBe('1');
+		fireEvent.click(getByTestId('mock-chat-header-back'));
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
@@ -104,7 +105,7 @@ describe('AgentOverlayChat', () => {
 		const { getByTestId } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
 		const chatContainer = getByTestId('mock-chat-container');
 		expect(chatContainer).toBeTruthy();
-		expect(chatContainer.textContent).toBe(SESSION_ID);
+		expect(chatContainer.textContent).toContain(SESSION_ID);
 	});
 
 	it('removes Escape key listener on unmount', () => {

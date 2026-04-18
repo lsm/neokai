@@ -64,6 +64,27 @@ export default function SpaceIsland({
 		spaceOverlayAgentNameSignal.value = null;
 	}, []);
 
+	// Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
+	// tests can trigger the overlay programmatically. Opening is purely
+	// client-side signal manipulation — no security concern in exposing this.
+	useEffect(() => {
+		type OverlayApi = { open: (sessionId: string, agentName?: string) => void; close: () => void };
+		const w = window as typeof window & { __neokai_space_overlay?: OverlayApi };
+		w.__neokai_space_overlay = {
+			open(sessionId, agentName) {
+				spaceOverlayAgentNameSignal.value = agentName ?? null;
+				spaceOverlaySessionIdSignal.value = sessionId;
+			},
+			close() {
+				spaceOverlaySessionIdSignal.value = null;
+				spaceOverlayAgentNameSignal.value = null;
+			},
+		};
+		return () => {
+			w.__neokai_space_overlay = undefined;
+		};
+	}, []);
+
 	const error = spaceStore.error.value;
 
 	useEffect(() => {

@@ -44,6 +44,15 @@ export interface ChatHeaderProps {
 	archiving?: boolean;
 	resettingAgent?: boolean;
 	readonly?: boolean;
+	/**
+	 * When provided, renders a left-arrow back button in the header's left
+	 * slot (replacing the `MobileMenuButton`) that invokes this callback on
+	 * click. Used when `ChatContainer` is embedded in a slide-over overlay
+	 * (e.g. `AgentOverlayChat`) so the user can dismiss it without the
+	 * redundant wrapper header chrome. When omitted, the header falls back to
+	 * the default `MobileMenuButton` which toggles the context panel.
+	 */
+	onBack?: () => void;
 }
 
 export function ChatHeader({
@@ -60,6 +69,7 @@ export function ChatHeader({
 	archiving = false,
 	resettingAgent = false,
 	readonly = false,
+	onBack,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
 
@@ -189,7 +199,27 @@ export function ChatHeader({
 			class={`flex-shrink-0 bg-dark-850 border-b ${borderColors.ui.default} px-4 h-[65px] flex items-center relative z-10`}
 		>
 			<div class="flex-1 min-w-0 flex items-center gap-3">
-				<MobileMenuButton />
+				{onBack ? (
+					<button
+						type="button"
+						onClick={onBack}
+						class="flex-shrink-0 p-1.5 rounded text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors focus:outline-none focus:ring-1 focus:ring-gray-600"
+						aria-label="Back"
+						data-testid="chat-header-back"
+					>
+						<svg
+							class="w-5 h-5"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width={2}
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+						</svg>
+					</button>
+				) : (
+					<MobileMenuButton />
+				)}
 
 				{/* Session title and stats */}
 				<div class="flex-1 min-w-0">
