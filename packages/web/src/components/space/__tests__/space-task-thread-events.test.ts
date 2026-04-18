@@ -369,6 +369,18 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
 		expect(events[0].title).toBe('Question');
 		expect(events[0].summary).toContain('Proceed with deploy?');
 		expect(events[0].summary).toContain('Context: PR is green.');
+		// The synthesized message must contain ONLY the text block. Keeping
+		// the original tool_use here would make SDKAssistantMessage render a
+		// collapsed tool card alongside the text bubble, defeating the
+		// purpose of surfacing the question as visible text. Tool_use /
+		// tool_result pairing is unaffected: useMessageMaps builds
+		// toolResultsMap from the raw messages array, not from synthesized
+		// events.
+		const synthesized = events[0].message as { message?: { content?: unknown[] } };
+		const content = synthesized.message?.content ?? [];
+		expect(content).toHaveLength(1);
+		expect((content[0] as { type: string }).type).toBe('text');
+		expect(content.some((b) => (b as { type: string }).type === 'tool_use')).toBe(false);
 	});
 
 	it('skips request_human_input when the question body is empty', () => {

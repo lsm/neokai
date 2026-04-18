@@ -119,8 +119,11 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 
 	// Tracks the element that opened the review overlay so we can restore focus
 	// to it when the overlay closes (WCAG 2.4.3). Captured at open time; cleared
-	// after restore to avoid cross-open leakage.
+	// after restore to avoid cross-open leakage. If the opener was removed from
+	// the DOM while the overlay was open (e.g. approving a gate removes it from
+	// `pendingGates`), we fall back to a wrapper element that is still mounted.
 	const overlayOpenerRef = useRef<HTMLElement | null>(null);
+	const bannerRef = useRef<HTMLDivElement | null>(null);
 
 	// Close the review overlay on Escape (basic modal a11y). We don't implement a
 	// full focus trap — GateArtifactsView's own close button is reachable via Tab.
@@ -133,12 +136,20 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 		return () => window.removeEventListener('keydown', onKey);
 	}, [reviewGateId]);
 
-	// On overlay close, return focus to the element that opened it.
+	// On overlay close, return focus to the element that opened it. If the
+	// opener was unmounted while the overlay was open (common when Approve/
+	// Reject from GateArtifactsView transitions the gate out of `pendingGates`),
+	// .focus() on the detached node is a no-op — fall back to the banner wrapper
+	// so keyboard focus lands somewhere meaningful rather than collapsing to
+	// <body>.
 	useEffect(() => {
 		if (reviewGateId) return;
 		const opener = overlayOpenerRef.current;
-		if (opener && typeof opener.focus === 'function') {
+		if (!opener) return; // no overlay was open — nothing to restore
+		if (opener.isConnected && typeof opener.focus === 'function') {
 			opener.focus();
+		} else if (bannerRef.current && typeof bannerRef.current.focus === 'function') {
+			bannerRef.current.focus();
 		}
 		overlayOpenerRef.current = null;
 	}, [reviewGateId]);
@@ -250,7 +261,9 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 			{fetchErrorBanner}
 			{pendingGates.length > 0 && (
 				<div
-					class="mx-4 mt-2 mb-2 rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-2 space-y-2"
+					ref={bannerRef}
+					tabIndex={-1}
+					class="mx-4 mt-2 mb-2 rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-2 space-y-2 focus:outline-none"
 					data-testid="pending-gate-banner"
 				>
 					{pendingGates.map((gate) => {

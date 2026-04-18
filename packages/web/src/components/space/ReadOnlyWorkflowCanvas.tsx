@@ -48,7 +48,10 @@ export function ReadOnlyWorkflowCanvas({
 	// Gate popup / overlay state
 	const [gatePopup, setGatePopup] = useState<GatePopupState | null>(null);
 	const [artifactsOverlay, setArtifactsOverlay] = useState<{ gateId: string } | null>(null);
-	const [approving, setApproving] = useState(false);
+	// Per-gate in-flight set so approving one gate never disables another gate's
+	// buttons — previously a single boolean disabled every decision affordance
+	// in the canvas while any RPC was pending.
+	const [approvingGateIds, setApprovingGateIds] = useState<Set<string>>(() => new Set());
 	const [channelDecisionError, setChannelDecisionError] = useState<string | null>(null);
 	const [popupDecisionError, setPopupDecisionError] = useState<string | null>(null);
 
@@ -124,7 +127,11 @@ export function ReadOnlyWorkflowCanvas({
 	const approveGateRequest = useCallback(
 		async (gateId: string, approved: boolean): Promise<{ ok: boolean; error?: string }> => {
 			if (!runId) return { ok: false, error: 'Missing run ID' };
-			setApproving(true);
+			setApprovingGateIds((prev) => {
+				const next = new Set(prev);
+				next.add(gateId);
+				return next;
+			});
 			try {
 				const hub = await connectionManager.getHub();
 				await hub.request('spaceWorkflowRun.approveGate', {
@@ -139,7 +146,12 @@ export function ReadOnlyWorkflowCanvas({
 					error: err instanceof Error ? err.message : 'Failed to submit decision',
 				};
 			} finally {
-				setApproving(false);
+				setApprovingGateIds((prev) => {
+					if (!prev.has(gateId)) return prev;
+					const next = new Set(prev);
+					next.delete(gateId);
+					return next;
+				});
 			}
 		},
 		[runId]
@@ -269,7 +281,9 @@ export function ReadOnlyWorkflowCanvas({
 						}}
 						onGateDecision={handleChannelGateDecision}
 						onViewArtifacts={handleChannelViewArtifacts}
-						decisionPending={approving}
+						decisionPending={
+							!!selectedChannel.gateId && approvingGateIds.has(selectedChannel.gateId)
+						}
 						decisionError={channelDecisionError}
 					/>
 				)}
@@ -294,7 +308,7 @@ export function ReadOnlyWorkflowCanvas({
 							<div class="flex gap-2">
 								<button
 									onClick={() => void handlePopupDecision(true)}
-									disabled={approving}
+									disabled={approvingGateIds.has(gatePopup.gateId)}
 									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 transition-colors"
 								>
 									Approve
@@ -302,7 +316,7 @@ export function ReadOnlyWorkflowCanvas({
 								<button
 									data-testid="popup-reject-btn"
 									onClick={() => void handlePopupDecision(false)}
-									disabled={approving}
+									disabled={approvingGateIds.has(gatePopup.gateId)}
 									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 transition-colors"
 								>
 									Reject

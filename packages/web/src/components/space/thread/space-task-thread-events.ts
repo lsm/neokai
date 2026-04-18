@@ -166,11 +166,15 @@ function extractAssistantEvents(
 				const questionContext = typeof input.context === 'string' ? input.context.trim() : '';
 				const body = questionContext ? `${question}\n\nContext: ${questionContext}` : question;
 				if (body) {
-					// Synthesize a text-shaped SDKMessage so renderers that key off
-					// message.message.content (e.g. markdown body rendering) treat
-					// the question as plain text instead of the original tool-use
-					// block. The outer event fields (id, sessionId, etc.) come from
-					// the real row; only the content array is replaced.
+					// Synthesize a text-only SDKMessage so the renderer treats the
+					// question as plain markdown. We intentionally DROP the original
+					// tool_use block from this synthesized event's content: keeping
+					// it would cause SDKAssistantMessage to also render a collapsed
+					// tool card alongside the text bubble (see SDKAssistantMessage
+					// toolBlocks path), defeating the purpose of surfacing the
+					// question as visible text. Tool_use/tool_result pairing is
+					// unaffected — toolResultsMap in useMessageMaps is built from
+					// the raw messages array, not from synthesized events.
 					const questionMessage = {
 						...message,
 						message: {
