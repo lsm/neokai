@@ -190,7 +190,11 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	};
 
 	return (
-		<div data-testid="compact-block">
+		<div
+			data-testid="compact-block"
+			data-agent-label={block.agentLabel}
+			data-agent-color={agentColor}
+		>
 			{/* Agent identity header — clickable to open the agent slide-out.
 			    Taller padding (min-h-[32px], py-2) makes the name a comfortable
 			    click/tap target while keeping the small text style. */}
