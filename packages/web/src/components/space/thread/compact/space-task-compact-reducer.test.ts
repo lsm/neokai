@@ -436,4 +436,84 @@ describe('applyBlockRowVisibility', () => {
 		expect(visibleRows.length).toBe(0);
 		expect(hiddenRowCount).toBe(0);
 	});
+
+	// ── Pinned user rows ────────────────────────────────────────────────────────
+
+	function makeUserMessage(uuid: string, text: string, isSynthetic = false): SDKMessage {
+		return {
+			type: 'user',
+			uuid,
+			message: { role: 'user', content: text },
+			isSynthetic,
+		} as unknown as SDKMessage;
+	}
+
+	function makeUserRow(id: string, text: string, isSynthetic = false): ParsedThreadRow {
+		return makeRow(id, 'Task', makeUserMessage(id, text, isSynthetic));
+	}
+
+	it('always keeps human user rows pinned even when they would fall outside the tail window', () => {
+		const humanRow = makeUserRow('human', 'why is the sky blue', false);
+		const block: CompactLogicalBlock = {
+			id: 'b',
+			agentLabel: 'Task',
+			rows: [
+				humanRow,
+				makeRow('tool-1', 'Task', makeToolUseMessage('tool-1')),
+				makeRow('tool-2', 'Task', makeToolUseMessage('tool-2')),
+				makeRow('tool-3', 'Task', makeToolUseMessage('tool-3')),
+				makeRow('tool-4', 'Task', makeToolUseMessage('tool-4')),
+				makeRow('tool-5', 'Task', makeToolUseMessage('tool-5')),
+			],
+			isTerminal: false,
+		};
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 3);
+		// Human row is pinned; last 3 are kept; 2 intervening rows are trimmed.
+		expect(visibleRows.map((r) => r.id)).toEqual(['human', 'tool-3', 'tool-4', 'tool-5']);
+		expect(hiddenRowCount).toBe(2);
+	});
+
+	it('always keeps synthetic user rows pinned (agent→agent handoffs)', () => {
+		const handoffRow = makeUserRow('handoff', '[NODE_COMPLETE] continue with review', true);
+		const block: CompactLogicalBlock = {
+			id: 'b',
+			agentLabel: 'Reviewer',
+			rows: [
+				handoffRow,
+				makeRow('tool-1', 'Reviewer', makeToolUseMessage('tool-1')),
+				makeRow('tool-2', 'Reviewer', makeToolUseMessage('tool-2')),
+				makeRow('tool-3', 'Reviewer', makeToolUseMessage('tool-3')),
+				makeRow('tool-4', 'Reviewer', makeToolUseMessage('tool-4')),
+			],
+			isTerminal: false,
+		};
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 3);
+		expect(visibleRows.map((r) => r.id)).toEqual(['handoff', 'tool-2', 'tool-3', 'tool-4']);
+		expect(hiddenRowCount).toBe(1);
+	});
+
+	it('keeps multiple pinned user rows when the block contains more than one', () => {
+		const block: CompactLogicalBlock = {
+			id: 'b',
+			agentLabel: 'Task',
+			rows: [
+				makeUserRow('user-1', 'first', false),
+				makeRow('tool-1', 'Task', makeToolUseMessage('tool-1')),
+				makeUserRow('user-2', 'follow up', false),
+				makeRow('tool-2', 'Task', makeToolUseMessage('tool-2')),
+				makeRow('tool-3', 'Task', makeToolUseMessage('tool-3')),
+				makeRow('tool-4', 'Task', makeToolUseMessage('tool-4')),
+			],
+			isTerminal: false,
+		};
+		const { visibleRows } = applyBlockRowVisibility(block, 3);
+		// Both pinned users + last 3 tool rows.
+		expect(visibleRows.map((r) => r.id)).toEqual([
+			'user-1',
+			'user-2',
+			'tool-2',
+			'tool-3',
+			'tool-4',
+		]);
+	});
 });

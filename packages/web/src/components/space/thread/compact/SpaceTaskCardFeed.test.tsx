@@ -29,7 +29,10 @@ import { SpaceTaskCardFeed } from './SpaceTaskCardFeed';
 // visibility, agent-header and running-block behavior without pulling in the
 // full SDK render tree. The stub echoes text/user content when available and
 // falls back to the message `type` so terminal/result rows still render
-// something detectable.
+// something detectable. Synthetic user messages (`isSynthetic=true`) are
+// marked with a distinct testid so the feed's test suite can assert they
+// route to the purple `SyntheticMessageBlock` path rather than the regular
+// user-bubble path.
 vi.mock('../../../sdk/SDKMessageRenderer', () => ({
 	SDKMessageRenderer: ({
 		message,
@@ -41,10 +44,13 @@ vi.mock('../../../sdk/SDKMessageRenderer', () => ({
 		isRunning?: boolean;
 	}) => {
 		const content = message?.message?.content;
+		const isSyntheticUser = message?.type === 'user' && message?.isSynthetic === true;
+		const testId = isSyntheticUser ? 'sdk-synthetic-message' : 'sdk-message-renderer';
 		const attrs = {
-			'data-testid': 'sdk-message-renderer',
+			'data-testid': testId,
 			'data-task-context': taskContext ? '1' : '0',
 			'data-running': isRunning ? '1' : '0',
+			'data-synthetic': isSyntheticUser ? '1' : '0',
 		};
 		if (typeof content === 'string') {
 			return <div {...attrs}>{content}</div>;
@@ -928,7 +934,11 @@ describe('SpaceTaskCardFeed', () => {
 		expect(rendered[0].textContent).toBe('visible content');
 	});
 
-	it('keeps synthetic user messages (isSynthetic=true) — agent→agent handoffs render alongside real ones', () => {
+	it('routes synthetic user messages to the purple SyntheticMessageBlock and human messages to the blue user bubble', () => {
+		// Both kinds of user rows are kept in the compact feed, but they are
+		// visually distinct: synthetic (agent→agent handoff) → purple synthetic
+		// block; human-typed → blue user bubble. The `isSynthetic` flag is NOT
+		// stripped — it must reach SDKMessageRenderer so the routing happens.
 		const syntheticRow: ParsedThreadRow = {
 			id: 'u-syn',
 			sessionId: null,
@@ -954,7 +964,7 @@ describe('SpaceTaskCardFeed', () => {
 			message: {
 				type: 'user',
 				uuid: 'u-real',
-				// no isSynthetic field — this is a real human message
+				// isSynthetic absent — real human message
 				message: { content: [{ type: 'text', text: 'Please build feature X' }] },
 			} as any,
 			fallbackText: null,
@@ -973,13 +983,20 @@ describe('SpaceTaskCardFeed', () => {
 			/>
 		);
 
-		// Synthetic and real user messages are both visible, along with the reply.
-		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
-		expect(rendered.length).toBe(3);
-		const texts = Array.from(rendered).map((el) => el.textContent);
-		expect(texts).toContain('Go implement feature X');
-		expect(texts).toContain('Please build feature X');
-		expect(texts).toContain('working on it');
+		// Synthetic message renders through the synthetic-block path.
+		const syntheticEls = container.querySelectorAll('[data-testid="sdk-synthetic-message"]');
+		expect(syntheticEls.length).toBe(1);
+		expect(syntheticEls[0].textContent).toBe('Go implement feature X');
+		expect(syntheticEls[0].getAttribute('data-synthetic')).toBe('1');
+
+		// Human user message + assistant reply render through the regular path.
+		const regularEls = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		expect(regularEls.length).toBe(2);
+		const regularTexts = Array.from(regularEls).map((el) => el.textContent);
+		expect(regularTexts).toContain('Please build feature X');
+		expect(regularTexts).toContain('working on it');
+		// Neither regular element is marked synthetic.
+		regularEls.forEach((el) => expect(el.getAttribute('data-synthetic')).toBe('0'));
 	});
 
 	// ── Empty input ──────────────────────────────────────────────────────────

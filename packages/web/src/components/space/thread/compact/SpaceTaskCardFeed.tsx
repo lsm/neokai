@@ -56,11 +56,11 @@ function isEmptyUserRow(row: ParsedThreadRow): boolean {
  * `system:init` rows ARE kept — they render as a small "Session Started" card
  * via `SpaceSystemInitCard` so multi-agent session starts stay legible.
  *
- * User messages — both real human input and synthetic agent→agent handoffs
- * (isSynthetic=true) — are all kept. Synthetic handoffs give the viewer
- * visibility into the task the orchestrator injected into a sub-agent session,
- * which is meaningful context in a multi-agent compact view. Only content-less
- * user rows are dropped via `isEmptyUserRow`.
+ * All user messages are kept — both real human input (isSynthetic=false/absent)
+ * and agent→agent handoffs (isSynthetic=true). Human messages render as the
+ * normal blue user bubble; synthetic messages render as the purple
+ * `SyntheticMessageBlock` so the system-generated origin is visible at a
+ * glance. Only content-less user rows are dropped via `isEmptyUserRow`.
  */
 function preFilterRows(rows: ParsedThreadRow[]): ParsedThreadRow[] {
 	return rows.filter((row) => {
@@ -125,6 +125,7 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 	if (isSDKSystemInit(row.message)) {
 		return <SpaceSystemInitCard message={row.message} />;
 	}
+
 	const msgUuid = (row.message as { uuid?: string }).uuid ?? '';
 	return (
 		<SDKMessageRenderer

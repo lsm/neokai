@@ -1,6 +1,8 @@
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
+	isSDKUserMessage,
+	isSDKUserMessageReplay,
 	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { ParsedThreadRow } from '../space-task-thread-events';
@@ -173,6 +175,18 @@ export interface BlockRowVisibility {
 }
 
 /**
+ * Returns `true` when the row is a user-type SDK message — either a real human
+ * input or a synthetic agent→agent handoff. Both carry conversational intent
+ * (the human's question, or the orchestrator's prompt to a sub-agent) and are
+ * pinned visible by `applyBlockRowVisibility` so they never slide out of the
+ * compact window.
+ */
+export function isUserRow(row: ParsedThreadRow): boolean {
+	if (!row.message) return false;
+	return isSDKUserMessage(row.message) || isSDKUserMessageReplay(row.message);
+}
+
+/**
  * Trim a logical block's rows to the last `maxRows` so each turn stays compact
  * even when the agent emitted many events.
  *
@@ -181,7 +195,12 @@ export interface BlockRowVisibility {
  * surfaces the count under the block's agent header so the user knows there
  * are earlier messages in this turn that were collapsed.
  *
- * The tail is always kept — this guarantees the running-border row and
+ * Pinned rows — user-type messages (real human input and synthetic
+ * agent→agent handoffs) — are always kept regardless of the `maxRows` cap.
+ * This guarantees the conversational anchors of a multi-agent thread stay
+ * visible even when the agent emitted many intervening tool-use events.
+ *
+ * The tail is also always kept — this guarantees the running-border row and
  * terminal result row (which are always at the end of a block) remain visible.
  */
 export function applyBlockRowVisibility(
@@ -194,8 +213,22 @@ export function applyBlockRowVisibility(
 	if (block.rows.length <= maxRows) {
 		return { visibleRows: block.rows, hiddenRowCount: 0 };
 	}
-	const visibleRows = block.rows.slice(block.rows.length - maxRows);
-	return { visibleRows, hiddenRowCount: block.rows.length - maxRows };
+
+	// Start with the last `maxRows` as the tail window.
+	const tailStart = block.rows.length - maxRows;
+	const tail = block.rows.slice(tailStart);
+
+	// Scan the front (rows 0..tailStart-1) and keep any pinned user rows so the
+	// conversational anchors — human inputs and agent→agent handoffs — are
+	// never trimmed out of view.
+	const pinnedFromFront: ParsedThreadRow[] = [];
+	for (let i = 0; i < tailStart; i++) {
+		if (isUserRow(block.rows[i])) pinnedFromFront.push(block.rows[i]);
+	}
+
+	const visibleRows = [...pinnedFromFront, ...tail];
+	const hiddenRowCount = block.rows.length - visibleRows.length;
+	return { visibleRows, hiddenRowCount };
 }
 
 /**
