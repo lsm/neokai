@@ -203,4 +203,72 @@ describe('PendingGateBanner', () => {
 		expect(getByTestId('pending-gate-review-overlay')).toBeTruthy();
 		expect(getByTestId('gate-artifacts-view').getAttribute('data-gate-id')).toBe('g1');
 	});
+
+	it('Escape key closes the review overlay', async () => {
+		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
+		mockRequest.mockResolvedValue({ gateData: [] });
+		const { findByTestId, queryByTestId, getByTestId } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		await findByTestId('pending-gate-banner');
+		fireEvent.click(getByTestId('pending-gate-review-btn'));
+		expect(getByTestId('pending-gate-review-overlay')).toBeTruthy();
+		fireEvent.keyDown(window, { key: 'Escape' });
+		await waitFor(() => expect(queryByTestId('pending-gate-review-overlay')).toBeNull());
+	});
+
+	it('per-gate busy state: rejecting gate A does not disable gate B buttons', async () => {
+		// Two pending gates. We fire rejection on g1 using a pending request so
+		// the RPC never resolves within the test — if busy state were a single
+		// value, gate B's buttons would appear disabled, which is the bug we
+		// want to prevent.
+		workflowsSignal.value = [
+			makeWorkflow([approvalGate('g1', 'First'), approvalGate('g2', 'Second')]),
+		];
+		let resolveApprove: (v: unknown) => void = () => {};
+		const pending = new Promise((resolve) => {
+			resolveApprove = resolve;
+		});
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.approveGate') return pending;
+			return Promise.resolve({});
+		});
+		const { findByTestId, getAllByTestId } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		await findByTestId('pending-gate-banner');
+		const rejectBtns = getAllByTestId('pending-gate-reject-btn') as HTMLButtonElement[];
+		const approveBtns = getAllByTestId('pending-gate-approve-btn') as HTMLButtonElement[];
+		fireEvent.click(rejectBtns[0]);
+		// First gate's buttons become busy; second gate's stay enabled.
+		await waitFor(() => expect(rejectBtns[0].disabled).toBe(true));
+		expect(approveBtns[0].disabled).toBe(true);
+		expect(rejectBtns[1].disabled).toBe(false);
+		expect(approveBtns[1].disabled).toBe(false);
+		resolveApprove({});
+	});
+
+	it('per-gate error: an error on gate A renders inside gate A row, not globally', async () => {
+		workflowsSignal.value = [
+			makeWorkflow([approvalGate('g1', 'First'), approvalGate('g2', 'Second')]),
+		];
+		mockRequest.mockImplementation((method: string, params: { gateId?: string }) => {
+			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.approveGate' && params.gateId === 'g1') {
+				return Promise.reject(new Error('backend exploded'));
+			}
+			return Promise.resolve({});
+		});
+		const { findByTestId, getAllByTestId, findAllByTestId } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		await findByTestId('pending-gate-banner');
+		const rejectBtns = getAllByTestId('pending-gate-reject-btn') as HTMLButtonElement[];
+		fireEvent.click(rejectBtns[0]);
+		const errors = await findAllByTestId('pending-gate-error');
+		// Exactly one error rendered (gate A's), not a global error for both.
+		expect(errors).toHaveLength(1);
+		expect(errors[0].textContent).toContain('backend exploded');
+	});
 });

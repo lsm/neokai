@@ -60,6 +60,9 @@ export function ChannelInfoPanel({
 		channel.gateLabel ?? (channel.gateType ? GATE_TYPE_LABELS[channel.gateType] : null);
 	const isBidirectional = channel.direction === 'bidirectional';
 	const showApprovalActions = status === 'waiting_human' && !!channel.gateId;
+	// View Artifacts is useful for any gate with a run (e.g. reviewing a
+	// rejected gate's evidence), not just ones still awaiting approval.
+	const showViewArtifacts = !!channel.gateId && !!onViewArtifacts;
 
 	return (
 		<div
@@ -117,31 +120,35 @@ export function ChannelInfoPanel({
 						{!gateLabel && !statusConfig && <span class="text-xs text-gray-500">No gate</span>}
 					</div>
 
-					{showApprovalActions && channel.gateId && (
+					{(showApprovalActions || showViewArtifacts) && channel.gateId && (
 						<>
 							<div class="flex items-center gap-2 pt-1" data-testid="channel-gate-actions">
-								<button
-									type="button"
-									onClick={() => void onGateDecision?.(channel.gateId!, true)}
-									disabled={decisionPending || !onGateDecision}
-									data-testid="channel-approve-btn"
-									class="px-3 py-1 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-								>
-									Approve
-								</button>
-								<button
-									type="button"
-									onClick={() => void onGateDecision?.(channel.gateId!, false)}
-									disabled={decisionPending || !onGateDecision}
-									data-testid="channel-reject-btn"
-									class="px-3 py-1 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-								>
-									Reject
-								</button>
-								{onViewArtifacts && (
+								{showApprovalActions && (
+									<>
+										<button
+											type="button"
+											onClick={() => void onGateDecision?.(channel.gateId!, true)}
+											disabled={decisionPending || !onGateDecision}
+											data-testid="channel-approve-btn"
+											class="px-3 py-1 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+										>
+											Approve
+										</button>
+										<button
+											type="button"
+											onClick={() => void onGateDecision?.(channel.gateId!, false)}
+											disabled={decisionPending || !onGateDecision}
+											data-testid="channel-reject-btn"
+											class="px-3 py-1 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+										>
+											Reject
+										</button>
+									</>
+								)}
+								{showViewArtifacts && (
 									<button
 										type="button"
-										onClick={() => onViewArtifacts(channel.gateId!)}
+										onClick={() => onViewArtifacts?.(channel.gateId!)}
 										data-testid="channel-view-artifacts-btn"
 										class="px-3 py-1 text-xs font-medium rounded bg-dark-700 text-gray-200 border border-dark-600 hover:bg-dark-600 transition-colors"
 									>

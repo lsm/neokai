@@ -124,6 +124,16 @@ describe('evaluateGateStatus', () => {
 		expect(evaluateGateStatus(gate([approvedField()]), { approved: false })).toBe('blocked');
 	});
 
+	it('external approval: re-approving after a rejection evaluates as open', () => {
+		// The daemon allows a human to re-submit approved=true after a rejection
+		// (or undefined → false → true transitions). evaluateGateStatus is
+		// stateless and must respect the latest data value.
+		const g = gate([approvedField()]);
+		expect(evaluateGateStatus(g, { approved: false })).toBe('blocked');
+		expect(evaluateGateStatus(g, { approved: true })).toBe('open');
+		expect(evaluateGateStatus(g, {})).toBe('waiting_human');
+	});
+
 	it('external approval: approved=true but peer field still failing → blocked', () => {
 		const g = gate([approvedField(), existsField('pr_url')]);
 		expect(evaluateGateStatus(g, { approved: true })).toBe('blocked');

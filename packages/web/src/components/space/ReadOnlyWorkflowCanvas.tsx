@@ -59,6 +59,8 @@ export function ReadOnlyWorkflowCanvas({
 		setViewportState,
 		gateDataLoading,
 		gateDataMap,
+		gateDataError,
+		retryGateData,
 	} = useRuntimeCanvasData(workflowId, runId ?? null);
 
 	// Track container dimensions for the toolbar's fit-to-view
@@ -204,6 +206,23 @@ export function ReadOnlyWorkflowCanvas({
 			{gateDataLoading && (
 				<div class="absolute top-2 right-2 z-10 text-xs text-gray-500 px-2 py-0.5 bg-dark-800 rounded">
 					Loading…
+				</div>
+			)}
+			{gateDataError && !gateDataLoading && (
+				<div
+					class="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs px-2 py-0.5 bg-red-900/50 border border-red-700/50 text-red-200 rounded"
+					data-testid="canvas-gate-data-error"
+					title={gateDataError}
+				>
+					<span>Gate status unavailable</span>
+					<button
+						type="button"
+						onClick={retryGateData}
+						data-testid="canvas-gate-data-retry"
+						class="underline hover:text-red-100"
+					>
+						Retry
+					</button>
 				</div>
 			)}
 			{isWorkflowRejected && (

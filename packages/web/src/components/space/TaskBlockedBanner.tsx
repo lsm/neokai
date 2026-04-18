@@ -3,9 +3,11 @@
  *
  * Replaces the generic amber blocked banner in SpaceTaskPane with
  * distinct UI per blockReason:
- *   - human_input_requested: NOT rendered — the question is surfaced as a
- *     "Question" message in the thread (see space-task-thread-events.ts),
- *     so a header banner would just duplicate it. Reply via the composer.
+ *   - human_input_requested: tiny "reply via composer" hint — the question
+ *     itself is surfaced as a "Question" message in the thread (see
+ *     space-task-thread-events.ts), so we don't duplicate it here. The hint
+ *     is a safety net: if the thread transformation ever fails to render the
+ *     question, the user still sees that input is required.
  *   - gate_rejected: purple — shows gate info + "Review & Approve" expanding to GateArtifactsView
  *   - execution_failed / agent_crashed: red — shows error + Resume button
  *   - dependency_failed: gray — informational
@@ -84,10 +86,21 @@ const FALLBACK_CONFIG = {
 export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlockedBannerProps) {
 	const reason = task.blockReason;
 
-	// Human-input requests are surfaced as a "Question" message in the thread,
-	// so a duplicate header banner is not needed. The composer below the thread
-	// is the reply affordance.
-	if (reason === 'human_input_requested') return null;
+	// Human-input requests render the question body as a "Question" message in
+	// the thread (space-task-thread-events.ts). Here we show only a thin hint
+	// pointing users to the composer — enough to be a safety net if the thread
+	// transformation is ever absent, without duplicating the full question.
+	if (reason === 'human_input_requested') {
+		return (
+			<div
+				class="mx-4 mt-2 mb-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5"
+				data-testid="task-blocked-banner"
+				data-reason="human_input_requested"
+			>
+				<p class="text-xs text-sky-300">💬 Awaiting your input — reply via the composer below.</p>
+			</div>
+		);
+	}
 
 	const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
 

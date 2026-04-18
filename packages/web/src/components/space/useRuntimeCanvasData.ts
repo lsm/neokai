@@ -11,7 +11,7 @@
  * - hub RPC spaceWorkflowRun.listGateData + space.gateData.updated events
  */
 
-import { useMemo, useState, useEffect, useRef } from 'preact/hooks';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { isChannelCyclic, TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
@@ -50,6 +50,10 @@ export interface RuntimeCanvasData {
 	gateDataLoading: boolean;
 	/** Gate data keyed by gateId — used by GateArtifactsView for PR link extraction. */
 	gateDataMap: Map<string, Record<string, unknown>>;
+	/** Last gate-data fetch error, if any. Null when loading or after success. */
+	gateDataError: string | null;
+	/** Re-run the gate-data fetch (e.g. for a Retry button). */
+	retryGateData: () => void;
 }
 
 export function useRuntimeCanvasData(
@@ -71,15 +75,20 @@ export function useRuntimeCanvasData(
 	// ---- Gate data fetching ----
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>>>(new Map());
 	const [gateDataLoading, setGateDataLoading] = useState(false);
+	const [gateDataError, setGateDataError] = useState<string | null>(null);
+	const [gateDataAttempt, setGateDataAttempt] = useState(0);
 	const runIdRef = useRef<string | null>(null);
+	const retryGateData = useCallback(() => setGateDataAttempt((n) => n + 1), []);
 
 	useEffect(() => {
 		if (!runId || !workflow) {
 			setGateDataMap(new Map());
+			setGateDataError(null);
 			return;
 		}
 		runIdRef.current = runId;
 		setGateDataLoading(true);
+		setGateDataError(null);
 
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
@@ -104,7 +113,10 @@ export function useRuntimeCanvasData(
 					return fetched;
 				});
 			})
-			.catch(() => {})
+			.catch((err: unknown) => {
+				if (runIdRef.current !== runId) return;
+				setGateDataError(err instanceof Error ? err.message : 'Failed to load gate data');
+			})
 			.finally(() => {
 				if (runIdRef.current === runId) setGateDataLoading(false);
 			});
@@ -125,7 +137,7 @@ export function useRuntimeCanvasData(
 		return () => {
 			unsubscribe?.();
 		};
-	}, [runId, workflow?.id]);
+	}, [runId, workflow?.id, gateDataAttempt]);
 
 	// ---- Build visual state from workflow ----
 	const visualState = useMemo(
@@ -320,5 +332,7 @@ export function useRuntimeCanvasData(
 		workflow,
 		gateDataLoading,
 		gateDataMap,
+		gateDataError,
+		retryGateData,
 	};
 }
