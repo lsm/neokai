@@ -56,6 +56,9 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const [fetchAttempt, setFetchAttempt] = useState(0);
 	const decisionCancelledRef = useRef(false);
+	// Tracks the live runId so in-flight decision responses from a previous
+	// run don't stamp busy/error state onto the new run after a runId swap.
+	const currentRunIdRef = useRef(runId);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -64,6 +67,12 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 		setReviewGateId(null);
 		setDecisionErrors(new Map());
 		setFetchError(null);
+		// If a decision RPC is in-flight when runId swaps (e.g. user navigates to
+		// another task's run), the pending promise is abandoned by the cleanup
+		// flag below — but busyGateIds from the prior run would otherwise leak
+		// here and permanently disable a gate's buttons in the new run.
+		setBusyGateIds(new Set());
+		currentRunIdRef.current = runId;
 
 		(async () => {
 			try {
@@ -108,6 +117,11 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 		};
 	}, []);
 
+	// Tracks the element that opened the review overlay so we can restore focus
+	// to it when the overlay closes (WCAG 2.4.3). Captured at open time; cleared
+	// after restore to avoid cross-open leakage.
+	const overlayOpenerRef = useRef<HTMLElement | null>(null);
+
 	// Close the review overlay on Escape (basic modal a11y). We don't implement a
 	// full focus trap — GateArtifactsView's own close button is reachable via Tab.
 	useEffect(() => {
@@ -118,6 +132,22 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	}, [reviewGateId]);
+
+	// On overlay close, return focus to the element that opened it.
+	useEffect(() => {
+		if (reviewGateId) return;
+		const opener = overlayOpenerRef.current;
+		if (opener && typeof opener.focus === 'function') {
+			opener.focus();
+		}
+		overlayOpenerRef.current = null;
+	}, [reviewGateId]);
+
+	const openReview = useCallback((gateId: string, event: Event) => {
+		const target = event.currentTarget;
+		if (target instanceof HTMLElement) overlayOpenerRef.current = target;
+		setReviewGateId(gateId);
+	}, []);
 
 	const pendingGates: PendingGate[] = [];
 	for (const gate of gates) {
@@ -141,11 +171,13 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 				next.delete(gateId);
 				return next;
 			});
+			const runIdAtCall = runId;
 			try {
 				const hub = await connectionManager.getHub();
 				await hub.request('spaceWorkflowRun.approveGate', { runId, gateId, approved });
 			} catch (err: unknown) {
 				if (decisionCancelledRef.current) return;
+				if (currentRunIdRef.current !== runIdAtCall) return; // stale runId
 				const msg = err instanceof Error ? err.message : 'Failed to submit decision';
 				setDecisionErrors((prev) => {
 					const next = new Map(prev);
@@ -153,7 +185,7 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 					return next;
 				});
 			} finally {
-				if (!decisionCancelledRef.current) {
+				if (!decisionCancelledRef.current && currentRunIdRef.current === runIdAtCall) {
 					setBusyGateIds((prev) => {
 						if (!prev.has(gateId)) return prev;
 						const next = new Set(prev);
@@ -257,7 +289,7 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 										</button>
 										<button
 											type="button"
-											onClick={() => setReviewGateId(gate.gateId)}
+											onClick={(e) => openReview(gate.gateId, e)}
 											data-testid="pending-gate-review-btn"
 											class="px-2 py-1 text-xs font-medium rounded bg-purple-900/30 text-purple-300 border border-purple-700/30 hover:bg-purple-900/50 transition-colors"
 										>

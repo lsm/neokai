@@ -271,4 +271,46 @@ describe('PendingGateBanner', () => {
 		expect(errors).toHaveLength(1);
 		expect(errors[0].textContent).toContain('backend exploded');
 	});
+
+	it('runId swap clears busyGateIds so buttons are not stuck disabled', async () => {
+		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
+		let resolveApprove: (v: unknown) => void = () => {};
+		const pending = new Promise((resolve) => {
+			resolveApprove = resolve;
+		});
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.approveGate') return pending;
+			return Promise.resolve({});
+		});
+		const { findByTestId, rerender } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		const rejectBtn = (await findByTestId('pending-gate-reject-btn')) as HTMLButtonElement;
+		fireEvent.click(rejectBtn);
+		await waitFor(() => expect(rejectBtn.disabled).toBe(true));
+		// Swap runId while the RPC is still pending — busyGateIds must reset.
+		rerender(<PendingGateBanner runId="r2" spaceId="s1" workflowId="wf-1" />);
+		const rejectBtnAfterSwap = (await findByTestId('pending-gate-reject-btn')) as HTMLButtonElement;
+		await waitFor(() => expect(rejectBtnAfterSwap.disabled).toBe(false));
+		resolveApprove({});
+	});
+
+	it('closing overlay restores focus to the opening Review button', async () => {
+		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
+		mockRequest.mockResolvedValue({ gateData: [] });
+		const { findByTestId, queryByTestId, getByTestId } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		const reviewBtn = (await findByTestId('pending-gate-review-btn')) as HTMLButtonElement;
+		reviewBtn.focus();
+		expect(document.activeElement).toBe(reviewBtn);
+		fireEvent.click(reviewBtn);
+		expect(getByTestId('pending-gate-review-overlay')).toBeTruthy();
+		// Close via Escape
+		fireEvent.keyDown(window, { key: 'Escape' });
+		await waitFor(() => expect(queryByTestId('pending-gate-review-overlay')).toBeNull());
+		// Focus must be restored to the opener
+		expect(document.activeElement).toBe(reviewBtn);
+	});
 });

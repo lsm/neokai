@@ -50,6 +50,7 @@ export function ReadOnlyWorkflowCanvas({
 	const [artifactsOverlay, setArtifactsOverlay] = useState<{ gateId: string } | null>(null);
 	const [approving, setApproving] = useState(false);
 	const [channelDecisionError, setChannelDecisionError] = useState<string | null>(null);
+	const [popupDecisionError, setPopupDecisionError] = useState<string | null>(null);
 
 	const {
 		nodeData,
@@ -117,6 +118,7 @@ export function ReadOnlyWorkflowCanvas({
 			y: event.clientY - rect.top,
 		});
 		setSelectedChannelId(null);
+		setPopupDecisionError(null);
 	}, []);
 
 	const approveGateRequest = useCallback(
@@ -147,8 +149,14 @@ export function ReadOnlyWorkflowCanvas({
 	const handlePopupDecision = useCallback(
 		async (approved: boolean) => {
 			if (!gatePopup) return;
+			setPopupDecisionError(null);
 			const result = await approveGateRequest(gatePopup.gateId, approved);
-			if (result.ok) setGatePopup(null);
+			if (result.ok) {
+				setGatePopup(null);
+				setPopupDecisionError(null);
+			} else {
+				setPopupDecisionError(result.error ?? 'Failed to submit decision');
+			}
 		},
 		[gatePopup, approveGateRequest]
 	);
@@ -300,6 +308,11 @@ export function ReadOnlyWorkflowCanvas({
 									Reject
 								</button>
 							</div>
+							{popupDecisionError && (
+								<p class="text-xs text-red-400 break-words" data-testid="popup-decision-error">
+									{popupDecisionError}
+								</p>
+							)}
 						</div>
 					</div>
 				)}

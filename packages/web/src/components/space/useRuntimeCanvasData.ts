@@ -92,7 +92,11 @@ export function useRuntimeCanvasData(
 
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
+			// WS not connected at mount — surface as an error so the Retry chip
+			// renders. Clicking Retry bumps gateDataAttempt and re-enters this
+			// effect; by then the connection may have come back up.
 			setGateDataLoading(false);
+			setGateDataError('Not connected');
 			return;
 		}
 
