@@ -700,4 +700,48 @@ describe('SpaceTaskUnifiedThread', () => {
 		render(<SpaceTaskUnifiedThread taskId="task-1" />);
 		expect(screen.getByText('No task-agent activity yet.')).toBeTruthy();
 	});
+
+	it('does not render the "earlier messages hidden" banner when nothing is truncated', () => {
+		// The compact query still sets sessionMessageCount even when the slice
+		// matches the delivered rows — the banner must stay hidden.
+		mockRows = makeRows().map((row) => ({ ...row, sessionMessageCount: 2 }));
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.queryByTestId('space-task-thread-earlier-banner')).toBeNull();
+	});
+
+	it('renders a banner with the true hidden count when the compact query has truncated rows', () => {
+		// 2 delivered rows, but 27 total → banner should show 25 hidden.
+		mockRows = makeRows().map((row) => ({ ...row, sessionMessageCount: 27 }));
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		const banner = screen.getByTestId('space-task-thread-earlier-banner');
+		expect(banner).toBeTruthy();
+		expect(banner.textContent).toContain('25');
+		expect(banner.textContent).toContain('earlier');
+	});
+
+	it('aggregates hidden counts across multiple sessions', () => {
+		// Task Agent (session A): 2 delivered, 4 total → 2 hidden
+		// Coder Agent (session B): 1 delivered, 6 total → 5 hidden
+		// Reviewer Agent (session C): 1 delivered, 1 total → 0 hidden
+		// Task Agent (session A again, interleaved): same session as first
+		const rows = makeMultiAgentRows();
+		rows[0] = { ...rows[0], sessionMessageCount: 4 };
+		rows[3] = { ...rows[3], sessionMessageCount: 4 };
+		rows[1] = { ...rows[1], sessionMessageCount: 6 };
+		rows[2] = { ...rows[2], sessionMessageCount: 1 };
+		mockRows = rows;
+
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		const banner = screen.getByTestId('space-task-thread-earlier-banner');
+		expect(banner).toBeTruthy();
+		// (4-2) + (6-1) + 0 = 7
+		expect(banner.textContent).toContain('7');
+	});
+
+	it('does not render a banner when sessionMessageCount is absent (full-query fallback)', () => {
+		// Legacy full query returns rows without sessionMessageCount.
+		mockRows = makeRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+		expect(screen.queryByTestId('space-task-thread-earlier-banner')).toBeNull();
+	});
 });
