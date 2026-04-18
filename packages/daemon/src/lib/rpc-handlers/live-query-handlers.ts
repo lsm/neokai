@@ -1347,7 +1347,8 @@ export function setupLiveQueryHandlers(
 			// this block with the appropriate chain validation.
 		} else if (
 			queryName === 'spaceTaskActivity.byTask' ||
-			queryName === 'spaceTaskMessages.byTask'
+			queryName === 'spaceTaskMessages.byTask' ||
+			queryName === 'spaceTaskMessages.byTask.compact'
 		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;
