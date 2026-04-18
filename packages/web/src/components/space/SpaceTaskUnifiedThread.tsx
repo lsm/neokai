@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
+import {
+	useSpaceTaskMessages,
+	type SpaceTaskThreadMessageRow,
+} from '../../hooks/useSpaceTaskMessages';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import { SpaceTaskThreadEventFeed } from './thread/SpaceTaskThreadEventFeed';
 import { SpaceTaskCardFeed } from './thread/compact/SpaceTaskCardFeed';
@@ -58,6 +61,34 @@ interface SpaceTaskUnifiedThreadProps {
 	isAgentActive?: boolean;
 }
 
+/**
+ * Count how many messages the server has truncated for this task's sessions.
+ *
+ * The compact LiveQuery variant returns at most N rows per session and
+ * attaches `sessionMessageCount` (the true total) to each row. For every
+ * session, the hidden count is `sessionMessageCount - deliveredRows`.
+ *
+ * Returns 0 when the full query variant is used (sessionMessageCount absent
+ * on all rows) or when no session was truncated.
+ */
+function countHiddenEarlierMessages(rows: SpaceTaskThreadMessageRow[]): number {
+	const deliveredBySession = new Map<string, number>();
+	const totalBySession = new Map<string, number>();
+	for (const row of rows) {
+		const key = row.sessionId ?? '';
+		deliveredBySession.set(key, (deliveredBySession.get(key) ?? 0) + 1);
+		if (typeof row.sessionMessageCount === 'number') {
+			totalBySession.set(key, row.sessionMessageCount);
+		}
+	}
+	let hidden = 0;
+	for (const [sessionKey, total] of totalBySession) {
+		const delivered = deliveredBySession.get(sessionKey) ?? 0;
+		if (total > delivered) hidden += total - delivered;
+	}
+	return hidden;
+}
+
 export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
@@ -77,6 +108,7 @@ export function SpaceTaskUnifiedThread({
 		[parsedRows]
 	);
 	const maps = useMessageMaps(parsedMessages, `space-task-${taskId}`);
+	const hiddenEarlierCount = useMemo(() => countHiddenEarlierMessages(rows), [rows]);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -162,6 +194,15 @@ export function SpaceTaskUnifiedThread({
 			)}
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
+					{hiddenEarlierCount > 0 && (
+						<div
+							class="px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-gray-500"
+							data-testid="space-task-thread-earlier-banner"
+						>
+							↑ {hiddenEarlierCount} earlier {hiddenEarlierCount === 1 ? 'message' : 'messages'}{' '}
+							hidden
+						</div>
+					)}
 					{renderStyle === 'compact' ? (
 						<SpaceTaskCardFeed
 							parsedRows={parsedRows}
