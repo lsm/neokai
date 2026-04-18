@@ -1,6 +1,10 @@
-export const MIN_MESSAGES_BOTTOM_PADDING_PX = 128;
-// Keep last message clear of the floating footer's gradient/focus glow.
-const MESSAGES_BOTTOM_PADDING_BUFFER_PX = 24;
+// Allow the last message to slide under the floating input pill instead of
+// stopping above the whole footer stack. The footer still expands the padding
+// when it grows tall (multiline composer, queue overlays, etc.).
+export const MIN_MESSAGES_BOTTOM_PADDING_PX = 96;
+export const MAX_MESSAGES_BOTTOM_PADDING_PX = 256;
+const FLOATING_FOOTER_BASELINE_HEIGHT_PX = 112;
+const FOOTER_GROWTH_TO_PADDING_RATIO = 0.75;
 const QUEUE_OVERLAY_ROW_HEADROOM_PX = 4;
 const MAX_QUEUE_OVERLAY_ROWS = 8;
 
@@ -18,8 +22,14 @@ export function getMessagesBottomPaddingPx(
 			: 0;
 	const queueHeadroomPx = normalizedQueueRows * QUEUE_OVERLAY_ROW_HEADROOM_PX;
 
-	return Math.max(
-		MIN_MESSAGES_BOTTOM_PADDING_PX,
-		Math.ceil(footerHeightPx) + MESSAGES_BOTTOM_PADDING_BUFFER_PX + queueHeadroomPx
+	const normalizedFooterHeightPx = Math.ceil(footerHeightPx);
+	const footerGrowthPx = Math.max(0, normalizedFooterHeightPx - FLOATING_FOOTER_BASELINE_HEIGHT_PX);
+	const computedPaddingPx =
+		MIN_MESSAGES_BOTTOM_PADDING_PX +
+		Math.ceil(footerGrowthPx * FOOTER_GROWTH_TO_PADDING_RATIO) +
+		queueHeadroomPx;
+	return Math.min(
+		MAX_MESSAGES_BOTTOM_PADDING_PX,
+		Math.max(MIN_MESSAGES_BOTTOM_PADDING_PX, computedPaddingPx)
 	);
 }

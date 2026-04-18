@@ -7,6 +7,7 @@ import type {
 	SessionType,
 	ThinkingLevel,
 } from '@neokai/shared';
+import type { MutableRef } from 'preact/hooks';
 import MessageInput from './MessageInput.tsx';
 import SessionStatusBar from './SessionStatusBar.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -36,6 +37,7 @@ interface ChatComposerProps {
 	isWaitingForInput: boolean;
 	isConnected: boolean;
 	rewindMode: boolean;
+	footerRef?: MutableRef<HTMLDivElement | null>;
 	onModelSwitch: (model: ModelInfo) => void;
 	onAutoScrollChange: (enabled: boolean) => void;
 	onCoordinatorModeChange: (enabled: boolean) => void;
@@ -74,6 +76,7 @@ export function ChatComposer({
 	isWaitingForInput,
 	isConnected,
 	rewindMode,
+	footerRef,
 	onModelSwitch,
 	onAutoScrollChange,
 	onCoordinatorModeChange,
@@ -84,7 +87,10 @@ export function ChatComposer({
 	onExitRewindMode,
 }: ChatComposerProps) {
 	return (
-		<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0">
+		<div
+			ref={footerRef}
+			class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-transparent"
+		>
 			<SessionStatusBar
 				sessionId={sessionId}
 				isProcessing={isProcessing}

@@ -57,7 +57,10 @@ import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
-import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
+import {
+	getMessagesBottomPaddingPx,
+	MIN_MESSAGES_BOTTOM_PADDING_PX,
+} from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -95,6 +98,7 @@ export default function ChatContainer({
 	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const footerRef = useRef<HTMLDivElement>(null);
 	// Store scroll position info to restore after older messages are loaded
 	const scrollPositionRestoreRef = useRef<{
 		oldScrollHeight: number;
@@ -121,6 +125,9 @@ export default function ChatContainer({
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
+	const [messagesBottomPaddingPx, setMessagesBottomPaddingPx] = useState(
+		MIN_MESSAGES_BOTTOM_PADDING_PX
+	);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -621,6 +628,63 @@ export default function ChatContainer({
 		scrollPositionRestoreRef.current = null;
 	}, [messages.length, loadingOlder]);
 
+	useLayoutEffect(() => {
+		const footerEl = footerRef.current ?? document.querySelector<HTMLDivElement>('.chat-footer');
+		if (!footerEl) return;
+
+		let rafId = 0;
+		let baselineFooterHeightPx = 0;
+		let baselineTextareaHeightPx = 0;
+		const getTextareaHeightPx = () => {
+			const textareaEl = footerEl.querySelector('textarea');
+			if (!textareaEl) return 0;
+			return textareaEl.getBoundingClientRect().height;
+		};
+
+		const updatePadding = () => {
+			const nextFooterHeightPx = Math.max(
+				footerEl.getBoundingClientRect().height,
+				footerEl.scrollHeight
+			);
+			const nextTextareaHeightPx = getTextareaHeightPx();
+			if (baselineFooterHeightPx <= 0 && nextFooterHeightPx > 0) {
+				baselineFooterHeightPx = nextFooterHeightPx;
+			}
+			if (baselineTextareaHeightPx <= 0 && nextTextareaHeightPx > 0) {
+				baselineTextareaHeightPx = nextTextareaHeightPx;
+			}
+
+			const footerGrowthPx = Math.max(0, nextFooterHeightPx - baselineFooterHeightPx);
+			const textareaGrowthPx = Math.max(0, nextTextareaHeightPx - baselineTextareaHeightPx);
+			const effectiveFooterHeightPx =
+				baselineFooterHeightPx > 0
+					? baselineFooterHeightPx + Math.max(footerGrowthPx, textareaGrowthPx)
+					: nextFooterHeightPx;
+			const nextPaddingPx = getMessagesBottomPaddingPx(effectiveFooterHeightPx);
+			setMessagesBottomPaddingPx((prev) =>
+				Math.abs(prev - nextPaddingPx) < 1 ? prev : nextPaddingPx
+			);
+		};
+
+		updatePadding();
+		if (typeof ResizeObserver === 'undefined') return;
+
+		const resizeObserver = new ResizeObserver(() => {
+			cancelAnimationFrame(rafId);
+			rafId = requestAnimationFrame(updatePadding);
+		});
+		resizeObserver.observe(footerEl);
+		const textareaEl = footerEl.querySelector('textarea');
+		if (textareaEl) {
+			resizeObserver.observe(textareaEl);
+		}
+
+		return () => {
+			cancelAnimationFrame(rafId);
+			resizeObserver.disconnect();
+		};
+	}, []);
+
 	// ========================================
 	// Auto-scroll
 	// ========================================
@@ -924,7 +988,7 @@ export default function ChatContainer({
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{
 						WebkitOverflowScrolling: 'touch',
-						paddingBottom: `${MIN_MESSAGES_BOTTOM_PADDING_PX}px`,
+						paddingBottom: `${messagesBottomPaddingPx || MIN_MESSAGES_BOTTOM_PADDING_PX}px`,
 					}}
 				>
 					{/* Worktree Choice Inline */}
@@ -1075,6 +1139,7 @@ export default function ChatContainer({
 				isWaitingForInput={isWaitingForInput}
 				isConnected={isConnected}
 				rewindMode={rewindMode}
+				footerRef={footerRef}
 				onModelSwitch={handleModelSwitchWithConfirmation}
 				onAutoScrollChange={handleAutoScrollChange}
 				onCoordinatorModeChange={handleCoordinatorModeChange}

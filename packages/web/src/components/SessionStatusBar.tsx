@@ -341,6 +341,8 @@ export default function SessionStatusBar({
 
 	// Get current model icon
 	const currentModelIcon = currentModelInfo ? getModelFamilyIcon(currentModelInfo.family) : '💎';
+	const glassControlButtonBaseClass =
+		'control-btn w-8 h-8 flex items-center justify-center rounded-full bg-transparent backdrop-blur-sm hover:bg-dark-800/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
 	return (
 		<ContentContainer className="pb-2 flex items-center gap-4 justify-between">
@@ -362,8 +364,8 @@ export default function SessionStatusBar({
 						delay={300}
 					>
 						<button
-							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-								coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
+							class={`${glassControlButtonBaseClass} ${
+								coordinatorMode ? 'border-2 border-purple-500' : 'border border-dark-600/80'
 							}`}
 							onClick={handleCoordinatorModeToggle}
 							disabled={coordinatorSwitching || modelSwitching}
@@ -398,8 +400,8 @@ export default function SessionStatusBar({
 						delay={300}
 					>
 						<button
-							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-								sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
+							class={`${glassControlButtonBaseClass} ${
+								sandboxEnabled ? 'border-2 border-green-500' : 'border border-dark-600/80'
 							}`}
 							onClick={handleSandboxModeToggle}
 							disabled={sandboxSwitching || modelSwitching}
@@ -435,7 +437,7 @@ export default function SessionStatusBar({
 							delay={300}
 						>
 							<button
-								class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+								class={`${glassControlButtonBaseClass} border border-dark-600/80 text-lg`}
 								onClick={toggleModelDropdown}
 								disabled={modelLoading || modelSwitching || coordinatorSwitching}
 								title={
@@ -532,8 +534,8 @@ export default function SessionStatusBar({
 						delay={300}
 					>
 						<button
-							class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
-								thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
+							class={`${glassControlButtonBaseClass} relative ${
+								thinkingLevel === 'auto' ? 'border-dark-600/80' : 'border-transparent'
 							}`}
 							onClick={toggleThinkingDropdown}
 							title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
@@ -573,8 +575,8 @@ export default function SessionStatusBar({
 					delay={300}
 				>
 					<button
-						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
-							autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
+						class={`${glassControlButtonBaseClass} ${
+							autoScroll ? 'border-2 border-emerald-500' : 'border border-dark-600/80'
 						}`}
 						onClick={handleAutoScrollToggle}
 						title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
