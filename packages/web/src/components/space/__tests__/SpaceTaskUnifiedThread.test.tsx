@@ -59,6 +59,64 @@ vi.mock('../../sdk/SDKMessageRenderer', () => ({
 
 // ── Row factories ─────────────────────────────────────────────────────────────
 
+/**
+ * Rows whose LAST assistant message ends with a tool_use block. Used to
+ * exercise the running-border rule that requires the tail event to be a
+ * tool invocation.
+ */
+function makeToolUseTailRows() {
+	return [
+		{
+			id: 'row-t1',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'coder',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'at1',
+				session_id: 'space:space-1:task:task-1',
+				message: {
+					content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } }],
+				},
+			}),
+			createdAt: 1_710_000_000_000,
+		},
+	];
+}
+
+/**
+ * Rows whose LAST assistant message ends with a plain text block (no
+ * tool_use). Running-border rule should keep the indicator hidden even
+ * when the agent is active.
+ */
+function makeTextTailRows() {
+	return [
+		{
+			id: 'row-x1',
+			sessionId: 'space:space-1:task:task-1',
+			kind: 'task_agent',
+			role: 'coder',
+			label: 'Task Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			messageType: 'assistant',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'ax1',
+				session_id: 'space:space-1:task:task-1',
+				message: {
+					content: [{ type: 'text', text: 'Thinking about next steps...' }],
+				},
+			}),
+			createdAt: 1_710_000_000_000,
+		},
+	];
+}
+
 function makeRows() {
 	return [
 		{
@@ -463,14 +521,18 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.getByText('DONE')).toBeTruthy();
 	});
 
-	it('still renders the running-block wrapper while the debug override is active', () => {
-		// NOTE: the feed currently hardcodes the running-block index to the last
-		// visible block for debugging the animation, so even terminal-tail-only
-		// threads show the arc. Flip this assertion back to `toBeNull()` when
-		// the debug override is removed.
+	it('does NOT render the running-block wrapper when the tail block is a terminal result', () => {
+		// makeNoiseRows ends with a terminal result (DONE). Even with
+		// isAgentActive=true, the tail block is terminal so no running indicator.
 		mockRows = makeNoiseRows();
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
-		expect(screen.queryByTestId('compact-running-block')).toBeTruthy();
+		render(<SpaceTaskUnifiedThread taskId="task-1" isAgentActive={true} />);
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
+	});
+
+	it('does NOT render the running-block wrapper when isAgentActive is false', () => {
+		mockRows = makeRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" isAgentActive={false} />);
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
 	});
 
 	// ── 3-block limit ─────────────────────────────────────────────────────────
@@ -521,10 +583,16 @@ describe('SpaceTaskUnifiedThread', () => {
 
 	// ── Running indicator ─────────────────────────────────────────────────────
 
-	it('shows the running-block wrapper when the tail block is non-terminal', () => {
-		mockRows = makeRows();
-		render(<SpaceTaskUnifiedThread taskId="task-1" />);
+	it('shows the running-block wrapper when the agent is active, tail block is non-terminal, and the last row has a tool_use', () => {
+		mockRows = makeToolUseTailRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" isAgentActive={true} />);
 		expect(screen.getByTestId('compact-running-block')).toBeTruthy();
+	});
+
+	it('does NOT render the running-block wrapper when the last row is a plain-text assistant message (no tool_use)', () => {
+		mockRows = makeTextTailRows();
+		render(<SpaceTaskUnifiedThread taskId="task-1" isAgentActive={true} />);
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
 	});
 
 	// ── Agent identity ────────────────────────────────────────────────────────

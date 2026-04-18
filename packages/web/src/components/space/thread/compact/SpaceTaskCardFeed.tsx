@@ -12,7 +12,7 @@ import { getAgentColor } from '../space-task-thread-agent-colors';
 import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
-	shouldShowRunningIndicator,
+	resolveRunningBlockIndex,
 	type CompactLogicalBlock,
 } from './space-task-compact-reducer';
 
@@ -21,6 +21,12 @@ interface SpaceTaskCardFeedProps {
 	/** Current task ID — accepted for API parity with the legacy feed; not used internally. */
 	taskId: string;
 	maps: UseMessageMapsResult;
+	/**
+	 * Whether the agent session backing this task is currently active (not idle /
+	 * completed / failed / interrupted). When false the running-border animation
+	 * is suppressed even if non-terminal blocks are present.
+	 */
+	isAgentActive: boolean;
 }
 
 // ── Row-level pre-filter (structural noise only) ─────────────────────────────
@@ -158,18 +164,17 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 			</div>
 			<div class="space-y-0 px-1 pb-1" data-testid="compact-block-body">
 				{block.rows.map((row, rowIdx) => {
-					// DEBUG: mark last 10 rows as running so we can see the animation
-					// across thinking blocks and tool calls.
-					const isRunningRow = isRunningBlock && rowIdx >= lastRowIdx - 9;
-					const isLastRunningRow = isRunningBlock && rowIdx === lastRowIdx;
-					if (isLastRunningRow) {
+					// Only the last row of the running block gets the animated border — it is
+					// the most-recent non-terminal event (tool use, thinking, etc.).
+					const isRunningRow = isRunningBlock && rowIdx === lastRowIdx;
+					if (isRunningRow) {
 						return (
 							<div key={String(row.id)} data-testid="compact-running-block">
-								{renderRow(row, maps, isRunningRow)}
+								{renderRow(row, maps, true)}
 							</div>
 						);
 					}
-					return <div key={String(row.id)}>{renderRow(row, maps, isRunningRow)}</div>;
+					return <div key={String(row.id)}>{renderRow(row, maps, false)}</div>;
 				})}
 			</div>
 		</div>
@@ -196,16 +201,27 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
  *   - `.running-block` chrome wrapping the last individual event message of
  *     the tail block while the thread is still executing (non-terminal last block).
  */
-export function SpaceTaskCardFeed({ parsedRows, taskId: _taskId, maps }: SpaceTaskCardFeedProps) {
+export function SpaceTaskCardFeed({
+	parsedRows,
+	taskId: _taskId,
+	maps,
+	isAgentActive,
+}: SpaceTaskCardFeedProps) {
 	const visibleBlocks = useMemo(() => {
 		const filtered = preFilterRows(parsedRows);
 		const blocks = buildLogicalBlocks(filtered);
 		return applyCompactVisibilityRules(blocks, 3);
 	}, [parsedRows]);
 
-	const _isRunning = useMemo(() => shouldShowRunningIndicator(visibleBlocks), [visibleBlocks]);
-	// DEBUG: force running indicator on last block regardless of task status.
-	const runningBlockIdx = visibleBlocks.length - 1;
+	// Running border: shown ONLY when the agent session is actively executing
+	// AND the last visible block is non-terminal AND its last row is a tool_use
+	// event (the agent is currently invoking a tool — read/write/bash/MCP call).
+	// Plain text and thinking-only rows do not qualify. See
+	// `resolveRunningBlockIndex` for the full rule set.
+	const runningBlockIdx = useMemo(
+		() => resolveRunningBlockIndex(visibleBlocks, isAgentActive),
+		[isAgentActive, visibleBlocks]
+	);
 
 	return (
 		<div class="space-y-2 px-1 py-1" data-testid="space-task-event-feed-compact">

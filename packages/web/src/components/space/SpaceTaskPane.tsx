@@ -146,6 +146,13 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	const isTerminalTask =
 		task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
+
+	// True when at least one activity member is actively executing (not idle /
+	// completed / failed / interrupted). Used to gate the running-border animation
+	// in the compact thread feed.
+	const isAgentActive = activityMembers.some(
+		(m) => m.state === 'active' || m.state === 'queued' || m.state === 'waiting_for_input'
+	);
 	const hasUnifiedWorkflowThread =
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !isTerminalTask;
@@ -445,6 +452,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
 									bottomInsetClass={showInlineComposer ? 'pb-16' : 'pb-3'}
+									isAgentActive={isAgentActive}
 								/>
 							) : (
 								<div class="h-full overflow-y-auto">

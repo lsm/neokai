@@ -1,4 +1,8 @@
-import { isSDKResultMessage } from '@neokai/shared/sdk/type-guards';
+import {
+	isSDKAssistantMessage,
+	isSDKResultMessage,
+	isToolUseBlock,
+} from '@neokai/shared/sdk/type-guards';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 
 /**
@@ -140,4 +144,46 @@ export function getRunningBlockIndex(visibleBlocks: CompactLogicalBlock[]): numb
 		if (!visibleBlocks[i].isTerminal) return i;
 	}
 	return -1;
+}
+
+/**
+ * Returns `true` when the row is an assistant SDK message whose content
+ * contains at least one `tool_use` block.
+ *
+ * Used by the compact feed to decide whether the running-border indicator
+ * should be shown: we only animate when the last visible event is a tool
+ * invocation (where the agent is visibly "doing something"), not a plain
+ * text bubble or thinking block.
+ */
+export function rowHasToolUse(row: ParsedThreadRow): boolean {
+	if (!row.message || !isSDKAssistantMessage(row.message)) return false;
+	const content = (row.message as { message?: { content?: unknown } }).message?.content;
+	if (!Array.isArray(content)) return false;
+	return content.some((block) => isToolUseBlock(block));
+}
+
+/**
+ * Resolve the running-block index for the compact feed.
+ *
+ * The running-border animation is shown ONLY when:
+ *   1. The agent session is actively executing (`isAgentActive`), AND
+ *   2. There is a non-terminal visible block at the tail, AND
+ *   3. The last row of that block is a `tool_use` event — i.e. the agent is
+ *      currently invoking a tool (read file, bash, MCP call, …). Plain text
+ *      messages, thinking blocks, and result cards do not qualify.
+ *
+ * Returns the index of the tail block when all conditions hold, or -1 when
+ * the running indicator should be hidden.
+ */
+export function resolveRunningBlockIndex(
+	visibleBlocks: CompactLogicalBlock[],
+	isAgentActive: boolean
+): number {
+	if (!isAgentActive) return -1;
+	const idx = getRunningBlockIndex(visibleBlocks);
+	if (idx < 0) return -1;
+	const block = visibleBlocks[idx];
+	const lastRow = block.rows[block.rows.length - 1];
+	if (!lastRow || !rowHasToolUse(lastRow)) return -1;
+	return idx;
 }

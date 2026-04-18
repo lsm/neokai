@@ -4,6 +4,8 @@ import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
 	shouldShowRunningIndicator,
+	resolveRunningBlockIndex,
+	rowHasToolUse,
 	type CompactLogicalBlock,
 } from './space-task-compact-reducer';
 import type { ParsedThreadRow } from '../space-task-thread-events';
@@ -286,5 +288,84 @@ describe('shouldShowRunningIndicator', () => {
 	it('shows indicator when earlier blocks are terminal but last is not', () => {
 		const blocks = [makeBlock('b1', 'A', true), makeBlock('b2', 'B', false)];
 		expect(shouldShowRunningIndicator(blocks)).toBe(true);
+	});
+});
+
+// ── rowHasToolUse ─────────────────────────────────────────────────────────────
+
+function makeToolUseMessage(uuid: string, toolName = 'bash'): SDKMessage {
+	return {
+		type: 'assistant',
+		uuid,
+		message: { content: [{ type: 'tool_use', id: `tu-${uuid}`, name: toolName, input: {} }] },
+	} as unknown as SDKMessage;
+}
+
+describe('rowHasToolUse', () => {
+	it('returns false for null message', () => {
+		expect(rowHasToolUse(makeRow('r1', 'A', null))).toBe(false);
+	});
+
+	it('returns false for a plain text assistant message', () => {
+		expect(rowHasToolUse(makeRow('r1', 'A', makeAssistantTextMessage('r1', 'hello')))).toBe(false);
+	});
+
+	it('returns true for an assistant message with a tool_use block', () => {
+		expect(rowHasToolUse(makeRow('r1', 'A', makeToolUseMessage('r1', 'bash')))).toBe(true);
+	});
+
+	it('returns false for a result message', () => {
+		expect(rowHasToolUse(makeResultRow('r1', 'A'))).toBe(false);
+	});
+});
+
+// ── resolveRunningBlockIndex ──────────────────────────────────────────────────
+
+function makeBlockWithRows(
+	id: string,
+	label: string,
+	isTerminal: boolean,
+	rows: ParsedThreadRow[]
+): CompactLogicalBlock {
+	return { id, agentLabel: label, rows, isTerminal };
+}
+
+describe('resolveRunningBlockIndex', () => {
+	it('returns -1 when isAgentActive is false', () => {
+		const block = makeBlockWithRows('b1', 'A', false, [
+			makeRow('r1', 'A', makeToolUseMessage('r1')),
+		]);
+		expect(resolveRunningBlockIndex([block], false)).toBe(-1);
+	});
+
+	it('returns -1 when all blocks are terminal', () => {
+		const block = makeBlockWithRows('b1', 'A', true, [makeResultRow('r1', 'A')]);
+		expect(resolveRunningBlockIndex([block], true)).toBe(-1);
+	});
+
+	it('returns -1 when last row of non-terminal block is not tool_use', () => {
+		const block = makeBlockWithRows('b1', 'A', false, [
+			makeRow('r1', 'A', makeAssistantTextMessage('r1', 'thinking…')),
+		]);
+		expect(resolveRunningBlockIndex([block], true)).toBe(-1);
+	});
+
+	it('returns the last non-terminal block index when last row is tool_use', () => {
+		const running = makeBlockWithRows('b2', 'Coder', false, [
+			makeRow('r2', 'Coder', makeToolUseMessage('r2', 'read_file')),
+		]);
+		const blocks = [makeBlock('b1', 'A', true), running];
+		expect(resolveRunningBlockIndex(blocks, true)).toBe(1);
+	});
+
+	it('targets the last non-terminal block even when a later terminal block exists', () => {
+		// body: non-terminal with tool_use, then terminal result
+		const running = makeBlockWithRows('b1', 'Coder', false, [
+			makeRow('r1', 'Coder', makeToolUseMessage('r1', 'bash')),
+		]);
+		const done = makeBlockWithRows('b2', 'Task', true, [makeResultRow('r2', 'Task')]);
+		// resolveRunningBlockIndex should not return the terminal block
+		// — getRunningBlockIndex returns 0 (last non-terminal), and its last row IS tool_use
+		expect(resolveRunningBlockIndex([running, done], true)).toBe(0);
 	});
 });

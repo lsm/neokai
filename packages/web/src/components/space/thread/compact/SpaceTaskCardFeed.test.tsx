@@ -66,6 +66,26 @@ function makeAssistantTextRow(id: string, label: string, text: string): ParsedTh
 	};
 }
 
+/** Assistant row whose content includes a tool_use block — triggers the running border. */
+function makeToolUseRow(id: string, label: string, toolName = 'bash'): ParsedThreadRow {
+	return {
+		id,
+		sessionId: null,
+		label,
+		taskId: 'task-1',
+		taskTitle: 'Task One',
+		createdAt: Date.now(),
+		message: {
+			type: 'assistant',
+			uuid: id,
+			message: {
+				content: [{ type: 'tool_use', id: `tu-${id}`, name: toolName, input: {} }],
+			},
+		} as any,
+		fallbackText: null,
+	};
+}
+
 function makeResultRow(
 	id: string,
 	label: string,
@@ -157,7 +177,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r2', 'Coder Agent', 'coder said hi'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
@@ -176,7 +201,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r2', 'Coder Agent', 'b'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const blocks = container.querySelectorAll('[data-testid="compact-block"]');
@@ -191,13 +221,19 @@ describe('SpaceTaskCardFeed', () => {
 
 	// ── Running-block wrapper ────────────────────────────────────────────────
 
-	it('marks the last non-terminal row as running and passes isRunning to SDKMessageRenderer', () => {
+	it('marks the last tool-use row as running and passes isRunning to SDKMessageRenderer', () => {
+		// The running border only fires when the last visible event is a tool_use block.
 		const rows = [
-			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
-			makeAssistantTextRow('r2', 'Coder Agent', 'final — running'),
+			makeAssistantTextRow('r1', 'Task Agent', 'prior text'),
+			makeToolUseRow('r2', 'Coder Agent', 'bash'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={true}
+			/>
 		);
 
 		// The testid wrapper must exist on the last row.
@@ -213,21 +249,61 @@ describe('SpaceTaskCardFeed', () => {
 		const nonRunning = Array.from(allRenderers).filter(
 			(el) => el.getAttribute('data-running') !== '1'
 		);
-		expect(nonRunning.length).toBe(1); // only 'prior' row is non-running
+		expect(nonRunning.length).toBe(1); // only 'prior text' row is non-running
 	});
 
-	it('still wraps the tail row in running-block while the debug override is active', () => {
-		// NOTE: the feed currently hardcodes `runningBlockIdx = visibleBlocks.length - 1`
-		// so the animated border is visible on every task regardless of terminal
-		// status. When that debug is reverted, the assertion should flip back to
-		// `toBeNull()`.
+	it('suppresses running-block when last visible row is not a tool_use block', () => {
+		// Plain text bubbles should not get the animated border even when agent is active.
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'just text, no tool use'),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={true}
+			/>
+		);
+
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
+	});
+
+	it('suppresses running-block when isAgentActive is false even with non-terminal tool-use rows', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
+			makeToolUseRow('r2', 'Coder Agent', 'read_file'),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		// No running-block wrapper when agent is not active.
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
+	});
+
+	it('suppresses running-block when all visible blocks are terminal', () => {
+		// All-terminal means the task completed — no border animation.
 		const rows = [
 			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
 			makeResultRow('r2', 'Task Agent', 'success'),
 		];
-		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={true}
+			/>
+		);
 
-		expect(screen.queryByTestId('compact-running-block')).toBeTruthy();
+		expect(screen.queryByTestId('compact-running-block')).toBeNull();
 	});
 
 	// ── Agent identity header ────────────────────────────────────────────────
@@ -239,7 +315,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r3', 'Reviewer Agent', 'c'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const headers = container.querySelectorAll('[data-testid="compact-block-header"]');
@@ -259,7 +340,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r2', 'Coder Agent', 'b'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const colored = Array.from(
@@ -276,7 +362,12 @@ describe('SpaceTaskCardFeed', () => {
 	it('renders a colored dot alongside the agent label', () => {
 		const rows = [makeAssistantTextRow('r1', 'Task Agent', 'a')];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const dot = container.querySelector(
@@ -293,7 +384,14 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
 			makeResultRow('r2', 'Task Agent', 'success'),
 		];
-		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
 
 		const badges = screen.getAllByTestId('compact-block-badge');
 		expect(badges.length).toBe(1);
@@ -305,7 +403,14 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
 			makeResultRow('r2', 'Task Agent', 'error'),
 		];
-		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
 
 		const badges = screen.getAllByTestId('compact-block-badge');
 		expect(badges.length).toBe(1);
@@ -323,7 +428,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r4', 'Space Agent', 'fourth'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
@@ -345,7 +455,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeResultRow('r5', 'Completer Agent', 'success'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const badges = screen.getAllByTestId('compact-block-badge');
@@ -368,7 +483,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r4', 'Space Agent', 'fourth'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		expect(screen.queryAllByTestId('compact-block-badge').length).toBe(0);
@@ -384,7 +504,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r1', 'Task Agent', 'visible content'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
@@ -400,7 +525,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeRateLimitRow('rl3', 'Task Agent', 'rejected'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		// allowed & allowed_warning filtered; visible-content + rejected remain.
@@ -414,7 +544,12 @@ describe('SpaceTaskCardFeed', () => {
 			makeAssistantTextRow('r1', 'Task Agent', 'visible content'),
 		];
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
@@ -426,7 +561,12 @@ describe('SpaceTaskCardFeed', () => {
 
 	it('renders the root container and no blocks when given no rows', () => {
 		const { container } = render(
-			<SpaceTaskCardFeed parsedRows={[]} taskId="task-1" maps={fakeMaps as any} />
+			<SpaceTaskCardFeed
+				parsedRows={[]}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
 		);
 
 		expect(screen.getByTestId('space-task-event-feed-compact')).toBeTruthy();

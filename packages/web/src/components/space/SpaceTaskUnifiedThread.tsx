@@ -10,11 +10,18 @@ import { getSpaceTaskThreadRenderStyle } from '../../lib/space-task-thread-confi
 interface SpaceTaskUnifiedThreadProps {
 	taskId: string;
 	bottomInsetClass?: string;
+	/**
+	 * Whether the agent session is currently active (not idle / completed /
+	 * failed / interrupted). Forwarded to the compact feed to gate the running
+	 * border animation.
+	 */
+	isAgentActive?: boolean;
 }
 
 export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
+	isAgentActive = false,
 }: SpaceTaskUnifiedThreadProps) {
 	// Read render style on every render so that the value stays fresh after a
 	// localStorage write (e.g. via setSpaceTaskThreadRenderStyle in devtools).
@@ -71,7 +78,12 @@ export function SpaceTaskUnifiedThread({
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
 					{renderStyle === 'compact' ? (
-						<SpaceTaskCardFeed parsedRows={parsedRows} taskId={taskId} maps={maps} />
+						<SpaceTaskCardFeed
+							parsedRows={parsedRows}
+							taskId={taskId}
+							maps={maps}
+							isAgentActive={isAgentActive}
+						/>
 					) : (
 						<SpaceTaskThreadEventFeed events={threadEvents} taskId={taskId} maps={maps} />
 					)}
