@@ -5,6 +5,7 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@neokai/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
@@ -88,7 +89,7 @@ interface Props {
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: SDKMessage[];
+	allMessages?: ChatMessage[];
 }
 
 export function SDKUserMessage({

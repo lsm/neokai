@@ -1009,6 +1009,18 @@ export interface SpaceWorkflow {
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
+	/**
+	 * Name of the built-in template this workflow was created from or last synced to.
+	 * `undefined` for user-created workflows not based on any template.
+	 */
+	templateName?: string;
+	/**
+	 * Canonical content hash of the template at the time of last sync.
+	 * Used to detect drift: if the current template's hash differs from this value,
+	 * the template has been updated (or the workflow has been modified) since last sync.
+	 * `undefined` when no template tracking is active.
+	 */
+	templateHash?: string;
 }
 
 /**
@@ -1042,6 +1054,16 @@ export interface CreateSpaceWorkflowParams {
 	tags?: string[];
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
+	/**
+	 * Name of the built-in template this workflow is being created from.
+	 * When set, `templateHash` must also be provided.
+	 */
+	templateName?: string;
+	/**
+	 * Canonical content hash of the built-in template at creation time.
+	 * Stored for future drift detection.
+	 */
+	templateHash?: string;
 }
 
 /**
@@ -1084,6 +1106,9 @@ export interface UpdateSpaceWorkflowParams {
 	tags?: string[] | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
+	/** Update template tracking (used when syncing from a template). */
+	templateName?: string | null;
+	templateHash?: string | null;
 }
 
 // ============================================================================

@@ -342,7 +342,7 @@ describe('SDKMessageHandler', () => {
 	});
 
 	describe('handleSystemMessage', () => {
-		it('should capture SDK session ID', async () => {
+		it('should capture SDK session ID and sdkOriginPath', async () => {
 			const message: SDKMessage = {
 				type: 'system',
 				subtype: 'init',
@@ -353,13 +353,16 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect(mockSession.sdkSessionId).toBe('sdk-session-123');
+			// sdkOriginPath should be set to the session's workspacePath (no worktree in this session)
+			expect(mockSession.sdkOriginPath).toBe('/test/path');
 			expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
 				sdkSessionId: 'sdk-session-123',
+				sdkOriginPath: '/test/path',
 			});
 			expect(emitSpy).toHaveBeenCalledWith('session.updated', {
 				sessionId: 'test-session-id',
 				source: 'sdk-session',
-				session: { sdkSessionId: 'sdk-session-123' },
+				session: { sdkSessionId: 'sdk-session-123', sdkOriginPath: '/test/path' },
 			});
 		});
 

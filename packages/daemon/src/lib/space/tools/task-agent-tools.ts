@@ -26,6 +26,12 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type {
+	PendingAgentMessageRepository,
+	PendingAgentMessageRecord,
+} from '../../../storage/repositories/pending-agent-message-repository';
+import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -45,6 +51,10 @@ import type { SendMessageInput } from './node-agent-tool-schemas';
 export type { ToolResult };
 
 const log = new Logger('task-agent-tools');
+
+function normalizeAgentNameToken(value: string): string {
+	return value.trim().toLowerCase();
+}
 
 /**
  * Agent identity metadata for sub-session creation.
@@ -96,6 +106,55 @@ export interface TaskAgentToolsConfig {
 	workflowRunRepo?: SpaceWorkflowRunRepository;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
+	/**
+	 * Workflow manager for resolving gate definitions.
+	 * Required for approve_gate autonomy enforcement to look up gate.requiredLevel.
+	 */
+	workflowManager?: SpaceWorkflowManager;
+	/**
+	 * Resolves the space's current autonomy level.
+	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
+	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
+	/**
+	 * The calling agent's name (e.g., 'task-agent'). Used for gate writer authorization
+	 * in approve_gate: the writers path is taken only when writers include this name or '*'.
+	 * When omitted, only '*' in writers can match (falls back to autonomy path otherwise).
+	 */
+	myAgentName?: string;
+	/**
+	 * Optional name aliases for the calling agent. Checked alongside myAgentName during
+	 * writer authorization.
+	 */
+	myAgentNameAliases?: string[];
+	/**
+	 * Persistent queue for messages whose target node-agent session is not yet
+	 * active. When provided, send_message queues such messages instead of
+	 * failing; TaskAgentManager flushes the queue when the target activates.
+	 * Optional — when absent, the old "no active sessions found" error stands.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
+	/**
+	 * Injects a message into the Space Agent chat session for this space.
+	 * When provided, `send_message({ target: 'space-agent', ... })` escalates
+	 * directly to the Space Agent without routing through a human.
+	 */
+	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
+	/**
+	 * Optional observability hook — fired whenever a message is queued for
+	 * later delivery via `pendingMessageRepo`. Tests can capture this to
+	 * assert queue behavior without touching DB.
+	 */
+	onMessageQueued?: (record: PendingAgentMessageRecord) => void;
+	/**
+	 * TaskAgentManager instance for direct session lookup by agent name.
+	 * When provided, send_message uses `getSubSessionByAgentName` and
+	 * `getAgentNamesForTask` to resolve live sessions by name rather than
+	 * filtering NodeExecution records by status. Sessions persist until the
+	 * task is archived, so status-filtered lookup is no longer needed.
+	 */
+	taskAgentManager?: TaskAgentManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +178,46 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		gateDataRepo,
 		workflowRunRepo,
 		onGateChanged,
+		workflowManager,
+		getSpaceAutonomyLevel,
+		myAgentName,
+		myAgentNameAliases,
+		pendingMessageRepo,
+		spaceAgentInjector,
+		onMessageQueued,
+		taskAgentManager,
 	} = config;
+
+	const agentNameAliases = new Set(
+		[myAgentName, ...(myAgentNameAliases ?? [])]
+			.filter((v): v is string => typeof v === 'string')
+			.map((v) => normalizeAgentNameToken(v))
+			.filter((v) => v.length > 0)
+	);
+
+	/** Reserved agent name used by Task Agent to escalate directly to the Space Agent. */
+	const SPACE_AGENT_TARGET = 'space-agent';
+
+	/** Emit DaemonHub event + invoke observability hook when a message is queued. */
+	function emitQueued(record: PendingAgentMessageRecord): void {
+		onMessageQueued?.(record);
+		if (!daemonHub) return;
+		void daemonHub
+			.emit('space.pendingMessage.queued', {
+				sessionId: 'global',
+				spaceId: space.id,
+				workflowRunId,
+				taskId: record.taskId,
+				targetAgentName: record.targetAgentName,
+				targetKind: record.targetKind,
+				messageId: record.id,
+				attempts: record.attempts,
+				maxAttempts: record.maxAttempts,
+				expiresAt: record.expiresAt,
+				deduped: false,
+			})
+			.catch(() => {});
+	}
 
 	return {
 		/**
@@ -241,73 +339,194 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		 *   - `target: 'coder'` — point-to-point to a single agent
 		 *   - `target: '*'` — broadcast to all permitted targets
 		 *   - `target: ['coder', 'reviewer']` — multicast to multiple agents
+		 *   - `target: 'space-agent'` — escalation to the Space Agent chat session
 		 *
 		 * The Task Agent's agent name is `'task-agent'`. Default bidirectional channels
 		 * are auto-created between the Task Agent and all node agents at
 		 * node-start, so the Task Agent can reach all peers by default.
+		 *
+		 * Queue-until-active:
+		 *   If the target node agent has a declared NodeExecution row but no active
+		 *   session (e.g. during reopen/startup races), the message is persisted to
+		 *   the pending queue and auto-delivered the moment that sub-session becomes
+		 *   active. See `PendingAgentMessageRepository`.
+		 *
+		 * Idempotency:
+		 *   Callers can pass an `idempotency_key` to de-duplicate repeat sends.
+		 *   The key is scoped to `(workflowRunId, targetAgentName)`.
 		 */
-		async send_message(args: SendMessageInput): Promise<ToolResult> {
+		async send_message(args: SendMessageInput & { idempotency_key?: string }): Promise<ToolResult> {
 			const { target, message } = args;
+			const idempotencyKey = args.idempotency_key ?? null;
 			let targetAgentNames: string[];
-			const activeExecutions = nodeExecutionRepo
-				.listByWorkflowRun(workflowRunId)
-				.filter(
-					(execution) =>
-						execution.agentSessionId &&
-						(execution.status === 'in_progress' || execution.status === 'pending')
-				);
-			const knownAgentNames = [
-				...new Set(activeExecutions.map((execution) => execution.agentName)),
-			];
+
+			// Agent names that have a live session (DB-driven lookup).
+			// These are reachable regardless of NodeExecution status — sessions persist
+			// until the task is archived, not until the node execution completes.
+			const liveAgentNames = taskAgentManager
+				? await taskAgentManager.getAgentNamesForTask(taskId)
+				: [];
+
+			// Agent names declared in any NodeExecution for this run — used to detect
+			// "agent exists but not yet spawned" (queueable) vs "unknown agent" (hard error).
+			const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+			const declaredAgentNames = [...new Set(allExecutions.map((e) => e.agentName))];
 
 			if (target === '*') {
-				if (knownAgentNames.length === 0) {
+				if (liveAgentNames.length === 0) {
+					if (!taskAgentManager) {
+						log.warn(
+							'send_message: taskAgentManager is absent; broadcast target ("*") cannot resolve live agent names — returning empty-targets error'
+						);
+					}
 					return jsonResult({
 						success: false,
 						error:
 							`No active workflow agent sessions found for this run. ` +
 							`Broadcast ('*') requires at least one active target.`,
-						availableTargets: knownAgentNames,
+						availableTargets: liveAgentNames,
 					});
 				}
-				targetAgentNames = knownAgentNames;
+				targetAgentNames = liveAgentNames;
 			} else if (Array.isArray(target)) {
 				targetAgentNames = target;
 			} else {
 				targetAgentNames = [target];
 			}
-			const sendPeers = activeExecutions.map((execution) => ({
-				sessionId: execution.agentSessionId!,
-				agentName: execution.agentName,
-			}));
 			const delivered: Array<{ agentName: string; sessionId: string }> = [];
+			const queued: Array<{
+				agentName: string;
+				targetKind: 'node_agent' | 'space_agent';
+				messageId: string;
+				deduped: boolean;
+			}> = [];
 			const notFound: string[] = [];
-			const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
+			const failed: Array<{ agentName: string; sessionId?: string; error: string }> = [];
 
 			// Best-effort delivery: attempt all targets, aggregate errors.
 			for (const targetAgentName of targetAgentNames) {
-				const targetSessions = sendPeers.filter((m) => m.agentName === targetAgentName);
-				if (targetSessions.length === 0) {
+				const prefixedMessage = `[Message from task-agent]: ${message}`;
+
+				// --- Space Agent escalation path --------------------------------
+				if (targetAgentName === SPACE_AGENT_TARGET) {
+					if (spaceAgentInjector) {
+						try {
+							await spaceAgentInjector(space.id, prefixedMessage);
+							delivered.push({
+								agentName: targetAgentName,
+								sessionId: `space:chat:${space.id}`,
+							});
+						} catch (err) {
+							const errMsg = err instanceof Error ? err.message : String(err);
+							// Queue for later delivery when possible.
+							if (pendingMessageRepo) {
+								const { record, deduped } = pendingMessageRepo.enqueue({
+									workflowRunId,
+									spaceId: space.id,
+									taskId,
+									targetKind: 'space_agent',
+									targetAgentName: SPACE_AGENT_TARGET,
+									message,
+									idempotencyKey,
+								});
+								queued.push({
+									agentName: targetAgentName,
+									targetKind: 'space_agent',
+									messageId: record.id,
+									deduped,
+								});
+								if (!deduped) emitQueued(record);
+								log.warn(
+									`send_message: Space Agent injection failed (${errMsg}); queued message ${record.id} for retry`
+								);
+							} else {
+								failed.push({ agentName: targetAgentName, error: errMsg });
+							}
+						}
+					} else if (pendingMessageRepo) {
+						// No injector available right now (e.g. Space chat session not yet provisioned);
+						// persist the message so it can be delivered once infrastructure is ready.
+						const { record, deduped } = pendingMessageRepo.enqueue({
+							workflowRunId,
+							spaceId: space.id,
+							taskId,
+							targetKind: 'space_agent',
+							targetAgentName: SPACE_AGENT_TARGET,
+							message,
+							idempotencyKey,
+						});
+						queued.push({
+							agentName: targetAgentName,
+							targetKind: 'space_agent',
+							messageId: record.id,
+							deduped,
+						});
+						if (!deduped) emitQueued(record);
+					} else {
+						failed.push({
+							agentName: targetAgentName,
+							error:
+								'Space Agent escalation is not available in this context ' +
+								'(no injector and no pending-message queue configured).',
+						});
+					}
+					continue;
+				}
+
+				// --- Node-agent path --------------------------------------------
+				// Look up the live session directly by agent name. Sessions remain alive
+				// for the full task lifetime (until archive), so no status filter is needed.
+				const liveSession = taskAgentManager
+					? await taskAgentManager.getSubSessionByAgentName(taskId, targetAgentName)
+					: null;
+				if (!liveSession) {
+					// Agent is declared but hasn't been spawned yet (pre-first-execution).
+					// Queue the message if we have the pending-message repo, else fall back to notFound.
+					const isDeclaredInRun = declaredAgentNames.includes(targetAgentName);
+					if (isDeclaredInRun && pendingMessageRepo) {
+						const { record, deduped } = pendingMessageRepo.enqueue({
+							workflowRunId,
+							spaceId: space.id,
+							taskId,
+							targetKind: 'node_agent',
+							targetAgentName,
+							message,
+							idempotencyKey,
+						});
+						queued.push({
+							agentName: targetAgentName,
+							targetKind: 'node_agent',
+							messageId: record.id,
+							deduped,
+						});
+						if (!deduped) emitQueued(record);
+						continue;
+					}
 					notFound.push(targetAgentName);
 					continue;
 				}
-				for (const targetMember of targetSessions) {
-					const prefixedMessage = `[Message from task-agent]: ${message}`;
-					try {
-						await messageInjector(targetMember.sessionId, prefixedMessage);
-						delivered.push({ agentName: targetAgentName, sessionId: targetMember.sessionId });
-					} catch (err) {
-						const errMsg = err instanceof Error ? err.message : String(err);
-						failed.push({
-							agentName: targetAgentName,
-							sessionId: targetMember.sessionId,
-							error: errMsg,
-						});
-					}
+				// Deliver directly to the live session. injectSubSessionMessage calls
+				// ensureQueryStarted() so an idle session is automatically restarted.
+				try {
+					await messageInjector(liveSession.session.id, prefixedMessage);
+					delivered.push({ agentName: targetAgentName, sessionId: liveSession.session.id });
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					failed.push({
+						agentName: targetAgentName,
+						sessionId: liveSession.session.id,
+						error: errMsg,
+					});
 				}
 			}
 
-			if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
+			// If the only outcome was "notFound" with nothing delivered or queued, return hard error.
+			if (
+				notFound.length > 0 &&
+				delivered.length === 0 &&
+				queued.length === 0 &&
+				failed.length === 0
+			) {
 				return jsonResult({
 					success: false,
 					error:
@@ -319,25 +538,37 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 			if (failed.length > 0) {
 				return jsonResult({
-					success: delivered.length > 0 ? 'partial' : false,
+					success: delivered.length > 0 || queued.length > 0 ? 'partial' : false,
 					delivered,
+					queued: queued.length > 0 ? queued : undefined,
 					failed,
 					notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 					message:
-						delivered.length > 0
-							? `Message delivered to ${delivered.length} peer(s) but failed for ${failed.length} peer(s).`
+						delivered.length + queued.length > 0
+							? `Message delivered/queued for ${delivered.length + queued.length} peer(s) but failed for ${failed.length} peer(s).`
 							: `Message delivery failed for all ${failed.length} target(s).`,
 				});
 			}
 
+			const summaryParts: string[] = [];
+			if (delivered.length > 0) {
+				summaryParts.push(
+					`delivered to ${delivered.length} peer(s): ` +
+						delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ')
+				);
+			}
+			if (queued.length > 0) {
+				summaryParts.push(
+					`queued for ${queued.length} peer(s) pending activation: ` +
+						queued.map((t) => t.agentName).join(', ')
+				);
+			}
 			return jsonResult({
 				success: true,
 				delivered,
+				queued: queued.length > 0 ? queued : undefined,
 				notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
-				message:
-					`Message delivered to ${delivered.length} peer(s): ` +
-					delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ') +
-					'.',
+				message: summaryParts.length > 0 ? `Message ${summaryParts.join('; ')}.` : 'No action.',
 			});
 		},
 
@@ -422,6 +653,38 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					success: false,
 					error: `Cannot modify gate on a ${run.status} workflow run`,
 				});
+			}
+
+			// Per-field two-path authorization for agent-originated approvals.
+			// Writers path: 'approved' field's writers includes this agent's name or '*' → allow.
+			// Autonomy path: writers don't include this agent (or empty writers) → require
+			// space.autonomyLevel >= gate.requiredLevel (default 5).
+			// Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
+			if (args.approved && workflowManager && getSpaceAutonomyLevel) {
+				const workflow = workflowManager.getWorkflow(run.workflowId);
+				const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
+				const approvedField = (gateDef?.fields ?? []).find((f) => f.name === 'approved');
+				const writers = approvedField?.writers ?? [];
+				const writerMatches = writers.some((w) => {
+					const normalized = normalizeAgentNameToken(w);
+					return normalized === '*' || agentNameAliases.has(normalized);
+				});
+
+				if (!writerMatches) {
+					// Autonomy path: this agent is not in the writers list
+					const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+					const spaceLevel = await getSpaceAutonomyLevel(space.id);
+					if (spaceLevel < effectiveRequiredLevel) {
+						return jsonResult({
+							success: false,
+							error:
+								`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+								`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+								`Increase space autonomy level or request human approval.`,
+						});
+					}
+				}
+				// Writers path: writerMatches → no autonomy check needed
 			}
 
 			const existing = gateDataRepo.get(workflowRunId, args.gate_id);
@@ -557,9 +820,23 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 			'send_message',
 			'Send a message directly to one or more peer node agents via declared channel topology. ' +
 				"Supports point-to-point ('coder'), broadcast ('*'), and multicast (['coder','reviewer']). " +
-				'Validates against declared channels — returns an error with available channels if unauthorized. ' +
+				"Use target 'space-agent' to escalate to the Space Agent without human relay. " +
+				'Messages for declared-but-inactive node agents are persisted to a queue and ' +
+				'auto-delivered once that sub-session activates. ' +
+				'Pass `idempotency_key` to de-duplicate repeated sends. ' +
 				'The Task Agent has default bidirectional channels to all node agents.',
-			SendMessageSchema.shape,
+			{
+				...SendMessageSchema.shape,
+				idempotency_key: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'Optional idempotency key. If set, re-sends with the same key for the same ' +
+							'(workflowRunId, targetAgentName) are de-duplicated — the existing queued or ' +
+							'delivered message is returned instead of being re-sent.'
+					),
+			},
 			(args) => handlers.send_message(args)
 		),
 		tool(

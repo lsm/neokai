@@ -68,6 +68,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
@@ -161,6 +162,18 @@ export interface TaskAgentManagerConfig {
 	dbPath?: string;
 	/** Workflow run artifact repository — for write_artifact / list_artifacts node agent tools */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Persistent queue of Task Agent → peer agent messages waiting for the target
+	 * session to activate. When provided, `createSubSession` flushes all pending
+	 * messages for the newly-activated agent (by name) and `send_message` can
+	 * enqueue instead of failing when the target is declared but not yet active.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
+	/**
+	 * Callback to inject a message into the Space Agent chat session for a space.
+	 * Used for Task Agent → Space Agent escalation via `send_message`.
+	 */
+	spaceAgentInjector?: (spaceId: string, message: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +254,39 @@ export class TaskAgentManager {
 	 */
 	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
 
-	constructor(private readonly config: TaskAgentManagerConfig) {}
+	/**
+	 * Unsubscribe function for the `space.task.updated` listener that triggers
+	 * full session cleanup when a task reaches `archived` state.
+	 * Populated on first cleanup subscription attempt; cleared in `cleanupAll()`.
+	 */
+	private taskArchiveListenerUnsub: (() => void) | null = null;
+
+	constructor(private readonly config: TaskAgentManagerConfig) {
+		this.subscribeToTaskArchiveEvents();
+	}
+
+	/**
+	 * Subscribe to `space.task.updated` and run full cleanup for tasks that
+	 * reach the `archived` state.
+	 *
+	 * `archived` is the only truly non-recoverable terminal state for a task —
+	 * per issue #1515, node agent sessions must remain reachable (e.g. for
+	 * cross-node `send_message` from a reviewer to a completed coder) for the
+	 * full lifetime of the parent task run, and are only torn down when the
+	 * task is archived.
+	 */
+	private subscribeToTaskArchiveEvents(): void {
+		if (this.taskArchiveListenerUnsub) return;
+		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', (event) => {
+			if (event.task?.status !== 'archived') return;
+			const taskId = event.taskId;
+			// Fire-and-forget — cleanup is idempotent and safe to skip on failure
+			// (cleanupAll still sweeps leftovers on daemon shutdown).
+			void this.cleanup(taskId, 'done').catch((err) => {
+				log.warn(`TaskAgentManager: failed to clean up sessions for archived task ${taskId}:`, err);
+			});
+		});
+	}
 
 	// -------------------------------------------------------------------------
 	// Public — Task Agent lifecycle
@@ -501,9 +546,18 @@ export class TaskAgentManager {
 				daemonHub: this.config.daemonHub,
 				gateDataRepo: this.config.gateDataRepo,
 				workflowRunRepo: this.config.workflowRunRepo,
+				workflowManager: this.config.spaceWorkflowManager,
+				getSpaceAutonomyLevel: async (sid) => {
+					const s = await this.config.spaceManager.getSpace(sid);
+					return s?.autonomyLevel ?? 1;
+				},
+				myAgentName: 'task-agent',
 				onGateChanged: (runId, gateId) => {
 					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 				},
+				pendingMessageRepo: this.config.pendingMessageRepo,
+				spaceAgentInjector: this.config.spaceAgentInjector,
+				taskAgentManager: this,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -804,6 +858,76 @@ export class TaskAgentManager {
 		init: AgentSessionInit,
 		memberInfo?: SubSessionMemberInfo
 	): Promise<string> {
+		// --- Session reuse: if this agent already has a live session, reuse it.
+		// Each named agent gets exactly one AgentSession per task lifetime; subsequent
+		// node executions inject a new message into the existing session rather than
+		// spawning a fresh one. Sessions are only torn down when the task is archived.
+		// Primary state is in DB: query nodeExecutionRepo for the most recent session ID
+		// for this agent, then check agentSessionIndex (fast path) or lazily rehydrate.
+		if (memberInfo?.agentName) {
+			const parentTask = this.config.taskRepo.getTask(taskId);
+			if (parentTask?.workflowRunId) {
+				const existingExecs = this.config.nodeExecutionRepo
+					.listByWorkflowRun(parentTask.workflowRunId)
+					.filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId);
+				// listByWorkflowRun returns rows ORDER BY created_at ASC, so .at(-1) is the most recent.
+				const prevExec = existingExecs.at(-1);
+				if (prevExec?.agentSessionId) {
+					// Reuse existing session — get from memory or restore from DB
+					const existing =
+						this.agentSessionIndex.get(prevExec.agentSessionId) ??
+						(await this.rehydrateSubSession(prevExec.agentSessionId));
+					if (existing) {
+						const existingSessionId = prevExec.agentSessionId;
+						log.info(
+							`TaskAgentManager: reusing session ${existingSessionId} for agent "${memberInfo.agentName}" (task ${taskId}); skipping new session ${sessionId}`
+						);
+
+						// Point the new NodeExecution at the existing session ID.
+						if (memberInfo.nodeId) {
+							const nodeExecs = this.config.nodeExecutionRepo.listByNode(
+								parentTask.workflowRunId,
+								memberInfo.nodeId
+							);
+							const match = nodeExecs.find(
+								(e) => e.agentName === memberInfo.agentName && !e.agentSessionId
+							);
+							if (match) {
+								this.config.nodeExecutionRepo.updateSessionId(match.id, existingSessionId);
+							}
+						}
+
+						// Register a fresh completion callback for this execution turn.
+						// Clear any stale callback registered by a previous execution (e.g. from
+						// rehydrateSubSession, which registers with the old nodeId). Without this,
+						// two callbacks would fire on the next idle: one for the old execution and
+						// one for the new — causing a double NODE_COMPLETE notification.
+						if (memberInfo.nodeId) {
+							this.completionCallbacks.delete(existingSessionId);
+							this.registerCompletionCallback(existingSessionId, async () => {
+								await this.handleSubSessionComplete(taskId, memberInfo.nodeId!, existingSessionId);
+							});
+						}
+
+						// Flush any pending messages for this agent.
+						const runId = parentTask.workflowRunId;
+						void this.flushPendingMessagesForTarget(
+							runId,
+							memberInfo.agentName,
+							existingSessionId
+						).catch((err) => {
+							log.warn(
+								`TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${existingSessionId}): ${err instanceof Error ? err.message : String(err)}`
+							);
+						});
+
+						return existingSessionId;
+					}
+				}
+			}
+		}
+
+		// --- First execution for this agent: create a new session.
 		const subSession = AgentSession.fromInit(
 			init,
 			this.config.db,
@@ -876,8 +1000,127 @@ export class TaskAgentManager {
 		// Start streaming query for the sub-session
 		await subSession.startStreamingQuery();
 
+		// Flush any queued messages addressed to this agent name so that the
+		// reopen/startup race doesn't drop Task Agent → node-agent messages.
+		if (memberInfo?.agentName) {
+			const parentTask = this.config.taskRepo.getTask(taskId);
+			const runId = parentTask?.workflowRunId;
+			if (runId) {
+				void this.flushPendingMessagesForTarget(runId, memberInfo.agentName, sessionId).catch(
+					(err) => {
+						log.warn(
+							`TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+						);
+					}
+				);
+			}
+		}
+
 		log.info(`TaskAgentManager: created sub-session ${sessionId} for task ${taskId}`);
 		return sessionId;
+	}
+
+	/**
+	 * Drain the pending-message queue for a specific target in a workflow run,
+	 * delivering each pending message in FIFO order to the given session.
+	 *
+	 * Called immediately after `createSubSession()` activates a sub-session, and
+	 * also invoked by rehydration paths after daemon restart. Safe to call
+	 * repeatedly — rows already marked delivered/expired/failed are ignored.
+	 *
+	 * Expired rows are swept first so they're never delivered. Each successful
+	 * injection calls `markDelivered`; each failure increments attempts via
+	 * `markAttemptFailed` and the row stays pending until `max_attempts` is hit.
+	 */
+	async flushPendingMessagesForTarget(
+		workflowRunId: string,
+		targetAgentName: string,
+		sessionId: string
+	): Promise<void> {
+		const repo = this.config.pendingMessageRepo;
+		if (!repo) return;
+
+		// Expire stale rows first so we don't deliver messages that have exceeded their TTL.
+		repo.expireStale(workflowRunId);
+
+		const pending = repo.listPendingForTarget(workflowRunId, targetAgentName);
+		if (pending.length === 0) return;
+
+		log.info(
+			`TaskAgentManager: flushing ${pending.length} pending message(s) for agent=${targetAgentName} session=${sessionId}`
+		);
+
+		for (const row of pending) {
+			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
+			try {
+				await this.injectSubSessionMessage(sessionId, prefixed);
+				repo.markDelivered(row.id, sessionId);
+				this.emitPendingDelivered(row.id, sessionId, row);
+			} catch (err) {
+				const errMsg = err instanceof Error ? err.message : String(err);
+				log.warn(
+					`TaskAgentManager: pending message ${row.id} delivery to ${sessionId} failed: ${errMsg}`
+				);
+				repo.markAttemptFailed(row.id, errMsg);
+				// Keep going — a single per-row failure must not block the rest of the queue.
+			}
+		}
+	}
+
+	/**
+	 * Drain the pending-message queue for the Space Agent target of a workflow run.
+	 * Uses the configured `spaceAgentInjector`. Called after space chat session
+	 * provisioning / rehydration so that Task Agent escalations survive restarts.
+	 */
+	async flushPendingMessagesForSpaceAgent(spaceId: string, workflowRunId: string): Promise<void> {
+		const repo = this.config.pendingMessageRepo;
+		const inject = this.config.spaceAgentInjector;
+		if (!repo || !inject) return;
+
+		repo.expireStale(workflowRunId);
+
+		const pending = repo
+			.listPendingForTarget(workflowRunId, 'space-agent')
+			.filter((r) => r.targetKind === 'space_agent');
+		if (pending.length === 0) return;
+
+		const spaceChatSessionId = `space:chat:${spaceId}`;
+		log.info(
+			`TaskAgentManager: flushing ${pending.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
+		);
+
+		for (const row of pending) {
+			const prefixed = `[Message from ${row.sourceAgentName}]: ${row.message}`;
+			try {
+				await inject(spaceId, prefixed);
+				repo.markDelivered(row.id, spaceChatSessionId);
+				this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+			} catch (err) {
+				const errMsg = err instanceof Error ? err.message : String(err);
+				log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
+				repo.markAttemptFailed(row.id, errMsg);
+			}
+		}
+	}
+
+	/** Emit observability event that a queued message was delivered. */
+	private emitPendingDelivered(
+		messageId: string,
+		sessionId: string,
+		row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
+	): void {
+		if (!this.config.daemonHub) return;
+		void this.config.daemonHub
+			.emit('space.pendingMessage.delivered', {
+				sessionId: 'global',
+				spaceId: row.spaceId,
+				workflowRunId: row.workflowRunId,
+				targetAgentName: row.targetAgentName,
+				targetKind: row.targetKind,
+				messageId,
+				deliveredSessionId: sessionId,
+			})
+			.catch(() => {});
 	}
 
 	// -------------------------------------------------------------------------
@@ -934,6 +1177,45 @@ export class TaskAgentManager {
 			return;
 		}
 		throw new Error(`Sub-session not found: ${subSessionId}`);
+	}
+
+	/**
+	 * Find the live AgentSession for a named agent within a task.
+	 *
+	 * Queries NodeExecution records from DB to find the most recent agentSessionId
+	 * for the given agent name, then returns the live session from agentSessionIndex
+	 * (fast path) or lazily rehydrates it from DB (after daemon restart).
+	 *
+	 * Returns null if the agent has never been spawned for this task.
+	 */
+	async getSubSessionByAgentName(taskId: string, agentName: string): Promise<AgentSession | null> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task?.workflowRunId) return null;
+
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+		// Most recent execution for this agent that has a session ID assigned
+		const exec = executions.filter((e) => e.agentName === agentName && e.agentSessionId).at(-1);
+		if (!exec?.agentSessionId) return null;
+
+		// Fast path: session already live in memory
+		const cached = this.agentSessionIndex.get(exec.agentSessionId);
+		if (cached) return cached;
+
+		// Slow path: restore from DB (lazy rehydration — no explicit startup step needed)
+		return this.rehydrateSubSession(exec.agentSessionId);
+	}
+
+	/**
+	 * Return all agent names that have an assigned session in this task's workflow run.
+	 * Used by the broadcast ('*') path in send_message.
+	 * Reads from DB so it is correct after daemon restarts without any rehydration step.
+	 */
+	async getAgentNamesForTask(taskId: string): Promise<string[]> {
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task?.workflowRunId) return [];
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+		const names = new Set(executions.filter((e) => e.agentSessionId).map((e) => e.agentName));
+		return [...names];
 	}
 
 	// -------------------------------------------------------------------------
@@ -1032,6 +1314,33 @@ export class TaskAgentManager {
 		});
 	}
 
+	/**
+	 * Interrupt a sub-session by its agent session ID WITHOUT deleting it.
+	 *
+	 * Unlike `cancelBySessionId`, this preserves the session in memory and in
+	 * the DB, so it remains reachable via `send_message` / `injectSubSessionMessage`
+	 * while the parent task is still active.
+	 *
+	 * Use this when the workflow run completes (end node fires) but the task
+	 * is not yet `archived` — siblings should stop processing but remain
+	 * messageable in case a downstream node needs to follow up (e.g. a reviewer
+	 * sending feedback back to a coder whose node has already finished).
+	 *
+	 * No-op if the session is not found or is not in a state that can be interrupted.
+	 */
+	async interruptBySessionId(agentSessionId: string): Promise<void> {
+		const session = this.agentSessionIndex.get(agentSessionId);
+		if (!session) return;
+		try {
+			await session.handleInterrupt();
+		} catch (err) {
+			log.warn(
+				`TaskAgentManager.interruptBySessionId: failed to interrupt session ${agentSessionId}:`,
+				err
+			);
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Public — rehydration
 	// -------------------------------------------------------------------------
@@ -1094,6 +1403,10 @@ export class TaskAgentManager {
 	 * Called on daemon shutdown to release all resources.
 	 */
 	async cleanupAll(): Promise<void> {
+		if (this.taskArchiveListenerUnsub) {
+			this.taskArchiveListenerUnsub();
+			this.taskArchiveListenerUnsub = null;
+		}
 		const taskIds = Array.from(this.taskAgentSessions.keys());
 		await Promise.allSettled(taskIds.map((taskId) => this.cleanup(taskId)));
 		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks cleaned up)`);
@@ -1705,9 +2018,18 @@ export class TaskAgentManager {
 			daemonHub: this.config.daemonHub,
 			gateDataRepo: this.config.gateDataRepo,
 			workflowRunRepo: this.config.workflowRunRepo,
+			workflowManager: this.config.spaceWorkflowManager,
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await this.config.spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
+			myAgentName: 'task-agent',
 			onGateChanged: (runId, gateId) => {
 				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			pendingMessageRepo: this.config.pendingMessageRepo,
+			spaceAgentInjector: this.config.spaceAgentInjector,
+			taskAgentManager: this,
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
@@ -1901,6 +2223,16 @@ export class TaskAgentManager {
 
 		// --- Restart the streaming query (idempotent if already running)
 		await agentSession.startStreamingQuery();
+
+		// Flush any pending Task Agent → this agent messages that accumulated while
+		// the sub-session was not alive in memory.
+		void this.flushPendingMessagesForTarget(workflowRunId, execution.agentName, subSessionId).catch(
+			(err) => {
+				log.warn(
+					`TaskAgentManager.rehydrateSubSession: flushPendingMessagesForTarget failed for ${execution.agentName} (session ${subSessionId}): ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		);
 
 		log.info(
 			`TaskAgentManager.rehydrateSubSession: rehydrated sub-session ${subSessionId} for task ${taskId} (node ${execution.workflowNodeId})`
@@ -2186,6 +2518,10 @@ export class TaskAgentManager {
 			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
 			onReportResult,
 			artifactRepo: this.config.artifactRepo,
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
 		});
 	}
 }

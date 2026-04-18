@@ -385,6 +385,26 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Rewrite those `approved` fields to `writers: []` so external-approval
 	//   gates keep working under the new authorization rules.
 	runMigration89(db);
+
+	// Migration 90: Add template_name and template_hash to space_workflows for drift detection.
+	runMigration90(db);
+
+	// Migration 91: Add instructions column to space_workflows.
+	//   Stores workflow-level instructions injected into every agent session.
+	runMigration91(db);
+
+	// Migration 92: Persistent queue for Task Agent → node agent / Space Agent
+	//   messages. Enables queue-until-active delivery when a target session is
+	//   declared in the workflow but not yet active (e.g. reopen races, daemon
+	//   restarts, lazy node activation). The flush-on-activate hook in
+	//   TaskAgentManager drains pending rows when a sub-session comes online.
+	runMigration92(db);
+
+	// Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
+	//   Stores the resolved CWD used when the SDK session was first created, so that
+	//   the session file can be found even when the effective CWD changes between daemon
+	//   restarts (e.g. when a worktree is added/removed after the session was started).
+	runMigration93(db);
 }
 
 /**
@@ -5958,5 +5978,116 @@ export function runMigration89(db: BunDatabase): void {
 		if (changed) {
 			update.run(JSON.stringify(gates), row.id);
 		}
+	}
+}
+
+/**
+ * Migration 90: Add template tracking columns to space_workflows.
+ *
+ * - template_name TEXT — the stable name of the built-in template this workflow
+ *   was created from or last synced to (e.g. "Fullstack QA Loop").
+ *   NULL for user-created workflows not based on any template.
+ *
+ * - template_hash TEXT — SHA-256 hex hash of the template's canonical content
+ *   fingerprint at the time of creation or last sync. Used for drift detection.
+ *   NULL when template_name is NULL.
+ */
+function runMigration90(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	if (!tableHasColumn(db, 'space_workflows', 'template_name')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN template_name TEXT DEFAULT NULL`);
+	}
+	if (!tableHasColumn(db, 'space_workflows', 'template_hash')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN template_hash TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 91: Add instructions column to space_workflows.
+ *
+ * - instructions TEXT — workflow-level instructions injected into every agent session
+ *   in this workflow. NULL for workflows with no explicit instructions.
+ */
+function runMigration91(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+
+	if (!tableHasColumn(db, 'space_workflows', 'instructions')) {
+		db.exec(`ALTER TABLE space_workflows ADD COLUMN instructions TEXT DEFAULT NULL`);
+	}
+}
+
+/**
+ * Migration 92: Create the `pending_agent_messages` table.
+ *
+ * Persistent, ordered queue for messages the Task Agent sends to peer agents
+ * (node agents or the Space Agent) when the target session isn't active yet.
+ * Queued rows are drained by `flushPendingMessagesForTarget()` the moment a
+ * sub-session activates, by rehydration paths after daemon restart, and by a
+ * periodic sweep. Rows carry bounded retry (`attempts <= max_attempts`) and
+ * an `expires_at` TTL so stale entries are dropped instead of replayed forever.
+ *
+ * Observability: queued/delivered events are emitted on DaemonHub
+ * (`space.pendingMessage.queued` / `space.pendingMessage.delivered`) so the UI
+ * and tests can observe the queue without polling.
+ */
+export function runMigration92(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_runs')) return;
+	if (tableExists(db, 'pending_agent_messages')) return;
+
+	db.exec(`
+		CREATE TABLE pending_agent_messages (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
+			target_kind TEXT NOT NULL
+				CHECK(target_kind IN ('node_agent', 'space_agent')),
+			target_agent_name TEXT NOT NULL,
+			message TEXT NOT NULL,
+			idempotency_key TEXT,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 5,
+			last_attempt_at INTEGER,
+			last_error TEXT,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
+			delivered_at INTEGER,
+			delivered_session_id TEXT,
+			expires_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_status ` +
+			`ON pending_agent_messages(workflow_run_id, status, created_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_target ` +
+			`ON pending_agent_messages(workflow_run_id, target_agent_name, status, created_at)`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem ` +
+			`ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
+			`WHERE idempotency_key IS NOT NULL`
+	);
+}
+
+/**
+ * Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
+ *
+ * Stores the resolved CWD used when the SDK session was first created, enabling
+ * the daemon to locate the SDK session file even when the effective CWD changes
+ * between daemon restarts (e.g. when a worktree is added/removed).
+ */
+export function runMigration93(db: BunDatabase): void {
+	if (!tableExists(db, 'sessions')) return;
+	try {
+		db.prepare('SELECT sdk_origin_path FROM sessions LIMIT 1').all();
+	} catch {
+		db.exec('ALTER TABLE sessions ADD COLUMN sdk_origin_path TEXT');
 	}
 }

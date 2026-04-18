@@ -164,6 +164,7 @@ function seedNodeExec(
 
 class MockTaskAgentManager {
 	readonly cancelledSessions: string[] = [];
+	readonly interruptedSessions: string[] = [];
 	readonly spawnedExecutionSessions: string[] = [];
 
 	isTaskAgentAlive(_taskId: string): boolean {
@@ -207,6 +208,10 @@ class MockTaskAgentManager {
 
 	cancelBySessionId(agentSessionId: string): void {
 		this.cancelledSessions.push(agentSessionId);
+	}
+
+	async interruptBySessionId(agentSessionId: string): Promise<void> {
+		this.interruptedSessions.push(agentSessionId);
 	}
 }
 
@@ -1048,10 +1053,14 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			}
 		});
 
-		test('canonical task done triggers sibling exec cancellation', async () => {
-			// Sibling cancellation now fires on canonical task transition to a
-			// terminal status, not on end-node-execution observation. Any still-
-			// in-flight node executions are cancelled so their agents stop work.
+		test('canonical task done interrupts siblings but keeps sessions alive (idle)', async () => {
+			// Per issue #1515: node agent sessions must remain reachable via
+			// send_message until the parent task reaches `archived`. When the
+			// task transitions to `done` / `cancelled`, sibling NodeExecutions
+			// still in flight are interrupted (session stops processing) and
+			// their status transitions to `idle` — NOT `cancelled` — so they
+			// remain a valid message target. The session itself is kept alive
+			// in memory; only `archived` triggers full teardown.
 			const mockTam = new MockTaskAgentManager();
 			mockTam.isSessionAlive = () => true;
 			const rt = makeRuntimeWithTam({
@@ -1060,7 +1069,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const workflow = workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
-				name: `Sibling Cancel On Task Terminal ${Date.now()}`,
+				name: `Sibling Interrupt On Task Terminal ${Date.now()}`,
 				description: '',
 				nodes: [
 					{ id: 'ec-sibling', name: 'Sibling', agentId: AGENT_A },
@@ -1082,7 +1091,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 			);
 			seedNodeExec(db, run.id, 'ec-end', 'End', 'idle');
 
-			// Canonical task transitions to done; runtime cancels in-flight siblings.
+			// Canonical task transitions to done; runtime quiesces in-flight siblings.
 			taskRepo.updateTask(tasks[0].id, { status: 'done' });
 
 			await rt.executeTick();
@@ -1092,11 +1101,83 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
 			const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
 			const siblingExec = execs.find((e) => e.workflowNodeId === 'ec-sibling');
-			expect(siblingExec?.status).toBe('cancelled');
-			expect(mockTam.cancelledSessions).toContain(siblingSessionId);
+			// Sibling execution transitions to `idle` (reachable), not `cancelled` (destroyed).
+			expect(siblingExec?.status).toBe('idle');
+			// Sibling session retains its agentSessionId so send_message can still reach it.
+			expect(siblingExec?.agentSessionId).toBe(siblingSessionId);
+			// Runtime interrupted the session — but did NOT delete/cancel it.
+			expect(mockTam.interruptedSessions).toContain(siblingSessionId);
+			expect(mockTam.cancelledSessions).not.toContain(siblingSessionId);
 
 			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
 			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('sibling session remains reachable for send_message after workflow completion (#1515)', async () => {
+			// Regression for issue #1515: when a downstream node (e.g. a reviewer)
+			// tries to resolve peers for send_message AFTER an upstream sibling
+			// has completed, the sibling's session must still appear as a valid
+			// target. This test asserts the post-completion state that feeds
+			// AgentMessageRouter.deliverMessage's peer lookup:
+			//
+			//   1. The sibling NodeExecution row status === 'idle' (not cancelled)
+			//   2. The sibling agentSessionId is still populated
+			//
+			// These two invariants are what list_peers / deliverMessage rely on
+			// when the Task Agent asks for a reviewer→coder send_message to
+			// succeed after the coder node has finished.
+			const mockTam = new MockTaskAgentManager();
+			mockTam.isSessionAlive = () => true;
+			const rt = makeRuntimeWithTam({
+				taskAgentManager: mockTam as unknown as TaskAgentManager,
+			});
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Post-Completion Messaging ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'coder-node', name: 'Coder', agentId: AGENT_A },
+					{ id: 'reviewer-node', name: 'Reviewer', agentId: AGENT_B },
+				],
+				startNodeId: 'coder-node',
+				endNodeId: 'reviewer-node',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const coderSessionId = 'coder-session-1515';
+			const coderExecId = seedNodeExec(db, run.id, 'coder-node', 'Coder', 'in_progress');
+			db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+				coderSessionId,
+				coderExecId
+			);
+			seedNodeExec(db, run.id, 'reviewer-node', 'Reviewer', 'idle');
+
+			// Reviewer flips the canonical task to done (e.g. after merging a PR).
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			await rt.executeTick();
+
+			// The coder NodeExecution must remain a valid send_message target:
+			// status=idle (listed by list_peers) and agentSessionId preserved
+			// (used by AgentMessageRouter.deliverMessage to locate the session).
+			const coderExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((e) => e.workflowNodeId === 'coder-node');
+			expect(coderExec?.status).toBe('idle');
+			expect(coderExec?.agentSessionId).toBe(coderSessionId);
+
+			// TaskAgentManager was instructed to interrupt (not destroy) the
+			// coder session — the session object itself is still registered
+			// and reachable for message injection.
+			expect(mockTam.interruptedSessions).toContain(coderSessionId);
+			expect(mockTam.cancelledSessions).not.toContain(coderSessionId);
+
+			// The parent task is `done`, not yet `archived` — in production this
+			// means TaskAgentManager's archive listener has not fired, so the
+			// sub-session record also survives full cleanup.
+			const updatedTask = taskRepo.getTask(tasks[0].id);
+			expect(updatedTask?.status).toBe('done');
 		});
 
 		test('workflow without endNodeId is rejected at start', async () => {

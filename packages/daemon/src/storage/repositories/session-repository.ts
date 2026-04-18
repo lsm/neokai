@@ -19,8 +19,8 @@ export class SessionRepository {
 	 */
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, type, session_context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -41,6 +41,7 @@ export class SessionRepository {
 			session.worktree?.branch ?? null,
 			session.gitBranch ?? null,
 			session.sdkSessionId ?? null,
+			session.sdkOriginPath ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
 			session.processingState ?? null,
 			session.archivedAt ?? null,
@@ -156,6 +157,10 @@ export class SessionRepository {
 			fields.push('sdk_session_id = ?');
 			values.push(updates.sdkSessionId ?? null);
 		}
+		if ('sdkOriginPath' in updates) {
+			fields.push('sdk_origin_path = ?');
+			values.push(updates.sdkOriginPath ?? null);
+		}
 		if (updates.availableCommands !== undefined) {
 			fields.push('available_commands = ?');
 			values.push(updates.availableCommands ? JSON.stringify(updates.availableCommands) : null);
@@ -269,6 +274,7 @@ export class SessionRepository {
 			worktree,
 			gitBranch: (row.git_branch as string | null) ?? undefined,
 			sdkSessionId: (row.sdk_session_id as string | null) ?? undefined,
+			sdkOriginPath: (row.sdk_origin_path as string | null) ?? undefined,
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
 			archivedAt: (row.archived_at as string | null) ?? undefined,

@@ -4,9 +4,12 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, SessionInfo, HealthStatus } from './types.ts';
+import type { AuthStatus, SessionInfo, HealthStatus, NeokaiActionMessage } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
+
+/** A message in the chat list — either a native SDK message or a NeoKai action prompt. */
+export type ChatMessage = SDKMessage | NeokaiActionMessage;
 
 /**
  * Global State Channels
@@ -196,7 +199,7 @@ export interface SessionState {
 
 // State channel: {sessionId}:state.sdkMessages
 export interface SDKMessagesState {
-	sdkMessages: SDKMessage[];
+	sdkMessages: ChatMessage[];
 	hasMore: boolean;
 	timestamp: number;
 }
@@ -243,7 +246,7 @@ export interface SessionsUpdate {
 }
 
 export interface SDKMessagesUpdate {
-	added?: SDKMessage[];
+	added?: ChatMessage[];
 	timestamp: number;
 }
 

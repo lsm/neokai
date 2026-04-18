@@ -34,6 +34,7 @@ describe('QueryLifecycleManager', () => {
 
 	// Mock spies
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let saveNeokaiActionMessageSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let setIdleSpy: ReturnType<typeof mock>;
@@ -59,6 +60,7 @@ describe('QueryLifecycleManager', () => {
 		};
 
 		updateSessionSpy = mock(() => {});
+		saveNeokaiActionMessageSpy = mock(() => 'row-id-mock');
 		emitSpy = mock(async () => {});
 		publishSpy = mock(async () => {});
 		setIdleSpy = mock(async () => {});
@@ -75,6 +77,7 @@ describe('QueryLifecycleManager', () => {
 			messageQueue,
 			db: {
 				updateSession: updateSessionSpy,
+				saveNeokaiActionMessage: saveNeokaiActionMessageSpy,
 			} as unknown as Database,
 			messageHub: {
 				event: publishSpy,
@@ -743,16 +746,30 @@ describe('QueryLifecycleManager', () => {
 			expect(clearModelsCacheSpy).toHaveBeenCalled();
 		});
 
-		test('validates SDK session when sdkSessionId exists', async () => {
-			// When session has sdkSessionId, validateAndRepairSDKSession should be called
-			mockContext = createMockContext();
-			mockContext.session.sdkSessionId = 'sdk-session-abc';
-			manager = new QueryLifecycleManager(mockContext);
+		test('validates SDK session when sdkSessionId exists and file is present', async () => {
+			// When session has sdkSessionId and the file exists, query starts after validation.
+			// This requires a temp dir so the file can be located by the file manager.
+			const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
+			try {
+				process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
+				const sdkSessionId = 'sdk-session-abc';
+				// Create file at current workspace path
+				const projectKey = '/test/workspace'.replace(/[/.]/g, '-');
+				mkdirSync(join(tmpTestDir, 'projects', projectKey), { recursive: true });
+				writeFileSync(join(tmpTestDir, 'projects', projectKey, `${sdkSessionId}.jsonl`), '');
 
-			await manager.ensureQueryStarted();
+				mockContext = createMockContext();
+				mockContext.session.sdkSessionId = sdkSessionId;
+				manager = new QueryLifecycleManager(mockContext);
 
-			// Should have started query after validation
-			expect(startStreamingCalled).toBe(true);
+				await manager.ensureQueryStarted();
+
+				// File found → query should start
+				expect(startStreamingCalled).toBe(true);
+			} finally {
+				delete process.env.TEST_SDK_SESSION_DIR;
+				rmSync(tmpTestDir, { recursive: true, force: true });
+			}
 		});
 
 		test('handles interrupt wait error gracefully', async () => {
@@ -1325,6 +1342,138 @@ describe('QueryLifecycleManager', () => {
 
 					// sdkSessionId preserved — SDK will attempt recovery on next query
 					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+		});
+
+		/**
+		 * Regression tests for Task #12: cross-workspace / worktree resume.
+		 *
+		 * When a session's effective CWD changes between daemon restarts (e.g. a worktree
+		 * is added after the session was created), the SDK session file lives under the
+		 * OLD project directory. The fix locates and migrates the file before resume.
+		 */
+		describe('cross-workspace resume (Task #12)', () => {
+			test(
+				'migrates session file from sdkOriginPath to current CWD when they differ',
+				async () => {
+					const sdkSessionId = 'sdk-migrate-origin-path';
+					const originWorkspace = '/origin/workspace';
+					const currentWorktree = '/current/worktree';
+
+					// File exists at the origin workspace's project dir
+					createSdkFile(originWorkspace, sdkSessionId);
+
+					// Session has sdkOriginPath = origin, but worktree CWD = current
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.sdkOriginPath = originWorkspace;
+					mockContext.session.worktree = {
+						isWorktree: true,
+						worktreePath: currentWorktree,
+						branch: 'feature/test',
+						mainRepoPath: originWorkspace,
+					};
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// sdkSessionId preserved (migration succeeded)
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+
+					// sdkOriginPath updated to current worktree path after migration
+					expect(mockContext.session.sdkOriginPath).toBe(currentWorktree);
+
+					// DB updated with new sdkOriginPath
+					expect(updateSessionSpy).toHaveBeenCalledWith('test-session', {
+						sdkOriginPath: currentWorktree,
+					});
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'finds session file via global scan when sdkOriginPath is not set (legacy sessions)',
+				async () => {
+					const sdkSessionId = 'sdk-global-scan-legacy';
+					// Simulate a legacy session: file is at workspace path, no sdkOriginPath stored
+					const legacyWorkspace = '/legacy/workspace';
+					createSdkFile(legacyWorkspace, sdkSessionId);
+
+					// Session has sdkSessionId but no sdkOriginPath (pre-fix session)
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.sdkOriginPath = undefined;
+					// No worktree — current workspace differs from where the file is
+					mockContext.session.workspacePath = '/new/different/workspace';
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// sdkSessionId preserved — global scan found and migrated the file
+					expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'blocks query and emits sdk_resume_choice action when transcript file not found anywhere',
+				async () => {
+					// sdkSessionId set but no file exists anywhere under TEST_SDK_SESSION_DIR
+					mockContext.session.sdkSessionId = 'sdk-completely-missing';
+					mockContext.session.sdkOriginPath = '/some/deleted/workspace';
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// Query must NOT start — user must choose first
+					expect(startStreamingCalled).toBe(false);
+
+					// A sdk_resume_choice action message must be saved to DB
+					expect(saveNeokaiActionMessageSpy).toHaveBeenCalledTimes(1);
+					const savedMsg = saveNeokaiActionMessageSpy.mock.calls[0][1];
+					expect(savedMsg.type).toBe('neokai_action');
+					expect(savedMsg.action).toBe('sdk_resume_choice');
+					expect(savedMsg.resolved).toBe(false);
+					expect(savedMsg.session_id).toBe('test-session');
+
+					// The action message must be broadcast via state.sdkMessages.delta
+					expect(publishSpy).toHaveBeenCalledWith(
+						'state.sdkMessages.delta',
+						expect.objectContaining({
+							added: expect.arrayContaining([
+								expect.objectContaining({
+									type: 'neokai_action',
+									action: 'sdk_resume_choice',
+								}),
+							]),
+						}),
+						expect.objectContaining({ channel: 'session:test-session' })
+					);
+				},
+				{ timeout: 5000 }
+			);
+
+			test(
+				'sets sdkOriginPath for sessions that have the file at current workspace but no origin recorded',
+				async () => {
+					const sdkSessionId = 'sdk-set-origin-on-existing';
+					// File exists at the current workspace (e.g., session was created here)
+					createSdkFile('/test/workspace', sdkSessionId);
+
+					mockContext.session.sdkSessionId = sdkSessionId;
+					mockContext.session.sdkOriginPath = undefined; // not set yet
+					// No worktree — current workspace = /test/workspace (from createMockContext)
+					manager = new QueryLifecycleManager(mockContext);
+
+					await manager.ensureQueryStarted();
+
+					// sdkOriginPath should now be set to the current workspace
+					expect(mockContext.session.sdkOriginPath).toBe('/test/workspace');
+
+					// DB updated
+					expect(updateSessionSpy).toHaveBeenCalledWith('test-session', {
+						sdkOriginPath: '/test/workspace',
+					});
 				},
 				{ timeout: 5000 }
 			);

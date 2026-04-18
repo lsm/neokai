@@ -652,9 +652,19 @@ export class SDKMessageHandler {
 			// Update in-memory session
 			session.sdkSessionId = message.session_id;
 
+			// Record the workspace path used as CWD when this SDK session was created.
+			// The SDK stores conversation files at:
+			//   ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl
+			// Persisting this "origin path" allows the daemon to locate and migrate the
+			// session file on resume even when the effective CWD changes (e.g. a worktree
+			// is added or removed between daemon restarts).
+			const sdkOriginPath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
+			session.sdkOriginPath = sdkOriginPath;
+
 			// Persist to database
 			db.updateSession(session.id, {
 				sdkSessionId: message.session_id,
+				sdkOriginPath,
 			});
 
 			// Emit session.updated event so StateManager broadcasts the change
@@ -662,7 +672,7 @@ export class SDKMessageHandler {
 			await daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'sdk-session',
-				session: { sdkSessionId: message.session_id },
+				session: { sdkSessionId: message.session_id, sdkOriginPath },
 			});
 		}
 

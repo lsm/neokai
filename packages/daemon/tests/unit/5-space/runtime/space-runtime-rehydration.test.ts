@@ -406,6 +406,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 					return `session:${t.id}`;
 				},
 				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
 				rehydrate: async () => {
 					rehydrateCallCount++;
 				},
@@ -443,6 +444,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 				isSessionAlive: () => false,
 				spawnWorkflowNodeAgentForExecution: async () => 'session-1',
 				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
 				rehydrate: async () => {
 					rehydrateCallCount++;
 				},
@@ -489,6 +491,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 					return `session:${t.id}`;
 				},
 				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
 				rehydrate: async () => {
 					// Capture executor count at the moment rehydrate() is called
 					executorCountAtRehydrate = rtRef?.executorCount ?? 0;
@@ -560,6 +563,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 					return `session:${t.id}`;
 				},
 				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
 				rehydrate: async () => {},
 			};
 
@@ -621,6 +625,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 					return `session:${t.id}`;
 				},
 				cancelBySessionId: () => {},
+				interruptBySessionId: async () => {},
 				rehydrate: async () => {},
 			};
 

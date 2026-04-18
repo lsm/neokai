@@ -22,6 +22,7 @@ import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 import { getVisualNodeDimensions } from './nodeMetrics';
+import { useIsMobileCanvas } from '../../../hooks/useIsMobileCanvas';
 
 // ============================================================================
 // Props
@@ -170,7 +171,12 @@ export function WorkflowNode({
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
 	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
-	const dimensions = getVisualNodeDimensions(step);
+	const isMobileCanvas = useIsMobileCanvas();
+	const baseDimensions = getVisualNodeDimensions(step);
+	// Compact Task Agent on mobile: narrower + shorter to keep the pinned node
+	// from dominating the canvas. Regular nodes keep their normal dimensions so
+	// edge routing / port positions remain stable across breakpoints.
+	const dimensions = isTaskAgent && isMobileCanvas ? { width: 112, height: 36 } : baseDimensions;
 
 	const multi = isMultiAgentNode(step);
 	const singleSlot =
@@ -352,15 +358,33 @@ export function WorkflowNode({
 	const pulseClass = hasActiveExecution ? 'animate-pulse' : '';
 	const activeAnchorSideSet = new Set(activeAnchorSides);
 
-	// Task Agent: render a visually distinct pinned node with no ports
+	// Task Agent: render a visually distinct pinned node with no ports.
+	//
+	// Mobile (< Tailwind md breakpoint): render a compact variant. The visible
+	// "Task Agent" header badge is oversized on small viewports, so we hide it
+	// visually with `sr-only` (keeping it for screen readers) and shrink the
+	// step-name text + padding. The card itself also uses smaller dimensions.
+	// The `aria-label` on the card provides redundant context so focused users
+	// always hear "Task Agent" regardless of the step name.
 	if (isTaskAgent) {
+		const rootPadding = isMobileCanvas ? 'px-2 py-1' : 'px-3 py-2';
+		const badgeClass = isMobileCanvas
+			? 'sr-only'
+			: 'text-xs font-bold text-amber-400 uppercase tracking-wider';
+		const nameClass = isMobileCanvas
+			? 'text-[11px] font-medium text-amber-100 truncate leading-tight'
+			: 'text-sm font-medium text-amber-100 truncate';
+		const nameMaxWidth = isMobileCanvas ? 96 : 180;
+
 		return (
 			<div
 				ref={nodeRef}
 				data-testid={`workflow-node-${stepId}`}
 				data-step-id={stepId}
 				data-task-agent="true"
+				data-task-agent-compact={isMobileCanvas ? 'true' : 'false'}
 				data-pan-canvas="true"
+				aria-label="Task Agent"
 				style={{
 					position: 'absolute',
 					left: position.x,
@@ -374,22 +398,22 @@ export function WorkflowNode({
 				class={`rounded-lg border-2 ${bgClass} ${borderClass}`}
 				onMouseDown={handleMouseDown}
 			>
-				<div class="px-3 py-2">
-					{/* Header row: Task Agent badge */}
-					<div class="flex items-center justify-between mb-1">
-						<span
-							data-testid="task-agent-badge"
-							class="text-xs font-bold text-amber-400 uppercase tracking-wider"
-						>
+				<div class={rootPadding}>
+					{/* Header row: Task Agent badge — visible on desktop/tablet,
+					    sr-only on mobile so screen readers still announce it. */}
+					{isMobileCanvas ? (
+						<span data-testid="task-agent-badge" class={badgeClass}>
 							Task Agent
 						</span>
-					</div>
+					) : (
+						<div class="flex items-center justify-between mb-1">
+							<span data-testid="task-agent-badge" class={badgeClass}>
+								Task Agent
+							</span>
+						</div>
+					)}
 					{/* Name */}
-					<p
-						data-testid="step-name"
-						class="text-sm font-medium text-amber-100 truncate"
-						style={{ maxWidth: 180 }}
-					>
+					<p data-testid="step-name" class={nameClass} style={{ maxWidth: nameMaxWidth }}>
 						{step.name || 'Task Agent'}
 					</p>
 				</div>

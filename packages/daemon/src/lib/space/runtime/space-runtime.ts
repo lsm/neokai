@@ -1378,16 +1378,23 @@ export class SpaceRuntime {
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, { result: summary });
 				}
 
-				// Sibling NodeExecution cleanup: cancel siblings still in_progress
-				// when the canonical task reaches a terminal status. The end-node
+				// Sibling NodeExecution quiescing: interrupt siblings still in_progress
+				// when the canonical task reaches a terminal status, transitioning them
+				// to `idle` so they remain reachable via send_message. The end-node
 				// execution itself is excluded so its session can finish writing back
 				// to the agent (it produced the report_result that triggered this
 				// completion path). Skipped when the task is paused at `review` —
 				// the human may yet reject the completion, in which case sibling
 				// progress is still relevant.
+				//
+				// Sessions are deliberately NOT deleted here — they are only destroyed
+				// when the task transitions to `archived` (the true non-recoverable
+				// terminal state). This allows post-completion cross-node messaging,
+				// e.g. a reviewer sending follow-up feedback to a coder whose node
+				// already finished while the PR is still being merged.
 				const taskTerminal = finalTaskStatus === 'done' || finalTaskStatus === 'cancelled';
 				if (taskTerminal) {
-					const siblingsToCancel = this.config.nodeExecutionRepo
+					const siblingsToQuiesce = this.config.nodeExecutionRepo
 						.listByWorkflowRun(runId)
 						.filter(
 							(e) =>
@@ -1395,15 +1402,22 @@ export class SpaceRuntime {
 								e.agentSessionId &&
 								(!endNodeId || e.workflowNodeId !== endNodeId)
 						);
-					for (const sibling of siblingsToCancel) {
-						this.config.nodeExecutionRepo.updateStatus(sibling.id, 'cancelled');
+					for (const sibling of siblingsToQuiesce) {
+						this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
 						if (this.config.taskAgentManager) {
-							this.config.taskAgentManager.cancelBySessionId(sibling.agentSessionId!);
+							void this.config.taskAgentManager
+								.interruptBySessionId(sibling.agentSessionId!)
+								.catch((err) => {
+									log.warn(
+										`SpaceRuntime: failed to interrupt sibling session ${sibling.agentSessionId}:`,
+										err
+									);
+								});
 						}
 						log.info(
-							`SpaceRuntime: cancelled sibling node execution ${sibling.id} ` +
+							`SpaceRuntime: quiesced sibling node execution ${sibling.id} ` +
 								`(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
-								`for completed run ${runId}`
+								`to idle for completed run ${runId}; session kept alive for post-completion messaging`
 						);
 					}
 				}

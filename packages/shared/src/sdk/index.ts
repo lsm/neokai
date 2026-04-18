@@ -28,5 +28,6 @@ export {
   hasAskUserQuestion,
   getMessageTypeDescription,
   isUserVisibleMessage,
+  isNeokaiActionMessage,
   type ContentBlock,
 } from "./type-guards.ts";

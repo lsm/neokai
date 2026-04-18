@@ -37,6 +37,10 @@ import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 
+function normalizeAgentNameToken(value: string): string {
+	return value.trim().toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -69,6 +73,23 @@ export interface SpaceAgentToolsConfig {
 	daemonHub?: DaemonHub;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
+	/**
+	 * Resolves the space's current autonomy level.
+	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
+	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
+	/**
+	 * The calling agent's name (e.g., 'space-agent'). Used for gate writer authorization
+	 * in approve_gate: the writers path is taken only when writers include this name or '*'.
+	 * When omitted, only '*' in writers can match (falls back to autonomy path otherwise).
+	 */
+	myAgentName?: string;
+	/**
+	 * Optional name aliases for the calling agent. Checked alongside myAgentName during
+	 * writer authorization.
+	 */
+	myAgentNameAliases?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +114,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		gateDataRepo,
 		daemonHub,
 		onGateChanged,
+		getSpaceAutonomyLevel,
+		myAgentName,
+		myAgentNameAliases,
 	} = config;
+
+	const agentNameAliases = new Set(
+		[myAgentName, ...(myAgentNameAliases ?? [])]
+			.filter((v): v is string => typeof v === 'string')
+			.map((v) => normalizeAgentNameToken(v))
+			.filter((v) => v.length > 0)
+	);
 
 	return {
 		/**
@@ -516,6 +547,38 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					success: false,
 					error: `Cannot modify gate on a ${run.status} workflow run`,
 				});
+			}
+
+			// Per-field two-path authorization for agent-originated approvals.
+			// Writers path: 'approved' field's writers includes this agent's name or '*' → allow.
+			// Autonomy path: writers don't include this agent (or empty writers) → require
+			// space.autonomyLevel >= gate.requiredLevel (default 5).
+			// Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
+			if (args.approved && getSpaceAutonomyLevel) {
+				const workflow = workflowManager.getWorkflow(run.workflowId);
+				const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
+				const approvedField = (gateDef?.fields ?? []).find((f) => f.name === 'approved');
+				const writers = approvedField?.writers ?? [];
+				const writerMatches = writers.some((w) => {
+					const normalized = normalizeAgentNameToken(w);
+					return normalized === '*' || agentNameAliases.has(normalized);
+				});
+
+				if (!writerMatches) {
+					// Autonomy path: this agent is not in the writers list
+					const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+					const spaceLevel = await getSpaceAutonomyLevel(spaceId);
+					if (spaceLevel < effectiveRequiredLevel) {
+						return jsonResult({
+							success: false,
+							error:
+								`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+								`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+								`Increase space autonomy level or request human approval.`,
+						});
+					}
+				}
+				// Writers path: writerMatches → no autonomy check needed
 			}
 
 			const existing = gateDataRepo.get(args.run_id, args.gate_id);

@@ -1025,3 +1025,368 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 		}
 	});
 });
+
+// ===========================================================================
+// send_message queue-until-active + Space Agent escalation
+// ===========================================================================
+
+describe('createTaskAgentToolHandlers — send_message queue-until-active', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('queues message when target is declared but inactive', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Declare "reviewer" in the run with no active session (pending, no session id).
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const { hub, emittedEvents } = makeMockDaemonHub();
+		const queuedRecords: Array<{ id: string; targetAgentName: string }> = [];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			daemonHub: hub,
+			onMessageQueued: (rec) =>
+				queuedRecords.push({ id: rec.id, targetAgentName: rec.targetAgentName }),
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'ping',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
+		expect(parsed.queued[0].agentName).toBe('reviewer');
+		expect(parsed.queued[0].targetKind).toBe('node_agent');
+		expect(parsed.queued[0].deduped).toBe(false);
+
+		// Queued record is persisted.
+		const pending = pendingRepo.listPendingForTarget(run.id, 'reviewer');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].message).toBe('ping');
+
+		// Observability: onMessageQueued hook fires + DaemonHub event is emitted.
+		expect(queuedRecords).toHaveLength(1);
+		expect(queuedRecords[0].targetAgentName).toBe('reviewer');
+		const queuedEvent = emittedEvents.find((e) => e.name === 'space.pendingMessage.queued');
+		expect(queuedEvent).toBeDefined();
+		expect(queuedEvent!.payload.targetAgentName).toBe('reviewer');
+		expect(queuedEvent!.payload.targetKind).toBe('node_agent');
+	});
+
+	test('returns notFoundAgentNames when target is not declared in run', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'ghost-agent',
+			message: 'hello',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(false);
+		expect(parsed.notFoundAgentNames).toEqual(['ghost-agent']);
+		// Nothing queued because agent isn't declared in the run.
+		expect(pendingRepo.listAllPending()).toHaveLength(0);
+	});
+
+	test('delivers to active target while queuing inactive target (partial)', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Coder has a live session (simulated via mock taskAgentManager backed by nodeExecutionRepo).
+		// Reviewer is declared in NodeExecution but has no live session yet.
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'active-node',
+			agentName: 'coder',
+			agentSessionId: 'session-coder',
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		// Mock taskAgentManager: coder has a live session, reviewer does not.
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async (_taskId: string) => ['coder'],
+			getSubSessionByAgentName: async (_taskId: string, agentName: string) => {
+				if (agentName === 'coder') return { session: { id: 'session-coder' } };
+				return null;
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const delivered: Array<{ sessionId: string; message: string }> = [];
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id, {
+				messageInjector: async (sessionId, message) => {
+					delivered.push({ sessionId, message });
+				},
+			}),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: ['coder', 'reviewer'],
+			message: 'hi all',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.delivered).toHaveLength(1);
+		expect(parsed.delivered[0].agentName).toBe('coder');
+		expect(parsed.queued).toHaveLength(1);
+		expect(parsed.queued[0].agentName).toBe('reviewer');
+
+		// The coder got the message right away.
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0].message).toBe('[Message from task-agent]: hi all');
+
+		// The reviewer message is queued.
+		const pending = pendingRepo.listPendingForTarget(run.id, 'reviewer');
+		expect(pending).toHaveLength(1);
+	});
+
+	test('idempotency_key dedupes repeated queue attempts', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const r1 = await handlers.send_message({
+			target: 'reviewer',
+			message: 'v1',
+			idempotency_key: 'dedupe-key-1',
+		});
+		const p1 = JSON.parse(r1.content[0].text);
+		expect(p1.queued[0].deduped).toBe(false);
+
+		const r2 = await handlers.send_message({
+			target: 'reviewer',
+			message: 'v2-replay',
+			idempotency_key: 'dedupe-key-1',
+		});
+		const p2 = JSON.parse(r2.content[0].text);
+		expect(p2.queued[0].deduped).toBe(true);
+		// ID returned is the original record, not a new one.
+		expect(p2.queued[0].messageId).toBe(p1.queued[0].messageId);
+
+		const pending = pendingRepo.listPendingForTarget(run.id, 'reviewer');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].message).toBe('v1');
+	});
+
+	test('escalates to Space Agent via spaceAgentInjector', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const injectorCalls: Array<{ spaceId: string; message: string }> = [];
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			spaceAgentInjector: async (spaceId, message) => {
+				injectorCalls.push({ spaceId, message });
+			},
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'space-agent',
+			message: 'need your help with scope',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.delivered).toHaveLength(1);
+		expect(parsed.delivered[0].agentName).toBe('space-agent');
+		expect(parsed.delivered[0].sessionId).toBe(`space:chat:${ctx.spaceId}`);
+
+		expect(injectorCalls).toHaveLength(1);
+		expect(injectorCalls[0].spaceId).toBe(ctx.spaceId);
+		expect(injectorCalls[0].message).toBe('[Message from task-agent]: need your help with scope');
+	});
+
+	test('queues for Space Agent when injector fails + pendingMessageRepo is configured', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			spaceAgentInjector: async () => {
+				throw new Error('Space Agent session not ready');
+			},
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'space-agent',
+			message: 'queue me',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		// delivery failed, but queued succeeded → overall success=true
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
+		expect(parsed.queued[0].targetKind).toBe('space_agent');
+
+		const pending = pendingRepo.listPendingForTarget(run.id, 'space-agent');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].message).toBe('queue me');
+		expect(pending[0].targetKind).toBe('space_agent');
+	});
+
+	test('queues for Space Agent when no injector is configured but pendingMessageRepo is', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			// no spaceAgentInjector
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'space-agent',
+			message: 'defer me',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
+		expect(parsed.queued[0].targetKind).toBe('space_agent');
+
+		const pending = pendingRepo.listPendingForTarget(run.id, 'space-agent');
+		expect(pending).toHaveLength(1);
+	});
+
+	test('fails hard when space-agent target has no injector and no queue repo', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			// neither pendingMessageRepo nor spaceAgentInjector
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'space-agent',
+			message: 'orphan',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		// No infra at all → escalation is a failed target. Because it's the only target,
+		// the handler reports partial-no-delivery.
+		expect(parsed.failed).toBeDefined();
+		expect(parsed.failed[0].agentName).toBe('space-agent');
+	});
+
+	test('send_message tool on MCP server surface accepts idempotency_key', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+		};
+		const server = createTaskAgentMcpServer(config);
+		const entry = server.instance._registeredTools['send_message'];
+
+		const out = await entry.handler(
+			{ target: 'reviewer', message: 'via mcp', idempotency_key: 'k-mcp' },
+			{}
+		);
+		const parsed = JSON.parse(out.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued[0].deduped).toBe(false);
+
+		// Replay with same key → deduped
+		const out2 = await entry.handler(
+			{ target: 'reviewer', message: 'via mcp replay', idempotency_key: 'k-mcp' },
+			{}
+		);
+		const parsed2 = JSON.parse(out2.content[0].text);
+		expect(parsed2.queued[0].deduped).toBe(true);
+	});
+});

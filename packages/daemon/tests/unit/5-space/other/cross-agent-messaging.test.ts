@@ -408,11 +408,41 @@ async function startRun(ctx: TaskCtx, wf: SpaceWorkflow) {
 	return { run, mainTask };
 }
 
+/**
+ * Build a mock taskAgentManager for unit tests.
+ *
+ * Reads NodeExecution rows with an agentSessionId to simulate the stable
+ * per-agent session map that TaskAgentManager maintains at runtime.
+ * This replaces the old status-filter approach (in_progress / pending)
+ * with a direct name→session lookup.
+ */
+function makeMockTaskAgentManager(
+	nodeExecutionRepo: NodeExecutionRepository,
+	taskId: string,
+	runId: string
+): TaskAgentToolsConfig['taskAgentManager'] {
+	return {
+		async getAgentNamesForTask(_taskId: string): Promise<string[]> {
+			const executions = nodeExecutionRepo.listByWorkflowRun(runId);
+			return [...new Set(executions.filter((e) => e.agentSessionId).map((e) => e.agentName))];
+		},
+		async getSubSessionByAgentName(
+			_taskId: string,
+			agentName: string
+		): Promise<{ session: { id: string } } | null> {
+			const executions = nodeExecutionRepo.listByWorkflowRun(runId);
+			const exec = executions.find((e) => e.agentName === agentName && e.agentSessionId);
+			if (!exec?.agentSessionId) return null;
+			return { session: { id: exec.agentSessionId } };
+		},
+	} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+}
+
 function makeTaskConfig(
 	ctx: TaskCtx,
 	taskId: string,
 	runId: string,
-	factory: SubSessionFactory,
+	_factory: SubSessionFactory,
 	overrides: {
 		messageInjector?: (sessionId: string, message: string) => Promise<void>;
 	} = {}
@@ -421,16 +451,14 @@ function makeTaskConfig(
 		taskId,
 		space: ctx.space,
 		workflowRunId: runId,
-		workspacePath: '/tmp/workspace',
-		workflowManager: ctx.workflowManager,
 		taskRepo: ctx.taskRepo,
 		workflowRunRepo: ctx.workflowRunRepo,
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
-		agentManager: ctx.agentManager,
 		taskManager: ctx.taskManager,
-		sessionFactory: factory,
 		messageInjector: overrides.messageInjector ?? (async () => {}),
-		onSubSessionComplete: async () => {},
+		// Build a mock that looks up live sessions from the NodeExecution table,
+		// mirroring the stable per-agent map that TaskAgentManager maintains at runtime.
+		taskAgentManager: makeMockTaskAgentManager(ctx.nodeExecutionRepo, taskId, runId),
 	};
 }
 

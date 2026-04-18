@@ -14,7 +14,8 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, Session, MessageHub } from '@neokai/shared';
+import type { MessageContent, Session, MessageHub, NeokaiActionMessage } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';
@@ -24,7 +25,14 @@ import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
 import { ErrorCategory } from '../error-manager';
 import { Logger } from '../logger';
-import { validateAndRepairSDKSession } from '../sdk-session-file-manager';
+import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+	validateAndRepairSDKSession,
+	findSDKSessionFileGlobally,
+	migrateSDKSessionFile,
+	getSDKSessionFilePath,
+} from '../sdk-session-file-manager';
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
@@ -87,6 +95,116 @@ export class QueryLifecycleManager {
 		return session.worktree
 			? session.worktree.worktreePath
 			: (session.workspacePath ?? process.cwd());
+	}
+
+	/**
+	 * Ensure the SDK session file is accessible at the current workspace path.
+	 *
+	 * When the effective CWD changes between daemon restarts (e.g. a worktree is
+	 * added or removed), the SDK session file may still live under the OLD project
+	 * directory. This method:
+	 *
+	 * 1. Checks whether the file already exists at the CURRENT workspace path → done.
+	 * 2. Tries sdkOriginPath (persisted CWD at session-init time) if it differs.
+	 * 3. Falls back to a global scan of ~/.claude/projects/ to locate the file.
+	 * 4. When found elsewhere, copies the file to the current workspace's project dir
+	 *    so the SDK subprocess (which starts with cwd=current) can find it, then
+	 *    updates sdkOriginPath in the DB to reflect the new canonical location.
+	 *
+	 * Non-destructive: the original file is never deleted.
+	 *
+	 * @returns true if the file is now present at the current workspace path, false
+	 *          if it cannot be located and the session must start fresh.
+	 */
+	private ensureSDKSessionFileMigrated(): boolean {
+		const { session, db } = this.ctx;
+		if (!session.sdkSessionId) return false;
+
+		const currentWorkspacePath = this.getSDKWorkspacePath();
+
+		// Fast path: file already at the correct location
+		const currentFilePath = getSDKSessionFilePath(currentWorkspacePath, session.sdkSessionId);
+		if (existsSync(currentFilePath)) {
+			// If sdkOriginPath was never recorded (sessions predating this fix), set it now.
+			if (!session.sdkOriginPath) {
+				session.sdkOriginPath = currentWorkspacePath;
+				db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+			}
+			return true;
+		}
+
+		// Try the persisted origin path first (common case after worktree assignment)
+		if (session.sdkOriginPath && session.sdkOriginPath !== currentWorkspacePath) {
+			const migrated = migrateSDKSessionFile(
+				session.sdkOriginPath,
+				currentWorkspacePath,
+				session.sdkSessionId
+			);
+			if (migrated) {
+				this.logger.info(
+					`SDK session file migrated from ${session.sdkOriginPath} → ${currentWorkspacePath} ` +
+						`(sdkSessionId: ${session.sdkSessionId})`
+				);
+				// Update origin to reflect new canonical location
+				session.sdkOriginPath = currentWorkspacePath;
+				db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+				return true;
+			}
+		}
+
+		// Global fallback: scan all ~/.claude/projects/ directories
+		const foundFilePath = findSDKSessionFileGlobally(session.sdkSessionId);
+		if (foundFilePath) {
+			// Copy from wherever it was found to the current workspace's project dir
+			try {
+				const targetDir = dirname(currentFilePath);
+				mkdirSync(targetDir, { recursive: true });
+				copyFileSync(foundFilePath, currentFilePath);
+				this.logger.info(
+					`SDK session file recovered via global scan: ${foundFilePath} → ${currentFilePath} ` +
+						`(sdkSessionId: ${session.sdkSessionId})`
+				);
+				session.sdkOriginPath = currentWorkspacePath;
+				db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+				return true;
+			} catch (err) {
+				this.logger.warn(`Failed to copy SDK session file from global scan result: ${err}`);
+			}
+		}
+
+		// File not found anywhere
+		return false;
+	}
+
+	/**
+	 * Validate and repair the SDK session file, with cross-path migration as a
+	 * pre-step when the effective CWD has changed since the session was created.
+	 *
+	 * Returns true when the session is ready to resume.
+	 */
+	private validateAndRepairWithMigration(): boolean {
+		const { session, db } = this.ctx;
+		if (!session.sdkSessionId) return false;
+
+		// Migrate the file to current workspace if needed
+		const fileFound = this.ensureSDKSessionFileMigrated();
+
+		if (!fileFound) {
+			this.logger.warn(
+				`SDK session file not found anywhere for sdkSessionId=${session.sdkSessionId}. ` +
+					'Will attempt resume anyway — the SDK may produce a "No conversation found" error ' +
+					'and start fresh automatically.'
+			);
+			return false;
+		}
+
+		// File is now at the current workspace — validate/repair as usual
+		return validateAndRepairSDKSession(
+			this.getSDKWorkspacePath(),
+			session.sdkSessionId,
+			session.id,
+			db
+		);
 	}
 
 	/**
@@ -203,7 +321,7 @@ export class QueryLifecycleManager {
 	 * starts cleanly without stale error artifacts from the interrupted query.
 	 */
 	async restart(): Promise<void> {
-		const { session, db, daemonHub, messageHandler } = this.ctx;
+		const { session, daemonHub, messageHandler } = this.ctx;
 
 		try {
 			// Clear error state and circuit breaker before stopping.
@@ -223,16 +341,12 @@ export class QueryLifecycleManager {
 			await this.ctx.stateManager.setIdle();
 
 			// Validate and repair SDK session file before restarting.
+			// Includes cross-path migration when effective CWD changed since session init.
 			// The interrupted query may have left the session file in an inconsistent state
 			// (e.g., orphaned tool_results from interrupted SDK context compaction).
 			// Also detects stale sdkSessionId when the session file no longer exists.
 			if (session.sdkSessionId) {
-				const isValid = validateAndRepairSDKSession(
-					this.getSDKWorkspacePath(),
-					session.sdkSessionId,
-					session.id,
-					db
-				);
+				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
 					// Session file missing or unrepairably corrupted — log but keep sdkSessionId.
 					// The SDK may recreate the file on resume, or "No conversation found" will
@@ -323,16 +437,9 @@ export class QueryLifecycleManager {
 				// ctx.processExitedPromise during queryPromise settlement).
 
 				// Validate and repair SDK session file before restarting.
-				// The interrupted query may have left the session file in an inconsistent state
-				// (e.g., orphaned tool_results from interrupted SDK context compaction).
-				// Also detects stale sdkSessionId when the session file no longer exists.
+				// Includes cross-path migration when effective CWD changed since session init.
 				if (session.sdkSessionId) {
-					const isValid = validateAndRepairSDKSession(
-						this.getSDKWorkspacePath(),
-						session.sdkSessionId,
-						session.id,
-						db
-					);
+					const isValid = this.validateAndRepairWithMigration();
 					if (!isValid) {
 						this.logger.warn(
 							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
@@ -360,6 +467,35 @@ export class QueryLifecycleManager {
 	}
 
 	/**
+	 * Emit a NeoKai action message asking the user what to do when the SDK
+	 * transcript file cannot be found.
+	 *
+	 * The action message is persisted to the DB and broadcast via the
+	 * state.sdkMessages.delta event so it appears in the chat timeline.
+	 * The query stays blocked; startStreamingQuery() is NOT called here.
+	 */
+	private async emitSdkResumeChoiceMessage(): Promise<void> {
+		const { session, db, messageHub } = this.ctx;
+
+		const actionMessage: NeokaiActionMessage = {
+			type: 'neokai_action',
+			uuid: generateUUID(),
+			session_id: session.id,
+			action: 'sdk_resume_choice',
+			resolved: false,
+			timestamp: Date.now(),
+		};
+
+		db.saveNeokaiActionMessage(session.id, actionMessage);
+
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{ added: [actionMessage], timestamp: Date.now() },
+			{ channel: `session:${session.id}` }
+		);
+	}
+
+	/**
 	 * Ensure query is started
 	 *
 	 * Waits for any pending interrupt, validates SDK session file,
@@ -371,7 +507,7 @@ export class QueryLifecycleManager {
 	 * In this case, force-stop the queue and restart.
 	 */
 	async ensureQueryStarted(): Promise<void> {
-		const { session, db, messageQueue, interruptHandler } = this.ctx;
+		const { session, messageQueue, interruptHandler } = this.ctx;
 
 		// Wait for any pending interrupt
 		const interruptPromise = interruptHandler.getInterruptPromise();
@@ -411,19 +547,19 @@ export class QueryLifecycleManager {
 			this.logger.debug(`ensureQueryStarted: session ${session.id} not running, starting query`);
 		}
 
-		// Validate SDK session file
+		// Validate SDK session file, migrating it to the current workspace path if needed.
 		if (session.sdkSessionId) {
-			const isValid = validateAndRepairSDKSession(
-				this.getSDKWorkspacePath(),
-				session.sdkSessionId,
-				session.id,
-				db
-			);
+			const isValid = this.validateAndRepairWithMigration();
 			if (!isValid) {
+				// Transcript file not found — ask the user before proceeding.
+				// Do NOT call startStreamingQuery() here; the query stays blocked until
+				// the user responds via the session.sdkResumeChoice RPC handler.
 				this.logger.warn(
-					`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-						'Will attempt resume anyway — SDK may recover.'
+					`SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
+						'Emitting sdk_resume_choice action message for user.'
 				);
+				await this.emitSdkResumeChoiceMessage();
+				return;
 			}
 		}
 

@@ -23,6 +23,7 @@
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflow, CompletionAction } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import { computeWorkflowHash } from './template-hash.ts';
 
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
@@ -1172,6 +1173,8 @@ export function seedBuiltInWorkflows(
 					? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
 					: undefined,
 				gates: template.gates ? [...template.gates] : undefined,
+				templateName: template.name,
+				templateHash: computeWorkflowHash(template),
 			});
 
 			seeded.push(template.name);

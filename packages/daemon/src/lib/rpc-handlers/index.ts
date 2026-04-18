@@ -6,6 +6,9 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
+import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { UUID } from 'crypto';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
 import type { AuthManager } from '../auth-manager';
@@ -61,6 +64,7 @@ import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-wor
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
+import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
@@ -362,6 +366,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
+	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
 
 	// Space workflow manager — created early so space.create can call seedBuiltInWorkflows
 	const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
@@ -415,7 +420,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.messageHub,
 		deps.spaceManager,
 		spaceWorkflowManager,
-		deps.daemonHub
+		deps.daemonHub,
+		deps.spaceAgentManager
 	);
 
 	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
@@ -470,6 +476,33 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Space Worktree Manager — one worktree per task, shared by all node agents.
 	const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
+	// Space Agent injector — routes Task Agent → Space Agent escalations into the
+	// `space:chat:${spaceId}` session via SessionManager. Shared between
+	// TaskAgentManager (for queue flush) and task-agent tool wiring.
+	const sessionManagerRef = deps.sessionManager;
+	const spaceAgentInjector = async (spaceId: string, message: string): Promise<void> => {
+		const sessionId = `space:chat:${spaceId}`;
+		const session = await sessionManagerRef.getSessionAsync(sessionId);
+		if (!session) {
+			throw new Error(`Space Agent chat session not found: ${sessionId}`);
+		}
+		const messageId = generateUUID();
+		const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+			type: 'user' as const,
+			uuid: messageId as UUID,
+			session_id: sessionId,
+			parent_tool_use_id: null,
+			isSynthetic: true,
+			message: {
+				role: 'user' as const,
+				content: [{ type: 'text' as const, text: message }],
+			},
+		};
+		await session.ensureQueryStarted();
+		deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+		await session.messageQueue.enqueueWithId(messageId, message);
+	};
+
 	// Task Agent Manager — manages Task Agent session lifecycle and message injection.
 	// Must be created after spaceRuntimeService so it can get WorkflowExecutors via
 	// spaceRuntimeService.createOrGetRuntime(spaceId).
@@ -497,6 +530,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		nodeExecutionRepo,
 		dbPath: deps.db.getDatabasePath(),
 		artifactRepo,
+		pendingMessageRepo,
+		spaceAgentInjector,
 	});
 
 	// Wire TaskAgentManager into the SpaceRuntime so the tick loop can spawn

@@ -18,7 +18,7 @@
  * mouse events because fireEvent(window, ...) does not work in happy-dom.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { WorkflowNode } from '../WorkflowNode';
@@ -28,6 +28,27 @@ import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 
+// Default to non-mobile for every test — individual tests (see "mobile"
+// describe blocks) override this before rendering. This keeps matchMedia
+// defined in happy-dom, which otherwise returns undefined.
+function mockMatchMedia(isMobile: boolean) {
+	Object.defineProperty(window, 'matchMedia', {
+		writable: true,
+		configurable: true,
+		value: vi.fn().mockImplementation((query: string) => ({
+			matches: query === '(max-width: 767px)' ? isMobile : false,
+			media: query,
+			onchange: null,
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			dispatchEvent: vi.fn(),
+		})),
+	});
+}
+
+beforeEach(() => mockMatchMedia(false));
 afterEach(() => cleanup());
 
 // ============================================================================
@@ -659,6 +680,119 @@ describe('WorkflowNode Task Agent rendering', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
 		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
 		expect(node.getAttribute('data-pan-canvas')).toBe('true');
+	});
+
+	it('exposes an aria-label for screen readers', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('aria-label')).toBe('Task Agent');
+	});
+});
+
+// ============================================================================
+// Task Agent — mobile canvas variant
+// ============================================================================
+
+describe('WorkflowNode Task Agent — mobile canvas variant', () => {
+	beforeEach(() => mockMatchMedia(true));
+
+	it('marks the node as compact on mobile', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-task-agent-compact')).toBe('true');
+	});
+
+	it('shrinks card dimensions below the desktop baseline', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		// Card shrinks from 160x60 (desktop) to 112x36 (mobile compact)
+		expect(node.style.width).toBe('112px');
+		expect(node.style.minHeight).toBe('36px');
+	});
+
+	it('keeps the Task Agent badge in the DOM but hides it visually with sr-only', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const badge = getByTestId('task-agent-badge');
+		// Badge text is still present for screen readers
+		expect(badge.textContent).toBe('Task Agent');
+		// Visible styling is swapped for sr-only (no uppercase/tracking on mobile)
+		expect(badge.className).toContain('sr-only');
+		expect(badge.className).not.toContain('uppercase');
+		expect(badge.className).not.toContain('tracking-wider');
+	});
+
+	it('uses a smaller name text class on mobile', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const name = getByTestId('step-name');
+		// Desktop uses text-sm; mobile drops to a compact 11px size
+		expect(name.className).toContain('text-[11px]');
+		expect(name.className).not.toContain('text-sm');
+	});
+
+	it('preserves the aria-label even when the badge is visually hidden', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('aria-label')).toBe('Task Agent');
+	});
+
+	it('still prevents dragging on mobile', () => {
+		const onPositionChange = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP, onPositionChange })} />
+		);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(40, 40);
+		expect(onPositionChange).not.toHaveBeenCalled();
+		windowMouseUp();
+	});
+
+	it('still renders as a canvas pan surface on mobile', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-pan-canvas')).toBe('true');
+	});
+
+	it('does not apply compact styles to regular (non-Task-Agent) nodes', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps()} />);
+		const node = getByTestId('workflow-node-step-local-1');
+		// Regular nodes preserve their default dimensions even on mobile
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('80px');
+		expect(node.getAttribute('data-task-agent-compact')).toBeNull();
+	});
+});
+
+describe('WorkflowNode Task Agent — desktop canvas variant', () => {
+	// Safety net to ensure the desktop rendering is NOT regressed by mobile work.
+	beforeEach(() => mockMatchMedia(false));
+
+	it('marks the node as non-compact on desktop', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-task-agent-compact')).toBe('false');
+	});
+
+	it('renders the Task Agent badge with the full visible styling', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const badge = getByTestId('task-agent-badge');
+		expect(badge.className).toContain('uppercase');
+		expect(badge.className).toContain('tracking-wider');
+		expect(badge.className).not.toContain('sr-only');
+	});
+
+	it('keeps the default desktop dimensions', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('60px');
+	});
+
+	it('keeps the original text-sm step-name class on desktop', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const name = getByTestId('step-name');
+		expect(name.className).toContain('text-sm');
+		expect(name.className).not.toContain('text-[11px]');
 	});
 });
 

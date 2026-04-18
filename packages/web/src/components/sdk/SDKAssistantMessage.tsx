@@ -8,7 +8,12 @@
  * - AskUserQuestion tool blocks with inline QuestionPrompt
  */
 
-import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
+import type {
+	PendingUserQuestion,
+	QuestionDraftResponse,
+	ResolvedQuestion,
+	ChatMessage,
+} from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
@@ -48,7 +53,7 @@ interface Props {
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: SDKMessage[];
+	allMessages?: ChatMessage[];
 	/**
 	 * When true, child tool / thinking / subagent blocks in this message are
 	 * each wrapped in <RunningBorder> so the animated arc traces their border.

@@ -640,6 +640,7 @@ describe('SpaceRuntime', () => {
 				isTaskAgentAlive?: (taskId: string) => boolean;
 				spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
 				cancelBySessionId?: (sessionId: string) => void;
+				interruptBySessionId?: (sessionId: string) => Promise<void>;
 				rehydrate?: () => Promise<void>;
 			} = {}
 		) {
@@ -675,6 +676,7 @@ describe('SpaceRuntime', () => {
 					_execution: unknown
 				) => spawnImpl(task),
 				cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
+				interruptBySessionId: overrides.interruptBySessionId ?? (async () => {}),
 				rehydrate: overrides.rehydrate ?? (async () => {}),
 				_spawned: spawned,
 			};

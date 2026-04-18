@@ -1,0 +1,350 @@
+/**
+ * Pending Agent Message Repository
+ *
+ * Persistent FIFO queue for Task Agent → peer agent (node agent or Space Agent)
+ * messages that could not be delivered immediately because the target session
+ * was not yet active. Rows are drained on target activation, during rehydration
+ * after daemon restart, and by a periodic sweep.
+ *
+ * Design goals:
+ *   - Ordered delivery per `(workflow_run_id, target_agent_name)` via `created_at`
+ *   - Idempotency: `(workflow_run_id, target_agent_name, idempotency_key)` is unique
+ *     when `idempotency_key` is set; re-enqueueing returns the existing row
+ *   - Bounded retries: each failed delivery increments `attempts` and records
+ *     `last_error`; once `attempts >= max_attempts`, the row is moved to
+ *     `status = 'failed'` and no longer drained
+ *   - TTL: `expires_at` is checked on drain; expired rows move to `status = 'expired'`
+ *   - Observability: callers emit `space.pendingMessage.queued` /
+ *     `space.pendingMessage.delivered` events — the repo itself is silent
+ *
+ * Lifecycle statuses:
+ *   pending   — queued, awaiting delivery
+ *   delivered — delivered once; drained from future sweeps
+ *   expired   — never delivered within TTL; kept as a historical record
+ *   failed    — exceeded `max_attempts`; kept as a historical record
+ */
+
+import type { Database as BunDatabase } from 'bun:sqlite';
+import { generateUUID } from '@neokai/shared';
+
+export type PendingMessageTargetKind = 'node_agent' | 'space_agent';
+export type PendingMessageStatus = 'pending' | 'delivered' | 'expired' | 'failed';
+
+/** Default TTL for a queued message when the caller doesn't pass `expiresAt`. */
+export const DEFAULT_PENDING_MESSAGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+/** Default retry cap for delivery attempts. */
+export const DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS = 5;
+
+export interface PendingAgentMessageRecord {
+	id: string;
+	workflowRunId: string;
+	spaceId: string;
+	taskId: string | null;
+	sourceAgentName: string;
+	targetKind: PendingMessageTargetKind;
+	targetAgentName: string;
+	message: string;
+	idempotencyKey: string | null;
+	attempts: number;
+	maxAttempts: number;
+	lastAttemptAt: number | null;
+	lastError: string | null;
+	status: PendingMessageStatus;
+	deliveredAt: number | null;
+	deliveredSessionId: string | null;
+	expiresAt: number;
+	createdAt: number;
+}
+
+export interface EnqueuePendingMessageInput {
+	workflowRunId: string;
+	spaceId: string;
+	/** Main task ID the Task Agent is orchestrating (optional — null for Space Agent escalations not tied to a specific task). */
+	taskId?: string | null;
+	/** Source agent slot name (defaults to `'task-agent'`). */
+	sourceAgentName?: string;
+	targetKind: PendingMessageTargetKind;
+	targetAgentName: string;
+	message: string;
+	/** Optional idempotency key. If set and a row already exists with the same `(workflowRunId, targetAgentName, idempotencyKey)`, the existing row is returned. */
+	idempotencyKey?: string | null;
+	/** Optional TTL in ms from now; defaults to DEFAULT_PENDING_MESSAGE_TTL_MS. */
+	ttlMs?: number;
+	/** Optional absolute expiry in ms — takes precedence over ttlMs. */
+	expiresAt?: number;
+	/** Optional max attempts cap (defaults to DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS). */
+	maxAttempts?: number;
+}
+
+export interface EnqueueResult {
+	record: PendingAgentMessageRecord;
+	/** True when this was a pre-existing row matched by idempotency key; false when a new row was inserted. */
+	deduped: boolean;
+}
+
+export class PendingAgentMessageRepository {
+	constructor(private db: BunDatabase) {}
+
+	/**
+	 * Insert a new pending message, or return the existing row if the
+	 * `(workflowRunId, targetAgentName, idempotencyKey)` tuple already exists
+	 * (when `idempotencyKey` is set).
+	 */
+	enqueue(input: EnqueuePendingMessageInput): EnqueueResult {
+		const idempotencyKey = input.idempotencyKey ?? null;
+
+		if (idempotencyKey !== null) {
+			const existing = this.findByIdempotencyKey(
+				input.workflowRunId,
+				input.targetAgentName,
+				idempotencyKey
+			);
+			if (existing) {
+				return { record: existing, deduped: true };
+			}
+		}
+
+		const now = Date.now();
+		const expiresAt = input.expiresAt ?? now + (input.ttlMs ?? DEFAULT_PENDING_MESSAGE_TTL_MS);
+		const id = generateUUID();
+		const sourceAgentName = input.sourceAgentName ?? 'task-agent';
+		const maxAttempts = input.maxAttempts ?? DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS;
+
+		this.db
+			.prepare(
+				`INSERT INTO pending_agent_messages (
+					id, workflow_run_id, space_id, task_id,
+					source_agent_name, target_kind, target_agent_name,
+					message, idempotency_key,
+					attempts, max_attempts,
+					last_attempt_at, last_error,
+					status, delivered_at, delivered_session_id,
+					expires_at, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?)`
+			)
+			.run(
+				id,
+				input.workflowRunId,
+				input.spaceId,
+				input.taskId ?? null,
+				sourceAgentName,
+				input.targetKind,
+				input.targetAgentName,
+				input.message,
+				idempotencyKey,
+				maxAttempts,
+				expiresAt,
+				now
+			);
+
+		const record = this.getById(id);
+		if (!record) {
+			throw new Error(`PendingAgentMessageRepository: failed to read back row ${id}`);
+		}
+		return { record, deduped: false };
+	}
+
+	/** Fetch a single row by primary key. */
+	getById(id: string): PendingAgentMessageRecord | null {
+		const row = this.db
+			.prepare('SELECT * FROM pending_agent_messages WHERE id = ?')
+			.get(id) as PendingMessageRow | null;
+		return row ? rowToRecord(row) : null;
+	}
+
+	/** Find a row by its idempotency tuple. Returns null if none matches or if `idempotencyKey` is empty. */
+	findByIdempotencyKey(
+		workflowRunId: string,
+		targetAgentName: string,
+		idempotencyKey: string
+	): PendingAgentMessageRecord | null {
+		if (!idempotencyKey) return null;
+		const row = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ?
+				 LIMIT 1`
+			)
+			.get(workflowRunId, targetAgentName, idempotencyKey) as PendingMessageRow | null;
+		return row ? rowToRecord(row) : null;
+	}
+
+	/**
+	 * List pending (still-deliverable) rows for a specific target in a run, oldest first.
+	 * Expired rows are NOT filtered here — callers use `expireStale()` first (or check
+	 * `expiresAt` before delivery) to move expired rows to `status = 'expired'`.
+	 */
+	listPendingForTarget(
+		workflowRunId: string,
+		targetAgentName: string
+	): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE workflow_run_id = ? AND target_agent_name = ? AND status = 'pending'
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(workflowRunId, targetAgentName) as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+
+	/** List all pending rows for a run, oldest first. Used by periodic sweepers. */
+	listPendingForRun(workflowRunId: string): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE workflow_run_id = ? AND status = 'pending'
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(workflowRunId) as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+
+	/** List all pending rows across every run, oldest first. Used by the global sweeper. */
+	listAllPending(): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE status = 'pending'
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all() as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+
+	/**
+	 * Mark a row as successfully delivered.
+	 * Records the session ID the message was delivered to and stamps `delivered_at`.
+	 */
+	markDelivered(id: string, sessionId: string): void {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`UPDATE pending_agent_messages
+				 SET status = 'delivered',
+				     delivered_at = ?,
+				     delivered_session_id = ?,
+				     last_attempt_at = ?,
+				     last_error = NULL
+				 WHERE id = ? AND status = 'pending'`
+			)
+			.run(now, sessionId, now, id);
+	}
+
+	/**
+	 * Record a failed delivery attempt.
+	 * Increments `attempts`; if the new count reaches `max_attempts`, the row
+	 * status is set to `'failed'` so it is no longer drained.
+	 */
+	markAttemptFailed(id: string, error: string): PendingAgentMessageRecord | null {
+		const now = Date.now();
+		this.db
+			.prepare(
+				`UPDATE pending_agent_messages
+				 SET attempts = attempts + 1,
+				     last_attempt_at = ?,
+				     last_error = ?,
+				     status = CASE
+				       WHEN attempts + 1 >= max_attempts THEN 'failed'
+				       ELSE status
+				     END
+				 WHERE id = ? AND status = 'pending'`
+			)
+			.run(now, error, id);
+		return this.getById(id);
+	}
+
+	/**
+	 * Sweep expired rows in a run — any pending row with `expires_at <= now`
+	 * is moved to `status = 'expired'`. Returns the number of rows updated.
+	 * Pass `runId = null` to sweep across all runs.
+	 */
+	expireStale(runId: string | null = null): number {
+		const now = Date.now();
+		const stmt =
+			runId === null
+				? this.db.prepare(
+						`UPDATE pending_agent_messages
+						 SET status = 'expired'
+						 WHERE status = 'pending' AND expires_at <= ?`
+					)
+				: this.db.prepare(
+						`UPDATE pending_agent_messages
+						 SET status = 'expired'
+						 WHERE status = 'pending' AND expires_at <= ? AND workflow_run_id = ?`
+					);
+		const result = runId === null ? stmt.run(now) : stmt.run(now, runId);
+		return result.changes;
+	}
+
+	/**
+	 * Delete all rows for a run regardless of status. Used when a workflow run is
+	 * deleted (FK also cascades, but this gives callers an explicit path).
+	 */
+	deleteByRun(workflowRunId: string): number {
+		const result = this.db
+			.prepare('DELETE FROM pending_agent_messages WHERE workflow_run_id = ?')
+			.run(workflowRunId);
+		return result.changes;
+	}
+
+	/** Test helper / diagnostics: list all rows for a run regardless of status. */
+	listAllForRun(workflowRunId: string): PendingAgentMessageRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM pending_agent_messages
+				 WHERE workflow_run_id = ?
+				 ORDER BY created_at ASC, rowid ASC`
+			)
+			.all(workflowRunId) as PendingMessageRow[];
+		return rows.map(rowToRecord);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Internal
+// ---------------------------------------------------------------------------
+
+interface PendingMessageRow {
+	id: string;
+	workflow_run_id: string;
+	space_id: string;
+	task_id: string | null;
+	source_agent_name: string;
+	target_kind: PendingMessageTargetKind;
+	target_agent_name: string;
+	message: string;
+	idempotency_key: string | null;
+	attempts: number;
+	max_attempts: number;
+	last_attempt_at: number | null;
+	last_error: string | null;
+	status: PendingMessageStatus;
+	delivered_at: number | null;
+	delivered_session_id: string | null;
+	expires_at: number;
+	created_at: number;
+}
+
+function rowToRecord(row: PendingMessageRow): PendingAgentMessageRecord {
+	return {
+		id: row.id,
+		workflowRunId: row.workflow_run_id,
+		spaceId: row.space_id,
+		taskId: row.task_id,
+		sourceAgentName: row.source_agent_name,
+		targetKind: row.target_kind,
+		targetAgentName: row.target_agent_name,
+		message: row.message,
+		idempotencyKey: row.idempotency_key,
+		attempts: row.attempts,
+		maxAttempts: row.max_attempts,
+		lastAttemptAt: row.last_attempt_at,
+		lastError: row.last_error,
+		status: row.status,
+		deliveredAt: row.delivered_at,
+		deliveredSessionId: row.delivered_session_id,
+		expiresAt: row.expires_at,
+		createdAt: row.created_at,
+	};
+}

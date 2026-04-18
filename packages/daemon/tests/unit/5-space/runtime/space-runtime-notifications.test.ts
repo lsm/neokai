@@ -1257,6 +1257,10 @@ describe('SpaceRuntime — notification events', () => {
 		}
 
 		async rehydrate(): Promise<void> {}
+
+		cancelBySessionId(_agentSessionId: string): void {}
+
+		async interruptBySessionId(_agentSessionId: string): Promise<void> {}
 	}
 
 	describe('workflow_run_completed via CompletionDetector', () => {
