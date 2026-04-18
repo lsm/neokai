@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceAgent, SpaceTask, SpaceWorkflow } from '@neokai/shared';
 
@@ -55,21 +55,25 @@ vi.mock('../../../lib/utils', () => ({
 // forwarded to WorkflowCanvas, which is tested in WorkflowCanvas's own tests.
 const capturedReadOnly: { value?: boolean } = {};
 let capturedOnChannelSelect: ((id: string | null) => void) | undefined;
+let capturedOnGateClick: ((gateId: string, event: MouseEvent) => void) | undefined;
 
 vi.mock('../visual-editor/WorkflowCanvas', () => ({
 	WorkflowCanvas: ({
 		nodes,
 		onNodeSelect,
 		onChannelSelect,
+		onGateClick,
 		readOnly,
 	}: {
 		nodes: Array<{ step: { localId: string; id?: string; name?: string } }>;
 		readOnly?: boolean;
 		onNodeSelect?: (id: string | null) => void;
 		onChannelSelect?: (id: string | null) => void;
+		onGateClick?: (gateId: string, event: MouseEvent) => void;
 	}) => {
 		capturedReadOnly.value = readOnly;
 		capturedOnChannelSelect = onChannelSelect;
+		capturedOnGateClick = onGateClick;
 		return (
 			<div data-testid="visual-workflow-canvas" data-node-count={nodes.length}>
 				{nodes.map((n) => (
@@ -85,6 +89,14 @@ vi.mock('../visual-editor/WorkflowCanvas', () => ({
 			</div>
 		);
 	},
+}));
+
+vi.mock('../GateArtifactsView', () => ({
+	GateArtifactsView: ({ gateId }: { gateId: string }) => (
+		<div data-testid="gate-artifacts-view" data-gate-id={gateId}>
+			GateArtifactsView
+		</div>
+	),
 }));
 
 vi.mock('../visual-editor/CanvasToolbar', () => ({
@@ -131,6 +143,7 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		mockNodeExecutionsByNodeId.value = new Map();
 		capturedReadOnly.value = undefined;
 		capturedOnChannelSelect = undefined;
+		capturedOnGateClick = undefined;
 		mockHub.request.mockClear();
 		mockHub.request.mockResolvedValue({ gateData: [] });
 	});
@@ -190,5 +203,41 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		mockWorkflows.value = [makeWorkflow()];
 		render(<ReadOnlyWorkflowCanvas workflowId="wf-1" />);
 		expect(capturedReadOnly.value).toBe(true);
+	});
+
+	it('clears gate popup when runId changes so stale gateId is not approvable', async () => {
+		// Regression: swapping runId while the popup was open left a gateId
+		// belonging to the previous run. Clicking Approve then POSTed an id
+		// the server didn't know for the new run.
+		mockWorkflows.value = [makeWorkflow()];
+		const { findByTestId, queryByTestId, rerender } = render(
+			<ReadOnlyWorkflowCanvas workflowId="wf-1" runId="r1" />
+		);
+		// Open the gate popup via the captured onGateClick.
+		const fakeEvent = { clientX: 50, clientY: 60 } as MouseEvent;
+		capturedOnGateClick?.('g-old', fakeEvent);
+		await findByTestId('view-artifacts-btn');
+		// Swap runId — popup should disappear.
+		rerender(<ReadOnlyWorkflowCanvas workflowId="wf-1" runId="r2" />);
+		await waitFor(() => expect(queryByTestId('view-artifacts-btn')).toBeNull());
+	});
+
+	it('artifacts overlay has dialog role + closes on Escape', async () => {
+		mockWorkflows.value = [makeWorkflow()];
+		const { findByTestId, getByTestId, queryByTestId } = render(
+			<ReadOnlyWorkflowCanvas workflowId="wf-1" runId="r1" />
+		);
+		capturedOnGateClick?.('g1', { clientX: 0, clientY: 0 } as MouseEvent);
+		const viewBtn = await findByTestId('view-artifacts-btn');
+		fireEvent.click(viewBtn);
+		const overlay = await findByTestId('artifacts-panel-overlay');
+		expect(overlay.getAttribute('role')).toBe('dialog');
+		expect(overlay.getAttribute('aria-modal')).toBe('true');
+		expect(overlay.getAttribute('aria-label')).toBeTruthy();
+		// Escape closes it.
+		fireEvent.keyDown(window, { key: 'Escape' });
+		await waitFor(() => expect(queryByTestId('artifacts-panel-overlay')).toBeNull());
+		// Suppress unused warning for getByTestId.
+		void getByTestId;
 	});
 });

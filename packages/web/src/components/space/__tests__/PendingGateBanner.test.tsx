@@ -296,6 +296,43 @@ describe('PendingGateBanner', () => {
 		resolveApprove({});
 	});
 
+	it('merges gate-data events that fire during the initial fetch', async () => {
+		// Regression: previously the subscription was registered AFTER awaiting
+		// listGateData, so updates pushed during the fetch window were dropped.
+		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
+		let resolveFetch: (v: unknown) => void = () => {};
+		const pendingFetch = new Promise((resolve) => {
+			resolveFetch = resolve;
+		});
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.listGateData') return pendingFetch;
+			return Promise.resolve({});
+		});
+		let emittedEvent: ((payload: unknown) => void) | undefined;
+		mockOnEvent.mockImplementation((_name: string, handler: (payload: unknown) => void) => {
+			emittedEvent = handler;
+			return () => {};
+		});
+
+		const { findByTestId, queryByTestId } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		await waitFor(() => expect(emittedEvent).toBeDefined());
+		// Push an event BEFORE the fetch resolves — this data carries
+		// `approved: true` so the gate should no longer be waiting_human.
+		emittedEvent!({ runId: 'r1', gateId: 'g1', data: { approved: true } });
+		// Now resolve the fetch with a stale snapshot (no data yet).
+		resolveFetch({ gateData: [] });
+		// The banner must NOT appear: the event's approved=true wins over the
+		// empty fetch snapshot. If the race is present, the fetch overwrites
+		// the event and the gate shows as pending.
+		await waitFor(() => expect(queryByTestId('pending-gate-banner')).toBeNull());
+		// Sanity: fetch-error banner should not appear either.
+		expect(queryByTestId('pending-gate-fetch-error')).toBeNull();
+		// Suppress unused warning for findByTestId.
+		void findByTestId;
+	});
+
 	it('closing overlay restores focus to the opening Review button', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
 		mockRequest.mockResolvedValue({ gateData: [] });

@@ -55,6 +55,20 @@ export function ReadOnlyWorkflowCanvas({
 	const [channelDecisionError, setChannelDecisionError] = useState<string | null>(null);
 	const [popupDecisionError, setPopupDecisionError] = useState<string | null>(null);
 
+	// Reset transient UI state whenever the run or workflow the canvas is
+	// displaying changes. Without this, a gate popup, artifacts overlay, or
+	// in-flight approving entry from the prior run remains mounted after
+	// swap — clicking Approve would then POST a gateId that doesn't exist in
+	// the new run and the server returns an error.
+	useEffect(() => {
+		setGatePopup(null);
+		setArtifactsOverlay(null);
+		setApprovingGateIds(new Set());
+		setSelectedChannelId(null);
+		setChannelDecisionError(null);
+		setPopupDecisionError(null);
+	}, [runId, workflowId]);
+
 	const {
 		nodeData,
 		channelEdges,
@@ -187,14 +201,26 @@ export function ReadOnlyWorkflowCanvas({
 		[approveGateRequest]
 	);
 
+	// Tracks the element focused when the artifacts overlay opens so focus can
+	// be restored to it on close (WCAG 2.4.3). document.activeElement works for
+	// both popup and ChannelInfoPanel callsites without changing signatures. If
+	// the opener unmounts while the overlay is open (common when approve/reject
+	// from GateArtifactsView clears the popup/channel context), we fall back to
+	// the canvas container so focus lands somewhere keyboard-navigable.
+	const overlayOpenerRef = useRef<HTMLElement | null>(null);
+
 	// Open artifacts overlay directly from channel info panel
 	const handleChannelViewArtifacts = useCallback((gateId: string) => {
+		const active = typeof document !== 'undefined' ? document.activeElement : null;
+		overlayOpenerRef.current = active instanceof HTMLElement ? active : null;
 		setArtifactsOverlay({ gateId });
 	}, []);
 
 	// Open artifacts overlay from popup
 	const handleOpenArtifacts = useCallback(() => {
 		if (!gatePopup) return;
+		const active = typeof document !== 'undefined' ? document.activeElement : null;
+		overlayOpenerRef.current = active instanceof HTMLElement ? active : null;
 		setArtifactsOverlay({ gateId: gatePopup.gateId });
 		setGatePopup(null);
 	}, [gatePopup]);
@@ -203,6 +229,32 @@ export function ReadOnlyWorkflowCanvas({
 	const handleArtifactsDecision = useCallback(() => {
 		setArtifactsOverlay(null);
 	}, []);
+
+	// Close the artifacts overlay on Escape — matches PendingGateBanner's twin.
+	useEffect(() => {
+		if (!artifactsOverlay) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') setArtifactsOverlay(null);
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [artifactsOverlay]);
+
+	// Restore focus to the overlay opener when the overlay closes. If the
+	// opener was detached (e.g. the popup closed when the overlay opened, or
+	// the channel info panel collapsed), fall back to the canvas container so
+	// focus doesn't collapse to <body>.
+	useEffect(() => {
+		if (artifactsOverlay) return;
+		const opener = overlayOpenerRef.current;
+		if (!opener) return;
+		if (opener.isConnected && typeof opener.focus === 'function') {
+			opener.focus();
+		} else if (containerRef.current && typeof containerRef.current.focus === 'function') {
+			containerRef.current.focus();
+		}
+		overlayOpenerRef.current = null;
+	}, [artifactsOverlay]);
 
 	const selectedChannel = selectedChannelId
 		? (channelEdges.find((c) => c.id === selectedChannelId) ?? null)
@@ -250,7 +302,7 @@ export function ReadOnlyWorkflowCanvas({
 					Workflow paused — awaiting approval
 				</div>
 			)}
-			<div ref={containerRef} class="flex-1 min-h-0 relative">
+			<div ref={containerRef} tabIndex={-1} class="flex-1 min-h-0 relative focus:outline-none">
 				<WorkflowCanvas
 					nodes={nodeData}
 					viewportState={viewportState}
@@ -337,6 +389,9 @@ export function ReadOnlyWorkflowCanvas({
 				<div
 					data-testid="artifacts-panel-overlay"
 					class="absolute inset-0 z-40 bg-black/50 flex items-center justify-center"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Review gate artifacts"
 					onClick={(e) => {
 						if (e.target === e.currentTarget) setArtifactsOverlay(null);
 					}}

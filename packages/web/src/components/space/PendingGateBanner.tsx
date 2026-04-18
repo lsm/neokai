@@ -79,13 +79,11 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 				const hub = await connectionManager.getHub();
 				if (cancelled) return;
 
-				const result = await hub.request<{ gateData: GateDataRecord[] }>(
-					'spaceWorkflowRun.listGateData',
-					{ runId }
-				);
-				if (cancelled) return;
-				setGateDataMap(new Map(result.gateData.map((r) => [r.gateId, r.data])));
-
+				// Subscribe BEFORE firing the initial fetch so updates that arrive
+				// while the request is in flight aren't dropped. When the fetch
+				// resolves we merge the snapshot into the map, giving event-
+				// delivered data precedence (strictly newer than a fetch that
+				// was serialized before the update was published).
 				unsubscribe = hub.onEvent<{
 					runId: string;
 					gateId: string;
@@ -97,6 +95,24 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 						next.set(event.gateId, event.data);
 						return next;
 					});
+				});
+
+				const result = await hub.request<{ gateData: GateDataRecord[] }>(
+					'spaceWorkflowRun.listGateData',
+					{ runId }
+				);
+				if (cancelled) return;
+				setGateDataMap((prev) => {
+					// Seed from the fetch snapshot, then overlay any event-delivered
+					// entries already in `prev` — those races the fetch and are newer.
+					const merged = new Map<string, Record<string, unknown>>();
+					for (const record of result.gateData) {
+						merged.set(record.gateId, record.data);
+					}
+					for (const [gateId, data] of prev) {
+						merged.set(gateId, data);
+					}
+					return merged;
 				});
 			} catch (err: unknown) {
 				if (cancelled) return;
@@ -263,7 +279,7 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 				<div
 					ref={bannerRef}
 					tabIndex={-1}
-					class="mx-4 mt-2 mb-2 rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-2 space-y-2 focus:outline-none"
+					class="mx-4 mt-2 mb-2 rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-2 space-y-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70"
 					data-testid="pending-gate-banner"
 				>
 					{pendingGates.map((gate) => {
