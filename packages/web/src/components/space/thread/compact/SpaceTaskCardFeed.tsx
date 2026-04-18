@@ -302,7 +302,9 @@ export function SpaceTaskCardFeed({
 	);
 
 	return (
-		<div class="space-y-2 px-1 py-1" data-testid="space-task-event-feed-compact">
+		// Horizontal padding (px-4) matches SpaceTaskPane's header padding so the
+		// compact thread content aligns with the pane title bar above it.
+		<div class="space-y-2 px-4 py-2" data-testid="space-task-event-feed-compact">
 			{visibleBlocks.map((block, idx) => (
 				<BlockSection
 					key={block.id}
