@@ -101,9 +101,9 @@ export function SpaceSystemInitCard({ message }: Props) {
 						</div>
 					)}
 					{toolCount > 0 && (
-						<div class="flex gap-2">
+						<div class="flex gap-2 items-start">
 							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">tools:</span>
-							<span class="font-mono">{toolCount}</span>
+							<span class="font-mono break-all">{m.tools!.join(', ')}</span>
 						</div>
 					)}
 					{mcpCount > 0 && (
@@ -127,9 +127,11 @@ export function SpaceSystemInitCard({ message }: Props) {
 						</div>
 					)}
 					{slashCount > 0 && (
-						<div class="flex gap-2">
+						<div class="flex gap-2 items-start">
 							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">slash:</span>
-							<span class="font-mono">{slashCount}</span>
+							<span class="font-mono break-all">
+								{m.slash_commands!.map((cmd) => `/${cmd}`).join(', ')}
+							</span>
 						</div>
 					)}
 					{m.agents && m.agents.length > 0 && (
