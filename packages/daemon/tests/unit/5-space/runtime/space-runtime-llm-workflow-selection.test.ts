@@ -29,8 +29,11 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SelectWorkflowWithLlm } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import {
+	buildSelectionPrompt,
+	type SelectWorkflowWithLlm,
+} from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
+import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirrors helpers in space-runtime.test.ts but scoped local
@@ -275,5 +278,89 @@ describe('SpaceRuntime — LLM workflow selection', () => {
 		const updated = taskRepo.getTask(task.id)!;
 		const run = workflowRunRepo.getRun(updated.workflowRunId!);
 		expect(run!.workflowId).toBe(onlyWf.id);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildSelectionPrompt — unit tests
+// ---------------------------------------------------------------------------
+
+describe('buildSelectionPrompt', () => {
+	function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+		return {
+			id: 'task-1',
+			spaceId: 'space-1',
+			title: 'Default title',
+			description: 'Default description',
+			status: 'open',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			workflowRunId: null,
+			preferredWorkflowId: null,
+			dependencies: [],
+			metadata: {},
+			startedAt: null,
+			completedAt: null,
+			...overrides,
+		} as SpaceTask;
+	}
+
+	function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
+		return {
+			id: 'wf-1',
+			spaceId: 'space-1',
+			name: 'My Workflow',
+			description: 'Does stuff',
+			tags: [],
+			nodes: [],
+			transitions: [],
+			startNodeId: 'step-1',
+			rules: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			...overrides,
+		} as SpaceWorkflow;
+	}
+
+	test('does not crash when task title and description are null/undefined', () => {
+		const task = makeTask({ title: null as unknown as string, description: undefined });
+		const workflows = [makeWorkflow()];
+		expect(() => buildSelectionPrompt(task, workflows)).not.toThrow();
+	});
+
+	test('includes a very long workflow name in the prompt without truncating unexpectedly', () => {
+		const longName = 'A'.repeat(200);
+		const task = makeTask({ title: 'Fix bug', description: 'Some details' });
+		const workflows = [makeWorkflow({ name: longName })];
+		const prompt = buildSelectionPrompt(task, workflows);
+		// Prompt must include at least the first 120 chars of the name (truncation limit)
+		expect(prompt).toContain(longName.slice(0, 119));
+	});
+
+	test('includes all workflow ids when multiple workflows are provided', () => {
+		const task = makeTask({ title: 'Deploy service', description: 'push to prod' });
+		const wf1 = makeWorkflow({ id: 'wf-alpha', name: 'Alpha' });
+		const wf2 = makeWorkflow({ id: 'wf-beta', name: 'Beta' });
+		const wf3 = makeWorkflow({ id: 'wf-gamma', name: 'Gamma' });
+		const prompt = buildSelectionPrompt(task, [wf1, wf2, wf3]);
+		expect(prompt).toContain('wf-alpha');
+		expect(prompt).toContain('wf-beta');
+		expect(prompt).toContain('wf-gamma');
+	});
+
+	test('prompt contains structural keywords and task title', () => {
+		const task = makeTask({ title: 'Implement auth', description: '' });
+		const workflows = [makeWorkflow({ id: 'wf-auth', name: 'Auth Workflow' })];
+		const prompt = buildSelectionPrompt(task, workflows);
+		expect(prompt).toContain('workflow');
+		expect(prompt).toContain('Implement auth');
+		expect(prompt).toContain('wf-auth');
+	});
+
+	test('handles empty description by emitting (empty) placeholder', () => {
+		const task = makeTask({ title: 'Quick task', description: '' });
+		const workflows = [makeWorkflow()];
+		const prompt = buildSelectionPrompt(task, workflows);
+		expect(prompt).toContain('(empty)');
 	});
 });

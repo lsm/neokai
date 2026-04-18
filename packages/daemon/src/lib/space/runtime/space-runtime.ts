@@ -135,9 +135,8 @@ export interface SpaceRuntimeConfig {
 	 * one of the provided workflow ids, or `null` to fall back to the
 	 * deterministic tag-based tiebreak (`default` → `v2` → most recently updated).
 	 *
-	 * Dependency-injected so tests can provide a deterministic stub without
-	 * touching the provider SDK. In production, wire this to
-	 * `selectWorkflowWithLlmDefault` from `./llm-workflow-selector`.
+	 * Automatically wired to `selectWorkflowWithLlmDefault` by `SpaceRuntimeService`;
+	 * override only in tests.
 	 */
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
 }
@@ -2017,6 +2016,9 @@ export class SpaceRuntime {
 			// Phase 1 — pick a workflow for every eligible task in parallel. LLM
 			// calls dominate the cost, so running them concurrently keeps the
 			// tick responsive when a space has many standalone tasks queued.
+			// Deliberate: N concurrent LLM calls — acceptable because standalone task lists
+			// are typically small (single digits); a concurrency cap/semaphore can be added
+			// later if larger task lists become common.
 			const candidates = await Promise.all(
 				standaloneOpenTasks.map(async (task) => {
 					const fresh = this.config.taskRepo.getTask(task.id);

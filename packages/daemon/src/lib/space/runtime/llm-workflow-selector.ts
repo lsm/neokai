@@ -21,9 +21,8 @@
  */
 
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
-import { getProviderService } from '../../provider-service';
+import { getProviderService, mergeProviderEnvVars } from '../../provider-service';
 import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver';
-import { mergeProviderEnvVars } from '../../provider-service';
 import { Logger } from '../../logger';
 
 const log = new Logger('llm-workflow-selector');
@@ -57,6 +56,8 @@ export async function selectWorkflowWithLlmDefault(
 	workflows: SpaceWorkflow[]
 ): Promise<string | null> {
 	if (workflows.length === 0) return null;
+	// Defensive: callers of this function directly (outside of selectWorkflowForStandaloneTask)
+	// may not have pre-filtered single-workflow lists.
 	if (workflows.length === 1) return workflows[0].id;
 
 	const providerService = getProviderService();
