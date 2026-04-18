@@ -55,13 +55,6 @@ function isEmptyUserRow(row: ParsedThreadRow): boolean {
  *
  * `system:init` rows ARE kept — they render as a small "Session Started" card
  * via `SpaceSystemInitCard` so multi-agent session starts stay legible.
- *
- * User-message filtering distinguishes two kinds:
- *   - Synthetic (isSynthetic=true): agent→agent handoff messages injected by
- *     the orchestrator into a sub-agent session. These are internal plumbing
- *     and must NOT surface in the compact view.
- *   - Real (isSynthetic falsy): messages sent by a human from the UI or via
- *     RPC. These are always shown.
  */
 function preFilterRows(rows: ParsedThreadRow[]): ParsedThreadRow[] {
 	return rows.filter((row) => {
@@ -69,14 +62,6 @@ function preFilterRows(rows: ParsedThreadRow[]): ParsedThreadRow[] {
 		if (isSDKRateLimitEvent(row.message)) {
 			const info = row.message.rate_limit_info;
 			if (info?.status !== 'rejected') return false;
-		}
-		// Drop synthetic user messages — these are agent→agent task injections,
-		// not human input. Real user messages (isSynthetic falsy) are kept.
-		if (
-			isSDKUserMessage(row.message) &&
-			(row.message as { isSynthetic?: boolean }).isSynthetic === true
-		) {
-			return false;
 		}
 		if (isEmptyUserRow(row)) return false;
 		return true;
