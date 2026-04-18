@@ -85,7 +85,12 @@ export function SpaceTaskThreadEventFeed({ events, taskId, maps }: SpaceTaskThre
 				const showInlineLabel = !inSameAgentRun;
 
 				return (
-					<div key={`agent-event-${event.id}-${index}`} class="space-y-px">
+					<div
+						key={`agent-event-${event.id}-${index}`}
+						class="space-y-px"
+						data-agent-label={event.label}
+						data-agent-color={getAgentColor(event.label)}
+					>
 						{showGroupHeader && (
 							<div
 								class="pt-1 text-[11px] uppercase tracking-[0.16em] font-mono"

@@ -1,8 +1,8 @@
 /**
  * Agent Overlay Chat E2E Tests (M7.6)
  *
- * Verifies that clicking the "View Agent Session" button in SpaceTaskPane opens
- * an overlay chat panel on top of the task view instead of navigating away:
+ * Verifies that the agent overlay slide-over panel works correctly on top of
+ * the task view:
  *   - The overlay panel appears (data-testid="agent-overlay-chat")
  *   - The task view remains accessible underneath (URL unchanged)
  *   - The agent name is surfaced via the dialog's aria-label
@@ -10,16 +10,22 @@
  *   - Pressing Escape also dismisses the overlay
  *   - Clicking the translucent backdrop also dismisses the overlay
  *
+ * Opening the overlay:
+ *   The dedicated "View Agent Session" header button was removed (commit a019567d0)
+ *   — agent sessions are now accessed via the compact-thread block headers which
+ *   require live agent messages not available in this lightweight test setup.
+ *   Instead, the overlay is opened via `window.__neokai_space_overlay.open()`, a
+ *   test hook exposed by SpaceIsland. This is acceptable as test infrastructure
+ *   because opening is purely client-side signal manipulation; all close/dismiss
+ *   actions still go through the UI (clicks, keyboard).
+ *
  * Setup:
  *   - A unique workspace directory is created in beforeEach.
  *   - Space + task are created via RPC (infrastructure).
- *   - A human session is created via RPC and linked to the task as
- *     taskAgentSessionId, so "view-agent-session-btn" renders without needing
- *     a live AI session from the daemon.
- *   - The task is transitioned to "done" status so SpaceTaskPane's useEffect
- *     skips the ensureTaskAgentSession call (which would clear the human
- *     session ID since it is not a real task-agent session), eliminating the
- *     race condition between the UI mount and the test click.
+ *   - The task is marked done so the space runtime ignores it (no race against
+ *     ensureTaskAgentSession clearing session IDs).
+ *   - A human session is created via RPC so ChatContainer has a real session to
+ *     load; without a valid session ID the ChatHeader / back button may not render.
  *
  * Cleanup:
  *   - Space is deleted via RPC in afterEach.
@@ -30,10 +36,13 @@
  *   - All test actions go through the UI (clicks, navigation, keyboard).
  *   - All assertions check visible DOM state.
  *   - RPC is only used in beforeEach / afterEach for infrastructure setup / teardown.
+ *   - window.__neokai_space_overlay.open() is used as a test-infrastructure trigger
+ *     (analogous to RPC setup calls) since no UI trigger is available in this
+ *     lightweight setup.
  *
  * Timeout conventions:
- *   - 10000ms: server round-trips (store hydration, RPC calls)
- *   - 5000ms:  local UI changes (button visibility, overlay toggle)
+ *   - 10000ms: server round-trips (store hydration, RPC calls, space load)
+ *   - 5000ms:  local UI changes (overlay toggle, button visibility)
  */
 
 import { existsSync, rmSync } from 'node:fs';
@@ -58,20 +67,14 @@ interface OverlayTestContext {
 }
 
 /**
- * Create a space with a task that has an agent session linked to it.
+ * Create a space with a task and a standalone human session.
  *
- * A human (non-AI) session is created so that `taskAgentSessionId` is
- * populated on the task — this causes SpaceTaskPane to render
- * `data-testid="view-agent-session-btn"` without requiring a live agent.
+ * The session is NOT linked to the task — it is only used as the sessionId
+ * argument to `window.__neokai_space_overlay.open()` so that ChatContainer
+ * has a valid session to load (enabling ChatHeader + back button to render).
  *
- * The task is then set to `done` so that SpaceTaskPane's useEffect skips the
- * `ensureTaskAgentSession` call (the effect returns early for terminal tasks).
- * Without this, the daemon would clear the human session ID (it's not a real
- * task-agent session), causing a race condition against the test click.
- *
- * For a done task, `showHeaderSessionAction = !!runtimeSpaceId && !!agentSessionId`,
- * so the "View Agent Session" button still renders as long as `taskAgentSessionId`
- * is set.
+ * The task is set to `done` so the space runtime skips it entirely and cannot
+ * race against test assertions.
  */
 async function createSpaceWithTaskAndSession(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -84,42 +87,20 @@ async function createSpaceWithTaskAndSession(
 	const spaceId = await createSpaceViaRpc(page, wsPath, spaceName);
 	const taskId = await createSpaceTaskViaRpc(page, spaceId, 'Overlay test task');
 
-	// Mark the task as done FIRST, then link the session. Order matters:
-	// if the task were still in 'open' status when taskAgentSessionId is set,
-	// the space runtime's tick loop could pick it up, call ensureTaskAgentSession,
-	// fail to restore the human session (it's not a real task-agent session), and
-	// clear taskAgentSessionId — a race condition that silently drops the button.
-	// By transitioning to 'done' before setting the session ID, the runtime skips
-	// this task entirely (it only processes non-terminal tasks). SpaceTaskPane also
-	// skips the ensureTaskAgentSession useEffect for terminal tasks, so the session
-	// ID stays set. The "View Agent Session" button still renders because
-	// showHeaderSessionAction = !!runtimeSpaceId && !!agentSessionId (both truthy).
 	const sessionId = await page.evaluate(
-		async ({ wsPath, spaceId, taskId }) => {
+		async ({ wsPath: wp, spaceId: sid, taskId: tid }) => {
 			const hub = window.__messageHub || window.appState?.messageHub;
 			if (!hub?.request) throw new Error('MessageHub not available');
 
-			// 1. Mark as done first — prevents the space runtime from touching it.
-			await hub.request('spaceTask.update', {
-				spaceId,
-				taskId,
-				status: 'done',
-			});
+			// Mark task done first — prevents the space runtime from processing it.
+			await hub.request('spaceTask.update', { spaceId: sid, taskId: tid, status: 'done' });
 
-			// 2. Create a lightweight session (no AI).
-			// session.create returns { sessionId, session } — not { id }.
+			// Create a lightweight human session (no AI). ChatContainer can load any
+			// valid session — it doesn't have to be a space_task_agent type session.
 			const { sessionId: newSessionId } = (await hub.request('session.create', {
-				workspacePath: wsPath,
+				workspacePath: wp,
 				createdBy: 'human',
 			})) as { sessionId: string };
-
-			// 3. Link the session to the now-done task. The runtime won't clear this
-			//    because it only processes non-terminal tasks.
-			await hub.request('spaceTask.update', {
-				spaceId,
-				taskId,
-				taskAgentSessionId: newSessionId,
-			});
 
 			return newSessionId;
 		},
@@ -146,6 +127,33 @@ async function deleteSessionViaRpc(
 	} catch {
 		// Best-effort cleanup
 	}
+}
+
+/**
+ * Open the agent overlay using the test hook exposed by SpaceIsland.
+ *
+ * The hook (`window.__neokai_space_overlay.open`) sets the client-side
+ * spaceOverlaySessionIdSignal / spaceOverlayAgentNameSignal which cause
+ * SpaceIsland to render `<AgentOverlayChat>`. It is registered in SpaceIsland's
+ * mount useEffect, so we wait for it to be available before calling.
+ */
+async function openOverlay(
+	page: Parameters<typeof waitForWebSocketConnected>[0],
+	sessionId: string,
+	agentName = 'Task Agent'
+): Promise<void> {
+	// Wait for SpaceIsland to mount and register the hook.
+	await page.waitForFunction(() => !!(window as Record<string, unknown>).__neokai_space_overlay, {
+		timeout: 10000,
+	});
+	await page.evaluate(
+		({ sid, name }) => {
+			type Api = { open: (s: string, n: string) => void };
+			const api = (window as Record<string, unknown>).__neokai_space_overlay as Api;
+			api.open(sid, name);
+		},
+		{ sid: sessionId, name: agentName }
+	);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -191,18 +199,14 @@ test.describe('Agent Overlay Chat', () => {
 		}
 	});
 
-	// ─── Test 1: "View Agent Session" button opens the overlay ──────────────
+	// ─── Test 1: Opening the overlay via test hook ────────────────────────────
 
-	test('clicking "View Agent Session" opens the agent overlay panel', async ({ page }) => {
+	test('opening the overlay shows the agent overlay panel', async ({ page }) => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		// Wait for the task pane to load and the agent session button to appear.
-		// "view-agent-session-btn" is rendered when task.taskAgentSessionId is set.
-		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
-
-		// Click the button to open the overlay.
-		await page.getByTestId('view-agent-session-btn').click();
+		// Open overlay via the test hook (header button was removed in a019567d0).
+		await openOverlay(page, sessionId, 'Task Agent');
 
 		// The overlay panel must appear.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
@@ -214,8 +218,7 @@ test.describe('Agent Overlay Chat', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
-		await page.getByTestId('view-agent-session-btn').click();
+		await openOverlay(page, sessionId, 'Task Agent');
 
 		// Overlay is open.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
@@ -233,8 +236,7 @@ test.describe('Agent Overlay Chat', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
-		await page.getByTestId('view-agent-session-btn').click();
+		await openOverlay(page, sessionId, 'Task Agent');
 
 		const overlay = page.getByTestId('agent-overlay-chat');
 		await expect(overlay).toBeVisible({ timeout: 5000 });
@@ -253,8 +255,7 @@ test.describe('Agent Overlay Chat', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
-		await page.getByTestId('view-agent-session-btn').click();
+		await openOverlay(page, sessionId, 'Task Agent');
 
 		// Overlay is open.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
@@ -277,8 +278,7 @@ test.describe('Agent Overlay Chat', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
-		await page.getByTestId('view-agent-session-btn').click();
+		await openOverlay(page, sessionId, 'Task Agent');
 
 		// Overlay is open.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
@@ -296,8 +296,7 @@ test.describe('Agent Overlay Chat', () => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
-		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
-		await page.getByTestId('view-agent-session-btn').click();
+		await openOverlay(page, sessionId, 'Task Agent');
 
 		// Overlay is open.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });

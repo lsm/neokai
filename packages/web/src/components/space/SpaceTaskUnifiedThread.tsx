@@ -23,17 +23,26 @@ function shortAgentLabel(label: string): string {
  * Walk all `[data-agent-label]` blocks inside `container` and return the agent
  * of the last block whose top edge is at or above the container's top edge.
  * This is the block currently occupying the visible top of the scroll area.
+ *
+ * Falls back to the first block when nothing has scrolled past the top yet
+ * (e.g. scrollTop=0) so the tag is always visible when content exists.
  */
 function findCurrentAgent(container: HTMLElement): AgentTag | null {
 	const blocks = container.querySelectorAll<HTMLElement>('[data-agent-label]');
+	if (blocks.length === 0) return null;
 	const containerTop = container.getBoundingClientRect().top;
 	let found: AgentTag | null = null;
 	for (const el of Array.from(blocks)) {
-		if (el.getBoundingClientRect().top <= containerTop + 4) {
+		if (el.getBoundingClientRect().top <= containerTop + 8) {
 			found = { label: el.dataset.agentLabel ?? '', color: el.dataset.agentColor ?? '' };
 		} else {
 			break;
 		}
+	}
+	// At scroll=0 nothing is above the fold — show the first block's agent.
+	if (!found) {
+		const first = blocks[0] as HTMLElement;
+		found = { label: first.dataset.agentLabel ?? '', color: first.dataset.agentColor ?? '' };
 	}
 	return found;
 }
@@ -77,9 +86,12 @@ export function SpaceTaskUnifiedThread({
 	// ── Scroll-spy: floating agent name tag ──────────────────────────────────
 	const [currentAgent, setCurrentAgent] = useState<AgentTag | null>(null);
 
-	// Attach scroll listener — re-registers only when render style changes.
+	// Attach scroll listener. Re-registers when renderStyle changes or when rows
+	// first appear (parsedRows.length>0 transitions the early-return path to the
+	// main return path, which is the first time containerRef.current is set).
+	const hasRows = parsedRows.length > 0;
 	useEffect(() => {
-		if (renderStyle !== 'compact') {
+		if (!hasRows) {
 			setCurrentAgent(null);
 			return;
 		}
@@ -89,13 +101,13 @@ export function SpaceTaskUnifiedThread({
 		update();
 		container.addEventListener('scroll', update, { passive: true });
 		return () => container.removeEventListener('scroll', update);
-	}, [renderStyle]);
+	}, [hasRows, renderStyle]);
 
-	// Re-probe when rows change (new blocks appear / auto-scroll runs).
+	// Re-probe when rows change so the tag reflects newly rendered blocks.
 	useEffect(() => {
-		if (renderStyle !== 'compact' || !containerRef.current) return;
+		if (!hasRows || !containerRef.current) return;
 		setCurrentAgent(findCurrentAgent(containerRef.current));
-	}, [parsedRows.length, renderStyle]);
+	}, [parsedRows.length, hasRows]);
 
 	if (isReconnecting) {
 		return (
@@ -130,7 +142,7 @@ export function SpaceTaskUnifiedThread({
 	return (
 		<div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
 			{/* Scroll-spy agent name tag — shows which agent's block is at the top of view */}
-			{renderStyle === 'compact' && currentAgent && (
+			{currentAgent && (
 				<div
 					class="absolute top-2 left-4 z-10 flex items-center gap-1.5 px-2 py-[3px] rounded bg-dark-900/85 border border-dark-700 backdrop-blur-[2px] pointer-events-none select-none"
 					aria-hidden="true"
