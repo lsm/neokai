@@ -176,12 +176,14 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 
 	return (
 		<div data-testid="compact-block">
-			{/* Agent identity header — clickable to open the agent slide-out */}
+			{/* Agent identity header — clickable to open the agent slide-out.
+			    Taller padding (min-h-[32px], py-2) makes the name a comfortable
+			    click/tap target while keeping the small text style. */}
 			<div
 				class={
-					'flex items-center gap-2 px-1 py-1.5 rounded-sm ' +
+					'flex items-center gap-2 px-2 py-2 min-h-[32px] rounded ' +
 					(isClickable
-						? 'cursor-pointer hover:bg-gray-800/40 transition-colors focus:outline-none focus:bg-gray-800/40'
+						? 'cursor-pointer hover:bg-gray-800/40 active:bg-gray-800/60 transition-colors focus:outline-none focus:bg-gray-800/40 focus:ring-1 focus:ring-gray-700'
 						: '')
 				}
 				data-testid="compact-block-header"
