@@ -5,7 +5,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
  * Compact "Session Started" card for Space task threads.
  *
  * Matches the visual language of `SDKResultMessage` and `SDKSystemMessage` —
- * indigo-tinted rounded card with an expandable details section — but uses
+ * sky-tinted rounded card with an expandable details section — but uses
  * smaller text (text-[11px]/text-xs) so it fits the compact thread density.
  *
  * The normal chat pipeline dispatches init messages to `SystemInitPill` (an
@@ -48,13 +48,13 @@ export function SpaceSystemInitCard({ message }: Props) {
 
 	return (
 		<div
-			class="rounded border bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800"
+			class="rounded border bg-sky-50 dark:bg-sky-900/20 border-sky-200 dark:border-sky-800"
 			data-testid="compact-system-init-card"
 		>
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
-				class="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors text-left rounded"
+				class="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors text-left rounded"
 				aria-expanded={expanded}
 				data-testid="compact-system-init-toggle"
 			>
@@ -62,7 +62,7 @@ export function SpaceSystemInitCard({ message }: Props) {
 					{/* Chevron rotates when expanded */}
 					<svg
 						class={
-							'w-3 h-3 flex-shrink-0 text-indigo-600 dark:text-indigo-400 transition-transform ' +
+							'w-3 h-3 flex-shrink-0 text-sky-600 dark:text-sky-400 transition-transform ' +
 							(expanded ? 'rotate-90' : '')
 						}
 						viewBox="0 0 24 24"
@@ -75,15 +75,15 @@ export function SpaceSystemInitCard({ message }: Props) {
 					>
 						<polyline points="9 18 15 12 9 6" />
 					</svg>
-					<span class="text-[11px] font-medium text-indigo-900 dark:text-indigo-100 flex-shrink-0">
+					<span class="text-[11px] font-medium text-sky-900 dark:text-sky-100 flex-shrink-0">
 						Session Started
 					</span>
-					<span class="text-[11px] text-indigo-700 dark:text-indigo-300 font-mono truncate">
+					<span class="text-[11px] text-sky-700 dark:text-sky-300 font-mono truncate">
 						{shortModel(m.model)}
 						{m.permissionMode ? ` · ${m.permissionMode}` : ''}
 					</span>
 				</div>
-				<div class="flex items-center gap-2 flex-shrink-0 text-[10px] text-indigo-600 dark:text-indigo-400">
+				<div class="flex items-center gap-2 flex-shrink-0 text-[10px] text-sky-600 dark:text-sky-400">
 					{toolCount > 0 && <span>{toolCount} tools</span>}
 					{mcpCount > 0 && <span>{mcpCount} MCP</span>}
 				</div>
@@ -91,24 +91,24 @@ export function SpaceSystemInitCard({ message }: Props) {
 
 			{expanded && (
 				<div
-					class="px-3 py-2 border-t border-indigo-200 dark:border-indigo-800 bg-white/60 dark:bg-gray-900/40 text-[11px] text-indigo-900 dark:text-indigo-100 space-y-1.5"
+					class="px-3 py-2 border-t border-sky-200 dark:border-sky-800 bg-white/60 dark:bg-gray-900/40 text-[11px] text-sky-900 dark:text-sky-100 space-y-1.5"
 					data-testid="compact-system-init-details"
 				>
 					{m.cwd && (
 						<div class="flex gap-2">
-							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">cwd:</span>
+							<span class="text-sky-500 dark:text-sky-400 flex-shrink-0">cwd:</span>
 							<span class="font-mono truncate">{m.cwd}</span>
 						</div>
 					)}
 					{toolCount > 0 && (
 						<div class="flex gap-2 items-start">
-							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">tools:</span>
+							<span class="text-sky-500 dark:text-sky-400 flex-shrink-0">tools:</span>
 							<span class="font-mono break-all">{m.tools!.join(', ')}</span>
 						</div>
 					)}
 					{mcpCount > 0 && (
 						<div class="flex gap-2 items-start">
-							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">mcp:</span>
+							<span class="text-sky-500 dark:text-sky-400 flex-shrink-0">mcp:</span>
 							<span class="flex flex-wrap gap-x-2 gap-y-0.5">
 								{m.mcp_servers!.map((s) => (
 									<span key={s.name} class="font-mono">
@@ -128,7 +128,7 @@ export function SpaceSystemInitCard({ message }: Props) {
 					)}
 					{slashCount > 0 && (
 						<div class="flex gap-2 items-start">
-							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">slash:</span>
+							<span class="text-sky-500 dark:text-sky-400 flex-shrink-0">slash:</span>
 							<span class="font-mono break-all">
 								{m.slash_commands!.map((cmd) => `/${cmd}`).join(', ')}
 							</span>
@@ -136,7 +136,7 @@ export function SpaceSystemInitCard({ message }: Props) {
 					)}
 					{m.agents && m.agents.length > 0 && (
 						<div class="flex gap-2 items-start">
-							<span class="text-indigo-500 dark:text-indigo-400 flex-shrink-0">agents:</span>
+							<span class="text-sky-500 dark:text-sky-400 flex-shrink-0">agents:</span>
 							<span class="flex flex-wrap gap-x-2 gap-y-0.5 font-mono">
 								{m.agents.map((a) => (
 									<span key={a}>{a}</span>
@@ -145,7 +145,7 @@ export function SpaceSystemInitCard({ message }: Props) {
 						</div>
 					)}
 					{(m.apiKeySource || m.output_style) && (
-						<div class="text-indigo-500 dark:text-indigo-400">
+						<div class="text-sky-500 dark:text-sky-400">
 							{m.apiKeySource && <>key: {m.apiKeySource}</>}
 							{m.apiKeySource && m.output_style && ' · '}
 							{m.output_style && <>output: {m.output_style}</>}
