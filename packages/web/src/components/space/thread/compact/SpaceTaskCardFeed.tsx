@@ -233,18 +233,16 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 						{terminalBadge}
 					</span>
 				)}
+				{hiddenInBlock > 0 && (
+					<span
+						class="ml-auto text-[10px] font-mono flex-shrink-0"
+						style={{ color: agentColor, opacity: 0.55 }}
+						data-testid="compact-block-hidden-count"
+					>
+						↑ {hiddenInBlock} earlier {hiddenInBlock === 1 ? 'message' : 'messages'}
+					</span>
+				)}
 			</div>
-
-			{/* Per-block hidden-message count — shown under the agent name */}
-			{hiddenInBlock > 0 && (
-				<div
-					class="px-1 pb-0.5 text-[10px] font-mono"
-					style={{ color: agentColor, opacity: 0.55 }}
-					data-testid="compact-block-hidden-count"
-				>
-					↑ {hiddenInBlock} earlier {hiddenInBlock === 1 ? 'message' : 'messages'}
-				</div>
-			)}
 
 			{/* Siderail + body */}
 			<div class="flex gap-2 pl-1 pb-1" data-testid="compact-block-body">
