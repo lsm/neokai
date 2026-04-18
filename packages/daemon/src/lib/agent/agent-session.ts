@@ -86,7 +86,7 @@ import type {
 	Provider,
 	RoomSkillOverride,
 } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { ChatMessage, MessageOrigin } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -740,7 +740,12 @@ export class AgentSession
 		limit?: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		return this.db.getSDKMessages(this.session.id, limit, before, since);
 	}
 

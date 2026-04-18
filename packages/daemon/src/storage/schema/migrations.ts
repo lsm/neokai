@@ -399,6 +399,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   restarts, lazy node activation). The flush-on-activate hook in
 	//   TaskAgentManager drains pending rows when a sub-session comes online.
 	runMigration92(db);
+
+	// Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
+	//   Stores the resolved CWD used when the SDK session was first created, so that
+	//   the session file can be found even when the effective CWD changes between daemon
+	//   restarts (e.g. when a worktree is added/removed after the session was started).
+	runMigration93(db);
 }
 
 /**
@@ -6068,4 +6074,20 @@ export function runMigration92(db: BunDatabase): void {
 			`ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
 			`WHERE idempotency_key IS NOT NULL`
 	);
+}
+
+/**
+ * Migration 93: Add sdk_origin_path column to sessions for cross-workspace/worktree resume.
+ *
+ * Stores the resolved CWD used when the SDK session was first created, enabling
+ * the daemon to locate the SDK session file even when the effective CWD changes
+ * between daemon restarts (e.g. when a worktree is added/removed).
+ */
+export function runMigration93(db: BunDatabase): void {
+	if (!tableExists(db, 'sessions')) return;
+	try {
+		db.prepare('SELECT sdk_origin_path FROM sessions LIMIT 1').all();
+	} catch {
+		db.exec('ALTER TABLE sessions ADD COLUMN sdk_origin_path TEXT');
+	}
 }

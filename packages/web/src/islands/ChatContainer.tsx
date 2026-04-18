@@ -27,7 +27,8 @@ import {
 	DEFAULT_ROOM_CHAT_FEATURES,
 	DEFAULT_LOBBY_FEATURES,
 } from '@neokai/shared';
-import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@neokai/shared';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
@@ -140,7 +141,7 @@ export default function ChatContainer({
 
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// Moved here before callbacks that depend on it
-	const [messages, setMessages] = useState<SDKMessage[]>([]);
+	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [session, setSession] = useState(sessionStore.sessionInfo.value);
 
 	// ========================================
@@ -491,7 +492,7 @@ export default function ChatContainer({
 			const oldScrollHeight = container.scrollHeight;
 			const oldScrollTop = container.scrollTop;
 
-			const oldestMessage = messages[0] as SDKMessage & { timestamp?: number };
+			const oldestMessage = messages[0] as ChatMessage & { timestamp?: number };
 			const beforeTimestamp = oldestMessage?.timestamp;
 			if (!beforeTimestamp) {
 				setHasMoreMessages(false);

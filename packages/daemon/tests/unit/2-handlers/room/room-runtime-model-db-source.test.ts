@@ -34,6 +34,7 @@ const SESSIONS_SCHEMA = `
     worktree_branch TEXT,
     git_branch TEXT,
     sdk_session_id TEXT,
+    sdk_origin_path TEXT,
     available_commands TEXT,
     processing_state TEXT,
     archived_at TEXT,

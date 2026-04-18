@@ -159,6 +159,14 @@ export interface SessionInfo {
 	worktree?: WorktreeMetadata;
 	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
 	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+	/**
+	 * The workspace path (resolved) that was used as CWD when the SDK session was first
+	 * created. The SDK stores conversation files under
+	 * ~/.claude/projects/{encoded-sdkOriginPath}/{sdkSessionId}.jsonl
+	 * Persisting this allows reliable resume even when the session's effective CWD
+	 * changes (e.g., worktree is added/removed between daemon restarts).
+	 */
+	sdkOriginPath?: string;
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
@@ -597,6 +605,26 @@ export type MessageDeliveryMode = 'immediate' | 'defer';
  * - 'system': message was injected by the daemon system internally
  */
 export type MessageOrigin = 'human' | 'neo' | 'system';
+
+/**
+ * A NeoKai-native action message stored alongside SDK messages in the chat.
+ *
+ * Used to present interactive prompts to the user from the daemon — for
+ * example, asking whether to start a fresh SDK session when the transcript
+ * file can no longer be found.
+ *
+ * The `type` field is intentionally distinct from all SDK message types so
+ * the frontend can identify and route it without ambiguity.
+ */
+export type NeokaiActionMessage = {
+	type: 'neokai_action';
+	uuid: string;
+	session_id: string;
+	action: 'sdk_resume_choice';
+	resolved: boolean;
+	chosenOption?: 'start_fresh' | 'leave_as_is';
+	timestamp: number;
+};
 
 // Tool types
 export interface Tool {

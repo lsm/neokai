@@ -16,8 +16,8 @@ import type {
 	SDKMessagesState,
 	AgentProcessingState,
 	SDKMessagesUpdate,
+	ChatMessage,
 } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { STATE_CHANNELS } from '@neokai/shared';
 import { StateChannel } from './state-channel';
 import { globalStore } from './global-store';
@@ -35,27 +35,28 @@ import { globalStore } from './global-store';
  * @internal Exported for testing
  */
 export function mergeSdkMessagesWithDedup(
-	existing: SDKMessage[],
-	added: SDKMessage[] | undefined
-): SDKMessage[] {
+	existing: ChatMessage[],
+	added: ChatMessage[] | undefined
+): ChatMessage[] {
 	if (!added || added.length === 0) {
 		return existing;
 	}
 
 	// Use Map for O(1) lookup by UUID
-	const map = new Map<string, SDKMessage>();
+	const map = new Map<string, ChatMessage>();
 
 	// Add existing messages first
 	for (const msg of existing) {
-		const msgWithUuid = msg as SDKMessage & { uuid?: string };
+		const msgWithUuid = msg as ChatMessage & { uuid?: string };
 		if (msgWithUuid.uuid) {
 			map.set(msgWithUuid.uuid, msg);
 		}
 	}
 
-	// Add new messages (overwrites if UUID already exists)
+	// Add new messages (overwrites if UUID already exists — also handles
+	// neokai_action messages being updated when the user resolves the prompt)
 	for (const msg of added) {
-		const msgWithUuid = msg as SDKMessage & { uuid?: string };
+		const msgWithUuid = msg as ChatMessage & { uuid?: string };
 		if (msgWithUuid.uuid) {
 			map.set(msgWithUuid.uuid, msg);
 		}
@@ -63,8 +64,8 @@ export function mergeSdkMessagesWithDedup(
 
 	// Convert back to array, preserving order by timestamp
 	return Array.from(map.values()).sort((a, b) => {
-		const timeA = (a as SDKMessage & { timestamp?: number }).timestamp || 0;
-		const timeB = (b as SDKMessage & { timestamp?: number }).timestamp || 0;
+		const timeA = (a as ChatMessage & { timestamp?: number }).timestamp || 0;
+		const timeB = (b as ChatMessage & { timestamp?: number }).timestamp || 0;
 		return timeA - timeB;
 	});
 }

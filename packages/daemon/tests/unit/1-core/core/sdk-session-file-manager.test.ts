@@ -20,6 +20,8 @@ import {
 	identifyOrphanedSDKFiles,
 	removeToolResultFromSessionFile,
 	truncateSessionFileAtMessage,
+	findSDKSessionFileGlobally,
+	migrateSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
 import type { Database } from '../../../../src/storage/database';
 
@@ -1407,6 +1409,113 @@ describe('SDK Session File Manager', () => {
 					// Ignore cleanup errors
 				}
 			}
+		});
+	});
+
+	// ========================================================================
+	// Cross-workspace / worktree resume helpers (Task #12 regression tests)
+	// ========================================================================
+
+	describe('findSDKSessionFileGlobally', () => {
+		test('should return null when projects directory does not exist', () => {
+			// TEST_SDK_SESSION_DIR is set to a fresh temp dir with no projects/ subdir
+			const result = findSDKSessionFileGlobally('nonexistent-session-id');
+			expect(result).toBeNull();
+		});
+
+		test('should return null when no project directory contains the session file', () => {
+			// Create projects dir but no matching file
+			mkdirSync(join(process.env.TEST_SDK_SESSION_DIR!, 'projects', '-some-project'), {
+				recursive: true,
+			});
+			const result = findSDKSessionFileGlobally('session-not-here');
+			expect(result).toBeNull();
+		});
+
+		test('should find a session file stored under a different workspace path', () => {
+			// Simulate: session was created with workspace A, file lives in A's project dir
+			const workspaceA = '/tmp/workspace-a';
+			const sessionId = 'resume-test-session-id';
+			const projectKeyA = workspaceA.replace(/[/.]/g, '-');
+			const projectDirA = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKeyA);
+			mkdirSync(projectDirA, { recursive: true });
+			const filePath = join(projectDirA, `${sessionId}.jsonl`);
+			writeFileSync(filePath, JSON.stringify({ type: 'user', uuid: 'u1' }) + '\n', 'utf-8');
+
+			// The session's current workspace is B (different) — file not at B
+			const result = findSDKSessionFileGlobally(sessionId);
+
+			expect(result).toBe(filePath);
+		});
+
+		test('should return null for a non-existent session id', () => {
+			// projects/ dir exists but the session file is not there
+			const projectDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', '-tmp-workspace-c');
+			mkdirSync(projectDir, { recursive: true });
+			writeFileSync(join(projectDir, 'other-session.jsonl'), '{}', 'utf-8');
+
+			const result = findSDKSessionFileGlobally('completely-different-session-id');
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('migrateSDKSessionFile', () => {
+		const sessionId = 'migrate-test-session';
+		const workspaceA = '/tmp/migrate-workspace-a';
+		const workspaceB = '/tmp/migrate-workspace-b';
+
+		test('should copy session file from source workspace to target workspace', () => {
+			// Create file at workspace A's project dir
+			const fileA = getSDKSessionFilePath(workspaceA, sessionId);
+			mkdirSync(join(fileA, '..'), { recursive: true });
+			writeFileSync(fileA, JSON.stringify({ type: 'user' }) + '\n', 'utf-8');
+
+			// Migrate to workspace B
+			const success = migrateSDKSessionFile(workspaceA, workspaceB, sessionId);
+
+			expect(success).toBe(true);
+
+			const fileB = getSDKSessionFilePath(workspaceB, sessionId);
+			expect(existsSync(fileB)).toBe(true);
+
+			// Source file should still exist (non-destructive)
+			expect(existsSync(fileA)).toBe(true);
+
+			// Content should match
+			const contentB = readFileSync(fileB, 'utf-8');
+			expect(contentB).toContain('"type":"user"');
+		});
+
+		test('should return false when source file does not exist', () => {
+			const success = migrateSDKSessionFile('/tmp/nonexistent-workspace', workspaceB, sessionId);
+			expect(success).toBe(false);
+		});
+
+		test('should return true without copying when source and target resolve to same path', () => {
+			// When both workspaces encode to the same project dir
+			const fileA = getSDKSessionFilePath(workspaceA, sessionId);
+			mkdirSync(join(fileA, '..'), { recursive: true });
+			writeFileSync(fileA, '{}', 'utf-8');
+
+			const success = migrateSDKSessionFile(workspaceA, workspaceA, sessionId);
+			expect(success).toBe(true);
+		});
+
+		test('should return true without error when target file already exists', () => {
+			// Both source and target already have the file (e.g. prior migration)
+			const fileA = getSDKSessionFilePath(workspaceA, sessionId);
+			const fileB = getSDKSessionFilePath(workspaceB, sessionId);
+			mkdirSync(join(fileA, '..'), { recursive: true });
+			mkdirSync(join(fileB, '..'), { recursive: true });
+			writeFileSync(fileA, '{"type":"old"}', 'utf-8');
+			writeFileSync(fileB, '{"type":"existing"}', 'utf-8');
+
+			const success = migrateSDKSessionFile(workspaceA, workspaceB, sessionId);
+			expect(success).toBe(true);
+
+			// Target content should remain unchanged (idempotent: no overwrite)
+			const content = readFileSync(fileB, 'utf-8');
+			expect(content).toContain('"type":"existing"');
 		});
 	});
 });

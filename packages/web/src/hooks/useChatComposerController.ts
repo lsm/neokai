@@ -1,4 +1,4 @@
-import type { AgentProcessingState, ModelInfo } from '@neokai/shared';
+import type { AgentProcessingState, ModelInfo, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useCallback, useMemo, useState } from 'preact/hooks';
 import { switchCoordinatorMode, switchSandboxMode } from '../lib/api-helpers.ts';
@@ -9,7 +9,7 @@ import { useModelSwitcher } from './useModelSwitcher.ts';
 interface UseChatComposerControllerOptions {
 	sessionId: string;
 	agentState: AgentProcessingState;
-	messages: SDKMessage[];
+	messages: ChatMessage[];
 	isProcessing: boolean;
 	coordinatorMode: boolean;
 	setCoordinatorMode: (value: boolean) => void;
@@ -120,7 +120,8 @@ export function useChatComposerController({
 
 		if (agentState.status === 'processing') {
 			const phase = agentState.phase;
-			const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+			const latestMessage =
+				messages.length > 0 ? (messages[messages.length - 1] as SDKMessage) : null;
 			const action = getCurrentAction(latestMessage, true, {
 				isCompacting: agentState.isCompacting,
 				streamingPhase: phase,
