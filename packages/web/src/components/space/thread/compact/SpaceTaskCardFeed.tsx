@@ -10,6 +10,7 @@ import type { UseMessageMapsResult } from '../../../../hooks/useMessageMaps';
 import { SDKMessageRenderer } from '../../../sdk/SDKMessageRenderer';
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import { spaceOverlayAgentNameSignal, spaceOverlaySessionIdSignal } from '../../../../lib/signals';
+import { SpaceSystemInitCard } from './SpaceSystemInitCard';
 import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
@@ -51,11 +52,13 @@ function isEmptyUserRow(row: ParsedThreadRow): boolean {
  * Pre-filter parsed rows before block grouping. Removes structural noise that
  * should never appear in the compact view. Result rows are NOT filtered here —
  * they are always preserved so terminal blocks remain visible.
+ *
+ * `system:init` rows ARE kept — they render as a small "Session Started" card
+ * via `SpaceSystemInitCard` so multi-agent session starts stay legible.
  */
 function preFilterRows(rows: ParsedThreadRow[]): ParsedThreadRow[] {
 	return rows.filter((row) => {
 		if (!row.message) return true; // raw fallback rows stay
-		if (isSDKSystemInit(row.message)) return false;
 		if (isSDKRateLimitEvent(row.message)) {
 			const info = row.message.rate_limit_info;
 			if (info?.status !== 'rejected') return false;
@@ -110,6 +113,11 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 				{row.fallbackText ?? 'Unparseable row'}
 			</div>
 		);
+	}
+	// System init messages get a dedicated small card — the normal SDK pipeline
+	// would render a plain inline pill in task context.
+	if (isSDKSystemInit(row.message)) {
+		return <SpaceSystemInitCard message={row.message} />;
 	}
 	const msgUuid = (row.message as { uuid?: string }).uuid ?? '';
 	return (

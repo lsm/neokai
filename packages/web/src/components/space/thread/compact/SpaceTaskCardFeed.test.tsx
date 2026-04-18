@@ -139,7 +139,11 @@ function makeResultRow(
 	};
 }
 
-function makeSystemInitRow(id: string, label: string): ParsedThreadRow {
+function makeSystemInitRow(
+	id: string,
+	label: string,
+	overrides: Record<string, unknown> = {}
+): ParsedThreadRow {
 	return {
 		id,
 		sessionId: null,
@@ -151,6 +155,17 @@ function makeSystemInitRow(id: string, label: string): ParsedThreadRow {
 			type: 'system',
 			subtype: 'init',
 			uuid: id,
+			model: 'claude-opus-4-5',
+			permissionMode: 'default',
+			cwd: '/tmp/work',
+			tools: ['Bash', 'Read', 'Edit'],
+			mcp_servers: [],
+			slash_commands: [],
+			agents: [],
+			apiKeySource: 'user',
+			output_style: 'text',
+			session_id: 'session-1',
+			...overrides,
 		} as any,
 		fallbackText: null,
 	};
@@ -769,9 +784,9 @@ describe('SpaceTaskCardFeed', () => {
 		expect(renderers[2].textContent).toBe('shown-e');
 	});
 
-	// ── Pre-filter (noise removal) ───────────────────────────────────────────
+	// ── System-init rendering ────────────────────────────────────────────────
 
-	it('filters out system-init rows', () => {
+	it('renders a system-init row as a SpaceSystemInitCard alongside other rows', () => {
 		const rows = [
 			makeSystemInitRow('s1', 'Task Agent'),
 			makeAssistantTextRow('r1', 'Task Agent', 'visible content'),
@@ -785,10 +800,93 @@ describe('SpaceTaskCardFeed', () => {
 			/>
 		);
 
+		// The init row must NOT be filtered — it must produce a compact init card.
+		const initCards = container.querySelectorAll('[data-testid="compact-system-init-card"]');
+		expect(initCards.length).toBe(1);
+		expect(initCards[0].textContent).toContain('Session Started');
+
+		// The normal assistant row still renders via SDKMessageRenderer.
 		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
 		expect(rendered.length).toBe(1);
 		expect(rendered[0].textContent).toBe('visible content');
 	});
+
+	it('shows collapsed header with model + tool count on the system-init card', () => {
+		const rows = [
+			makeSystemInitRow('s1', 'Task Agent', {
+				tools: ['Bash', 'Read', 'Edit', 'Write'],
+				mcp_servers: [{ name: 'chrome-devtools', status: 'connected' }],
+			}),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const toggle = screen.getByTestId('compact-system-init-toggle');
+		// Model is shown without the `claude-` prefix, and permission mode is appended.
+		expect(toggle.textContent).toContain('opus-4-5');
+		expect(toggle.textContent).toContain('default');
+		// Counts visible in the collapsed state.
+		expect(toggle.textContent).toContain('4 tools');
+		expect(toggle.textContent).toContain('1 MCP');
+	});
+
+	it('expands the system-init card when clicked and reveals cwd + mcp details', () => {
+		const rows = [
+			makeSystemInitRow('s1', 'Task Agent', {
+				cwd: '/Users/dev/focus/neokai',
+				mcp_servers: [
+					{ name: 'chrome-devtools', status: 'connected' },
+					{ name: 'stale-server', status: 'disconnected' },
+				],
+			}),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		// Details are hidden until the user clicks the toggle.
+		expect(screen.queryByTestId('compact-system-init-details')).toBeNull();
+
+		fireEvent.click(screen.getByTestId('compact-system-init-toggle'));
+
+		const details = screen.getByTestId('compact-system-init-details');
+		expect(details.textContent).toContain('/Users/dev/focus/neokai');
+		expect(details.textContent).toContain('chrome-devtools');
+		expect(details.textContent).toContain('stale-server');
+
+		// A second click collapses again.
+		fireEvent.click(screen.getByTestId('compact-system-init-toggle'));
+		expect(screen.queryByTestId('compact-system-init-details')).toBeNull();
+	});
+
+	it('does NOT dispatch system-init rows through SDKMessageRenderer (avoids the pill fallback)', () => {
+		const rows = [makeSystemInitRow('s1', 'Task Agent')];
+		const { container } = render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		// Only the init card renders — no SDK renderer for this row.
+		expect(container.querySelectorAll('[data-testid="compact-system-init-card"]').length).toBe(1);
+		expect(container.querySelectorAll('[data-testid="sdk-message-renderer"]').length).toBe(0);
+	});
+
+	// ── Pre-filter (noise removal) ───────────────────────────────────────────
 
 	it('filters out non-rejected rate-limit rows', () => {
 		const rows = [
