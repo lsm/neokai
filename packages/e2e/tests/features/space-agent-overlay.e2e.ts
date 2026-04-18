@@ -5,8 +5,8 @@
  * an overlay chat panel on top of the task view instead of navigating away:
  *   - The overlay panel appears (data-testid="agent-overlay-chat")
  *   - The task view remains accessible underneath (URL unchanged)
- *   - The agent name label is shown in the overlay header
- *   - The close button (data-testid="agent-overlay-close") dismisses the overlay
+ *   - The agent name is surfaced via the dialog's aria-label
+ *   - The back button in ChatHeader (data-testid="chat-header-back") dismisses the overlay
  *   - Pressing Escape also dismisses the overlay
  *   - Clicking the translucent backdrop also dismisses the overlay
  *
@@ -227,27 +227,29 @@ test.describe('Agent Overlay Chat', () => {
 		await expect(page.getByTestId('task-thread-panel')).toBeAttached({ timeout: 5000 });
 	});
 
-	// ─── Test 3: Agent name is shown in the overlay header ──────────────────
+	// ─── Test 3: Agent identity surfaced via dialog aria-label ──────────────
 
-	test('overlay header displays an agent name label', async ({ page }) => {
+	test('overlay surfaces the agent name via the dialog aria-label', async ({ page }) => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
 		await expect(page.getByTestId('view-agent-session-btn')).toBeVisible({ timeout: 10000 });
 		await page.getByTestId('view-agent-session-btn').click();
 
-		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
+		const overlay = page.getByTestId('agent-overlay-chat');
+		await expect(overlay).toBeVisible({ timeout: 5000 });
 
-		// The header label must be visible and non-empty.
-		const nameLabel = page.getByTestId('agent-overlay-name');
-		await expect(nameLabel).toBeVisible({ timeout: 5000 });
-		const labelText = await nameLabel.textContent();
-		expect(labelText?.trim().length).toBeGreaterThan(0);
+		// The dialog wrapper's aria-label must be non-empty so screen readers
+		// identify which agent is open. It's either `${agentName} chat` when we
+		// have a name, or the fallback `Agent chat` — both are non-empty.
+		const ariaLabel = await overlay.getAttribute('aria-label');
+		expect(ariaLabel?.trim().length).toBeGreaterThan(0);
+		expect(ariaLabel).toMatch(/chat$/);
 	});
 
-	// ─── Test 4: Close button dismisses the overlay ──────────────────────────
+	// ─── Test 4: Back button dismisses the overlay ──────────────────────────
 
-	test('close button dismisses the overlay', async ({ page }) => {
+	test('back button in the chat header dismisses the overlay', async ({ page }) => {
 		await page.goto(`/space/${spaceId}/task/${taskId}`);
 		await page.waitForURL(`/space/${spaceId}/task/${taskId}`, { timeout: 10000 });
 
@@ -257,8 +259,10 @@ test.describe('Agent Overlay Chat', () => {
 		// Overlay is open.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeVisible({ timeout: 5000 });
 
-		// Click the ✕ close button.
-		await page.getByTestId('agent-overlay-close').click();
+		// The embedded ChatContainer owns the only header; its left-slot back
+		// button (which replaces the mobile-menu button when `onBack` is set)
+		// is the dismiss control.
+		await page.getByTestId('chat-header-back').click();
 
 		// Overlay must be gone.
 		await expect(page.getByTestId('agent-overlay-chat')).toBeHidden({ timeout: 5000 });
