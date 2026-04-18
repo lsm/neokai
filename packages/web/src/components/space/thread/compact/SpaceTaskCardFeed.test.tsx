@@ -498,13 +498,14 @@ describe('SpaceTaskCardFeed', () => {
 
 	// ── Hidden-count indicator ───────────────────────────────────────────────
 
-	it('shows hidden-count label with the number of rows trimmed before the first visible block', () => {
-		// 4 blocks → only last 3 survive → r1 is hidden → 1 event hidden.
+	it('shows per-block hidden-count when a block has more than 3 rows', () => {
+		// One block with 5 rows → 2 hidden, last 3 shown.
 		const rows = [
-			makeAssistantTextRow('r1', 'Task Agent', 'first'),
-			makeAssistantTextRow('r2', 'Coder Agent', 'second'),
-			makeAssistantTextRow('r3', 'Reviewer Agent', 'third'),
-			makeAssistantTextRow('r4', 'Space Agent', 'fourth'),
+			makeAssistantTextRow('r1', 'Task Agent', 'a'),
+			makeAssistantTextRow('r2', 'Task Agent', 'b'),
+			makeAssistantTextRow('r3', 'Task Agent', 'c'),
+			makeAssistantTextRow('r4', 'Task Agent', 'd'),
+			makeAssistantTextRow('r5', 'Task Agent', 'e'),
 		];
 		render(
 			<SpaceTaskCardFeed
@@ -515,44 +516,18 @@ describe('SpaceTaskCardFeed', () => {
 			/>
 		);
 
-		const label = screen.getByTestId('compact-hidden-count');
-		expect(label).toBeTruthy();
-		expect(label.textContent).toContain('1');
-		// Singular form when exactly 1 row is hidden.
-		expect(label.textContent?.toLowerCase()).toContain('message');
-	});
-
-	it('counts all rows in hidden blocks, not just the blocks themselves', () => {
-		// Block 1 (Task Agent) has 2 consecutive assistant rows → counts as 1 block with 2 rows.
-		// Blocks 2/3/4 are the last-3 window. So 2 rows from block 1 are hidden.
-		const rows = [
-			makeAssistantTextRow('r1a', 'Task Agent', 'first-a'),
-			makeAssistantTextRow('r1b', 'Task Agent', 'first-b'),
-			makeAssistantTextRow('r2', 'Coder Agent', 'second'),
-			makeAssistantTextRow('r3', 'Reviewer Agent', 'third'),
-			makeAssistantTextRow('r4', 'Space Agent', 'fourth'),
-		];
-		render(
-			<SpaceTaskCardFeed
-				parsedRows={rows}
-				taskId="task-1"
-				maps={fakeMaps as any}
-				isAgentActive={false}
-			/>
-		);
-
-		const label = screen.getByTestId('compact-hidden-count');
+		const label = screen.getByTestId('compact-block-hidden-count');
 		expect(label.textContent).toContain('2');
-		// Plural form when more than 1 row is hidden.
 		expect(label.textContent?.toLowerCase()).toContain('messages');
 	});
 
-	it('does NOT render the hidden-count label when no blocks are trimmed', () => {
-		// 3 blocks all fit within the window → nothing hidden.
+	it('uses singular "message" when exactly 1 row is hidden in a block', () => {
+		// One block with 4 rows → 1 hidden.
 		const rows = [
 			makeAssistantTextRow('r1', 'Task Agent', 'a'),
-			makeAssistantTextRow('r2', 'Coder Agent', 'b'),
-			makeAssistantTextRow('r3', 'Reviewer Agent', 'c'),
+			makeAssistantTextRow('r2', 'Task Agent', 'b'),
+			makeAssistantTextRow('r3', 'Task Agent', 'c'),
+			makeAssistantTextRow('r4', 'Task Agent', 'd'),
 		];
 		render(
 			<SpaceTaskCardFeed
@@ -563,7 +538,29 @@ describe('SpaceTaskCardFeed', () => {
 			/>
 		);
 
-		expect(screen.queryByTestId('compact-hidden-count')).toBeNull();
+		const label = screen.getByTestId('compact-block-hidden-count');
+		expect(label.textContent).toContain('1');
+		// Should be "message" not "messages".
+		expect(label.textContent).not.toContain('messages');
+		expect(label.textContent?.toLowerCase()).toContain('message');
+	});
+
+	it('does NOT render a hidden-count label when a block has 3 or fewer rows', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'a'),
+			makeAssistantTextRow('r2', 'Task Agent', 'b'),
+			makeAssistantTextRow('r3', 'Task Agent', 'c'),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		expect(screen.queryByTestId('compact-block-hidden-count')).toBeNull();
 	});
 
 	it('does NOT render the hidden-count label when parsedRows is empty', () => {
@@ -576,7 +573,32 @@ describe('SpaceTaskCardFeed', () => {
 			/>
 		);
 
-		expect(screen.queryByTestId('compact-hidden-count')).toBeNull();
+		expect(screen.queryByTestId('compact-block-hidden-count')).toBeNull();
+	});
+
+	it('only shows the last 3 rows of a block when more exist', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'hidden-a'),
+			makeAssistantTextRow('r2', 'Task Agent', 'hidden-b'),
+			makeAssistantTextRow('r3', 'Task Agent', 'shown-c'),
+			makeAssistantTextRow('r4', 'Task Agent', 'shown-d'),
+			makeAssistantTextRow('r5', 'Task Agent', 'shown-e'),
+		];
+		const { container } = render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const renderers = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		// Only last 3 rows rendered.
+		expect(renderers.length).toBe(3);
+		expect(renderers[0].textContent).toBe('shown-c');
+		expect(renderers[1].textContent).toBe('shown-d');
+		expect(renderers[2].textContent).toBe('shown-e');
 	});
 
 	// ── Pre-filter (noise removal) ───────────────────────────────────────────

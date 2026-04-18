@@ -76,6 +76,9 @@ function getTerminalBadge(block: CompactLogicalBlock): 'DONE' | 'ERROR' | null {
 	return hasError ? 'ERROR' : 'DONE';
 }
 
+/** Max rows shown per block before older ones are hidden. */
+const MAX_ROWS_PER_BLOCK = 3;
+
 // ── Per-block rendering ──────────────────────────────────────────────────────
 
 interface BlockSectionProps {
@@ -132,7 +135,11 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	const agentColor = getAgentColor(block.agentLabel);
 	const terminalBadge = getTerminalBadge(block);
-	const lastRowIdx = block.rows.length - 1;
+
+	// Show only the most-recent MAX_ROWS_PER_BLOCK rows; count the rest as hidden.
+	const hiddenInBlock = Math.max(0, block.rows.length - MAX_ROWS_PER_BLOCK);
+	const visibleRows = block.rows.slice(hiddenInBlock);
+	const lastVisibleIdx = visibleRows.length - 1;
 
 	return (
 		<div data-testid="compact-block">
@@ -164,6 +171,17 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 				)}
 			</div>
 
+			{/* Per-block hidden-message count — shown under the agent name */}
+			{hiddenInBlock > 0 && (
+				<div
+					class="px-1 pb-0.5 text-[10px] font-mono"
+					style={{ color: agentColor, opacity: 0.55 }}
+					data-testid="compact-block-hidden-count"
+				>
+					↑ {hiddenInBlock} earlier {hiddenInBlock === 1 ? 'message' : 'messages'}
+				</div>
+			)}
+
 			{/* Siderail + body */}
 			<div class="flex gap-2 pl-1 pb-1" data-testid="compact-block-body">
 				{/* Vertical colored siderail */}
@@ -172,12 +190,11 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 					style={{ backgroundColor: agentColor }}
 					aria-hidden="true"
 				/>
-				{/* Message rows */}
+				{/* Message rows — last MAX_ROWS_PER_BLOCK only */}
 				<div class="flex-1 min-w-0 space-y-1">
-					{block.rows.map((row, rowIdx) => {
-						// Only the last row of the running block gets the animated border — it is
-						// the most-recent non-terminal event (tool use, thinking, etc.).
-						const isRunningRow = isRunningBlock && rowIdx === lastRowIdx;
+					{visibleRows.map((row, rowIdx) => {
+						// Only the last row of the running block gets the animated border.
+						const isRunningRow = isRunningBlock && rowIdx === lastVisibleIdx;
 						if (isRunningRow) {
 							return (
 								<div key={String(row.id)} data-testid="compact-running-block">
@@ -219,22 +236,10 @@ export function SpaceTaskCardFeed({
 	maps,
 	isAgentActive,
 }: SpaceTaskCardFeedProps) {
-	const { visibleBlocks, hiddenRowCount } = useMemo(() => {
+	const visibleBlocks = useMemo(() => {
 		const filtered = preFilterRows(parsedRows);
 		const allBlocks = buildLogicalBlocks(filtered);
-		const visible = applyCompactVisibilityRules(allBlocks, 3);
-
-		// Count rows that were trimmed before the first visible block.
-		let hidden = 0;
-		if (visible.length > 0 && visible.length < allBlocks.length) {
-			const firstVisibleId = visible[0].id;
-			for (const block of allBlocks) {
-				if (block.id === firstVisibleId) break;
-				hidden += block.rows.length;
-			}
-		}
-
-		return { visibleBlocks: visible, hiddenRowCount: hidden };
+		return applyCompactVisibilityRules(allBlocks, 3);
 	}, [parsedRows]);
 
 	// Running border: shown ONLY when the agent session is actively executing
@@ -249,23 +254,6 @@ export function SpaceTaskCardFeed({
 
 	return (
 		<div class="space-y-2 px-1 py-1" data-testid="space-task-event-feed-compact">
-			{hiddenRowCount > 0 && (
-				<div
-					class="flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500"
-					data-testid="compact-hidden-count"
-				>
-					<svg
-						class="w-3 h-3 flex-shrink-0"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke="currentColor"
-						strokeWidth={2}
-					>
-						<path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
-					</svg>
-					{hiddenRowCount} earlier {hiddenRowCount === 1 ? 'message' : 'messages'}
-				</div>
-			)}
 			{visibleBlocks.map((block, idx) => (
 				<BlockSection
 					key={block.id}
