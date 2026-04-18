@@ -136,6 +136,7 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 
 	return (
 		<div data-testid="compact-block">
+			{/* Agent identity header */}
 			<div class="flex items-center gap-2 px-1 pt-1 pb-0.5" data-testid="compact-block-header">
 				<span
 					class="w-2 h-2 rounded-full flex-shrink-0"
@@ -162,20 +163,31 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 					</span>
 				)}
 			</div>
-			<div class="space-y-0 px-1 pb-1" data-testid="compact-block-body">
-				{block.rows.map((row, rowIdx) => {
-					// Only the last row of the running block gets the animated border — it is
-					// the most-recent non-terminal event (tool use, thinking, etc.).
-					const isRunningRow = isRunningBlock && rowIdx === lastRowIdx;
-					if (isRunningRow) {
-						return (
-							<div key={String(row.id)} data-testid="compact-running-block">
-								{renderRow(row, maps, true)}
-							</div>
-						);
-					}
-					return <div key={String(row.id)}>{renderRow(row, maps, false)}</div>;
-				})}
+
+			{/* Siderail + body */}
+			<div class="flex gap-2 pl-1 pb-1" data-testid="compact-block-body">
+				{/* Vertical colored siderail */}
+				<div
+					class="w-0.5 rounded-full flex-shrink-0 self-stretch opacity-40"
+					style={{ backgroundColor: agentColor }}
+					aria-hidden="true"
+				/>
+				{/* Message rows */}
+				<div class="flex-1 min-w-0 space-y-1">
+					{block.rows.map((row, rowIdx) => {
+						// Only the last row of the running block gets the animated border — it is
+						// the most-recent non-terminal event (tool use, thinking, etc.).
+						const isRunningRow = isRunningBlock && rowIdx === lastRowIdx;
+						if (isRunningRow) {
+							return (
+								<div key={String(row.id)} data-testid="compact-running-block">
+									{renderRow(row, maps, true)}
+								</div>
+							);
+						}
+						return <div key={String(row.id)}>{renderRow(row, maps, false)}</div>;
+					})}
+				</div>
 			</div>
 		</div>
 	);
@@ -207,10 +219,22 @@ export function SpaceTaskCardFeed({
 	maps,
 	isAgentActive,
 }: SpaceTaskCardFeedProps) {
-	const visibleBlocks = useMemo(() => {
+	const { visibleBlocks, hiddenRowCount } = useMemo(() => {
 		const filtered = preFilterRows(parsedRows);
-		const blocks = buildLogicalBlocks(filtered);
-		return applyCompactVisibilityRules(blocks, 3);
+		const allBlocks = buildLogicalBlocks(filtered);
+		const visible = applyCompactVisibilityRules(allBlocks, 3);
+
+		// Count rows that were trimmed before the first visible block.
+		let hidden = 0;
+		if (visible.length > 0 && visible.length < allBlocks.length) {
+			const firstVisibleId = visible[0].id;
+			for (const block of allBlocks) {
+				if (block.id === firstVisibleId) break;
+				hidden += block.rows.length;
+			}
+		}
+
+		return { visibleBlocks: visible, hiddenRowCount: hidden };
 	}, [parsedRows]);
 
 	// Running border: shown ONLY when the agent session is actively executing
@@ -225,6 +249,23 @@ export function SpaceTaskCardFeed({
 
 	return (
 		<div class="space-y-2 px-1 py-1" data-testid="space-task-event-feed-compact">
+			{hiddenRowCount > 0 && (
+				<div
+					class="flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-gray-500 dark:text-gray-500"
+					data-testid="compact-hidden-count"
+				>
+					<svg
+						class="w-3 h-3 flex-shrink-0"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						strokeWidth={2}
+					>
+						<path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+					</svg>
+					{hiddenRowCount} earlier {hiddenRowCount === 1 ? 'message' : 'messages'}
+				</div>
+			)}
 			{visibleBlocks.map((block, idx) => (
 				<BlockSection
 					key={block.id}
