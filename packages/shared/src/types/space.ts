@@ -1060,7 +1060,7 @@ export interface CreateSpaceWorkflowParams {
 	channels?: WorkflowChannel[];
 	/** Gate definitions for this workflow. */
 	gates?: Gate[];
-	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
+	/** Tags for organizational categorization (default: []). See `SpaceWorkflow.tags` for runtime semantics. */
 	tags?: string[];
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
@@ -1111,7 +1111,7 @@ export interface UpdateSpaceWorkflowParams {
 	gates?: Gate[] | null;
 	/**
 	 * Replaces the tag list. Pass `[]` or `null` to clear all tags.
-	 * Tags are for organizational categorization only — not used for automatic workflow selection.
+	 * See `SpaceWorkflow.tags` for runtime semantics (used by the deterministic fallback selector).
 	 */
 	tags?: string[] | null;
 	/** Visual editor node positions. Pass `null` to clear. */
