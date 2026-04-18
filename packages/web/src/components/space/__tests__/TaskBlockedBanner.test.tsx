@@ -3,7 +3,7 @@
  *
  * Tests:
  * - Renders fallback amber banner when blockReason is null
- * - Renders human_input_requested banner with question and "Reply below" hint
+ * - Returns null for human_input_requested (question renders in the thread instead)
  * - Renders gate_rejected banner with "Review & Approve" button
  * - Renders execution_failed banner with Resume button
  * - Renders agent_crashed banner with Resume button
@@ -96,19 +96,13 @@ describe('TaskBlockedBanner', () => {
 		expect(banner.textContent).toContain('Blocked');
 	});
 
-	it('renders human_input_requested banner with question and reply hint', () => {
+	it('renders nothing for human_input_requested (question surfaces in thread)', () => {
 		const task = makeTask({
 			blockReason: 'human_input_requested',
 			result: 'What color scheme do you prefer?',
 		});
-		const { getByTestId, getByText } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
-		const banner = getByTestId('task-blocked-banner');
-		expect(banner.className).toContain('border-blue-500');
-		expect(banner.textContent).toContain('Waiting for Input');
-		expect(getByTestId('task-blocked-message').textContent).toBe(
-			'What color scheme do you prefer?'
-		);
-		expect(getByText('Reply below to continue')).toBeTruthy();
+		const { queryByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
+		expect(queryByTestId('task-blocked-banner')).toBeNull();
 	});
 
 	it('renders gate_rejected banner with Review & Approve button', async () => {

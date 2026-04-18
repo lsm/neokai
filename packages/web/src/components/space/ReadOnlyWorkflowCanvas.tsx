@@ -115,28 +115,49 @@ export function ReadOnlyWorkflowCanvas({
 		setSelectedChannelId(null);
 	}, []);
 
-	// Direct approve/reject from popup
-	const handlePopupDecision = useCallback(
-		async (approved: boolean) => {
-			if (!gatePopup || !runId) return;
+	const approveGateRequest = useCallback(
+		async (gateId: string, approved: boolean) => {
+			if (!runId) return;
 			setApproving(true);
 			try {
 				const hub = await connectionManager.getHub();
 				await hub.request('spaceWorkflowRun.approveGate', {
 					runId,
-					gateId: gatePopup.gateId,
+					gateId,
 					approved,
 				});
-				setGatePopup(null);
 			} catch (err) {
 				// eslint-disable-next-line no-console
-				console.error('[handlePopupDecision] approveGate error:', err);
+				console.error('[approveGateRequest] approveGate error:', err);
 			} finally {
 				setApproving(false);
 			}
 		},
-		[gatePopup, runId]
+		[runId]
 	);
+
+	// Direct approve/reject from popup
+	const handlePopupDecision = useCallback(
+		async (approved: boolean) => {
+			if (!gatePopup) return;
+			await approveGateRequest(gatePopup.gateId, approved);
+			setGatePopup(null);
+		},
+		[gatePopup, approveGateRequest]
+	);
+
+	// Approve/reject from inline channel info panel
+	const handleChannelGateDecision = useCallback(
+		async (gateId: string, approved: boolean) => {
+			await approveGateRequest(gateId, approved);
+		},
+		[approveGateRequest]
+	);
+
+	// Open artifacts overlay directly from channel info panel
+	const handleChannelViewArtifacts = useCallback((gateId: string) => {
+		setArtifactsOverlay({ gateId });
+	}, []);
 
 	// Open artifacts overlay from popup
 	const handleOpenArtifacts = useCallback(() => {
@@ -205,6 +226,9 @@ export function ReadOnlyWorkflowCanvas({
 						fromNodeName={getNodeName(selectedChannel.fromStepId)}
 						toNodeName={getNodeName(selectedChannel.toStepId)}
 						onClose={() => setSelectedChannelId(null)}
+						onGateDecision={handleChannelGateDecision}
+						onViewArtifacts={handleChannelViewArtifacts}
+						decisionPending={approving}
 					/>
 				)}
 

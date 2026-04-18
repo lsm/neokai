@@ -156,6 +156,39 @@ function extractAssistantEvents(
 		}
 
 		if (isToolUseBlock(block)) {
+			// Special-case request_human_input: surface the question as a visible
+			// text message in the thread instead of a collapsed tool card. The
+			// tool stores the question only in task.result, so without this the
+			// question would be invisible in the thread.
+			if (block.name === 'request_human_input') {
+				const input = (block.input ?? {}) as Record<string, unknown>;
+				const question = typeof input.question === 'string' ? input.question.trim() : '';
+				const questionContext = typeof input.context === 'string' ? input.context.trim() : '';
+				const body = questionContext ? `${question}\n\nContext: ${questionContext}` : question;
+				if (body) {
+					const questionMessage = {
+						...message,
+						message: {
+							...message.message,
+							content: [{ type: 'text', text: body }],
+						},
+					} as SDKMessage;
+					events.push({
+						id: eventId,
+						label: row.label,
+						taskId: row.taskId,
+						taskTitle: row.taskTitle,
+						sessionId: row.sessionId,
+						createdAt: row.createdAt,
+						kind: 'text',
+						title: 'Question',
+						summary: body,
+						message: questionMessage,
+					});
+					continue;
+				}
+			}
+
 			const isSubagent = block.name === 'Task';
 			const isBash = block.name === 'Bash';
 			const input = (block.input ?? {}) as Record<string, unknown>;

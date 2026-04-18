@@ -3,7 +3,9 @@
  *
  * Replaces the generic amber blocked banner in SpaceTaskPane with
  * distinct UI per blockReason:
- *   - human_input_requested: blue/info — shows question, prompts "Reply below"
+ *   - human_input_requested: NOT rendered — the question is surfaced as a
+ *     "Question" message in the thread (see space-task-thread-events.ts),
+ *     so a header banner would just duplicate it. Reply via the composer.
  *   - gate_rejected: purple — shows gate info + "Review & Approve" expanding to GateArtifactsView
  *   - execution_failed / agent_crashed: red — shows error + Resume button
  *   - dependency_failed: gray — informational
@@ -34,13 +36,6 @@ const REASON_CONFIG: Partial<
 		{ label: string; border: string; bg: string; title: string; icon: string }
 	>
 > = {
-	human_input_requested: {
-		label: 'Waiting for Input',
-		border: 'border-blue-500/30',
-		bg: 'bg-blue-500/10',
-		title: 'text-blue-300',
-		icon: '💬',
-	},
 	gate_rejected: {
 		label: 'Gate Pending Approval',
 		border: 'border-purple-500/30',
@@ -88,6 +83,12 @@ const FALLBACK_CONFIG = {
 
 export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlockedBannerProps) {
 	const reason = task.blockReason;
+
+	// Human-input requests are surfaced as a "Question" message in the thread,
+	// so a duplicate header banner is not needed. The composer below the thread
+	// is the reply affordance.
+	if (reason === 'human_input_requested') return null;
+
 	const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
 
 	const [showGateReview, setShowGateReview] = useState(false);
@@ -156,9 +157,6 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
 						<p class="mt-0.5 text-sm text-gray-200/90" data-testid="task-blocked-message">
 							{task.result}
 						</p>
-					)}
-					{reason === 'human_input_requested' && (
-						<p class="mt-1 text-xs text-blue-400/70">Reply below to continue</p>
 					)}
 				</div>
 
