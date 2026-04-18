@@ -179,7 +179,7 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 			{/* Agent identity header — clickable to open the agent slide-out */}
 			<div
 				class={
-					'flex items-center gap-2 px-1 pt-1 pb-0.5 rounded-sm ' +
+					'flex items-center gap-2 px-1 py-1.5 rounded-sm ' +
 					(isClickable
 						? 'cursor-pointer hover:bg-gray-800/40 transition-colors focus:outline-none focus:bg-gray-800/40'
 						: '')
