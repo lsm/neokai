@@ -48,6 +48,82 @@ export function AgentOverlayChat({ sessionId, agentName, onClose }: AgentOverlay
 		}
 	}, []);
 
+	// Swipe-to-close: dragging the panel rightward dismisses it. We also
+	// call preventDefault on horizontal touchmove so the browser's native
+	// swipe-back gesture (which navigates the underlying page) is suppressed
+	// while the user is clearly swiping the overlay away.
+	useEffect(() => {
+		const panel = panelRef.current;
+		if (!panel) return;
+
+		let startX = 0;
+		let startY = 0;
+		let dragging = false;
+		let currentDx = 0;
+
+		const CLOSE_THRESHOLD = 80; // px right to commit close
+
+		const onTouchStart = (e: TouchEvent) => {
+			const t = e.touches[0];
+			startX = t.clientX;
+			startY = t.clientY;
+			currentDx = 0;
+			dragging = true;
+			// Remove transition so drag follows finger immediately
+			panel.style.transition = 'none';
+		};
+
+		const onTouchMove = (e: TouchEvent) => {
+			if (!dragging) return;
+			const t = e.touches[0];
+			const dx = t.clientX - startX;
+			const dy = t.clientY - startY;
+
+			// Only track right-ward swipes that are more horizontal than vertical
+			if (dx > 0 && Math.abs(dx) > Math.abs(dy)) {
+				currentDx = dx;
+				panel.style.transform = `translateX(${dx}px)`;
+				// Block the browser back-gesture and underlying scroll
+				e.preventDefault();
+			}
+		};
+
+		const finish = () => {
+			if (!dragging) return;
+			dragging = false;
+			if (currentDx > CLOSE_THRESHOLD) {
+				// Slide off-screen then close
+				panel.style.transition = 'transform 200ms ease-out';
+				panel.style.transform = 'translateX(100%)';
+				setTimeout(onClose, 200);
+			} else {
+				// Spring back to original position
+				panel.style.transition = 'transform 200ms ease-out';
+				panel.style.transform = '';
+				// Clean up inline style after animation
+				const tid = setTimeout(() => {
+					panel.style.transition = '';
+					panel.style.transform = '';
+				}, 200);
+				return () => clearTimeout(tid);
+			}
+			currentDx = 0;
+		};
+
+		panel.addEventListener('touchstart', onTouchStart, { passive: true });
+		// passive: false so we can call preventDefault to suppress browser back gesture
+		panel.addEventListener('touchmove', onTouchMove, { passive: false });
+		panel.addEventListener('touchend', finish, { passive: true });
+		panel.addEventListener('touchcancel', finish, { passive: true });
+
+		return () => {
+			panel.removeEventListener('touchstart', onTouchStart);
+			panel.removeEventListener('touchmove', onTouchMove);
+			panel.removeEventListener('touchend', finish);
+			panel.removeEventListener('touchcancel', finish);
+		};
+	}, [onClose]);
+
 	return (
 		<Portal into="body">
 			{/* Full-screen wrapper — backdrop on the left, panel on the right */}
