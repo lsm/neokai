@@ -1001,7 +1001,17 @@ export interface SpaceWorkflow {
 	 * Persisted as JSON in the `gates` column of `space_workflows`.
 	 */
 	gates?: Gate[];
-	/** Tags for organizational categorization. Not used for automatic workflow selection. */
+	/**
+	 * Tags for organizational categorization.
+	 *
+	 * Primary workflow selection for standalone tasks is LLM-driven; tags are
+	 * exposed to the selector as context alongside the workflow name and
+	 * description. Two tag values are also recognized by the deterministic
+	 * fallback (used when the LLM selector is absent or declines to answer):
+	 *   - `default` — preferred fallback over any other workflow
+	 *   - `v2`      — preferred fallback over non-v2 workflows
+	 * Other tag values have no runtime meaning.
+	 */
 	tags: string[];
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;

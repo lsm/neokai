@@ -582,7 +582,9 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 		expect(parsed.workflows).toEqual([]);
 	});
 
-	test('returns matching workflow ranked first when keywords match name', async () => {
+	test('returns every workflow unranked so the Space Agent LLM can pick', async () => {
+		// suggest_workflow no longer keyword-ranks: it just surfaces the
+		// catalogue so the caller's LLM can reason without bias.
 		buildSingleStepWorkflow(
 			ctx.spaceId,
 			ctx.workflowManager,
@@ -607,82 +609,41 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflows).toHaveLength(2);
-		// Coding Workflow should rank first (matches 'coding' in name and description)
-		expect(parsed.workflows[0].name).toBe('Coding Workflow');
+		const names = parsed.workflows.map((w: { name: string }) => w.name).sort();
+		expect(names).toEqual(['Coding Workflow', 'Research Workflow']);
 	});
 
-	test('returns matching workflow when keywords match description', async () => {
-		buildSingleStepWorkflow(
+	test('does not keyword-rank — "review" tag no longer hijacks top spot', async () => {
+		// Regression guard for the P0 bug that prompted switching to LLM-driven
+		// selection: a task description containing "review feedback" used to
+		// push the keyword-matching workflow (Review Flow) in front of the
+		// workflow whose name/description actually fit the work (Coding Flow).
+		const coding = buildSingleStepWorkflow(
 			ctx.spaceId,
 			ctx.workflowManager,
 			ctx.agentId,
-			'Alpha WF',
-			[],
-			'deploys to production environment'
+			'Coding Flow',
+			['coding'],
+			'Write code and open a PR'
 		);
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Beta WF',
-			[],
-			'runs unit tests'
-		);
-
-		const result = await makeHandlers(ctx).suggest_workflow({
-			description: 'deploy to production',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.workflows[0].name).toBe('Alpha WF');
-	});
-
-	test('returns matching workflow when keywords match tags', async () => {
-		buildSingleStepWorkflow(
+		const review = buildSingleStepWorkflow(
 			ctx.spaceId,
 			ctx.workflowManager,
 			ctx.agentId,
 			'Review Flow',
-			['pullrequest', 'review'],
-			''
-		);
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Deploy Flow',
-			['deployment', 'release'],
-			''
+			['review'],
+			'Review a pull request'
 		);
 
-		const result = await makeHandlers(ctx).suggest_workflow({ description: 'review pullrequest' });
+		const result = await makeHandlers(ctx).suggest_workflow({
+			description: 'address review feedback and re-run the coding loop',
+		});
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.workflows[0].name).toBe('Review Flow');
-	});
-
-	test('returns all workflows when no keywords match', async () => {
-		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Alpha WF');
-		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'Beta WF');
-
-		const result = await makeHandlers(ctx).suggest_workflow({ description: 'xyz-unique-term' });
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		// All workflows returned as fallback
 		expect(parsed.workflows).toHaveLength(2);
-	});
-
-	test('returns all workflows when description contains only stop words', async () => {
-		buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'My WF');
-
-		const result = await makeHandlers(ctx).suggest_workflow({ description: 'the and for' });
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.workflows).toHaveLength(1);
+		// Order is creation order (insertion order) — never keyword rank.
+		expect(parsed.workflows.map((w: { id: string }) => w.id)).toEqual([coding.id, review.id]);
 	});
 
 	test('returns all workflows for empty description', async () => {
@@ -693,85 +654,6 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflows).toHaveLength(1);
-	});
-
-	test('V2 workflow preferred over V1 when both match equally (coding task)', async () => {
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Coding Workflow',
-			['coding', 'default'],
-			'For writing code'
-		);
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Full-Cycle Coding Workflow',
-			['coding', 'v2', 'parallel-review', 'default'],
-			'For writing code with parallel review'
-		);
-
-		const result = await makeHandlers(ctx).suggest_workflow({
-			description: 'implement a new coding feature',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.workflows).toHaveLength(2);
-		// V2 must be ranked first (tiebreaker: 'v2' tag)
-		expect(parsed.workflows[0].name).toBe('Full-Cycle Coding Workflow');
-		expect(parsed.workflows[1].name).toBe('Coding Workflow');
-	});
-
-	test('V1 fallback when V2 is not seeded (backward compatibility)', async () => {
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Coding Workflow',
-			['coding', 'default'],
-			'For writing code'
-		);
-
-		const result = await makeHandlers(ctx).suggest_workflow({
-			description: 'implement a new coding feature',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.workflows).toHaveLength(1);
-		expect(parsed.workflows[0].name).toBe('Coding Workflow');
-	});
-
-	test('non-coding workflows unaffected by v2 tiebreaker', async () => {
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Research Workflow',
-			['research'],
-			'For research tasks'
-		);
-		buildSingleStepWorkflow(
-			ctx.spaceId,
-			ctx.workflowManager,
-			ctx.agentId,
-			'Deploy Workflow',
-			['deploy', 'v2'],
-			'For deployment tasks'
-		);
-
-		// A research query — deploy v2 workflow should NOT hijack top spot
-		const result = await makeHandlers(ctx).suggest_workflow({
-			description: 'research competitors',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		// Research Workflow has more hits; Deploy Workflow should not outrank it
-		expect(parsed.workflows[0].name).toBe('Research Workflow');
 	});
 });
 
@@ -1349,7 +1231,10 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		expect(tasks[0].status).toBe('open');
 	});
 
-	test('suggest_workflow ranks V2 workflow first for clear coding request', async () => {
+	test('suggest_workflow surfaces every workflow so the LLM can choose', async () => {
+		// Post-refactor behavior: suggest_workflow no longer keyword-ranks.
+		// The whole catalogue is returned in creation order so the caller's
+		// LLM is not biased by substring overlap with the task description.
 		buildSingleStepWorkflow(
 			ctx.spaceId,
 			ctx.workflowManager,
@@ -1373,8 +1258,9 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		// V2 must rank first — it has the 'v2' tiebreaker tag
-		expect(parsed.workflows[0].name).toBe('Full-Cycle Coding Workflow');
+		expect(parsed.workflows).toHaveLength(2);
+		const names = parsed.workflows.map((w: { name: string }) => w.name).sort();
+		expect(names).toEqual(['Coding Workflow', 'Full-Cycle Coding Workflow']);
 	});
 });
 

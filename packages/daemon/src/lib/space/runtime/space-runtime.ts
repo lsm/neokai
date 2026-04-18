@@ -47,6 +47,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
 import { CompletionDetector } from './completion-detector';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import {
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
@@ -54,47 +55,6 @@ import {
 } from './constants';
 
 const log = new Logger('space-runtime');
-
-const WORKFLOW_SELECTION_STOP_WORDS = new Set([
-	'the',
-	'and',
-	'for',
-	'are',
-	'but',
-	'not',
-	'you',
-	'all',
-	'can',
-	'was',
-	'one',
-	'our',
-	'out',
-	'day',
-	'get',
-	'has',
-	'him',
-	'his',
-	'how',
-	'its',
-	'may',
-	'new',
-	'now',
-	'old',
-	'see',
-	'two',
-	'use',
-	'way',
-	'who',
-	'did',
-	'let',
-	'put',
-	'say',
-	'she',
-	'too',
-	'had',
-	'any',
-	'via',
-]);
 
 // ---------------------------------------------------------------------------
 // Config
@@ -169,6 +129,17 @@ export interface SpaceRuntimeConfig {
 		spaceId: string;
 		run: SpaceWorkflowRun;
 	}) => Promise<void> | void;
+	/**
+	 * Optional LLM-backed workflow selector used when a standalone task has no
+	 * `preferredWorkflowId` and multiple workflows are available. Should return
+	 * one of the provided workflow ids, or `null` to fall back to the
+	 * deterministic tag-based tiebreak (`default` → `v2` → most recently updated).
+	 *
+	 * Dependency-injected so tests can provide a deterministic stub without
+	 * touching the provider SDK. In production, wire this to
+	 * `selectWorkflowWithLlmDefault` from `./llm-workflow-selector`.
+	 */
+	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
 }
 
 interface StartWorkflowRunOptions {
@@ -2023,9 +1994,12 @@ export class SpaceRuntime {
 	 * by the runtime tick (not by Task Agent session creation).
 	 *
 	 * For each open standalone task:
-	 * 1. Select a fallback workflow for the task
+	 * 1. Select a workflow for the task (LLM-driven, with deterministic fallback)
 	 * 2. Start a workflow run
 	 * 3. Attach the original task to the run and mark it in_progress
+	 *
+	 * Selection work runs in parallel across tasks so a slow LLM call on one
+	 * task does not delay the rest of the tick.
 	 */
 	private async attachStandaloneTasksToWorkflows(): Promise<void> {
 		const spaces = await this.listActiveSpaces();
@@ -2040,51 +2014,52 @@ export class SpaceRuntime {
 
 			const taskManager = this.getOrCreateTaskManager(space.id);
 
-			for (const task of standaloneOpenTasks) {
-				// Re-read to avoid racing with external updates between list and attach.
-				const fresh = this.config.taskRepo.getTask(task.id);
-				if (!fresh || fresh.workflowRunId) continue;
-				if (fresh.status !== 'open') continue;
+			// Phase 1 — pick a workflow for every eligible task in parallel. LLM
+			// calls dominate the cost, so running them concurrently keeps the
+			// tick responsive when a space has many standalone tasks queued.
+			const candidates = await Promise.all(
+				standaloneOpenTasks.map(async (task) => {
+					const fresh = this.config.taskRepo.getTask(task.id);
+					if (!fresh || fresh.workflowRunId) return null;
+					if (fresh.status !== 'open') return null;
+					if (!(await taskManager.areDependenciesMet(fresh))) return null;
 
-				// Skip tasks whose dependencies aren't met yet — they'll be
-				// re-evaluated on the next tick when upstream tasks complete.
-				if (!(await taskManager.areDependenciesMet(fresh))) continue;
+					const selected = await this.selectWorkflowForStandaloneTask(fresh, workflows);
+					if (!selected) return null;
+					return { fresh, selected };
+				})
+			);
 
-				// Prefer the caller-specified workflow; fall back to heuristic selection.
-				let selectedWorkflow: ReturnType<typeof this.selectFallbackWorkflowForStandaloneTask>;
-				if (fresh.preferredWorkflowId) {
-					const explicit = this.config.spaceWorkflowManager.getWorkflow(fresh.preferredWorkflowId);
-					if (explicit) {
-						selectedWorkflow = explicit;
-					} else {
-						log.warn(
-							`SpaceRuntime: preferred_workflow_id "${fresh.preferredWorkflowId}" not found for task ${fresh.id}; falling back to heuristic selection`
-						);
-						selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
-					}
-				} else {
-					selectedWorkflow = this.selectFallbackWorkflowForStandaloneTask(fresh, workflows);
-				}
-				if (!selectedWorkflow) continue;
+			// Phase 2 — apply the attachments sequentially so repo writes and
+			// event emission stay in a predictable order per space.
+			for (const candidate of candidates) {
+				if (!candidate) continue;
+				const { fresh, selected } = candidate;
+
+				// Re-read once more to defend against concurrent updates between
+				// phase 1 and phase 2 (e.g. another actor attached the task).
+				const current = this.config.taskRepo.getTask(fresh.id);
+				if (!current || current.workflowRunId) continue;
+				if (current.status !== 'open') continue;
 
 				try {
 					const { run } = await this.startWorkflowRun(
 						space.id,
-						selectedWorkflow.id,
-						fresh.title,
-						fresh.description,
-						{ parentTaskId: fresh.id }
+						selected.id,
+						current.title,
+						current.description,
+						{ parentTaskId: current.id }
 					);
 
-					await this.updateTaskAndEmit(space.id, fresh.id, {
+					await this.updateTaskAndEmit(space.id, current.id, {
 						workflowRunId: run.id,
 						status: 'in_progress',
-						startedAt: fresh.startedAt ?? Date.now(),
+						startedAt: current.startedAt ?? Date.now(),
 						completedAt: null,
 					});
 				} catch (err) {
 					log.warn(
-						`SpaceRuntime: failed to attach standalone task ${fresh.id} to workflow ${selectedWorkflow.id}:`,
+						`SpaceRuntime: failed to attach standalone task ${current.id} to workflow ${selected.id}:`,
 						err
 					);
 				}
@@ -2093,43 +2068,87 @@ export class SpaceRuntime {
 	}
 
 	/**
-	 * Deterministically select a fallback workflow for a standalone task.
+	 * Pick the workflow to run for a standalone task.
 	 *
-	 * Preference order:
-	 * 1. Highest keyword overlap with task title/description
-	 * 2. `default` tag
-	 * 3. `v2` tag
-	 * 4. Most recently updated workflow
+	 * Order of precedence:
+	 * 1. `task.preferredWorkflowId` when it resolves to an existing workflow.
+	 * 2. The LLM selector (`SpaceRuntimeConfig.selectWorkflowWithLlm`) when
+	 *    provided and it returns an id that exists in the candidate list.
+	 *    Unknown ids, `null` returns, and thrown errors all fall through.
+	 * 3. Deterministic fallback: the first workflow tagged `default`, else the
+	 *    first tagged `v2`, else the most recently updated workflow.
+	 *
+	 * The old substring/keyword scorer was retired in favour of LLM-based
+	 * selection because it mis-routed tasks whose descriptions happened to
+	 * share words with workflow metadata (e.g. a "review feedback" task
+	 * hijacking a "review" workflow even when "coding" was the right fit).
 	 */
-	private selectFallbackWorkflowForStandaloneTask(
+	private async selectWorkflowForStandaloneTask(
 		task: SpaceTask,
 		workflows: SpaceWorkflow[]
-	): SpaceWorkflow | null {
+	): Promise<SpaceWorkflow | null> {
+		if (workflows.length === 0) return null;
+
+		// Caller-specified preferred workflow wins over both LLM and deterministic
+		// fallback. Fall through if the id doesn't resolve (e.g. workflow was
+		// deleted between task creation and attachment).
+		if (task.preferredWorkflowId) {
+			const explicit = this.config.spaceWorkflowManager.getWorkflow(task.preferredWorkflowId);
+			if (explicit) return explicit;
+			log.warn(
+				`SpaceRuntime: preferred_workflow_id "${task.preferredWorkflowId}" not found for task ${task.id}; selecting a workflow automatically`
+			);
+		}
+
+		if (workflows.length === 1) return workflows[0];
+
+		const llmSelector = this.config.selectWorkflowWithLlm;
+		if (llmSelector) {
+			let llmResult: string | null = null;
+			try {
+				llmResult = await llmSelector(task, workflows);
+			} catch (err) {
+				log.warn(
+					`SpaceRuntime: LLM workflow selector threw for task ${task.id}; using deterministic fallback:`,
+					err
+				);
+				llmResult = null;
+			}
+
+			if (llmResult) {
+				const hit = workflows.find((w) => w.id === llmResult);
+				if (hit) return hit;
+				log.warn(
+					`SpaceRuntime: LLM workflow selector returned unknown id "${llmResult}" for task ${task.id}; using deterministic fallback`
+				);
+			}
+		}
+
+		return this.selectDeterministicWorkflowFallback(workflows);
+	}
+
+	/**
+	 * Tiebreak selection when no LLM/preferred workflow is available.
+	 *
+	 * Preference order:
+	 * 1. `default` tag
+	 * 2. `v2` tag
+	 * 3. Most recently updated workflow
+	 */
+	private selectDeterministicWorkflowFallback(workflows: SpaceWorkflow[]): SpaceWorkflow | null {
 		if (workflows.length === 0) return null;
 		if (workflows.length === 1) return workflows[0];
 
-		const keywords = `${task.title} ${task.description}`
-			.toLowerCase()
-			.split(/\W+/)
-			.filter((word) => word.length >= 3 && !WORKFLOW_SELECTION_STOP_WORDS.has(word));
-
 		const scored = workflows.map((workflow) => {
-			const haystack = [workflow.name, workflow.description ?? '', ...(workflow.tags ?? [])]
-				.join(' ')
-				.toLowerCase();
-			const hits =
-				keywords.length === 0 ? 0 : keywords.filter((keyword) => haystack.includes(keyword)).length;
 			const tags = workflow.tags ?? [];
 			return {
 				workflow,
-				hits,
 				isDefault: tags.includes('default') ? 1 : 0,
 				isV2: tags.includes('v2') ? 1 : 0,
 			};
 		});
 
 		scored.sort((a, b) => {
-			if (b.hits !== a.hits) return b.hits - a.hits;
 			if (b.isDefault !== a.isDefault) return b.isDefault - a.isDefault;
 			if (b.isV2 !== a.isV2) return b.isV2 - a.isV2;
 			return b.workflow.updatedAt - a.workflow.updatedAt;

@@ -33,7 +33,7 @@ import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import type { DaemonHub } from '../../daemon-hub';
-import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
+import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
 
@@ -236,17 +236,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Suggest workflows that best match a description of the intended work.
+		 * Return all workflows in the space so the Space Agent LLM can pick one.
 		 *
-		 * Performs a case-insensitive keyword search over workflow names, descriptions,
-		 * and tags. Always returns ALL available workflows, sorted by relevance
-		 * (number of keyword hits descending). When no keywords match, all workflows
-		 * are returned in creation order.
+		 * Previously this tool did keyword pre-ranking, but that could bias the
+		 * LLM toward a substring-overlap pick (e.g. a "review feedback" task
+		 * always surfacing a "review" workflow first). Selection is fully
+		 * LLM-driven, so we just expose the full catalogue and let the caller
+		 * reason over it.
 		 *
-		 * Selection is still LLM-driven: the agent should use this to rank candidates
-		 * before creating a task.
+		 * The `description` argument is retained for forward compatibility and
+		 * call-site clarity, but is not used by the handler. Callers can still
+		 * read it from structured tool logs for observability.
 		 */
-		async suggest_workflow(args: { description: string }): Promise<ToolResult> {
+		async suggest_workflow(_args: { description: string }): Promise<ToolResult> {
 			const allWorkflows = workflowManager.listWorkflows(spaceId);
 			if (allWorkflows.length === 0) {
 				return jsonResult({
@@ -255,47 +257,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					message: 'No workflows available in this space.',
 				});
 			}
-
-			// Extract meaningful keywords (3+ chars, skip stop words)
-			const keywords = args.description
-				.toLowerCase()
-				.split(/\W+/)
-				.filter((w) => w.length >= 3 && !SUGGEST_WORKFLOW_STOP_WORDS.has(w));
-
-			if (keywords.length === 0) {
-				// No meaningful keywords — return all in creation order
-				return jsonResult({ success: true, workflows: allWorkflows });
-			}
-
-			// Score each workflow by number of keyword hits; return all sorted by score
-			const scored = allWorkflows.map((wf) => {
-				const haystack = [wf.name, wf.description ?? '', ...(wf.tags ?? [])]
-					.join(' ')
-					.toLowerCase();
-				const hits = keywords.filter((kw) => haystack.includes(kw)).length;
-				return { workflow: wf, hits };
-			});
-
-			const anyHits = scored.some((s) => s.hits > 0);
-			if (!anyHits) {
-				// No keyword matches — return all so LLM can still reason
-				return jsonResult({
-					success: true,
-					workflows: allWorkflows,
-					message: 'No direct keyword matches found; returning all workflows for LLM selection.',
-				});
-			}
-
-			// Stable sort descending by hits; tiebreak: prefer 'v2'-tagged workflows (e.g.
-			// FULL_CYCLE_CODING_WORKFLOW over CODING_WORKFLOW) so the full pipeline is
-			// always recommended first when both match equally.
-			scored.sort((a, b) => {
-				if (b.hits !== a.hits) return b.hits - a.hits;
-				const aIsV2 = (a.workflow.tags ?? []).includes('v2') ? 1 : 0;
-				const bIsV2 = (b.workflow.tags ?? []).includes('v2') ? 1 : 0;
-				return bIsV2 - aIsV2;
-			});
-			return jsonResult({ success: true, workflows: scored.map((s) => s.workflow) });
+			return jsonResult({ success: true, workflows: allWorkflows });
 		},
 
 		/**
@@ -798,11 +760,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'suggest_workflow',
-			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before creating a task.',
+			'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
 			{
 				description: z
 					.string()
-					.describe('Description of the work you want to do — used for keyword matching'),
+					.describe(
+						'Description of the work you want to do. Provided for context; the tool returns all workflows regardless.'
+					),
 			},
 			(args) => handlers.suggest_workflow(args)
 		),
