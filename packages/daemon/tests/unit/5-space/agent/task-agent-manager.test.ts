@@ -1028,6 +1028,31 @@ describe('TaskAgentManager', () => {
 			expect(lastMsg.msg).toBe('Hello Task Agent!');
 		});
 
+		test('saves message with isSynthetic=false (human-originated, not agent→agent)', async () => {
+			const task = await makeTask(ctx.taskManager);
+			const sessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const savedMessages: unknown[] = [];
+			const originalSave = ctx.mockDb.saveUserMessage;
+			ctx.mockDb.saveUserMessage = (
+				_sid: string,
+				msg: unknown,
+				status: string
+			): ReturnType<typeof ctx.mockDb.saveUserMessage> => {
+				savedMessages.push(msg);
+				return originalSave.call(ctx.mockDb, _sid, msg, status);
+			};
+
+			await ctx.manager.injectTaskAgentMessage(task.id, 'Add dark mode please');
+
+			ctx.mockDb.saveUserMessage = originalSave;
+
+			// The persisted SDK message must have isSynthetic=false so the compact
+			// Space task thread feed can distinguish human input from agent→agent injections.
+			const lastSaved = savedMessages.at(-1) as { isSynthetic?: boolean } | undefined;
+			expect(lastSaved?.isSynthetic).toBe(false);
+		});
+
 		test('lazily restores persisted session before injecting a message', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const persistedSessionId = `space:${ctx.spaceId}:task:${task.id}`;
