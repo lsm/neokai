@@ -50,8 +50,8 @@ interface Props {
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
 	allMessages?: SDKMessage[];
 	/**
-	 * When true, applies the `.running-block` animated border directly to the
-	 * message bubble (text blocks) or outermost container (tool/thinking-only).
+	 * When true, child tool / thinking / subagent blocks in this message are
+	 * each wrapped in <RunningBorder> so the animated arc traces their border.
 	 * Set by the compact task thread renderer for the last non-terminal message.
 	 */
 	isRunning?: boolean;
@@ -145,10 +145,7 @@ export function SDKAssistantMessage({
 						: messageColors.assistant.background,
 					borderRadius.message.bubble,
 					messageSpacing.assistant.bubble.combined,
-					'space-y-3',
-					// Apply running border directly to the bubble so the animation
-					// traces exactly on the message bubble's visible boundary.
-					isRunning && 'running-block'
+					'space-y-3'
 				)}
 			>
 				{hasError && (
@@ -297,18 +294,10 @@ export function SDKAssistantMessage({
 
 	// Normal mode - original layout
 	//
-	// For running-block placement: the animated arc must trace the inner
-	// visible card's border (not the outer wrapper, which has padding that
-	// would leave a visible gap). When there are text blocks, the bubble
-	// itself already applies `.running-block`. Otherwise, forward `isRunning`
-	// to the LAST tool or thinking block so the class lands on its outermost
-	// bordered element.
-	const lastToolBlockIdx = toolBlocks.length - 1;
-	const lastThinkingBlockIdx = thinkingBlocks.length - 1;
-	const applyRunningToLastTool = isRunning && textBlocks.length === 0 && toolBlocks.length > 0;
-	const applyRunningToLastThinking =
-		isRunning && textBlocks.length === 0 && toolBlocks.length === 0 && thinkingBlocks.length > 0;
-
+	// When isRunning, ALL blocks in this message receive the animated arc so
+	// every block type is visible for debugging/verification. Each component
+	// applies the arc via a wrapper div (not directly on its overflow:hidden
+	// root) so the inset:-2px extension isn't clipped.
 	const messageContent = (
 		<div
 			class="py-2 space-y-3"
@@ -332,18 +321,14 @@ export function SDKAssistantMessage({
 						resolvedQuestions={resolvedQuestions}
 						pendingQuestion={pendingQuestion}
 						onQuestionResolved={onQuestionResolved}
-						isRunning={applyRunningToLastTool && idx === lastToolBlockIdx}
+						isRunning={!!isRunning}
 					/>
 				);
 			})}
 
 			{/* Thinking blocks - visible by default with expand/collapse for long content */}
 			{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-				<ThinkingBlock
-					key={`thinking-${idx}`}
-					content={block.thinking}
-					isRunning={applyRunningToLastThinking && idx === lastThinkingBlockIdx}
-				/>
+				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} isRunning={!!isRunning} />
 			))}
 
 			{/* Text blocks - bubble + actions */}
@@ -386,9 +371,9 @@ function ToolUseBlock({
 		state: 'submitted' | 'cancelled',
 		responses: QuestionDraftResponse[]
 	) => void;
-	/** When true, apply the animated `.running-block` arc to this block's
-	 * outermost visible bordered card. Used by the compact task thread renderer
-	 * to indicate the last still-executing event message. */
+	/** When true, wrap this block's outermost visible bordered card in
+	 * <RunningBorder>. Used by the compact task thread renderer to indicate the
+	 * last still-executing event message. */
 	isRunning?: boolean;
 }) {
 	// Extract content and metadata from enhanced toolResult structure

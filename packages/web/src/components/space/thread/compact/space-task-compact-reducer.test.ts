@@ -189,7 +189,10 @@ describe('applyCompactVisibilityRules', () => {
 		expect(result.map((b) => b.id)).toEqual(['b2', 'b3', 'b4']);
 	});
 
-	it('always includes terminal blocks even when outside the last-N window', () => {
+	it('drops scattered (non-trailing) terminal blocks outside the last-N window', () => {
+		// Per the current reducer: only the contiguous trailing-terminal tail is
+		// always kept. A terminal block followed by more non-terminal work is
+		// treated as ordinary history and falls out of the last-N body window.
 		const blocks = [
 			makeBlock('b1', 'A', true),
 			makeBlock('b2', 'B'),
@@ -198,7 +201,20 @@ describe('applyCompactVisibilityRules', () => {
 			makeBlock('b5', 'E'),
 		];
 		const result = applyCompactVisibilityRules(blocks, 3);
-		expect(result.map((b) => b.id)).toEqual(['b1', 'b3', 'b4', 'b5']);
+		expect(result.map((b) => b.id)).toEqual(['b3', 'b4', 'b5']);
+	});
+
+	it('always includes the trailing terminal tail even when it exceeds maxBlocks', () => {
+		// b4 + b5 form the contiguous terminal tail; body window is last 3 of [b1,b2,b3].
+		const blocks = [
+			makeBlock('b1', 'A'),
+			makeBlock('b2', 'B'),
+			makeBlock('b3', 'C'),
+			makeBlock('b4', 'D', true),
+			makeBlock('b5', 'E', true),
+		];
+		const result = applyCompactVisibilityRules(blocks, 3);
+		expect(result.map((b) => b.id)).toEqual(['b1', 'b2', 'b3', 'b4', 'b5']);
 	});
 
 	it('includes terminal block already within the last-N window (no duplication)', () => {
@@ -207,20 +223,23 @@ describe('applyCompactVisibilityRules', () => {
 		expect(result).toHaveLength(3);
 	});
 
-	it('preserves chronological order when terminal blocks are injected', () => {
+	it('preserves chronological order across body window and terminal tail', () => {
 		const blocks = [
-			makeBlock('b1', 'A', true),
+			makeBlock('b1', 'A'),
 			makeBlock('b2', 'B'),
 			makeBlock('b3', 'C'),
-			makeBlock('b4', 'D'),
-			makeBlock('b5', 'E'),
+			makeBlock('b4', 'D', true),
+			makeBlock('b5', 'E', true),
 		];
 		const result = applyCompactVisibilityRules(blocks, 3);
 		const ids = result.map((b) => b.id);
-		expect(ids.indexOf('b1')).toBeLessThan(ids.indexOf('b3'));
+		expect(ids.indexOf('b3')).toBeLessThan(ids.indexOf('b4'));
 	});
 
-	it('handles multiple terminal blocks across the list', () => {
+	it('only keeps the trailing-terminal tail — scattered non-trailing terminals are dropped', () => {
+		// b1 and b3 are terminals but they are NOT part of the trailing tail
+		// because b4, b5, b6 follow them (non-terminal). Body window of size 3
+		// from [b1..b6] is [b4, b5, b6]; no scattered terminal survives.
 		const blocks = [
 			makeBlock('b1', 'A', true),
 			makeBlock('b2', 'B'),
@@ -230,7 +249,7 @@ describe('applyCompactVisibilityRules', () => {
 			makeBlock('b6', 'F'),
 		];
 		const result = applyCompactVisibilityRules(blocks, 3);
-		expect(result.map((b) => b.id)).toEqual(['b1', 'b3', 'b4', 'b5', 'b6']);
+		expect(result.map((b) => b.id)).toEqual(['b4', 'b5', 'b6']);
 	});
 
 	it('works with maxBlocks=1', () => {
@@ -257,9 +276,11 @@ describe('shouldShowRunningIndicator', () => {
 		expect(shouldShowRunningIndicator(blocks)).toBe(false);
 	});
 
-	it('only considers the last block, ignoring earlier ones', () => {
+	it('returns true when any earlier block is still non-terminal even if the last is terminal', () => {
+		// With the current reducer, terminal tails pin themselves to the end —
+		// so if any earlier block is non-terminal we treat the task as still running.
 		const blocks = [makeBlock('b1', 'A', false), makeBlock('b2', 'B', true)];
-		expect(shouldShowRunningIndicator(blocks)).toBe(false);
+		expect(shouldShowRunningIndicator(blocks)).toBe(true);
 	});
 
 	it('shows indicator when earlier blocks are terminal but last is not', () => {

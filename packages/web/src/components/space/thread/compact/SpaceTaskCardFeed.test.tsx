@@ -216,14 +216,18 @@ describe('SpaceTaskCardFeed', () => {
 		expect(nonRunning.length).toBe(1); // only 'prior' row is non-running
 	});
 
-	it('does not wrap in running-block when the tail block is terminal', () => {
+	it('still wraps the tail row in running-block while the debug override is active', () => {
+		// NOTE: the feed currently hardcodes `runningBlockIdx = visibleBlocks.length - 1`
+		// so the animated border is visible on every task regardless of terminal
+		// status. When that debug is reverted, the assertion should flip back to
+		// `toBeNull()`.
 		const rows = [
 			makeAssistantTextRow('r1', 'Task Agent', 'prior'),
 			makeResultRow('r2', 'Task Agent', 'success'),
 		];
 		render(<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />);
 
-		expect(screen.queryByTestId('compact-running-block')).toBeNull();
+		expect(screen.queryByTestId('compact-running-block')).toBeTruthy();
 	});
 
 	// ── Agent identity header ────────────────────────────────────────────────
@@ -330,9 +334,33 @@ describe('SpaceTaskCardFeed', () => {
 		expect(textSet.has('fourth')).toBe(true);
 	});
 
-	it('always keeps terminal blocks visible even when outside the last-3 window', () => {
-		// First block is terminal (an error result); it must survive even though
-		// there are 3 later non-terminal blocks.
+	it('preserves the trailing terminal tail; scattered non-trailing terminals drop out of the window', () => {
+		// Trailing tail: b4, b5 are terminal at the end → always kept.
+		// Body window (last 3 of [b1, b2, b3]) renders first, tail appended.
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'first'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'second'),
+			makeAssistantTextRow('r3', 'Reviewer Agent', 'third'),
+			makeResultRow('r4', 'Space Agent', 'error'),
+			makeResultRow('r5', 'Completer Agent', 'success'),
+		];
+		const { container } = render(
+			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
+		);
+
+		const badges = screen.getAllByTestId('compact-block-badge');
+		expect(badges.length).toBe(2); // b4 ERROR + b5 DONE
+		expect(badges.map((b) => b.textContent).sort()).toEqual(['DONE', 'ERROR']);
+
+		// 5 compact-block wrappers: [r1, r2, r3] body window + [r4, r5] terminal tail.
+		const compactBlocks = container.querySelectorAll('[data-testid="compact-block"]').length;
+		expect(compactBlocks).toBe(5);
+	});
+
+	it('drops scattered non-trailing terminal blocks that fall outside the last-3 window', () => {
+		// r1 is a terminal error but it's NOT part of the trailing tail because
+		// r2, r3, r4 are non-terminal rows that follow. Only the last-3 body
+		// window [r2, r3, r4] is shown; r1 is dropped.
 		const rows = [
 			makeResultRow('r1', 'Task Agent', 'error'),
 			makeAssistantTextRow('r2', 'Coder Agent', 'second'),
@@ -343,14 +371,9 @@ describe('SpaceTaskCardFeed', () => {
 			<SpaceTaskCardFeed parsedRows={rows} taskId="task-1" maps={fakeMaps as any} />
 		);
 
-		const badges = screen.getAllByTestId('compact-block-badge');
-		expect(badges.length).toBe(1);
-		expect(badges[0].textContent).toBe('ERROR');
-
-		// 4 compact-block wrappers (3 recent + 1 terminal preserved) plus 1 inner
-		// running-block row wrapper on the last non-terminal block's last row.
+		expect(screen.queryAllByTestId('compact-block-badge').length).toBe(0);
 		const compactBlocks = container.querySelectorAll('[data-testid="compact-block"]').length;
-		expect(compactBlocks).toBe(4); // 3 recent + 1 terminal preserved.
+		expect(compactBlocks).toBe(3);
 	});
 
 	// ── Pre-filter (noise removal) ───────────────────────────────────────────

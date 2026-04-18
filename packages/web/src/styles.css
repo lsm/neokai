@@ -679,70 +679,12 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
    padding — the wrapper already accounts for both the tab bar and home indicator. */
 
 /* ── Space task thread — compact running-block indicator ─────────────────────
-   A white arc of light that traces clockwise around the border of the last
-   active (non-terminal) event message while the agent session is running.
+   The animated border-light for running (non-terminal) event messages is now
+   rendered by the <RunningBorder> Preact component in
+   packages/web/src/components/sdk/RunningBorder.tsx. It uses an inline SVG
+   with <animateMotion> and a radial-gradient mask to trace the element's
+   rounded-rectangle border exactly.
 
-   Technique (matches the @property arc-spin pattern):
-   - @property --running-angle lets CSS smoothly interpolate the conic-gradient
-     start angle so the arc rotates rather than jumps.
-   - ::before extends 2px outside the element (inset: -2px; padding: 2px) so
-     the 2px arc ring sits exactly on the element's visible border edge with
-     no gap.
-   - The mask punches out the content area (content-box) leaving only the 2px
-     padding ring visible — the card interior is untouched.
-   - z-index: -1 + isolation: isolate keeps the arc behind all card content
-     without affecting child stacking. */
-
-@property --running-angle {
-	syntax: "<angle>";
-	initial-value: 0deg;
-	inherits: false;
-}
-
-@keyframes space-task-spin-border {
-	to {
-		--running-angle: 360deg;
-	}
-}
-
-.running-block {
-	position: relative;
-	isolation: isolate;
-}
-
-.running-block::before {
-	content: "";
-	position: absolute;
-	inset: -2px;
-	border-radius: inherit;
-	padding: 2px;
-	/* Arc: ~40% visible (60% transparent), bright white head fading to dim tail */
-	background: conic-gradient(
-		from var(--running-angle),
-		transparent 0%,
-		transparent 60%,
-		rgba(255, 255, 255, 0.95) 80%,
-		rgba(255, 255, 255, 0.2) 95%,
-		transparent 100%
-	);
-	/* Mask: content-box punches a hole through the center so only the 2px
-	   padding ring (the arc) is visible — card interior stays clean */
-	-webkit-mask:
-		linear-gradient(#000 0 0) content-box,
-		linear-gradient(#000 0 0);
-	-webkit-mask-composite: xor;
-	mask:
-		linear-gradient(#000 0 0) content-box,
-		linear-gradient(#000 0 0);
-	mask-composite: exclude;
-	animation: space-task-spin-border 4s linear infinite;
-	z-index: -1;
-	pointer-events: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.running-block::before {
-		animation: none;
-		background: rgba(255, 255, 255, 0.25);
-	}
-}
+   No global CSS class is needed for the effect; consumers (ThinkingBlock,
+   ToolResultCard, SubagentBlock) wrap themselves in <RunningBorder> when
+   `isRunning` is true. */

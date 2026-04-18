@@ -76,39 +76,68 @@ export function buildLogicalBlocks(rows: ParsedThreadRow[]): CompactLogicalBlock
 /**
  * Apply compact visibility rules to a list of logical blocks.
  *
- * Rules (applied together):
- * 1. Show at most `maxBlocks` of the most-recent blocks.
- * 2. Always show terminal blocks (blocks containing a result message), even
- *    when they fall outside the `maxBlocks` window — this may cause the
- *    rendered count to exceed `maxBlocks`.
+ * Algorithm:
+ * 1. Identify the "terminal tail" — the contiguous run of terminal blocks at
+ *    the very end of allBlocks. These are the task's final result/error ending
+ *    blocks and are always shown regardless of the maxBlocks limit.
+ * 2. From the remaining "body" (everything before the terminal tail), show the
+ *    last `maxBlocks` blocks.
+ * 3. Special case: if ALL blocks are terminal (task fully done), show only the
+ *    last maxBlocks blocks.
+ *
+ * This correctly handles multi-iteration tasks where many historical DONE
+ * blocks exist — only the most recent body blocks + the current terminal tail
+ * are shown, not every historical terminal block.
  *
  * @param allBlocks  All logical blocks in chronological order.
- * @param maxBlocks  Maximum blocks to show before terminal-block addition (default: 3).
+ * @param maxBlocks  Maximum body blocks to show (default: 3).
  */
 export function applyCompactVisibilityRules(
 	allBlocks: CompactLogicalBlock[],
 	maxBlocks = 3
 ): CompactLogicalBlock[] {
+	if (allBlocks.length === 0) return [];
 	if (allBlocks.length <= maxBlocks) return allBlocks;
 
-	const lastNStart = Math.max(0, allBlocks.length - maxBlocks);
-	const lastNSet = new Set<number>();
-	for (let i = lastNStart; i < allBlocks.length; i++) {
-		lastNSet.add(i);
+	// Find the start of the terminal tail: the contiguous run of terminal blocks
+	// at the very end. These "ending blocks" are always kept.
+	let terminalTailStart = allBlocks.length;
+	while (terminalTailStart > 0 && allBlocks[terminalTailStart - 1].isTerminal) {
+		terminalTailStart--;
 	}
 
-	return allBlocks.filter((block, idx) => lastNSet.has(idx) || block.isTerminal);
+	const terminalTail = allBlocks.slice(terminalTailStart);
+	const body = allBlocks.slice(0, terminalTailStart);
+
+	if (body.length === 0) {
+		// All blocks are terminal (task fully done) — show last maxBlocks only.
+		return allBlocks.slice(allBlocks.length - maxBlocks);
+	}
+
+	// Show the last maxBlocks blocks from the body, then append the terminal tail.
+	const bodyWindow = body.slice(Math.max(0, body.length - maxBlocks));
+	return [...bodyWindow, ...terminalTail];
 }
 
 /**
  * Whether the running-state indicator should be displayed.
  *
- * Returns `true` when `visibleBlocks` is non-empty and the last block is
- * non-terminal (i.e. no result message has appeared yet — the task is still
- * executing). The indicator is scoped to the last visible block only.
+ * Returns `true` when `visibleBlocks` contains at least one non-terminal block
+ * (the task is still executing). Use `getRunningBlockIndex` to find which
+ * block should receive the animated chrome.
  */
 export function shouldShowRunningIndicator(visibleBlocks: CompactLogicalBlock[]): boolean {
-	if (visibleBlocks.length === 0) return false;
-	const lastBlock = visibleBlocks[visibleBlocks.length - 1];
-	return !lastBlock.isTerminal;
+	return visibleBlocks.some((b) => !b.isTerminal);
+}
+
+/**
+ * Returns the index of the last non-terminal block in `visibleBlocks`, or -1
+ * if all blocks are terminal. This is the block that should receive the
+ * animated running-state chrome.
+ */
+export function getRunningBlockIndex(visibleBlocks: CompactLogicalBlock[]): number {
+	for (let i = visibleBlocks.length - 1; i >= 0; i--) {
+		if (!visibleBlocks[i].isTerminal) return i;
+	}
+	return -1;
 }

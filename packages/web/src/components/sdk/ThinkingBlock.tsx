@@ -9,14 +9,15 @@
 
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { RunningBorder } from './RunningBorder.tsx';
 
 interface ThinkingBlockProps {
 	content: string;
 	className?: string;
 	/** Compact mode: shows only first line with no expand/collapse button */
 	compact?: boolean;
-	/** When true, apply the animated `.running-block` arc to the outermost
-	 * bordered container so the running indicator traces this card's border. */
+	/** When true, wrap this card in <RunningBorder> so the animated arc traces
+	 * this card's outer rounded-rectangle border. */
 	isRunning?: boolean;
 }
 
@@ -56,15 +57,9 @@ export function ThinkingBlock({
 
 	const charCount = content.length;
 
-	return (
+	const inner = (
 		<div
-			class={cn(
-				'border rounded-lg overflow-hidden',
-				colors.bg,
-				colors.border,
-				isRunning && 'running-block',
-				className
-			)}
+			class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}
 			data-testid="thinking-block"
 		>
 			{/* Header */}
@@ -166,4 +161,9 @@ export function ThinkingBlock({
 			</div>
 		</div>
 	);
+
+	if (isRunning) {
+		return <RunningBorder borderRadius={8}>{inner}</RunningBorder>;
+	}
+	return inner;
 }

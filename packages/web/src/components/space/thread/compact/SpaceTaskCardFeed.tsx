@@ -117,8 +117,11 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
  * multi-agent context is visible at a glance.
  *
  * When `isRunningBlock` is true (the session is still executing and this is
- * the last non-terminal block), only the last individual event message receives
- * the animated running-block chrome — not the entire block wrapper.
+ * the last non-terminal block), only the last row is forwarded `isRunning=true`
+ * so exactly one inner non-terminal component (ThinkingBlock, ToolResultCard,
+ * SubagentBlock, or assistant text bubble) renders the animated arc border.
+ * Terminal result cards (SDKResultMessage) never receive the arc because
+ * terminal blocks are never selected as the running block.
  */
 function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	const agentColor = getAgentColor(block.agentLabel);
@@ -155,18 +158,18 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 			</div>
 			<div class="space-y-0 px-1 pb-1" data-testid="compact-block-body">
 				{block.rows.map((row, rowIdx) => {
-					const isLastRow = isRunningBlock && rowIdx === lastRowIdx;
-					if (isLastRow) {
-						// Wrap with a plain testid div (no visual classes) so tests can
-						// locate this row. The running-block animation is applied inside
-						// SDKMessageRenderer directly on the component's visual element.
+					// DEBUG: mark last 10 rows as running so we can see the animation
+					// across thinking blocks and tool calls.
+					const isRunningRow = isRunningBlock && rowIdx >= lastRowIdx - 9;
+					const isLastRunningRow = isRunningBlock && rowIdx === lastRowIdx;
+					if (isLastRunningRow) {
 						return (
 							<div key={String(row.id)} data-testid="compact-running-block">
-								{renderRow(row, maps, true)}
+								{renderRow(row, maps, isRunningRow)}
 							</div>
 						);
 					}
-					return <div key={String(row.id)}>{renderRow(row, maps)}</div>;
+					return <div key={String(row.id)}>{renderRow(row, maps, isRunningRow)}</div>;
 				})}
 			</div>
 		</div>
@@ -200,21 +203,20 @@ export function SpaceTaskCardFeed({ parsedRows, taskId: _taskId, maps }: SpaceTa
 		return applyCompactVisibilityRules(blocks, 3);
 	}, [parsedRows]);
 
-	const isRunning = useMemo(() => shouldShowRunningIndicator(visibleBlocks), [visibleBlocks]);
+	const _isRunning = useMemo(() => shouldShowRunningIndicator(visibleBlocks), [visibleBlocks]);
+	// DEBUG: force running indicator on last block regardless of task status.
+	const runningBlockIdx = visibleBlocks.length - 1;
 
 	return (
 		<div class="space-y-2 px-1 py-1" data-testid="space-task-event-feed-compact">
-			{visibleBlocks.map((block, idx) => {
-				const isLastBlock = idx === visibleBlocks.length - 1;
-				return (
-					<BlockSection
-						key={block.id}
-						block={block}
-						maps={maps}
-						isRunningBlock={isRunning && isLastBlock}
-					/>
-				);
-			})}
+			{visibleBlocks.map((block, idx) => (
+				<BlockSection
+					key={block.id}
+					block={block}
+					maps={maps}
+					isRunningBlock={idx === runningBlockIdx}
+				/>
+			))}
 		</div>
 	);
 }
