@@ -49,6 +49,7 @@ export function ReadOnlyWorkflowCanvas({
 	const [gatePopup, setGatePopup] = useState<GatePopupState | null>(null);
 	const [artifactsOverlay, setArtifactsOverlay] = useState<{ gateId: string } | null>(null);
 	const [approving, setApproving] = useState(false);
+	const [channelDecisionError, setChannelDecisionError] = useState<string | null>(null);
 
 	const {
 		nodeData,
@@ -100,6 +101,7 @@ export function ReadOnlyWorkflowCanvas({
 	const handleChannelSelect = useCallback((channelId: string | null) => {
 		setSelectedChannelId(channelId);
 		setGatePopup(null);
+		setChannelDecisionError(null);
 	}, []);
 
 	// Gate icon click — open action popup
@@ -116,8 +118,8 @@ export function ReadOnlyWorkflowCanvas({
 	}, []);
 
 	const approveGateRequest = useCallback(
-		async (gateId: string, approved: boolean) => {
-			if (!runId) return;
+		async (gateId: string, approved: boolean): Promise<{ ok: boolean; error?: string }> => {
+			if (!runId) return { ok: false, error: 'Missing run ID' };
 			setApproving(true);
 			try {
 				const hub = await connectionManager.getHub();
@@ -126,9 +128,12 @@ export function ReadOnlyWorkflowCanvas({
 					gateId,
 					approved,
 				});
+				return { ok: true };
 			} catch (err) {
-				// eslint-disable-next-line no-console
-				console.error('[approveGateRequest] approveGate error:', err);
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : 'Failed to submit decision',
+				};
 			} finally {
 				setApproving(false);
 			}
@@ -140,8 +145,8 @@ export function ReadOnlyWorkflowCanvas({
 	const handlePopupDecision = useCallback(
 		async (approved: boolean) => {
 			if (!gatePopup) return;
-			await approveGateRequest(gatePopup.gateId, approved);
-			setGatePopup(null);
+			const result = await approveGateRequest(gatePopup.gateId, approved);
+			if (result.ok) setGatePopup(null);
 		},
 		[gatePopup, approveGateRequest]
 	);
@@ -149,7 +154,13 @@ export function ReadOnlyWorkflowCanvas({
 	// Approve/reject from inline channel info panel
 	const handleChannelGateDecision = useCallback(
 		async (gateId: string, approved: boolean) => {
-			await approveGateRequest(gateId, approved);
+			setChannelDecisionError(null);
+			const result = await approveGateRequest(gateId, approved);
+			if (result.ok) {
+				setSelectedChannelId(null);
+			} else {
+				setChannelDecisionError(result.error ?? 'Failed to submit decision');
+			}
 		},
 		[approveGateRequest]
 	);
@@ -225,10 +236,14 @@ export function ReadOnlyWorkflowCanvas({
 						channel={selectedChannel}
 						fromNodeName={getNodeName(selectedChannel.fromStepId)}
 						toNodeName={getNodeName(selectedChannel.toStepId)}
-						onClose={() => setSelectedChannelId(null)}
+						onClose={() => {
+							setSelectedChannelId(null);
+							setChannelDecisionError(null);
+						}}
 						onGateDecision={handleChannelGateDecision}
 						onViewArtifacts={handleChannelViewArtifacts}
 						decisionPending={approving}
+						decisionError={channelDecisionError}
 					/>
 				)}
 

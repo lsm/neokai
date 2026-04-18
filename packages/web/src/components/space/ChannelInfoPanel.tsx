@@ -20,6 +20,8 @@ interface ChannelInfoPanelProps {
 	onViewArtifacts?: (gateId: string) => void;
 	/** Disables approve/reject buttons while an RPC is in flight. */
 	decisionPending?: boolean;
+	/** Error message from last decision attempt; shown below the action buttons. */
+	decisionError?: string | null;
 	class?: string;
 }
 
@@ -49,6 +51,7 @@ export function ChannelInfoPanel({
 	onGateDecision,
 	onViewArtifacts,
 	decisionPending = false,
+	decisionError = null,
 	class: className,
 }: ChannelInfoPanelProps): JSX.Element {
 	const status = channel.runtimeStatus;
@@ -115,37 +118,44 @@ export function ChannelInfoPanel({
 					</div>
 
 					{showApprovalActions && channel.gateId && (
-						<div class="flex items-center gap-2 pt-1" data-testid="channel-gate-actions">
-							<button
-								type="button"
-								onClick={() => void onGateDecision?.(channel.gateId!, true)}
-								disabled={decisionPending || !onGateDecision}
-								data-testid="channel-approve-btn"
-								class="px-3 py-1 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-							>
-								Approve
-							</button>
-							<button
-								type="button"
-								onClick={() => void onGateDecision?.(channel.gateId!, false)}
-								disabled={decisionPending || !onGateDecision}
-								data-testid="channel-reject-btn"
-								class="px-3 py-1 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-							>
-								Reject
-							</button>
-							{onViewArtifacts && (
+						<>
+							<div class="flex items-center gap-2 pt-1" data-testid="channel-gate-actions">
 								<button
 									type="button"
-									onClick={() => onViewArtifacts(channel.gateId!)}
-									disabled={decisionPending}
-									data-testid="channel-view-artifacts-btn"
-									class="px-3 py-1 text-xs font-medium rounded bg-dark-700 text-gray-200 border border-dark-600 hover:bg-dark-600 disabled:opacity-50 transition-colors"
+									onClick={() => void onGateDecision?.(channel.gateId!, true)}
+									disabled={decisionPending || !onGateDecision}
+									data-testid="channel-approve-btn"
+									class="px-3 py-1 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 								>
-									View Artifacts
+									Approve
 								</button>
+								<button
+									type="button"
+									onClick={() => void onGateDecision?.(channel.gateId!, false)}
+									disabled={decisionPending || !onGateDecision}
+									data-testid="channel-reject-btn"
+									class="px-3 py-1 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+								>
+									Reject
+								</button>
+								{onViewArtifacts && (
+									<button
+										type="button"
+										onClick={() => onViewArtifacts(channel.gateId!)}
+										disabled={decisionPending}
+										data-testid="channel-view-artifacts-btn"
+										class="px-3 py-1 text-xs font-medium rounded bg-dark-700 text-gray-200 border border-dark-600 hover:bg-dark-600 disabled:opacity-50 transition-colors"
+									>
+										View Artifacts
+									</button>
+								)}
+							</div>
+							{decisionError && (
+								<p class="text-xs text-red-400" data-testid="channel-gate-error">
+									{decisionError}
+								</p>
 							)}
-						</div>
+						</>
 					)}
 				</div>
 

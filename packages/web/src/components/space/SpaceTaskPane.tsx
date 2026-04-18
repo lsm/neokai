@@ -427,7 +427,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							/>
 						) : (
 							task.workflowRunId && (
-								<PendingGateBanner runId={task.workflowRunId} spaceId={runtimeSpaceId} />
+								<PendingGateBanner
+									runId={task.workflowRunId}
+									spaceId={runtimeSpaceId}
+									workflowId={canvasWorkflowId}
+								/>
 							)
 						)}
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">

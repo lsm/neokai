@@ -13,7 +13,7 @@
 
 import { useMemo, useState, useEffect, useRef } from 'preact/hooks';
 import { isChannelCyclic, TASK_AGENT_NODE_ID } from '@neokai/shared';
-import type { Gate, GateField, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
 import type { WorkflowNodeData } from './visual-editor/WorkflowCanvas';
@@ -27,68 +27,7 @@ import {
 	routeSemanticWorkflowEdges,
 	buildNodeAnchorUsage,
 } from './visual-editor/semanticWorkflowGraph';
-
-// ---- Gate status evaluation (mirrors logic from old WorkflowCanvas) ----
-
-type GateStatus = 'open' | 'blocked' | 'waiting_human';
-
-interface GateScriptResultData {
-	success: boolean;
-	reason?: string;
-}
-
-function parseScriptResult(data: Record<string, unknown>): { failed: boolean; reason?: string } {
-	const sr = data._scriptResult as GateScriptResultData | undefined;
-	if (sr && !sr.success) return { failed: true, reason: sr.reason };
-	return { failed: false };
-}
-
-function evalFieldStatus(field: GateField, data: Record<string, unknown>): GateStatus {
-	const check = field.check;
-	if (check.op === 'count') {
-		const map = data[field.name];
-		if (!map || typeof map !== 'object' || Array.isArray(map)) return 'blocked';
-		const count = Object.values(map as Record<string, unknown>).filter(
-			(v) => v === check.match
-		).length;
-		return count >= check.min ? 'open' : 'blocked';
-	}
-	const val = data[field.name];
-	if (check.op === 'exists') return val !== undefined ? 'open' : 'blocked';
-	if (check.op === '==') return val === check.value ? 'open' : 'blocked';
-	if (check.op === '!=') return val !== check.value ? 'open' : 'blocked';
-	return 'blocked';
-}
-
-function isExternalApprovalGate(fields: GateField[]): boolean {
-	return fields.some((f) => f.name === 'approved' && f.writers.length === 0);
-}
-
-function evaluateGateStatus(
-	gate: Gate,
-	data: Record<string, unknown>,
-	scriptFailed = false
-): GateStatus {
-	if (scriptFailed) return 'blocked';
-	if ((gate.fields ?? []).length === 0) return 'open';
-	if (isExternalApprovalGate(gate.fields ?? [])) {
-		const val = data['approved'];
-		if (val === true) {
-			const othersPassed = (gate.fields ?? []).every((f) => {
-				if (f.name === 'approved') return true;
-				return evalFieldStatus(f, data) === 'open';
-			});
-			return othersPassed ? 'open' : 'blocked';
-		}
-		if (val === false) return 'blocked';
-		return 'waiting_human';
-	}
-	for (const field of gate.fields ?? []) {
-		const status = evalFieldStatus(field, data);
-		if (status !== 'open') return status;
-	}
-	return 'open';
-}
+import { evaluateGateStatus, parseScriptResult, type GateStatus } from './gate-status';
 
 // ---- Gate data types ----
 

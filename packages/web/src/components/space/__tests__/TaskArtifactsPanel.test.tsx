@@ -298,6 +298,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 		vi.doMock('../SpaceTaskUnifiedThread', () => ({
 			SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
 		}));
+		vi.doMock('../PendingGateBanner', () => ({
+			PendingGateBanner: () => null,
+		}));
 		vi.doMock('../TaskArtifactsPanel', () => ({
 			TaskArtifactsPanel: ({ runId }: { runId: string }) => (
 				<div data-testid="artifacts-panel" data-run-id={runId} />
@@ -355,6 +358,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 
 		vi.doMock('../SpaceTaskUnifiedThread', () => ({
 			SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
+		}));
+		vi.doMock('../PendingGateBanner', () => ({
+			PendingGateBanner: () => null,
 		}));
 		vi.doMock('../TaskArtifactsPanel', () => ({
 			TaskArtifactsPanel: () => <div data-testid="artifacts-panel" />,
@@ -414,6 +420,9 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 
 		vi.doMock('../SpaceTaskUnifiedThread', () => ({
 			SpaceTaskUnifiedThread: () => <div data-testid="space-task-unified-thread" />,
+		}));
+		vi.doMock('../PendingGateBanner', () => ({
+			PendingGateBanner: () => null,
 		}));
 		vi.doMock('../TaskArtifactsPanel', () => ({
 			TaskArtifactsPanel: ({ runId, onClose }: { runId: string; onClose: () => void }) => (
