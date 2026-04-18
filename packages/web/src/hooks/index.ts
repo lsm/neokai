@@ -70,6 +70,7 @@ export {
 } from './useReferenceAutocomplete';
 export { useViewportSafety } from './useViewportSafety';
 export { useClickOutside } from './useClickOutside';
+export { useIsMobileCanvas, MOBILE_CANVAS_MEDIA_QUERY } from './useIsMobileCanvas';
 export {
 	useMissionDetailData,
 	type UseMissionDetailDataResult,
