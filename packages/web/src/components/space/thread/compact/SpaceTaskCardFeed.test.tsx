@@ -1,8 +1,29 @@
 // @ts-nocheck
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/preact';
-import { SpaceTaskCardFeed } from './SpaceTaskCardFeed';
+import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import type { ParsedThreadRow } from '../space-task-thread-events';
+
+// ── Signal mocks ─────────────────────────────────────────────────────────────
+// Hoisted plain holders the component mutates; we assert against them in tests.
+const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal } = vi.hoisted(() => ({
+	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
+	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
+}));
+vi.mock('../../../../lib/signals', async (importOriginal) => {
+	const actual = await importOriginal();
+	return {
+		...actual,
+		get spaceOverlaySessionIdSignal() {
+			return mockSpaceOverlaySessionIdSignal;
+		},
+		get spaceOverlayAgentNameSignal() {
+			return mockSpaceOverlayAgentNameSignal;
+		},
+	};
+});
+
+// Import the component AFTER vi.mock so the mocked signals are picked up.
+import { SpaceTaskCardFeed } from './SpaceTaskCardFeed';
 
 // Stub SDKMessageRenderer so these tests can focus on the feed's grouping,
 // visibility, agent-header and running-block behavior without pulling in the
@@ -49,10 +70,15 @@ const fakeMaps = {
 
 // ── Row factories ────────────────────────────────────────────────────────────
 
-function makeAssistantTextRow(id: string, label: string, text: string): ParsedThreadRow {
+function makeAssistantTextRow(
+	id: string,
+	label: string,
+	text: string,
+	sessionId: string | null = null
+): ParsedThreadRow {
 	return {
 		id,
-		sessionId: null,
+		sessionId,
 		label,
 		taskId: 'task-1',
 		taskTitle: 'Task One',
@@ -67,10 +93,15 @@ function makeAssistantTextRow(id: string, label: string, text: string): ParsedTh
 }
 
 /** Assistant row whose content includes a tool_use block — triggers the running border. */
-function makeToolUseRow(id: string, label: string, toolName = 'bash'): ParsedThreadRow {
+function makeToolUseRow(
+	id: string,
+	label: string,
+	toolName = 'bash',
+	sessionId: string | null = null
+): ParsedThreadRow {
 	return {
 		id,
-		sessionId: null,
+		sessionId,
 		label,
 		taskId: 'task-1',
 		taskTitle: 'Task One',
@@ -166,7 +197,11 @@ function makeEmptyUserRow(id: string, label: string): ParsedThreadRow {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('SpaceTaskCardFeed', () => {
-	beforeEach(() => cleanup());
+	beforeEach(() => {
+		cleanup();
+		mockSpaceOverlaySessionIdSignal.value = null;
+		mockSpaceOverlayAgentNameSignal.value = null;
+	});
 	afterEach(() => cleanup());
 
 	// ── Delegation to SDKMessageRenderer (the whole point of this refactor) ──
@@ -375,6 +410,139 @@ describe('SpaceTaskCardFeed', () => {
 		);
 		expect(dot).toBeTruthy();
 		expect((dot as HTMLElement).style.backgroundColor).not.toBe('');
+	});
+
+	// ── Click-to-open agent slide-out ────────────────────────────────────────
+
+	it('opens the agent overlay when the agent-name header is clicked', () => {
+		const rows = [makeAssistantTextRow('r1', 'Task Agent', 'hello', 'session-abc')];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const header = screen.getByTestId('compact-block-header');
+		expect(header.getAttribute('data-clickable')).toBe('1');
+		expect(header.getAttribute('role')).toBe('button');
+		expect(header.getAttribute('tabindex')).toBe('0');
+
+		fireEvent.click(header);
+
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-abc');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Task Agent');
+	});
+
+	it('opens the agent overlay when Enter is pressed on the focused header', () => {
+		const rows = [makeAssistantTextRow('r1', 'Coder Agent', 'hi', 'sess-coder')];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const header = screen.getByTestId('compact-block-header');
+		fireEvent.keyDown(header, { key: 'Enter' });
+
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-coder');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Agent');
+	});
+
+	it('opens the agent overlay when Space is pressed on the focused header', () => {
+		const rows = [makeAssistantTextRow('r1', 'Reviewer Agent', 'hi', 'sess-rev')];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const header = screen.getByTestId('compact-block-header');
+		fireEvent.keyDown(header, { key: ' ' });
+
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-rev');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Reviewer Agent');
+	});
+
+	it('does NOT open the overlay when the block has no sessionId on any row', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'hello' /* sessionId defaults to null */),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const header = screen.getByTestId('compact-block-header');
+		expect(header.getAttribute('data-clickable')).toBe('0');
+		expect(header.getAttribute('role')).toBeNull();
+		expect(header.getAttribute('tabindex')).toBeNull();
+
+		// Clicking a non-clickable header is a no-op.
+		fireEvent.click(header);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBeNull();
+		expect(mockSpaceOverlayAgentNameSignal.value).toBeNull();
+	});
+
+	it('uses the first row with a non-null sessionId to derive the block sessionId', () => {
+		// r1 has no sessionId (fallback row scenario), r2 has 'sess-2'.
+		// Both are the same agent → one block; the overlay should open with 'sess-2'.
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'first'),
+			makeAssistantTextRow('r2', 'Task Agent', 'second', 'sess-2'),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const header = screen.getByTestId('compact-block-header');
+		fireEvent.click(header);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-2');
+	});
+
+	it('each block opens its own agent overlay independently', () => {
+		const rows = [
+			makeAssistantTextRow('r1', 'Task Agent', 'task msg', 'sess-task'),
+			makeAssistantTextRow('r2', 'Coder Agent', 'coder msg', 'sess-coder'),
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const headers = screen.getAllByTestId('compact-block-header');
+		expect(headers.length).toBe(2);
+
+		// Click the Coder header → signals point to Coder.
+		fireEvent.click(headers[1]);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-coder');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Agent');
+
+		// Click the Task header → signals swap to Task.
+		fireEvent.click(headers[0]);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-task');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Task Agent');
 	});
 
 	// ── Terminal badge ───────────────────────────────────────────────────────

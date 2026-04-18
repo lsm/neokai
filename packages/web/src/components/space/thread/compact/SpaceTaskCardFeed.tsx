@@ -9,6 +9,7 @@ import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { UseMessageMapsResult } from '../../../../hooks/useMessageMaps';
 import { SDKMessageRenderer } from '../../../sdk/SDKMessageRenderer';
 import { getAgentColor } from '../space-task-thread-agent-colors';
+import { spaceOverlayAgentNameSignal, spaceOverlaySessionIdSignal } from '../../../../lib/signals';
 import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
@@ -66,6 +67,19 @@ function preFilterRows(rows: ParsedThreadRow[]): ParsedThreadRow[] {
 
 function shortAgentLabel(label: string): string {
 	return label.replace(/\s+agent$/i, '').toUpperCase();
+}
+
+/**
+ * Pick the authoritative session id for a block — the first row carrying a
+ * non-null sessionId. Most rows within a block share the same sessionId, but
+ * some fallback rows (e.g. raw parse-failure rows) may have null, so we skip
+ * over them and return null only when every row lacks a session.
+ */
+function getBlockSessionId(block: CompactLogicalBlock): string | null {
+	for (const row of block.rows) {
+		if (row.sessionId) return row.sessionId;
+	}
+	return null;
 }
 
 function getTerminalBadge(block: CompactLogicalBlock): 'DONE' | 'ERROR' | null {
@@ -136,6 +150,8 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	const agentColor = getAgentColor(block.agentLabel);
 	const terminalBadge = getTerminalBadge(block);
+	const blockSessionId = getBlockSessionId(block);
+	const isClickable = blockSessionId !== null;
 
 	// Trim this turn to its most-recent rows; show the hidden-count under the header.
 	const { visibleRows, hiddenRowCount: hiddenInBlock } = applyBlockRowVisibility(
@@ -144,10 +160,38 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	);
 	const lastVisibleIdx = visibleRows.length - 1;
 
+	const handleOpenAgentOverlay = () => {
+		if (!blockSessionId) return;
+		spaceOverlayAgentNameSignal.value = block.agentLabel;
+		spaceOverlaySessionIdSignal.value = blockSessionId;
+	};
+
+	const handleHeaderKeyDown = (e: KeyboardEvent) => {
+		if (!isClickable) return;
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			handleOpenAgentOverlay();
+		}
+	};
+
 	return (
 		<div data-testid="compact-block">
-			{/* Agent identity header */}
-			<div class="flex items-center gap-2 px-1 pt-1 pb-0.5" data-testid="compact-block-header">
+			{/* Agent identity header — clickable to open the agent slide-out */}
+			<div
+				class={
+					'flex items-center gap-2 px-1 pt-1 pb-0.5 rounded-sm ' +
+					(isClickable
+						? 'cursor-pointer hover:bg-gray-800/40 transition-colors focus:outline-none focus:bg-gray-800/40'
+						: '')
+				}
+				data-testid="compact-block-header"
+				data-clickable={isClickable ? '1' : '0'}
+				role={isClickable ? 'button' : undefined}
+				tabIndex={isClickable ? 0 : undefined}
+				aria-label={isClickable ? `Open ${block.agentLabel} session details` : undefined}
+				onClick={isClickable ? handleOpenAgentOverlay : undefined}
+				onKeyDown={isClickable ? handleHeaderKeyDown : undefined}
+			>
 				<span
 					class="w-2 h-2 rounded-full flex-shrink-0"
 					style={{ backgroundColor: agentColor }}
