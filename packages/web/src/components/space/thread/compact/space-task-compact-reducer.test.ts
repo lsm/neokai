@@ -3,6 +3,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
+	applyBlockRowVisibility,
 	shouldShowRunningIndicator,
 	resolveRunningBlockIndex,
 	rowHasToolUse,
@@ -367,5 +368,72 @@ describe('resolveRunningBlockIndex', () => {
 		// resolveRunningBlockIndex should not return the terminal block
 		// — getRunningBlockIndex returns 0 (last non-terminal), and its last row IS tool_use
 		expect(resolveRunningBlockIndex([running, done], true)).toBe(0);
+	});
+});
+
+// ── applyBlockRowVisibility ───────────────────────────────────────────────────
+
+describe('applyBlockRowVisibility', () => {
+	function makeBlock(id: string, rowCount: number): CompactLogicalBlock {
+		const rows: ParsedThreadRow[] = [];
+		for (let i = 0; i < rowCount; i++) {
+			rows.push(makeRow(`${id}-${i}`, 'Task'));
+		}
+		return { id, agentLabel: 'Task', rows, isTerminal: false };
+	}
+
+	it('returns all rows and 0 hidden when block has fewer rows than maxRows', () => {
+		const block = makeBlock('b', 2);
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 3);
+		expect(visibleRows.length).toBe(2);
+		expect(hiddenRowCount).toBe(0);
+	});
+
+	it('returns all rows and 0 hidden when block has exactly maxRows', () => {
+		const block = makeBlock('b', 3);
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 3);
+		expect(visibleRows.length).toBe(3);
+		expect(hiddenRowCount).toBe(0);
+	});
+
+	it('keeps the last maxRows and reports the trimmed count', () => {
+		const block = makeBlock('b', 5);
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 3);
+		expect(visibleRows.length).toBe(3);
+		expect(hiddenRowCount).toBe(2);
+		// The visible rows must be the tail — the last 3.
+		expect(visibleRows.map((r) => r.id)).toEqual(['b-2', 'b-3', 'b-4']);
+	});
+
+	it('preserves the final row (terminal + running border stay visible)', () => {
+		const block = makeBlock('b', 10);
+		const { visibleRows } = applyBlockRowVisibility(block, 3);
+		expect(visibleRows[visibleRows.length - 1].id).toBe('b-9');
+	});
+
+	it('defaults to maxRows=3 when the argument is omitted', () => {
+		const block = makeBlock('b', 5);
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block);
+		expect(visibleRows.length).toBe(3);
+		expect(hiddenRowCount).toBe(2);
+	});
+
+	it('returns empty visible and all-hidden when maxRows is 0', () => {
+		const block = makeBlock('b', 4);
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 0);
+		expect(visibleRows.length).toBe(0);
+		expect(hiddenRowCount).toBe(4);
+	});
+
+	it('handles an empty-rows block gracefully', () => {
+		const block: CompactLogicalBlock = {
+			id: 'empty',
+			agentLabel: 'Task',
+			rows: [],
+			isTerminal: false,
+		};
+		const { visibleRows, hiddenRowCount } = applyBlockRowVisibility(block, 3);
+		expect(visibleRows.length).toBe(0);
+		expect(hiddenRowCount).toBe(0);
 	});
 });

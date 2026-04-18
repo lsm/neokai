@@ -163,6 +163,42 @@ export function rowHasToolUse(row: ParsedThreadRow): boolean {
 }
 
 /**
+ * Row-level visibility result for a single logical block.
+ */
+export interface BlockRowVisibility {
+	/** Rows to render for this block, in chronological order. */
+	visibleRows: ParsedThreadRow[];
+	/** Count of rows trimmed off the front of the block. */
+	hiddenRowCount: number;
+}
+
+/**
+ * Trim a logical block's rows to the last `maxRows` so each turn stays compact
+ * even when the agent emitted many events.
+ *
+ * Returns the visible tail plus the count of rows that were hidden from the
+ * front. The caller renders `visibleRows` and, when `hiddenRowCount > 0`,
+ * surfaces the count under the block's agent header so the user knows there
+ * are earlier messages in this turn that were collapsed.
+ *
+ * The tail is always kept — this guarantees the running-border row and
+ * terminal result row (which are always at the end of a block) remain visible.
+ */
+export function applyBlockRowVisibility(
+	block: CompactLogicalBlock,
+	maxRows = 3
+): BlockRowVisibility {
+	if (maxRows <= 0) {
+		return { visibleRows: [], hiddenRowCount: block.rows.length };
+	}
+	if (block.rows.length <= maxRows) {
+		return { visibleRows: block.rows, hiddenRowCount: 0 };
+	}
+	const visibleRows = block.rows.slice(block.rows.length - maxRows);
+	return { visibleRows, hiddenRowCount: block.rows.length - maxRows };
+}
+
+/**
  * Resolve the running-block index for the compact feed.
  *
  * The running-border animation is shown ONLY when:

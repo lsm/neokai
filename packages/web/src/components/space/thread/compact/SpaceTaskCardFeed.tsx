@@ -12,6 +12,7 @@ import { getAgentColor } from '../space-task-thread-agent-colors';
 import {
 	buildLogicalBlocks,
 	applyCompactVisibilityRules,
+	applyBlockRowVisibility,
 	resolveRunningBlockIndex,
 	type CompactLogicalBlock,
 } from './space-task-compact-reducer';
@@ -136,9 +137,11 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 	const agentColor = getAgentColor(block.agentLabel);
 	const terminalBadge = getTerminalBadge(block);
 
-	// Show only the most-recent MAX_ROWS_PER_BLOCK rows; count the rest as hidden.
-	const hiddenInBlock = Math.max(0, block.rows.length - MAX_ROWS_PER_BLOCK);
-	const visibleRows = block.rows.slice(hiddenInBlock);
+	// Trim this turn to its most-recent rows; show the hidden-count under the header.
+	const { visibleRows, hiddenRowCount: hiddenInBlock } = applyBlockRowVisibility(
+		block,
+		MAX_ROWS_PER_BLOCK
+	);
 	const lastVisibleIdx = visibleRows.length - 1;
 
 	return (
