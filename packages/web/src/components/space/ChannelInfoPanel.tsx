@@ -142,9 +142,8 @@ export function ChannelInfoPanel({
 									<button
 										type="button"
 										onClick={() => onViewArtifacts(channel.gateId!)}
-										disabled={decisionPending}
 										data-testid="channel-view-artifacts-btn"
-										class="px-3 py-1 text-xs font-medium rounded bg-dark-700 text-gray-200 border border-dark-600 hover:bg-dark-600 disabled:opacity-50 transition-colors"
+										class="px-3 py-1 text-xs font-medium rounded bg-dark-700 text-gray-200 border border-dark-600 hover:bg-dark-600 transition-colors"
 									>
 										View Artifacts
 									</button>

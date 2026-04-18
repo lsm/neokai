@@ -24,8 +24,12 @@ export function parseScriptResult(data: Record<string, unknown>): {
 	failed: boolean;
 	reason?: string;
 } {
-	const sr = data._scriptResult as GateScriptResultData | undefined;
-	if (sr && !sr.success) return { failed: true, reason: sr.reason };
+	const raw = data._scriptResult;
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { failed: false };
+	const sr = raw as Partial<GateScriptResultData>;
+	if (sr.success === false) {
+		return { failed: true, reason: typeof sr.reason === 'string' ? sr.reason : undefined };
+	}
 	return { failed: false };
 }
 

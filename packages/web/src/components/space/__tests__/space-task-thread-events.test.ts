@@ -342,6 +342,61 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
 		expect(events[0].summary).toBe('Please help me.');
 	});
 
+	it('reshapes request_human_input tool_use into a visible text Question event', () => {
+		const row = makeRow({
+			id: 'hi-row',
+			label: 'Task Agent',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'hi1',
+				session_id: 'session-1',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 't-hi-1',
+							name: 'request_human_input',
+							input: { question: 'Proceed with deploy?', context: 'PR is green.' },
+						},
+					],
+				},
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		expect(events).toHaveLength(1);
+		expect(events[0].kind).toBe('text');
+		expect(events[0].title).toBe('Question');
+		expect(events[0].summary).toContain('Proceed with deploy?');
+		expect(events[0].summary).toContain('Context: PR is green.');
+	});
+
+	it('skips request_human_input when the question body is empty', () => {
+		const row = makeRow({
+			id: 'hi-empty',
+			label: 'Task Agent',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'hi2',
+				session_id: 'session-1',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 't-hi-2',
+							name: 'request_human_input',
+							input: { question: '   ' },
+						},
+					],
+				},
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		// Falls through to the generic tool-rendering branch.
+		expect(events[0].kind).toBe('tool');
+	});
+
 	it('handles mixed agent rows with tool events maintaining correct labels', () => {
 		const rows = [
 			makeRow({
