@@ -928,6 +928,60 @@ describe('SpaceTaskCardFeed', () => {
 		expect(rendered[0].textContent).toBe('visible content');
 	});
 
+	it('keeps synthetic user messages (isSynthetic=true) — agent→agent handoffs render alongside real ones', () => {
+		const syntheticRow: ParsedThreadRow = {
+			id: 'u-syn',
+			sessionId: null,
+			label: 'Coder Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			createdAt: Date.now(),
+			message: {
+				type: 'user',
+				uuid: 'u-syn',
+				isSynthetic: true,
+				message: { content: [{ type: 'text', text: 'Go implement feature X' }] },
+			} as any,
+			fallbackText: null,
+		};
+		const realUserRow: ParsedThreadRow = {
+			id: 'u-real',
+			sessionId: null,
+			label: 'Coder Agent',
+			taskId: 'task-1',
+			taskTitle: 'Task One',
+			createdAt: Date.now(),
+			message: {
+				type: 'user',
+				uuid: 'u-real',
+				// no isSynthetic field — this is a real human message
+				message: { content: [{ type: 'text', text: 'Please build feature X' }] },
+			} as any,
+			fallbackText: null,
+		};
+		const rows = [
+			syntheticRow,
+			realUserRow,
+			makeAssistantTextRow('r1', 'Coder Agent', 'working on it'),
+		];
+		const { container } = render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		// Synthetic and real user messages are both visible, along with the reply.
+		const rendered = container.querySelectorAll('[data-testid="sdk-message-renderer"]');
+		expect(rendered.length).toBe(3);
+		const texts = Array.from(rendered).map((el) => el.textContent);
+		expect(texts).toContain('Go implement feature X');
+		expect(texts).toContain('Please build feature X');
+		expect(texts).toContain('working on it');
+	});
+
 	// ── Empty input ──────────────────────────────────────────────────────────
 
 	it('renders the root container and no blocks when given no rows', () => {
