@@ -133,6 +133,9 @@ export interface ToolResultCardProps {
 	isOutputRemoved?: boolean;
 	/** Disable expand/collapse and hide the chevron icon */
 	disableExpand?: boolean;
+	/** When true, wrap this card in <RunningBorder> so the animated arc traces
+	 * this card's outer rounded-rectangle border. */
+	isRunning?: boolean;
 }
 
 /**

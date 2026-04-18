@@ -11,6 +11,7 @@
 
 import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { RunningBorder } from './RunningBorder.tsx';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
@@ -59,6 +60,9 @@ interface SubagentBlockProps {
 	toolResultsMap?: Map<string, unknown>;
 	/** Additional CSS classes */
 	className?: string;
+	/** When true, wrap this block in <RunningBorder> so the animated arc traces
+	 * this card's outer rounded-rectangle border. */
+	isRunning?: boolean;
 }
 
 /**
@@ -239,6 +243,7 @@ export function SubagentBlock({
 	nestedMessages = [],
 	toolResultsMap,
 	className,
+	isRunning = false,
 }: SubagentBlockProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
 
@@ -272,7 +277,11 @@ export function SubagentBlock({
 		});
 	}, [nestedMessages, input.prompt]);
 
-	return (
+	// The running-state arc is rendered by <RunningBorder> as an absolutely
+	// positioned SVG sibling (applied via a wrapper below). It cannot live on
+	// this div because overflow:hidden would clip the SVG that extends slightly
+	// past the card's outer edge.
+	const block = (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
 			{/* Header */}
 			<button
@@ -385,6 +394,10 @@ export function SubagentBlock({
 			)}
 		</div>
 	);
+	if (isRunning) {
+		return <RunningBorder borderRadius={8}>{block}</RunningBorder>;
+	}
+	return block;
 }
 
 /**

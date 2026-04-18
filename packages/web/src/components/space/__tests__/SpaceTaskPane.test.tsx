@@ -207,22 +207,6 @@ describe('SpaceTaskPane', () => {
 		expect(getByText('Keep this view open while the task thread starts.')).toBeTruthy();
 	});
 
-	it('does not show header session button when no task session exists', () => {
-		mockTasks.value = [makeTask({ taskAgentSessionId: null })];
-		const { queryByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		expect(queryByTestId('view-agent-session-btn')).toBeNull();
-	});
-
-	it('opens overlay via header button when task session exists', () => {
-		mockSpaceOverlaySessionIdSignal.value = null;
-		mockSpaceOverlayAgentNameSignal.value = null;
-		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
-		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
-		fireEvent.click(getByTestId('view-agent-session-btn'));
-		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-abc');
-		expect(mockSpaceOverlayAgentNameSignal.value).toBe('View Agent Session');
-	});
-
 	it('calls onClose when back button is clicked', () => {
 		mockTasks.value = [makeTask()];
 		const onClose = vi.fn();

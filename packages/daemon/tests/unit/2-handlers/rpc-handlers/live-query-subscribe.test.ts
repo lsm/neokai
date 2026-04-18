@@ -308,6 +308,21 @@ describe('setupLiveQueryHandlers', () => {
 		).rejects.toThrow('Unauthorized');
 	});
 
+	test('subscribe spaceTaskMessages.byTask.compact: nonexistent task rejected', async () => {
+		// Regression guard: the compact variant is the default used by the web
+		// hook. It must share the same space-task authorization check as the
+		// legacy full variant — otherwise any authenticated client could
+		// subscribe with an arbitrary taskId and read messages for a task they
+		// don't have access to.
+		await expect(
+			setup.callHandler('liveQuery.subscribe', {
+				queryName: 'spaceTaskMessages.byTask.compact',
+				params: ['space-task-does-not-exist'],
+				subscriptionId: 'sub-1',
+			})
+		).rejects.toThrow('Unauthorized');
+	});
+
 	// -----------------------------------------------------------------------
 	// Unauthorized group_id
 	// -----------------------------------------------------------------------

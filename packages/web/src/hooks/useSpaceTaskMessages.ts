@@ -14,7 +14,17 @@ export interface SpaceTaskThreadMessageRow {
 	content: string;
 	createdAt: number;
 	parentToolUseId?: string | null;
+	/**
+	 * Total messages stored for this session — populated by the compact query
+	 * variant when the server has sliced the result set. When equal to the
+	 * number of delivered rows for this session, nothing was truncated.
+	 *
+	 * Absent (undefined) when the full/legacy query is used.
+	 */
+	sessionMessageCount?: number;
 }
+
+export type SpaceTaskMessagesQueryVariant = 'compact' | 'full';
 
 export interface UseSpaceTaskMessagesResult {
 	rows: SpaceTaskThreadMessageRow[];
@@ -52,11 +62,17 @@ function applyDelta(
 	return sortRows(Array.from(next.values()));
 }
 
-export function useSpaceTaskMessages(taskId: string | null): UseSpaceTaskMessagesResult {
+export function useSpaceTaskMessages(
+	taskId: string | null,
+	variant: SpaceTaskMessagesQueryVariant = 'compact'
+): UseSpaceTaskMessagesResult {
 	const { request, onEvent, isConnected } = useMessageHub();
 	const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 	const activeSubIdRef = useRef<string | null>(null);
+
+	const queryName =
+		variant === 'full' ? 'spaceTaskMessages.byTask' : 'spaceTaskMessages.byTask.compact';
 
 	useEffect(() => {
 		if (!taskId || !isConnected) {
@@ -83,7 +99,7 @@ export function useSpaceTaskMessages(taskId: string | null): UseSpaceTaskMessage
 		});
 
 		request('liveQuery.subscribe', {
-			queryName: 'spaceTaskMessages.byTask',
+			queryName,
 			params: [taskId],
 			subscriptionId,
 		}).catch(() => {
@@ -98,7 +114,7 @@ export function useSpaceTaskMessages(taskId: string | null): UseSpaceTaskMessage
 			activeSubIdRef.current = null;
 			Promise.resolve(request('liveQuery.unsubscribe', { subscriptionId })).catch(() => {});
 		};
-	}, [taskId, isConnected, onEvent, request]);
+	}, [taskId, isConnected, onEvent, request, queryName]);
 
 	const sortedRows = useMemo(() => sortRows(rows), [rows]);
 

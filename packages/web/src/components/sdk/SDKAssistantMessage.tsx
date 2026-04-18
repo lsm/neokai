@@ -54,6 +54,12 @@ interface Props {
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
 	allMessages?: ChatMessage[];
+	/**
+	 * When true, child tool / thinking / subagent blocks in this message are
+	 * each wrapped in <RunningBorder> so the animated arc traces their border.
+	 * Set by the compact task thread renderer for the last non-terminal message.
+	 */
+	isRunning?: boolean;
 }
 
 export function SDKAssistantMessage({
@@ -68,6 +74,7 @@ export function SDKAssistantMessage({
 	selectedMessages,
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
+	isRunning,
 }: Props) {
 	const { message: apiMessage } = message;
 	const hasError = 'error' in message && message.error !== undefined;
@@ -291,6 +298,11 @@ export function SDKAssistantMessage({
 	}
 
 	// Normal mode - original layout
+	//
+	// When isRunning, ALL blocks in this message receive the animated arc so
+	// every block type is visible for debugging/verification. Each component
+	// applies the arc via a wrapper div (not directly on its overflow:hidden
+	// root) so the inset:-2px extension isn't clipped.
 	const messageContent = (
 		<div
 			class="py-2 space-y-3"
@@ -314,13 +326,14 @@ export function SDKAssistantMessage({
 						resolvedQuestions={resolvedQuestions}
 						pendingQuestion={pendingQuestion}
 						onQuestionResolved={onQuestionResolved}
+						isRunning={!!isRunning}
 					/>
 				);
 			})}
 
 			{/* Thinking blocks - visible by default with expand/collapse for long content */}
 			{thinkingBlocks.map((block: Extract<ContentBlock, { type: 'thinking' }>, idx: number) => (
-				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} />
+				<ThinkingBlock key={`thinking-${idx}`} content={block.thinking} isRunning={!!isRunning} />
 			))}
 
 			{/* Text blocks - bubble + actions */}
@@ -350,6 +363,7 @@ function ToolUseBlock({
 	resolvedQuestions,
 	pendingQuestion,
 	onQuestionResolved,
+	isRunning,
 }: {
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
@@ -362,6 +376,10 @@ function ToolUseBlock({
 		state: 'submitted' | 'cancelled',
 		responses: QuestionDraftResponse[]
 	) => void;
+	/** When true, wrap this block's outermost visible bordered card in
+	 * <RunningBorder>. Used by the compact task thread renderer to indicate the
+	 * last still-executing event message. */
+	isRunning?: boolean;
 }) {
 	// Extract content and metadata from enhanced toolResult structure
 	const resultData = toolResult as
@@ -388,6 +406,7 @@ function ToolUseBlock({
 				toolId={block.id}
 				nestedMessages={nestedMessages}
 				toolResultsMap={toolResultsMap}
+				isRunning={isRunning}
 			/>
 		);
 	}
@@ -444,6 +463,7 @@ function ToolUseBlock({
 						messageUuid={messageUuid}
 						sessionId={sessionId}
 						isOutputRemoved={isOutputRemoved}
+						isRunning={isRunning}
 					/>
 				</div>
 			);
@@ -461,6 +481,7 @@ function ToolUseBlock({
 					messageUuid={messageUuid}
 					sessionId={sessionId}
 					isOutputRemoved={isOutputRemoved}
+					isRunning={isRunning}
 				/>
 				{/* Render QuestionPrompt inline - ALWAYS show the form */}
 				{resolved ? (
@@ -499,6 +520,7 @@ function ToolUseBlock({
 			messageUuid={messageUuid}
 			sessionId={sessionId}
 			isOutputRemoved={isOutputRemoved}
+			isRunning={isRunning}
 		/>
 	);
 }
