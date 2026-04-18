@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceAgent } from '../../lib/router';
 import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
 import type {
 	SpaceTaskActivityMember,
@@ -157,7 +156,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		!!task.workflowRunId || !!agentSessionId || activityMembers.length > 0;
 	const showInlineComposer = !isTerminalTask;
 	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
-	const showHeaderSessionAction = !!runtimeSpaceId && !!agentSessionId;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
 	const floatingToggleTopClass = activeView === 'artifacts' ? 'top-14' : 'top-3';
@@ -256,16 +254,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
-	const handleTaskAgentAction = () => {
-		if (!runtimeSpaceId) return;
-		if (agentSessionId) {
-			spaceOverlayAgentNameSignal.value = agentActionLabel;
-			spaceOverlaySessionIdSignal.value = agentSessionId;
-			return;
-		}
-		navigateToSpaceAgent(runtimeSpaceId);
-	};
-
 	const taskActionItems: DropdownMenuItem[] = [];
 	if (activityMembers.length > 0) {
 		taskActionItems.push(
@@ -314,16 +302,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							</span>
 						)}
 					</div>
-					{showHeaderSessionAction && (
-						<button
-							type="button"
-							onClick={handleTaskAgentAction}
-							data-testid="view-agent-session-btn"
-							class="flex-shrink-0 px-2 py-1 text-xs text-gray-400 hover:text-gray-200 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors"
-						>
-							{agentActionLabel}
-						</button>
-					)}
 					{taskActionItems.length > 0 && (
 						<Dropdown
 							items={taskActionItems}
