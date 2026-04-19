@@ -2514,8 +2514,15 @@ export class TaskAgentManager {
 			gateDataRepo: this.config.gateDataRepo,
 			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
 			scriptExecutor: executeGateScript,
-			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId })
-			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
+			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
+			// workflowStartIso is sourced from the run's createdAt so gate scripts can
+			// filter activity by "since workflow start" (e.g. review-posted-gate).
+			scriptContext: {
+				workspacePath,
+				runId: workflowRunId,
+				gateId: '',
+				workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
+			},
 			onReportResult,
 			artifactRepo: this.config.artifactRepo,
 			getSpaceAutonomyLevel: async (sid) => {
