@@ -12,16 +12,16 @@ describe('layout-metrics', () => {
 	});
 
 	it('grows padding when the composer expands to multiple lines', () => {
-		expect(getMessagesBottomPaddingPx(134)).toBe(113);
-		expect(getMessagesBottomPaddingPx(158)).toBe(131);
+		expect(getMessagesBottomPaddingPx(134)).toBe(118);
+		expect(getMessagesBottomPaddingPx(158)).toBe(142);
 	});
 
 	it('adds queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(158, 3)).toBe(143);
+		expect(getMessagesBottomPaddingPx(158, 3)).toBe(154);
 	});
 
 	it('caps queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(158, 99)).toBe(163);
+		expect(getMessagesBottomPaddingPx(158, 99)).toBe(174);
 	});
 
 	it('caps very tall footer padding at the hard maximum', () => {

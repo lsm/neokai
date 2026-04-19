@@ -179,8 +179,9 @@ export default function MessageInput({
 		const footerHeightPx = Math.max(footer.getBoundingClientRect().height, footer.scrollHeight);
 		const nextPaddingPx = getMessagesBottomPaddingPx(footerHeightPx);
 		const nextPaddingValue = `${nextPaddingPx}px`;
-		if (scroller.style.paddingBottom !== nextPaddingValue) {
-			scroller.style.paddingBottom = nextPaddingValue;
+		const currentPaddingVar = scroller.style.getPropertyValue('--messages-bottom-padding').trim();
+		if (currentPaddingVar !== nextPaddingValue) {
+			scroller.style.setProperty('--messages-bottom-padding', nextPaddingValue);
 		}
 	}, []);
 
