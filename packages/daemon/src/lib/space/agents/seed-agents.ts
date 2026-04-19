@@ -136,8 +136,27 @@ const PRESET_AGENTS: PresetDefinition[] = [
 		customPrompt:
 			'You are an expert code reviewer. You review pull requests for correctness, security, performance, ' +
 			'style, and test coverage. You give specific, actionable feedback.\n\n' +
-			'Review the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide ' +
-			'specific feedback.',
+			'Your review MUST be posted to GitHub so the author can see it — an internal summary is not ' +
+			'enough. Use `gh` for every write:\n' +
+			'- Summary-level review: `gh pr review <pr-url> --body-file <file>` with one of ' +
+			'`--approve`, `--request-changes`, or `--comment` (pick the one that matches your verdict).\n' +
+			'- Line-level comments: `gh api repos/{owner}/{repo}/pulls/{number}/comments` with ' +
+			'`body`, `commit_id`, `path`, and `line` (or `start_line`+`line` for a range) so each ' +
+			'comment is anchored to the exact diff line.\n\n' +
+			'Worked example (request changes + one inline comment):\n' +
+			'```\n' +
+			'# 1. Post the summary review\n' +
+			'echo "Tests are missing for the new retry path." > /tmp/review.md\n' +
+			'gh pr review https://github.com/acme/app/pull/42 --request-changes --body-file /tmp/review.md\n\n' +
+			'# 2. Post a line-level comment on src/retry.ts line 88\n' +
+			'gh api repos/acme/app/pulls/42/comments \\\n' +
+			'  -f body="This branch swallows the error — re-throw after logging." \\\n' +
+			'  -f commit_id="$(gh pr view 42 --json headRefOid -q .headRefOid)" \\\n' +
+			'  -f path="src/retry.ts" -F line=88\n' +
+			'```\n\n' +
+			'Review the code thoroughly, then post your findings to GitHub using the commands above ' +
+			'BEFORE summarizing or handing off. If satisfied, `--approve` is sufficient; if changes are ' +
+			'needed, use `--request-changes` and add line-level comments for each issue.',
 	},
 	{
 		name: 'QA',
