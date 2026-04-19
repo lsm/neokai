@@ -924,7 +924,7 @@ export default function ChatContainer({
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{
 						WebkitOverflowScrolling: 'touch',
-						paddingBottom: `${MIN_MESSAGES_BOTTOM_PADDING_PX}px`,
+						paddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
 					}}
 				>
 					{/* Worktree Choice Inline */}

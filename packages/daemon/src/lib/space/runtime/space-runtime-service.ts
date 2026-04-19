@@ -26,6 +26,8 @@ import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { DaemonHub } from '../../daemon-hub';
 import { SpaceRuntime } from './space-runtime';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
+import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
@@ -83,6 +85,12 @@ export interface SpaceRuntimeServiceConfig {
 	 * can resolve artifact data for script env injection.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Optional LLM-backed workflow selector override. Passed through to
+	 * SpaceRuntime verbatim. Defaults to `selectWorkflowWithLlmDefault` which
+	 * calls the Claude Agent SDK. Tests should supply a deterministic stub.
+	 */
+	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
 }
 
 export class SpaceRuntimeService {
@@ -104,6 +112,7 @@ export class SpaceRuntimeService {
 		this.runtime = new SpaceRuntime({
 			...config,
 			nodeExecutionRepo: this.nodeExecutionRepo,
+			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
 			onTaskUpdated: async ({ spaceId, task }) => {
 				if (!this.config.daemonHub) return;
 				await this.config.daemonHub.emit('space.task.updated', {

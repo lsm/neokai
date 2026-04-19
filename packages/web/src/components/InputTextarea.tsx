@@ -65,6 +65,7 @@ export interface InputTextareaProps {
 	/** Optional ref forwarded to the underlying textarea element */
 	textareaRef?: MutableRef<HTMLTextAreaElement | null>;
 	transparent?: boolean;
+	onHeightChange?: (heightPx: number) => void;
 }
 
 /**
@@ -95,6 +96,7 @@ export function InputTextarea({
 	leadingPaddingClass,
 	textareaRef: externalTextareaRef,
 	transparent = false,
+	onHeightChange,
 }: InputTextareaProps) {
 	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
 	const textareaRef = externalTextareaRef ?? internalTextareaRef;
@@ -156,10 +158,11 @@ export function InputTextarea({
 			const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
 			textarea.style.height = `${newHeight}px`;
 			setIsMultiline(newHeight > 45);
+			onHeightChange?.(newHeight);
 		});
 
 		return () => cancelAnimationFrame(rafId);
-	}, [content]);
+	}, [content, onHeightChange]);
 
 	// Focus on mount
 	useEffect(() => {
@@ -202,11 +205,11 @@ export function InputTextarea({
 			<div
 				class={cn(
 					'relative rounded-3xl border transition-all',
-					transparent ? 'bg-dark-800/45 backdrop-blur-sm' : 'bg-dark-800/60 backdrop-blur-sm',
+					transparent ? 'bg-transparent backdrop-blur-sm' : 'bg-dark-800/60 backdrop-blur-sm',
 					disabled
 						? borderColors.ui.disabled
 						: transparent
-							? 'border-dark-600/80 focus-within:bg-dark-800/60'
+							? 'border-dark-600/80 focus-within:bg-dark-800/30'
 							: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>

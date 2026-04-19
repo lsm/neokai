@@ -158,6 +158,13 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
+	// `sessionMessageCount` is surfaced only by the compact variant of the query. It
+	// carries the true per-session message total so the client can render an
+	// "N earlier messages" badge when the server-side slice has dropped rows.
+	const sessionMessageCount =
+		typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
+			? Number(row.sessionMessageCount)
+			: undefined;
 
 	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
@@ -183,7 +190,7 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 		// Keep original content when sdk_message is not valid JSON.
 	}
 
-	return {
+	const mapped: Record<string, unknown> = {
 		id,
 		sessionId,
 		kind,
@@ -196,6 +203,10 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 		createdAt,
 		parentToolUseId,
 	};
+	if (sessionMessageCount !== undefined) {
+		mapped.sessionMessageCount = sessionMessageCount;
+	}
+	return mapped;
 }
 
 // ============================================================================
@@ -735,7 +746,16 @@ ORDER BY
   st.id ASC
 `.trim();
 
-const SPACE_TASK_MESSAGES_BY_TASK_SQL = `
+/**
+ * Shared CTE block for `spaceTaskMessages.byTask*` queries.
+ *
+ * Produces a `joined` row set — one row per (session, sdk_message) pair — that
+ * the variant queries then either emit as-is (full) or slice with window
+ * functions (compact).
+ *
+ * The final variant must append its own `SELECT ... FROM ranked|joined ORDER BY`.
+ */
+const SPACE_TASK_MESSAGES_BASE_CTE = `
 WITH target_task AS (
   SELECT *
   FROM space_tasks
@@ -776,23 +796,109 @@ all_sessions AS (
   SELECT * FROM orchestration
   UNION ALL
   SELECT * FROM node_agents
+),
+joined AS (
+  SELECT
+    sm.id AS id,
+    sm.session_id AS sessionId,
+    ase.kind AS kind,
+    ase.role AS role,
+    ase.label AS label,
+    ase.task_id AS taskId,
+    ase.task_title AS taskTitle,
+    sm.message_type AS messageType,
+    sm.sdk_message AS content,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
+    json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
+  FROM all_sessions ase
+  JOIN sdk_messages sm ON sm.session_id = ase.session_id
+  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+)
+`.trim();
+
+/**
+ * Legacy/full variant — emits every joined row. Used by the verbose renderer
+ * and as a fallback when a caller genuinely needs the full history.
+ */
+const SPACE_TASK_MESSAGES_BY_TASK_SQL = `
+${SPACE_TASK_MESSAGES_BASE_CTE}
+SELECT
+  id,
+  sessionId,
+  kind,
+  role,
+  label,
+  taskId,
+  taskTitle,
+  messageType,
+  content,
+  createdAt,
+  iteration,
+  parentToolUseId
+FROM joined
+ORDER BY createdAt ASC, id ASC
+`.trim();
+
+/**
+ * Max rows per session for the compact variant.
+ *
+ * Chosen as a pragmatic upper bound for the compact event feed — large enough
+ * that normal task activity still renders end-to-end, but small enough that a
+ * long-running task with thousands of messages does not flood the client.
+ *
+ * Clients read `sessionMessageCount` to know the real per-session total and
+ * can render an "N earlier messages hidden" banner when the server has
+ * truncated the result set.
+ *
+ * Exported so tests and the row mapper can refer to the same constant.
+ */
+export const SPACE_TASK_MESSAGES_COMPACT_LIMIT_PER_SESSION = 50;
+
+/**
+ * Compact variant — keeps only the last N rows per session (ordered by
+ * createdAt DESC so the *newest* rows survive), and attaches
+ * `sessionMessageCount` to every surviving row so the client knows the real
+ * per-session total. The final output is re-sorted by createdAt ASC, id ASC
+ * to match the ordering contract of the legacy query.
+ *
+ * Notes:
+ *   - Uses `ROW_NUMBER()` window function (SQLite 3.25+). Bun's bundled
+ *     SQLite is well past that cutoff.
+ *   - `COUNT(*) OVER (PARTITION BY sessionId)` is computed once per row
+ *     and carries the real total regardless of the row slice.
+ *   - Result messages (which are always the final message of a session)
+ *     naturally remain inside the last N, so "terminal" detection on the
+ *     client is unaffected by the slice.
+ */
+const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
+${SPACE_TASK_MESSAGES_BASE_CTE},
+ranked AS (
+  SELECT
+    j.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY j.sessionId
+      ORDER BY j.createdAt DESC, j.id DESC
+    ) AS rn,
+    COUNT(*) OVER (PARTITION BY j.sessionId) AS sessionMessageCount
+  FROM joined j
 )
 SELECT
-  sm.id AS id,
-  sm.session_id AS sessionId,
-  ase.kind AS kind,
-  ase.role AS role,
-  ase.label AS label,
-  ase.task_id AS taskId,
-  ase.task_title AS taskTitle,
-  sm.message_type AS messageType,
-  sm.sdk_message AS content,
-  CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-  CAST(COALESCE(json_extract(sm.sdk_message, '$._taskMeta.iteration'), 0) AS INTEGER) AS iteration,
-  json_extract(sm.sdk_message, '$.parent_tool_use_id') AS parentToolUseId
-FROM all_sessions ase
-JOIN sdk_messages sm ON sm.session_id = ase.session_id
-WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+  id,
+  sessionId,
+  kind,
+  role,
+  label,
+  taskId,
+  taskTitle,
+  messageType,
+  content,
+  createdAt,
+  iteration,
+  parentToolUseId,
+  sessionMessageCount
+FROM ranked
+WHERE rn <= ${SPACE_TASK_MESSAGES_COMPACT_LIMIT_PER_SESSION}
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
@@ -1018,6 +1124,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		},
 	],
 	[
+		'spaceTaskMessages.byTask.compact',
+		{
+			sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
+			paramCount: 1,
+			mapRow: mapSpaceTaskMessageRow,
+		},
+	],
+	[
 		'mcpServers.global',
 		{
 			sql: MCP_SERVERS_GLOBAL_SQL,
@@ -1233,7 +1347,8 @@ export function setupLiveQueryHandlers(
 			// this block with the appropriate chain validation.
 		} else if (
 			queryName === 'spaceTaskActivity.byTask' ||
-			queryName === 'spaceTaskMessages.byTask'
+			queryName === 'spaceTaskMessages.byTask' ||
+			queryName === 'spaceTaskMessages.byTask.compact'
 		) {
 			const taskId = params[0] as string;
 			let spaceTask: { space_id: string } | null = null;

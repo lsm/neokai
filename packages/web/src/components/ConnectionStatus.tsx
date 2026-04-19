@@ -3,7 +3,7 @@
  *
  * Shows daemon connection and processing status:
  * - Connecting: Yellow dot + "Connecting..."
- * - Connected: Green dot + "Online"
+ * - Connected + idle: Green dot + "Ready"
  * - Disconnected: Gray dot + "Offline"
  * - Processing: Pulsing dot + dynamic action (e.g., "Reading files...", "Thinking...")
  */
@@ -66,7 +66,7 @@ export default function ConnectionStatus({
 		if (connectionState === 'connected') {
 			return {
 				dotClass: 'bg-green-500',
-				text: '',
+				text: 'Ready',
 				textClass: 'text-green-400',
 			};
 		}
