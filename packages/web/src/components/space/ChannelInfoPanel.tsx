@@ -16,8 +16,14 @@ interface ChannelInfoPanelProps {
 	onClose: () => void;
 	/** Called when the user approves or rejects the channel's gate from this panel. */
 	onGateDecision?: (gateId: string, approved: boolean) => void | Promise<void>;
-	/** Called when the user clicks "View Artifacts" for the channel's gate. */
-	onViewArtifacts?: (gateId: string) => void;
+	/**
+	 * Called when the user clicks "View Artifacts" for the channel's gate.
+	 * The click event is forwarded so the parent can capture `event.currentTarget`
+	 * for focus restoration on overlay close — `document.activeElement` is
+	 * unreliable for button clicks in Safari/Firefox, which don't move focus
+	 * to a button on click.
+	 */
+	onViewArtifacts?: (gateId: string, event: Event) => void;
 	/** Disables approve/reject buttons while an RPC is in flight. */
 	decisionPending?: boolean;
 	/** Error message from last decision attempt; shown below the action buttons. */
@@ -148,7 +154,7 @@ export function ChannelInfoPanel({
 								{showViewArtifacts && (
 									<button
 										type="button"
-										onClick={() => onViewArtifacts?.(channel.gateId!)}
+										onClick={(e) => onViewArtifacts?.(channel.gateId!, e)}
 										data-testid="channel-view-artifacts-btn"
 										class="px-3 py-1 text-xs font-medium rounded bg-dark-700 text-gray-200 border border-dark-600 hover:bg-dark-600 transition-colors"
 									>

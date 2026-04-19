@@ -201,29 +201,33 @@ export function ReadOnlyWorkflowCanvas({
 		[approveGateRequest]
 	);
 
-	// Tracks the element focused when the artifacts overlay opens so focus can
-	// be restored to it on close (WCAG 2.4.3). document.activeElement works for
-	// both popup and ChannelInfoPanel callsites without changing signatures. If
-	// the opener unmounts while the overlay is open (common when approve/reject
-	// from GateArtifactsView clears the popup/channel context), we fall back to
-	// the canvas container so focus lands somewhere keyboard-navigable.
+	// Tracks the element that opened the artifacts overlay so focus can be
+	// restored to it on close (WCAG 2.4.3). We capture `event.currentTarget`
+	// from the triggering click — `document.activeElement` is unreliable here
+	// because Safari and Firefox don't move focus to buttons on click. Mirrors
+	// PendingGateBanner's pattern for consistency. If the opener unmounts
+	// while the overlay is open (e.g. approve/reject clears the popup or
+	// ChannelInfoPanel context), we fall back to the canvas container.
 	const overlayOpenerRef = useRef<HTMLElement | null>(null);
 
 	// Open artifacts overlay directly from channel info panel
-	const handleChannelViewArtifacts = useCallback((gateId: string) => {
-		const active = typeof document !== 'undefined' ? document.activeElement : null;
-		overlayOpenerRef.current = active instanceof HTMLElement ? active : null;
+	const handleChannelViewArtifacts = useCallback((gateId: string, event: Event) => {
+		const target = event.currentTarget;
+		overlayOpenerRef.current = target instanceof HTMLElement ? target : null;
 		setArtifactsOverlay({ gateId });
 	}, []);
 
 	// Open artifacts overlay from popup
-	const handleOpenArtifacts = useCallback(() => {
-		if (!gatePopup) return;
-		const active = typeof document !== 'undefined' ? document.activeElement : null;
-		overlayOpenerRef.current = active instanceof HTMLElement ? active : null;
-		setArtifactsOverlay({ gateId: gatePopup.gateId });
-		setGatePopup(null);
-	}, [gatePopup]);
+	const handleOpenArtifacts = useCallback(
+		(event: MouseEvent) => {
+			if (!gatePopup) return;
+			const target = event.currentTarget;
+			overlayOpenerRef.current = target instanceof HTMLElement ? target : null;
+			setArtifactsOverlay({ gateId: gatePopup.gateId });
+			setGatePopup(null);
+		},
+		[gatePopup]
+	);
 
 	// Close artifacts overlay after decision
 	const handleArtifactsDecision = useCallback(() => {
@@ -302,7 +306,11 @@ export function ReadOnlyWorkflowCanvas({
 					Workflow paused — awaiting approval
 				</div>
 			)}
-			<div ref={containerRef} tabIndex={-1} class="flex-1 min-h-0 relative focus:outline-none">
+			<div
+				ref={containerRef}
+				tabIndex={-1}
+				class="flex-1 min-h-0 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70"
+			>
 				<WorkflowCanvas
 					nodes={nodeData}
 					viewportState={viewportState}

@@ -214,7 +214,7 @@ describe('ReadOnlyWorkflowCanvas', () => {
 			<ReadOnlyWorkflowCanvas workflowId="wf-1" runId="r1" />
 		);
 		// Open the gate popup via the captured onGateClick.
-		const fakeEvent = { clientX: 50, clientY: 60 } as MouseEvent;
+		const fakeEvent = new MouseEvent('click', { clientX: 50, clientY: 60 });
 		capturedOnGateClick?.('g-old', fakeEvent);
 		await findByTestId('view-artifacts-btn');
 		// Swap runId — popup should disappear.
@@ -227,7 +227,7 @@ describe('ReadOnlyWorkflowCanvas', () => {
 		const { findByTestId, getByTestId, queryByTestId } = render(
 			<ReadOnlyWorkflowCanvas workflowId="wf-1" runId="r1" />
 		);
-		capturedOnGateClick?.('g1', { clientX: 0, clientY: 0 } as MouseEvent);
+		capturedOnGateClick?.('g1', new MouseEvent('click', { clientX: 0, clientY: 0 }));
 		const viewBtn = await findByTestId('view-artifacts-btn');
 		fireEvent.click(viewBtn);
 		const overlay = await findByTestId('artifacts-panel-overlay');
