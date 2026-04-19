@@ -60,6 +60,11 @@ interface Props {
 	 * Set by the compact task thread renderer for the last non-terminal message.
 	 */
 	isRunning?: boolean;
+	/**
+	 * When true, Task/Agent tool_use blocks are rendered as normal tool cards
+	 * instead of SubagentBlock.
+	 */
+	flattenSubagentTools?: boolean;
 }
 
 export function SDKAssistantMessage({
@@ -75,6 +80,7 @@ export function SDKAssistantMessage({
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
 	isRunning,
+	flattenSubagentTools = false,
 }: Props) {
 	const { message: apiMessage } = message;
 	const hasError = 'error' in message && message.error !== undefined;
@@ -274,6 +280,7 @@ export function SDKAssistantMessage({
 							resolvedQuestions={resolvedQuestions}
 							pendingQuestion={pendingQuestion}
 							onQuestionResolved={onQuestionResolved}
+							flattenSubagentTools={flattenSubagentTools}
 						/>
 					);
 				})}
@@ -326,6 +333,7 @@ export function SDKAssistantMessage({
 						resolvedQuestions={resolvedQuestions}
 						pendingQuestion={pendingQuestion}
 						onQuestionResolved={onQuestionResolved}
+						flattenSubagentTools={flattenSubagentTools}
 						isRunning={!!isRunning}
 					/>
 				);
@@ -364,6 +372,7 @@ function ToolUseBlock({
 	pendingQuestion,
 	onQuestionResolved,
 	isRunning,
+	flattenSubagentTools = false,
 }: {
 	block: Extract<ContentBlock, { type: 'tool_use' }>;
 	toolResult?: unknown;
@@ -380,6 +389,8 @@ function ToolUseBlock({
 	 * <RunningBorder>. Used by the compact task thread renderer to indicate the
 	 * last still-executing event message. */
 	isRunning?: boolean;
+	/** Render Task/Agent tool_use blocks as generic tool cards when true. */
+	flattenSubagentTools?: boolean;
 }) {
 	// Extract content and metadata from enhanced toolResult structure
 	const resultData = toolResult as
@@ -395,9 +406,9 @@ function ToolUseBlock({
 	const sessionId = resultData?.sessionId || propSessionId;
 	const isOutputRemoved = resultData?.isOutputRemoved || false;
 
-	// Use SubagentBlock for Task tool (no delete button)
+	// Use SubagentBlock for Task tool (no delete button) unless flatten mode is enabled.
 	// SDK 0.2.76+ renamed the tool from 'Task' to 'Agent', support both for compatibility
-	if (block.name === 'Task' || block.name === 'Agent') {
+	if (!flattenSubagentTools && (block.name === 'Task' || block.name === 'Agent')) {
 		return (
 			<SubagentBlock
 				input={block.input as unknown as AgentInput}

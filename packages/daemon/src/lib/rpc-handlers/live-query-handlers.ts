@@ -158,9 +158,9 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
-	// `sessionMessageCount` is surfaced only by the compact variant of the query. It
-	// carries the true per-session message total so the client can render an
-	// "N earlier messages" badge when the server-side slice has dropped rows.
+	// Optional backward-compat field from older compact-query variants.
+	// Current compact SQL no longer emits this, but keep tolerant parsing so
+	// historical rows/tests and alternate query variants remain safe.
 	const sessionMessageCount =
 		typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
 			? Number(row.sessionMessageCount)
@@ -841,47 +841,79 @@ ORDER BY createdAt ASC, id ASC
 `.trim();
 
 /**
- * Max rows per session for the compact variant.
+ * Number of rendered "event units" the compact thread keeps from the tail.
  *
- * Chosen as a pragmatic upper bound for the compact event feed — large enough
- * that normal task activity still renders end-to-end, but small enough that a
- * long-running task with thousands of messages does not flood the client.
- *
- * Clients read `sessionMessageCount` to know the real per-session total and
- * can render an "N earlier messages hidden" banner when the server has
- * truncated the result set.
- *
- * Exported so tests and the row mapper can refer to the same constant.
+ * The web renderer now flattens assistant rows by content blocks (tool_use /
+ * thinking / text), so one database row can expand to multiple rendered events.
+ * This query estimates that expansion and returns only the rows needed for:
+ *   - the earliest real (non-synthetic) user anchor message, and
+ *   - the tail rows that cover the last N rendered events.
  */
-export const SPACE_TASK_MESSAGES_COMPACT_LIMIT_PER_SESSION = 50;
+export const SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT = 5;
 
 /**
- * Compact variant — keeps only the last N rows per session (ordered by
- * createdAt DESC so the *newest* rows survive), and attaches
- * `sessionMessageCount` to every surviving row so the client knows the real
- * per-session total. The final output is re-sorted by createdAt ASC, id ASC
- * to match the ordering contract of the legacy query.
+ * Compact variant — returns only the rows needed by the compact task thread.
  *
- * Notes:
- *   - Uses `ROW_NUMBER()` window function (SQLite 3.25+). Bun's bundled
- *     SQLite is well past that cutoff.
- *   - `COUNT(*) OVER (PARTITION BY sessionId)` is computed once per row
- *     and carries the real total regardless of the row slice.
- *   - Result messages (which are always the final message of a session)
- *     naturally remain inside the last N, so "terminal" detection on the
- *     client is unaffected by the slice.
+ * Strategy:
+ *   1. Estimate each row's render weight (`eventCount`):
+ *      - assistant rows: number of content blocks with a string `type`
+ *      - all other rows: 1
+ *   2. Walk rows from newest→oldest with a cumulative event count and keep the
+ *      rows fully inside the last-N tail.
+ *   3. Include one additional "crossing" row when a multi-block assistant row
+ *      straddles the N-event cutoff.
+ *   4. Always include the earliest non-synthetic user row as the anchor.
+ *   5. Return final rows in chronological order (createdAt ASC, id ASC).
  */
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
 ${SPACE_TASK_MESSAGES_BASE_CTE},
-ranked AS (
+annotated AS (
   SELECT
     j.*,
-    ROW_NUMBER() OVER (
-      PARTITION BY j.sessionId
-      ORDER BY j.createdAt DESC, j.id DESC
-    ) AS rn,
-    COUNT(*) OVER (PARTITION BY j.sessionId) AS sessionMessageCount
+    CASE
+      WHEN j.messageType = 'assistant' THEN COALESCE(
+        NULLIF((
+          SELECT COUNT(*)
+          FROM json_each(json_extract(j.content, '$.message.content')) AS je
+          WHERE json_type(je.value, '$.type') = 'text'
+        ), 0),
+        1
+      )
+      ELSE 1
+    END AS eventCount,
+    CASE
+      WHEN j.messageType = 'user' AND COALESCE(json_extract(j.content, '$.isSynthetic'), 0) != 1 THEN 1
+      ELSE 0
+    END AS isInitialHumanCandidate
   FROM joined j
+),
+weighted AS (
+  SELECT
+    a.*,
+    ROW_NUMBER() OVER (ORDER BY a.createdAt ASC, a.id ASC) AS rnAsc,
+    SUM(a.eventCount) OVER (
+      ORDER BY a.createdAt DESC, a.id DESC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS tailEventCum
+  FROM annotated a
+),
+selected AS (
+  SELECT w.*
+  FROM weighted w
+  WHERE
+    w.tailEventCum <= ${SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT}
+    OR (
+      (w.tailEventCum - w.eventCount) < ${SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT}
+      AND w.tailEventCum > ${SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT}
+    )
+    OR (
+      w.isInitialHumanCandidate = 1
+      AND w.rnAsc = (
+        SELECT MIN(w2.rnAsc)
+        FROM weighted w2
+        WHERE w2.isInitialHumanCandidate = 1
+      )
+    )
 )
 SELECT
   id,
@@ -895,10 +927,8 @@ SELECT
   content,
   createdAt,
   iteration,
-  parentToolUseId,
-  sessionMessageCount
-FROM ranked
-WHERE rn <= ${SPACE_TASK_MESSAGES_COMPACT_LIMIT_PER_SESSION}
+  parentToolUseId
+FROM selected
 ORDER BY createdAt ASC, id ASC
 `.trim();
 

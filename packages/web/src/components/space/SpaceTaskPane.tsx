@@ -159,7 +159,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const canSendThreadMessage = !isTerminalTask && !ensuringThread && !sendingThread;
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
-	const floatingToggleTopClass = activeView === 'artifacts' ? 'top-14' : 'top-3';
 	const activitySummary = STATUS_LABELS[task.status];
 	const transitionActions = getTransitionActions(task.status);
 	const agentActionLabel =
@@ -337,13 +336,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				</div>
 			)}
 
-			<div class="flex-1 min-h-0 overflow-hidden relative">
-				<div
-					class={cn(
-						'absolute right-4 z-20 flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm',
-						floatingToggleTopClass
-					)}
-				>
+			<div class="px-4 pb-2 flex-shrink-0 flex justify-center">
+				<div class="flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
 					<button
 						type="button"
 						onClick={() => setActiveView('thread')}
@@ -400,6 +394,8 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</button>
 					)}
 				</div>
+			</div>
+			<div class="flex-1 min-h-0 overflow-hidden">
 				{activeView === 'canvas' && task.workflowRunId && canvasWorkflowId ? (
 					<div class="h-full" data-testid="canvas-view">
 						<ReadOnlyWorkflowCanvas

@@ -1,52 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import {
-	useSpaceTaskMessages,
-	type SpaceTaskThreadMessageRow,
-} from '../../hooks/useSpaceTaskMessages';
+import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 import { SpaceTaskThreadEventFeed } from './thread/SpaceTaskThreadEventFeed';
 import { SpaceTaskCardFeed } from './thread/compact/SpaceTaskCardFeed';
 import { buildThreadEvents, parseThreadRow } from './thread/space-task-thread-events';
 import { getSpaceTaskThreadRenderStyle } from '../../lib/space-task-thread-config';
 
-// ── Scroll-spy helpers ───────────────────────────────────────────────────────
-
 interface AgentTag {
 	label: string;
 	color: string;
 }
 
-/** Strips the trailing "Agent" word for compact display, e.g. "Task Agent" → "TASK". */
 function shortAgentLabel(label: string): string {
 	return label.replace(/\s+agent$/i, '').toUpperCase();
 }
 
-/**
- * Walk all `[data-agent-label]` blocks inside `container` and return the agent
- * of the last block whose top edge is at or above the container's top edge.
- * This is the block currently occupying the visible top of the scroll area.
- *
- * Falls back to the first block when nothing has scrolled past the top yet
- * (e.g. scrollTop=0) so the tag is always visible when content exists.
- */
 function findCurrentAgent(container: HTMLElement): AgentTag | null {
-	const blocks = container.querySelectorAll<HTMLElement>('[data-agent-label]');
-	if (blocks.length === 0) return null;
+	const rows = container.querySelectorAll<HTMLElement>('[data-agent-label]');
+	if (rows.length === 0) return null;
+
 	const containerTop = container.getBoundingClientRect().top;
 	let found: AgentTag | null = null;
-	for (const el of Array.from(blocks)) {
-		if (el.getBoundingClientRect().top <= containerTop + 8) {
-			found = { label: el.dataset.agentLabel ?? '', color: el.dataset.agentColor ?? '' };
+	for (const row of Array.from(rows)) {
+		if (row.getBoundingClientRect().top <= containerTop + 8) {
+			found = {
+				label: row.dataset.agentLabel ?? '',
+				color: row.dataset.agentColor ?? '',
+			};
 		} else {
 			break;
 		}
 	}
-	// At scroll=0 nothing is above the fold — show the first block's agent.
+
 	if (!found) {
-		const first = blocks[0] as HTMLElement;
-		found = { label: first.dataset.agentLabel ?? '', color: first.dataset.agentColor ?? '' };
+		const first = rows[0] as HTMLElement;
+		found = {
+			label: first.dataset.agentLabel ?? '',
+			color: first.dataset.agentColor ?? '',
+		};
 	}
+
 	return found;
 }
 
@@ -61,34 +55,6 @@ interface SpaceTaskUnifiedThreadProps {
 	isAgentActive?: boolean;
 }
 
-/**
- * Count how many messages the server has truncated for this task's sessions.
- *
- * The compact LiveQuery variant returns at most N rows per session and
- * attaches `sessionMessageCount` (the true total) to each row. For every
- * session, the hidden count is `sessionMessageCount - deliveredRows`.
- *
- * Returns 0 when the full query variant is used (sessionMessageCount absent
- * on all rows) or when no session was truncated.
- */
-function countHiddenEarlierMessages(rows: SpaceTaskThreadMessageRow[]): number {
-	const deliveredBySession = new Map<string, number>();
-	const totalBySession = new Map<string, number>();
-	for (const row of rows) {
-		const key = row.sessionId ?? '';
-		deliveredBySession.set(key, (deliveredBySession.get(key) ?? 0) + 1);
-		if (typeof row.sessionMessageCount === 'number') {
-			totalBySession.set(key, row.sessionMessageCount);
-		}
-	}
-	let hidden = 0;
-	for (const [sessionKey, total] of totalBySession) {
-		const delivered = deliveredBySession.get(sessionKey) ?? 0;
-		if (total > delivered) hidden += total - delivered;
-	}
-	return hidden;
-}
-
 export function SpaceTaskUnifiedThread({
 	taskId,
 	bottomInsetClass = 'pb-3',
@@ -97,7 +63,7 @@ export function SpaceTaskUnifiedThread({
 	// Read render style on every render so that the value stays fresh after a
 	// localStorage write (e.g. via setSpaceTaskThreadRenderStyle in devtools).
 	const renderStyle = getSpaceTaskThreadRenderStyle();
-	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId);
+	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'full');
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
@@ -108,38 +74,37 @@ export function SpaceTaskUnifiedThread({
 		[parsedRows]
 	);
 	const maps = useMessageMaps(parsedMessages, `space-task-${taskId}`);
-	const hiddenEarlierCount = useMemo(() => countHiddenEarlierMessages(rows), [rows]);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
 		containerRef.current.scrollTop = containerRef.current.scrollHeight;
 	}, [parsedRows.length, threadEvents.length]);
 
-	// ── Scroll-spy: floating agent name tag ──────────────────────────────────
+	const hasRows = parsedRows.length > 0;
 	const [currentAgent, setCurrentAgent] = useState<AgentTag | null>(null);
 
-	// Attach scroll listener. Re-registers when renderStyle changes or when rows
-	// first appear (parsedRows.length>0 transitions the early-return path to the
-	// main return path, which is the first time containerRef.current is set).
-	const hasRows = parsedRows.length > 0;
 	useEffect(() => {
-		if (!hasRows) {
+		if (renderStyle !== 'compact' || !hasRows) {
 			setCurrentAgent(null);
 			return;
 		}
+
 		const container = containerRef.current;
 		if (!container) return;
+
 		const update = () => setCurrentAgent(findCurrentAgent(container));
 		update();
 		container.addEventListener('scroll', update, { passive: true });
 		return () => container.removeEventListener('scroll', update);
 	}, [hasRows, renderStyle]);
 
-	// Re-probe when rows change so the tag reflects newly rendered blocks.
 	useEffect(() => {
-		if (!hasRows || !containerRef.current) return;
+		if (renderStyle !== 'compact' || !hasRows || !containerRef.current) {
+			setCurrentAgent(null);
+			return;
+		}
 		setCurrentAgent(findCurrentAgent(containerRef.current));
-	}, [parsedRows.length, hasRows]);
+	}, [parsedRows.length, hasRows, renderStyle]);
 
 	if (isReconnecting) {
 		return (
@@ -173,7 +138,6 @@ export function SpaceTaskUnifiedThread({
 
 	return (
 		<div class="h-full min-h-0 flex flex-col relative" data-testid="space-task-unified-thread">
-			{/* Scroll-spy agent name tag — shows which agent's block is at the top of view */}
 			{currentAgent && (
 				<div
 					class="absolute top-2 left-4 z-10 flex items-center gap-1.5 px-2 py-[3px] rounded bg-dark-900/85 border border-dark-700 backdrop-blur-[2px] pointer-events-none select-none"
@@ -194,15 +158,6 @@ export function SpaceTaskUnifiedThread({
 			)}
 			<div ref={containerRef} class={`flex-1 overflow-y-auto ${bottomInsetClass}`}>
 				<div class="min-h-[calc(100%+1px)]">
-					{hiddenEarlierCount > 0 && (
-						<div
-							class="px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-gray-500"
-							data-testid="space-task-thread-earlier-banner"
-						>
-							↑ {hiddenEarlierCount} earlier {hiddenEarlierCount === 1 ? 'message' : 'messages'}{' '}
-							hidden
-						</div>
-					)}
 					{renderStyle === 'compact' ? (
 						<SpaceTaskCardFeed
 							parsedRows={parsedRows}
