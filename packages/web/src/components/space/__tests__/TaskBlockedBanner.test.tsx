@@ -3,7 +3,7 @@
  *
  * Tests:
  * - Renders fallback amber banner when blockReason is null
- * - Renders human_input_requested banner with question and "Reply below" hint
+ * - Renders a minimal "reply via composer" hint for human_input_requested (full question renders in the thread)
  * - Renders gate_rejected banner with "Review & Approve" button
  * - Renders execution_failed banner with Resume button
  * - Renders agent_crashed banner with Resume button
@@ -96,19 +96,20 @@ describe('TaskBlockedBanner', () => {
 		expect(banner.textContent).toContain('Blocked');
 	});
 
-	it('renders human_input_requested banner with question and reply hint', () => {
+	it('renders a minimal "reply via composer" hint for human_input_requested', () => {
+		// The full question renders in the thread; this banner is a safety net
+		// that points the user to the composer in case the thread message is
+		// missing. It must NOT duplicate the full question text.
 		const task = makeTask({
 			blockReason: 'human_input_requested',
 			result: 'What color scheme do you prefer?',
 		});
-		const { getByTestId, getByText } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
+		const { getByTestId } = render(<TaskBlockedBanner task={task} spaceId="space-1" />);
 		const banner = getByTestId('task-blocked-banner');
-		expect(banner.className).toContain('border-blue-500');
-		expect(banner.textContent).toContain('Waiting for Input');
-		expect(getByTestId('task-blocked-message').textContent).toBe(
-			'What color scheme do you prefer?'
-		);
-		expect(getByText('Reply below to continue')).toBeTruthy();
+		expect(banner.getAttribute('data-reason')).toBe('human_input_requested');
+		expect(banner.textContent).toContain('composer');
+		// Deliberately not rendering task.result inside the banner.
+		expect(banner.textContent).not.toContain('What color scheme');
 	});
 
 	it('renders gate_rejected banner with Review & Approve button', async () => {

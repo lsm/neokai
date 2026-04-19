@@ -11,9 +11,9 @@
  * - hub RPC spaceWorkflowRun.listGateData + space.gateData.updated events
  */
 
-import { useMemo, useState, useEffect, useRef } from 'preact/hooks';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { isChannelCyclic, TASK_AGENT_NODE_ID } from '@neokai/shared';
-import type { Gate, GateField, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { connectionManager } from '../../lib/connection-manager';
 import type { WorkflowNodeData } from './visual-editor/WorkflowCanvas';
@@ -27,68 +27,7 @@ import {
 	routeSemanticWorkflowEdges,
 	buildNodeAnchorUsage,
 } from './visual-editor/semanticWorkflowGraph';
-
-// ---- Gate status evaluation (mirrors logic from old WorkflowCanvas) ----
-
-type GateStatus = 'open' | 'blocked' | 'waiting_human';
-
-interface GateScriptResultData {
-	success: boolean;
-	reason?: string;
-}
-
-function parseScriptResult(data: Record<string, unknown>): { failed: boolean; reason?: string } {
-	const sr = data._scriptResult as GateScriptResultData | undefined;
-	if (sr && !sr.success) return { failed: true, reason: sr.reason };
-	return { failed: false };
-}
-
-function evalFieldStatus(field: GateField, data: Record<string, unknown>): GateStatus {
-	const check = field.check;
-	if (check.op === 'count') {
-		const map = data[field.name];
-		if (!map || typeof map !== 'object' || Array.isArray(map)) return 'blocked';
-		const count = Object.values(map as Record<string, unknown>).filter(
-			(v) => v === check.match
-		).length;
-		return count >= check.min ? 'open' : 'blocked';
-	}
-	const val = data[field.name];
-	if (check.op === 'exists') return val !== undefined ? 'open' : 'blocked';
-	if (check.op === '==') return val === check.value ? 'open' : 'blocked';
-	if (check.op === '!=') return val !== check.value ? 'open' : 'blocked';
-	return 'blocked';
-}
-
-function isExternalApprovalGate(fields: GateField[]): boolean {
-	return fields.some((f) => f.name === 'approved' && f.writers.length === 0);
-}
-
-function evaluateGateStatus(
-	gate: Gate,
-	data: Record<string, unknown>,
-	scriptFailed = false
-): GateStatus {
-	if (scriptFailed) return 'blocked';
-	if ((gate.fields ?? []).length === 0) return 'open';
-	if (isExternalApprovalGate(gate.fields ?? [])) {
-		const val = data['approved'];
-		if (val === true) {
-			const othersPassed = (gate.fields ?? []).every((f) => {
-				if (f.name === 'approved') return true;
-				return evalFieldStatus(f, data) === 'open';
-			});
-			return othersPassed ? 'open' : 'blocked';
-		}
-		if (val === false) return 'blocked';
-		return 'waiting_human';
-	}
-	for (const field of gate.fields ?? []) {
-		const status = evalFieldStatus(field, data);
-		if (status !== 'open') return status;
-	}
-	return 'open';
-}
+import { evaluateGateStatus, parseScriptResult, type GateStatus } from './gate-status';
 
 // ---- Gate data types ----
 
@@ -111,6 +50,10 @@ export interface RuntimeCanvasData {
 	gateDataLoading: boolean;
 	/** Gate data keyed by gateId — used by GateArtifactsView for PR link extraction. */
 	gateDataMap: Map<string, Record<string, unknown>>;
+	/** Last gate-data fetch error, if any. Null when loading or after success. */
+	gateDataError: string | null;
+	/** Re-run the gate-data fetch (e.g. for a Retry button). */
+	retryGateData: () => void;
 }
 
 export function useRuntimeCanvasData(
@@ -132,19 +75,28 @@ export function useRuntimeCanvasData(
 	// ---- Gate data fetching ----
 	const [gateDataMap, setGateDataMap] = useState<Map<string, Record<string, unknown>>>(new Map());
 	const [gateDataLoading, setGateDataLoading] = useState(false);
+	const [gateDataError, setGateDataError] = useState<string | null>(null);
+	const [gateDataAttempt, setGateDataAttempt] = useState(0);
 	const runIdRef = useRef<string | null>(null);
+	const retryGateData = useCallback(() => setGateDataAttempt((n) => n + 1), []);
 
 	useEffect(() => {
 		if (!runId || !workflow) {
 			setGateDataMap(new Map());
+			setGateDataError(null);
 			return;
 		}
 		runIdRef.current = runId;
 		setGateDataLoading(true);
+		setGateDataError(null);
 
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) {
+			// WS not connected at mount — surface as an error so the Retry chip
+			// renders. Clicking Retry bumps gateDataAttempt and re-enters this
+			// effect; by then the connection may have come back up.
 			setGateDataLoading(false);
+			setGateDataError('Not connected');
 			return;
 		}
 
@@ -165,7 +117,10 @@ export function useRuntimeCanvasData(
 					return fetched;
 				});
 			})
-			.catch(() => {})
+			.catch((err: unknown) => {
+				if (runIdRef.current !== runId) return;
+				setGateDataError(err instanceof Error ? err.message : 'Failed to load gate data');
+			})
 			.finally(() => {
 				if (runIdRef.current === runId) setGateDataLoading(false);
 			});
@@ -186,7 +141,7 @@ export function useRuntimeCanvasData(
 		return () => {
 			unsubscribe?.();
 		};
-	}, [runId, workflow?.id]);
+	}, [runId, workflow?.id, gateDataAttempt]);
 
 	// ---- Build visual state from workflow ----
 	const visualState = useMemo(
@@ -381,5 +336,7 @@ export function useRuntimeCanvasData(
 		workflow,
 		gateDataLoading,
 		gateDataMap,
+		gateDataError,
+		retryGateData,
 	};
 }

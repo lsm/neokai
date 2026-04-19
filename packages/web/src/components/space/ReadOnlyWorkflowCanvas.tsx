@@ -48,7 +48,26 @@ export function ReadOnlyWorkflowCanvas({
 	// Gate popup / overlay state
 	const [gatePopup, setGatePopup] = useState<GatePopupState | null>(null);
 	const [artifactsOverlay, setArtifactsOverlay] = useState<{ gateId: string } | null>(null);
-	const [approving, setApproving] = useState(false);
+	// Per-gate in-flight set so approving one gate never disables another gate's
+	// buttons — previously a single boolean disabled every decision affordance
+	// in the canvas while any RPC was pending.
+	const [approvingGateIds, setApprovingGateIds] = useState<Set<string>>(() => new Set());
+	const [channelDecisionError, setChannelDecisionError] = useState<string | null>(null);
+	const [popupDecisionError, setPopupDecisionError] = useState<string | null>(null);
+
+	// Reset transient UI state whenever the run or workflow the canvas is
+	// displaying changes. Without this, a gate popup, artifacts overlay, or
+	// in-flight approving entry from the prior run remains mounted after
+	// swap — clicking Approve would then POST a gateId that doesn't exist in
+	// the new run and the server returns an error.
+	useEffect(() => {
+		setGatePopup(null);
+		setArtifactsOverlay(null);
+		setApprovingGateIds(new Set());
+		setSelectedChannelId(null);
+		setChannelDecisionError(null);
+		setPopupDecisionError(null);
+	}, [runId, workflowId]);
 
 	const {
 		nodeData,
@@ -58,6 +77,8 @@ export function ReadOnlyWorkflowCanvas({
 		setViewportState,
 		gateDataLoading,
 		gateDataMap,
+		gateDataError,
+		retryGateData,
 	} = useRuntimeCanvasData(workflowId, runId ?? null);
 
 	// Track container dimensions for the toolbar's fit-to-view
@@ -100,6 +121,7 @@ export function ReadOnlyWorkflowCanvas({
 	const handleChannelSelect = useCallback((channelId: string | null) => {
 		setSelectedChannelId(channelId);
 		setGatePopup(null);
+		setChannelDecisionError(null);
 	}, []);
 
 	// Gate icon click — open action popup
@@ -113,42 +135,130 @@ export function ReadOnlyWorkflowCanvas({
 			y: event.clientY - rect.top,
 		});
 		setSelectedChannelId(null);
+		setPopupDecisionError(null);
 	}, []);
 
-	// Direct approve/reject from popup
-	const handlePopupDecision = useCallback(
-		async (approved: boolean) => {
-			if (!gatePopup || !runId) return;
-			setApproving(true);
+	const approveGateRequest = useCallback(
+		async (gateId: string, approved: boolean): Promise<{ ok: boolean; error?: string }> => {
+			if (!runId) return { ok: false, error: 'Missing run ID' };
+			setApprovingGateIds((prev) => {
+				const next = new Set(prev);
+				next.add(gateId);
+				return next;
+			});
 			try {
 				const hub = await connectionManager.getHub();
 				await hub.request('spaceWorkflowRun.approveGate', {
 					runId,
-					gateId: gatePopup.gateId,
+					gateId,
 					approved,
 				});
-				setGatePopup(null);
+				return { ok: true };
 			} catch (err) {
-				// eslint-disable-next-line no-console
-				console.error('[handlePopupDecision] approveGate error:', err);
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : 'Failed to submit decision',
+				};
 			} finally {
-				setApproving(false);
+				setApprovingGateIds((prev) => {
+					if (!prev.has(gateId)) return prev;
+					const next = new Set(prev);
+					next.delete(gateId);
+					return next;
+				});
 			}
 		},
-		[gatePopup, runId]
+		[runId]
 	);
 
+	// Direct approve/reject from popup
+	const handlePopupDecision = useCallback(
+		async (approved: boolean) => {
+			if (!gatePopup) return;
+			setPopupDecisionError(null);
+			const result = await approveGateRequest(gatePopup.gateId, approved);
+			if (result.ok) {
+				setGatePopup(null);
+				setPopupDecisionError(null);
+			} else {
+				setPopupDecisionError(result.error ?? 'Failed to submit decision');
+			}
+		},
+		[gatePopup, approveGateRequest]
+	);
+
+	// Approve/reject from inline channel info panel
+	const handleChannelGateDecision = useCallback(
+		async (gateId: string, approved: boolean) => {
+			setChannelDecisionError(null);
+			const result = await approveGateRequest(gateId, approved);
+			if (result.ok) {
+				setSelectedChannelId(null);
+			} else {
+				setChannelDecisionError(result.error ?? 'Failed to submit decision');
+			}
+		},
+		[approveGateRequest]
+	);
+
+	// Tracks the element that opened the artifacts overlay so focus can be
+	// restored to it on close (WCAG 2.4.3). We capture `event.currentTarget`
+	// from the triggering click — `document.activeElement` is unreliable here
+	// because Safari and Firefox don't move focus to buttons on click. Mirrors
+	// PendingGateBanner's pattern for consistency. If the opener unmounts
+	// while the overlay is open (e.g. approve/reject clears the popup or
+	// ChannelInfoPanel context), we fall back to the canvas container.
+	const overlayOpenerRef = useRef<HTMLElement | null>(null);
+
+	// Open artifacts overlay directly from channel info panel
+	const handleChannelViewArtifacts = useCallback((gateId: string, event: Event) => {
+		const target = event.currentTarget;
+		overlayOpenerRef.current = target instanceof HTMLElement ? target : null;
+		setArtifactsOverlay({ gateId });
+	}, []);
+
 	// Open artifacts overlay from popup
-	const handleOpenArtifacts = useCallback(() => {
-		if (!gatePopup) return;
-		setArtifactsOverlay({ gateId: gatePopup.gateId });
-		setGatePopup(null);
-	}, [gatePopup]);
+	const handleOpenArtifacts = useCallback(
+		(event: MouseEvent) => {
+			if (!gatePopup) return;
+			const target = event.currentTarget;
+			overlayOpenerRef.current = target instanceof HTMLElement ? target : null;
+			setArtifactsOverlay({ gateId: gatePopup.gateId });
+			setGatePopup(null);
+		},
+		[gatePopup]
+	);
 
 	// Close artifacts overlay after decision
 	const handleArtifactsDecision = useCallback(() => {
 		setArtifactsOverlay(null);
 	}, []);
+
+	// Close the artifacts overlay on Escape — matches PendingGateBanner's twin.
+	useEffect(() => {
+		if (!artifactsOverlay) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') setArtifactsOverlay(null);
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [artifactsOverlay]);
+
+	// Restore focus to the overlay opener when the overlay closes. If the
+	// opener was detached (e.g. the popup closed when the overlay opened, or
+	// the channel info panel collapsed), fall back to the canvas container so
+	// focus doesn't collapse to <body>.
+	useEffect(() => {
+		if (artifactsOverlay) return;
+		const opener = overlayOpenerRef.current;
+		if (!opener) return;
+		if (opener.isConnected && typeof opener.focus === 'function') {
+			opener.focus();
+		} else if (containerRef.current && typeof containerRef.current.focus === 'function') {
+			containerRef.current.focus();
+		}
+		overlayOpenerRef.current = null;
+	}, [artifactsOverlay]);
 
 	const selectedChannel = selectedChannelId
 		? (channelEdges.find((c) => c.id === selectedChannelId) ?? null)
@@ -174,12 +284,33 @@ export function ReadOnlyWorkflowCanvas({
 					Loading…
 				</div>
 			)}
+			{gateDataError && !gateDataLoading && (
+				<div
+					class="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs px-2 py-0.5 bg-red-900/50 border border-red-700/50 text-red-200 rounded"
+					data-testid="canvas-gate-data-error"
+					title={gateDataError}
+				>
+					<span>Gate status unavailable</span>
+					<button
+						type="button"
+						onClick={retryGateData}
+						data-testid="canvas-gate-data-retry"
+						class="underline hover:text-red-100"
+					>
+						Retry
+					</button>
+				</div>
+			)}
 			{isWorkflowRejected && (
 				<div class="flex-shrink-0 flex items-center justify-center px-4 py-2 bg-red-900/80 border-b border-red-700/60 text-sm text-red-200">
 					Workflow paused — awaiting approval
 				</div>
 			)}
-			<div ref={containerRef} class="flex-1 min-h-0 relative">
+			<div
+				ref={containerRef}
+				tabIndex={-1}
+				class="flex-1 min-h-0 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70"
+			>
 				<WorkflowCanvas
 					nodes={nodeData}
 					viewportState={viewportState}
@@ -204,7 +335,16 @@ export function ReadOnlyWorkflowCanvas({
 						channel={selectedChannel}
 						fromNodeName={getNodeName(selectedChannel.fromStepId)}
 						toNodeName={getNodeName(selectedChannel.toStepId)}
-						onClose={() => setSelectedChannelId(null)}
+						onClose={() => {
+							setSelectedChannelId(null);
+							setChannelDecisionError(null);
+						}}
+						onGateDecision={handleChannelGateDecision}
+						onViewArtifacts={handleChannelViewArtifacts}
+						decisionPending={
+							!!selectedChannel.gateId && approvingGateIds.has(selectedChannel.gateId)
+						}
+						decisionError={channelDecisionError}
 					/>
 				)}
 
@@ -228,7 +368,7 @@ export function ReadOnlyWorkflowCanvas({
 							<div class="flex gap-2">
 								<button
 									onClick={() => void handlePopupDecision(true)}
-									disabled={approving}
+									disabled={approvingGateIds.has(gatePopup.gateId)}
 									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 transition-colors"
 								>
 									Approve
@@ -236,12 +376,17 @@ export function ReadOnlyWorkflowCanvas({
 								<button
 									data-testid="popup-reject-btn"
 									onClick={() => void handlePopupDecision(false)}
-									disabled={approving}
+									disabled={approvingGateIds.has(gatePopup.gateId)}
 									class="flex-1 px-2 py-1.5 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 transition-colors"
 								>
 									Reject
 								</button>
 							</div>
+							{popupDecisionError && (
+								<p class="text-xs text-red-400 break-words" data-testid="popup-decision-error">
+									{popupDecisionError}
+								</p>
+							)}
 						</div>
 					</div>
 				)}
@@ -252,6 +397,9 @@ export function ReadOnlyWorkflowCanvas({
 				<div
 					data-testid="artifacts-panel-overlay"
 					class="absolute inset-0 z-40 bg-black/50 flex items-center justify-center"
+					role="dialog"
+					aria-modal="true"
+					aria-label="Review gate artifacts"
 					onClick={(e) => {
 						if (e.target === e.currentTarget) setArtifactsOverlay(null);
 					}}

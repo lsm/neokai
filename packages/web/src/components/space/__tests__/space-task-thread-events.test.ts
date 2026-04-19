@@ -342,6 +342,73 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
 		expect(events[0].summary).toBe('Please help me.');
 	});
 
+	it('reshapes request_human_input tool_use into a visible text Question event', () => {
+		const row = makeRow({
+			id: 'hi-row',
+			label: 'Task Agent',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'hi1',
+				session_id: 'session-1',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 't-hi-1',
+							name: 'request_human_input',
+							input: { question: 'Proceed with deploy?', context: 'PR is green.' },
+						},
+					],
+				},
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		expect(events).toHaveLength(1);
+		expect(events[0].kind).toBe('text');
+		expect(events[0].title).toBe('Question');
+		expect(events[0].summary).toContain('Proceed with deploy?');
+		expect(events[0].summary).toContain('Context: PR is green.');
+		// The synthesized message must contain ONLY the text block. Keeping
+		// the original tool_use here would make SDKAssistantMessage render a
+		// collapsed tool card alongside the text bubble, defeating the
+		// purpose of surfacing the question as visible text. Tool_use /
+		// tool_result pairing is unaffected: useMessageMaps builds
+		// toolResultsMap from the raw messages array, not from synthesized
+		// events.
+		const synthesized = events[0].message as { message?: { content?: unknown[] } };
+		const content = synthesized.message?.content ?? [];
+		expect(content).toHaveLength(1);
+		expect((content[0] as { type: string }).type).toBe('text');
+		expect(content.some((b) => (b as { type: string }).type === 'tool_use')).toBe(false);
+	});
+
+	it('skips request_human_input when the question body is empty', () => {
+		const row = makeRow({
+			id: 'hi-empty',
+			label: 'Task Agent',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'hi2',
+				session_id: 'session-1',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 't-hi-2',
+							name: 'request_human_input',
+							input: { question: '   ' },
+						},
+					],
+				},
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		// Falls through to the generic tool-rendering branch.
+		expect(events[0].kind).toBe('tool');
+	});
+
 	it('handles mixed agent rows with tool events maintaining correct labels', () => {
 		const rows = [
 			makeRow({
