@@ -311,14 +311,13 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	// Sync from the signal once, then clear it so the filter doesn't re-apply on
 	// re-renders or when the component remounts from an unrelated cause. The
 	// chip's own state is what persists for the duration of this view.
+	// Intentionally run once at mount; the signal is a one-shot hand-off.
 	useEffect(() => {
 		if (preFilter) {
 			setActiveFilter(preFilter);
 			setActiveTab('action');
 			currentSpaceTasksFilterSignal.value = null;
 		}
-		// Intentionally run once at mount; the signal is a one-shot hand-off.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	const awaitingApprovalCount = useMemo(
