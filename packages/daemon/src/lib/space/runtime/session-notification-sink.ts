@@ -117,6 +117,8 @@ export function formatEventMessage(
 			return formatTaskRetry(event, autonomyLevel);
 		case 'workflow_run_needs_attention':
 			return formatWorkflowRunNeedsAttention(event, autonomyLevel);
+		case 'task_awaiting_approval':
+			return formatTaskAwaitingApproval(event, autonomyLevel);
 	}
 }
 
@@ -325,6 +327,46 @@ function formatWorkflowRunNeedsAttention(
 		timestamp: event.timestamp,
 		autonomyLevel,
 	});
+}
+
+function formatTaskAwaitingApproval(
+	event: {
+		kind: 'task_awaiting_approval';
+		spaceId: string;
+		taskId: string;
+		actionId: string;
+		actionName: string;
+		actionDescription?: string;
+		actionType: 'script' | 'instruction' | 'mcp_call';
+		requiredLevel: number;
+		spaceLevel: number;
+		autonomyLevel: number;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const descPart = event.actionDescription ? ` — ${event.actionDescription}` : '';
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} is awaiting approval for completion action ` +
+		`'${event.actionName}' (type: ${event.actionType})${descPart}. ` +
+		`Requires autonomy ${event.requiredLevel}, space is at ${event.spaceLevel}. ` +
+		`Review the action and approve or reject to resume the task.`;
+	const payload: Record<string, unknown> = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		actionId: event.actionId,
+		actionName: event.actionName,
+		actionType: event.actionType,
+		requiredLevel: event.requiredLevel,
+		spaceLevel: event.spaceLevel,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
+	if (event.actionDescription !== undefined) {
+		payload['actionDescription'] = event.actionDescription;
+	}
+	return buildMessage(event.kind, humanReadable, payload);
 }
 
 function buildMessage(

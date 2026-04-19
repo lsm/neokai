@@ -56,6 +56,19 @@ import {
 
 const log = new Logger('space-runtime');
 
+/**
+ * Build the human-readable pause reason stored on `SpaceTask.result` when a
+ * task pauses at a completion action awaiting approval. Kept as a standalone
+ * helper so tests can assert the exact wording without pulling in the full
+ * runtime wiring.
+ */
+function buildAwaitingApprovalReason(
+	action: CompletionAction,
+	spaceLevel: SpaceAutonomyLevel
+): string {
+	return `Awaiting approval: ${action.name} (requires autonomy ${action.requiredLevel}, space is at ${spaceLevel})`;
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -503,10 +516,23 @@ export class SpaceRuntime {
 					workflow,
 					reportedStatus,
 					nextResult,
-					spaceLevel
+					spaceLevel,
+					canonicalTask.id
 				);
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, params);
-			} else if (nextResult && canonicalTask.result !== nextResult) {
+			} else if (
+				nextResult &&
+				canonicalTask.result !== nextResult &&
+				// Don't clobber the structured pause-reason surfaced on `result` when the
+				// task is paused at a completion action — that string is what read
+				// surfaces use to explain *why* the task is awaiting review. The
+				// original agent output is still recoverable via `reportedSummary`, and
+				// `resumeCompletionActions` restores `result` from there on resume.
+				!(
+					canonicalTask.status === 'review' &&
+					canonicalTask.pendingCheckpointType === 'completion_action'
+				)
+			) {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
 			}
 			return;
@@ -872,9 +898,14 @@ export class SpaceRuntime {
 					});
 				}
 			} else {
-				// Pause at this action — clear stale approvedAt from previous cycle
+				// Pause at this action — clear stale approvedAt from previous cycle and
+				// surface a structured pause reason + fresh awaiting-approval event so
+				// the Space Agent and UI learn about this new gate.
+				const pauseReason = buildAwaitingApprovalReason(action, spaceLevel);
+				await this.emitTaskAwaitingApproval(spaceId, taskId, action, spaceLevel);
 				return await this.finalizeResume(spaceId, taskId, {
 					status: 'review',
+					result: pauseReason,
 					pendingActionIndex: i,
 					pendingCheckpointType: 'completion_action',
 					approvedAt: null,
@@ -882,9 +913,12 @@ export class SpaceRuntime {
 			}
 		}
 
-		// All remaining actions executed — task is done
+		// All remaining actions executed — task is done. Restore the result field
+		// to the original agent summary (the pause-reason string was only relevant
+		// while the task was awaiting approval).
 		return await this.finalizeResume(spaceId, taskId, {
 			status: 'done',
+			result: task.reportedSummary ?? null,
 			completedAt: Date.now(),
 			approvalSource: 'human',
 			approvedAt: Date.now(),
@@ -1086,6 +1120,20 @@ export class SpaceRuntime {
 		}
 		if (canonicalTask.status !== 'in_progress') {
 			this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
+		}
+		// awaiting_approval entries are keyed per (task, action); clear them when the
+		// task is no longer paused at a completion action so a future pause — even on
+		// the same action — can fire a fresh event.
+		if (
+			canonicalTask.status !== 'review' ||
+			canonicalTask.pendingCheckpointType !== 'completion_action'
+		) {
+			const awaitingPrefix = `${canonicalTask.id}:awaiting_approval:`;
+			for (const key of this.notifiedTaskSet) {
+				if (key.startsWith(awaitingPrefix)) {
+					this.notifiedTaskSet.delete(key);
+				}
+			}
 		}
 
 		// ─── Completion bypass ───────────────────────────────────────────────
@@ -1341,7 +1389,8 @@ export class SpaceRuntime {
 						meta.workflow,
 						reportedStatus,
 						nextTaskResult,
-						spaceLevel
+						spaceLevel,
+						canonicalTask.id
 					);
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
 					finalTaskStatus = params.status ?? canonicalTask.status;
@@ -1652,7 +1701,8 @@ export class SpaceRuntime {
 		workflow: SpaceWorkflow | null,
 		reportedStatus: SpaceReportedStatus,
 		taskResult: string | null,
-		spaceLevel: SpaceAutonomyLevel
+		spaceLevel: SpaceAutonomyLevel,
+		taskId?: string
 	): Promise<UpdateSpaceTaskParams> {
 		// Non-success outcomes pass through directly. Completion actions are a
 		// success-path review gate ("flip to done after verifying X"); they
@@ -1723,10 +1773,17 @@ export class SpaceRuntime {
 					};
 				}
 			} else {
-				// Pause at this action — task goes to 'review' with pending action metadata
+				// Pause at this action — task goes to 'review' with pending action metadata.
+				// Populate `result` with a structured pause reason so surfaces can explain
+				// *why* the task is awaiting review. The original agent output is preserved
+				// on the separate `reportedSummary` field.
+				const pauseReason = buildAwaitingApprovalReason(action, spaceLevel);
+				if (taskId) {
+					await this.emitTaskAwaitingApproval(spaceId, taskId, action, spaceLevel);
+				}
 				return {
 					status: 'review' as const,
-					result: taskResult,
+					result: pauseReason,
 					pendingActionIndex: i,
 					pendingCheckpointType: 'completion_action' as const,
 				};
@@ -1743,6 +1800,39 @@ export class SpaceRuntime {
 			pendingActionIndex: null,
 			pendingCheckpointType: null,
 		};
+	}
+
+	/**
+	 * Emit a `task_awaiting_approval` event for a task that just paused at a
+	 * completion action. Deduplicated by `${taskId}:awaiting_approval:${actionId}`
+	 * so we don't re-fire for the same pause across ticks — each distinct pending
+	 * action gets exactly one event per pause.
+	 *
+	 * Callers must ensure the dedup set is cleared when the task leaves the
+	 * paused state (see `updateTaskAndEmit`).
+	 */
+	private async emitTaskAwaitingApproval(
+		spaceId: string,
+		taskId: string,
+		action: CompletionAction,
+		spaceLevel: SpaceAutonomyLevel
+	): Promise<void> {
+		const dedupKey = `${taskId}:awaiting_approval:${action.id}`;
+		if (this.notifiedTaskSet.has(dedupKey)) return;
+		this.notifiedTaskSet.add(dedupKey);
+		await this.safeNotify({
+			kind: 'task_awaiting_approval',
+			spaceId,
+			taskId,
+			actionId: action.id,
+			actionName: action.name,
+			actionDescription: action.description,
+			actionType: action.type,
+			requiredLevel: action.requiredLevel,
+			spaceLevel,
+			autonomyLevel: spaceLevel,
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	/**
