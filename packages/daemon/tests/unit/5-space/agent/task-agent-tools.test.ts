@@ -1350,6 +1350,121 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		expect(parsed.failed[0].agentName).toBe('space-agent');
 	});
 
+	test('reactivates a completed node agent so it consumes the queued message', async () => {
+		// Bug repro: a coder that ran to completion (NodeExecution status=idle with an
+		// assigned agentSessionId) must still be reachable via send_message. If the
+		// session isn't currently live in memory (simulated here by a mock manager that
+		// returns null), the handler must not leave the message stuck in the queue —
+		// it must trigger reactivation (rehydrate/inject) so the agent processes the
+		// follow-up instruction.
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Coder previously ran to completion: agentSessionId set, status 'idle'.
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'coder-node',
+			agentName: 'coder',
+			agentSessionId: 'session-coder-completed',
+			status: 'idle',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		// Mock manager: getSubSessionByAgentName returns null (session not in memory
+		// and rehydration unavailable). But injectSubSessionMessage succeeds — this
+		// is the activation path we want send_message to exercise.
+		const injected: Array<{ sessionId: string; message: string }> = [];
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async () => ['coder'],
+			getSubSessionByAgentName: async () => null,
+			injectSubSessionMessage: async (sessionId: string, message: string) => {
+				injected.push({ sessionId, message });
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'coder',
+			message: 'please address this review feedback',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		// The message must be delivered (via reactivation), not left sitting in the queue.
+		expect(parsed.success).toBe(true);
+		expect(parsed.delivered).toHaveLength(1);
+		expect(parsed.delivered[0].agentName).toBe('coder');
+		expect(parsed.delivered[0].sessionId).toBe('session-coder-completed');
+		expect(parsed.queued ?? []).toHaveLength(0);
+
+		// The manager's inject path received the prefixed message.
+		expect(injected).toHaveLength(1);
+		expect(injected[0].sessionId).toBe('session-coder-completed');
+		expect(injected[0].message).toBe(
+			'[Message from task-agent]: please address this review feedback'
+		);
+
+		// Nothing persisted to the pending queue for the coder.
+		const pending = pendingRepo.listPendingForTarget(run.id, 'coder');
+		expect(pending).toHaveLength(0);
+	});
+
+	test('falls back to queueing if reactivation of completed agent fails', async () => {
+		// When the prior session is truly unreachable (e.g. both in-memory miss and DB
+		// restore fail), we must still queue the message — the pending queue is the
+		// durability backstop. The injectSubSessionMessage throw path exercises this.
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'coder-node',
+			agentName: 'coder',
+			agentSessionId: 'session-coder-gone',
+			status: 'idle',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async () => ['coder'],
+			getSubSessionByAgentName: async () => null,
+			injectSubSessionMessage: async () => {
+				throw new Error('Sub-session not found: session-coder-gone');
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({ target: 'coder', message: 'hello' });
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.delivered ?? []).toHaveLength(0);
+		expect(parsed.queued).toHaveLength(1);
+		expect(parsed.queued[0].agentName).toBe('coder');
+
+		const pending = pendingRepo.listPendingForTarget(run.id, 'coder');
+		expect(pending).toHaveLength(1);
+	});
+
 	test('send_message tool on MCP server surface accepts idempotency_key', async () => {
 		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
 		const { run, mainTask } = await startRun(ctx, wf);
