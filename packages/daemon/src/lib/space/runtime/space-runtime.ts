@@ -1809,7 +1809,9 @@ export class SpaceRuntime {
 	 * action gets exactly one event per pause.
 	 *
 	 * Callers must ensure the dedup set is cleared when the task leaves the
-	 * paused state (see `updateTaskAndEmit`).
+	 * paused state — this cleanup runs at the top of `processRunTick`, which
+	 * strips all `${taskId}:awaiting_approval:*` entries once the task is no
+	 * longer at `review` + `completion_action`.
 	 */
 	private async emitTaskAwaitingApproval(
 		spaceId: string,
