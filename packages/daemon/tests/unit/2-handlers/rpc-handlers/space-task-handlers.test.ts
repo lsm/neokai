@@ -584,6 +584,70 @@ describe('space-task-handlers', () => {
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 		});
 
+		it('maps cancelReason onto approvalReason for review→cancelled audit trail', async () => {
+			// Rejecting a paused task goes review→cancelled. The single
+			// `approval_reason` column doubles as an audit trail for both
+			// approvals and rejections, so the handler must fold cancelReason
+			// into the same persistence path.
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			setup(mockSpace, reviewTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...reviewTask,
+				status: 'cancelled' as const,
+			});
+			(taskManager.updateTask as ReturnType<typeof mock>).mockImplementation(
+				async (_taskId: string, params: Record<string, unknown>) => ({
+					...reviewTask,
+					status: 'cancelled' as const,
+					...params,
+				})
+			);
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'cancelled',
+				cancelReason: 'not worth shipping',
+			});
+
+			// setTaskStatus is called with the rejection reason mapped onto approvalReason.
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'cancelled', {
+				result: undefined,
+				approvalSource: undefined,
+				approvalReason: 'not worth shipping',
+			});
+			// A follow-up updateTask ensures approvalReason lands even though
+			// setTaskStatus only stamps it on review→done.
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+				approvalReason: 'not worth shipping',
+			});
+		});
+
+		it('falls back to approvalReason when cancelReason is omitted on cancel transitions', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			setup(mockSpace, reviewTask);
+			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
+				...reviewTask,
+				status: 'cancelled' as const,
+			});
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'cancelled',
+				approvalReason: 'rejected via legacy field',
+			});
+
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith('task-1', 'cancelled', {
+				result: undefined,
+				approvalSource: undefined,
+				approvalReason: 'rejected via legacy field',
+			});
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+				approvalReason: 'rejected via legacy field',
+			});
+		});
+
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {
 			const doneTask = { ...mockTask, status: 'done' as const };
 			setup(mockSpace, doneTask);
@@ -646,9 +710,47 @@ describe('space-task-handlers', () => {
 				status: 'done',
 			});
 
-			expect(runtime.resumeCompletionActions).toHaveBeenCalledWith('space-1', 'task-1');
+			expect(runtime.resumeCompletionActions).toHaveBeenCalledWith('space-1', 'task-1', {
+				approvalReason: null,
+			});
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 			expect((result as SpaceTask).status).toBe('done');
+		});
+
+		it('forwards approvalReason to resumeCompletionActions for audit trail', async () => {
+			const { runtime } = setupWithRuntime();
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+				approvalReason: 'LGTM — shipped',
+			});
+
+			expect(runtime.resumeCompletionActions).toHaveBeenCalledWith('space-1', 'task-1', {
+				approvalReason: 'LGTM — shipped',
+			});
+			// The runtime persists the reason on its terminal write; the handler must
+			// NOT redundantly call updateTask with approvalReason again.
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+		});
+
+		it('does not forward approvalReason as a follow-up updateTask field', async () => {
+			// Regression guard: approvalReason / cancelReason must be stripped from the
+			// `otherFields` follow-up merge on the resume path so we never overwrite the
+			// reason the runtime just persisted on the terminal transition.
+			setupWithRuntime();
+
+			await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'done',
+				approvalReason: 'shipped',
+				result: 'done and dusted',
+			});
+
+			expect(taskManager.updateTask).toHaveBeenCalledTimes(1);
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', { result: 'done and dusted' });
 		});
 
 		it('skips the secondary emit when no extra fields were merged', async () => {
