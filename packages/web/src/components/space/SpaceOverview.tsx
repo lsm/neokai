@@ -11,7 +11,12 @@
 import { useState, useCallback } from 'preact/hooks';
 import type { RuntimeState, SpaceTask, SpaceAutonomyLevel } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
-import { navigateToSpaceTask, navigateToSpaceSession } from '../../lib/router';
+import {
+	navigateToSpaceTask,
+	navigateToSpaceSession,
+	navigateToSpaceTasks,
+} from '../../lib/router';
+import { currentSpaceTasksFilterSignal } from '../../lib/signals';
 import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
@@ -346,8 +351,19 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	// Recent tasks — sorted by updatedAt, top 5
 	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
 
+	// Awaiting-approval count: tasks paused at a completion action. Predicate
+	// matches the SpaceTasks filter chip exactly so the two surfaces agree.
+	const awaitingApprovalCount = tasks.filter(
+		(t) => t.pendingCheckpointType === 'completion_action'
+	).length;
+
 	const handleTaskClick =
 		onSelectTask ?? ((taskId: string) => navigateToSpaceTask(spaceId, taskId));
+
+	const handleAwaitingApprovalClick = () => {
+		currentSpaceTasksFilterSignal.value = 'awaiting_completion_action';
+		navigateToSpaceTasks(spaceId);
+	};
 
 	return (
 		<div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
@@ -390,6 +406,36 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 						color="border-green-800/30 text-green-400"
 					/>
 				</div>
+
+				{/* Awaiting-approval summary — surfaces tasks paused at a completion
+				action as a single click-through. Hidden when the count is zero so it
+				doesn't add visual noise to happy-path dashboards. */}
+				{awaitingApprovalCount > 0 && (
+					<button
+						type="button"
+						onClick={handleAwaitingApprovalClick}
+						data-testid="awaiting-approval-summary"
+						class="w-full flex items-center justify-between rounded-xl border border-amber-800/40 bg-amber-900/20 px-5 py-3 text-left transition-colors hover:bg-amber-900/30"
+					>
+						<div class="flex items-center gap-3">
+							<span class="text-lg" aria-hidden="true">
+								⏸
+							</span>
+							<div>
+								<p class="text-sm font-semibold text-amber-200">
+									{awaitingApprovalCount} {awaitingApprovalCount === 1 ? 'task' : 'tasks'} awaiting
+									your approval
+								</p>
+								<p class="text-xs text-amber-300/70">
+									Paused at completion actions — click to review
+								</p>
+							</div>
+						</div>
+						<span class="text-amber-400/80 text-sm" aria-hidden="true">
+							&rarr;
+						</span>
+					</button>
+				)}
 
 				{/* Recent Tasks */}
 				<div>

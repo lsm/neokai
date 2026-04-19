@@ -46,6 +46,14 @@ export const currentSpaceTaskIdSignal = signal<string | null>(null);
 export type SpaceViewMode = 'overview' | 'tasks' | 'sessions' | 'configure';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
+// Tasks-view pre-filter, used by callers like the SpaceOverview awaiting-approval
+// summary to deep-link into a filtered tasks list (e.g. "completion-action pauses
+// only"). Set on navigation; SpaceTasks consumes it and reverts to null on the
+// next explicit tab click to avoid sticky filters. Kept as a signal rather than
+// a URL query param to avoid URL churn when the count drops to zero.
+export type SpaceTasksFilter = 'awaiting_completion_action' | null;
+export const currentSpaceTasksFilterSignal = signal<SpaceTasksFilter>(null);
+
 // Overlay signals — session shown in slide-over panel on top of the current view
 // When spaceOverlaySessionIdSignal is set, opens AgentOverlayChat without replacing the task/overview view
 export const spaceOverlaySessionIdSignal = signal<string | null>(null);

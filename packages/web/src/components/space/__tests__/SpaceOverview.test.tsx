@@ -39,9 +39,12 @@ vi.mock('../../../lib/space-store', () => ({
 	},
 }));
 
+const navigateToSpaceTasksMock = vi.fn();
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceTask: vi.fn(),
 	navigateToSpaceAgent: vi.fn(),
+	navigateToSpaceSession: vi.fn(),
+	navigateToSpaceTasks: (...args: unknown[]) => navigateToSpaceTasksMock(...args),
 }));
 
 mockSpace = signal<Space | null>(null);
@@ -397,6 +400,66 @@ describe('SpaceOverview', () => {
 			const { container } = render(<SpaceOverview spaceId="space-1" />);
 			const segment1 = container.querySelector('[data-testid="overview-autonomy-1"]')!;
 			expect(segment1.getAttribute('aria-label')).toBe('Supervised');
+		});
+	});
+
+	describe('Awaiting Approval Summary', () => {
+		beforeEach(() => {
+			navigateToSpaceTasksMock.mockClear();
+		});
+
+		it('is hidden when no tasks are paused at a completion action', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [makeTask('t1', 'in_progress')];
+			const { queryByTestId } = render(<SpaceOverview spaceId="space-1" />);
+			expect(queryByTestId('awaiting-approval-summary')).toBeNull();
+		});
+
+		it('renders count when tasks are paused at completion actions', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'review', {
+					pendingActionIndex: 0,
+					pendingCheckpointType: 'completion_action',
+				}),
+				makeTask('t2', 'review', {
+					pendingActionIndex: 1,
+					pendingCheckpointType: 'completion_action',
+				}),
+				// Gate-paused task should not contribute to the count
+				makeTask('t3', 'review', {
+					pendingCheckpointType: 'gate',
+				}),
+			];
+			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
+			const summary = getByTestId('awaiting-approval-summary');
+			expect(summary.textContent).toContain('2');
+			expect(summary.textContent).toContain('awaiting your approval');
+		});
+
+		it('uses singular "task" when count is 1', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'review', {
+					pendingActionIndex: 0,
+					pendingCheckpointType: 'completion_action',
+				}),
+			];
+			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByTestId('awaiting-approval-summary').textContent).toContain('1 task');
+		});
+
+		it('clicking the summary navigates to the tasks view', () => {
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'review', {
+					pendingActionIndex: 0,
+					pendingCheckpointType: 'completion_action',
+				}),
+			];
+			const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByTestId('awaiting-approval-summary'));
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1');
 		});
 	});
 });
