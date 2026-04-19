@@ -637,6 +637,115 @@ describe('formatEventMessage — completion_action_executed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// task_awaiting_approval event (completion-action pause surface)
+// ---------------------------------------------------------------------------
+
+describe('formatEventMessage — task_awaiting_approval', () => {
+	const TIMESTAMP = '2026-04-19T12:00:00.000Z';
+
+	it('formats task_awaiting_approval with [TASK_EVENT] prefix and action metadata', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'task_awaiting_approval',
+			spaceId: 'space-a',
+			taskId: 'task-1',
+			actionId: 'merge-pr',
+			actionName: 'Merge PR',
+			actionDescription: 'Merges the staged PR',
+			actionType: 'script',
+			requiredLevel: 4,
+			spaceLevel: 2,
+			autonomyLevel: 2,
+			timestamp: TIMESTAMP,
+		};
+
+		const msg = formatEventMessage(event, 2);
+		expect(msg).toContain('[TASK_EVENT] task_awaiting_approval');
+		expect(msg).toContain('task-1');
+		expect(msg).toContain('space-a');
+		expect(msg).toContain("'Merge PR'");
+		expect(msg).toContain('Merges the staged PR');
+		expect(msg).toContain('Requires autonomy 4');
+		expect(msg).toContain('space is at 2');
+	});
+
+	it('includes action metadata in JSON payload', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'task_awaiting_approval',
+			spaceId: 'space-a',
+			taskId: 'task-1',
+			actionId: 'merge-pr',
+			actionName: 'Merge PR',
+			actionDescription: 'Merges the staged PR',
+			actionType: 'script',
+			requiredLevel: 4,
+			spaceLevel: 2,
+			autonomyLevel: 2,
+			timestamp: TIMESTAMP,
+		};
+
+		const msg = formatEventMessage(event, 2);
+		const json = extractJson(msg);
+		expect(json['kind']).toBe('task_awaiting_approval');
+		expect(json['actionId']).toBe('merge-pr');
+		expect(json['actionName']).toBe('Merge PR');
+		expect(json['actionDescription']).toBe('Merges the staged PR');
+		expect(json['actionType']).toBe('script');
+		expect(json['requiredLevel']).toBe(4);
+		expect(json['spaceLevel']).toBe(2);
+		expect(json['autonomyLevel']).toBe(2);
+		expect(json['taskId']).toBe('task-1');
+		expect(json['spaceId']).toBe('space-a');
+	});
+
+	it('omits actionDescription from JSON when absent', () => {
+		const event: SpaceNotificationEvent = {
+			kind: 'task_awaiting_approval',
+			spaceId: 'space-a',
+			taskId: 'task-1',
+			actionId: 'deploy',
+			actionName: 'Deploy',
+			actionType: 'mcp_call',
+			requiredLevel: 5,
+			spaceLevel: 1,
+			autonomyLevel: 1,
+			timestamp: TIMESTAMP,
+		};
+
+		const msg = formatEventMessage(event, 1);
+		const json = extractJson(msg);
+		expect(json['actionDescription']).toBeUndefined();
+	});
+
+	it('SessionNotificationSink.notify() injects task_awaiting_approval message', async () => {
+		const factory = makeMockSessionFactory();
+		const sink = new SessionNotificationSink({
+			sessionFactory: factory,
+			sessionId: 'session:spaces:global',
+			autonomyLevel: 2,
+		});
+
+		await sink.notify({
+			kind: 'task_awaiting_approval',
+			spaceId: 'space-a',
+			taskId: 'task-1',
+			actionId: 'merge-pr',
+			actionName: 'Merge PR',
+			actionType: 'script',
+			requiredLevel: 4,
+			spaceLevel: 2,
+			autonomyLevel: 2,
+			timestamp: TIMESTAMP,
+		});
+
+		expect(factory.calls).toHaveLength(1);
+		const [call] = factory.calls;
+		expect(call.message).toContain('[TASK_EVENT] task_awaiting_approval');
+		expect(call.message).toContain('Merge PR');
+		expect(call.opts?.deliveryMode).toBe('defer');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Test utility: extract the first JSON block from a message
 // ---------------------------------------------------------------------------
 

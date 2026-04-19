@@ -10,6 +10,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
+import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 
 /**
  * Run all database migrations
@@ -405,6 +406,20 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   the session file can be found even when the effective CWD changes between daemon
 	//   restarts (e.g. when a worktree is added/removed after the session was started).
 	runMigration93(db);
+
+	// Migration 94: Backfill workflow template tracking and end-node completion actions
+	//   for workflows seeded by earlier code paths that silently dropped these fields.
+	//   Also removes orphan duplicate built-in workflow rows that have no active runs.
+	runMigration94(db);
+}
+
+/**
+ * Migration 94 — delegated to m94-backfill-workflow-templates.ts so the large
+ * backfill block doesn't bloat this file. The behaviour is documented in that
+ * module. Exported for direct invocation from tests.
+ */
+export function runMigration94(db: BunDatabase): void {
+	runMigration94External(db);
 }
 
 /**
