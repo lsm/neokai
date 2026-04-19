@@ -660,4 +660,295 @@ describe('SpaceRuntime — completion actions', () => {
 		// completionActions should be absent, not null or undefined
 		expect(endNode!.completionActions).toBeUndefined();
 	});
+
+	// ─── Awaiting-approval pause surface ─────────────────────────────────
+	//
+	// When a task pauses at a completion action because the space's autonomy
+	// level is below the action's `requiredLevel`, the runtime must:
+	//   1. populate `task.result` with a human-readable pause reason so read
+	//      surfaces can explain *why* the task is awaiting review, while
+	//      preserving the original agent output on `reportedSummary`; and
+	//   2. emit a structured `task_awaiting_approval` event exactly once per
+	//      distinct pause (so the Space Agent gets one notification, not one
+	//      per tick).
+	//
+	// The auto-execute path (level sufficient) must not emit the event at all.
+
+	test('pause at completion action populates result with pause-reason string', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'review-action',
+				name: 'Merge PR',
+				description: 'Merges the staged PR into main',
+				type: 'script',
+				requiredLevel: 4,
+				script: 'echo "merge"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'original agent summary',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('review');
+		expect(task.result).toBe('Awaiting approval: Merge PR (requires autonomy 4, space is at 2)');
+		// Original agent output is still recoverable from reportedSummary
+		expect(task.reportedSummary).toBe('original agent summary');
+	});
+
+	test('pause emits task_awaiting_approval event exactly once across ticks', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'approval-action',
+				name: 'Deploy to prod',
+				description: 'Promotes the staged build',
+				type: 'script',
+				requiredLevel: 5,
+				script: 'echo "deploy"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		// Tick 1: task pauses, event fires
+		await rt.executeTick();
+
+		const firstPauseEvents = sink.events.filter((e) => e.kind === 'task_awaiting_approval');
+		expect(firstPauseEvents).toHaveLength(1);
+		const event = firstPauseEvents[0];
+		if (event.kind !== 'task_awaiting_approval') throw new Error('narrowing');
+		expect(event.spaceId).toBe(SPACE_ID);
+		expect(event.taskId).toBe(tasks[0].id);
+		expect(event.actionId).toBe('approval-action');
+		expect(event.actionName).toBe('Deploy to prod');
+		expect(event.actionDescription).toBe('Promotes the staged build');
+		expect(event.actionType).toBe('script');
+		expect(event.requiredLevel).toBe(5);
+		expect(event.spaceLevel).toBe(2);
+		expect(event.autonomyLevel).toBe(2);
+		expect(typeof event.timestamp).toBe('string');
+
+		// Tick 2: task still paused — event must NOT re-fire
+		await rt.executeTick();
+		const afterSecondTick = sink.events.filter((e) => e.kind === 'task_awaiting_approval');
+		expect(afterSecondTick).toHaveLength(1);
+	});
+
+	test('auto-execute (level sufficient) does NOT emit task_awaiting_approval', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'auto-action',
+				name: 'Auto Action',
+				type: 'script',
+				requiredLevel: 3,
+				script: 'echo "ok"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+		// No awaiting-approval event should have fired on the happy path
+		expect(sink.events.filter((e) => e.kind === 'task_awaiting_approval')).toHaveLength(0);
+	});
+
+	test('resume re-pauses at next high-level action and emits a fresh event', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'first',
+				name: 'First',
+				type: 'script',
+				requiredLevel: 3,
+				script: 'echo "1"',
+			},
+			{
+				id: 'second',
+				name: 'Second',
+				type: 'script',
+				requiredLevel: 4,
+				script: 'echo "2"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		// Pause at first action
+		await rt.executeTick();
+		const firstPause = sink.events.filter((e) => e.kind === 'task_awaiting_approval');
+		expect(firstPause).toHaveLength(1);
+		if (firstPause[0].kind !== 'task_awaiting_approval') throw new Error('narrowing');
+		expect(firstPause[0].actionId).toBe('first');
+
+		// Human approves → first action runs, re-pauses at second
+		const resumed = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(resumed!.status).toBe('review');
+		expect(resumed!.pendingActionIndex).toBe(1);
+		// Re-pause populates the pause-reason string for the new action
+		expect(resumed!.result).toBe('Awaiting approval: Second (requires autonomy 4, space is at 2)');
+
+		const allApprovalEvents = sink.events.filter((e) => e.kind === 'task_awaiting_approval');
+		expect(allApprovalEvents).toHaveLength(2);
+		if (allApprovalEvents[1].kind !== 'task_awaiting_approval') throw new Error('narrowing');
+		expect(allApprovalEvents[1].actionId).toBe('second');
+	});
+
+	test('resume-to-done restores task.result from reportedSummary', async () => {
+		setAutonomyLevel(3);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'only',
+				name: 'Only Action',
+				type: 'script',
+				requiredLevel: 5,
+				script: 'echo "ok"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'the real summary the agent produced',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+		const paused = taskRepo.getTask(tasks[0].id)!;
+		expect(paused.result).toContain('Awaiting approval');
+
+		// Force autonomy high enough so resume succeeds (auto-executes the action)
+		setAutonomyLevel(5);
+		const resumed = await rt.resumeCompletionActions(SPACE_ID, tasks[0].id);
+		expect(resumed!.status).toBe('done');
+		expect(resumed!.result).toBe('the real summary the agent produced');
+	});
+
+	// ─── pendingAction read-path enrichment ──────────────────────────────
+
+	test('enrichTaskWithPendingAction populates pendingAction metadata on paused task', async () => {
+		setAutonomyLevel(2);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'merge-pr',
+				name: 'Merge PR',
+				description: 'Merges the staged PR',
+				type: 'script',
+				requiredLevel: 4,
+				script: 'echo "merge"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('review');
+
+		const { enrichTaskWithPendingAction } = await import(
+			'../../../../src/lib/space/runtime/pending-action.ts'
+		);
+		const enriched = enrichTaskWithPendingAction(task, workflowRunRepo, workflowManager);
+		expect(enriched.pendingAction).toBeDefined();
+		expect(enriched.pendingAction).toEqual({
+			id: 'merge-pr',
+			name: 'Merge PR',
+			description: 'Merges the staged PR',
+			type: 'script',
+			requiredLevel: 4,
+		});
+		// Ensure we did not leak the script body into the enriched shape
+		expect((enriched.pendingAction as Record<string, unknown>)['script']).toBeUndefined();
+	});
+
+	test('enrichTaskWithPendingAction leaves non-paused tasks untouched', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'auto',
+				name: 'Auto',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "ok"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+
+		const { enrichTaskWithPendingAction } = await import(
+			'../../../../src/lib/space/runtime/pending-action.ts'
+		);
+		const enriched = enrichTaskWithPendingAction(task, workflowRunRepo, workflowManager);
+		expect(enriched.pendingAction).toBeUndefined();
+	});
 });

@@ -285,6 +285,31 @@ export interface SpaceTask {
 	 */
 	pendingCheckpointType: 'completion_action' | 'gate' | null;
 	/**
+	 * Metadata for the completion action the task is currently paused at, derived from
+	 * `workflow.endNode.completionActions[pendingActionIndex]` at read time.
+	 *
+	 * Populated by read-path enrichers (e.g. `get_task_detail`, `list_tasks`) so UIs can
+	 * render a review/approval banner without fetching workflow detail. Null when the
+	 * task is not paused at a completion action, or when the workflow can't be resolved.
+	 *
+	 * NOT persisted in the database. NOT included in every `SpaceTask` instance —
+	 * callers that load tasks straight from the repo will see `undefined` here.
+	 * Script bodies, instruction prompts, and MCP tool args are intentionally omitted;
+	 * consumers fetch the workflow definition directly if they need those.
+	 */
+	pendingAction?: {
+		/** Unique identifier within the node's completion actions */
+		id: string;
+		/** Human-readable name (shown in approval UI) */
+		name: string;
+		/** Human-readable description if defined on the action */
+		description?: string;
+		/** Discriminator for the action's execution type */
+		type: 'script' | 'instruction' | 'mcp_call';
+		/** Minimum space autonomy level required to auto-execute this action */
+		requiredLevel: SpaceAutonomyLevel;
+	} | null;
+	/**
 	 * Status the end-node agent reported via `report_result`. Null until the agent
 	 * reports. Recorded separately from `status` so the runtime can resolve the
 	 * final task status through completion-actions review (supervised modes) without
@@ -1329,6 +1354,8 @@ interface CompletionActionBase {
 	id: string;
 	/** Human-readable name (shown in approval UI) */
 	name: string;
+	/** Human-readable description of what the action does (shown alongside the name in approval UI) */
+	description?: string;
 	/** Minimum space autonomy level required to auto-execute this action */
 	requiredLevel: SpaceAutonomyLevel;
 	/** Which artifact type to resolve as context for this action */
