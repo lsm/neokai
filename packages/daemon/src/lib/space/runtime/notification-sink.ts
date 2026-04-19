@@ -106,6 +106,44 @@ export interface TaskRetryEvent {
 	timestamp: string;
 }
 
+/**
+ * A task has paused at a completion action that requires approval because the
+ * space's current autonomy level is below the action's `requiredLevel`.
+ *
+ * Emitted exactly once per pause. Space Agent consumers use this to surface a
+ * review/approval UI or notify stakeholders. The event carries enough metadata
+ * to render a banner ("Awaiting approval: Merge PR") without a second fetch,
+ * but deliberately omits executable bodies (e.g. the `script` payload) —
+ * consumers fetch workflow detail for those.
+ */
+export interface TaskAwaitingApprovalEvent {
+	kind: 'task_awaiting_approval';
+	/** Space the task belongs to. */
+	spaceId: string;
+	/** Task that paused awaiting approval. */
+	taskId: string;
+	/** ID of the completion action currently awaiting approval. */
+	actionId: string;
+	/** Human-readable name of the action (shown in approval UI). */
+	actionName: string;
+	/** Optional human-readable description of the action. */
+	actionDescription?: string;
+	/** Discriminator for the action's execution type. */
+	actionType: 'script' | 'instruction' | 'mcp_call';
+	/** Minimum autonomy level required to auto-execute this action. */
+	requiredLevel: number;
+	/** Space's autonomy level at the time the pause was emitted. */
+	spaceLevel: number;
+	/**
+	 * Alias of `spaceLevel` preserved for API-schema convenience — consumers
+	 * that prefer the more explicit name ("what is the space's autonomy level?")
+	 * can read this instead.
+	 */
+	autonomyLevel: number;
+	/** ISO-8601 timestamp when the event was emitted. */
+	timestamp: string;
+}
+
 /** A blocked workflow run has exhausted automatic retries and needs human/Space Agent attention. */
 export interface WorkflowRunNeedsAttentionEvent {
 	kind: 'workflow_run_needs_attention';
@@ -174,7 +212,8 @@ export type SpaceNotificationEvent =
 	| AgentAutoCompletedEvent
 	| AgentCrashEvent
 	| TaskRetryEvent
-	| WorkflowRunNeedsAttentionEvent;
+	| WorkflowRunNeedsAttentionEvent
+	| TaskAwaitingApprovalEvent;
 
 // ---------------------------------------------------------------------------
 // NotificationSink interface

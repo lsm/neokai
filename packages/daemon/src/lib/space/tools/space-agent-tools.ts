@@ -22,7 +22,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -36,6 +36,7 @@ import type { DaemonHub } from '../../daemon-hub';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
+import { enrichTaskWithPendingAction } from '../runtime/pending-action';
 
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
@@ -262,6 +263,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 		/**
 		 * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
+		 *
+		 * Tasks in the non-compact output are enriched with `pendingAction` when they are
+		 * paused at a completion action, so consumers can render an approval banner
+		 * without a second fetch.
 		 */
 		async list_tasks(args: {
 			status?: SpaceTaskStatus;
@@ -271,7 +276,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			offset?: number;
 			compact?: boolean;
 		}): Promise<ToolResult> {
-			let tasks;
+			let tasks: SpaceTask[];
 			if (args.workflow_run_id) {
 				tasks = taskRepo.listByWorkflowRun(args.workflow_run_id);
 				if (args.status) {
@@ -300,7 +305,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}));
 				return jsonResult({ success: true, total, tasks: compactTasks });
 			}
-			return jsonResult({ success: true, total, tasks });
+			const enrichedTasks = tasks.map((t) =>
+				enrichTaskWithPendingAction(t, workflowRunRepo, workflowManager)
+			);
+			return jsonResult({ success: true, total, tasks: enrichedTasks });
 		},
 
 		/**
@@ -328,9 +336,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 		/**
 		 * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
+		 *
+		 * When the task is paused at a completion action (`pendingCheckpointType ===
+		 * 'completion_action'`), the returned task is enriched with a `pendingAction`
+		 * field describing the action awaiting approval. Script bodies, instruction
+		 * prompts, and MCP tool args are omitted — consumers fetch the workflow for those.
 		 */
 		async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
-			let task = null;
+			let task: SpaceTask | null = null;
 			if (args.task_number !== undefined) {
 				task = await taskManager.getTaskByNumber(args.task_number);
 			} else if (args.task_id) {
@@ -345,7 +358,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
 				return jsonResult({ success: false, error: `Task not found: ${ref}` });
 			}
-			return jsonResult({ success: true, task });
+			const enriched = enrichTaskWithPendingAction(task, workflowRunRepo, workflowManager);
+			return jsonResult({ success: true, task: enriched });
 		},
 
 		/**
