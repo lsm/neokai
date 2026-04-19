@@ -34,6 +34,8 @@ export interface ParsedThreadRow {
 	taskId: string;
 	taskTitle: string;
 	createdAt: number;
+	turnIndex?: number;
+	turnHiddenMessageCount?: number;
 	message: SDKMessage | null;
 	fallbackText: string | null;
 }
@@ -332,6 +334,8 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			createdAt: row.createdAt,
+			turnIndex: row.turnIndex,
+			turnHiddenMessageCount: row.turnHiddenMessageCount,
 			message: withTimestamp,
 			fallbackText: null,
 		};
@@ -343,6 +347,8 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
 			taskId: row.taskId,
 			taskTitle: row.taskTitle,
 			createdAt: row.createdAt,
+			turnIndex: row.turnIndex,
+			turnHiddenMessageCount: row.turnHiddenMessageCount,
 			message: null,
 			fallbackText: row.content,
 		};

@@ -67,6 +67,18 @@ interface Props {
 	/** When true, renders all message types without skipping (for task conversation timelines) */
 	taskContext?: boolean;
 	/**
+	 * When true, keeps sub-agent child messages in the main feed instead of
+	 * suppressing them in favor of nested SubagentBlock rendering.
+	 */
+	showSubagentMessages?: boolean;
+	/**
+	 * When true, renders Task/Agent tool_use blocks as normal tool cards instead
+	 * of SubagentBlock.
+	 */
+	flattenSubagentTools?: boolean;
+	/** When true, user messages containing tool_result blocks are rendered. */
+	showToolResultUserMessages?: boolean;
+	/**
 	 * When true, the last non-terminal event message in a compact task thread is
 	 * still executing. The receiving component wraps its visible boundary element
 	 * (e.g. the assistant message bubble or tool card) in <RunningBorder> so the
@@ -186,6 +198,9 @@ export function SDKMessageRenderer({
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
 	taskContext,
+	showSubagentMessages = false,
+	flattenSubagentTools = false,
+	showToolResultUserMessages = false,
 	isRunning,
 }: Props) {
 	// NeoKai-native action messages are always shown and handled separately.
@@ -218,7 +233,7 @@ export function SDKMessageRenderer({
 	}
 
 	// Skip sub-agent messages - they're now shown inside SubagentBlock
-	if (isSubagentMessage(sdkMessage)) {
+	if (!showSubagentMessages && isSubagentMessage(sdkMessage)) {
 		return null;
 	}
 
@@ -234,6 +249,7 @@ export function SDKMessageRenderer({
 				sessionInfo={sessionInfo}
 				isReplay={true}
 				sessionId={sessionId}
+				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
 	} else if (isSDKUserMessage(sdkMessage)) {
@@ -249,6 +265,7 @@ export function SDKMessageRenderer({
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
 				allMessages={_allMessages}
+				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
 	} else if (isSDKAssistantMessage(sdkMessage)) {
@@ -265,6 +282,7 @@ export function SDKMessageRenderer({
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
 				allMessages={_allMessages}
+				flattenSubagentTools={flattenSubagentTools}
 				isRunning={isRunning}
 			/>
 		);

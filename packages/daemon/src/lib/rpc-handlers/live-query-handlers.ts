@@ -158,12 +158,20 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	const rawId = row.id;
 	const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `row-${createdAt}`;
 	const parentToolUseId = typeof row.parentToolUseId === 'string' ? row.parentToolUseId : null;
-	// `sessionMessageCount` is surfaced only by the compact variant of the query. It
-	// carries the true per-session message total so the client can render an
-	// "N earlier messages" badge when the server-side slice has dropped rows.
+	// Optional backward-compat field from older compact-query variants.
+	// Current compact SQL no longer emits this, but keep tolerant parsing so
+	// historical rows/tests and alternate query variants remain safe.
 	const sessionMessageCount =
 		typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
 			? Number(row.sessionMessageCount)
+			: undefined;
+	const turnIndex =
+		typeof row.turnIndex === 'number' && Number.isFinite(row.turnIndex)
+			? Number(row.turnIndex)
+			: undefined;
+	const turnHiddenMessageCount =
+		typeof row.turnHiddenMessageCount === 'number' && Number.isFinite(row.turnHiddenMessageCount)
+			? Number(row.turnHiddenMessageCount)
 			: undefined;
 
 	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
@@ -205,6 +213,12 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	};
 	if (sessionMessageCount !== undefined) {
 		mapped.sessionMessageCount = sessionMessageCount;
+	}
+	if (turnIndex !== undefined) {
+		mapped.turnIndex = turnIndex;
+	}
+	if (turnHiddenMessageCount !== undefined) {
+		mapped.turnHiddenMessageCount = turnHiddenMessageCount;
 	}
 	return mapped;
 }
@@ -840,48 +854,116 @@ FROM joined
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
-/**
- * Max rows per session for the compact variant.
- *
- * Chosen as a pragmatic upper bound for the compact event feed — large enough
- * that normal task activity still renders end-to-end, but small enough that a
- * long-running task with thousands of messages does not flood the client.
- *
- * Clients read `sessionMessageCount` to know the real per-session total and
- * can render an "N earlier messages hidden" banner when the server has
- * truncated the result set.
- *
- * Exported so tests and the row mapper can refer to the same constant.
- */
-export const SPACE_TASK_MESSAGES_COMPACT_LIMIT_PER_SESSION = 50;
+/** Maximum non-terminal rows to keep per (session, turn) in compact mode. */
+export const SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT = 5;
 
 /**
- * Compact variant — keeps only the last N rows per session (ordered by
- * createdAt DESC so the *newest* rows survive), and attaches
- * `sessionMessageCount` to every surviving row so the client knows the real
- * per-session total. The final output is re-sorted by createdAt ASC, id ASC
- * to match the ordering contract of the legacy query.
+ * Compact variant — server-side turn compaction for task threads.
  *
- * Notes:
- *   - Uses `ROW_NUMBER()` window function (SQLite 3.25+). Bun's bundled
- *     SQLite is well past that cutoff.
- *   - `COUNT(*) OVER (PARTITION BY sessionId)` is computed once per row
- *     and carries the real total regardless of the row slice.
- *   - Result messages (which are always the final message of a session)
- *     naturally remain inside the last N, so "terminal" detection on the
- *     client is unaffected by the slice.
+ * Turn model (per session):
+ *   - A turn is rows between terminal result messages.
+ *   - Turn 1 starts at the first row in the session.
+ *   - A terminal row (`messageType = 'result'`) closes the current turn and
+ *     belongs to that turn.
+ *
+ * Visibility:
+ *   - Keep ALL terminal rows.
+ *   - Keep only the last N renderable non-terminal rows per session-turn.
+ *   - Rows that are known to render as `null` in compact UI (currently
+ *     `user` messages whose content is tool_result blocks) are excluded from
+ *     the non-terminal cap and omitted from compact payloads.
+ *   - Return rows globally ordered by `(createdAt ASC, id ASC)`.
  */
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
 ${SPACE_TASK_MESSAGES_BASE_CTE},
-ranked AS (
+session_turns AS (
   SELECT
     j.*,
-    ROW_NUMBER() OVER (
-      PARTITION BY j.sessionId
-      ORDER BY j.createdAt DESC, j.id DESC
-    ) AS rn,
-    COUNT(*) OVER (PARTITION BY j.sessionId) AS sessionMessageCount
+    CASE
+      WHEN j.messageType = 'result' THEN 1
+      ELSE 0
+    END AS isTerminal,
+    CASE
+      WHEN j.messageType = 'user'
+        AND json_type(j.content, '$.message.content') = 'array'
+        AND EXISTS (
+        SELECT 1
+        FROM json_each(json_extract(j.content, '$.message.content')) AS je
+        WHERE json_extract(je.value, '$.type') = 'tool_result'
+      ) THEN 0
+      ELSE 1
+    END AS isRenderable,
+    COALESCE(
+      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+        PARTITION BY j.sessionId
+        ORDER BY j.createdAt ASC, j.id ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ),
+      0
+    ) + 1 AS turnIndex
   FROM joined j
+),
+ranked AS (
+  SELECT
+    st.*,
+    CASE
+      WHEN st.isTerminal = 0 AND st.isRenderable = 1 THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable
+        ORDER BY st.createdAt DESC, st.id DESC
+      )
+      ELSE NULL
+    END AS nonTerminalRankDesc,
+    CASE
+      WHEN st.isTerminal = 0 AND st.isRenderable = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable, st.messageType
+        ORDER BY st.createdAt ASC, st.id ASC
+      )
+      ELSE NULL
+    END AS userRowRankAsc
+  FROM session_turns st
+),
+scored AS (
+  SELECT
+    r.*,
+    CASE
+      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
+        THEN 1
+      ELSE 0
+    END AS isTailVisible,
+    CASE
+      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
+        THEN 1
+      ELSE 0
+    END AS isInitialUserVisible,
+    SUM(CASE WHEN r.isTerminal = 0 AND r.isRenderable = 1 THEN 1 ELSE 0 END) OVER (
+      PARTITION BY r.sessionId, r.turnIndex
+    ) AS totalRenderableNonTerminalInTurn,
+    SUM(
+      CASE
+        WHEN r.isTerminal = 0 AND r.isRenderable = 1
+          AND (
+            (r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT})
+            OR (r.messageType = 'user' AND r.userRowRankAsc = 1)
+          )
+          THEN 1
+        ELSE 0
+      END
+    ) OVER (
+      PARTITION BY r.sessionId, r.turnIndex
+    ) AS visibleRenderableNonTerminalInTurn
+  FROM ranked r
+),
+selected AS (
+  SELECT
+    s.*
+  FROM scored s
+  WHERE
+    s.isTerminal = 1
+    OR (
+      s.isTerminal = 0
+      AND s.isRenderable = 1
+      AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
+    )
 )
 SELECT
   id,
@@ -894,11 +976,15 @@ SELECT
   messageType,
   content,
   createdAt,
+  turnIndex,
+  CASE
+    WHEN totalRenderableNonTerminalInTurn > visibleRenderableNonTerminalInTurn
+      THEN totalRenderableNonTerminalInTurn - visibleRenderableNonTerminalInTurn
+    ELSE 0
+  END AS turnHiddenMessageCount,
   iteration,
-  parentToolUseId,
-  sessionMessageCount
-FROM ranked
-WHERE rn <= ${SPACE_TASK_MESSAGES_COMPACT_LIMIT_PER_SESSION}
+  parentToolUseId
+FROM selected
 ORDER BY createdAt ASC, id ASC
 `.trim();
 

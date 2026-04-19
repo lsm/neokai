@@ -1,23 +1,12 @@
 import { useMemo } from 'preact/hooks';
-import {
-	isSDKRateLimitEvent,
-	isSDKResultMessage,
-	isSDKSystemInit,
-	isSDKUserMessage,
-} from '@neokai/shared/sdk/type-guards';
+import { isSDKSystemInit, isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { UseMessageMapsResult } from '../../../../hooks/useMessageMaps';
+import { spaceOverlayAgentNameSignal, spaceOverlaySessionIdSignal } from '../../../../lib/signals';
 import { SDKMessageRenderer } from '../../../sdk/SDKMessageRenderer';
 import { getAgentColor } from '../space-task-thread-agent-colors';
-import { spaceOverlayAgentNameSignal, spaceOverlaySessionIdSignal } from '../../../../lib/signals';
 import { SpaceSystemInitCard } from './SpaceSystemInitCard';
-import {
-	buildLogicalBlocks,
-	applyCompactVisibilityRules,
-	applyBlockRowVisibility,
-	resolveRunningBlockIndex,
-	type CompactLogicalBlock,
-} from './space-task-compact-reducer';
+import { rowHasToolUse } from './space-task-compact-reducer';
 
 interface SpaceTaskCardFeedProps {
 	parsedRows: ParsedThreadRow[];
@@ -26,90 +15,97 @@ interface SpaceTaskCardFeedProps {
 	maps: UseMessageMapsResult;
 	/**
 	 * Whether the agent session backing this task is currently active (not idle /
-	 * completed / failed / interrupted). When false the running-border animation
-	 * is suppressed even if non-terminal blocks are present.
+	 * completed / failed / interrupted). Used to gate the running border on the
+	 * last visible row when that row is a tool_use assistant message.
 	 */
 	isAgentActive: boolean;
 }
 
-// ── Row-level pre-filter (structural noise only) ─────────────────────────────
-
-function isEmptyUserRow(row: ParsedThreadRow): boolean {
-	if (!row.message || !isSDKUserMessage(row.message)) return false;
-	const content = (row.message as { message?: { content?: unknown } }).message?.content;
-	if (typeof content === 'string') return content.trim().length === 0;
-	if (Array.isArray(content)) {
-		return !content.some((block) => {
-			if (!block || typeof block !== 'object') return false;
-			const b = block as { type?: unknown; text?: unknown };
-			return b.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0;
-		});
-	}
-	return true;
+interface AgentBlock {
+	id: string;
+	label: string;
+	color: string;
+	sessionId: string | null;
+	rows: ParsedThreadRow[];
 }
 
-/**
- * Pre-filter parsed rows before block grouping. Removes structural noise that
- * should never appear in the compact view. Result rows are NOT filtered here —
- * they are always preserved so terminal blocks remain visible.
- *
- * `system:init` rows ARE kept — they render as a small "Session Started" card
- * via `SpaceSystemInitCard` so multi-agent session starts stay legible.
- *
- * All user messages are kept — both real human input (isSynthetic=false/absent)
- * and agent→agent handoffs (isSynthetic=true). Human messages render as the
- * normal blue user bubble; synthetic messages render as the purple
- * `SyntheticMessageBlock` so the system-generated origin is visible at a
- * glance. Only content-less user rows are dropped via `isEmptyUserRow`.
- */
-function preFilterRows(rows: ParsedThreadRow[]): ParsedThreadRow[] {
-	return rows.filter((row) => {
-		if (!row.message) return true; // raw fallback rows stay
-		if (isSDKRateLimitEvent(row.message)) {
-			const info = row.message.rate_limit_info;
-			if (info?.status !== 'rejected') return false;
-		}
-		if (isEmptyUserRow(row)) return false;
-		return true;
-	});
+function normalizeAgentKey(label: string): string {
+	return label.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function shortAgentLabel(label: string): string {
 	return label.replace(/\s+agent$/i, '').toUpperCase();
 }
 
-/**
- * Pick the authoritative session id for a block — the first row carrying a
- * non-null sessionId. Most rows within a block share the same sessionId, but
- * some fallback rows (e.g. raw parse-failure rows) may have null, so we skip
- * over them and return null only when every row lacks a session.
- */
-function getBlockSessionId(block: CompactLogicalBlock): string | null {
-	for (const row of block.rows) {
-		if (row.sessionId) return row.sessionId;
+function buildAgentTurnBlocks(rows: ParsedThreadRow[]): AgentBlock[] {
+	if (rows.length === 0) return [];
+
+	const grouped = new Map<
+		string,
+		AgentBlock & {
+			startCreatedAt: number;
+			startRowId: string;
+			sequence: number;
+		}
+	>();
+	let sequence = 0;
+
+	for (const row of rows) {
+		const sessionKey = row.sessionId ?? `label:${normalizeAgentKey(row.label)}`;
+		const turnKey =
+			typeof row.turnIndex === 'number' && Number.isFinite(row.turnIndex) ? row.turnIndex : 1;
+		const key = `${sessionKey}::turn:${turnKey}`;
+		const existing = grouped.get(key);
+		if (existing) {
+			existing.rows.push(row);
+			if (row.createdAt < existing.startCreatedAt) {
+				existing.startCreatedAt = row.createdAt;
+				existing.startRowId = String(row.id);
+			}
+			continue;
+		}
+
+		grouped.set(key, {
+			id: String(row.id),
+			label: row.label,
+			color: getAgentColor(row.label),
+			sessionId: row.sessionId ?? null,
+			rows: [row],
+			startCreatedAt: row.createdAt,
+			startRowId: String(row.id),
+			sequence: sequence++,
+		});
 	}
-	return null;
+
+	return Array.from(grouped.values())
+		.sort((a, b) => {
+			if (a.startCreatedAt !== b.startCreatedAt) {
+				return a.startCreatedAt - b.startCreatedAt;
+			}
+			return a.sequence - b.sequence;
+		})
+		.map(
+			({
+				startCreatedAt: _startCreatedAt,
+				startRowId: _startRowId,
+				sequence: _sequence,
+				...block
+			}) => block
+		);
 }
 
-function getTerminalBadge(block: CompactLogicalBlock): 'DONE' | 'ERROR' | null {
-	if (!block.isTerminal) return null;
-	const hasError = block.rows.some((row) => {
-		if (!row.message || !isSDKResultMessage(row.message)) return false;
-		return row.message.subtype !== 'success';
-	});
-	return hasError ? 'ERROR' : 'DONE';
+function getBlockHiddenCount(rows: ParsedThreadRow[]): number {
+	let hiddenCount = 0;
+	for (const row of rows) {
+		const hidden = row.turnHiddenMessageCount ?? 0;
+		if (hidden > hiddenCount) hiddenCount = hidden;
+	}
+	return hiddenCount;
 }
 
-/** Max rows shown per block before older ones are hidden. */
-const MAX_ROWS_PER_BLOCK = 3;
-
-// ── Per-block rendering ──────────────────────────────────────────────────────
-
-interface BlockSectionProps {
-	block: CompactLogicalBlock;
-	maps: UseMessageMapsResult;
-	/** True only for the last visible block when the thread is still running. */
-	isRunningBlock: boolean;
+function getBlockPinnedInitialUserRowId(rows: ParsedThreadRow[]): string | null {
+	const initialUser = rows.find((row) => row.message !== null && isSDKUserMessage(row.message));
+	return initialUser ? String(initialUser.id) : null;
 }
 
 function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning = false) {
@@ -120,8 +116,8 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 			</div>
 		);
 	}
-	// System init messages get a dedicated small card — the normal SDK pipeline
-	// would render a plain inline pill in task context.
+
+	// Keep task init rows compact/expandable in task context.
 	if (isSDKSystemInit(row.message)) {
 		return <SpaceSystemInitCard message={row.message} />;
 	}
@@ -136,49 +132,25 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 			subagentMessagesMap={maps.subagentMessagesMap}
 			sessionInfo={maps.sessionInfoMap.get(msgUuid)}
 			taskContext={true}
+			showSubagentMessages={true}
 			isRunning={isRunning}
 		/>
 	);
 }
 
-/**
- * Renders a single logical block as a small agent-identity header followed by
- * each row's SDK message delegated to `SDKMessageRenderer`.
- *
- * This matches the normal-session rendering pipeline exactly — a tool use
- * becomes a `ToolResultCard` (bordered card with chevron), a thinking block
- * becomes a `ThinkingBlock` (bordered card), a Task tool becomes a
- * `SubagentBlock`, and a result becomes a `SDKResultMessage` card. No outer
- * wrapper is added around the group; each message renders its own chrome.
- *
- * The agent-identity header is the only space-task-specific addition — it
- * labels each logical block's agent (e.g. TASK, CODER, REVIEWER) so the
- * multi-agent context is visible at a glance.
- *
- * When `isRunningBlock` is true (the session is still executing and this is
- * the last non-terminal block), only the last row is forwarded `isRunning=true`
- * so exactly one inner non-terminal component (ThinkingBlock, ToolResultCard,
- * SubagentBlock, or assistant text bubble) renders the animated arc border.
- * Terminal result cards (SDKResultMessage) never receive the arc because
- * terminal blocks are never selected as the running block.
- */
-function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
-	const agentColor = getAgentColor(block.agentLabel);
-	const terminalBadge = getTerminalBadge(block);
-	const blockSessionId = getBlockSessionId(block);
-	const isClickable = blockSessionId !== null;
-
-	// Trim this turn to its most-recent rows; show the hidden-count under the header.
-	const { visibleRows, hiddenRowCount: hiddenInBlock } = applyBlockRowVisibility(
-		block,
-		MAX_ROWS_PER_BLOCK
-	);
-	const lastVisibleIdx = visibleRows.length - 1;
+function renderAgentBlock(
+	block: AgentBlock,
+	maps: UseMessageMapsResult,
+	runningRowId: string | null,
+	pinnedInitialUserRowId: string | null,
+	hiddenCount: number
+) {
+	const isClickable = !!block.sessionId;
 
 	const handleOpenAgentOverlay = () => {
-		if (!blockSessionId) return;
-		spaceOverlayAgentNameSignal.value = block.agentLabel;
-		spaceOverlaySessionIdSignal.value = blockSessionId;
+		if (!block.sessionId) return;
+		spaceOverlayAgentNameSignal.value = block.label;
+		spaceOverlaySessionIdSignal.value = block.sessionId;
 	};
 
 	const handleHeaderKeyDown = (e: KeyboardEvent) => {
@@ -191,110 +163,184 @@ function BlockSection({ block, maps, isRunningBlock }: BlockSectionProps) {
 
 	return (
 		<div
+			key={block.id}
+			class="relative pt-2 pb-1"
 			data-testid="compact-block"
-			data-agent-label={block.agentLabel}
-			data-agent-color={agentColor}
+			data-agent-label={block.label}
+			data-agent-color={block.color}
 		>
-			{/* Agent identity header — clickable to open the agent slide-out.
-			    Taller padding (min-h-[32px], py-2) makes the name a comfortable
-			    click/tap target while keeping the small text style. */}
+			{/* ⌐ bracket — single stroke that caps the top then runs down the side,
+			    rounded at the inside corner so the arm curves smoothly into the rail. */}
 			<div
-				class={
-					'flex items-center gap-2 px-2 py-2 min-h-[32px] rounded ' +
-					(isClickable
-						? 'cursor-pointer hover:bg-gray-800/40 active:bg-gray-800/60 transition-colors focus:outline-none focus:bg-gray-800/40 focus:ring-1 focus:ring-gray-700'
-						: '')
-				}
-				data-testid="compact-block-header"
-				data-clickable={isClickable ? '1' : '0'}
-				role={isClickable ? 'button' : undefined}
-				tabIndex={isClickable ? 0 : undefined}
-				aria-label={isClickable ? `Open ${block.agentLabel} session details` : undefined}
-				onClick={isClickable ? handleOpenAgentOverlay : undefined}
-				onKeyDown={isClickable ? handleHeaderKeyDown : undefined}
-			>
-				<span
-					class="w-2 h-2 rounded-full flex-shrink-0"
-					style={{ backgroundColor: agentColor }}
-					aria-hidden="true"
-				/>
-				<span
-					class="text-[11px] uppercase tracking-[0.16em] font-mono font-medium flex-shrink-0"
-					style={{ color: agentColor }}
-				>
-					{shortAgentLabel(block.agentLabel)}
-				</span>
-				{terminalBadge && (
-					<span
-						class={
-							'ml-1 text-[10px] uppercase tracking-[0.14em] font-mono border rounded px-1 py-px flex-shrink-0 ' +
-							(terminalBadge === 'ERROR'
-								? 'text-red-300 border-red-800/80 bg-red-950/30'
-								: 'text-emerald-300 border-emerald-800/80 bg-emerald-950/30')
-						}
-						data-testid="compact-block-badge"
-					>
-						{terminalBadge}
-					</span>
-				)}
-				{hiddenInBlock > 0 && (
-					<span
-						class="ml-auto text-[10px] font-mono flex-shrink-0"
-						style={{ color: agentColor, opacity: 0.55 }}
-						data-testid="compact-block-hidden-count"
-					>
-						↑ {hiddenInBlock} earlier {hiddenInBlock === 1 ? 'message' : 'messages'}
-					</span>
-				)}
-			</div>
+				class="absolute top-0 left-0 bottom-1 border-l-2 border-t-2 rounded-tl-md pointer-events-none"
+				style={{
+					borderColor: block.color,
+					width: 'clamp(96px, 30%, 180px)',
+				}}
+				aria-hidden="true"
+				data-testid="compact-block-bracket"
+			/>
 
-			{/* Siderail + body */}
-			<div class="flex gap-2 pl-1 pb-1" data-testid="compact-block-body">
-				{/* Vertical colored siderail */}
-				<div
-					class="w-0.5 rounded-full flex-shrink-0 self-stretch opacity-40"
-					style={{ backgroundColor: agentColor }}
-					aria-hidden="true"
-				/>
-				{/* Message rows — last MAX_ROWS_PER_BLOCK only */}
-				<div class="flex-1 min-w-0 space-y-1">
-					{visibleRows.map((row, rowIdx) => {
-						// Only the last row of the running block gets the animated border.
-						const isRunningRow = isRunningBlock && rowIdx === lastVisibleIdx;
-						if (isRunningRow) {
-							return (
-								<div key={String(row.id)} data-testid="compact-running-block">
-									{renderRow(row, maps, true)}
-								</div>
-							);
-						}
-						return <div key={String(row.id)}>{renderRow(row, maps, false)}</div>;
-					})}
-				</div>
+			{renderAgentHeaderPill(block, isClickable, handleOpenAgentOverlay, handleHeaderKeyDown)}
+
+			<div class="pl-4 pt-0.5 space-y-1" data-testid="compact-block-body">
+				{block.rows.flatMap((row) => {
+					const key = String(row.id);
+					const rowNode = renderRow(row, maps, key === runningRowId);
+					const rowEl =
+						key === runningRowId ? (
+							<div key={`row-${key}`} data-testid="compact-running-block">
+								{rowNode}
+							</div>
+						) : (
+							<div key={`row-${key}`}>{rowNode}</div>
+						);
+					if (
+						hiddenCount > 0 &&
+						pinnedInitialUserRowId !== null &&
+						key === pinnedInitialUserRowId
+					) {
+						return [
+							rowEl,
+							renderHiddenDivider(
+								key,
+								hiddenCount,
+								block.label,
+								isClickable,
+								handleOpenAgentOverlay
+							),
+						];
+					}
+					return [rowEl];
+				})}
 			</div>
 		</div>
 	);
 }
 
-// ── Main feed component ──────────────────────────────────────────────────────
+function renderAgentHeaderPill(
+	block: AgentBlock,
+	isClickable: boolean,
+	onOpen: () => void,
+	onKeyDown: (e: KeyboardEvent) => void
+) {
+	const label = shortAgentLabel(block.label);
+	// Pill fills the arm's width minus `m-2` on the left; right edge is flush.
+	const pillBase =
+		'flex items-center justify-center w-full px-2.5 py-1 rounded-full border text-[11px] uppercase tracking-[0.12em] font-mono font-semibold whitespace-nowrap transition-colors';
+	const pillInteractive =
+		'cursor-pointer border-dark-600 bg-dark-850 hover:border-gray-500 hover:bg-dark-800 focus:outline-none focus:ring-1 focus:ring-gray-500';
+	const pillStatic = 'border-dark-700 bg-dark-850';
+
+	const pill = !isClickable ? (
+		<span class={`${pillBase} ${pillStatic}`} data-testid="compact-block-header" data-clickable="0">
+			<span class="truncate" style={{ color: block.color }}>
+				{label}
+			</span>
+		</span>
+	) : (
+		<button
+			type="button"
+			class={`${pillBase} ${pillInteractive}`}
+			data-testid="compact-block-header"
+			data-clickable="1"
+			aria-label={`Open ${block.label} session details`}
+			onClick={onOpen}
+			onKeyDown={onKeyDown}
+		>
+			<span class="truncate" style={{ color: block.color }}>
+				{label}
+			</span>
+		</button>
+	);
+
+	return (
+		<div
+			class="mt-1 pl-2 pr-0"
+			style={{ width: 'clamp(96px, 30%, 180px)' }}
+			data-testid="compact-block-header-slot"
+		>
+			{pill}
+		</div>
+	);
+}
+
+function renderHiddenDivider(
+	rowKey: string,
+	hiddenCount: number,
+	agentLabel: string,
+	isClickable: boolean,
+	onOpen: () => void
+) {
+	const label = `${hiddenCount} earlier ${hiddenCount === 1 ? 'message' : 'messages'}`;
+	const pillBase =
+		'relative z-10 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] uppercase tracking-[0.12em] font-mono whitespace-nowrap transition-colors ';
+	const pillInteractive =
+		'cursor-pointer border-dark-600 bg-dark-850 text-gray-300 hover:border-gray-500 hover:bg-dark-800 hover:text-gray-100 focus:outline-none focus:ring-1 focus:ring-gray-500';
+	const pillStatic = 'border-dark-700 bg-dark-850 text-gray-400';
+	return (
+		<div
+			key={`hidden-divider-${rowKey}`}
+			class="relative flex items-center justify-center py-2"
+			data-testid="compact-turn-hidden-divider"
+		>
+			<div
+				class="absolute inset-x-0 top-1/2 border-t border-dashed border-dark-700"
+				aria-hidden="true"
+			/>
+			{isClickable ? (
+				<button
+					type="button"
+					class={pillBase + pillInteractive}
+					onClick={onOpen}
+					data-testid="compact-turn-hidden-divider-button"
+					aria-label={`${label}. Open ${agentLabel} chat to view earlier messages.`}
+				>
+					<svg
+						class="w-3 h-3"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M4 10l4-4 4 4" />
+					</svg>
+					<span>{label}</span>
+					<span class="text-gray-500">· open chat</span>
+				</button>
+			) : (
+				<span class={pillBase + pillStatic}>
+					<svg
+						class="w-3 h-3"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M4 10l4-4 4 4" />
+					</svg>
+					<span>{label}</span>
+				</span>
+			)}
+		</div>
+	);
+}
 
 /**
- * SpaceTaskCardFeed — compact renderer for Space task threads that reuses the
- * normal-session rendering pipeline.
+ * SpaceTaskCardFeed — compact renderer grouped by agent turn blocks.
  *
- * Each parsed row's SDK message is delegated to `SDKMessageRenderer` (the same
- * router used by `ChatContainer`), which dispatches to the appropriate block
- * component — `ToolResultCard`, `ThinkingBlock`, `SubagentBlock`,
- * `SDKResultMessage`, `SDKAssistantMessage`, `SDKUserMessage`, etc. — so the
- * visual language matches a normal chat session exactly.
- *
- * The only space-task-specific additions are:
- *   - Visibility rules from `space-task-compact-reducer` (max 3 recent logical
- *     blocks, terminal blocks always kept).
- *   - A small agent-identity header above each logical block so multi-agent
- *     context (Task / Coder / Reviewer / …) is readable at a glance.
- *   - `.running-block` chrome wrapping the last individual event message of
- *     the tail block while the thread is still executing (non-terminal last block).
+ * Rendering policy:
+ * - Render the compact server-provided row set.
+ * - Group rows by (agent session, turnIndex) so interleaved messages from the
+ *   same agent turn are rendered in one block.
+ * - Order blocks by turn start time (earliest row in each block).
+ * - Render each block as a clickable agent card with color header/siderail.
  */
 export function SpaceTaskCardFeed({
 	parsedRows,
@@ -302,34 +348,33 @@ export function SpaceTaskCardFeed({
 	maps,
 	isAgentActive,
 }: SpaceTaskCardFeedProps) {
-	const visibleBlocks = useMemo(() => {
-		const filtered = preFilterRows(parsedRows);
-		const allBlocks = buildLogicalBlocks(filtered);
-		return applyCompactVisibilityRules(allBlocks, 3);
-	}, [parsedRows]);
+	const blocks = useMemo(() => buildAgentTurnBlocks(parsedRows), [parsedRows]);
 
-	// Running border: shown ONLY when the agent session is actively executing
-	// AND the last visible block is non-terminal AND its last row is a tool_use
-	// event (the agent is currently invoking a tool — read/write/bash/MCP call).
-	// Plain text and thinking-only rows do not qualify. See
-	// `resolveRunningBlockIndex` for the full rule set.
-	const runningBlockIdx = useMemo(
-		() => resolveRunningBlockIndex(visibleBlocks, isAgentActive),
-		[isAgentActive, visibleBlocks]
-	);
+	const runningRowId = useMemo(() => {
+		if (!isAgentActive) return null;
+		const tailLast = parsedRows[parsedRows.length - 1];
+		if (!tailLast || !rowHasToolUse(tailLast)) return null;
+		return String(tailLast.id);
+	}, [isAgentActive, parsedRows]);
 
 	return (
-		// Horizontal padding (px-4) matches SpaceTaskPane's header padding so the
-		// compact thread content aligns with the pane title bar above it.
-		<div class="space-y-2 px-4 py-2" data-testid="space-task-event-feed-compact">
-			{visibleBlocks.map((block, idx) => (
-				<BlockSection
-					key={block.id}
-					block={block}
-					maps={maps}
-					isRunningBlock={idx === runningBlockIdx}
-				/>
-			))}
+		<div class="px-4 py-2" data-testid="space-task-event-feed-compact">
+			{blocks.map((block, index) => {
+				const blockHiddenCount = getBlockHiddenCount(block.rows);
+				const blockPinnedInitialUserRowId =
+					blockHiddenCount > 0 ? getBlockPinnedInitialUserRowId(block.rows) : null;
+				return (
+					<div key={block.id} class={index > 0 ? 'mt-1' : ''} data-testid="compact-turn-group">
+						{renderAgentBlock(
+							block,
+							maps,
+							runningRowId,
+							blockPinnedInitialUserRowId,
+							blockHiddenCount
+						)}
+					</div>
+				);
+			})}
 		</div>
 	);
 }

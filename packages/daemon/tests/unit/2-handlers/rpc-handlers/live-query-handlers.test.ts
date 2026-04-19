@@ -404,22 +404,61 @@ describe('NAMED_QUERY_REGISTRY', () => {
 		});
 
 		// -------------------------------------------------------------------------
-		// spaceTaskMessages.byTask.compact — per-session slicing + count
+		// spaceTaskMessages.byTask.compact — per-session turn compaction
 		// -------------------------------------------------------------------------
 
 		describe('spaceTaskMessages.byTask.compact', () => {
-			const compactLimit = 50;
-
-			function insertSdkMessageAt(id: string, sessionIdValue: string, timestampMs: number): void {
+			function insertSdkMessageAt(
+				id: string,
+				sessionIdValue: string,
+				timestampMs: number,
+				sdkMessage?: Record<string, unknown>,
+				messageType = 'assistant'
+			): void {
 				const iso = new Date(timestampMs).toISOString();
+				const payload =
+					sdkMessage ??
+					({
+						type: 'assistant',
+						message: { role: 'assistant', content: [{ type: 'text', text: id }] },
+					} as Record<string, unknown>);
 				db.exec(`
 					INSERT INTO sdk_messages (
 						id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin
 					) VALUES (
-						'${id}', '${sessionIdValue}', 'assistant', NULL, '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}',
+						'${id}', '${sessionIdValue}', '${messageType}', NULL, '${JSON.stringify(payload)}',
 						'${iso}', 'consumed', 'system'
 					)
 				`);
+			}
+
+			function insertResultMessageAt(
+				id: string,
+				sessionIdValue: string,
+				timestampMs: number,
+				subtype: 'success' | 'error_during_execution' = 'success'
+			): void {
+				insertSdkMessageAt(
+					id,
+					sessionIdValue,
+					timestampMs,
+					{
+						type: 'result',
+						subtype,
+						duration_ms: 1,
+						duration_api_ms: 1,
+						is_error: subtype !== 'success',
+						total_cost_usd: 0,
+						usage: {
+							input_tokens: 1,
+							cached_input_tokens: 0,
+							output_tokens: 1,
+							reasoning_output_tokens: 0,
+							total_tokens: 2,
+						},
+					},
+					'result'
+				);
 			}
 
 			function queryCompact(taskId: string): Record<string, unknown>[] {
@@ -428,72 +467,156 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				return entry.mapRow ? rows.map(entry.mapRow) : rows;
 			}
 
-			test('returns at most compactLimit rows per session', () => {
+			test('keeps last 5 non-terminal rows per turn and always keeps terminal rows', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-				// Insert 2*compactLimit messages for the same session.
-				const total = compactLimit * 2;
-				for (let i = 0; i < total; i++) {
-					insertSdkMessageAt(`sdk-msg-${i}`, sessionId, now + i * 1000);
+				for (let i = 1; i <= 7; i += 1) {
+					insertSdkMessageAt(`t1-n${i}`, sessionId, now + i * 1000);
 				}
+				insertResultMessageAt('t1-r', sessionId, now + 8000, 'success');
+				for (let i = 1; i <= 7; i += 1) {
+					insertSdkMessageAt(`t2-n${i}`, sessionId, now + (8 + i) * 1000);
+				}
+				insertResultMessageAt('t2-r', sessionId, now + 16000, 'error_during_execution');
 
 				const rows = queryCompact(taskId);
-				expect(rows).toHaveLength(compactLimit);
+				expect(rows.map((r) => r.id)).toEqual([
+					't1-n3',
+					't1-n4',
+					't1-n5',
+					't1-n6',
+					't1-n7',
+					't1-r',
+					't2-n3',
+					't2-n4',
+					't2-n5',
+					't2-n6',
+					't2-n7',
+					't2-r',
+				]);
+				const t1Row = rows.find((r) => r.id === 't1-r')!;
+				const t2Row = rows.find((r) => r.id === 't2-r')!;
+				expect(t1Row.turnIndex).toBe(1);
+				expect(t2Row.turnIndex).toBe(2);
+				expect(t1Row.turnHiddenMessageCount).toBe(2);
+				expect(t2Row.turnHiddenMessageCount).toBe(2);
 			});
 
-			test('keeps the most recent rows (last N by createdAt)', () => {
+			test('terminal row does not count toward the 5-row non-terminal cap', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-				const total = compactLimit + 5;
-				// Insert in chronological order (i==0 is oldest).
-				for (let i = 0; i < total; i++) {
-					insertSdkMessageAt(`sdk-keep-${String(i).padStart(4, '0')}`, sessionId, now + i * 1000);
+				for (let i = 1; i <= 6; i += 1) {
+					insertSdkMessageAt(`n${i}`, sessionId, now + i * 1000);
 				}
+				insertResultMessageAt('r1', sessionId, now + 7000, 'success');
 
 				const rows = queryCompact(taskId);
-				expect(rows).toHaveLength(compactLimit);
-				// The oldest rows (sdk-keep-0000..0004) should be dropped; the newest
-				// (sdk-keep-00{total-1}) should survive.
-				const newestId = `sdk-keep-${String(total - 1).padStart(4, '0')}`;
-				const ids = rows.map((r) => r.id);
-				expect(ids).toContain(newestId);
-				expect(ids).not.toContain('sdk-keep-0000');
-				expect(ids).not.toContain('sdk-keep-0004');
+				expect(rows.map((r) => r.id)).toEqual(['n2', 'n3', 'n4', 'n5', 'n6', 'r1']);
+				expect(rows).toHaveLength(6);
 			});
 
-			test('surfaces sessionMessageCount equal to the true per-session total', () => {
+			test('pins the initial user message in a turn and places hidden count after it', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-				const total = compactLimit + 10;
-				for (let i = 0; i < total; i++) {
-					insertSdkMessageAt(`sdk-count-${i}`, sessionId, now + i * 1000);
+				insertSdkMessageAt(
+					'u-initial',
+					sessionId,
+					now + 1000,
+					{
+						type: 'user',
+						isSynthetic: true,
+						message: { role: 'user', content: 'Initial turn prompt' },
+					},
+					'user'
+				);
+				for (let i = 1; i <= 7; i += 1) {
+					insertSdkMessageAt(`a${i}`, sessionId, now + (1 + i) * 1000);
 				}
+				insertResultMessageAt('r1', sessionId, now + 10000, 'success');
 
 				const rows = queryCompact(taskId);
-				// Every row should carry the true total, not the delivered count.
-				for (const row of rows) {
-					expect(row.sessionMessageCount).toBe(total);
-				}
+				expect(rows.map((r) => r.id)).toEqual(['u-initial', 'a3', 'a4', 'a5', 'a6', 'a7', 'r1']);
+				const resultRow = rows.find((r) => r.id === 'r1')!;
+				expect(resultRow.turnHiddenMessageCount).toBe(2);
 			});
 
-			test('omits sessionMessageCount when counts match delivered rows (no truncation)', () => {
+			test('applies turn compaction independently per session (agent)', () => {
+				const orchestrationSessionId = 'space:test-space:task:compact-orch';
+				const nodeSessionId = 'space:test-space:task:compact-node';
+				const workflowRunId = 'wr-compact-per-session';
+				const workflowNodeId = 'node-compact';
+				const taskId = insertSpaceTask({
+					taskAgentSessionId: orchestrationSessionId,
+					workflowRunId,
+				});
+
+				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
+				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
+
+				db.exec(`
+					INSERT INTO node_executions (
+						id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+						agent_session_id, status, result, created_at, started_at,
+						completed_at, updated_at
+					) VALUES (
+						'ne-compact', '${workflowRunId}', '${workflowNodeId}', 'coder', NULL,
+						'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
+						NULL, ${now}
+					)
+				`);
+
+				for (let i = 1; i <= 6; i += 1) {
+					insertSdkMessageAt(`orch-n${i}`, orchestrationSessionId, now + i * 1000);
+					insertSdkMessageAt(`node-n${i}`, nodeSessionId, now + i * 1000 + 500);
+				}
+				insertResultMessageAt('orch-r', orchestrationSessionId, now + 7000, 'success');
+				insertResultMessageAt('node-r', nodeSessionId, now + 7500, 'success');
+
+				const rows = queryCompact(taskId);
+				const orchIds = rows.filter((r) => r.sessionId === orchestrationSessionId).map((r) => r.id);
+				const nodeIds = rows.filter((r) => r.sessionId === nodeSessionId).map((r) => r.id);
+
+				expect(orchIds).toEqual(['orch-n2', 'orch-n3', 'orch-n4', 'orch-n5', 'orch-n6', 'orch-r']);
+				expect(nodeIds).toEqual(['node-n2', 'node-n3', 'node-n4', 'node-n5', 'node-n6', 'node-r']);
+			});
+
+			test('omits user tool_result rows and excludes them from non-terminal cap', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-				// Well under the compact limit.
-				insertSdkMessageAt('sdk-small-1', sessionId, now);
-				insertSdkMessageAt('sdk-small-2', sessionId, now + 1000);
+				insertSdkMessageAt('a1', sessionId, now + 1000);
+				insertSdkMessageAt('a2', sessionId, now + 1100);
+				insertSdkMessageAt('a3', sessionId, now + 1200);
+				insertSdkMessageAt('a4', sessionId, now + 1300);
+				insertSdkMessageAt('a5', sessionId, now + 1400);
+				insertSdkMessageAt('a6', sessionId, now + 1500);
+				insertSdkMessageAt(
+					'u1',
+					sessionId,
+					now + 1600,
+					{
+						type: 'user',
+						message: {
+							role: 'user',
+							content: [
+								{
+									type: 'tool_result',
+									tool_use_id: 'toolu_test',
+									content: [{ type: 'text', text: 'result payload' }],
+								},
+							],
+						},
+					},
+					'user'
+				);
+				insertResultMessageAt('r1', sessionId, now + 1700, 'success');
 
 				const rows = queryCompact(taskId);
-				expect(rows).toHaveLength(2);
-				// sessionMessageCount is always set by the compact SQL, but must equal
-				// the delivered count when the slice didn't drop anything.
-				for (const row of rows) {
-					expect(row.sessionMessageCount).toBe(2);
-				}
+				expect(rows.map((r) => r.id)).toEqual(['a2', 'a3', 'a4', 'a5', 'a6', 'r1']);
+				expect(rows.map((r) => r.id)).not.toContain('u1');
 			});
 
 			test('final ordering is createdAt ASC, id ASC', () => {
@@ -502,7 +625,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
 				insertSdkMessageAt('sdk-b', sessionId, now + 2000);
 				insertSdkMessageAt('sdk-a', sessionId, now + 1000);
-				insertSdkMessageAt('sdk-c', sessionId, now + 3000);
+				insertResultMessageAt('sdk-r', sessionId, now + 3000, 'success');
 
 				const rows = queryCompact(taskId);
 				const createdAts = rows.map((r) => r.createdAt as number);
@@ -510,63 +633,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				expect(createdAts).toEqual(sorted);
 			});
 
-			test('slices independently per session', () => {
-				const orchestrationSessionId = 'space:compact:task:orch-multi';
-				const nodeSessionId = 'node-agent-session-compact-multi';
-				const workflowRunId = 'wr-compact-multi';
-				const workflowNodeId = 'node-compact-multi';
-
-				const taskId = insertSpaceTask({
-					id: 'compact-multi-1',
-					taskAgentSessionId: orchestrationSessionId,
-					workflowRunId,
-					status: 'in_progress',
-				});
-
-				db.exec(`
-					INSERT INTO node_executions (
-						id, workflow_run_id, workflow_node_id, agent_name, agent_id,
-						agent_session_id, status, result, created_at, started_at,
-						completed_at, updated_at
-					) VALUES (
-						'ne-compact-multi', '${workflowRunId}', '${workflowNodeId}', 'coder', NULL,
-						'${nodeSessionId}', 'in_progress', NULL, ${now}, ${now},
-						NULL, ${now}
-					)
-				`);
-
-				insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"processing"}');
-				insertSession(nodeSessionId, 'space_task_agent', '{"status":"processing"}');
-
-				// Orchestration: above the limit; node agent: below.
-				const orchestrationTotal = compactLimit + 7;
-				for (let i = 0; i < orchestrationTotal; i++) {
-					insertSdkMessageAt(`sdk-orch-${i}`, orchestrationSessionId, now + i * 1000);
-				}
-				for (let i = 0; i < 3; i++) {
-					insertSdkMessageAt(`sdk-node-${i}`, nodeSessionId, now + i * 1000);
-				}
-
-				const rows = queryCompact(taskId);
-				const orchestrationRows = rows.filter((r) => r.sessionId === orchestrationSessionId);
-				const nodeRows = rows.filter((r) => r.sessionId === nodeSessionId);
-
-				expect(orchestrationRows).toHaveLength(compactLimit);
-				expect(nodeRows).toHaveLength(3);
-
-				for (const row of orchestrationRows) {
-					expect(row.sessionMessageCount).toBe(orchestrationTotal);
-				}
-				for (const row of nodeRows) {
-					expect(row.sessionMessageCount).toBe(3);
-				}
-			});
-
-			test('legacy full query variant is unaffected (no sessionMessageCount, no slice)', () => {
+			test('legacy full query variant is unaffected (no compact slicing)', () => {
 				const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
 				insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-				const total = compactLimit + 4;
+				const total = 12;
 				for (let i = 0; i < total; i++) {
 					insertSdkMessageAt(`sdk-full-${i}`, sessionId, now + i * 1000);
 				}

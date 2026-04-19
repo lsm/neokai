@@ -90,6 +90,8 @@ interface Props {
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
 	allMessages?: ChatMessage[];
+	/** Render user rows whose content is tool_result blocks. */
+	showToolResultMessages?: boolean;
 }
 
 export function SDKUserMessage({
@@ -105,6 +107,7 @@ export function SDKUserMessage({
 	selectedMessages,
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
+	showToolResultMessages = false,
 }: Props) {
 	const { message: apiMessage } = message;
 	const [copied, setCopied] = useState(false);
@@ -120,7 +123,7 @@ export function SDKUserMessage({
 	};
 
 	// Don't render tool result messages - they'll be shown with their tool use blocks
-	if (isToolResultMessage()) {
+	if (isToolResultMessage() && !showToolResultMessages) {
 		return null;
 	}
 
@@ -143,6 +146,28 @@ export function SDKUserMessage({
 						return b.text as string;
 					}
 					// Image blocks or other types - skip or show type
+					if (b.type === 'tool_result') {
+						const rawContent = b.content;
+						if (typeof rawContent === 'string') return rawContent;
+						if (Array.isArray(rawContent)) {
+							return rawContent
+								.map((c: unknown) => {
+									const obj = c as Record<string, unknown>;
+									if (typeof obj.text === 'string') return obj.text;
+									return '';
+								})
+								.filter(Boolean)
+								.join('\n');
+						}
+						if (rawContent && typeof rawContent === 'object') {
+							try {
+								return JSON.stringify(rawContent, null, 2);
+							} catch {
+								return String(rawContent);
+							}
+						}
+						return '';
+					}
 					return '';
 				})
 				.filter(Boolean)
