@@ -278,12 +278,12 @@ describe('SessionStatusBar', () => {
 		it('should show disabled state when autoScroll is false', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={false} />);
 
-			// Should have gray border when disabled
+			// Should have neutral border when disabled
 			const buttons = Array.from(container.querySelectorAll('.control-btn'));
 			const autoScrollButton = buttons.find(
 				(btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
 			);
-			expect(autoScrollButton?.className).toContain('border-gray-600');
+			expect(autoScrollButton?.className).toContain('border-dark-600/80');
 		});
 
 		it('should call onAutoScrollChange when clicked', () => {
@@ -641,8 +641,8 @@ describe('SessionStatusBar', () => {
 			const thinkingButton = buttons.find(
 				(btn) => btn.getAttribute('title')?.includes('Thinking:') || false
 			);
-			// Auto level should have gray border, not amber ring
-			expect(thinkingButton?.className).toContain('border-gray-600');
+			// Auto level should have neutral border, not amber ring
+			expect(thinkingButton?.className).toContain('border-dark-600/80');
 		});
 
 		it('should show border ring for think8k level', () => {
@@ -783,13 +783,13 @@ describe('SessionStatusBar', () => {
 			expect(coordinatorButton?.className).toContain('border-purple-500');
 		});
 
-		it('should show gray border when coordinator mode is disabled', () => {
+		it('should show neutral border when coordinator mode is disabled', () => {
 			const { container } = render(<SessionStatusBar {...defaultProps} coordinatorMode={false} />);
 			const buttons = Array.from(container.querySelectorAll('.control-btn'));
 			const coordinatorButton = buttons.find(
 				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
 			);
-			expect(coordinatorButton?.className).toContain('border-gray-600');
+			expect(coordinatorButton?.className).toContain('border-dark-600/80');
 		});
 	});
 
