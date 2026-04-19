@@ -115,6 +115,10 @@ export class SpaceWorkflowManager {
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
 		}
+		// IMPORTANT: thread `completionActions` through both branches. The
+		// second branch (existing.nodes rehydration) runs on EVERY update call —
+		// including updates that don't touch nodes — so dropping the field here
+		// silently deletes completionActions from any workflow that had them.
 		const effectiveNodes: WorkflowNodeInput[] =
 			params.nodes !== undefined
 				? (params.nodes ?? []).map(
@@ -122,6 +126,7 @@ export class SpaceWorkflowManager {
 							id: n.id,
 							name: n.name,
 							agents: n.agents,
+							...(n.completionActions ? { completionActions: n.completionActions } : {}),
 						})
 					)
 				: existing.nodes.map(
@@ -129,6 +134,7 @@ export class SpaceWorkflowManager {
 							id: n.id,
 							name: n.name,
 							agents: n.agents,
+							...(n.completionActions ? { completionActions: n.completionActions } : {}),
 						})
 					);
 
