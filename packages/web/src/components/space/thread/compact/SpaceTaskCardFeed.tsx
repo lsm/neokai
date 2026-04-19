@@ -1,5 +1,5 @@
 import { useMemo } from 'preact/hooks';
-import { isSDKResultMessage, isSDKSystemInit } from '@neokai/shared/sdk/type-guards';
+import { isSDKSystemInit, isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { UseMessageMapsResult } from '../../../../hooks/useMessageMaps';
 import { spaceOverlayAgentNameSignal, spaceOverlaySessionIdSignal } from '../../../../lib/signals';
@@ -32,7 +32,7 @@ interface AgentBlock {
 interface TurnGroup {
 	id: string;
 	index: number;
-	rows: ParsedThreadRow[];
+	block: AgentBlock;
 }
 
 function normalizeAgentKey(label: string): string {
@@ -43,72 +43,84 @@ function shortAgentLabel(label: string): string {
 	return label.replace(/\s+agent$/i, '').toUpperCase();
 }
 
-function isTurnTerminalRow(row: ParsedThreadRow): boolean {
-	if (!row.message) return false;
-	return isSDKResultMessage(row.message);
-}
-
-function buildTurns(rows: ParsedThreadRow[]): TurnGroup[] {
+function buildAgentTurnBlocks(rows: ParsedThreadRow[]): AgentBlock[] {
 	if (rows.length === 0) return [];
 
-	const turns: TurnGroup[] = [];
-	let currentRows: ParsedThreadRow[] = [];
-	let currentStartId: string | number = rows[0].id;
-	let turnIndex = 1;
+	const grouped = new Map<
+		string,
+		AgentBlock & {
+			startCreatedAt: number;
+			startRowId: string;
+			sequence: number;
+		}
+	>();
+	let sequence = 0;
 
 	for (const row of rows) {
-		if (currentRows.length === 0) {
-			currentStartId = row.id;
-		}
-
-		currentRows.push(row);
-
-		if (isTurnTerminalRow(row)) {
-			turns.push({
-				id: `turn-${turnIndex}-${String(currentStartId)}`,
-				index: turnIndex,
-				rows: currentRows,
-			});
-			turnIndex += 1;
-			currentRows = [];
-		}
-	}
-
-	if (currentRows.length > 0) {
-		turns.push({
-			id: `turn-${turnIndex}-${String(currentStartId)}`,
-			index: turnIndex,
-			rows: currentRows,
-		});
-	}
-
-	return turns;
-}
-
-function buildAgentBlocks(rows: ParsedThreadRow[]): AgentBlock[] {
-	if (rows.length === 0) return [];
-
-	const blocks: AgentBlock[] = [];
-	for (const row of rows) {
-		const last = blocks[blocks.length - 1];
-		const rowKey = `${normalizeAgentKey(row.label)}::${row.sessionId ?? ''}`;
-		const lastKey =
-			last === undefined ? null : `${normalizeAgentKey(last.label)}::${last.sessionId ?? ''}`;
-		if (last && lastKey === rowKey) {
-			last.rows.push(row);
+		const sessionKey = row.sessionId ?? `label:${normalizeAgentKey(row.label)}`;
+		const turnKey =
+			typeof row.turnIndex === 'number' && Number.isFinite(row.turnIndex) ? row.turnIndex : 1;
+		const key = `${sessionKey}::turn:${turnKey}`;
+		const existing = grouped.get(key);
+		if (existing) {
+			existing.rows.push(row);
+			if (row.createdAt < existing.startCreatedAt) {
+				existing.startCreatedAt = row.createdAt;
+				existing.startRowId = String(row.id);
+			}
 			continue;
 		}
 
-		blocks.push({
+		grouped.set(key, {
 			id: String(row.id),
 			label: row.label,
 			color: getAgentColor(row.label),
 			sessionId: row.sessionId ?? null,
 			rows: [row],
+			startCreatedAt: row.createdAt,
+			startRowId: String(row.id),
+			sequence: sequence++,
 		});
 	}
 
-	return blocks;
+	return Array.from(grouped.values())
+		.sort((a, b) => {
+			if (a.startCreatedAt !== b.startCreatedAt) {
+				return a.startCreatedAt - b.startCreatedAt;
+			}
+			return a.sequence - b.sequence;
+		})
+		.map(
+			({
+				startCreatedAt: _startCreatedAt,
+				startRowId: _startRowId,
+				sequence: _sequence,
+				...block
+			}) => block
+		);
+}
+
+function buildTurns(rows: ParsedThreadRow[]): TurnGroup[] {
+	const blocks = buildAgentTurnBlocks(rows);
+	return blocks.map((block, index) => ({
+		id: `turn-${index + 1}-${block.id}`,
+		index: index + 1,
+		block,
+	}));
+}
+
+function getBlockHiddenCount(rows: ParsedThreadRow[]): number {
+	let hiddenCount = 0;
+	for (const row of rows) {
+		const hidden = row.turnHiddenMessageCount ?? 0;
+		if (hidden > hiddenCount) hiddenCount = hidden;
+	}
+	return hiddenCount;
+}
+
+function getBlockPinnedInitialUserRowId(rows: ParsedThreadRow[]): string | null {
+	const initialUser = rows.find((row) => row.message !== null && isSDKUserMessage(row.message));
+	return initialUser ? String(initialUser.id) : null;
 }
 
 function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning = false) {
@@ -144,7 +156,9 @@ function renderRow(row: ParsedThreadRow, maps: UseMessageMapsResult, isRunning =
 function renderAgentBlock(
 	block: AgentBlock,
 	maps: UseMessageMapsResult,
-	runningRowId: string | null
+	runningRowId: string | null,
+	pinnedInitialUserRowId: string | null,
+	hiddenCount: number
 ) {
 	const isClickable = !!block.sessionId;
 
@@ -205,17 +219,39 @@ function renderAgentBlock(
 					data-testid="compact-block-siderail"
 				/>
 				<div class="flex-1 min-w-0 space-y-1">
-					{block.rows.map((row) => {
+					{block.rows.flatMap((row) => {
 						const key = String(row.id);
 						const rowNode = renderRow(row, maps, key === runningRowId);
-						if (key === runningRowId) {
-							return (
-								<div key={key} data-testid="compact-running-block">
+						const rowEl =
+							key === runningRowId ? (
+								<div key={`row-${key}`} data-testid="compact-running-block">
 									{rowNode}
 								</div>
+							) : (
+								<div key={`row-${key}`}>{rowNode}</div>
 							);
+						if (
+							hiddenCount > 0 &&
+							pinnedInitialUserRowId !== null &&
+							key === pinnedInitialUserRowId
+						) {
+							return [
+								rowEl,
+								<div
+									key={`hidden-divider-${key}`}
+									class="relative py-1.5"
+									data-testid="compact-turn-hidden-divider"
+								>
+									<div class="border-t border-dark-700" aria-hidden="true" />
+									<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+										<span class="px-2 text-[11px] uppercase tracking-[0.12em] text-gray-500 bg-dark-900">
+											{`${hiddenCount} earlier ${hiddenCount === 1 ? 'message' : 'messages'}`}
+										</span>
+									</div>
+								</div>,
+							];
 						}
-						return <div key={key}>{rowNode}</div>;
+						return [rowEl];
 					})}
 				</div>
 			</div>
@@ -224,14 +260,14 @@ function renderAgentBlock(
 }
 
 /**
- * SpaceTaskCardFeed — compact renderer grouped by turn and then agent block.
+ * SpaceTaskCardFeed — compact renderer grouped by agent turn blocks.
  *
  * Rendering policy:
- * - Render whole history (no tail truncation).
- * - Group rows into "turns" using terminal result/error messages as boundaries.
- *   Turn N includes rows up to and including the terminal result/error row.
- * - Within each turn, group consecutive rows by agent/session into clickable
- *   agent blocks with color headers/siderails.
+ * - Render the compact server-provided row set.
+ * - Group rows by (agent session, turnIndex) so interleaved messages from the
+ *   same agent turn are rendered in one block.
+ * - Order blocks by turn start time (earliest row in each block).
+ * - Render each block as a clickable agent card with color header/siderail.
  */
 export function SpaceTaskCardFeed({
 	parsedRows,
@@ -240,19 +276,21 @@ export function SpaceTaskCardFeed({
 	isAgentActive,
 }: SpaceTaskCardFeedProps) {
 	const turns = useMemo(() => buildTurns(parsedRows), [parsedRows]);
-	const allRows = useMemo(() => turns.flatMap((turn) => turn.rows), [turns]);
 
 	const runningRowId = useMemo(() => {
 		if (!isAgentActive) return null;
-		const tailLast = allRows[allRows.length - 1];
+		const tailLast = parsedRows[parsedRows.length - 1];
 		if (!tailLast || !rowHasToolUse(tailLast)) return null;
 		return String(tailLast.id);
-	}, [isAgentActive, allRows]);
+	}, [isAgentActive, parsedRows]);
 
 	return (
 		<div class="space-y-2 px-4 py-2" data-testid="space-task-event-feed-compact">
 			{turns.map((turn) => {
-				const blocks = buildAgentBlocks(turn.rows);
+				const block = turn.block;
+				const blockHiddenCount = getBlockHiddenCount(block.rows);
+				const blockPinnedInitialUserRowId =
+					blockHiddenCount > 0 ? getBlockPinnedInitialUserRowId(block.rows) : null;
 				return (
 					<div key={turn.id} class="space-y-1.5" data-testid="compact-turn-group">
 						<div class="relative py-1" data-testid="compact-turn-divider">
@@ -263,7 +301,13 @@ export function SpaceTaskCardFeed({
 								</span>
 							</div>
 						</div>
-						{blocks.map((block) => renderAgentBlock(block, maps, runningRowId))}
+						{renderAgentBlock(
+							block,
+							maps,
+							runningRowId,
+							blockPinnedInitialUserRowId,
+							blockHiddenCount
+						)}
 					</div>
 				);
 			})}

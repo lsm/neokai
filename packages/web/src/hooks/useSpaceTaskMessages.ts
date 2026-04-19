@@ -15,6 +15,16 @@ export interface SpaceTaskThreadMessageRow {
 	createdAt: number;
 	parentToolUseId?: string | null;
 	/**
+	 * Server-computed turn index (per session) for compact thread grouping.
+	 * Present in compact query rows; absent in full rows.
+	 */
+	turnIndex?: number;
+	/**
+	 * Count of earlier non-terminal messages hidden by compact cap in this
+	 * session-turn. Present in compact query rows; absent in full rows.
+	 */
+	turnHiddenMessageCount?: number;
+	/**
 	 * Total messages stored for this session — populated by the compact query
 	 * variant when the server has sliced the result set. When equal to the
 	 * number of delivered rows for this session, nothing was truncated.

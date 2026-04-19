@@ -165,6 +165,14 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 		typeof row.sessionMessageCount === 'number' && Number.isFinite(row.sessionMessageCount)
 			? Number(row.sessionMessageCount)
 			: undefined;
+	const turnIndex =
+		typeof row.turnIndex === 'number' && Number.isFinite(row.turnIndex)
+			? Number(row.turnIndex)
+			: undefined;
+	const turnHiddenMessageCount =
+		typeof row.turnHiddenMessageCount === 'number' && Number.isFinite(row.turnHiddenMessageCount)
+			? Number(row.turnHiddenMessageCount)
+			: undefined;
 
 	let content = typeof row.content === 'string' ? row.content : String(row.content ?? '');
 
@@ -205,6 +213,12 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
 	};
 	if (sessionMessageCount !== undefined) {
 		mapped.sessionMessageCount = sessionMessageCount;
+	}
+	if (turnIndex !== undefined) {
+		mapped.turnIndex = turnIndex;
+	}
+	if (turnHiddenMessageCount !== undefined) {
+		mapped.turnHiddenMessageCount = turnHiddenMessageCount;
 	}
 	return mapped;
 }
@@ -840,79 +854,115 @@ FROM joined
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
-/**
- * Number of rendered "event units" the compact thread keeps from the tail.
- *
- * The web renderer now flattens assistant rows by content blocks (tool_use /
- * thinking / text), so one database row can expand to multiple rendered events.
- * This query estimates that expansion and returns only the rows needed for:
- *   - the earliest real (non-synthetic) user anchor message, and
- *   - the tail rows that cover the last N rendered events.
- */
-export const SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT = 5;
+/** Maximum non-terminal rows to keep per (session, turn) in compact mode. */
+export const SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT = 5;
 
 /**
- * Compact variant — returns only the rows needed by the compact task thread.
+ * Compact variant — server-side turn compaction for task threads.
  *
- * Strategy:
- *   1. Estimate each row's render weight (`eventCount`):
- *      - assistant rows: number of content blocks with a string `type`
- *      - all other rows: 1
- *   2. Walk rows from newest→oldest with a cumulative event count and keep the
- *      rows fully inside the last-N tail.
- *   3. Include one additional "crossing" row when a multi-block assistant row
- *      straddles the N-event cutoff.
- *   4. Always include the earliest non-synthetic user row as the anchor.
- *   5. Return final rows in chronological order (createdAt ASC, id ASC).
+ * Turn model (per session):
+ *   - A turn is rows between terminal result messages.
+ *   - Turn 1 starts at the first row in the session.
+ *   - A terminal row (`messageType = 'result'`) closes the current turn and
+ *     belongs to that turn.
+ *
+ * Visibility:
+ *   - Keep ALL terminal rows.
+ *   - Keep only the last N renderable non-terminal rows per session-turn.
+ *   - Rows that are known to render as `null` in compact UI (currently
+ *     `user` messages whose content is tool_result blocks) are excluded from
+ *     the non-terminal cap and omitted from compact payloads.
+ *   - Return rows globally ordered by `(createdAt ASC, id ASC)`.
  */
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
 ${SPACE_TASK_MESSAGES_BASE_CTE},
-annotated AS (
+session_turns AS (
   SELECT
     j.*,
     CASE
-      WHEN j.messageType = 'assistant' THEN COALESCE(
-        NULLIF((
-          SELECT COUNT(*)
-          FROM json_each(json_extract(j.content, '$.message.content')) AS je
-          WHERE json_type(je.value, '$.type') = 'text'
-        ), 0),
-        1
-      )
-      ELSE 1
-    END AS eventCount,
-    CASE
-      WHEN j.messageType = 'user' AND COALESCE(json_extract(j.content, '$.isSynthetic'), 0) != 1 THEN 1
+      WHEN j.messageType = 'result' THEN 1
       ELSE 0
-    END AS isInitialHumanCandidate
+    END AS isTerminal,
+    CASE
+      WHEN j.messageType = 'user'
+        AND json_type(j.content, '$.message.content') = 'array'
+        AND EXISTS (
+        SELECT 1
+        FROM json_each(json_extract(j.content, '$.message.content')) AS je
+        WHERE json_extract(je.value, '$.type') = 'tool_result'
+      ) THEN 0
+      ELSE 1
+    END AS isRenderable,
+    COALESCE(
+      SUM(CASE WHEN j.messageType = 'result' THEN 1 ELSE 0 END) OVER (
+        PARTITION BY j.sessionId
+        ORDER BY j.createdAt ASC, j.id ASC
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+      ),
+      0
+    ) + 1 AS turnIndex
   FROM joined j
 ),
-weighted AS (
+ranked AS (
   SELECT
-    a.*,
-    ROW_NUMBER() OVER (ORDER BY a.createdAt ASC, a.id ASC) AS rnAsc,
-    SUM(a.eventCount) OVER (
-      ORDER BY a.createdAt DESC, a.id DESC
-      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ) AS tailEventCum
-  FROM annotated a
+    st.*,
+    CASE
+      WHEN st.isTerminal = 0 AND st.isRenderable = 1 THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable
+        ORDER BY st.createdAt DESC, st.id DESC
+      )
+      ELSE NULL
+    END AS nonTerminalRankDesc,
+    CASE
+      WHEN st.isTerminal = 0 AND st.isRenderable = 1 AND st.messageType = 'user' THEN ROW_NUMBER() OVER (
+        PARTITION BY st.sessionId, st.turnIndex, st.isTerminal, st.isRenderable, st.messageType
+        ORDER BY st.createdAt ASC, st.id ASC
+      )
+      ELSE NULL
+    END AS userRowRankAsc
+  FROM session_turns st
+),
+scored AS (
+  SELECT
+    r.*,
+    CASE
+      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT}
+        THEN 1
+      ELSE 0
+    END AS isTailVisible,
+    CASE
+      WHEN r.isTerminal = 0 AND r.isRenderable = 1 AND r.messageType = 'user' AND r.userRowRankAsc = 1
+        THEN 1
+      ELSE 0
+    END AS isInitialUserVisible,
+    SUM(CASE WHEN r.isTerminal = 0 AND r.isRenderable = 1 THEN 1 ELSE 0 END) OVER (
+      PARTITION BY r.sessionId, r.turnIndex
+    ) AS totalRenderableNonTerminalInTurn,
+    SUM(
+      CASE
+        WHEN r.isTerminal = 0 AND r.isRenderable = 1
+          AND (
+            (r.nonTerminalRankDesc <= ${SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT})
+            OR (r.messageType = 'user' AND r.userRowRankAsc = 1)
+          )
+          THEN 1
+        ELSE 0
+      END
+    ) OVER (
+      PARTITION BY r.sessionId, r.turnIndex
+    ) AS visibleRenderableNonTerminalInTurn
+  FROM ranked r
 ),
 selected AS (
-  SELECT w.*
-  FROM weighted w
+  SELECT
+    s.*
+  FROM scored s
   WHERE
-    w.tailEventCum <= ${SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT}
+    s.isTerminal = 1
     OR (
-      (w.tailEventCum - w.eventCount) < ${SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT}
-      AND w.tailEventCum > ${SPACE_TASK_MESSAGES_COMPACT_TARGET_EVENT_COUNT}
-    )
-    OR (
-      w.isInitialHumanCandidate = 1
-      AND w.rnAsc = (
-        SELECT MIN(w2.rnAsc)
-        FROM weighted w2
-        WHERE w2.isInitialHumanCandidate = 1
-      )
+      s.isTerminal = 0
+      AND s.isRenderable = 1
+      AND (s.isTailVisible = 1 OR s.isInitialUserVisible = 1)
     )
 )
 SELECT
@@ -926,6 +976,12 @@ SELECT
   messageType,
   content,
   createdAt,
+  turnIndex,
+  CASE
+    WHEN totalRenderableNonTerminalInTurn > visibleRenderableNonTerminalInTurn
+      THEN totalRenderableNonTerminalInTurn - visibleRenderableNonTerminalInTurn
+    ELSE 0
+  END AS turnHiddenMessageCount,
   iteration,
   parentToolUseId
 FROM selected

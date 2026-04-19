@@ -76,6 +76,8 @@ interface Props {
 	 * of SubagentBlock.
 	 */
 	flattenSubagentTools?: boolean;
+	/** When true, user messages containing tool_result blocks are rendered. */
+	showToolResultUserMessages?: boolean;
 	/**
 	 * When true, the last non-terminal event message in a compact task thread is
 	 * still executing. The receiving component wraps its visible boundary element
@@ -198,6 +200,7 @@ export function SDKMessageRenderer({
 	taskContext,
 	showSubagentMessages = false,
 	flattenSubagentTools = false,
+	showToolResultUserMessages = false,
 	isRunning,
 }: Props) {
 	// NeoKai-native action messages are always shown and handled separately.
@@ -246,6 +249,7 @@ export function SDKMessageRenderer({
 				sessionInfo={sessionInfo}
 				isReplay={true}
 				sessionId={sessionId}
+				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
 	} else if (isSDKUserMessage(sdkMessage)) {
@@ -261,6 +265,7 @@ export function SDKMessageRenderer({
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
 				allMessages={_allMessages}
+				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
 	} else if (isSDKAssistantMessage(sdkMessage)) {

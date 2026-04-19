@@ -63,8 +63,9 @@ export function SpaceTaskUnifiedThread({
 	// Read render style on every render so that the value stays fresh after a
 	// localStorage write (e.g. via setSpaceTaskThreadRenderStyle in devtools).
 	const renderStyle = getSpaceTaskThreadRenderStyle();
-	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'full');
+	const { rows, isLoading, isReconnecting } = useSpaceTaskMessages(taskId, 'compact');
 	const containerRef = useRef<HTMLDivElement>(null);
+	const didInitialCompactScrollRef = useRef<string | null>(null);
 
 	const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
 	const threadEvents = useMemo(() => buildThreadEvents(parsedRows), [parsedRows]);
@@ -77,8 +78,15 @@ export function SpaceTaskUnifiedThread({
 
 	useEffect(() => {
 		if (!containerRef.current) return;
+		if (renderStyle === 'compact') {
+			if (didInitialCompactScrollRef.current !== taskId) {
+				containerRef.current.scrollTop = 0;
+				didInitialCompactScrollRef.current = taskId;
+			}
+			return;
+		}
 		containerRef.current.scrollTop = containerRef.current.scrollHeight;
-	}, [parsedRows.length, threadEvents.length]);
+	}, [taskId, renderStyle, parsedRows.length, threadEvents.length]);
 
 	const hasRows = parsedRows.length > 0;
 	const [currentAgent, setCurrentAgent] = useState<AgentTag | null>(null);

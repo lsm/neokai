@@ -27,12 +27,14 @@ vi.mock('../../../sdk/SDKMessageRenderer', () => ({
 		message,
 		taskContext,
 		showSubagentMessages,
+		showToolResultUserMessages,
 		flattenSubagentTools,
 		isRunning,
 	}: {
 		message: any;
 		taskContext?: boolean;
 		showSubagentMessages?: boolean;
+		showToolResultUserMessages?: boolean;
 		flattenSubagentTools?: boolean;
 		isRunning?: boolean;
 	}) => {
@@ -52,6 +54,7 @@ vi.mock('../../../sdk/SDKMessageRenderer', () => ({
 				data-testid="sdk-message-renderer"
 				data-task-context={taskContext ? '1' : '0'}
 				data-show-subagents={showSubagentMessages ? '1' : '0'}
+				data-show-tool-result-users={showToolResultUserMessages ? '1' : '0'}
 				data-flatten-subagent-tools={flattenSubagentTools ? '1' : '0'}
 				data-running={isRunning ? '1' : '0'}
 			>
@@ -68,11 +71,15 @@ const fakeMaps = {
 	sessionInfoMap: new Map(),
 } as const;
 
+function defaultSessionIdForLabel(label: string): string {
+	return `sess-${label.trim().toLowerCase().replace(/\s+/g, '-')}`;
+}
+
 function makeAssistantTextRow(
 	id: string,
 	label: string,
 	text: string,
-	sessionId = `sess-${id}`,
+	sessionId = defaultSessionIdForLabel(label),
 	parentToolUseId?: string
 ): ParsedThreadRow {
 	return {
@@ -82,6 +89,8 @@ function makeAssistantTextRow(
 		taskId: 'task-1',
 		taskTitle: 'Task One',
 		createdAt: Number(id.replace(/\D/g, '') || 0),
+		turnIndex: undefined,
+		turnHiddenMessageCount: undefined,
 		message: {
 			type: 'assistant',
 			uuid: id,
@@ -96,7 +105,7 @@ function makeToolUseRow(
 	id: string,
 	label: string,
 	toolName = 'Bash',
-	sessionId = `sess-${id}`
+	sessionId = defaultSessionIdForLabel(label)
 ): ParsedThreadRow {
 	return {
 		id,
@@ -105,6 +114,8 @@ function makeToolUseRow(
 		taskId: 'task-1',
 		taskTitle: 'Task One',
 		createdAt: Number(id.replace(/\D/g, '') || 0),
+		turnIndex: undefined,
+		turnHiddenMessageCount: undefined,
 		message: {
 			type: 'assistant',
 			uuid: id,
@@ -118,7 +129,7 @@ function makeUserRow(
 	id: string,
 	label: string,
 	text: string,
-	sessionId = `sess-${id}`,
+	sessionId = defaultSessionIdForLabel(label),
 	isSynthetic = false
 ): ParsedThreadRow {
 	return {
@@ -128,6 +139,8 @@ function makeUserRow(
 		taskId: 'task-1',
 		taskTitle: 'Task One',
 		createdAt: Number(id.replace(/\D/g, '') || 0),
+		turnIndex: undefined,
+		turnHiddenMessageCount: undefined,
 		message: {
 			type: 'user',
 			uuid: id,
@@ -142,7 +155,7 @@ function makeResultRow(
 	id: string,
 	label: string,
 	subtype: 'success' | 'error_during_execution' = 'success',
-	sessionId = `sess-${id}`,
+	sessionId = defaultSessionIdForLabel(label),
 	parentToolUseId?: string
 ): ParsedThreadRow {
 	return {
@@ -152,6 +165,8 @@ function makeResultRow(
 		taskId: 'task-1',
 		taskTitle: 'Task One',
 		createdAt: Number(id.replace(/\D/g, '') || 0),
+		turnIndex: undefined,
+		turnHiddenMessageCount: undefined,
 		message: {
 			type: 'result',
 			uuid: id,
@@ -170,7 +185,7 @@ describe('SpaceTaskCardFeed', () => {
 	});
 	afterEach(() => cleanup());
 
-	it('renders whole history (no tail truncation)', () => {
+	it('renders all compact rows while preserving agent-turn block grouping', () => {
 		const rows = [
 			makeUserRow('u1', 'Task Agent', 'Initial ask'),
 			makeAssistantTextRow('a1', 'Task Agent', 'msg-1'),
@@ -192,18 +207,27 @@ describe('SpaceTaskCardFeed', () => {
 		const rendered = Array.from(
 			container.querySelectorAll('[data-testid="sdk-message-renderer"]')
 		).map((el) => el.textContent);
-		expect(rendered).toEqual(['Initial ask', 'msg-1', 'msg-2', 'msg-3', 'msg-4', 'msg-5', 'msg-6']);
+		expect(rendered).toEqual(['Initial ask', 'msg-1', 'msg-4', 'msg-5', 'msg-6', 'msg-2', 'msg-3']);
 		expect(screen.queryByTestId('compact-flat-hidden-divider')).toBeNull();
 	});
 
-	it('groups rows by turn using terminal result/error boundaries', () => {
+	it('groups interleaved messages by agent/session turn and orders by turn start', () => {
 		const rows = [
-			makeAssistantTextRow('a0', 'Task Agent', 'turn1-task'),
-			makeAssistantTextRow('a1', 'Coder Agent', 'turn1-coder'),
-			makeResultRow('r1', 'Task Agent', 'success'),
-			makeAssistantTextRow('a2', 'Task Agent', 'turn2-task'),
-			makeResultRow('r2', 'Task Agent', 'error_during_execution'),
-			makeAssistantTextRow('a3', 'Task Agent', 'turn3-task'),
+			{ ...makeUserRow('u1', 'Coder Agent', 'coder-init', 'sess-coder'), turnIndex: 1 },
+			{ ...makeUserRow('u2', 'Reviewer Agent', 'review-init', 'sess-reviewer'), turnIndex: 1 },
+			{
+				...makeAssistantTextRow('a1', 'Coder Agent', 'coder-progress', 'sess-coder'),
+				turnIndex: 1,
+			},
+			{
+				...makeAssistantTextRow('a2', 'Reviewer Agent', 'review-progress', 'sess-reviewer'),
+				turnIndex: 1,
+			},
+			{ ...makeResultRow('r1', 'Coder Agent', 'success', 'sess-coder'), turnIndex: 1 },
+			{
+				...makeAssistantTextRow('a3', 'Reviewer Agent', 'review-tail', 'sess-reviewer'),
+				turnIndex: 1,
+			},
 		];
 		render(
 			<SpaceTaskCardFeed
@@ -215,17 +239,21 @@ describe('SpaceTaskCardFeed', () => {
 		);
 
 		const turnGroups = screen.getAllByTestId('compact-turn-group');
-		expect(turnGroups.length).toBe(3);
+		expect(turnGroups.length).toBe(2);
 		expect(screen.getByText('Turn 1')).toBeTruthy();
 		expect(screen.getByText('Turn 2')).toBeTruthy();
-		expect(screen.getByText('Turn 3')).toBeTruthy();
-
 		const turn1Msgs = within(turnGroups[0]).getAllByTestId('sdk-message-renderer');
-		expect(turn1Msgs.map((el) => el.textContent)).toEqual(['turn1-task', 'turn1-coder', 'result']);
+		expect(turn1Msgs.map((el) => el.textContent)).toEqual([
+			'coder-init',
+			'coder-progress',
+			'result',
+		]);
 		const turn2Msgs = within(turnGroups[1]).getAllByTestId('sdk-message-renderer');
-		expect(turn2Msgs.map((el) => el.textContent)).toEqual(['turn2-task', 'result']);
-		const turn3Msgs = within(turnGroups[2]).getAllByTestId('sdk-message-renderer');
-		expect(turn3Msgs.map((el) => el.textContent)).toEqual(['turn3-task']);
+		expect(turn2Msgs.map((el) => el.textContent)).toEqual([
+			'review-init',
+			'review-progress',
+			'review-tail',
+		]);
 	});
 
 	it('renders agent headers and color siderails within turns', () => {
@@ -317,7 +345,48 @@ describe('SpaceTaskCardFeed', () => {
 		const rendered = container.querySelector('[data-testid="sdk-message-renderer"]') as HTMLElement;
 		expect(rendered.getAttribute('data-task-context')).toBe('1');
 		expect(rendered.getAttribute('data-show-subagents')).toBe('1');
+		expect(rendered.getAttribute('data-show-tool-result-users')).toBe('0');
 		expect(rendered.getAttribute('data-flatten-subagent-tools')).toBe('0');
+	});
+
+	it('renders turn-level earlier divider after initial user message', () => {
+		const rows = [
+			{
+				...makeUserRow('u1', 'Task Agent', 'Initial ask', 'sess-task', true),
+				turnIndex: 2,
+				turnHiddenMessageCount: 4,
+			},
+			{
+				...makeAssistantTextRow('a1', 'Task Agent', 'msg-1', 'sess-task'),
+				turnIndex: 2,
+				turnHiddenMessageCount: 4,
+			},
+			{
+				...makeAssistantTextRow('a2', 'Task Agent', 'msg-2', 'sess-task'),
+				turnIndex: 2,
+				turnHiddenMessageCount: 4,
+			},
+			{
+				...makeResultRow('r1', 'Task Agent', 'success', 'sess-task'),
+				turnIndex: 2,
+				turnHiddenMessageCount: 4,
+			},
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const divider = screen.getByTestId('compact-turn-hidden-divider');
+		expect(divider.textContent).toContain('4 earlier messages');
+		const initialUser = screen.getByText('Initial ask');
+		expect(
+			initialUser.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
 	});
 
 	it('renders subagent result/error rows (no filtering)', () => {
