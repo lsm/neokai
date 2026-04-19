@@ -561,7 +561,8 @@ export class SpaceRuntime {
 					workflow,
 					reportedStatus,
 					nextResult,
-					spaceLevel
+					spaceLevel,
+					canonicalTask.id
 				);
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, params);
 			} else if (nextResult && canonicalTask.result !== nextResult) {
@@ -1451,7 +1452,8 @@ export class SpaceRuntime {
 						meta.workflow,
 						reportedStatus,
 						nextTaskResult,
-						spaceLevel
+						spaceLevel,
+						canonicalTask.id
 					);
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
 					finalTaskStatus = params.status ?? canonicalTask.status;
@@ -1762,7 +1764,8 @@ export class SpaceRuntime {
 		workflow: SpaceWorkflow | null,
 		reportedStatus: SpaceReportedStatus,
 		taskResult: string | null,
-		spaceLevel: SpaceAutonomyLevel
+		spaceLevel: SpaceAutonomyLevel,
+		taskId: string | null
 	): Promise<UpdateSpaceTaskParams> {
 		// Non-success outcomes pass through directly. Completion actions are a
 		// success-path review gate ("flip to done after verifying X"); they
@@ -1837,10 +1840,14 @@ export class SpaceRuntime {
 				// space-agent notification stream and — when the task has a task
 				// agent session — in the task's own thread.
 				const executedAt = new Date().toISOString();
+				// `taskId` is threaded in by callers (both reconcile and tick paths
+				// have canonicalTask.id in scope); fall back to '' only if a future
+				// caller ever omits it.
+				const notifyTaskId = taskId ?? '';
 				await this.safeNotify({
 					kind: 'completion_action_executed',
 					spaceId,
-					taskId: '', // resolved below via run → task lookup when possible
+					taskId: notifyTaskId,
 					runId,
 					actionId: action.id,
 					actionName: action.name,
@@ -1849,12 +1856,10 @@ export class SpaceRuntime {
 					executedAt,
 					timestamp: executedAt,
 				});
-				// Resolve the owning task so the thread-event emission can target
-				// its taskAgentSessionId. The auto-execute path is called from the
-				// tick loop where we don't have the task handy, so look it up now.
-				const owningTasks = this.config.taskRepo.listByWorkflowRun(runId);
-				const owningTask =
-					owningTasks.find((t) => t.workflowRunId === runId) ?? owningTasks[0] ?? null;
+				// Thread-event emission targets the task's own agent session so
+				// SpaceTaskUnifiedThread can render it inline. Only fetch when we
+				// have a real taskId to bind against.
+				const owningTask = taskId ? this.config.taskRepo.getTask(taskId) : null;
 				if (owningTask?.taskAgentSessionId) {
 					this.emitTaskThreadEvent(owningTask.taskAgentSessionId, 'completion_action_executed', {
 						spaceId,

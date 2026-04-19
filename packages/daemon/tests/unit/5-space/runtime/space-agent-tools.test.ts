@@ -1468,3 +1468,61 @@ describe('createSpaceAgentToolHandlers — approve_completion_action', () => {
 		expect(registered).toHaveProperty('approve_task');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// approve_task — completion-action checkpoint guard
+// ---------------------------------------------------------------------------
+
+describe('createSpaceAgentToolHandlers — approve_task guard', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('rejects tasks paused at a completion-action checkpoint', async () => {
+		// Bypass guard: a plain `setTaskStatus('done')` on a completion-action
+		// checkpoint would skip the pending action(s) entirely. approve_task
+		// must decline and route callers to approve_completion_action.
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'paused at completion action',
+			description: 'needs resume path',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		ctx.taskRepo.updateTask(taskId, {
+			status: 'review',
+			pendingCheckpointType: 'completion_action',
+			pendingActionIndex: 0,
+		});
+
+		const result = await makeHandlers(ctx).approve_task({
+			task_id: taskId,
+			reason: 'lgtm',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('completion-action checkpoint');
+		expect(parsed.error).toContain('approve_completion_action');
+	});
+
+	test('allows plain review→done approvals (no completion-action checkpoint)', async () => {
+		const createResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'plain review task',
+			description: 'no pending action',
+		});
+		const taskId = JSON.parse(createResult.content[0].text).task.id;
+		// Plain review (pendingCheckpointType is null) — approve_task should proceed.
+		ctx.taskRepo.updateTask(taskId, { status: 'review' });
+
+		const result = await makeHandlers(ctx).approve_task({
+			task_id: taskId,
+			reason: 'looks good',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.status).toBe('done');
+	});
+});

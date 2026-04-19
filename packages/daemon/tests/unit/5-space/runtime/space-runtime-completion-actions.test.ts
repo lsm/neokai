@@ -789,6 +789,10 @@ describe('SpaceRuntime — completion actions', () => {
 		expect(event.actionId).toBe('auto-1');
 		expect(event.approvedBy).toBe('auto_policy');
 		expect(event.approvalReason).toBeNull();
+		// The auto-execute notification must carry the owning task's id so
+		// notification-sink consumers can bind the event to a task in the UI —
+		// callers now thread canonicalTask.id into resolveCompletionWithActions.
+		expect(event.taskId).toBe(tasks[0].id);
 	});
 
 	test('resumeCompletionActions writes thread event into the task agent session', async () => {

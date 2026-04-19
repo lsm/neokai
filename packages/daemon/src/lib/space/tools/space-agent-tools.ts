@@ -681,6 +681,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
 				});
 			}
+			// Hard guard against bypassing completion-action execution. A plain
+			// `setTaskStatus('done')` here would skip the pending completion
+			// action(s) entirely, defeating the review gate. Callers must use
+			// `approve_completion_action`, which routes through
+			// `SpaceRuntime.resumeCompletionActions` and runs the pending action.
+			if (task.pendingCheckpointType === 'completion_action') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is paused at a completion-action checkpoint. ` +
+						`Use approve_completion_action instead to run the pending action(s).`,
+				});
+			}
 
 			try {
 				const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
