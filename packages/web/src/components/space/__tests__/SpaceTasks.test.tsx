@@ -226,4 +226,52 @@ describe('SpaceTasks', () => {
 		// Open group not shown (no open tasks)
 		expect(queryByText(/Open \(/)).toBeNull();
 	});
+
+	describe('Awaiting-approval filter chip', () => {
+		it('is hidden when no tasks are paused at a completion action', () => {
+			mockTasks.value = [makeTask('t1', 'review')];
+			const { queryByTestId, getByText } = render(<SpaceTasks spaceId="space-1" />);
+			fireEvent.click(getByText('Action'));
+			expect(queryByTestId('tasks-filter-awaiting-approval')).toBeNull();
+		});
+
+		it('shows chip with count when at least one task is paused at a completion action', () => {
+			mockTasks.value = [
+				makeTask('t1', 'review', {
+					pendingActionIndex: 0,
+					pendingCheckpointType: 'completion_action',
+				}),
+				makeTask('t2', 'review'),
+			];
+			const { getByTestId, getByText } = render(<SpaceTasks spaceId="space-1" />);
+			fireEvent.click(getByText('Action'));
+			const chip = getByTestId('tasks-filter-awaiting-approval');
+			expect(chip.textContent).toContain('Awaiting Approval');
+			expect(chip.textContent).toContain('1');
+		});
+
+		it('filters the list to awaiting-approval tasks only when toggled on', () => {
+			mockTasks.value = [
+				makeTask('t1', 'review', {
+					pendingActionIndex: 0,
+					pendingCheckpointType: 'completion_action',
+				}),
+				makeTask('t2', 'review'),
+			];
+			const { getByTestId, getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
+			fireEvent.click(getByText('Action'));
+			// Both tasks visible by default (action tab: blocked + review)
+			expect(getByText('Task t1')).toBeTruthy();
+			expect(getByText('Task t2')).toBeTruthy();
+
+			// Toggle the filter chip on
+			fireEvent.click(getByTestId('tasks-filter-awaiting-approval'));
+			expect(getByText('Task t1')).toBeTruthy();
+			expect(queryByText('Task t2')).toBeNull();
+
+			// Toggle off via Clear filter
+			fireEvent.click(getByTestId('tasks-filter-clear'));
+			expect(getByText('Task t2')).toBeTruthy();
+		});
+	});
 });

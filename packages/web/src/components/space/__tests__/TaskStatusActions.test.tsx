@@ -192,4 +192,46 @@ describe('TaskStatusActions component', () => {
 		const { getByTestId } = render(<TaskStatusActions status="open" onTransition={onTransition} />);
 		expect(getByTestId('task-status-actions')).toBeTruthy();
 	});
+
+	describe('pendingCheckpointType gating', () => {
+		it('hides Approve (done) and Cancel (cancelled) when paused at completion action', () => {
+			const onTransition = vi.fn();
+			const { queryByTestId, getByTestId } = render(
+				<TaskStatusActions
+					status="review"
+					onTransition={onTransition}
+					pendingCheckpointType="completion_action"
+				/>
+			);
+			// "review -> done" / "review -> cancelled" are owned by the banner now
+			expect(queryByTestId('task-action-done')).toBeNull();
+			expect(queryByTestId('task-action-cancelled')).toBeNull();
+			// Non-approval transitions stay visible so the user can still reopen or archive.
+			expect(getByTestId('task-action-in_progress')).toBeTruthy();
+			expect(getByTestId('task-action-archived')).toBeTruthy();
+		});
+
+		it('keeps Approve / Cancel visible when pendingCheckpointType is gate or null', () => {
+			const onTransition = vi.fn();
+			const { getByTestId, rerender } = render(
+				<TaskStatusActions
+					status="review"
+					onTransition={onTransition}
+					pendingCheckpointType={null}
+				/>
+			);
+			expect(getByTestId('task-action-done')).toBeTruthy();
+			expect(getByTestId('task-action-cancelled')).toBeTruthy();
+
+			rerender(
+				<TaskStatusActions
+					status="review"
+					onTransition={onTransition}
+					pendingCheckpointType="gate"
+				/>
+			);
+			expect(getByTestId('task-action-done')).toBeTruthy();
+			expect(getByTestId('task-action-cancelled')).toBeTruthy();
+		});
+	});
 });
