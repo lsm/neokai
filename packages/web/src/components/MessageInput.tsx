@@ -17,6 +17,7 @@ import type {
 } from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager';
+import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
@@ -170,6 +171,20 @@ export default function MessageInput({
 	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
 	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
 
+	const syncMessagesContainerPadding = useCallback(() => {
+		const scroller = document.querySelector<HTMLElement>('[data-messages-container]');
+		const footer = document.querySelector<HTMLElement>('.chat-footer');
+		if (!scroller || !footer) return;
+
+		const footerHeightPx = Math.max(footer.getBoundingClientRect().height, footer.scrollHeight);
+		const nextPaddingPx = getMessagesBottomPaddingPx(footerHeightPx);
+		const nextPaddingValue = `${nextPaddingPx}px`;
+		const currentPaddingVar = scroller.style.getPropertyValue('--messages-bottom-padding').trim();
+		if (currentPaddingVar !== nextPaddingValue) {
+			scroller.style.setProperty('--messages-bottom-padding', nextPaddingValue);
+		}
+	}, []);
+
 	const extractOutgoingMessage = useCallback(() => {
 		const messageContent = content.trim();
 		if (!messageContent) {
@@ -212,6 +227,10 @@ export default function MessageInput({
 	}, [refreshQueuedMessages]);
 
 	useEffect(() => {
+		syncMessagesContainerPadding();
+	}, [syncMessagesContainerPadding]);
+
+	useEffect(() => {
 		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
 			return;
 		const timer = setInterval(() => {
@@ -219,6 +238,23 @@ export default function MessageInput({
 		}, 700);
 		return () => clearInterval(timer);
 	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
+
+	useEffect(() => {
+		syncMessagesContainerPadding();
+	}, [
+		syncMessagesContainerPadding,
+		attachments.length,
+		isDragging,
+		queuedForCurrentTurn.length,
+		queuedForNextTurn.length,
+	]);
+
+	const handleTextareaHeightChange = useCallback(
+		(_heightPx: number) => {
+			syncMessagesContainerPadding();
+		},
+		[syncMessagesContainerPadding]
+	);
 
 	// Submit handler
 	const handleSubmit = useCallback(
@@ -502,6 +538,8 @@ export default function MessageInput({
 							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
 							textareaRef={textareaInputRef}
+							transparent={true}
+							onHeightChange={handleTextareaHeightChange}
 						/>
 					</div>
 				</form>

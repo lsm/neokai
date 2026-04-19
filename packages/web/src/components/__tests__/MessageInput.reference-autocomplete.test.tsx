@@ -167,6 +167,16 @@ describe('MessageInput reference autocomplete', () => {
 		return render(<MessageInput sessionId="test-session" onSend={onSend} />);
 	}
 
+	it('renders the same transparent glass input shell used by the threaded composer', () => {
+		const { container } = renderInput();
+		const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+		const shell = textarea.parentElement as HTMLDivElement;
+
+		expect(shell.className).toContain('bg-transparent');
+		expect(shell.className).toContain('backdrop-blur-sm');
+		expect(shell.className).toContain('border-dark-600/80');
+	});
+
 	describe('keyboard event priority', () => {
 		it('reference autocomplete handleKeyDown is called before command autocomplete', () => {
 			const { container } = renderInput();
