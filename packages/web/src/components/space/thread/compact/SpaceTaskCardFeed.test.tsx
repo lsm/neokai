@@ -275,7 +275,7 @@ describe('SpaceTaskCardFeed', () => {
 		expect(headers.length).toBe(3);
 		expect(container.textContent).toContain('TASK');
 		expect(container.textContent).toContain('CODER');
-		expect(container.textContent).toContain('Agent Turn');
+		expect(container.textContent).not.toContain('Agent Turn');
 
 		const siderails = container.querySelectorAll('[data-testid="compact-block-siderail"]');
 		expect(siderails.length).toBe(3);
@@ -387,6 +387,36 @@ describe('SpaceTaskCardFeed', () => {
 		expect(
 			initialUser.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
+	});
+
+	it('clicking the earlier-messages pill opens the agent slide-out chat', () => {
+		const rows = [
+			{
+				...makeUserRow('u1', 'Coder Agent', 'Initial ask', 'sess-coder', true),
+				turnIndex: 2,
+				turnHiddenMessageCount: 3,
+			},
+			{
+				...makeAssistantTextRow('a1', 'Coder Agent', 'msg-1', 'sess-coder'),
+				turnIndex: 2,
+				turnHiddenMessageCount: 3,
+			},
+		];
+		render(
+			<SpaceTaskCardFeed
+				parsedRows={rows}
+				taskId="task-1"
+				maps={fakeMaps as any}
+				isAgentActive={false}
+			/>
+		);
+
+		const pill = screen.getByTestId('compact-turn-hidden-divider-button');
+		expect(pill.textContent).toContain('3 earlier messages');
+		expect(pill.textContent?.toLowerCase()).toContain('open chat');
+		fireEvent.click(pill);
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-coder');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Agent');
 	});
 
 	it('renders subagent result/error rows (no filtering)', () => {

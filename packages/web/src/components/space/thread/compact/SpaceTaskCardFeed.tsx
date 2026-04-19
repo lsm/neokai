@@ -170,9 +170,9 @@ function renderAgentBlock(
 		>
 			<div
 				class={
-					'flex items-center justify-between gap-2 px-3 py-2.5 min-h-[38px] rounded-md border border-dark-700/80 border-l-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ' +
+					'group flex items-center gap-2 px-2 py-1.5 min-h-[30px] rounded ' +
 					(isClickable
-						? 'cursor-pointer hover:bg-gray-800/70 active:bg-gray-800/80 transition-colors focus:outline-none focus:bg-gray-800/70 focus:ring-1 focus:ring-gray-700'
+						? 'cursor-pointer hover:bg-dark-800/70 active:bg-dark-800 transition-colors focus:outline-none focus:bg-dark-800/70 focus:ring-1 focus:ring-dark-600'
 						: '')
 				}
 				data-testid="compact-block-header"
@@ -182,27 +182,32 @@ function renderAgentBlock(
 				aria-label={isClickable ? `Open ${block.label} session details` : undefined}
 				onClick={isClickable ? handleOpenAgentOverlay : undefined}
 				onKeyDown={isClickable ? handleHeaderKeyDown : undefined}
-				style={{
-					borderLeftColor: block.color,
-					background: `linear-gradient(90deg, ${block.color}22 0%, rgba(18, 22, 30, 0.82) 40%)`,
-				}}
 			>
-				<div class="flex items-center gap-2 flex-1 min-w-0">
-					<span
-						class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-						style={{ backgroundColor: block.color }}
-						aria-hidden="true"
-					/>
-					<span
-						class="text-[12px] uppercase tracking-[0.18em] font-mono font-semibold whitespace-nowrap"
-						style={{ color: block.color }}
-					>
-						{shortAgentLabel(block.label)}
-					</span>
-				</div>
-				<span class="text-[10px] uppercase tracking-[0.14em] font-mono text-gray-400 border border-dark-600/80 bg-dark-900/80 rounded px-1.5 py-0.5 flex-shrink-0">
-					Agent Turn
+				<span
+					class="w-2 h-2 rounded-full flex-shrink-0"
+					style={{ backgroundColor: block.color }}
+					aria-hidden="true"
+				/>
+				<span
+					class="text-[11px] uppercase tracking-[0.16em] font-mono font-medium flex-shrink-0"
+					style={{ color: block.color }}
+				>
+					{shortAgentLabel(block.label)}
 				</span>
+				{isClickable ? (
+					<svg
+						class="ml-auto w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity flex-shrink-0"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M6 4l4 4-4 4" />
+					</svg>
+				) : null}
 			</div>
 
 			<div class="flex gap-2 pl-1 pb-1" data-testid="compact-block-body">
@@ -231,24 +236,86 @@ function renderAgentBlock(
 						) {
 							return [
 								rowEl,
-								<div
-									key={`hidden-divider-${key}`}
-									class="relative py-1.5"
-									data-testid="compact-turn-hidden-divider"
-								>
-									<div class="border-t border-dark-700" aria-hidden="true" />
-									<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-										<span class="px-2 text-[11px] uppercase tracking-[0.12em] text-gray-500 bg-dark-900">
-											{`${hiddenCount} earlier ${hiddenCount === 1 ? 'message' : 'messages'}`}
-										</span>
-									</div>
-								</div>,
+								renderHiddenDivider(
+									key,
+									hiddenCount,
+									block.label,
+									isClickable,
+									handleOpenAgentOverlay
+								),
 							];
 						}
 						return [rowEl];
 					})}
 				</div>
 			</div>
+		</div>
+	);
+}
+
+function renderHiddenDivider(
+	rowKey: string,
+	hiddenCount: number,
+	agentLabel: string,
+	isClickable: boolean,
+	onOpen: () => void
+) {
+	const label = `${hiddenCount} earlier ${hiddenCount === 1 ? 'message' : 'messages'}`;
+	const pillBase =
+		'relative z-10 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] uppercase tracking-[0.12em] font-mono whitespace-nowrap transition-colors ';
+	const pillInteractive =
+		'cursor-pointer border-dark-600 bg-dark-850 text-gray-300 hover:border-gray-500 hover:bg-dark-800 hover:text-gray-100 focus:outline-none focus:ring-1 focus:ring-gray-500';
+	const pillStatic = 'border-dark-700 bg-dark-850 text-gray-400';
+	return (
+		<div
+			key={`hidden-divider-${rowKey}`}
+			class="relative flex items-center justify-center py-2"
+			data-testid="compact-turn-hidden-divider"
+		>
+			<div
+				class="absolute inset-x-0 top-1/2 border-t border-dashed border-dark-700"
+				aria-hidden="true"
+			/>
+			{isClickable ? (
+				<button
+					type="button"
+					class={pillBase + pillInteractive}
+					onClick={onOpen}
+					data-testid="compact-turn-hidden-divider-button"
+					aria-label={`${label}. Open ${agentLabel} chat to view earlier messages.`}
+				>
+					<svg
+						class="w-3 h-3"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M4 10l4-4 4 4" />
+					</svg>
+					<span>{label}</span>
+					<span class="text-gray-500">· open chat</span>
+				</button>
+			) : (
+				<span class={pillBase + pillStatic}>
+					<svg
+						class="w-3 h-3"
+						viewBox="0 0 16 16"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<path d="M4 10l4-4 4 4" />
+					</svg>
+					<span>{label}</span>
+				</span>
+			)}
 		</div>
 	);
 }
@@ -287,7 +354,7 @@ export function SpaceTaskCardFeed({
 				return (
 					<div
 						key={block.id}
-						class={`space-y-1.5 ${index > 0 ? 'pt-2 border-t border-dark-700/70' : ''}`}
+						class={`space-y-1 ${index > 0 ? 'pt-2' : ''}`}
 						data-testid="compact-turn-group"
 					>
 						{renderAgentBlock(
