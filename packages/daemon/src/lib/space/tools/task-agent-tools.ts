@@ -480,41 +480,8 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 					? await taskAgentManager.getSubSessionByAgentName(taskId, targetAgentName)
 					: null;
 				if (!liveSession) {
-					// Two cases land here:
-					//   (a) pre-first-execution — agent declared but never spawned (no prior
-					//       agentSessionId). Pure queue-until-active: activation happens when
-					//       SpaceRuntime eventually spawns the node agent.
-					//   (b) post-completion — agent previously ran, its NodeExecution has a
-					//       `agentSessionId`, but the session isn't currently live in memory
-					//       (e.g. after a daemon restart that rehydrated the Task Agent but
-					//       not the sub-session). Without explicit reactivation the queue is
-					//       a dead letter because nothing drives the agent back online.
-					// For (b) we attempt direct injection via the prior session ID;
-					// injectSubSessionMessage searches agentSessionIndex, the subSessions map,
-					// and lazily rehydrates from DB — any of those resolves the session and
-					// also calls ensureQueryStarted() so the idle agent consumes the message.
-					const priorExecForAgent = allExecutions
-						.filter((e) => e.agentName === targetAgentName && e.agentSessionId)
-						.at(-1);
-					if (priorExecForAgent?.agentSessionId && taskAgentManager) {
-						try {
-							await taskAgentManager.injectSubSessionMessage(
-								priorExecForAgent.agentSessionId,
-								prefixedMessage
-							);
-							delivered.push({
-								agentName: targetAgentName,
-								sessionId: priorExecForAgent.agentSessionId,
-							});
-							continue;
-						} catch (err) {
-							log.warn(
-								`send_message: reactivation of completed agent "${targetAgentName}" (session ${priorExecForAgent.agentSessionId}) failed, falling back to queue: ${err instanceof Error ? err.message : String(err)}`
-							);
-							// Fall through to queue as the durability backstop.
-						}
-					}
-
+					// Agent is declared but hasn't been spawned yet (pre-first-execution).
+					// Queue the message if we have the pending-message repo, else fall back to notFound.
 					const isDeclaredInRun = declaredAgentNames.includes(targetAgentName);
 					if (isDeclaredInRun && pendingMessageRepo) {
 						const { record, deduped } = pendingMessageRepo.enqueue({
