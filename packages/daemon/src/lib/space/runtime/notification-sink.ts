@@ -161,6 +161,43 @@ export interface WorkflowRunNeedsAttentionEvent {
 	timestamp: string;
 }
 
+/**
+ * A completion action attached to a workflow's Done node has successfully
+ * executed. Emitted once per action — both for human-approved resumes and for
+ * actions that auto-executed under sufficient autonomy.
+ *
+ * Used for audit trail and for rendering a visible record of "what actually
+ * ran" in the task's thread.
+ */
+export interface CompletionActionExecutedEvent {
+	kind: 'completion_action_executed';
+	/** Space the task belongs to. */
+	spaceId: string;
+	/** Task whose end-node completion actions are being processed. */
+	taskId: string;
+	/** Workflow run that owns the Done node with completion actions. */
+	runId: string;
+	/** Completion action id (stable, from the workflow definition). */
+	actionId: string;
+	/** Human-readable name of the executed action. */
+	actionName: string;
+	/**
+	 * Who authorized this execution:
+	 * - `human`: a user explicitly approved via `spaceTask.update` / `approve_task`.
+	 * - `auto_policy`: space autonomy level was high enough to execute without review.
+	 */
+	approvedBy: 'human' | 'auto_policy';
+	/**
+	 * Optional rationale supplied by the approver. Only populated for
+	 * `approvedBy === 'human'`; null otherwise.
+	 */
+	approvalReason: string | null;
+	/** ISO-8601 timestamp when execution completed. */
+	executedAt: string;
+	/** ISO-8601 timestamp when the event was emitted (same value as executedAt). */
+	timestamp: string;
+}
+
 /** A workflow run has reached a terminal state (done, cancelled, or blocked). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
@@ -213,7 +250,8 @@ export type SpaceNotificationEvent =
 	| AgentCrashEvent
 	| TaskRetryEvent
 	| WorkflowRunNeedsAttentionEvent
-	| TaskAwaitingApprovalEvent;
+	| TaskAwaitingApprovalEvent
+	| CompletionActionExecutedEvent;
 
 // ---------------------------------------------------------------------------
 // NotificationSink interface

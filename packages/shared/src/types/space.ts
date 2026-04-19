@@ -437,6 +437,14 @@ export interface UpdateSpaceTaskParams {
 	approvalSource?: SpaceApprovalSource | null;
 	/** Optional approval reason/comment */
 	approvalReason?: string | null;
+	/**
+	 * Optional cancellation/rejection reason. Stored into the same underlying
+	 * `approval_reason` column as `approvalReason`, but semantically paired with
+	 * transitions that abort work (e.g. review → cancelled, or rejecting a
+	 * paused completion action). When both are provided, the runtime picks the
+	 * one that matches the transition direction.
+	 */
+	cancelReason?: string | null;
 	/** Timestamp when approval occurred; null to clear */
 	approvedAt?: number | null;
 	/** Index of the completion action awaiting approval; null to clear */
