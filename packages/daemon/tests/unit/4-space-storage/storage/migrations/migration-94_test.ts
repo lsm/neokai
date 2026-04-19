@@ -264,6 +264,42 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		}
 	});
 
+	test('divergent row (structure matches template but description differs) → template_hash reflects the row, not the canonical template', () => {
+		// Pins the ELSE branch of `fingerprintMatches ? known.hash : rowHash` in
+		// the migration. Combined with `hash self-verification` above (which
+		// covers the TRUE branch), both branches are exercised.
+		const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!;
+		const canonicalHash = computeWorkflowHash(template);
+
+		// Same name + node set as Coding Workflow, but with a tweaked description
+		// — so the structural name match passes but fingerprintMatches is false.
+		const wfId = 'wf-diverged';
+		const codingId = 'n-d-coding';
+		const reviewId = 'n-d-review';
+		insertWorkflow(db, {
+			id: wfId,
+			spaceId: 'sp-1',
+			name: template.name,
+			description: template.description + ' — user edited',
+			channels: template.channels ?? [],
+			gates: template.gates ?? [],
+			endNodeId: reviewId,
+		});
+		insertNode(db, { id: codingId, workflowId: wfId, name: 'Coding' });
+		insertNode(db, { id: reviewId, workflowId: wfId, name: 'Review' });
+
+		runMigration94(db);
+
+		const row = readWorkflow(db, wfId)!;
+		// template_name still set — we're confident it's a Coding Workflow variant.
+		expect(row.template_name).toBe('Coding Workflow');
+		// template_hash must NOT be the canonical hash (fingerprint differs).
+		expect(row.template_hash).not.toBe(canonicalHash);
+		// And it must be non-null — the migration populates it with the row's
+		// own fingerprint hash so drift detection reflects the current state.
+		expect(row.template_hash).toBeTruthy();
+	});
+
 	test('legacy Coding Workflow: sets template_name + canonical hash + injects merge-pr', () => {
 		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-1',

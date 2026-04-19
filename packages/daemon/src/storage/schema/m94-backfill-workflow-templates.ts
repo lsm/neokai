@@ -133,7 +133,12 @@ const MERGE_PR_COMPLETION_ACTION: CompletionActionShape = {
 	script: PR_MERGE_BASH_SCRIPT,
 };
 
-const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON when available; f';
+// First 64 chars of `PR_READY_BASH_SCRIPT` (joined with \n) — matches what
+// `computeWorkflowHash` captures via `g.script.source.slice(0, 64)`. Must be
+// exactly 64 characters; any shorter and `fingerprintMatches` becomes dead
+// code for templates with scripted gates (Coding, Research, Full-Cycle,
+// Coding+QA) and the migration falls back to the row's own hash.
+const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON when available; fal';
 
 /**
  * Known built-in templates and their fingerprints.
