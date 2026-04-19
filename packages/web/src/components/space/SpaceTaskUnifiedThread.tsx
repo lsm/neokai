@@ -20,28 +20,36 @@ function findCurrentAgent(container: HTMLElement): AgentTag | null {
 	const rows = container.querySelectorAll<HTMLElement>('[data-agent-label]');
 	if (rows.length === 0) return null;
 
-	const containerTop = container.getBoundingClientRect().top;
-	let found: AgentTag | null = null;
+	const containerRect = container.getBoundingClientRect();
+	const topEdge = containerRect.top + 8;
+	let currentBlock: HTMLElement | null = null;
 	for (const row of Array.from(rows)) {
-		if (row.getBoundingClientRect().top <= containerTop + 8) {
-			found = {
-				label: row.dataset.agentLabel ?? '',
-				color: row.dataset.agentColor ?? '',
-			};
+		if (row.getBoundingClientRect().top <= topEdge) {
+			currentBlock = row;
 		} else {
 			break;
 		}
 	}
 
-	if (!found) {
-		const first = rows[0] as HTMLElement;
-		found = {
-			label: first.dataset.agentLabel ?? '',
-			color: first.dataset.agentColor ?? '',
-		};
+	if (!currentBlock) {
+		currentBlock = rows[0] as HTMLElement;
 	}
 
-	return found;
+	// Hide the floating tag when the block's own inline header is visible in the
+	// viewport — the user can already see which agent they're reading, so the
+	// sticky label is redundant.
+	const header = currentBlock.querySelector<HTMLElement>('[data-testid="compact-block-header"]');
+	if (header) {
+		const headerRect = header.getBoundingClientRect();
+		const isHeaderOnScreen =
+			headerRect.bottom > containerRect.top && headerRect.top < containerRect.bottom;
+		if (isHeaderOnScreen) return null;
+	}
+
+	return {
+		label: currentBlock.dataset.agentLabel ?? '',
+		color: currentBlock.dataset.agentColor ?? '',
+	};
 }
 
 interface SpaceTaskUnifiedThreadProps {

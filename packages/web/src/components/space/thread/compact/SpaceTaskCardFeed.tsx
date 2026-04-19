@@ -164,91 +164,103 @@ function renderAgentBlock(
 	return (
 		<div
 			key={block.id}
+			class="relative pt-2 pb-1"
 			data-testid="compact-block"
 			data-agent-label={block.label}
 			data-agent-color={block.color}
 		>
+			{/* ⌐ bracket — single stroke that caps the top then runs down the side,
+			    rounded at the inside corner so the arm curves smoothly into the rail. */}
 			<div
-				class={
-					'group flex items-center gap-2 px-2 py-1.5 min-h-[30px] rounded ' +
-					(isClickable
-						? 'cursor-pointer hover:bg-dark-800/70 active:bg-dark-800 transition-colors focus:outline-none focus:bg-dark-800/70 focus:ring-1 focus:ring-dark-600'
-						: '')
-				}
-				data-testid="compact-block-header"
-				data-clickable={isClickable ? '1' : '0'}
-				role={isClickable ? 'button' : undefined}
-				tabIndex={isClickable ? 0 : undefined}
-				aria-label={isClickable ? `Open ${block.label} session details` : undefined}
-				onClick={isClickable ? handleOpenAgentOverlay : undefined}
-				onKeyDown={isClickable ? handleHeaderKeyDown : undefined}
-			>
-				<span
-					class="w-2 h-2 rounded-full flex-shrink-0"
-					style={{ backgroundColor: block.color }}
-					aria-hidden="true"
-				/>
-				<span
-					class="text-[11px] uppercase tracking-[0.16em] font-mono font-medium flex-shrink-0"
-					style={{ color: block.color }}
-				>
-					{shortAgentLabel(block.label)}
-				</span>
-				{isClickable ? (
-					<svg
-						class="ml-auto w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity flex-shrink-0"
-						viewBox="0 0 16 16"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<path d="M6 4l4 4-4 4" />
-					</svg>
-				) : null}
-			</div>
+				class="absolute top-0 left-0 bottom-1 border-l-2 border-t-2 rounded-tl-md pointer-events-none"
+				style={{
+					borderColor: block.color,
+					width: 'clamp(96px, 30%, 180px)',
+				}}
+				aria-hidden="true"
+				data-testid="compact-block-bracket"
+			/>
 
-			<div class="flex gap-2 pl-1 pb-1" data-testid="compact-block-body">
-				<div
-					class="w-0.5 rounded-full flex-shrink-0 self-stretch opacity-40"
-					style={{ backgroundColor: block.color }}
-					aria-hidden="true"
-					data-testid="compact-block-siderail"
-				/>
-				<div class="flex-1 min-w-0 space-y-1">
-					{block.rows.flatMap((row) => {
-						const key = String(row.id);
-						const rowNode = renderRow(row, maps, key === runningRowId);
-						const rowEl =
-							key === runningRowId ? (
-								<div key={`row-${key}`} data-testid="compact-running-block">
-									{rowNode}
-								</div>
-							) : (
-								<div key={`row-${key}`}>{rowNode}</div>
-							);
-						if (
-							hiddenCount > 0 &&
-							pinnedInitialUserRowId !== null &&
-							key === pinnedInitialUserRowId
-						) {
-							return [
-								rowEl,
-								renderHiddenDivider(
-									key,
-									hiddenCount,
-									block.label,
-									isClickable,
-									handleOpenAgentOverlay
-								),
-							];
-						}
-						return [rowEl];
-					})}
-				</div>
+			{renderAgentHeaderPill(block, isClickable, handleOpenAgentOverlay, handleHeaderKeyDown)}
+
+			<div class="pl-4 pt-0.5 space-y-1" data-testid="compact-block-body">
+				{block.rows.flatMap((row) => {
+					const key = String(row.id);
+					const rowNode = renderRow(row, maps, key === runningRowId);
+					const rowEl =
+						key === runningRowId ? (
+							<div key={`row-${key}`} data-testid="compact-running-block">
+								{rowNode}
+							</div>
+						) : (
+							<div key={`row-${key}`}>{rowNode}</div>
+						);
+					if (
+						hiddenCount > 0 &&
+						pinnedInitialUserRowId !== null &&
+						key === pinnedInitialUserRowId
+					) {
+						return [
+							rowEl,
+							renderHiddenDivider(
+								key,
+								hiddenCount,
+								block.label,
+								isClickable,
+								handleOpenAgentOverlay
+							),
+						];
+					}
+					return [rowEl];
+				})}
 			</div>
+		</div>
+	);
+}
+
+function renderAgentHeaderPill(
+	block: AgentBlock,
+	isClickable: boolean,
+	onOpen: () => void,
+	onKeyDown: (e: KeyboardEvent) => void
+) {
+	const label = shortAgentLabel(block.label);
+	// Pill fills the arm's width minus `m-2` breathing room on each side.
+	const pillBase =
+		'flex items-center justify-center w-full px-2.5 py-1 rounded-full border text-[11px] uppercase tracking-[0.12em] font-mono font-semibold whitespace-nowrap transition-colors';
+	const pillInteractive =
+		'cursor-pointer border-dark-600 bg-dark-850 hover:border-gray-500 hover:bg-dark-800 focus:outline-none focus:ring-1 focus:ring-gray-500';
+	const pillStatic = 'border-dark-700 bg-dark-850';
+
+	const pill = !isClickable ? (
+		<span class={`${pillBase} ${pillStatic}`} data-testid="compact-block-header" data-clickable="0">
+			<span class="truncate" style={{ color: block.color }}>
+				{label}
+			</span>
+		</span>
+	) : (
+		<button
+			type="button"
+			class={`${pillBase} ${pillInteractive}`}
+			data-testid="compact-block-header"
+			data-clickable="1"
+			aria-label={`Open ${block.label} session details`}
+			onClick={onOpen}
+			onKeyDown={onKeyDown}
+		>
+			<span class="truncate" style={{ color: block.color }}>
+				{label}
+			</span>
+		</button>
+	);
+
+	return (
+		<div
+			class="mt-1 px-2"
+			style={{ width: 'clamp(96px, 30%, 180px)' }}
+			data-testid="compact-block-header-slot"
+		>
+			{pill}
 		</div>
 	);
 }
@@ -346,17 +358,13 @@ export function SpaceTaskCardFeed({
 	}, [isAgentActive, parsedRows]);
 
 	return (
-		<div class="space-y-2 px-4 py-2" data-testid="space-task-event-feed-compact">
+		<div class="px-4 py-2" data-testid="space-task-event-feed-compact">
 			{blocks.map((block, index) => {
 				const blockHiddenCount = getBlockHiddenCount(block.rows);
 				const blockPinnedInitialUserRowId =
 					blockHiddenCount > 0 ? getBlockPinnedInitialUserRowId(block.rows) : null;
 				return (
-					<div
-						key={block.id}
-						class={`space-y-1 ${index > 0 ? 'pt-2' : ''}`}
-						data-testid="compact-turn-group"
-					>
+					<div key={block.id} class={index > 0 ? 'mt-1' : ''} data-testid="compact-turn-group">
 						{renderAgentBlock(
 							block,
 							maps,

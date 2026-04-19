@@ -277,10 +277,10 @@ describe('SpaceTaskCardFeed', () => {
 		expect(container.textContent).toContain('CODER');
 		expect(container.textContent).not.toContain('Agent Turn');
 
-		const siderails = container.querySelectorAll('[data-testid="compact-block-siderail"]');
-		expect(siderails.length).toBe(3);
-		siderails.forEach((el) => {
-			expect((el as HTMLElement).style.backgroundColor).not.toBe('');
+		const brackets = container.querySelectorAll('[data-testid="compact-block-bracket"]');
+		expect(brackets.length).toBe(3);
+		brackets.forEach((el) => {
+			expect((el as HTMLElement).style.borderColor).not.toBe('');
 		});
 	});
 
