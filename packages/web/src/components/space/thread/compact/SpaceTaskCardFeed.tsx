@@ -225,7 +225,7 @@ function renderAgentHeaderPill(
 	onKeyDown: (e: KeyboardEvent) => void
 ) {
 	const label = shortAgentLabel(block.label);
-	// Pill fills the arm's width minus `m-2` on the left and `m-1` on the right.
+	// Pill fills the arm's width minus `m-2` on the left; right edge is flush.
 	const pillBase =
 		'flex items-center justify-center w-full px-2.5 py-1 rounded-full border text-[11px] uppercase tracking-[0.12em] font-mono font-semibold whitespace-nowrap transition-colors';
 	const pillInteractive =
@@ -256,7 +256,7 @@ function renderAgentHeaderPill(
 
 	return (
 		<div
-			class="mt-1 pl-2 pr-1"
+			class="mt-1 pl-2 pr-0"
 			style={{ width: 'clamp(96px, 30%, 180px)' }}
 			data-testid="compact-block-header-slot"
 		>
