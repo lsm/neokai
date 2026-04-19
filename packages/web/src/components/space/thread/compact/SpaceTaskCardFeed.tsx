@@ -29,12 +29,6 @@ interface AgentBlock {
 	rows: ParsedThreadRow[];
 }
 
-interface TurnGroup {
-	id: string;
-	index: number;
-	block: AgentBlock;
-}
-
 function normalizeAgentKey(label: string): string {
 	return label.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -98,15 +92,6 @@ function buildAgentTurnBlocks(rows: ParsedThreadRow[]): AgentBlock[] {
 				...block
 			}) => block
 		);
-}
-
-function buildTurns(rows: ParsedThreadRow[]): TurnGroup[] {
-	const blocks = buildAgentTurnBlocks(rows);
-	return blocks.map((block, index) => ({
-		id: `turn-${index + 1}-${block.id}`,
-		index: index + 1,
-		block,
-	}));
 }
 
 function getBlockHiddenCount(rows: ParsedThreadRow[]): number {
@@ -185,9 +170,9 @@ function renderAgentBlock(
 		>
 			<div
 				class={
-					'flex items-center gap-2 px-2 py-2 min-h-[32px] rounded ' +
+					'flex items-center justify-between gap-2 px-3 py-2.5 min-h-[38px] rounded-md border border-dark-700/80 border-l-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ' +
 					(isClickable
-						? 'cursor-pointer hover:bg-gray-800/40 active:bg-gray-800/60 transition-colors focus:outline-none focus:bg-gray-800/40 focus:ring-1 focus:ring-gray-700'
+						? 'cursor-pointer hover:bg-gray-800/70 active:bg-gray-800/80 transition-colors focus:outline-none focus:bg-gray-800/70 focus:ring-1 focus:ring-gray-700'
 						: '')
 				}
 				data-testid="compact-block-header"
@@ -197,17 +182,26 @@ function renderAgentBlock(
 				aria-label={isClickable ? `Open ${block.label} session details` : undefined}
 				onClick={isClickable ? handleOpenAgentOverlay : undefined}
 				onKeyDown={isClickable ? handleHeaderKeyDown : undefined}
+				style={{
+					borderLeftColor: block.color,
+					background: `linear-gradient(90deg, ${block.color}22 0%, rgba(18, 22, 30, 0.82) 40%)`,
+				}}
 			>
-				<span
-					class="w-2 h-2 rounded-full flex-shrink-0"
-					style={{ backgroundColor: block.color }}
-					aria-hidden="true"
-				/>
-				<span
-					class="text-[11px] uppercase tracking-[0.16em] font-mono font-medium flex-shrink-0"
-					style={{ color: block.color }}
-				>
-					{shortAgentLabel(block.label)}
+				<div class="flex items-center gap-2 flex-1 min-w-0">
+					<span
+						class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+						style={{ backgroundColor: block.color }}
+						aria-hidden="true"
+					/>
+					<span
+						class="text-[12px] uppercase tracking-[0.18em] font-mono font-semibold whitespace-nowrap"
+						style={{ color: block.color }}
+					>
+						{shortAgentLabel(block.label)}
+					</span>
+				</div>
+				<span class="text-[10px] uppercase tracking-[0.14em] font-mono text-gray-400 border border-dark-600/80 bg-dark-900/80 rounded px-1.5 py-0.5 flex-shrink-0">
+					Agent Turn
 				</span>
 			</div>
 
@@ -275,7 +269,7 @@ export function SpaceTaskCardFeed({
 	maps,
 	isAgentActive,
 }: SpaceTaskCardFeedProps) {
-	const turns = useMemo(() => buildTurns(parsedRows), [parsedRows]);
+	const blocks = useMemo(() => buildAgentTurnBlocks(parsedRows), [parsedRows]);
 
 	const runningRowId = useMemo(() => {
 		if (!isAgentActive) return null;
@@ -286,21 +280,16 @@ export function SpaceTaskCardFeed({
 
 	return (
 		<div class="space-y-2 px-4 py-2" data-testid="space-task-event-feed-compact">
-			{turns.map((turn) => {
-				const block = turn.block;
+			{blocks.map((block, index) => {
 				const blockHiddenCount = getBlockHiddenCount(block.rows);
 				const blockPinnedInitialUserRowId =
 					blockHiddenCount > 0 ? getBlockPinnedInitialUserRowId(block.rows) : null;
 				return (
-					<div key={turn.id} class="space-y-1.5" data-testid="compact-turn-group">
-						<div class="relative py-1" data-testid="compact-turn-divider">
-							<div class="border-t border-dark-700" aria-hidden="true" />
-							<div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-								<span class="px-2 text-[11px] uppercase tracking-[0.12em] text-gray-500 bg-dark-900">
-									{`Turn ${turn.index}`}
-								</span>
-							</div>
-						</div>
+					<div
+						key={block.id}
+						class={`space-y-1.5 ${index > 0 ? 'pt-2 border-t border-dark-700/70' : ''}`}
+						data-testid="compact-turn-group"
+					>
 						{renderAgentBlock(
 							block,
 							maps,

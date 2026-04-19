@@ -171,7 +171,7 @@ describe('SpaceTaskUnifiedThread', () => {
 		expect(screen.getByText('tail-1')).toBeTruthy();
 		expect(screen.getByText('tail-5')).toBeTruthy();
 		expect(screen.queryByTestId('compact-flat-hidden-divider')).toBeNull();
-		expect(screen.getByText('Turn 1')).toBeTruthy();
+		expect(screen.queryByTestId('compact-turn-divider')).toBeNull();
 	});
 
 	it('renders the floating agent tag in compact mode', () => {

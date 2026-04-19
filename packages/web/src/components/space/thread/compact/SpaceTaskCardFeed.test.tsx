@@ -240,8 +240,7 @@ describe('SpaceTaskCardFeed', () => {
 
 		const turnGroups = screen.getAllByTestId('compact-turn-group');
 		expect(turnGroups.length).toBe(2);
-		expect(screen.getByText('Turn 1')).toBeTruthy();
-		expect(screen.getByText('Turn 2')).toBeTruthy();
+		expect(screen.queryByTestId('compact-turn-divider')).toBeNull();
 		const turn1Msgs = within(turnGroups[0]).getAllByTestId('sdk-message-renderer');
 		expect(turn1Msgs.map((el) => el.textContent)).toEqual([
 			'coder-init',
@@ -276,6 +275,7 @@ describe('SpaceTaskCardFeed', () => {
 		expect(headers.length).toBe(3);
 		expect(container.textContent).toContain('TASK');
 		expect(container.textContent).toContain('CODER');
+		expect(container.textContent).toContain('Agent Turn');
 
 		const siderails = container.querySelectorAll('[data-testid="compact-block-siderail"]');
 		expect(siderails.length).toBe(3);
