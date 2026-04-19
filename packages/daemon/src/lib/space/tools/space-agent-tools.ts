@@ -22,7 +22,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -36,6 +36,7 @@ import type { DaemonHub } from '../../daemon-hub';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import { canTransition } from '../runtime/workflow-run-status-machine';
+import { enrichTaskWithPendingAction } from '../runtime/pending-action';
 
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
@@ -262,6 +263,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 		/**
 		 * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
+		 *
+		 * Tasks in the non-compact output are enriched with `pendingAction` when they are
+		 * paused at a completion action, so consumers can render an approval banner
+		 * without a second fetch.
 		 */
 		async list_tasks(args: {
 			status?: SpaceTaskStatus;
@@ -271,7 +276,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			offset?: number;
 			compact?: boolean;
 		}): Promise<ToolResult> {
-			let tasks;
+			let tasks: SpaceTask[];
 			if (args.workflow_run_id) {
 				tasks = taskRepo.listByWorkflowRun(args.workflow_run_id);
 				if (args.status) {
@@ -300,7 +305,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}));
 				return jsonResult({ success: true, total, tasks: compactTasks });
 			}
-			return jsonResult({ success: true, total, tasks });
+			const enrichedTasks = tasks.map((t) =>
+				enrichTaskWithPendingAction(t, workflowRunRepo, workflowManager)
+			);
+			return jsonResult({ success: true, total, tasks: enrichedTasks });
 		},
 
 		/**
@@ -328,9 +336,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 		/**
 		 * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
+		 *
+		 * When the task is paused at a completion action (`pendingCheckpointType ===
+		 * 'completion_action'`), the returned task is enriched with a `pendingAction`
+		 * field describing the action awaiting approval. Script bodies, instruction
+		 * prompts, and MCP tool args are omitted — consumers fetch the workflow for those.
 		 */
 		async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
-			let task = null;
+			let task: SpaceTask | null = null;
 			if (args.task_number !== undefined) {
 				task = await taskManager.getTaskByNumber(args.task_number);
 			} else if (args.task_id) {
@@ -345,7 +358,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
 				return jsonResult({ success: false, error: `Task not found: ${ref}` });
 			}
-			return jsonResult({ success: true, task });
+			const enriched = enrichTaskWithPendingAction(task, workflowRunRepo, workflowManager);
+			return jsonResult({ success: true, task: enriched });
 		},
 
 		/**
@@ -681,6 +695,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
 				});
 			}
+			// Hard guard against bypassing completion-action execution. A plain
+			// `setTaskStatus('done')` here would skip the pending completion
+			// action(s) entirely, defeating the review gate. Callers must use
+			// `approve_completion_action`, which routes through
+			// `SpaceRuntime.resumeCompletionActions` and runs the pending action.
+			if (task.pendingCheckpointType === 'completion_action') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is paused at a completion-action checkpoint. ` +
+						`Use approve_completion_action instead to run the pending action(s).`,
+				});
+			}
 
 			try {
 				const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
@@ -701,6 +728,84 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				}
 
 				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Approve a task paused at a completion-action checkpoint
+		 * (`pendingCheckpointType === 'completion_action'`) and resume execution of
+		 * the pending action(s). Unlike `approve_task`, this does not transition the
+		 * task directly to `done` — it delegates to `SpaceRuntime.resumeCompletionActions`,
+		 * which runs the pending action and either:
+		 *   - finishes the task (`done`) once all remaining actions execute,
+		 *   - pauses again (`review`) if another action needs higher autonomy, or
+		 *   - marks the task `blocked` if an action fails.
+		 *
+		 * The optional `reason` is persisted into the task's `approval_reason` column
+		 * as part of the audit trail and surfaces in the `completion_action_executed`
+		 * thread event (with `approvedBy: 'human'`).
+		 */
+		async approve_completion_action(args: {
+			task_id: string;
+			reason?: string;
+		}): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (task.status !== 'review') {
+				return jsonResult({
+					success: false,
+					error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
+				});
+			}
+			if (task.pendingCheckpointType !== 'completion_action') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is not paused at a completion-action checkpoint ` +
+						`(pendingCheckpointType=${task.pendingCheckpointType ?? 'null'}). ` +
+						`Use approve_task for plain review→done approvals.`,
+				});
+			}
+
+			try {
+				const resumed = await runtime.resumeCompletionActions(spaceId, args.task_id, {
+					approvalReason: args.reason ?? null,
+				});
+				if (!resumed) {
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to resume completion actions for task ${args.task_id} — ` +
+							`task state is inconsistent (see daemon logs for details).`,
+					});
+				}
+
+				// SpaceRuntime.resumeCompletionActions emits notification events but does
+				// not emit the RPC-level space.task.updated hub event; mirror the
+				// approve_task behaviour so frontends refresh.
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.updated', {
+							sessionId: 'global',
+							spaceId,
+							taskId: args.task_id,
+							task: resumed,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({ success: true, task: resumed });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
@@ -927,6 +1032,20 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 				reason: z.string().optional().describe('Reason for approval'),
 			},
 			(args) => handlers.approve_task(args)
+		),
+		tool(
+			'approve_completion_action',
+			"Approve a task paused at a completion-action checkpoint (pendingCheckpointType='completion_action') and resume execution of the pending action(s). Prefer this over approve_task when the task is specifically paused for completion-action review — it runs the pending action instead of bypassing to 'done'.",
+			{
+				task_id: z.string().describe('ID of the task to approve'),
+				reason: z
+					.string()
+					.optional()
+					.describe(
+						'Rationale for approval. Persisted in the task audit trail and surfaced in the completion_action_executed thread event.'
+					),
+			},
+			(args) => handlers.approve_completion_action(args)
 		),
 	];
 

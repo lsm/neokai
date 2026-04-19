@@ -1138,6 +1138,10 @@ export function seedBuiltInWorkflows(
 					...a,
 					agentId: resolvedIds.get(a.agentId)!,
 				})),
+				// Thread completionActions through to persisted nodes. Without this,
+				// end-node actions like MERGE_PR_COMPLETION_ACTION are silently dropped
+				// so report_result() completes the workflow but the PR never merges.
+				...(s.completionActions ? { completionActions: s.completionActions } : {}),
 			}));
 
 			const startNodeId = nodeIdMap.get(template.startNodeId);

@@ -14,6 +14,7 @@ import { TaskArtifactsPanel } from './TaskArtifactsPanel';
 import { getTransitionActions, TaskStatusActions } from './TaskStatusActions';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { PendingGateBanner } from './PendingGateBanner';
+import { PendingCompletionActionBanner } from './PendingCompletionActionBanner';
 import { ThreadedChatComposer } from './ThreadedChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -332,6 +333,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						status={task.status}
 						onTransition={handleStatusTransition}
 						disabled={statusTransitioning}
+						pendingCheckpointType={task.pendingCheckpointType}
 					/>
 				</div>
 			)}
@@ -422,13 +424,22 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								onStatusTransition={handleStatusTransition}
 							/>
 						) : (
-							task.workflowRunId && (
-								<PendingGateBanner
-									runId={task.workflowRunId}
-									spaceId={runtimeSpaceId}
-									workflowId={canvasWorkflowId}
-								/>
-							)
+							<>
+								{task.pendingCheckpointType === 'completion_action' && (
+									<PendingCompletionActionBanner
+										task={task}
+										spaceId={runtimeSpaceId}
+										spaceAutonomyLevel={spaceStore.space.value?.autonomyLevel}
+									/>
+								)}
+								{task.workflowRunId && (
+									<PendingGateBanner
+										runId={task.workflowRunId}
+										spaceId={runtimeSpaceId}
+										workflowId={canvasWorkflowId}
+									/>
+								)}
+							</>
 						)}
 						<div class="flex-1 min-h-0" data-testid="task-thread-panel">
 							{hasUnifiedWorkflowThread ? (

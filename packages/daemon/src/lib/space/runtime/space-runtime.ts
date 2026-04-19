@@ -44,6 +44,7 @@ import { WorkflowExecutor } from './workflow-executor';
 import { selectWorkflow } from './workflow-selector';
 import { Logger } from '../../logger';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { type NotificationSink, NullNotificationSink } from './notification-sink';
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
 import { CompletionDetector } from './completion-detector';
@@ -55,6 +56,19 @@ import {
 } from './constants';
 
 const log = new Logger('space-runtime');
+
+/**
+ * Build the human-readable pause reason stored on `SpaceTask.result` when a
+ * task pauses at a completion action awaiting approval. Kept as a standalone
+ * helper so tests can assert the exact wording without pulling in the full
+ * runtime wiring.
+ */
+function buildAwaitingApprovalReason(
+	action: CompletionAction,
+	spaceLevel: SpaceAutonomyLevel
+): string {
+	return `Awaiting approval: ${action.name} (requires autonomy ${action.requiredLevel}, space is at ${spaceLevel})`;
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -108,6 +122,13 @@ export interface SpaceRuntimeConfig {
 	 * artifact data from the workflow run for script env injection.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Optional SDK message repository used to emit synthetic SDK messages into
+	 * a task's agent session (e.g. the `completion_action_executed` marker
+	 * rendered by `SpaceTaskUnifiedThread`). Defaults to a repo constructed
+	 * from `db` if not provided — tests can inject a stub to assert emissions.
+	 */
+	sdkMessageRepo?: SDKMessageRepository;
 	/**
 	 * Optional callback emitted when runtime mutates a SpaceTask internally.
 	 * Used to fan out `space.task.updated` events for UI synchronization.
@@ -194,6 +215,13 @@ export class SpaceRuntime {
 	private notificationSink: NotificationSink;
 
 	/**
+	 * Lazy-initialized SDK message repository used for thread-event emission.
+	 * Sourced from `config.sdkMessageRepo` when provided, otherwise constructed
+	 * on first use from `config.db`.
+	 */
+	private sdkMessageRepo: SDKMessageRepository | null = null;
+
+	/**
 	 * Completion detector — inspects canonical `SpaceTask` to decide completion.
 	 * Initialized from config or defaulted to `new CompletionDetector(taskRepo)`.
 	 */
@@ -241,6 +269,49 @@ export class SpaceRuntime {
 	constructor(private config: SpaceRuntimeConfig) {
 		this.notificationSink = config.notificationSink ?? new NullNotificationSink();
 		this.completionDetector = config.completionDetector ?? new CompletionDetector(config.taskRepo);
+		this.sdkMessageRepo = config.sdkMessageRepo ?? null;
+	}
+
+	/**
+	 * Lazy accessor for the SDK message repository. Constructed from `config.db`
+	 * on first use when the caller did not inject one. Centralized here so
+	 * emission sites can stay one-liners and tests can inject a stub via config.
+	 */
+	private getSdkMessageRepo(): SDKMessageRepository {
+		if (!this.sdkMessageRepo) {
+			this.sdkMessageRepo = new SDKMessageRepository(this.config.db);
+		}
+		return this.sdkMessageRepo;
+	}
+
+	/**
+	 * Persist a synthetic SDK `system` message into the target session so it
+	 * surfaces in `SpaceTaskUnifiedThread`. Failures are logged and swallowed —
+	 * thread-event emission must never block a resume or fail a task.
+	 *
+	 * @internal — public for testing only.
+	 */
+	emitTaskThreadEvent(sessionId: string, subtype: string, payload: Record<string, unknown>): void {
+		try {
+			// Shape mirrors the SDK system message contract expected by the web
+			// thread renderer (`isSDKSystemMessage` + subtype switch in
+			// `space-task-thread-events.ts`). Unknown subtypes degrade gracefully
+			// to a generic "system" event, so consumers without the new subtype
+			// branch still show something meaningful.
+			const message = {
+				type: 'system',
+				subtype,
+				session_id: sessionId,
+				uuid: `${subtype}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+				...payload,
+			} as unknown as Parameters<SDKMessageRepository['saveSDKMessage']>[1];
+			this.getSdkMessageRepo().saveSDKMessage(sessionId, message);
+		} catch (err) {
+			log.warn(
+				`[SpaceRuntime] Failed to emit thread event ${subtype} on session ${sessionId}: ` +
+					`${err instanceof Error ? err.message : String(err)}`
+			);
+		}
 	}
 
 	/**
@@ -503,10 +574,23 @@ export class SpaceRuntime {
 					workflow,
 					reportedStatus,
 					nextResult,
-					spaceLevel
+					spaceLevel,
+					canonicalTask.id
 				);
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, params);
-			} else if (nextResult && canonicalTask.result !== nextResult) {
+			} else if (
+				nextResult &&
+				canonicalTask.result !== nextResult &&
+				// Don't clobber the structured pause-reason surfaced on `result` when the
+				// task is paused at a completion action — that string is what read
+				// surfaces use to explain *why* the task is awaiting review. The
+				// original agent output is still recoverable via `reportedSummary`, and
+				// `resumeCompletionActions` restores `result` from there on resume.
+				!(
+					canonicalTask.status === 'review' &&
+					canonicalTask.pendingCheckpointType === 'completion_action'
+				)
+			) {
 				await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, { result: nextResult });
 			}
 			return;
@@ -797,9 +881,19 @@ export class SpaceRuntime {
 	 * remaining actions. If a later action also requires higher autonomy, the task
 	 * pauses again. If all remaining actions complete, the task transitions to 'done'.
 	 *
+	 * @param options.approvalReason Optional human-supplied rationale for the
+	 *   approval. Persisted alongside `approvalSource='human'`/`approvedAt` on
+	 *   the terminal `done` transition (stored in the `approval_reason` column).
+	 *   Written only on the success path — intermediate re-pauses keep the
+	 *   column unchanged so a prior cycle's reason does not leak forward.
+	 *
 	 * @returns The updated task, or null if the task wasn't in a resumable state.
 	 */
-	async resumeCompletionActions(spaceId: string, taskId: string): Promise<SpaceTask | null> {
+	async resumeCompletionActions(
+		spaceId: string,
+		taskId: string,
+		options?: { approvalReason?: string | null }
+	): Promise<SpaceTask | null> {
 		const task = this.config.taskRepo.getTask(taskId);
 		if (!task) {
 			log.warn(`SpaceRuntime.resumeCompletionActions: task ${taskId} not found`);
@@ -871,10 +965,54 @@ export class SpaceRuntime {
 						result: `Completion action "${action.name}" failed`,
 					});
 				}
+				// Emit audit-trail event for each successfully executed action. This
+				// covers both the human-approved resume (i === startIndex) and any
+				// subsequent auto-executed actions. The human-approved entry is the
+				// one most useful to surface in the task thread; downstream renderers
+				// can filter by `approvedBy === 'human'` if they want.
+				const approvedBy = i === startIndex ? 'human' : 'auto_policy';
+				const approvalReason = i === startIndex ? (options?.approvalReason ?? null) : null;
+				const executedAt = new Date().toISOString();
+				await this.safeNotify({
+					kind: 'completion_action_executed',
+					spaceId,
+					taskId,
+					runId: run.id,
+					actionId: action.id,
+					actionName: action.name,
+					approvedBy,
+					approvalReason,
+					executedAt,
+					timestamp: executedAt,
+				});
+				// Also surface the event in the task's own message stream so
+				// SpaceTaskUnifiedThread can render it inline in the timeline. This
+				// writes a synthetic SDK system message into the task agent's
+				// session (if one exists). No-op when the task never had a Task
+				// Agent session — node-agent standalone tasks still get the
+				// notification-sink entry above.
+				const latestTask = this.config.taskRepo.getTask(taskId);
+				if (latestTask?.taskAgentSessionId) {
+					this.emitTaskThreadEvent(latestTask.taskAgentSessionId, 'completion_action_executed', {
+						spaceId,
+						taskId,
+						runId: run.id,
+						actionId: action.id,
+						actionName: action.name,
+						approvedBy,
+						approvalReason,
+						executedAt,
+					});
+				}
 			} else {
-				// Pause at this action — clear stale approvedAt from previous cycle
+				// Pause at this action — clear stale approvedAt from previous cycle and
+				// surface a structured pause reason + fresh awaiting-approval event so
+				// the Space Agent and UI learn about this new gate.
+				const pauseReason = buildAwaitingApprovalReason(action, spaceLevel);
+				await this.emitTaskAwaitingApproval(spaceId, taskId, action, spaceLevel);
 				return await this.finalizeResume(spaceId, taskId, {
 					status: 'review',
+					result: pauseReason,
 					pendingActionIndex: i,
 					pendingCheckpointType: 'completion_action',
 					approvedAt: null,
@@ -882,11 +1020,17 @@ export class SpaceRuntime {
 			}
 		}
 
-		// All remaining actions executed — task is done
+		// All remaining actions executed — task is done. Restore `result` to the
+		// original agent summary (the pause-reason string was only relevant while
+		// the task was awaiting approval) and persist the human-supplied approval
+		// reason (when given) so the audit trail records *why* this task was
+		// approved, not just *that* it was.
 		return await this.finalizeResume(spaceId, taskId, {
 			status: 'done',
+			result: task.reportedSummary ?? null,
 			completedAt: Date.now(),
 			approvalSource: 'human',
+			approvalReason: options?.approvalReason ?? null,
 			approvedAt: Date.now(),
 			pendingActionIndex: null,
 			pendingCheckpointType: null,
@@ -1086,6 +1230,20 @@ export class SpaceRuntime {
 		}
 		if (canonicalTask.status !== 'in_progress') {
 			this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
+		}
+		// awaiting_approval entries are keyed per (task, action); clear them when the
+		// task is no longer paused at a completion action so a future pause — even on
+		// the same action — can fire a fresh event.
+		if (
+			canonicalTask.status !== 'review' ||
+			canonicalTask.pendingCheckpointType !== 'completion_action'
+		) {
+			const awaitingPrefix = `${canonicalTask.id}:awaiting_approval:`;
+			for (const key of this.notifiedTaskSet) {
+				if (key.startsWith(awaitingPrefix)) {
+					this.notifiedTaskSet.delete(key);
+				}
+			}
 		}
 
 		// ─── Completion bypass ───────────────────────────────────────────────
@@ -1341,7 +1499,8 @@ export class SpaceRuntime {
 						meta.workflow,
 						reportedStatus,
 						nextTaskResult,
-						spaceLevel
+						spaceLevel,
+						canonicalTask.id
 					);
 					await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, params);
 					finalTaskStatus = params.status ?? canonicalTask.status;
@@ -1652,7 +1811,8 @@ export class SpaceRuntime {
 		workflow: SpaceWorkflow | null,
 		reportedStatus: SpaceReportedStatus,
 		taskResult: string | null,
-		spaceLevel: SpaceAutonomyLevel
+		spaceLevel: SpaceAutonomyLevel,
+		taskId: string
 	): Promise<UpdateSpaceTaskParams> {
 		// Non-success outcomes pass through directly. Completion actions are a
 		// success-path review gate ("flip to done after verifying X"); they
@@ -1722,11 +1882,48 @@ export class SpaceRuntime {
 						result: `Completion action "${action.name}" failed`,
 					};
 				}
+				// Emit audit-trail event for the auto-executed action. Mirrors the
+				// resume path so every successfully-run action is visible in the
+				// space-agent notification stream and — when the task has a task
+				// agent session — in the task's own thread.
+				const executedAt = new Date().toISOString();
+				await this.safeNotify({
+					kind: 'completion_action_executed',
+					spaceId,
+					taskId,
+					runId,
+					actionId: action.id,
+					actionName: action.name,
+					approvedBy: 'auto_policy',
+					approvalReason: null,
+					executedAt,
+					timestamp: executedAt,
+				});
+				// Thread-event emission targets the task's own agent session so
+				// SpaceTaskUnifiedThread can render it inline.
+				const owningTask = this.config.taskRepo.getTask(taskId);
+				if (owningTask?.taskAgentSessionId) {
+					this.emitTaskThreadEvent(owningTask.taskAgentSessionId, 'completion_action_executed', {
+						spaceId,
+						taskId: owningTask.id,
+						runId,
+						actionId: action.id,
+						actionName: action.name,
+						approvedBy: 'auto_policy',
+						approvalReason: null,
+						executedAt,
+					});
+				}
 			} else {
-				// Pause at this action — task goes to 'review' with pending action metadata
+				// Pause at this action — task goes to 'review' with pending action metadata.
+				// Populate `result` with a structured pause reason so surfaces can explain
+				// *why* the task is awaiting review. The original agent output is preserved
+				// on the separate `reportedSummary` field.
+				const pauseReason = buildAwaitingApprovalReason(action, spaceLevel);
+				await this.emitTaskAwaitingApproval(spaceId, taskId, action, spaceLevel);
 				return {
 					status: 'review' as const,
-					result: taskResult,
+					result: pauseReason,
 					pendingActionIndex: i,
 					pendingCheckpointType: 'completion_action' as const,
 				};
@@ -1743,6 +1940,41 @@ export class SpaceRuntime {
 			pendingActionIndex: null,
 			pendingCheckpointType: null,
 		};
+	}
+
+	/**
+	 * Emit a `task_awaiting_approval` event for a task that just paused at a
+	 * completion action. Deduplicated by `${taskId}:awaiting_approval:${actionId}`
+	 * so we don't re-fire for the same pause across ticks — each distinct pending
+	 * action gets exactly one event per pause.
+	 *
+	 * Callers must ensure the dedup set is cleared when the task leaves the
+	 * paused state — this cleanup runs at the top of `processRunTick`, which
+	 * strips all `${taskId}:awaiting_approval:*` entries once the task is no
+	 * longer at `review` + `completion_action`.
+	 */
+	private async emitTaskAwaitingApproval(
+		spaceId: string,
+		taskId: string,
+		action: CompletionAction,
+		spaceLevel: SpaceAutonomyLevel
+	): Promise<void> {
+		const dedupKey = `${taskId}:awaiting_approval:${action.id}`;
+		if (this.notifiedTaskSet.has(dedupKey)) return;
+		this.notifiedTaskSet.add(dedupKey);
+		await this.safeNotify({
+			kind: 'task_awaiting_approval',
+			spaceId,
+			taskId,
+			actionId: action.id,
+			actionName: action.name,
+			actionDescription: action.description,
+			actionType: action.type,
+			requiredLevel: action.requiredLevel,
+			spaceLevel,
+			autonomyLevel: spaceLevel,
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	/**
