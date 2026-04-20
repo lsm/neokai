@@ -161,6 +161,33 @@ All three sourceTypes are actively injected by `QueryOptionsBuilder`: `plugin` a
 
 See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documentation.
 
+### Space Agent User Message Anatomy
+
+Every Space agent session receives a structured user message composed by
+`buildCustomAgentTaskMessage` (`packages/daemon/src/lib/space/agents/custom-agent.ts`)
+plus a runtime execution contract appended by the Task Agent Manager. The
+message is action-first and workflow-aware:
+
+1. `## Your Task` — task number, title, description, priority
+2. `## Runtime Location` — worktree path, derived PR URL (`none yet` when no
+   gate has recorded a `pr_url`)
+3. `## Your Role in This Workflow` — current node, peers, outbound channels,
+   gates writable by this node/agent (omitted outside a workflow)
+4. `## Previous Work on This Goal` — bulleted summaries from prior tasks
+5. `## Project Context` — `space.backgroundContext`
+6. `## Standing Instructions` — `space.instructions` then
+   `workflow.instructions`, merged under one heading
+
+Slot prompts in `built-in-workflows.ts` (and any user-authored workflow) must
+contain only **behavioral** instruction — what the agent does, how to use
+tools, and any required step-by-step checklists. Do not re-state peers,
+channel targets, gate IDs, or "X is my reviewer" chrome: that context is
+injected centrally by the builder. Re-adding it creates drift when the
+workflow graph is edited later.
+
+A dev-mode warning is logged when the final user message exceeds 4 KB so
+future prompt bloat surfaces during development without failing sessions.
+
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
