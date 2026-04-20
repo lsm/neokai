@@ -118,10 +118,12 @@ describe('CODING_WORKFLOW template', () => {
 		expect(ch!.maxCycles).toBeUndefined();
 	});
 
-	test('Review → Coding channel is ungated with maxCycles', () => {
+	test('Review → Coding channel is gated by review-posted-gate with maxCycles', () => {
 		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(ch).toBeDefined();
-		expect(ch!.gateId).toBeUndefined();
+		// The review-posted-gate closes the feedback-loop gap where the reviewer
+		// summarizes feedback internally without posting to GitHub.
+		expect(ch!.gateId).toBe('review-posted-gate');
 		// direction field removed from WorkflowChannel
 		expect(ch!.maxCycles).toBe(5);
 	});
@@ -140,11 +142,43 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('has one gate with one field', () => {
-		expect(CODING_WORKFLOW.gates).toHaveLength(1);
-		const gate = CODING_WORKFLOW.gates![0];
-		expect(gate.id).toBe('code-ready-gate');
-		expect(gate.fields).toHaveLength(1);
+	test('has two gates: code-ready-gate and review-posted-gate', () => {
+		expect(CODING_WORKFLOW.gates).toHaveLength(2);
+		const gateIds = CODING_WORKFLOW.gates!.map((g) => g.id).sort();
+		expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
+		for (const gate of CODING_WORKFLOW.gates!) {
+			expect(gate.fields).toHaveLength(1);
+		}
+	});
+
+	test('review-posted-gate has review_url field writable only by reviewer', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const field = gate.fields.find((f) => f.name === 'review_url')!;
+		expect(field.type).toBe('string');
+		expect(field.writers).toEqual(['reviewer']);
+		expect(field.check.op).toBe('exists');
+	});
+
+	test('review-posted-gate has bash script verifying a review submitted after workflow start', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		expect(gate.script).toBeDefined();
+		expect(gate.script!.interpreter).toBe('bash');
+		expect(gate.script!.timeoutMs).toBe(30000);
+		// The script must consult the workflow start timestamp injected by the runner.
+		expect(gate.script!.source).toContain('NEOKAI_WORKFLOW_START_ISO');
+		// And query GitHub for the reviews list via the PR URL.
+		expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews');
+		expect(gate.script!.source).toContain('submittedAt');
+		// Must fail loudly when no review has landed since start.
+		expect(gate.script!.source).toContain('exit 1');
+		// Must echo pr_url/review_count on success for downstream consumers.
+		expect(gate.script!.source).toContain('pr_url');
+		expect(gate.script!.source).toContain('review_count');
+	});
+
+	test('review-posted-gate resets on cycle so each feedback round is re-verified', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		expect(gate.resetOnCycle).toBe(true);
 	});
 
 	test('code-ready-gate has pr_url field writable only by Coding', () => {
@@ -783,7 +817,7 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
 	});
 
-	test('CODING_WORKFLOW seeded with two channels (gated Coding→Review, ungated Review→Coding)', async () => {
+	test('CODING_WORKFLOW seeded with two channels (gated Coding→Review, gated Review→Coding)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(wf.channels).toHaveLength(2);
@@ -794,16 +828,18 @@ describe('seedBuiltInWorkflows()', () => {
 
 		const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
-		expect(reviewToCode!.gateId).toBeUndefined();
+		// Review → Coding is now gated by review-posted-gate so the reviewer's
+		// message cannot be delivered until a GitHub review is visible.
+		expect(reviewToCode!.gateId).toBe('review-posted-gate');
 		expect(reviewToCode!.maxCycles).toBe(5);
 	});
 
-	test('CODING_WORKFLOW seeded with one gate (code-ready-gate)', async () => {
+	test('CODING_WORKFLOW seeded with two gates (code-ready-gate + review-posted-gate)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		expect(wf.gates).toHaveLength(1);
-		const gateIds = wf.gates!.map((g) => g.id);
-		expect(gateIds).toContain('code-ready-gate');
+		expect(wf.gates).toHaveLength(2);
+		const gateIds = wf.gates!.map((g) => g.id).sort();
+		expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
 	});
 
 	test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -1736,11 +1772,48 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
 		expect(coder.customPrompt?.value.trim().length).toBeGreaterThan(0);
 	});
 
+	test('Coding node coder customPrompt teaches inline reply via gh api when re-activated', () => {
+		const codeNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+		const coder = codeNode.agents[0];
+		const prompt = coder.customPrompt!.value;
+		// The coder must be told where to find the review links on re-activation
+		// and how to reply inline so each GitHub thread gets a visible response.
+		expect(prompt).toContain('review_url');
+		expect(prompt).toContain('comment_urls');
+		expect(prompt).toContain('/replies');
+	});
+
 	test('Review node reviewer has non-empty customPrompt', () => {
 		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const reviewer = reviewNode.agents[0];
 		expect(reviewer.customPrompt?.value).toBeDefined();
 		expect(reviewer.customPrompt?.value).toContain('report_result');
+	});
+
+	test('Review node reviewer customPrompt requires posting to GitHub and echoing review_url', () => {
+		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const reviewer = reviewNode.agents[0];
+		const prompt = reviewer.customPrompt!.value;
+		// Reviewer must post to GitHub via gh pr review / gh api.
+		expect(prompt).toContain('gh pr review');
+		expect(prompt).toContain('gh api');
+		// And on the changes-requested path, send_message to Coding must carry
+		// the review URL + comment URLs so the coder can reply inline.
+		expect(prompt).toContain('review_url');
+		expect(prompt).toContain('comment_urls');
+		// The gate name must be mentioned so the reviewer understands the contract.
+		expect(prompt).toContain('review-posted-gate');
+	});
+});
+
+describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires gh pr review before report_result', () => {
+	test('reviewer prompt mandates gh pr review before handoff', () => {
+		const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
+		const prompt = agent.customPrompt!.value;
+		expect(prompt).toContain('gh pr review');
+		expect(prompt).toContain('report_result');
+		// The ordering matters: post BEFORE calling report_result.
+		expect(prompt).toMatch(/post.*before|BEFORE calling.*report_result/i);
 	});
 });
 

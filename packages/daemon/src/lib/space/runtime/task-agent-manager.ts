@@ -1711,7 +1711,7 @@ export class TaskAgentManager {
 			'  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
 			'  - save({ summary?, data? }) — persist your output at any time (call multiple times as needed)',
 			isEndNode
-				? '  - report_result({ status, summary }) — YOU ARE THE END NODE: call this when the workflow is complete to close the run'
+				? '  - report_result({ summary, evidence? }) — YOU ARE THE END NODE: call this when the workflow is complete to close the run. Do NOT pass a status; the runtime decides the terminal state via completion actions.'
 				: null,
 			'Only contact the task-agent via send_message if you are blocked or need human input.',
 		]
@@ -1749,7 +1749,7 @@ export class TaskAgentManager {
 
 		if (isEndNode) {
 			lines.push(
-				'  - report_result({ status, summary }) — YOU ARE THE END NODE: call this when the workflow is complete'
+				'  - report_result({ summary, evidence? }) — YOU ARE THE END NODE: call this when the workflow is complete. Do NOT pass a status; the runtime decides the terminal state via completion actions. `evidence` is an optional object (prUrl, commitSha, testOutput, …) supporting your summary.'
 			);
 		}
 
@@ -1801,7 +1801,7 @@ export class TaskAgentManager {
 		);
 		if (isEndNode) {
 			lines.push(
-				'When your work is complete, call report_result({ status: "done", summary: "..." }) to close the workflow run.'
+				'When your work is complete, call report_result({ summary: "...", evidence: { prUrl?: "...", commitSha?: "...", testOutput?: "...", ... } }) to close the workflow run. Do NOT pass a `status` — the runtime runs completion actions to decide the terminal state.'
 			);
 		}
 		return lines.join('\n');
@@ -2455,24 +2455,32 @@ export class TaskAgentManager {
 				if (!task)
 					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
 
+				// Serialize optional evidence into the summary so completion-action
+				// verifiers and downstream consumers can inspect it. The agent
+				// does NOT pass a status — the runtime always records `done` and
+				// lets the completion-action pipeline decide the terminal state.
+				const serializedSummary = args.evidence
+					? `${args.summary}\n\n<!-- evidence -->\n${JSON.stringify(args.evidence, null, 2)}`
+					: args.summary;
+
 				// Idempotency: if the agent re-invokes report_result with the same outcome
 				// (retry, double-call, etc.), skip the DB write and the broadcast — they
 				// would be no-ops that still wake every subscriber.
 				const successPayload = jsonResult({
 					success: true,
 					taskId: capturedTaskId,
-					status: args.status,
 					summary: args.summary,
-					message: `Result reported as "${args.status}". The runtime will resolve the final task status (supervised mode may pause for human approval).`,
+					message:
+						'Result recorded. The completion-action pipeline will determine the final task status (supervised mode may pause for human approval).',
 				});
-				if (task.reportedStatus === args.status && task.reportedSummary === args.summary) {
+				if (task.reportedStatus === 'done' && task.reportedSummary === serializedSummary) {
 					return successPayload;
 				}
 
 				try {
 					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
-						reportedStatus: args.status,
-						reportedSummary: args.summary,
+						reportedStatus: 'done',
+						reportedSummary: serializedSummary,
 					});
 
 					if (this.config.daemonHub && updated) {
@@ -2514,8 +2522,15 @@ export class TaskAgentManager {
 			gateDataRepo: this.config.gateDataRepo,
 			onGateDataChanged: (runId, gateId) => nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
 			scriptExecutor: executeGateScript,
-			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId })
-			scriptContext: { workspacePath, runId: workflowRunId, gateId: '' },
+			// gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
+			// workflowStartIso is sourced from the run's createdAt so gate scripts can
+			// filter activity by "since workflow start" (e.g. review-posted-gate).
+			scriptContext: {
+				workspacePath,
+				runId: workflowRunId,
+				gateId: '',
+				workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
+			},
 			onReportResult,
 			artifactRepo: this.config.artifactRepo,
 			getSpaceAutonomyLevel: async (sid) => {

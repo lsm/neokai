@@ -292,6 +292,37 @@ describe('buildRestrictedEnv', () => {
 	test('works without user env parameter', () => {
 		expect(buildRestrictedEnv(CTX)['NEOKAI_GATE_ID']).toBe('gate-123');
 	});
+
+	test('injects NEOKAI_WORKFLOW_START_ISO when context provides it', () => {
+		const env = buildRestrictedEnv({
+			...CTX,
+			workflowStartIso: '2026-04-19T10:00:00.000Z',
+		});
+		expect(env['NEOKAI_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
+	});
+
+	test('does not inject NEOKAI_WORKFLOW_START_ISO when context omits it', () => {
+		// When workflowStartIso isn't resolvable (e.g. old run, test harness),
+		// we leave the var unset rather than defaulting to something misleading.
+		expect(buildRestrictedEnv(CTX)['NEOKAI_WORKFLOW_START_ISO']).toBeUndefined();
+	});
+
+	test('user env cannot override NEOKAI_WORKFLOW_START_ISO', () => {
+		const env = buildRestrictedEnv(
+			{ ...CTX, workflowStartIso: '2026-04-19T10:00:00.000Z' },
+			{ NEOKAI_WORKFLOW_START_ISO: '1970-01-01T00:00:00.000Z' }
+		);
+		expect(env['NEOKAI_WORKFLOW_START_ISO']).toBe('2026-04-19T10:00:00.000Z');
+	});
+
+	test('user env cannot spoof NEOKAI_WORKFLOW_START_ISO when context omits it', () => {
+		// Even with no context-provided value, agents must not be able to set the
+		// var themselves — that would let them backdate reviews and bypass the gate.
+		const env = buildRestrictedEnv(CTX, {
+			NEOKAI_WORKFLOW_START_ISO: '2020-01-01T00:00:00.000Z',
+		});
+		expect(env['NEOKAI_WORKFLOW_START_ISO']).toBeUndefined();
+	});
 });
 
 // ---------------------------------------------------------------------------

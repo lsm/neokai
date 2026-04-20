@@ -23,6 +23,7 @@ import {
 	isTextBlock,
 	isToolUseBlock,
 	isThinkingBlock,
+	hasRenderableThinking,
 	getMessageTypeDescription,
 	isUserVisibleMessage,
 	type ContentBlock,
@@ -433,6 +434,51 @@ describe('Content Block Type Guards', () => {
 		test('should return false for text block', () => {
 			const block: ContentBlock = { type: 'text', text: 'Hello' };
 			expect(isThinkingBlock(block)).toBe(false);
+		});
+
+		test('should return true even when thinking payload is empty (Opus 4.7 case)', () => {
+			// Opus 4.7 with `thinking.display = 'omitted'` returns a
+			// structurally-valid thinking block whose `thinking` field is
+			// empty. The type guard stays structural; callers use
+			// `hasRenderableThinking` to decide whether to display.
+			const block: ContentBlock = {
+				type: 'thinking',
+				thinking: '',
+				signature: 'sig_abc',
+			};
+			expect(isThinkingBlock(block)).toBe(true);
+		});
+
+		test('should return false for redacted_thinking block', () => {
+			// redacted_thinking is its own variant — callers that want
+			// "is it a thinking block?" shouldn't match redacted blocks.
+			const block: ContentBlock = {
+				type: 'redacted_thinking',
+				data: 'opaque',
+			};
+			expect(isThinkingBlock(block)).toBe(false);
+		});
+	});
+
+	describe('hasRenderableThinking', () => {
+		test('should return true for non-empty thinking', () => {
+			const block = { type: 'thinking' as const, thinking: 'Real reasoning.' };
+			expect(hasRenderableThinking(block)).toBe(true);
+		});
+
+		test('should return false for empty thinking (Opus 4.7 omitted stub)', () => {
+			const block = { type: 'thinking' as const, thinking: '', signature: 'sig_x' };
+			expect(hasRenderableThinking(block)).toBe(false);
+		});
+
+		test('should return false for whitespace-only thinking', () => {
+			const block = { type: 'thinking' as const, thinking: '   \n\t  ' };
+			expect(hasRenderableThinking(block)).toBe(false);
+		});
+
+		test('should return false when thinking field is missing/non-string', () => {
+			const block = { type: 'thinking' as const, thinking: undefined as unknown as string };
+			expect(hasRenderableThinking(block)).toBe(false);
 		});
 	});
 });
