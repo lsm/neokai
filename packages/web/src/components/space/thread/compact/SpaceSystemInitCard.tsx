@@ -51,18 +51,23 @@ export function SpaceSystemInitCard({ message }: Props) {
 			class="rounded border bg-sky-50 dark:bg-sky-900/20 border-sky-200 dark:border-sky-800"
 			data-testid="compact-system-init-card"
 		>
+			{/*
+			 * Collapsed row uses the same padding (`px-3 py-2`), icon size
+			 * (`w-4 h-4`), and text size (`text-xs`) as `SDKResultMessage` so
+			 * the two render at matching heights in the compact feed.
+			 */}
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
-				class="w-full px-2.5 py-1.5 flex items-center justify-between gap-2 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors text-left rounded"
+				class="w-full px-3 py-2 flex items-center justify-between gap-2 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors text-left rounded"
 				aria-expanded={expanded}
 				data-testid="compact-system-init-toggle"
 			>
-				<div class="flex items-center gap-2 min-w-0">
+				<div class="flex items-center gap-2 min-w-0 text-xs">
 					{/* Chevron rotates when expanded */}
 					<svg
 						class={
-							'w-3 h-3 flex-shrink-0 text-sky-600 dark:text-sky-400 transition-transform ' +
+							'w-4 h-4 flex-shrink-0 text-sky-600 dark:text-sky-400 transition-transform ' +
 							(expanded ? 'rotate-90' : '')
 						}
 						viewBox="0 0 24 24"
@@ -75,15 +80,15 @@ export function SpaceSystemInitCard({ message }: Props) {
 					>
 						<polyline points="9 18 15 12 9 6" />
 					</svg>
-					<span class="text-[11px] font-medium text-sky-900 dark:text-sky-100 flex-shrink-0">
+					<span class="font-medium text-sky-900 dark:text-sky-100 flex-shrink-0">
 						Session Started
 					</span>
-					<span class="text-[11px] text-sky-700 dark:text-sky-300 font-mono truncate">
+					<span class="text-sky-700 dark:text-sky-300 font-mono truncate">
 						{shortModel(m.model)}
 						{m.permissionMode ? ` · ${m.permissionMode}` : ''}
 					</span>
 				</div>
-				<div class="flex items-center gap-2 flex-shrink-0 text-[10px] text-sky-600 dark:text-sky-400">
+				<div class="flex items-center gap-2 flex-shrink-0 text-xs text-sky-600 dark:text-sky-400">
 					{toolCount > 0 && <span>{toolCount} tools</span>}
 					{mcpCount > 0 && <span>{mcpCount} MCP</span>}
 				</div>

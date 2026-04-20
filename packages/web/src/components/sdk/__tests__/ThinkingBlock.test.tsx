@@ -224,11 +224,24 @@ describe('ThinkingBlock', () => {
 	});
 
 	describe('Edge Cases', () => {
-		it('should handle empty content', () => {
+		it('should render nothing for empty content (Opus 4.7 omitted-thinking stub)', () => {
+			// Opus 4.7 with `thinking.display = 'omitted'` returns a thinking
+			// block whose `thinking` field is an empty string (plus a
+			// signature for multi-turn continuity). The card should not
+			// render in that case — otherwise users see a bogus
+			// "Thinking · 0 characters" card.
 			const { container } = render(<ThinkingBlock content="" />);
 
-			expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
-			expect(container.textContent).toContain('0 characters');
+			expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
+			expect(container.textContent).not.toContain('0 characters');
+		});
+
+		it('should render nothing for whitespace-only content', () => {
+			// JSX attribute strings don't interpret escape sequences — use an
+			// expression so the content is actual whitespace.
+			const { container } = render(<ThinkingBlock content={'   \n\t  '} />);
+
+			expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
 		});
 
 		it('should handle very long single line content', () => {

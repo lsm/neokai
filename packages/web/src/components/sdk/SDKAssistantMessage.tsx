@@ -18,6 +18,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
 import {
 	type ContentBlock,
+	hasRenderableThinking,
 	isTextBlock,
 	isThinkingBlock,
 	isToolUseBlock,
@@ -138,10 +139,14 @@ export function SDKAssistantMessage({
 		return date.toLocaleString();
 	};
 
-	// Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained
+	// Separate blocks by type - tool use and thinking blocks get full width, text blocks are constrained.
+	//
+	// Thinking blocks with empty/whitespace payloads (emitted by Opus 4.7 and
+	// other models running with `thinking.display = 'omitted'`) are filtered
+	// out here so the UI doesn't show an empty "Thinking · 0 characters" card.
 	const textBlocks = apiMessage.content.filter((block: ContentBlock) => isTextBlock(block));
 	const toolBlocks = apiMessage.content.filter((block: ContentBlock) => isToolUseBlock(block));
-	const thinkingBlocks = apiMessage.content.filter((block: ContentBlock) => isThinkingBlock(block));
+	const thinkingBlocks = apiMessage.content.filter(isThinkingBlock).filter(hasRenderableThinking);
 
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
