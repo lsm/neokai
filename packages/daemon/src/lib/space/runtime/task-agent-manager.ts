@@ -74,6 +74,7 @@ import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { createEndNodeHandlers } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
@@ -90,13 +91,6 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import type {
-	ReportResultInput,
-	ApproveTaskInput,
-	SubmitForApprovalInput,
-} from '../tools/task-agent-tool-schemas';
-import { jsonResult } from '../tools/tool-result';
-import type { ToolResult } from '../tools/tool-result';
 
 const log = new Logger('task-agent-manager');
 
@@ -893,7 +887,7 @@ export class TaskAgentManager {
 					agentSlotName: execution.agentName,
 					gateData: gateDataSnapshot,
 				});
-				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution);
+				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution, space);
 				const kickoffMessage = runtimeContract
 					? `${initialMessage}\n\n${runtimeContract}`
 					: initialMessage;
@@ -1769,12 +1763,53 @@ export class TaskAgentManager {
 	/**
 	 * Build a runtime contract for a specific node execution from the current
 	 * workflow graph, including gate requirements derived from outbound channels.
+	 *
+	 * The `space` argument is used to determine whether `approve_task` is
+	 * currently unlocked by the space's autonomy level. When unlocked, the
+	 * prompt tells the agent it can self-close; otherwise the prompt tells the
+	 * agent that `submit_for_approval` is the only way to finalize. This keeps
+	 * the system prompt aligned with what the MCP handler actually enforces at
+	 * call time.
 	 */
 	private buildNodeExecutionRuntimeContract(
 		workflow: SpaceWorkflow | null,
-		execution: NodeExecution
+		execution: NodeExecution,
+		space: Space | null
 	): string {
 		const isEndNode = !!workflow?.endNodeId && execution.workflowNodeId === workflow.endNodeId;
+
+		// Compute whether approve_task is currently unlocked for this space.
+		// The MCP handler re-checks at call time, so this is purely for prompt
+		// accuracy — the tool is registered unconditionally on end-node sessions.
+		const spaceLevel = space?.autonomyLevel ?? 1;
+		const requiredLevel = workflow?.completionAutonomyLevel ?? 5;
+		const approveUnlocked = spaceLevel >= requiredLevel;
+
+		// Design v2 end-node tool contract (Task #39):
+		//   - report_result: append-only audit — does NOT close the task.
+		//   - approve_task : self-close (autonomy-gated).
+		//   - submit_for_approval: human sign-off (always available).
+		// Keep these strings in sync with `node-agent-tools.ts` and
+		// `task-agent-manager.ts` where the handlers live.
+		const endNodeContractLines = (indent: string): string[] => {
+			if (!isEndNode) return [];
+			const lines = [
+				`${indent}- report_result({ summary, evidence? }) — APPEND-ONLY AUDIT. Records what you observed; does NOT close the task. Every call is a new entry.`,
+			];
+			if (approveUnlocked) {
+				lines.push(
+					`${indent}- approve_task({}) — Close this task as done (self-approval). Unlocked for this space (autonomy ${spaceLevel} >= required ${requiredLevel}). Use as your FINAL action when you are satisfied the work is complete.`
+				);
+			} else {
+				lines.push(
+					`${indent}- approve_task({}) — NOT AVAILABLE: space autonomy ${spaceLevel} < workflow completionAutonomyLevel ${requiredLevel}. Do NOT call this tool; use submit_for_approval instead.`
+				);
+			}
+			lines.push(
+				`${indent}- submit_for_approval({ reason? }) — Request human sign-off. Always available to end-node agents. Use when autonomy blocks self-close OR the outcome is risky enough to escalate.`
+			);
+			return lines;
+		};
 
 		const fallback = [
 			'## Runtime Execution Contract',
@@ -1782,14 +1817,10 @@ export class TaskAgentManager {
 			'Tools available:',
 			'  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
 			'  - save({ summary?, data? }) — persist your output at any time (call multiple times as needed)',
-			isEndNode
-				? '  - report_result({ summary, evidence? }) — YOU ARE THE END NODE: call this when the workflow is complete to close the run. Do NOT pass a status; the runtime decides the terminal state via completion actions.'
-				: null,
+			...endNodeContractLines('  '),
 			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
 			'Only contact the task-agent via send_message if you are blocked or need human input.',
-		]
-			.filter(Boolean)
-			.join('\n');
+		].join('\n');
 
 		if (!workflow) {
 			return fallback;
@@ -1818,18 +1849,10 @@ export class TaskAgentManager {
 			'Tools available:',
 			'  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
 			'  - save({ summary?, data? }) — persist your output (summary text and/or structured data like pr_url)',
-		];
-
-		if (isEndNode) {
-			lines.push(
-				'  - report_result({ summary, evidence? }) — YOU ARE THE END NODE: call this when the workflow is complete. Do NOT pass a status; the runtime decides the terminal state via completion actions. `evidence` is an optional object (prUrl, commitSha, testOutput, …) supporting your summary.'
-			);
-		}
-
-		lines.push(
+			...endNodeContractLines('  '),
 			'  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
-			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool'
-		);
+			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
+		];
 
 		if (outboundGatedChannels.length === 0) {
 			lines.push('No outbound gated channels are currently mapped from this agent/node.');
@@ -1874,9 +1897,18 @@ export class TaskAgentManager {
 			'Only contact the task-agent via send_message if you are blocked or need human input.'
 		);
 		if (isEndNode) {
-			lines.push(
-				'When your work is complete, call report_result({ summary: "...", evidence: { prUrl?: "...", commitSha?: "...", testOutput?: "...", ... } }) to close the workflow run. Do NOT pass a `status` — the runtime runs completion actions to decide the terminal state.'
-			);
+			// Closure guidance: record audit first (report_result), then finalize
+			// via the appropriate tool. This replaces the old (incorrect) guidance
+			// that said report_result closes the run.
+			if (approveUnlocked) {
+				lines.push(
+					'When your work is complete: (1) call report_result({ summary, evidence? }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your report — decides the terminal status via completion actions.'
+				);
+			} else {
+				lines.push(
+					'When your work is complete: (1) call report_result({ summary, evidence? }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+				);
+			}
 		}
 		return lines.join('\n');
 	}
@@ -2648,144 +2680,22 @@ export class TaskAgentManager {
 		// reported feedback. Splitting audit from closure restores the intended
 		// iterative semantics.
 		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
-		let onReportResult: ((args: ReportResultInput) => Promise<ToolResult>) | undefined;
-		let onApproveTask: ((args: ApproveTaskInput) => Promise<ToolResult>) | undefined;
-		let onSubmitForApproval: ((args: SubmitForApprovalInput) => Promise<ToolResult>) | undefined;
-
-		if (isEndNode) {
-			const capturedTaskId = taskId;
-			const capturedSpaceId = spaceId;
-			const capturedWorkflow = workflow;
-
-			// report_result — append-only audit. Records what the agent observed
-			// without touching `reportedStatus`. Every call is a new row, including
-			// repeat calls across review cycles; no de-duplication.
-			onReportResult = async (args: ReportResultInput) => {
-				const task = this.config.taskRepo.getTask(capturedTaskId);
-				if (!task)
-					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
-
-				try {
-					this.config.taskReportResultRepo.append({
-						taskId: capturedTaskId,
-						spaceId: capturedSpaceId,
-						workflowNodeId,
-						agentName,
-						summary: args.summary,
-						evidence: args.evidence ?? null,
-					});
-					return jsonResult({
-						success: true,
-						taskId: capturedTaskId,
-						summary: args.summary,
-						message:
-							'Result recorded to audit log. This does NOT close the task — call approve_task (if available) or submit_for_approval to finalize.',
-					});
-				} catch (err) {
-					return jsonResult({
-						success: false,
-						error: err instanceof Error ? err.message : String(err),
-					});
-				}
-			};
-
-			// approve_task — agent self-closes. Gated by autonomy level. Registration
-			// is conditional on the same check, but we also re-check here as
-			// defense-in-depth against a buggy/malicious client bypassing it.
-			onApproveTask = async (_args: ApproveTaskInput) => {
-				const space = await this.config.spaceManager.getSpace(capturedSpaceId);
-				const currentLevel = space?.autonomyLevel ?? 1;
-				const required = capturedWorkflow?.completionAutonomyLevel ?? 5;
-				if (currentLevel < required) {
-					return jsonResult({
-						success: false,
-						error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${required}. Use submit_for_approval to request human review.`,
-					});
-				}
-				const task = this.config.taskRepo.getTask(capturedTaskId);
-				if (!task)
-					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
-
-				try {
-					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
-						reportedStatus: 'done',
-						// Clear any pending-completion state in case a prior submit_for_approval
-						// set it; approval supersedes the pending request.
-						pendingCheckpointType: null,
-						pendingCompletionSubmittedByNodeId: null,
-						pendingCompletionSubmittedAt: null,
-						pendingCompletionReason: null,
-					});
-					if (this.config.daemonHub && updated) {
-						void this.config.daemonHub
-							.emit('space.task.updated', {
-								sessionId: 'global',
-								spaceId: capturedSpaceId,
-								taskId: capturedTaskId,
-								task: updated,
-							})
-							.catch((err) => {
-								log.warn(
-									`Failed to emit space.task.updated for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
-								);
-							});
-					}
-					return jsonResult({
-						success: true,
-						taskId: capturedTaskId,
-						message:
-							'Task approved for completion. The completion-action pipeline will now resolve terminal status.',
-					});
-				} catch (err) {
-					return jsonResult({
-						success: false,
-						error: err instanceof Error ? err.message : String(err),
-					});
-				}
-			};
-
-			// submit_for_approval — always available to end nodes. Marks the task
-			// awaiting human review; the runtime resumes on approveTaskCompletion RPC.
-			onSubmitForApproval = async (args: SubmitForApprovalInput) => {
-				const task = this.config.taskRepo.getTask(capturedTaskId);
-				if (!task)
-					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
-
-				try {
-					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
-						status: 'review',
-						pendingCheckpointType: 'task_completion',
-						pendingCompletionSubmittedByNodeId: workflowNodeId,
-						pendingCompletionSubmittedAt: Date.now(),
-						pendingCompletionReason: args.reason ?? null,
-					});
-					if (this.config.daemonHub && updated) {
-						void this.config.daemonHub
-							.emit('space.task.updated', {
-								sessionId: 'global',
-								spaceId: capturedSpaceId,
-								taskId: capturedTaskId,
-								task: updated,
-							})
-							.catch((err) => {
-								log.warn(
-									`Failed to emit space.task.updated for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
-								);
-							});
-					}
-					return jsonResult({
-						success: true,
-						taskId: capturedTaskId,
-						message: `Task submitted for human review${args.reason ? ` (reason: ${args.reason})` : ''}. A human must approve or reject via the UI before the workflow continues.`,
-					});
-				} catch (err) {
-					return jsonResult({
-						success: false,
-						error: err instanceof Error ? err.message : String(err),
-					});
-				}
-			};
-		}
+		const endNodeHandlers = isEndNode
+			? createEndNodeHandlers({
+					taskId,
+					spaceId,
+					workflow,
+					workflowNodeId,
+					agentName,
+					taskRepo: this.config.taskRepo,
+					taskReportResultRepo: this.config.taskReportResultRepo,
+					spaceManager: this.config.spaceManager,
+					daemonHub: this.config.daemonHub,
+				})
+			: undefined;
+		const onReportResult = endNodeHandlers?.onReportResult;
+		const onApproveTask = endNodeHandlers?.onApproveTask;
+		const onSubmitForApproval = endNodeHandlers?.onSubmitForApproval;
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
 		// Looks up the live AgentSession by the enclosing-scope subSessionId, then
