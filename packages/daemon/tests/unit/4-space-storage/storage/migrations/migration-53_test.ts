@@ -134,6 +134,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 				{ id: 'ch-1', from: 'node-a', to: 'node-b', label: 'alpha to beta' },
 				{ id: 'ch-2', from: 'node-b', to: 'node-a' },
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		// Verify the channels column is written at the DB level
@@ -172,6 +173,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'sp-cfg',
 			name: 'Config Check',
+			completionAutonomyLevel: 3,
 		});
 
 		// After M74, config column is dropped. Verify tags column exists and has default.
@@ -196,6 +198,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'sp-upd',
 			name: 'Update Test',
+			completionAutonomyLevel: 3,
 		});
 
 		repo.updateWorkflow(wf.id, {
@@ -223,6 +226,7 @@ describe('Migration 53: channels column on space_workflows', () => {
 		const wf = repo.createWorkflow({
 			spaceId: 'sp-clr',
 			name: 'Clear Test',
+			completionAutonomyLevel: 3,
 		});
 
 		repo.updateWorkflow(wf.id, { channels: null });

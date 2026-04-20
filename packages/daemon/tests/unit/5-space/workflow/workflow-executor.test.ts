@@ -156,6 +156,7 @@ describe('WorkflowExecutor', () => {
 			nodes,
 			transitions,
 			startNodeId: stepsSpec[0].id,
+			completionAutonomyLevel: 3,
 		});
 
 		const run = runRepo.createRun({

@@ -147,6 +147,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,
+		completionAutonomyLevel: 3,
 		...overrides,
 	};
 }

@@ -64,6 +64,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTaskReportResultRepository } from '../../../storage/repositories/space-task-report-result-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -89,8 +90,13 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import type { ReportResultInput } from '../tools/task-agent-tool-schemas';
+import type {
+	ReportResultInput,
+	ApproveTaskInput,
+	SubmitForApprovalInput,
+} from '../tools/task-agent-tool-schemas';
 import { jsonResult } from '../tools/tool-result';
+import type { ToolResult } from '../tools/tool-result';
 
 const log = new Logger('task-agent-manager');
 
@@ -115,6 +121,14 @@ export interface TaskAgentManagerConfig {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task repository — direct DB reads */
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Append-only audit log for `report_result` tool calls from end-node agents.
+	 * Every `report_result` invocation writes one row here — the table is the
+	 * source of truth for "what did the agent observe", independent of the
+	 * task's reported/terminal status. Task #39: this separation is what keeps
+	 * Coding↔Review loops from closing on review feedback.
+	 */
+	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Workflow run repository — reading and updating runs */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
@@ -540,6 +554,7 @@ export class TaskAgentManager {
 				space,
 				workflowRunId,
 				taskRepo: this.config.taskRepo,
+				taskReportResultRepo: this.config.taskReportResultRepo,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				taskManager,
 				messageInjector: (subSessionId, message) =>
@@ -2070,6 +2085,7 @@ export class TaskAgentManager {
 			space,
 			workflowRunId: rehydrateWorkflowRunId,
 			taskRepo: this.config.taskRepo,
+			taskReportResultRepo: this.config.taskReportResultRepo,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			taskManager,
 			messageInjector: (subSessionId, message) =>
@@ -2621,53 +2637,85 @@ export class TaskAgentManager {
 			? this.buildAgentNameAliasesForExecution(workflow, execution)
 			: this.agentNameVariants(agentName);
 
-		// Build onReportResult callback for end-node agents so they can close the workflow run.
+		// Design v2 tool contract (Task #39):
+		//   `report_result`      — append-only audit. Does NOT close the task.
+		//   `approve_task`       — closes the task as done (self-approval). Gated
+		//                          by `space.autonomyLevel >= workflow.completionAutonomyLevel`.
+		//   `submit_for_approval` — request human review of completion.
 		//
-		// Records the agent's reported intent (status + summary) into
-		// `space_tasks.reported_status` / `reported_summary`, but does NOT directly
-		// transition `space_tasks.status`. The runtime resolves the final task status
-		// on the next tick via `resolveCompletionWithActions`, which honors the
-		// supervised-mode review gate. See `CompletionDetector.isComplete`.
+		// The previous behaviour where `report_result` set `reportedStatus='done'`
+		// caused cycle-graphs like Coding↔Review to close the moment the Reviewer
+		// reported feedback. Splitting audit from closure restores the intended
+		// iterative semantics.
 		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
-		let onReportResult:
-			| ((args: ReportResultInput) => Promise<ReturnType<typeof jsonResult>>)
-			| undefined;
+		let onReportResult: ((args: ReportResultInput) => Promise<ToolResult>) | undefined;
+		let onApproveTask: ((args: ApproveTaskInput) => Promise<ToolResult>) | undefined;
+		let onSubmitForApproval: ((args: SubmitForApprovalInput) => Promise<ToolResult>) | undefined;
+
 		if (isEndNode) {
 			const capturedTaskId = taskId;
 			const capturedSpaceId = spaceId;
+			const capturedWorkflow = workflow;
+
+			// report_result — append-only audit. Records what the agent observed
+			// without touching `reportedStatus`. Every call is a new row, including
+			// repeat calls across review cycles; no de-duplication.
 			onReportResult = async (args: ReportResultInput) => {
 				const task = this.config.taskRepo.getTask(capturedTaskId);
 				if (!task)
 					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
 
-				// Serialize optional evidence into the summary so completion-action
-				// verifiers and downstream consumers can inspect it. The agent
-				// does NOT pass a status — the runtime always records `done` and
-				// lets the completion-action pipeline decide the terminal state.
-				const serializedSummary = args.evidence
-					? `${args.summary}\n\n<!-- evidence -->\n${JSON.stringify(args.evidence, null, 2)}`
-					: args.summary;
-
-				// Idempotency: if the agent re-invokes report_result with the same outcome
-				// (retry, double-call, etc.), skip the DB write and the broadcast — they
-				// would be no-ops that still wake every subscriber.
-				const successPayload = jsonResult({
-					success: true,
-					taskId: capturedTaskId,
-					summary: args.summary,
-					message:
-						'Result recorded. The completion-action pipeline will determine the final task status (supervised mode may pause for human approval).',
-				});
-				if (task.reportedStatus === 'done' && task.reportedSummary === serializedSummary) {
-					return successPayload;
+				try {
+					this.config.taskReportResultRepo.append({
+						taskId: capturedTaskId,
+						spaceId: capturedSpaceId,
+						workflowNodeId,
+						agentName,
+						summary: args.summary,
+						evidence: args.evidence ?? null,
+					});
+					return jsonResult({
+						success: true,
+						taskId: capturedTaskId,
+						summary: args.summary,
+						message:
+							'Result recorded to audit log. This does NOT close the task — call approve_task (if available) or submit_for_approval to finalize.',
+					});
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
 				}
+			};
+
+			// approve_task — agent self-closes. Gated by autonomy level. Registration
+			// is conditional on the same check, but we also re-check here as
+			// defense-in-depth against a buggy/malicious client bypassing it.
+			onApproveTask = async (_args: ApproveTaskInput) => {
+				const space = await this.config.spaceManager.getSpace(capturedSpaceId);
+				const currentLevel = space?.autonomyLevel ?? 1;
+				const required = capturedWorkflow?.completionAutonomyLevel ?? 5;
+				if (currentLevel < required) {
+					return jsonResult({
+						success: false,
+						error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${required}. Use submit_for_approval to request human review.`,
+					});
+				}
+				const task = this.config.taskRepo.getTask(capturedTaskId);
+				if (!task)
+					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
 
 				try {
 					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
 						reportedStatus: 'done',
-						reportedSummary: serializedSummary,
+						// Clear any pending-completion state in case a prior submit_for_approval
+						// set it; approval supersedes the pending request.
+						pendingCheckpointType: null,
+						pendingCompletionSubmittedByNodeId: null,
+						pendingCompletionSubmittedAt: null,
+						pendingCompletionReason: null,
 					});
-
 					if (this.config.daemonHub && updated) {
 						void this.config.daemonHub
 							.emit('space.task.updated', {
@@ -2682,11 +2730,59 @@ export class TaskAgentManager {
 								);
 							});
 					}
-
-					return successPayload;
+					return jsonResult({
+						success: true,
+						taskId: capturedTaskId,
+						message:
+							'Task approved for completion. The completion-action pipeline will now resolve terminal status.',
+					});
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					return jsonResult({ success: false, error: message });
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			};
+
+			// submit_for_approval — always available to end nodes. Marks the task
+			// awaiting human review; the runtime resumes on approveTaskCompletion RPC.
+			onSubmitForApproval = async (args: SubmitForApprovalInput) => {
+				const task = this.config.taskRepo.getTask(capturedTaskId);
+				if (!task)
+					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
+
+				try {
+					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
+						status: 'review',
+						pendingCheckpointType: 'task_completion',
+						pendingCompletionSubmittedByNodeId: workflowNodeId,
+						pendingCompletionSubmittedAt: Date.now(),
+						pendingCompletionReason: args.reason ?? null,
+					});
+					if (this.config.daemonHub && updated) {
+						void this.config.daemonHub
+							.emit('space.task.updated', {
+								sessionId: 'global',
+								spaceId: capturedSpaceId,
+								taskId: capturedTaskId,
+								task: updated,
+							})
+							.catch((err) => {
+								log.warn(
+									`Failed to emit space.task.updated for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
+								);
+							});
+					}
+					return jsonResult({
+						success: true,
+						taskId: capturedTaskId,
+						message: `Task submitted for human review${args.reason ? ` (reason: ${args.reason})` : ''}. A human must approve or reject via the UI before the workflow continues.`,
+					});
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					});
 				}
 			};
 		}
@@ -2754,6 +2850,8 @@ export class TaskAgentManager {
 				workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
 			},
 			onReportResult,
+			onApproveTask,
+			onSubmitForApproval,
 			artifactRepo: this.config.artifactRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManager.getSpace(sid);

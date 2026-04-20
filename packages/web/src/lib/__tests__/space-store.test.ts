@@ -120,6 +120,7 @@ function makeWorkflow(id: string): SpaceWorkflow {
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		completionAutonomyLevel: 3,
 	};
 }
 

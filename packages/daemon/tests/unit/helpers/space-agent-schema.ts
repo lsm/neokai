@@ -65,6 +65,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
 			instructions TEXT DEFAULT NULL,
+			completion_autonomy_level INTEGER NOT NULL DEFAULT 3,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE

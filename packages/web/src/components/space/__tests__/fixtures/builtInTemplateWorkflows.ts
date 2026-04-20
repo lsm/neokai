@@ -48,6 +48,7 @@ export function makeBuiltInTemplateWorkflows(
 			tags: [],
 			createdAt: 0,
 			updatedAt: 0,
+			completionAutonomyLevel: 3,
 		},
 		{
 			id: 'tpl-research',
@@ -70,6 +71,7 @@ export function makeBuiltInTemplateWorkflows(
 			tags: [],
 			createdAt: 0,
 			updatedAt: 0,
+			completionAutonomyLevel: 2,
 		},
 		{
 			id: 'tpl-review-only',
@@ -87,6 +89,7 @@ export function makeBuiltInTemplateWorkflows(
 			tags: [],
 			createdAt: 0,
 			updatedAt: 0,
+			completionAutonomyLevel: 2,
 		},
 		{
 			id: 'tpl-plan-decompose',
@@ -119,6 +122,7 @@ export function makeBuiltInTemplateWorkflows(
 			tags: ['planning', 'decomposition'],
 			createdAt: 0,
 			updatedAt: 0,
+			completionAutonomyLevel: 3,
 			channels: [
 				{
 					from: 'Planning',
@@ -195,6 +199,7 @@ export function makeBuiltInTemplateWorkflows(
 			tags: [],
 			createdAt: 0,
 			updatedAt: 0,
+			completionAutonomyLevel: 4,
 			channels: [
 				{
 					from: 'Coding',

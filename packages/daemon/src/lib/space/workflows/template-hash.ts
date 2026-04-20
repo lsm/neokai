@@ -27,6 +27,12 @@ interface WorkflowFingerprint {
 	 * gate internals (not just gate additions/removals).
 	 */
 	gates: string[];
+	// NOTE: `completionAutonomyLevel` is intentionally NOT part of the
+	// fingerprint. Including it would invalidate historical template hashes
+	// computed by Migration 94 and make every existing Space's workflow appear
+	// drifted on upgrade. The field is persisted and enforced at runtime, but
+	// structural drift detection continues to track only the node/channel/gate
+	// topology as before.
 }
 
 /**

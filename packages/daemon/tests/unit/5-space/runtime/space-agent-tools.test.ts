@@ -86,6 +86,7 @@ function buildSingleStepWorkflow(
 		startNodeId: stepId,
 		rules: [],
 		tags,
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -1187,6 +1188,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 			startNodeId: stepId,
 			rules: [],
 			tags: ['coding', 'v2'],
+			completionAutonomyLevel: 3,
 		});
 
 		const result = await startWorkflowRun(ctx, {
@@ -1215,6 +1217,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 			startNodeId: stepId,
 			rules: [],
 			tags: ['planning', 'decomposition'],
+			completionAutonomyLevel: 3,
 		});
 
 		await startWorkflowRun(ctx, {

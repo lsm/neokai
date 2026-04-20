@@ -362,6 +362,7 @@ function seedWorkflowRun(ctx: TestCtx, wfRunId: string, _wfId: string, wfNodeId:
 		],
 		startNodeId: wfNodeId,
 		tags: [],
+		completionAutonomyLevel: 3,
 	});
 	const now = Date.now();
 	ctx.bunDb

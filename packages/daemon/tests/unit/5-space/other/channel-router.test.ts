@@ -145,6 +145,7 @@ function buildWorkflow(
 		rules: [],
 		tags: [],
 		channels: channels ?? [],
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -182,6 +183,7 @@ function buildWorkflowWithGates(
 		tags: [],
 		channels,
 		gates,
+		completionAutonomyLevel: 3,
 	});
 }
 

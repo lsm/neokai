@@ -27,8 +27,16 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../daemon-hub';
-import { ReportResultSchema } from './task-agent-tool-schemas';
-import type { ReportResultInput } from './task-agent-tool-schemas';
+import {
+	ReportResultSchema,
+	ApproveTaskSchema,
+	SubmitForApprovalSchema,
+} from './task-agent-tool-schemas';
+import type {
+	ReportResultInput,
+	ApproveTaskInput,
+	SubmitForApprovalInput,
+} from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
@@ -159,10 +167,26 @@ export interface NodeAgentToolsConfig {
 	/**
 	 * Optional callback for the `report_result` tool.
 	 * When provided, a `report_result` tool is added to the MCP server —
-	 * intended for the end node of a workflow so it can close the workflow run.
+	 * intended for the end node of a workflow so it can append an audit record
+	 * of what it observed. Design v2: this call does NOT close the task.
 	 * When absent, `report_result` is not available to this node agent.
 	 */
 	onReportResult?: (args: ReportResultInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for the `approve_task` tool. When provided, `approve_task`
+	 * is added to the MCP server. Intended for the end node when
+	 * `space.autonomyLevel >= workflow.completionAutonomyLevel`. The handler
+	 * also runtime-checks as defense-in-depth against a buggy/malicious client
+	 * bypassing registration gating.
+	 */
+	onApproveTask?: (args: ApproveTaskInput) => Promise<ToolResult>;
+	/**
+	 * Optional callback for the `submit_for_approval` tool. When provided, the
+	 * tool is added to the MCP server. Always present for end nodes regardless
+	 * of autonomy level — agents may voluntarily escalate risky outcomes for
+	 * human review even when they could self-close.
+	 */
+	onSubmitForApproval?: (args: SubmitForApprovalInput) => Promise<ToolResult>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * When provided, agent gate writes via send_message are blocked when
@@ -989,12 +1013,40 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			? [
 					tool(
 						'report_result',
-						'Record the final result of the workflow — the runtime decides the terminal status via completion actions. ' +
-							'Only available to the end node of the workflow. ' +
-							'Provide a human-readable summary and optional structured evidence (prUrl, commitSha, testOutput, …). ' +
-							'Do NOT pass a `status` — the completion-action pipeline is the sole arbiter of success/failure.',
+						"Append an audit record of what you observed to the task's report log. " +
+							'This does NOT close the task — it is append-only. To finalize the task, ' +
+							'call `approve_task` (if available) for self-close, or `submit_for_approval` ' +
+							'to request human review. Provide a human-readable summary and optional ' +
+							'structured evidence (prUrl, commitSha, testOutput, …).',
 						ReportResultSchema.shape,
 						(args) => onReportResult(args)
+					),
+				]
+			: []),
+		...(config.onApproveTask
+			? [
+					tool(
+						'approve_task',
+						'Close this task as done (self-approval). Only available when the space autonomy level ' +
+							"meets the workflow's completionAutonomyLevel threshold. Takes no arguments — the task " +
+							'is inferred from your session context. After calling, the completion-action pipeline ' +
+							'runs and resolves the terminal status. Use this as your final action when you are ' +
+							'authorized to self-close; otherwise use submit_for_approval.',
+						ApproveTaskSchema.shape,
+						(args) => config.onApproveTask!(args)
+					),
+				]
+			: []),
+		...(config.onSubmitForApproval
+			? [
+					tool(
+						'submit_for_approval',
+						"Request human review of this task's completion. Always available to end-node agents. " +
+							'Use this when you want to escalate for human sign-off — either because autonomy rules ' +
+							'require it, or because the outcome is risky enough to warrant attention. Pass an ' +
+							'optional `reason` explaining why you are escalating; it is shown in the approval UI.',
+						SubmitForApprovalSchema.shape,
+						(args) => config.onSubmitForApproval!(args)
 					),
 				]
 			: []),

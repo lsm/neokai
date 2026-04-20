@@ -60,6 +60,7 @@ import { SpaceTaskManager } from '../space/managers/space-task-manager';
 import { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import { SpaceTaskReportResultRepository } from '../../storage/repositories/space-task-report-result-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
@@ -369,6 +370,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
+	// Append-only audit of report_result calls from end-node agents (Task #39).
+	// Shared with TaskAgentManager so both the end-node `report_result` and the
+	// task-agent `report_result` handlers append to the same log.
+	const spaceTaskReportResultRepo = new SpaceTaskReportResultRepository(deps.db.getDatabase());
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
@@ -525,6 +530,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		spaceWorkflowManager,
 		spaceRuntimeService,
 		taskRepo: spaceTaskRepo,
+		taskReportResultRepo: spaceTaskReportResultRepo,
 		workflowRunRepo: spaceWorkflowRunRepo,
 		gateDataRepo,
 		channelCycleRepo,

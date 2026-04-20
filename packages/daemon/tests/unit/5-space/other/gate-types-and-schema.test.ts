@@ -178,6 +178,7 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Test Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toBeDefined();
@@ -194,6 +195,7 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'No Gates Workflow',
+			completionAutonomyLevel: 3,
 		});
 		expect(workflow.gates).toBeUndefined();
 	});
@@ -203,6 +205,7 @@ describe('SpaceWorkflowRepository — gates round-trip', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'Update Gates Test',
+			completionAutonomyLevel: 3,
 		});
 
 		// Set gates
@@ -254,6 +257,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 			spaceId: SPACE_ID,
 			name: 'Label Color Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toBeDefined();
@@ -285,6 +289,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 					resetOnCycle: false,
 				},
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		// Update with label and color added
@@ -364,6 +369,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 			spaceId: SPACE_ID,
 			name: 'Multi Label Color',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toHaveLength(3);
@@ -398,6 +404,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 			spaceId: SPACE_ID,
 			name: 'Label Only Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates![0].label).toBe('Manual Check');
@@ -427,6 +434,7 @@ describe('SpaceWorkflowRepository — gates with label and color round-trip', ()
 			spaceId: SPACE_ID,
 			name: 'Color Only Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates![0].color).toBe('#8b5cf6');
@@ -458,6 +466,7 @@ describe('SpaceWorkflowRepository — gates with script round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Bash Script Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toBeDefined();
@@ -486,6 +495,7 @@ describe('SpaceWorkflowRepository — gates with script round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Node Script Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates![0].script!.interpreter).toBe('node');
@@ -512,6 +522,7 @@ describe('SpaceWorkflowRepository — gates with script round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Python Script Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates![0].script!.interpreter).toBe('python3');
@@ -554,6 +565,7 @@ describe('SpaceWorkflowRepository — gates with script round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Combined Gate Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		const gate = workflow.gates![0];
@@ -588,6 +600,7 @@ describe('SpaceWorkflowRepository — gates with script round-trip', () => {
 					resetOnCycle: false,
 				},
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		// Update: replace fields-only gate with script gate
@@ -633,6 +646,7 @@ describe('SpaceWorkflowRepository — script-only gate round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Script Only Workflow',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toBeDefined();
@@ -664,6 +678,7 @@ describe('SpaceWorkflowRepository — script-only gate round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Script Only Round-Trip',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		// Fetch fresh from DB
@@ -706,6 +721,7 @@ describe('SpaceWorkflowRepository — script-only gate round-trip', () => {
 			spaceId: SPACE_ID,
 			name: 'Multi Script Gates',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toHaveLength(3);
@@ -731,6 +747,7 @@ describe('SpaceWorkflowRepository — script-only gate round-trip', () => {
 					resetOnCycle: false,
 				},
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		// Update: add fields alongside script
@@ -768,6 +785,7 @@ describe('SpaceWorkflowRunRepository — failureReason', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'FR Test Workflow',
+			completionAutonomyLevel: 3,
 		});
 
 		const runRepo = new SpaceWorkflowRunRepository(db);
@@ -784,6 +802,7 @@ describe('SpaceWorkflowRunRepository — failureReason', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'FR Persist Test',
+			completionAutonomyLevel: 3,
 		});
 
 		const runRepo = new SpaceWorkflowRunRepository(db);
@@ -811,6 +830,7 @@ describe('SpaceWorkflowRunRepository — failureReason', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'FR Clear Test',
+			completionAutonomyLevel: 3,
 		});
 
 		const runRepo = new SpaceWorkflowRunRepository(db);
@@ -831,6 +851,7 @@ describe('SpaceWorkflowRunRepository — failureReason', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'FR All Values',
+			completionAutonomyLevel: 3,
 		});
 		const runRepo = new SpaceWorkflowRunRepository(db);
 
@@ -867,6 +888,7 @@ describe('gate_data table — schema and CRUD', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'GD Test Workflow',
+			completionAutonomyLevel: 3,
 		});
 		const runRepo = new SpaceWorkflowRunRepository(db);
 		const run = runRepo.createRun({
@@ -895,6 +917,7 @@ describe('gate_data table — schema and CRUD', () => {
 		const workflow = workflowRepo.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'Cascade Test',
+			completionAutonomyLevel: 3,
 		});
 		const runRepo = new SpaceWorkflowRunRepository(db);
 		const run = runRepo.createRun({
@@ -1256,6 +1279,7 @@ describe('Backward compatibility — gates without new fields round-trip', () =>
 			spaceId: SPACE_ID,
 			name: 'Legacy Fields Gate',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toHaveLength(1);
@@ -1290,6 +1314,7 @@ describe('Backward compatibility — gates without new fields round-trip', () =>
 			spaceId: SPACE_ID,
 			name: 'Legacy Desc Gate',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates![0].id).toBe('gate-desc');
@@ -1334,6 +1359,7 @@ describe('Backward compatibility — gates without new fields round-trip', () =>
 			spaceId: SPACE_ID,
 			name: 'Multi Legacy Gates',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		expect(workflow.gates).toHaveLength(2);
@@ -1366,6 +1392,7 @@ describe('Backward compatibility — gates without new fields round-trip', () =>
 			spaceId: SPACE_ID,
 			name: 'Legacy Round-Trip',
 			gates,
+			completionAutonomyLevel: 3,
 		});
 
 		// Fetch fresh from DB

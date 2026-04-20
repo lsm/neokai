@@ -65,6 +65,7 @@ function seedWorkflowRunWithChannels(
 		transitions: [],
 		startNodeId: '',
 		rules: [],
+		completionAutonomyLevel: 3,
 	});
 
 	const runRepo = new SpaceWorkflowRunRepository(db);

@@ -185,6 +185,7 @@ function buildWorkflowWithActions(
 		endNodeId,
 		rules: [],
 		tags: [],
+		completionAutonomyLevel: 3,
 	});
 }
 

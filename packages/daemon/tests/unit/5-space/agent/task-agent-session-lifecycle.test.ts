@@ -1266,6 +1266,7 @@ describe('Task Agent Session Lifecycle', () => {
 					},
 				],
 				startNodeId: 'step-code',
+				completionAutonomyLevel: 3,
 			});
 
 			const task = await makeTask(ctx.taskManager, {

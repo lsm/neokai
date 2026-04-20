@@ -235,6 +235,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 			'Tasks within a space with numbering, status, PR tracking, and workflow run associations.',
 	},
 	{
+		tableName: 'space_task_report_results',
+		scopeColumn: 'space_id',
+		blacklistedColumns: [],
+		description:
+			'Append-only audit log of `report_result` tool calls per task. Stores summary, optional evidence, and agent identity for each report.',
+	},
+	{
 		tableName: 'space_worktrees',
 		scopeColumn: 'space_id',
 		blacklistedColumns: [],

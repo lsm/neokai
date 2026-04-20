@@ -17,6 +17,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type {
 	SpaceWorkflow,
+	SpaceAutonomyLevel,
 	WorkflowNode,
 	WorkflowNodeInput,
 	WorkflowNodeAgent,
@@ -45,6 +46,7 @@ interface WorkflowRow {
 	template_name: string | null;
 	template_hash: string | null;
 	instructions: string | null;
+	completion_autonomy_level: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -117,6 +119,7 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
 		nodes,
 		startNodeId,
 		tags,
+		completionAutonomyLevel: row.completion_autonomy_level as SpaceAutonomyLevel,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
@@ -145,6 +148,16 @@ export class SpaceWorkflowRepository {
 		const workflowId = generateUUID();
 		const now = Date.now();
 
+		if (params.completionAutonomyLevel === undefined || params.completionAutonomyLevel === null) {
+			// completion_autonomy_level is required — the runtime (MCP tool handlers,
+			// workflow builder, template seeder) must supply an explicit value. We
+			// never silently default here; the DB column has a NOT NULL default only
+			// to satisfy SQLite's ADD COLUMN backfill rules.
+			throw new Error(
+				`createWorkflow: completionAutonomyLevel is required (workflow name="${params.name}")`
+			);
+		}
+
 		// Pre-resolve node IDs so channels can reference them
 		const nodeInputs = params.nodes ?? [];
 		const resolvedNodes: Array<{ id: string; input: WorkflowNodeInput }> = nodeInputs.map(
@@ -164,8 +177,8 @@ export class SpaceWorkflowRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, layout, template_name, template_hash, instructions, completion_autonomy_level, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				workflowId,
@@ -181,6 +194,7 @@ export class SpaceWorkflowRepository {
 				params.templateName ?? null,
 				params.templateHash ?? null,
 				params.instructions ?? null,
+				params.completionAutonomyLevel,
 				now,
 				now
 			);
@@ -279,6 +293,10 @@ export class SpaceWorkflowRepository {
 		if (params.instructions !== undefined) {
 			fields.push('instructions = ?');
 			values.push(params.instructions ?? null);
+		}
+		if (params.completionAutonomyLevel !== undefined) {
+			fields.push('completion_autonomy_level = ?');
+			values.push(params.completionAutonomyLevel);
 		}
 
 		const hasNodeReplacement = params.nodes !== undefined;

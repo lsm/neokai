@@ -104,6 +104,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'My Workflow',
 			nodes: [coderNode, plannerNode],
+			completionAutonomyLevel: 3,
 		});
 
 		expect(wf.id).toBeTruthy();
@@ -122,6 +123,7 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'Tagged',
 			nodes: [coderNode],
 			tags: ['ci', 'deploy'],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.tags).toEqual(['ci', 'deploy']);
 	});
@@ -131,6 +133,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'Auto Start',
 			nodes: [coderNode, plannerNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.startNodeId).toBe(coderNode.id);
 	});
@@ -141,6 +144,7 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'Explicit Start',
 			nodes: [coderNode, plannerNode],
 			startNodeId: plannerNode.id,
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.startNodeId).toBe(plannerNode.id);
 	});
@@ -157,6 +161,7 @@ describe('SpaceWorkflowRepository', () => {
 			nodes: [coderNode, plannerNode],
 			startNodeId: coderNode.id,
 			tags: ['a', 'b'],
+			completionAutonomyLevel: 3,
 		});
 
 		const fetched = repo.getWorkflow(created.id)!;
@@ -167,14 +172,25 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('listWorkflows returns all workflows for a space', () => {
-		repo.createWorkflow({ spaceId: 'space-1', name: 'WF1', nodes: [coderNode] });
-		repo.createWorkflow({ spaceId: 'space-1', name: 'WF2', nodes: [plannerNode] });
+		repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF1',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
+		repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF2',
+			nodes: [plannerNode],
+			completionAutonomyLevel: 3,
+		});
 		// Another space — should not appear; use anonymous step (no fixed id) to avoid PK collision
 		seedSpace(db, 'space-2');
 		repo.createWorkflow({
 			spaceId: 'space-2',
 			name: 'WF3',
 			nodes: [{ name: 'Code', agentId: 'agent-coder' }],
+			completionAutonomyLevel: 3,
 		});
 
 		const wfs = repo.listWorkflows('space-1');
@@ -183,14 +199,24 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('updateWorkflow updates name and description', () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'Old Name', nodes: [coderNode] });
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Old Name',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		const updated = repo.updateWorkflow(wf.id, { name: 'New Name', description: 'Updated desc' });
 		expect(updated?.name).toBe('New Name');
 		expect(updated?.description).toBe('Updated desc');
 	});
 
 	test('updateWorkflow bumps updatedAt on step-only update', async () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		const before = wf.updatedAt;
 		// Small delay to ensure timestamp difference
 		await new Promise((r) => setTimeout(r, 2));
@@ -205,6 +231,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'WF',
 			nodes: [coderNode, plannerNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes).toHaveLength(2);
 
@@ -220,7 +247,12 @@ describe('SpaceWorkflowRepository', () => {
 	});
 
 	test('deleteWorkflow removes the workflow and its steps', () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = repo.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(repo.deleteWorkflow(wf.id)).toBe(true);
 		expect(repo.getWorkflow(wf.id)).toBeNull();
 
@@ -243,6 +275,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'WF With Agent',
 			nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+			completionAutonomyLevel: 3,
 		});
 		const results = repo.getWorkflowsReferencingAgent('agent-1');
 		expect(results).toHaveLength(1);
@@ -254,6 +287,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'WF',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(repo.getWorkflowsReferencingAgent('no-such-agent')).toHaveLength(0);
 	});
@@ -276,6 +310,7 @@ describe('SpaceWorkflowRepository', () => {
 					],
 				},
 			],
+			completionAutonomyLevel: 3,
 		});
 		// Both agents must be found via the config LIKE path (agent_id is NULL in DB)
 		const refs1 = repo.getWorkflowsReferencingAgent('agent-multi-1');
@@ -315,6 +350,7 @@ describe('SpaceWorkflowRepository', () => {
 					// node-level instructions removed
 				},
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		const read = repo.getWorkflow(wf.id);
@@ -355,6 +391,7 @@ describe('SpaceWorkflowRepository', () => {
 				{ id: 'ch-1', from: 'Channels Step', to: 'multi-2', label: 'feedback' },
 				{ id: 'ch-2', from: 'multi-2', to: ['Channels Step', 'Channels Step'] },
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		const read = repo.getWorkflow(wf.id);
@@ -384,6 +421,7 @@ describe('SpaceWorkflowRepository', () => {
 					agentId: 'agent-1',
 				} as unknown as import('@neokai/shared').WorkflowNodeInput,
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		const read = repo.getWorkflow(wf.id);
@@ -404,6 +442,7 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'WF',
 			nodes: [coderNode],
 			tags: ['ci', 'deploy'],
+			completionAutonomyLevel: 3,
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
 		expect(fetched.tags).toEqual(['ci', 'deploy']);
@@ -421,6 +460,7 @@ describe('SpaceWorkflowRepository', () => {
 					agentId: 'agent-99',
 				} as unknown as import('@neokai/shared').WorkflowNodeInput,
 			],
+			completionAutonomyLevel: 3,
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
 		// Legacy agentId shorthand is normalised to agents[] during insertNode
@@ -441,6 +481,7 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'Layout WF',
 			nodes: [coderNode, plannerNode],
 			layout,
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.layout).toEqual(layout);
 
@@ -453,6 +494,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'No Layout WF',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.layout).toBeUndefined();
 
@@ -465,6 +507,7 @@ describe('SpaceWorkflowRepository', () => {
 			spaceId: 'space-1',
 			name: 'WF',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.layout).toBeUndefined();
 
@@ -483,6 +526,7 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'WF',
 			nodes: [coderNode],
 			layout,
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.layout).toEqual(layout);
 
@@ -500,6 +544,7 @@ describe('SpaceWorkflowRepository', () => {
 			name: 'WF Raw',
 			nodes: [coderNode],
 			layout,
+			completionAutonomyLevel: 3,
 		});
 		const row = db.prepare('SELECT layout FROM space_workflows WHERE id = ?').get(wf.id) as {
 			layout: string;
@@ -543,42 +588,83 @@ describe('SpaceWorkflowManager', () => {
 	// -------------------------------------------------------------------------
 
 	test('createWorkflow throws if name already exists in space', () => {
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Dup', nodes: [coderNode] });
+		manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Dup',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(() =>
-			manager.createWorkflow({ spaceId: 'space-1', name: 'Dup', nodes: [plannerNode] })
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Dup',
+				nodes: [plannerNode],
+				completionAutonomyLevel: 3,
+			})
 		).toThrow(WorkflowValidationError);
 	});
 
 	test('createWorkflow allows same name in different spaces', () => {
 		seedSpace(db, 'space-2');
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Same', nodes: [coderNode] });
+		manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Same',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		// Use anonymous step (no fixed id) to avoid PK collision across spaces in the same DB
 		const wf2 = manager.createWorkflow({
 			spaceId: 'space-2',
 			name: 'Same',
 			nodes: [{ name: 'Code', agentId: 'agent-coder' }],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf2.name).toBe('Same');
 	});
 
 	test('updateWorkflow throws if new name conflicts with another workflow', () => {
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Existing', nodes: [coderNode] });
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF2', nodes: [plannerNode] });
+		manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Existing',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF2',
+			nodes: [plannerNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(() => manager.updateWorkflow(wf.id, { name: 'Existing' })).toThrow(
 			WorkflowValidationError
 		);
 	});
 
 	test('updateWorkflow allows keeping the same name', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		const updated = manager.updateWorkflow(wf.id, { name: 'WF' });
 		expect(updated?.name).toBe('WF');
 	});
 
 	test('name is trimmed before storage — whitespace variants collide', () => {
-		manager.createWorkflow({ spaceId: 'space-1', name: 'Foo', nodes: [coderNode] });
+		manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'Foo',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(() =>
-			manager.createWorkflow({ spaceId: 'space-1', name: '  Foo  ', nodes: [plannerNode] })
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: '  Foo  ',
+				nodes: [plannerNode],
+				completionAutonomyLevel: 3,
+			})
 		).toThrow(WorkflowValidationError);
 	});
 
@@ -587,6 +673,7 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: '  Trimmed  ',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.name).toBe('Trimmed');
 	});
@@ -596,24 +683,39 @@ describe('SpaceWorkflowManager', () => {
 	// -------------------------------------------------------------------------
 
 	test('createWorkflow throws when steps is empty', () => {
-		expect(() => manager.createWorkflow({ spaceId: 'space-1', name: 'Empty', nodes: [] })).toThrow(
-			WorkflowValidationError
-		);
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Empty',
+				nodes: [],
+				completionAutonomyLevel: 3,
+			})
+		).toThrow(WorkflowValidationError);
 	});
 
 	test('createWorkflow throws when steps is not provided (defaults to empty)', () => {
-		expect(() => manager.createWorkflow({ spaceId: 'space-1', name: 'NoNodes' })).toThrow(
-			WorkflowValidationError
-		);
+		expect(() =>
+			manager.createWorkflow({ spaceId: 'space-1', name: 'NoNodes', completionAutonomyLevel: 3 })
+		).toThrow(WorkflowValidationError);
 	});
 
 	test('updateWorkflow throws when replacing with empty steps', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(() => manager.updateWorkflow(wf.id, { nodes: [] })).toThrow(WorkflowValidationError);
 	});
 
 	test('updateWorkflow throws when steps is null (treated as empty replacement)', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(() => manager.updateWorkflow(wf.id, { nodes: null as unknown as [] })).toThrow(
 			WorkflowValidationError
 		);
@@ -628,6 +730,7 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'WF',
 			nodes: [{ name: 'Step', agents: [{ agentId: 'some-uuid', name: 'agent' }] }],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes[0].agents[0].agentId).toBe('some-uuid');
 	});
@@ -638,6 +741,7 @@ describe('SpaceWorkflowManager', () => {
 				spaceId: 'space-1',
 				name: 'Bad AgentId',
 				nodes: [{ name: 'Step', agentId: '' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -648,6 +752,7 @@ describe('SpaceWorkflowManager', () => {
 				spaceId: 'space-1',
 				name: 'Whitespace AgentId',
 				nodes: [{ name: 'Step', agentId: '   ' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -663,6 +768,7 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'Custom WF',
 			nodes: [{ name: 'Step', agents: [{ agentId: 'agent-1', name: 'main' }] }],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes[0].agents[0].agentId).toBe('agent-1');
 	});
@@ -677,6 +783,7 @@ describe('SpaceWorkflowManager', () => {
 				spaceId: 'space-1',
 				name: 'Bad Agent',
 				nodes: [{ name: 'Step', agentId: 'non-existent-uuid' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -686,12 +793,18 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'No-Lookup WF',
 			nodes: [{ name: 'Step', agents: [{ agentId: 'anything', name: 'main' }] }],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes[0].agents[0].agentId).toBe('anything');
 	});
 
 	test('updateWorkflow rejects invalid agentId via lookup', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		const lookup: SpaceAgentLookup = { getAgentById: () => null };
 		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
@@ -706,7 +819,12 @@ describe('SpaceWorkflowManager', () => {
 	// -------------------------------------------------------------------------
 
 	test('deleteWorkflow removes an existing workflow', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(manager.deleteWorkflow(wf.id)).toBe(true);
 		expect(manager.getWorkflow(wf.id)).toBeNull();
 	});
@@ -724,6 +842,7 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'Ordered',
 			nodes: [plannerNode, coderNode, generalNode],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes[0].name).toBe('Plan');
 		expect(wf.nodes[1].name).toBe('Code');
@@ -740,11 +859,13 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'Uses Alpha',
 			nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
+			completionAutonomyLevel: 3,
 		});
 		manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Uses Other',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 		const refs = manager.getWorkflowsReferencingAgent('agent-1');
 		expect(refs).toHaveLength(1);
@@ -766,6 +887,7 @@ describe('SpaceWorkflowManager', () => {
 						agents: [{ agentId: '' }],
 					},
 				],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -781,6 +903,7 @@ describe('SpaceWorkflowManager', () => {
 						agents: [{ agentId: '   ' }],
 					},
 				],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -800,12 +923,18 @@ describe('SpaceWorkflowManager', () => {
 				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
 				{ name: 'End', agentId: 'agent-a' },
 			],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes[0].agents).toHaveLength(2);
 	});
 
 	test('updateWorkflow rejects agents[] entry with empty agentId (no lookup)', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		expect(() =>
 			manager.updateWorkflow(wf.id, {
 				nodes: [{ id: 'step-x', name: 'Step', agents: [{ agentId: '' }] }],
@@ -824,6 +953,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'Empty From',
 				nodes: [{ name: 'Step', agents: [{ agentId: 'agent-a', name: 'a' }] }],
 				channels: [{ id: 'ch-1', from: '', to: 'Step' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -835,6 +965,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'Empty To',
 				nodes: [{ name: 'Step', agents: [{ agentId: 'agent-a', name: 'a' }] }],
 				channels: [{ id: 'ch-1', from: 'Step', to: '' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -846,6 +977,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'Empty Array To',
 				nodes: [{ name: 'Step', agents: [{ agentId: 'agent-a', name: 'a' }] }],
 				channels: [{ id: 'ch-1', from: 'Step', to: [] as string[] }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -857,6 +989,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'Whitespace From',
 				nodes: [{ name: 'Step', agents: [{ agentId: 'agent-a', name: 'a' }] }],
 				channels: [{ id: 'ch-1', from: '   ', to: 'Step' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -868,6 +1001,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'Whitespace To',
 				nodes: [{ name: 'Step', agents: [{ agentId: 'agent-a', name: 'a' }] }],
 				channels: [{ id: 'ch-1', from: 'Step', to: '   ' }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -879,6 +1013,7 @@ describe('SpaceWorkflowManager', () => {
 				name: 'Whitespace Array To Element',
 				nodes: [{ name: 'Step', agents: [{ agentId: 'agent-a', name: 'a' }] }],
 				channels: [{ id: 'ch-1', from: 'Step', to: ['   '] }],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -893,6 +1028,7 @@ describe('SpaceWorkflowManager', () => {
 			],
 			channels: [{ id: 'ch-1', from: '*', to: 'Review' }],
 			startNodeId: 'n1',
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.channels).toHaveLength(1);
 		expect(wf.channels![0].from).toBe('*');
@@ -909,6 +1045,7 @@ describe('SpaceWorkflowManager', () => {
 			],
 			channels: [{ id: 'ch-1', from: 'Code', to: ['Review', 'QA'] }],
 			startNodeId: 'n1',
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.channels).toHaveLength(1);
 		expect(wf.channels![0].to).toEqual(['Review', 'QA']);
@@ -930,6 +1067,7 @@ describe('SpaceWorkflowManager', () => {
 			],
 			channels: [{ id: 'ch-1', from: 'Code', to: 'Review' }],
 			startNodeId: 'n1',
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.channels).toHaveLength(1);
 		expect(wf.channels![0].from).toBe('Code');
@@ -942,6 +1080,7 @@ describe('SpaceWorkflowManager', () => {
 			name: 'Any Role Channels',
 			nodes: [{ name: 'Step', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] }],
 			channels: [{ id: 'ch-1', from: 'arbitrary-source', to: 'arbitrary-target' }],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.channels).toHaveLength(1);
 	});
@@ -952,13 +1091,19 @@ describe('SpaceWorkflowManager', () => {
 			name: 'Wildcard Channels 2',
 			nodes: [{ name: 'Step', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] }],
 			channels: [{ id: 'ch-1', from: '*', to: '*' }],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.channels).toHaveLength(1);
 		expect(wf.channels![0].from).toBe('*');
 	});
 
 	test('updateWorkflow stores channels at workflow level when replacing step', () => {
-		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', nodes: [coderNode] });
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			nodes: [coderNode],
+			completionAutonomyLevel: 3,
+		});
 		const updated = manager.updateWorkflow(wf.id, {
 			nodes: [
 				{ id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
@@ -1000,6 +1145,7 @@ describe('SpaceWorkflowManager', () => {
 			],
 			channels: [{ id: 'ch-1', from: 'Code', to: 'Review', label: 'submit' }],
 			startNodeId: 'step-1',
+			completionAutonomyLevel: 3,
 		});
 
 		const read = manager.getWorkflow(wf.id)!;
@@ -1024,6 +1170,7 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'Update Multi-Agent',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 
 		const updated = manager.updateWorkflow(wf.id, {
@@ -1068,6 +1215,7 @@ describe('SpaceWorkflowManager', () => {
 			],
 			startNodeId: 'step-1',
 			endNodeId: 'step-end',
+			completionAutonomyLevel: 3,
 		});
 
 		expect(manager.deleteWorkflow(wf.id)).toBe(true);
@@ -1080,6 +1228,7 @@ describe('SpaceWorkflowManager', () => {
 			spaceId: 'space-1',
 			name: 'Single Agent',
 			nodes: [coderNode],
+			completionAutonomyLevel: 3,
 		});
 		const multi = manager.createWorkflow({
 			spaceId: 'space-1',
@@ -1098,6 +1247,7 @@ describe('SpaceWorkflowManager', () => {
 			],
 			startNodeId: 'step-m',
 			endNodeId: 'step-end',
+			completionAutonomyLevel: 3,
 		});
 
 		const workflows = manager.listWorkflows('space-1');
@@ -1127,6 +1277,7 @@ describe('SpaceWorkflowManager', () => {
 						agents: [{ agentId: 'agent-a', name: '' }],
 					},
 				],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -1145,6 +1296,7 @@ describe('SpaceWorkflowManager', () => {
 						],
 					},
 				],
+				completionAutonomyLevel: 3,
 			})
 		).toThrow(WorkflowValidationError);
 	});
@@ -1164,6 +1316,7 @@ describe('SpaceWorkflowManager', () => {
 				// Synthetic single-agent end node — multi-agent end nodes are forbidden.
 				{ name: 'End', agentId: 'agent-a' },
 			],
+			completionAutonomyLevel: 3,
 		});
 		expect(wf.nodes[0].agents).toHaveLength(2);
 		expect(wf.nodes[0].agents![0].name).toBe('strict-reviewer');
@@ -1187,6 +1340,7 @@ describe('SpaceWorkflowManager', () => {
 					agents: [{ agentId: 'agent-old-1' }, { agentId: 'agent-old-2' }],
 				},
 			],
+			completionAutonomyLevel: 3,
 		});
 
 		const read = repo.getWorkflow(wf.id)!;

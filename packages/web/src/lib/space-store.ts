@@ -1696,6 +1696,32 @@ class SpaceStore {
 	}
 
 	/**
+	 * Approve or reject a task awaiting human sign-off at a `submit_for_approval`
+	 * checkpoint (`pendingCheckpointType === 'task_completion'`). Routes to the
+	 * `spaceTask.approvePendingCompletion` RPC which handles status transition,
+	 * pending-field cleanup, and reason capture atomically.
+	 */
+	async approvePendingCompletion(
+		taskId: string,
+		approved: boolean,
+		reason?: string | null
+	): Promise<SpaceTask> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const task = await hub.request<SpaceTask>('spaceTask.approvePendingCompletion', {
+			taskId,
+			spaceId,
+			approved,
+			reason: reason ?? null,
+		});
+		return task;
+	}
+
+	/**
 	 * Ensure a Task Agent session exists for a task and return latest task state.
 	 */
 	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {

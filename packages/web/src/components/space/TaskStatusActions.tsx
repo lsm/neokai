@@ -74,11 +74,13 @@ interface TaskStatusActionsProps {
 	disabled?: boolean;
 	/**
 	 * Type of checkpoint the task is paused at, if any. When set to
-	 * `completion_action`, the generic Approve/Reject transitions are hidden
-	 * and routed through `PendingCompletionActionBanner` instead — the banner
-	 * shows what would actually run on approval, which the generic button can't.
+	 * `completion_action` or `task_completion`, the generic Approve/Reject
+	 * transitions are hidden and routed through the matching banner
+	 * (`PendingCompletionActionBanner` / `PendingTaskCompletionBanner`) instead —
+	 * those banners show what the approval actually does, which the generic
+	 * buttons can't.
 	 */
-	pendingCheckpointType?: 'completion_action' | 'gate' | null;
+	pendingCheckpointType?: 'completion_action' | 'gate' | 'task_completion' | null;
 }
 
 export function TaskStatusActions({
@@ -88,12 +90,13 @@ export function TaskStatusActions({
 	pendingCheckpointType,
 }: TaskStatusActionsProps) {
 	const allActions = getTransitionActions(status);
-	// When a task is paused at a completion action, hide the generic Approve
-	// (review → done) and Cancel (review → cancelled) buttons. The banner owns
-	// those transitions so it can disclose what the approval will actually run.
-	// Non-checkpoint transitions (e.g. Reopen → in_progress, Archive) stay visible.
+	// When a task is paused at a completion action or a submit_for_approval
+	// checkpoint, hide the generic Approve (review → done) and Cancel (review →
+	// cancelled) buttons. The dedicated banner owns those transitions so it can
+	// disclose what the approval will actually run / send. Non-checkpoint
+	// transitions (e.g. Reopen → in_progress, Archive) stay visible.
 	const actions =
-		pendingCheckpointType === 'completion_action'
+		pendingCheckpointType === 'completion_action' || pendingCheckpointType === 'task_completion'
 			? allActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allActions;
 

@@ -71,6 +71,7 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceTaskReportResultRepository } from '../../../../src/storage/repositories/space-task-report-result-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -166,6 +167,7 @@ function buildTwoStepWorkflow(
 			},
 		],
 		startNodeId: step1Id,
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -181,6 +183,7 @@ function buildSingleStepWorkflow(
 		name,
 		nodes: [{ id: stepId, name: 'Only Step', agents: [{ agentId, name: 'only-step' }] }],
 		startNodeId: stepId,
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -199,6 +202,7 @@ function buildHumanGateWorkflow(
 			{ id: step2Id, name: 'After Gate', agents: [{ agentId, name: 'after-gate' }] },
 		],
 		startNodeId: step1Id,
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -218,6 +222,7 @@ function buildTaskResultWorkflow(
 			{ id: step2Id, name: 'Next Step', agents: [{ agentId, name: 'next-step' }] },
 		],
 		startNodeId: step1Id,
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -234,6 +239,7 @@ interface TestCtx {
 	workflowManager: SpaceWorkflowManager;
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	taskRepo: SpaceTaskRepository;
+	taskReportResultRepo: SpaceTaskReportResultRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
 	taskManager: SpaceTaskManager;
 	runtime: SpaceRuntime;
@@ -257,6 +263,7 @@ function makeCtx(): TestCtx {
 
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const taskRepo = new SpaceTaskRepository(db);
+	const taskReportResultRepo = new SpaceTaskReportResultRepository(db);
 	const nodeExecutionRepo = new NodeExecutionRepository(db);
 	const spaceManager = new SpaceManager(db);
 	const taskManager = new SpaceTaskManager(db, spaceId);
@@ -282,6 +289,7 @@ function makeCtx(): TestCtx {
 		workflowManager,
 		workflowRunRepo,
 		taskRepo,
+		taskReportResultRepo,
 		nodeExecutionRepo,
 		taskManager,
 		runtime,
@@ -301,6 +309,7 @@ function makeConfig(
 		space: ctx.space,
 		workflowRunId,
 		taskRepo: ctx.taskRepo,
+		taskReportResultRepo: ctx.taskReportResultRepo,
 		nodeExecutionRepo: ctx.nodeExecutionRepo,
 		taskManager: ctx.taskManager,
 		messageInjector: options?.messageInjector ?? (async () => {}),
@@ -379,7 +388,7 @@ async function startRun(
 // report_result tests
 // ===========================================================================
 
-describe('createTaskAgentToolHandlers — report_result', () => {
+describe('createTaskAgentToolHandlers — report_result (Design v2 append-only audit)', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		ctx = makeCtx();
@@ -389,7 +398,7 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('records summary and marks task done (runtime pipeline decides terminal status)', async () => {
+	test('records summary as an audit row and does NOT mutate task state', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Main task',
@@ -405,17 +414,24 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.summary).toBe('All steps completed successfully.');
-		// `status` is intentionally NOT echoed — the agent does not control it.
+		expect(parsed.taskId).toBe(mainTask.id);
+		expect(parsed.reportId).toBeDefined();
+		// `status` is intentionally NOT echoed — report_result is audit-only.
 		expect(parsed.status).toBeUndefined();
 
+		// The task's status must remain unchanged (report_result is append-only).
 		const updated = ctx.taskRepo.getTask(mainTask.id);
-		// The tool always records `done`; the completion-action pipeline may
-		// later downgrade it. Downstream tests cover that.
-		expect(updated?.status).toBe('done');
+		expect(updated?.status).toBe('in_progress');
+
+		// Exactly one audit row is written.
+		const audit = ctx.taskReportResultRepo.listByTask(mainTask.id);
+		expect(audit).toHaveLength(1);
+		expect(audit[0].summary).toBe('All steps completed successfully.');
+		expect(audit[0].evidence).toBeNull();
+		expect(audit[0].agentName).toBe('task-agent');
 	});
 
-	test('records evidence alongside the summary', async () => {
+	test('records evidence alongside the summary in the audit row', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Main task',
@@ -435,11 +451,17 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 
+		// Task state unchanged (audit-only).
 		const updated = ctx.taskRepo.getTask(mainTask.id);
-		expect(updated?.status).toBe('done');
-		expect(updated?.result).toContain('PR opened.');
-		expect(updated?.result).toContain('https://github.com/example/repo/pull/42');
-		expect(updated?.result).toContain('abc1234');
+		expect(updated?.status).toBe('in_progress');
+
+		const audit = ctx.taskReportResultRepo.listByTask(mainTask.id);
+		expect(audit).toHaveLength(1);
+		expect(audit[0].summary).toBe('PR opened.');
+		expect(audit[0].evidence).toEqual({
+			prUrl: 'https://github.com/example/repo/pull/42',
+			commitSha: 'abc1234',
+		});
 	});
 
 	test('returns error when task not found', async () => {
@@ -454,32 +476,40 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		expect(parsed.error).toContain('task-does-not-exist');
 	});
 
-	test('returns error when status transition is invalid', async () => {
-		// done → done is not a valid transition
+	test('accepts multiple report_result calls on the same task (append-only, no transition errors)', async () => {
+		// Design v2: the agent can report many times during a task's lifetime.
+		// Unlike the legacy contract, there is no transition error for repeat calls.
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
-			title: 'Already done',
+			title: 'Ongoing',
 			description: '',
-			status: 'done',
+			status: 'in_progress',
 		});
 
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id'));
 
-		const result = await handlers.report_result({
-			summary: 'Done again?',
-		});
-		const parsed = JSON.parse(result.content[0].text);
+		const first = await handlers.report_result({ summary: 'First report.' });
+		const second = await handlers.report_result({ summary: 'Second report.' });
 
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('transition');
+		expect(JSON.parse(first.content[0].text).success).toBe(true);
+		expect(JSON.parse(second.content[0].text).success).toBe(true);
+
+		const audit = ctx.taskReportResultRepo.listByTask(mainTask.id);
+		expect(audit).toHaveLength(2);
+		expect(audit[0].summary).toBe('First report.');
+		expect(audit[1].summary).toBe('Second report.');
+
+		// Task is still in_progress — reports never close it.
+		const updated = ctx.taskRepo.getTask(mainTask.id);
+		expect(updated?.status).toBe('in_progress');
 	});
 });
 
 // ===========================================================================
-// report_result — DaemonHub event emission tests
+// report_result — DaemonHub event emission tests (Design v2)
 // ===========================================================================
 
-describe('createTaskAgentToolHandlers — report_result DaemonHub events', () => {
+describe('createTaskAgentToolHandlers — report_result does not emit task lifecycle events', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		ctx = makeCtx();
@@ -489,7 +519,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('emits space.task.done event with summary', async () => {
+	test('does NOT emit space.task.done (report_result is audit-only; approve_task owns terminal events)', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Test Task',
@@ -505,44 +535,11 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 
 		await handlers.report_result({ summary: 'All done.' });
 
-		// The mock emit is synchronous (records events before returning Promise.resolve()),
-		// so no async flush is needed — assertions can run immediately.
-		expect(emittedEvents).toHaveLength(1);
-		expect(emittedEvents[0].name).toBe('space.task.done');
-		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
-		expect(emittedEvents[0].payload.spaceId).toBe(ctx.spaceId);
-		expect(emittedEvents[0].payload.status).toBe('done');
-		expect(emittedEvents[0].payload.summary).toBe('All done.');
-		expect(emittedEvents[0].payload.workflowRunId).toBe('run-123');
-		expect(emittedEvents[0].payload.taskTitle).toBe('Test Task');
-	});
-
-	test('always emits space.task.done (runtime pipeline decides final status)', async () => {
-		const mainTask = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'Failing Task',
-			description: '',
-			status: 'in_progress',
-		});
-		const { hub, emittedEvents } = makeMockDaemonHub();
-
-		const handlers = createTaskAgentToolHandlers({
-			...makeConfig(ctx, mainTask.id, 'run-456'),
-			daemonHub: hub,
-		});
-
-		// The agent can no longer self-certify "blocked" — it always reports a
-		// summary and the completion-action pipeline decides if the task should
-		// end up blocked/needs_attention.
-		await handlers.report_result({
-			summary: 'Tests failed — summary only; pipeline may flip to needs_attention.',
-		});
-
-		expect(emittedEvents).toHaveLength(1);
-		expect(emittedEvents[0].name).toBe('space.task.done');
-		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
-		expect(emittedEvents[0].payload.status).toBe('done');
-		expect(emittedEvents[0].payload.taskTitle).toBe('Failing Task');
+		// Design v2: report_result must not emit any task lifecycle events.
+		// Terminal events (space.task.done) are the responsibility of approve_task
+		// and the completion-action pipeline that handles submit_for_approval.
+		const taskLifecycleEvents = emittedEvents.filter((e) => e.name.startsWith('space.task.'));
+		expect(taskLifecycleEvents).toHaveLength(0);
 	});
 
 	test('does not emit events when daemonHub is not provided', async () => {
@@ -561,25 +558,6 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 
 		// Should still succeed — hub is optional
 		expect(parsed.success).toBe(true);
-	});
-
-	test('event payload includes sessionId: global', async () => {
-		const mainTask = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'Hub Test Task',
-			description: '',
-			status: 'in_progress',
-		});
-		const { hub, emittedEvents } = makeMockDaemonHub();
-
-		const handlers = createTaskAgentToolHandlers({
-			...makeConfig(ctx, mainTask.id, 'run-id'),
-			daemonHub: hub,
-		});
-
-		await handlers.report_result({ summary: 'Done.' });
-
-		expect(emittedEvents[0].payload.sessionId).toBe('global');
 	});
 
 	test('does not emit event when task is not found', async () => {
@@ -777,7 +755,9 @@ describe('createTaskAgentMcpServer', () => {
 		const { server } = await makeServerCtx();
 		const entry = server.instance._registeredTools['report_result'];
 		expect(entry).toBeDefined();
-		expect(entry.description).toContain('Mark the task as completed, failed, or cancelled');
+		// Design v2: report_result is append-only audit.
+		expect(entry.description).toContain('append-only audit');
+		expect(entry.description).toContain('does NOT close the task');
 	});
 
 	test('request_human_input has correct description', async () => {

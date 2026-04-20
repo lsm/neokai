@@ -190,6 +190,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Start Run');
@@ -232,6 +233,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -261,6 +263,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -289,6 +292,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -321,6 +325,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -363,6 +368,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -404,6 +410,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -445,6 +452,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -476,6 +484,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
 			startNodeId: STEP_A,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -637,6 +646,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
 			endNodeId,
 			rules: [],
 			tags: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

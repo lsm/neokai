@@ -81,6 +81,56 @@ export const ReportResultSchema = z
 export type ReportResultInput = z.infer<typeof ReportResultSchema>;
 
 // ---------------------------------------------------------------------------
+// approve_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `approve_task` input.
+ *
+ * Agent-self-close tool for end-node agents. Conditionally registered on the
+ * MCP server only when `space.autonomyLevel >= workflow.completionAutonomyLevel`.
+ * Calling this tool sets `space_tasks.reportedStatus = 'done'`, triggering the
+ * completion-action pipeline on the next runtime tick.
+ *
+ * Takes no arguments — the task, workflow, and node are implicit from the
+ * calling session's context. Strict schema so future fields fail fast until
+ * explicitly added.
+ */
+export const ApproveTaskSchema = z.object({}).strict();
+
+export type ApproveTaskInput = z.infer<typeof ApproveTaskSchema>;
+
+// ---------------------------------------------------------------------------
+// submit_for_approval
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `submit_for_approval` input.
+ *
+ * Always available to end-node agents (independent of autonomy level). Marks
+ * the task as awaiting human sign-off: sets `task.status = 'review'` and
+ * populates the pending-completion fields so the UI can route a human to
+ * approve or reject. Even at high autonomy levels this remains available —
+ * agents may want to escalate a risky result for attention.
+ */
+export const SubmitForApprovalSchema = z
+	.object({
+		/**
+		 * Optional human-readable reason for requesting review. Surfaces in the
+		 * approval UI so the human reviewer knows why the agent escalated.
+		 */
+		reason: z
+			.string()
+			.describe(
+				'Optional note explaining why you are requesting human review (visible in the approval UI)'
+			)
+			.optional(),
+	})
+	.strict();
+
+export type SubmitForApprovalInput = z.infer<typeof SubmitForApprovalSchema>;
+
+// ---------------------------------------------------------------------------
 // request_human_input
 // ---------------------------------------------------------------------------
 
@@ -123,6 +173,8 @@ export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
  */
 export const TASK_AGENT_TOOL_SCHEMAS = {
 	report_result: ReportResultSchema,
+	approve_task: ApproveTaskSchema,
+	submit_for_approval: SubmitForApprovalSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
 } as const;

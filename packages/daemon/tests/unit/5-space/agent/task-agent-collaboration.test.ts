@@ -194,6 +194,7 @@ function buildTwoNodeWorkflow(ctx: TestCtx): SpaceWorkflow {
 		transitions: [],
 		startNodeId: node1Id,
 		rules: [],
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -219,6 +220,7 @@ function buildHumanGateWorkflow(ctx: TestCtx): SpaceWorkflow {
 				gate: { type: 'human', description: 'Human must approve before reviewer is notified' },
 			},
 		],
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -323,6 +325,7 @@ describe('Task Agent — multi-agent node collaboration', () => {
 			],
 			startNodeId: node1Id,
 			channels: [{ id: 'ch-1', from: 'Code', to: 'Review' }],
+			completionAutonomyLevel: 3,
 		});
 
 		const loadedWf = ctx.workflowManager.getWorkflow(wf.id);
@@ -345,6 +348,7 @@ describe('Task Agent — multi-agent node collaboration', () => {
 			startNodeId: 'only-node',
 			rules: [],
 			channels: [],
+			completionAutonomyLevel: 3,
 		});
 
 		const { run, mainTask } = await startRun(ctx, wf);

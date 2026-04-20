@@ -82,6 +82,7 @@ function createWorkflowAndRun(db: BunDatabase, spaceId: string): { runId: string
 		transitions: [],
 		startNodeId: '',
 		rules: [],
+		completionAutonomyLevel: 3,
 	});
 	const runRepo = new SpaceWorkflowRunRepository(db);
 	const run = runRepo.createRun({ spaceId, workflowId: workflow.id, title: 'Test Run' });
