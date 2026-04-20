@@ -295,6 +295,38 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
 	});
 
 	// -------------------------------------------------------------------------
+	// deliverMessage — attribution forwarding
+	// -------------------------------------------------------------------------
+
+	describe('deliverMessage attribution', () => {
+		test('forwards fromRole as agent:<name> when reopening via peer send_message', async () => {
+			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'A', agentId: AGENT_A },
+				{ id: NODE_B, name: 'B', agentId: AGENT_B },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Peer reopen attribution',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+
+			// Agent A sends a message to Agent B on a done run — expect reopen
+			// attributed to "agent:A".
+			await router.deliverMessage(run.id, 'A', 'B', 'hello');
+
+			const reopens = sink.reopens();
+			expect(reopens).toHaveLength(1);
+			expect(reopens[0].by).toBe('agent:A');
+			expect(reopens[0].fromStatus).toBe('done');
+			expect(reopens[0].reason).toContain('peer send_message');
+			expect(reopens[0].reason).toContain('"A"');
+			expect(reopens[0].reason).toContain('"B"');
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// onGateDataChanged — reopen and archive blocking
 	// -------------------------------------------------------------------------
 

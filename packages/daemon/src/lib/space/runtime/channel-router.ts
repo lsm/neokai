@@ -557,7 +557,10 @@ export class ChannelRouter {
 		let activatedTasks: SpaceTask[] | undefined;
 
 		if (activeTasks.length === 0) {
-			activatedTasks = await this.activateNode(runId, targetNode.id);
+			activatedTasks = await this.activateNode(runId, targetNode.id, {
+				reopenBy: `agent:${fromRole}`,
+				reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
+			});
 		}
 
 		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────
