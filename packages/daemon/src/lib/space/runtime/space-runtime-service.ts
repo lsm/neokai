@@ -742,6 +742,10 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
+			// Forward the runtime's current sink so activation-driven reopens of
+			// terminal runs still surface `workflow_run_reopened` to the Space
+			// Agent session (mirrors `notifyGateDataChanged` above).
+			notificationSink: this.runtime.getNotificationSink(),
 		});
 		return router.activateNode(runId, nodeId);
 	}
