@@ -2316,3 +2316,232 @@ describe('node-agent-tools: restore_node_agent', () => {
 		expect(registered).toContain('restore_node_agent');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: send_message (review-posted-gate artifact append)
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: review-posted-gate multi-round artifact history', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	/**
+	 * Build a workflow with a single Review → Coding channel gated by the
+	 * production review-posted-gate definition. The sender is the reviewer,
+	 * matching the real coding workflow layout.
+	 */
+	function makeReviewPostedWorkflow(): SpaceWorkflow {
+		const gate: Gate = {
+			id: 'review-posted-gate',
+			fields: [
+				{ name: 'review_url', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+			],
+			resetOnCycle: true,
+		};
+		return {
+			id: 'wf-review-posted',
+			spaceId: ctx.spaceId,
+			name: 'Test Coding Workflow',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [
+				{ id: 'ch-review-coder', from: 'reviewer', to: 'coder', gateId: 'review-posted-gate' },
+			],
+			gates: [gate],
+		};
+	}
+
+	test('appends one review artifact per cycle with cycle 0, 1, 2 across 3 rounds', async () => {
+		const { WorkflowRunArtifactRepository } = await import(
+			'../../../../src/storage/repositories/workflow-run-artifact-repository.ts'
+		);
+		const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+
+		const workflow = makeReviewPostedWorkflow();
+		const config = makeConfig(ctx, {
+			workflow,
+			myAgentName: 'reviewer',
+			mySessionId: ctx.reviewerSessionId,
+			artifactRepo,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Round 1
+		const r1 = await handlers.send_message({
+			target: 'coder',
+			message: 'Round 1 — please fix retry logic',
+			data: {
+				review_url: 'https://github.com/acme/app/pull/42#pullrequestreview-1',
+				comment_urls: ['https://github.com/acme/app/pull/42#discussion_r1001'],
+			},
+		});
+		expect(JSON.parse(r1.content[0].text).gateWrite.gateOpen).toBe(true);
+
+		// Round 2
+		const r2 = await handlers.send_message({
+			target: 'coder',
+			message: 'Round 2 — edge case still broken',
+			data: {
+				review_url: 'https://github.com/acme/app/pull/42#pullrequestreview-2',
+				comment_urls: [
+					'https://github.com/acme/app/pull/42#discussion_r1002',
+					'https://github.com/acme/app/pull/42#discussion_r1003',
+				],
+			},
+		});
+		expect(JSON.parse(r2.content[0].text).gateWrite.gateOpen).toBe(true);
+
+		// Round 3
+		const r3 = await handlers.send_message({
+			target: 'coder',
+			message: 'Round 3 — tests missing',
+			data: {
+				review_url: 'https://github.com/acme/app/pull/42#pullrequestreview-3',
+				comment_urls: [],
+			},
+		});
+		expect(JSON.parse(r3.content[0].text).gateWrite.gateOpen).toBe(true);
+
+		const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+		expect(artifacts).toHaveLength(3);
+
+		// Artifacts are ordered by createdAt ascending. Cycle numbers must be 0,1,2.
+		const cycles = artifacts.map((a) => a.data.cycle);
+		expect(cycles).toEqual([0, 1, 2]);
+
+		// Each artifact carries review_url and comment_urls from its round.
+		expect(artifacts[0].data.review_url).toBe(
+			'https://github.com/acme/app/pull/42#pullrequestreview-1'
+		);
+		expect(artifacts[0].data.comment_urls).toEqual([
+			'https://github.com/acme/app/pull/42#discussion_r1001',
+		]);
+		expect(artifacts[1].data.review_url).toBe(
+			'https://github.com/acme/app/pull/42#pullrequestreview-2'
+		);
+		expect(artifacts[1].data.comment_urls as string[]).toHaveLength(2);
+		expect(artifacts[2].data.review_url).toBe(
+			'https://github.com/acme/app/pull/42#pullrequestreview-3'
+		);
+		expect(artifacts[2].data.comment_urls).toEqual([]);
+
+		// submittedAt is an ISO8601 string set at write time.
+		for (const a of artifacts) {
+			expect(typeof a.data.submittedAt).toBe('string');
+			expect(() => new Date(a.data.submittedAt as string).toISOString()).not.toThrow();
+		}
+
+		// Each artifact must have a unique artifactKey so upsert doesn't collapse rounds.
+		const keys = artifacts.map((a) => a.artifactKey);
+		expect(new Set(keys).size).toBe(3);
+		expect(keys).toEqual(['cycle-0', 'cycle-1', 'cycle-2']);
+	});
+
+	test('skips artifact append when review_url is absent from gate data', async () => {
+		const { WorkflowRunArtifactRepository } = await import(
+			'../../../../src/storage/repositories/workflow-run-artifact-repository.ts'
+		);
+		const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+
+		// Use a gate where the reviewer can send data, but we omit review_url.
+		const gate: Gate = {
+			id: 'review-posted-gate',
+			fields: [
+				{ name: 'review_url', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+				{ name: 'other', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+			],
+			resetOnCycle: true,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-no-url',
+			spaceId: ctx.spaceId,
+			name: 'Test',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [
+				{ id: 'ch-review-coder', from: 'reviewer', to: 'coder', gateId: 'review-posted-gate' },
+			],
+			gates: [gate],
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			myAgentName: 'reviewer',
+			mySessionId: ctx.reviewerSessionId,
+			artifactRepo,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		// Write to gate but with only `other`, no `review_url`.
+		await handlers.send_message({
+			target: 'coder',
+			message: 'hi',
+			data: { other: 'value' },
+		});
+
+		// No artifact should have been appended because the review_url field is absent.
+		const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+		expect(artifacts).toHaveLength(0);
+	});
+
+	test('skips artifact append for non-review-posted-gate gates (no false positives)', async () => {
+		const { WorkflowRunArtifactRepository } = await import(
+			'../../../../src/storage/repositories/workflow-run-artifact-repository.ts'
+		);
+		const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+
+		// Different gate id — the append block is gated on id === 'review-posted-gate'.
+		const gate: Gate = {
+			id: 'some-other-gate',
+			fields: [
+				{ name: 'review_url', type: 'string', writers: ['reviewer'], check: { op: 'exists' } },
+			],
+			resetOnCycle: false,
+		};
+		const workflow: SpaceWorkflow = {
+			id: 'wf-other',
+			spaceId: ctx.spaceId,
+			name: 'Test',
+			description: '',
+			nodes: [],
+			startNodeId: '',
+			rules: [],
+			tags: [],
+			channels: [
+				{ id: 'ch-review-coder', from: 'reviewer', to: 'coder', gateId: 'some-other-gate' },
+			],
+			gates: [gate],
+		};
+
+		const config = makeConfig(ctx, {
+			workflow,
+			myAgentName: 'reviewer',
+			mySessionId: ctx.reviewerSessionId,
+			artifactRepo,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+
+		await handlers.send_message({
+			target: 'coder',
+			message: 'hi',
+			data: { review_url: 'https://example.com/pr/1#review-1' },
+		});
+
+		const artifacts = artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'review' });
+		expect(artifacts).toHaveLength(0);
+	});
+});

@@ -85,6 +85,46 @@ const PR_READY_BASH_SCRIPT = [
 ].join('\n');
 
 /**
+ * Review-posted gate script.
+ *
+ * Verifies that the Reviewer has actually posted a GitHub review since the
+ * workflow run started. This gate guards the Review → Coding feedback channel:
+ * the runtime refuses to deliver a "changes requested" message until the review
+ * is visible on GitHub, closing the gap where reviewers summarize feedback
+ * internally and never call `gh pr review`.
+ *
+ * Environment variables:
+ *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url`
+ *   NEOKAI_WORKFLOW_START_ISO   — ISO8601 timestamp of workflowRun.createdAt,
+ *                                 injected by the gate script runner
+ */
+const REVIEW_POSTED_BASH_SCRIPT = [
+	'PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -z "$PR_URL" ]; then',
+	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+	'fi',
+	'if [ -z "$PR_URL" ]; then',
+	'  echo "No PR URL available to verify review" >&2',
+	'  exit 1',
+	'fi',
+	'START_ISO="${NEOKAI_WORKFLOW_START_ISO:-}"',
+	'if [ -z "$START_ISO" ]; then',
+	'  echo "NEOKAI_WORKFLOW_START_ISO not injected — cannot determine review window" >&2',
+	'  exit 1',
+	'fi',
+	'if ! REVIEW_JSON=$(gh pr view "$PR_URL" --json reviews); then',
+	'  echo "Failed to fetch reviews for ${PR_URL}" >&2',
+	'  exit 1',
+	'fi',
+	'REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since)] | length\' <<< "$REVIEW_JSON")',
+	'if [ "$REVIEW_COUNT" = "0" ] || [ -z "$REVIEW_COUNT" ]; then',
+	'  echo "No review submitted on ${PR_URL} since workflow start (${START_ISO})" >&2',
+	'  exit 1',
+	'fi',
+	'jq -n --arg url "$PR_URL" --argjson n "$REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+].join('\n');
+
+/**
  * Merge PR completion action script.
  *
  * Used as a `script` completion action on short workflows (Coding, Research).
@@ -137,6 +177,94 @@ const MERGE_PR_COMPLETION_ACTION: CompletionAction = {
 	requiredLevel: 4,
 	artifactType: 'pr',
 	script: PR_MERGE_BASH_SCRIPT,
+};
+
+/**
+ * Verifies the PR associated with the end-node is actually merged on GitHub.
+ * Used by QA workflows where the agent is expected to run `gh pr merge` itself
+ * — this action double-checks that the merge actually happened so the agent
+ * cannot "lie" about completion.
+ *
+ * Exits 0 on merged, non-zero with a descriptive message otherwise.
+ */
+const VERIFY_PR_MERGED_BASH_SCRIPT = [
+	'# Resolve PR URL from artifact data or current branch',
+	'PR_URL=$(jq -r \'.pr_url // .url // .merged_pr_url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -z "$PR_URL" ]; then',
+	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+	'fi',
+	'if [ -z "$PR_URL" ]; then',
+	'  echo "verify-pr-merged: no PR URL found — cannot verify merge" >&2',
+	'  exit 1',
+	'fi',
+	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
+	'if [ "$PR_STATE" != "MERGED" ]; then',
+	'  echo "verify-pr-merged: PR $PR_URL is in state \\"$PR_STATE\\", expected MERGED" >&2',
+	'  exit 1',
+	'fi',
+	'echo "verify-pr-merged: PR $PR_URL is merged"',
+	'jq -n --arg url "$PR_URL" \'{"verified_pr_url":$url,"status":"merged"}\'',
+].join('\n');
+
+/**
+ * Completion action for QA-style workflows whose end-node agent is expected to
+ * perform the merge itself (e.g. Coding-with-QA, Full-Cycle Coding). The
+ * script exits non-zero if the PR is not actually merged, causing the task
+ * to end in `blocked` instead of silently completing.
+ */
+const VERIFY_PR_MERGED_COMPLETION_ACTION: CompletionAction = {
+	id: 'verify-pr-merged',
+	name: 'Verify PR merged',
+	description:
+		'Verifies the PR associated with the task is in state MERGED on GitHub. ' +
+		'Fails the task if the agent claims completion without having actually merged.',
+	type: 'script',
+	requiredLevel: 2,
+	artifactType: 'pr',
+	script: VERIFY_PR_MERGED_BASH_SCRIPT,
+};
+
+/**
+ * Script that verifies the PR associated with a Review-Only task has at least
+ * one review comment or submitted review posted. Prevents the Reviewer from
+ * "claiming reviewed" without actually posting feedback on GitHub.
+ */
+const VERIFY_REVIEW_POSTED_BASH_SCRIPT = [
+	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -z "$PR_URL" ]; then',
+	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+	'fi',
+	'if [ -z "$PR_URL" ]; then',
+	'  echo "verify-review-posted: no PR URL found — cannot verify review was posted" >&2',
+	'  exit 1',
+	'fi',
+	'REVIEW_COUNT=$(gh pr view "$PR_URL" --json reviews -q \'.reviews | length\' 2>/dev/null || echo 0)',
+	'COMMENT_COUNT=$(gh pr view "$PR_URL" --json comments -q \'.comments | length\' 2>/dev/null || echo 0)',
+	'TOTAL=$((REVIEW_COUNT + COMMENT_COUNT))',
+	'if [ "$TOTAL" -lt 1 ]; then',
+	'  echo "verify-review-posted: PR $PR_URL has no reviews or review comments — reviewer did not post" >&2',
+	'  exit 1',
+	'fi',
+	'echo "verify-review-posted: PR $PR_URL has $REVIEW_COUNT reviews and $COMMENT_COUNT comments"',
+	'jq -n --arg url "$PR_URL" --arg reviews "$REVIEW_COUNT" --arg comments "$COMMENT_COUNT" \\',
+	'  \'{"pr_url":$url,"review_count":($reviews|tonumber),"comment_count":($comments|tonumber)}\'',
+].join('\n');
+
+/**
+ * Completion action for Review-Only workflows. The reviewer is expected to
+ * post their findings on the PR; this script verifies at least one
+ * review/comment was posted before the task is allowed to close as done.
+ */
+const VERIFY_REVIEW_POSTED_COMPLETION_ACTION: CompletionAction = {
+	id: 'verify-review-posted',
+	name: 'Verify review posted',
+	description:
+		'Verifies the Reviewer actually posted review feedback on the PR (review or review-comment). ' +
+		'Fails the task if the agent reports completion without having posted anything.',
+	type: 'script',
+	requiredLevel: 2,
+	artifactType: 'pr',
+	script: VERIFY_REVIEW_POSTED_BASH_SCRIPT,
 };
 
 const V2_PLANNING_PROMPT =
@@ -271,8 +399,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'explicitly by sending a message to the Review node with the PR URL — that send ' +
 							'is what passes the readiness gate and activates the Reviewer.\n' +
 							'- If the Reviewer requests changes, you will be re-activated with their message. ' +
-							'Pull the review comments from GitHub, evaluate each one, address the valid items, ' +
-							'and push back on any you disagree with — explain your reasoning in the reply.\n' +
+							'The message `data` payload will include `review_url` and `comment_urls` pointing ' +
+							'at the exact GitHub comment threads to address — use those links instead of ' +
+							'scraping the PR blind.\n' +
 							'- This cycle can repeat up to 5 times.\n\n' +
 							'Steps:\n' +
 							'1. Read and understand the task requirements\n' +
@@ -286,12 +415,16 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'**Always include `data: { pr_url }` on every send_message to Review** — the gate ' +
 							'data resets each cycle, so even on round 2+ you must re-supply it.\n\n' +
 							'If re-activated after review:\n' +
-							'1. Pull review comments from GitHub (`gh pr view` and `gh api`)\n' +
-							'2. Evaluate each comment critically — do not blindly accept feedback. Verify ' +
+							'1. Read the incoming message `data` — you should find `review_url` and ' +
+							'`comment_urls` (an array of comment thread URLs). Open each one; do not rely on ' +
+							'a summary.\n' +
+							'2. For each comment: evaluate critically — do not blindly accept feedback. Verify ' +
 							'against the code and the task requirements. The Reviewer can be wrong.\n' +
-							'3. For valid items: make the fix and reply to the comment confirming what changed\n' +
-							'4. For items you disagree with: reply explaining why, with evidence from the code ' +
-							'or tests. Do not change code you believe is correct.\n' +
+							'3. For valid items: make the fix, then reply to that specific thread via ' +
+							'`gh api repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies -f body="<ack>"` ' +
+							'explaining what changed. One reply per comment creates a visible audit trail.\n' +
+							'4. For items you disagree with: reply on the same thread explaining why, with ' +
+							'evidence from the code or tests. Do not change code you believe is correct.\n' +
 							'5. Push fixes, verify tests still pass, then send_message to Review again ' +
 							'(again with `data: { pr_url }`) to re-trigger the review cycle',
 					},
@@ -314,8 +447,13 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'- You share the same worktree as the engineer — review the codebase as a whole, ' +
 							'not just the PR diff. Read related files, run tests, check for issues the diff ' +
 							'might not surface (e.g. callers of changed functions, integration points).\n' +
-							'- Post all feedback as PR review comments on GitHub so the engineer can address ' +
-							'them item by item. Then send a short message to Coding summarizing the request.\n' +
+							'- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
+							'response. Use `gh pr review <pr-url> --request-changes --body-file <file>` for ' +
+							'the summary, and `gh api repos/{owner}/{repo}/pulls/{n}/comments` for line-level ' +
+							'comments (one per issue, anchored to the exact path and line).\n' +
+							'- The Review → Coding channel is gated by `review-posted-gate` — the runtime ' +
+							'checks GitHub for a fresh review before releasing your message. If you skip ' +
+							'`gh pr review`, the gate will block and the coder will never hear from you.\n' +
 							'- If you request changes, the engineer is automatically re-activated.\n\n' +
 							'**You MUST call `report_result` to end this workflow.** It is the only signal ' +
 							'the runtime accepts as completion — finishing your turn without it leaves the ' +
@@ -326,11 +464,21 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
 							'2. Check for correctness, style, test coverage, and integration impact\n' +
 							'3. Run the relevant tests yourself if uncertain\n' +
-							'4. If changes needed: post specific, actionable review comments on GitHub, then ' +
-							'send_message to Coding asking them to address the comments (do NOT call ' +
-							'`report_result` — leave the workflow open for the next round)\n' +
-							'5. If satisfied: verify the PR is open and mergeable, then call ' +
-							'`report_result(status="done", summary=...)` as your final action',
+							'4. If changes needed:\n' +
+							'   a. Post a summary review: `gh pr review <pr-url> --request-changes ' +
+							'--body-file /tmp/review.md`. Capture the returned review URL.\n' +
+							'   b. For each issue, post a line-level comment: `gh api ' +
+							'repos/{owner}/{repo}/pulls/{n}/comments -f body=... -f commit_id=... ' +
+							'-f path=... -F line=...`. Capture each response `html_url`.\n' +
+							'   c. send_message(target="Coding", message="<short request summary>", ' +
+							'data={ pr_url: "<url>", review_url: "<gh pr review url>", ' +
+							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
+							'satisfies the review-posted-gate and gives the coder direct links to each ' +
+							'thread. Do NOT call `report_result` — leave the workflow open for the next round.\n' +
+							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
+							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
+							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
+							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
 					},
 				},
 			],
@@ -362,6 +510,28 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			},
 			resetOnCycle: true,
 		},
+		{
+			id: 'review-posted-gate',
+			label: 'Review Posted',
+			description:
+				'Reviewer has posted a GitHub review (via `gh pr review`) since the workflow ' +
+				'started. Blocks the Review → Coding feedback channel until a real review is ' +
+				'visible on the PR.',
+			fields: [
+				{
+					name: 'review_url',
+					type: 'string',
+					writers: ['reviewer'],
+					check: { op: 'exists' },
+				},
+			],
+			script: {
+				interpreter: 'bash',
+				source: REVIEW_POSTED_BASH_SCRIPT,
+				timeoutMs: 30000,
+			},
+			resetOnCycle: true,
+		},
 	],
 	channels: [
 		{
@@ -373,6 +543,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			from: 'Review',
 			to: 'Coding',
+			gateId: 'review-posted-gate',
 			maxCycles: 5,
 			label: 'Review → Coding (changes requested)',
 		},
@@ -456,7 +627,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'5. If more research needed: send_message back to Research with specific areas to ' +
 							'investigate (do NOT call `report_result`)\n' +
 							'6. If satisfied: verify the PR is still open and mergeable, then call ' +
-							'`report_result(status="done", summary=...)` as your final action',
+							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
+							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
 					},
 				},
 			],
@@ -539,17 +711,29 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
 							'stuck. Do all review work BEFORE calling `report_result`; it must be your last tool ' +
 							'call.\n\n' +
+							'**You MUST post your review to the PR via `gh pr review` BEFORE calling ' +
+							'`report_result`.** An internal summary is not enough — the author must be able to see ' +
+							'your feedback on GitHub. Use:\n' +
+							'- `gh pr review <pr-url> --body-file <file>` with `--approve`, `--request-changes`, or ' +
+							'`--comment`.\n' +
+							'- `gh api repos/{owner}/{repo}/pulls/{n}/comments` for line-level comments anchored to ' +
+							'specific files/lines.\n\n' +
 							'Expected inputs: A PR or code to review (specified in the task description).\n' +
-							'Expected outputs: A thorough review summary with actionable findings.\n\n' +
+							'Expected outputs: A GitHub review posted on the PR + a summary for the task agent.\n\n' +
 							'Review checklist:\n' +
 							'1. Read the PR diff or specified code thoroughly\n' +
 							'2. Check for correctness, security, performance, and style issues\n' +
 							'3. Verify test coverage is adequate\n' +
-							'4. Summarize your findings clearly\n' +
-							'5. Call `report_result(status="done", summary=...)` as your final action',
+							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
+							'where relevant) — this is required, not optional, and the runtime verifies at ' +
+							'least one review/comment exists before accepting completion\n' +
+							'5. Summarize your findings clearly for the task record\n' +
+							'6. Call `report_result({ summary, evidence: { prUrl } })` as your final action. ' +
+							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
 					},
 				},
 			],
+			completionActions: [VERIFY_REVIEW_POSTED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: REVIEW_REVIEW_NODE,
@@ -737,11 +921,14 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'(do NOT call `report_result`)\n' +
 							'6. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'7. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'8. Call `report_result(status="done", summary=...)` confirming merge and sync\n\n' +
+							'8. Call `report_result({ summary, evidence: { prUrl, testOutput } })` confirming ' +
+							'merge and sync. Do NOT pass a `status` — the runtime verifies the PR is actually ' +
+							'merged before accepting completion.\n\n' +
 							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
 					},
 				},
 			],
+			completionActions: [VERIFY_PR_MERGED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: V2_PLANNING_NODE,
@@ -954,10 +1141,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'`report_result`)\n' +
 							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call `report_result(status="done", summary=...)` confirming merge and sync',
+							'7. Call `report_result({ summary, evidence: { prUrl, testOutput } })` confirming ' +
+							'merge and sync. Do NOT pass a `status` — the runtime verifies the PR is actually ' +
+							'merged before accepting completion.',
 					},
 				},
 			],
+			completionActions: [VERIFY_PR_MERGED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: FULLSTACK_CODING_NODE,

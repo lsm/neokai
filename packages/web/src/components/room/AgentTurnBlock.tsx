@@ -18,6 +18,7 @@ import { borderRadius, messageColors, messageSpacing } from '../../lib/design-to
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
+	hasRenderableThinking,
 	isTextBlock,
 	isToolUseBlock,
 	isThinkingBlock,
@@ -210,7 +211,8 @@ function NestedMessageRenderer({
 
 		const textBlocks = content.filter((block) => isTextBlock(block));
 		const toolBlocks = content.filter((block) => isToolUseBlock(block));
-		const thinkingBlocks = content.filter((block) => isThinkingBlock(block));
+		// Skip empty thinking blocks (Opus 4.7 "omitted thinking" stubs).
+		const thinkingBlocks = content.filter(isThinkingBlock).filter(hasRenderableThinking);
 
 		return (
 			<div class="space-y-2">

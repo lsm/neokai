@@ -186,7 +186,19 @@ export function isSDKRateLimitEvent(
 // ============================================================================
 
 /**
- * Type for content blocks from APIAssistantMessage
+ * Type for content blocks from APIAssistantMessage.
+ *
+ * The `thinking` variant carries an optional `signature` field that Anthropic
+ * returns alongside thinking output for multi-turn continuity. When the model
+ * is configured with `thinking.display = 'omitted'` (the Opus 4.7 default in
+ * some paths), the server returns a thinking block with a non-empty signature
+ * and an *empty* `thinking` string. Renderers must treat empty thinking as
+ * "no content to display" rather than rendering an empty card.
+ *
+ * We also accept the `redacted_thinking` variant emitted by the raw Anthropic
+ * API when a thinking block is redacted for safety. The SDK normally maps
+ * these into `thinking` blocks, but we include the type so the union is
+ * exhaustive and renderers can skip them safely if they ever appear.
  */
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -196,7 +208,8 @@ export type ContentBlock =
       name: string;
       input: Record<string, unknown>;
     }
-  | { type: "thinking"; thinking: string };
+  | { type: "thinking"; thinking: string; signature?: string }
+  | { type: "redacted_thinking"; data: string };
 
 /**
  * AskUserQuestion tool input type
@@ -276,12 +289,33 @@ export function isToolUseBlock(
 }
 
 /**
- * Check if content block is a thinking block
+ * Check if content block is a thinking block.
+ *
+ * Note: this guard matches thinking blocks regardless of whether the
+ * `thinking` payload is empty. Empty thinking blocks are emitted by newer
+ * Anthropic models (e.g. Opus 4.7) when `thinking.display = 'omitted'` is in
+ * effect — the server still returns a thinking block carrying a signature for
+ * multi-turn continuity but no textual content. Use
+ * {@link hasRenderableThinking} at render time to decide whether to display
+ * a thinking card.
  */
 export function isThinkingBlock(
   block: ContentBlock,
 ): block is Extract<ContentBlock, { type: "thinking" }> {
   return block.type === "thinking";
+}
+
+/**
+ * Check if a thinking block has content that's worth rendering in the UI.
+ *
+ * Returns `false` for blocks with missing/empty/whitespace-only thinking
+ * strings (e.g. Opus 4.7 omitted-thinking stubs), so renderers can avoid
+ * showing an empty "Thinking · 0 characters" card.
+ */
+export function hasRenderableThinking(
+  block: Extract<ContentBlock, { type: "thinking" }>,
+): boolean {
+  return typeof block.thinking === "string" && block.thinking.trim().length > 0;
 }
 
 // ============================================================================
