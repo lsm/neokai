@@ -93,6 +93,7 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
 		status: status as SpaceWorkflowRun['status'],
 		startedAt: null,
 		completedAt: null,
+		completionActionsFiredAt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};

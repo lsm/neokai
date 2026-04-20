@@ -734,6 +734,5 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 			'planner-fact-checker': buildPlannerFactCheckerAgentDef(),
 			'plan-writer': buildPlanWriterAgentDef(planSlug),
 		},
-		contextAutoQueue: false,
 	};
 }

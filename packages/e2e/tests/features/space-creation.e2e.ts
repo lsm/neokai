@@ -221,7 +221,7 @@ test.describe('Space Creation UX', () => {
 			'Coding with QA Workflow',
 			'Research Workflow',
 			'Review-Only Workflow',
-			'Full-Cycle Coding Workflow',
+			'Plan & Decompose Workflow',
 		];
 		for (const workflowName of BUILT_IN_WORKFLOWS) {
 			await expect(page.locator('text=' + workflowName).first()).toBeVisible({ timeout: 5000 });

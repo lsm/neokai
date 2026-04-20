@@ -109,6 +109,8 @@ export function formatEventMessage(
 			return formatTaskTimeout(event, autonomyLevel);
 		case 'workflow_run_completed':
 			return formatWorkflowRunCompleted(event, autonomyLevel);
+		case 'workflow_run_reopened':
+			return formatWorkflowRunReopened(event, autonomyLevel);
 		case 'agent_auto_completed':
 			return formatAgentAutoCompleted(event, autonomyLevel);
 		case 'agent_crash':
@@ -221,6 +223,35 @@ function formatWorkflowRunCompleted(
 	if (event.summary !== undefined) {
 		payload['summary'] = event.summary;
 	}
+	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatWorkflowRunReopened(
+	event: {
+		kind: 'workflow_run_reopened';
+		spaceId: string;
+		runId: string;
+		fromStatus: 'done' | 'cancelled';
+		reason: string;
+		by: string;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const humanReadable =
+		`Workflow run ${event.runId} in space ${event.spaceId} was reopened from '${event.fromStatus}' ` +
+		`back to 'in_progress' (by: ${event.by}). Reason: ${event.reason}. ` +
+		`A previously-finished task is active again; completion actions will not re-fire.`;
+	const payload = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		runId: event.runId,
+		fromStatus: event.fromStatus,
+		reason: event.reason,
+		by: event.by,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
 	return buildMessage(event.kind, humanReadable, payload);
 }
 

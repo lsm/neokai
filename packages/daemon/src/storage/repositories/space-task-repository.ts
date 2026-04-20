@@ -109,6 +109,23 @@ export class SpaceTaskRepository {
 	}
 
 	/**
+	 * List tasks for a workflow run, INCLUDING archived tasks.
+	 *
+	 * Archive is the authoritative tombstone for a task: once archived, no
+	 * further inter-agent messages or node activations are permitted for the
+	 * run. Callers that enforce that tombstone (e.g. `ChannelRouter`) must be
+	 * able to see the archived task to throw the correct error — they cannot
+	 * rely on `listByWorkflowRun()`, which filters archived tasks out.
+	 */
+	listByWorkflowRunIncludingArchived(workflowRunId: string): SpaceTask[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM space_tasks WHERE workflow_run_id = ? ORDER BY created_at ASC`
+		);
+		const rows = stmt.all(workflowRunId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpaceTask(r));
+	}
+
+	/**
 	 * List standalone tasks for a space (tasks with no workflowRunId).
 	 * The SQL-level filter avoids fetching workflow tasks that would be discarded by the caller.
 	 */

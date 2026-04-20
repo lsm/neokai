@@ -1,7 +1,8 @@
 /**
  * ContextTracker Tests
  *
- * Tests context window usage tracking via /context command parsing.
+ * Tests context window usage tracking backed by the SDK's native
+ * `query.getContextUsage()` (adapted via `ContextFetcher`).
  */
 
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
@@ -59,7 +60,7 @@ describe('ContextTracker', () => {
 					Messages: { tokens: 25000, percent: 12.5 },
 					'Free space': { tokens: 170000, percent: 85 },
 				},
-				source: 'context-command',
+				source: 'sdk-get-context-usage',
 			};
 
 			tracker.updateWithDetailedBreakdown(contextInfo);

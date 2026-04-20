@@ -5,8 +5,9 @@
  * - activateNode(): first activation creates tasks for each agent slot
  * - activateNode(): idempotent — returns existing tasks on repeated calls
  * - activateNode(): concurrent activation (UNIQUE constraint) handled gracefully
- * - activateNode(): cancelled run throws ActivationError
- * - activateNode(): completed run throws ActivationError
+ * - activateNode(): cancelled run auto-reopens when parent task is not archived
+ * - activateNode(): completed run auto-reopens when parent task is not archived
+ * - activateNode(): archived-task run throws ActivationError
  * - activateNode(): missing run throws ActivationError
  * - activateNode(): missing workflow throws ActivationError
  * - activateNode(): missing node throws ActivationError
@@ -435,7 +436,7 @@ describe('ChannelRouter', () => {
 		// Error cases
 		// -----------------------------------------------------------------------
 
-		test('throws ActivationError when run is cancelled', async () => {
+		test('auto-reopens cancelled run back to in_progress when parent task is not archived', async () => {
 			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
 				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
 			]);
@@ -445,13 +446,16 @@ describe('ChannelRouter', () => {
 				workflowId: workflow.id,
 				title: 'Cancelled Run',
 			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
 			workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
-			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/cancelled/);
+			await router.activateNode(run.id, NODE_A);
+
+			const after = workflowRunRepo.getRun(run.id);
+			expect(after?.status).toBe('in_progress');
 		});
 
-		test('throws ActivationError when run is completed', async () => {
+		test('auto-reopens done run back to in_progress when parent task is not archived', async () => {
 			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
 				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
 			]);
@@ -463,8 +467,33 @@ describe('ChannelRouter', () => {
 			});
 			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
+			await router.activateNode(run.id, NODE_A);
+
+			const after = workflowRunRepo.getRun(run.id);
+			expect(after?.status).toBe('in_progress');
+		});
+
+		test('throws ActivationError with archived-task message when parent task is archived', async () => {
+			const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Archived Run',
+			});
+			// Archive every task associated with the run — the canonical task is
+			// created by the test wrapper around workflowRunRepo.createRun above.
+			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+				taskRepo.archiveTask(t.id);
+			}
+
 			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
-			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/done/);
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(/archived/);
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(
+				/create a new task to continue/
+			);
 		});
 
 		test('throws ActivationError when run does not exist', async () => {
@@ -1411,7 +1440,7 @@ describe('ChannelRouter', () => {
 			expect(activated).toHaveLength(0);
 		});
 
-		test('onGateDataChanged: returns empty array for completed run', async () => {
+		test('onGateDataChanged: returns empty array for run whose parent task is archived', async () => {
 			const gate: Gate = {
 				id: 'done-gate',
 				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
@@ -1438,13 +1467,56 @@ describe('ChannelRouter', () => {
 			const run = workflowRunRepo.createRun({
 				spaceId: SPACE_ID,
 				workflowId: workflow.id,
-				title: 'Completed Run',
+				title: 'Archived Run',
+			});
+			// Archive is the authoritative tombstone — a done/cancelled run whose
+			// parent task is NOT archived is still reopenable on gate activity.
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+				taskRepo.archiveTask(t.id);
+			}
+
+			gateDataRepo.set(run.id, 'done-gate', { done: true });
+			const activated = await router.onGateDataChanged(run.id, 'done-gate');
+			expect(activated).toHaveLength(0);
+		});
+
+		test('onGateDataChanged: re-activates target node when run is done but parent task is not archived', async () => {
+			const gate: Gate = {
+				id: 'done-gate',
+				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [
+				{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'done-gate' },
+			];
+			const workflow = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{
+						id: NODE_A,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+					{ id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Reopenable Done Run',
 			});
 			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
 			gateDataRepo.set(run.id, 'done-gate', { done: true });
 			const activated = await router.onGateDataChanged(run.id, 'done-gate');
-			expect(activated).toHaveLength(0);
+			expect(activated.length).toBeGreaterThan(0);
+			// The run was auto-reopened back to in_progress.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
 		});
 
 		// -----------------------------------------------------------------------
@@ -1981,9 +2053,9 @@ describe('ChannelRouter', () => {
 		// -----------------------------------------------------------------------
 
 		test('review-votes-gate: QA blocked until all 3 reviewers approve (min: 3)', async () => {
-			// Mirrors the FULL_CYCLE_CODING_WORKFLOW review-votes-gate:
-			// Each of the 3 reviewer nodes writes independently to review-votes-gate.
-			// QA only activates when vote count reaches 3.
+			// Parallel vote-counting gate pattern (also used by the Plan & Decompose
+			// plan-approval-gate with min:4): each reviewer writes independently, and
+			// the downstream node only activates once the vote count reaches the min.
 			const gate: Gate = {
 				id: 'review-votes-gate',
 				fields: [
@@ -2159,7 +2231,8 @@ describe('ChannelRouter', () => {
 			const NODE_QA = 'node-qa-loop';
 			const NODE_DONE = 'node-done-qa';
 
-			// Gates matching FULL_CYCLE_CODING_WORKFLOW design
+			// Gates mirroring a code-review pipeline: PR-gate guarding review,
+			// vote-counting gate guarding QA
 			const gateCodePr: Gate = {
 				id: 'code-pr-gate',
 				fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],

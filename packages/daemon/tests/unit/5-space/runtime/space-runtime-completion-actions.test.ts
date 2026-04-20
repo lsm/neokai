@@ -1151,6 +1151,85 @@ describe('SpaceRuntime — completion actions', () => {
 		expect((enriched.pendingAction as Record<string, unknown>)['script']).toBeUndefined();
 	});
 
+	// ─── Idempotency guard: completion actions fire at most once per run ────
+
+	test('completion actions do NOT re-fire when completionActionsFiredAt is already set on the run', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		// A marker file we'd expect to be touched if the script actually ran.
+		const markerPath = join(dir, 'completion-marker.txt');
+		const actions: CompletionAction[] = [
+			{
+				id: 'touch-marker',
+				name: 'Touch Marker',
+				type: 'script',
+				requiredLevel: 2,
+				script: `touch "${markerPath}"`,
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		// Simulate a previous completion that already fired the action set. The
+		// idempotency guard in resolveCompletionWithActions should see this marker
+		// and short-circuit the loop — the script must NOT run on this tick.
+		workflowRunRepo.updateRun(run.id, { completionActionsFiredAt: Date.now() - 1000 });
+
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete (reopen cycle)',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+		expect(task.approvalSource).toBe('auto_policy');
+
+		// The script must NOT have been executed — if the marker file exists, the
+		// guard failed and the side-effecting script ran again.
+		const { existsSync } = await import('node:fs');
+		expect(existsSync(markerPath)).toBe(false);
+	});
+
+	test('completionActionsFiredAt is stamped after the full action set executes', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'action-1',
+				name: 'Action 1',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "ran"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+		const runBefore = workflowRunRepo.getRun(run.id)!;
+		expect(runBefore.completionActionsFiredAt).toBeNull();
+
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'task complete',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const runAfter = workflowRunRepo.getRun(run.id)!;
+		expect(runAfter.completionActionsFiredAt).not.toBeNull();
+		expect(typeof runAfter.completionActionsFiredAt).toBe('number');
+	});
+
 	test('enrichTaskWithPendingAction leaves non-paused tasks untouched', async () => {
 		setAutonomyLevel(5);
 		const rt = makeRuntime();

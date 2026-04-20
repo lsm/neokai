@@ -161,6 +161,33 @@ All three sourceTypes are actively injected by `QueryOptionsBuilder`: `plugin` a
 
 See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documentation.
 
+### Space Agent User Message Anatomy
+
+Every Space agent session receives a structured user message composed by
+`buildCustomAgentTaskMessage` (`packages/daemon/src/lib/space/agents/custom-agent.ts`)
+plus a runtime execution contract appended by the Task Agent Manager. The
+message is action-first and workflow-aware:
+
+1. `## Your Task` — task number, title, description, priority
+2. `## Runtime Location` — worktree path, derived PR URL (`none yet` when no
+   gate has recorded a `pr_url`)
+3. `## Your Role in This Workflow` — current node, peers, outbound channels,
+   gates writable by this node/agent (omitted outside a workflow)
+4. `## Previous Work on This Goal` — bulleted summaries from prior tasks
+5. `## Project Context` — `space.backgroundContext`
+6. `## Standing Instructions` — `space.instructions` then
+   `workflow.instructions`, merged under one heading
+
+Slot prompts in `built-in-workflows.ts` (and any user-authored workflow) must
+contain only **behavioral** instruction — what the agent does, how to use
+tools, and any required step-by-step checklists. Do not re-state peers,
+channel targets, gate IDs, or "X is my reviewer" chrome: that context is
+injected centrally by the builder. Re-adding it creates drift when the
+workflow graph is edited later.
+
+A dev-mode warning is logged when the final user message exceeds 4 KB so
+future prompt bloat surfaces during development without failing sessions.
+
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
@@ -293,6 +320,23 @@ make self-test TEST=tests/core/navigation-3-column.e2e.ts
 **Other notes:**
 - Always run a single E2E test file at a time — too slow to run all together
 - If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
+
+## Space Runtime
+
+### Space tool surface
+
+Every session whose `session.context.spaceId` is set — **not just** the Space chat agent — is attached to the `space-agent-tools` MCP server at startup. This means worker sessions, coder sessions, room_chat sessions opened in a Space, and any ad-hoc sessions created with a Space as their context can all query Space state, read/write gate data, signal tasks, etc.
+
+- **Wiring:** `SpaceRuntimeService.attachSpaceToolsToMemberSession(session)` runs for each member session (from `session.created` event + startup backfill). It uses `AgentSession.mergeRuntimeMcpServers({ 'space-agent-tools': … })` so other runtime-attached MCP servers (room tools, db-query, task-agent glue) are preserved.
+- **Not re-attached here:** `space_chat` sessions (`setupSpaceAgentSession` already attaches) and `space_task_agent` sessions (TaskAgentManager attaches them during config build — attaching again afterwards would race with its `setRuntimeMcpServers`).
+- **Permissions:** All gating (writer auth, autonomy level) happens inside the tool handlers themselves, so widening the surface is safe.
+- **No `myAgentName` for ordinary members:** gate writer-authorization for member sessions falls through to the autonomy path, matching the existing contract.
+
+### LiveQuery: `messages.bySession`
+
+SDK messages for a session are published as a LiveQuery under the name `messages.bySession` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`. The frontend `SessionStore` subscribes via `hub.request('liveQuery.subscribe', { queryName: 'messages.bySession', params: [sessionId, limit], subscriptionId })` and applies the resulting snapshot + delta stream — no per-message RPC fetch and no `state.sdkMessages.delta` event listening. Optimistic user echo is preserved via `pendingLocalMessageUuids` until the snapshot/delta includes the user's message.
+
+---
 
 ## Mission System
 

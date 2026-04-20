@@ -578,6 +578,15 @@ export interface SpaceWorkflowRun {
 	updatedAt: number;
 	/** Completion timestamp (milliseconds since epoch); null until the run reaches a terminal state */
 	completedAt: number | null;
+	/**
+	 * Timestamp (milliseconds since epoch) at which the run's end-node
+	 * `completionActions` have been successfully fired. Used as an idempotency
+	 * marker so that a run which is reopened (done → in_progress) and later
+	 * completes again does not re-fire its completion actions.
+	 *
+	 * Null until the first successful completion. Never cleared on reopen.
+	 */
+	completionActionsFiredAt: number | null;
 }
 
 /**
