@@ -73,6 +73,7 @@ import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -596,6 +597,33 @@ export class TaskAgentManager {
 				this.taskDbQueryServers.set(taskId, dbQueryServer);
 				taskMcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
 			}
+
+			// Attach `space-agent-tools` alongside `task-agent` so the task agent
+			// can coordinate directly with the rest of the Space (e.g., via
+			// `send_message_to_agent`) in the same way the Space chat session
+			// can. Safe because tool handlers gate on autonomy + writer checks.
+			const spaceAgentMcpServer = createSpaceAgentMcpServer({
+				spaceId,
+				runtime: this.config.spaceRuntimeService.getSharedRuntime(),
+				workflowManager: this.config.spaceWorkflowManager,
+				taskRepo: this.config.taskRepo,
+				nodeExecutionRepo: this.config.nodeExecutionRepo,
+				workflowRunRepo: this.config.workflowRunRepo,
+				taskManager,
+				spaceAgentManager: this.config.spaceAgentManager,
+				taskAgentManager: this,
+				gateDataRepo: this.config.gateDataRepo,
+				daemonHub: this.config.daemonHub,
+				onGateChanged: (runId, gateId) => {
+					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
+				},
+				getSpaceAutonomyLevel: async (sid) => {
+					const s = await this.config.spaceManager.getSpace(sid);
+					return s?.autonomyLevel ?? 1;
+				},
+				myAgentName: 'task-agent',
+			});
+			taskMcpServers['space-agent-tools'] = spaceAgentMcpServer as unknown as McpServerConfig;
 
 			agentSession.setRuntimeMcpServers(taskMcpServers);
 
