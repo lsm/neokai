@@ -314,6 +314,7 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
 						startNodeId: node.id,
 						rules: [],
 						tags: [],
+						completionAutonomyLevel: 3,
 					});
 				},
 				{ sid: spaceId, wname: deletableWorkflowName }

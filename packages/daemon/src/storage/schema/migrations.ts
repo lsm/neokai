@@ -436,6 +436,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   call; those are now enqueued to the job queue and the cached result is served
 	//   synchronously from this table on subsequent opens.
 	runMigration98(db);
+
+	// Migration 99: Tool-contract refactor for Task #39 — adds the
+	//   `space_workflows.completion_autonomy_level` column, three pending-completion
+	//   columns on `space_tasks`, and the `space_task_report_results` append-only
+	//   audit table used by the new `report_result` tool.
+	runMigration99(db);
 }
 
 /**
@@ -6306,4 +6312,261 @@ export function runMigration98(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_wrac_run_task_key ON workflow_run_artifact_cache(run_id, task_id, cache_key)`
 	);
+}
+
+/**
+ * Migration 99 — Tool-contract refactor for Task #39.
+ *
+ * Adds:
+ *   1. `space_workflows.completion_autonomy_level` (INTEGER, NOT NULL) — the
+ *      minimum autonomy level at which `approve_task` (agent self-close) is
+ *      registered on end-node agents.
+ *   2. `space_tasks.pending_completion_submitted_by_node_id` (TEXT, nullable)
+ *      `space_tasks.pending_completion_submitted_at` (INTEGER, nullable)
+ *      `space_tasks.pending_completion_reason` (TEXT, nullable)
+ *      Populated when an end-node agent calls `submit_for_approval`; cleared on
+ *      approve or reject.
+ *   3. `space_task_report_results` table — append-only audit of each
+ *      `report_result` call. Does NOT replace `space_tasks.reported_summary`
+ *      (which the UI caches as the latest); it adds history.
+ *
+ * Backfill policy for the new NOT NULL column on `space_workflows`:
+ *   - Rows whose `name` matches a built-in template get a per-template level:
+ *       Coding Workflow               → 3
+ *       Research Workflow             → 2
+ *       Review-Only Workflow          → 2
+ *       Coding with QA Workflow       → 4
+ *       Plan & Decompose Workflow     → 3
+ *   - Any other row (user-created) gets level 3 as a reasonable default.
+ *   These are picked to reflect the risk profile of each workflow's
+ *   terminal action — merging a PR (Coding) is higher-risk than posting a
+ *   review (Review-Only); Coding with QA's end step runs `gh pr merge`
+ *   itself, so it requires the highest autonomy (4).
+ *
+ * SQLite does not allow an `ADD COLUMN ... NOT NULL` on a table that already
+ * has rows without also supplying a DEFAULT. We add the column with
+ * `NOT NULL DEFAULT 3`, then `UPDATE` per-name to apply the per-template
+ * overrides. The default remains on the column (SQLite can't drop a default
+ * without rebuilding the table); future inserts from the runtime layer will
+ * always supply an explicit value, so the default only matters for any future
+ * migration that inserts a row without specifying this column.
+ */
+export function runMigration99(db: BunDatabase): void {
+	// 1. space_workflows.completion_autonomy_level ---------------------------
+	if (
+		tableExists(db, 'space_workflows') &&
+		!tableHasColumn(db, 'space_workflows', 'completion_autonomy_level')
+	) {
+		db.exec(
+			`ALTER TABLE space_workflows ADD COLUMN completion_autonomy_level INTEGER NOT NULL DEFAULT 3`
+		);
+		// Per-template backfill — override the default for built-in workflows
+		// whose risk profile differs from the generic default of 3.
+		const perTemplateLevels: Array<[string, number]> = [
+			['Coding Workflow', 3],
+			['Research Workflow', 2],
+			['Review-Only Workflow', 2],
+			['Coding with QA Workflow', 4],
+			['Plan & Decompose Workflow', 3],
+		];
+		const update = db.prepare(
+			`UPDATE space_workflows SET completion_autonomy_level = ? WHERE name = ?`
+		);
+		for (const [name, level] of perTemplateLevels) {
+			update.run(level, name);
+		}
+	}
+
+	// 2. space_tasks pending_completion_* columns ----------------------------
+	if (tableExists(db, 'space_tasks')) {
+		if (!tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_by_node_id')) {
+			db.exec(
+				`ALTER TABLE space_tasks ADD COLUMN pending_completion_submitted_by_node_id TEXT DEFAULT NULL`
+			);
+		}
+		if (!tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_at')) {
+			db.exec(
+				`ALTER TABLE space_tasks ADD COLUMN pending_completion_submitted_at INTEGER DEFAULT NULL`
+			);
+		}
+		if (!tableHasColumn(db, 'space_tasks', 'pending_completion_reason')) {
+			db.exec(`ALTER TABLE space_tasks ADD COLUMN pending_completion_reason TEXT DEFAULT NULL`);
+		}
+	}
+
+	// 3. space_task_report_results table -------------------------------------
+	// Only create if the parent tables exist; otherwise this is a very fresh
+	// DB that pre-dates the Space system, and the table will be (re)created
+	// automatically once spaces tables come online via earlier migrations.
+	if (tableExists(db, 'space_tasks') && tableExists(db, 'spaces')) {
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS space_task_report_results (
+				id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL,
+				space_id TEXT NOT NULL,
+				workflow_node_id TEXT,
+				agent_name TEXT,
+				summary TEXT NOT NULL,
+				evidence TEXT,
+				recorded_at INTEGER NOT NULL,
+				FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE,
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_task_report_results_task ON space_task_report_results(task_id, recorded_at)`
+		);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_space_task_report_results_space ON space_task_report_results(space_id, recorded_at)`
+		);
+	}
+
+	// 4. Widen `pending_checkpoint_type` CHECK constraint ---------------------
+	// Migration 86 added this column with CHECK(... IN ('completion_action', 'gate')).
+	// Task #39's new `submit_for_approval` tool writes 'task_completion', which
+	// the old constraint blocks at SQLite level. SQLite cannot ALTER a CHECK
+	// constraint, so rebuild the table with the widened enum. Detection: if the
+	// raw CREATE TABLE sql lacks 'task_completion' we need to rebuild.
+	if (tableExists(db, 'space_tasks')) {
+		const master = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+			.get() as { sql?: string } | undefined;
+		const currentSql = master?.sql ?? '';
+		if (
+			currentSql &&
+			!currentSql.includes("'task_completion'") &&
+			tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')
+		) {
+			// Build the INSERT/SELECT column list from the intersection of the
+			// full post-M98 schema and the columns the existing table actually
+			// has. This makes the rebuild safe when M98 is invoked against an
+			// older/minimal schema (e.g. isolated migration tests that construct
+			// a bare-bones space_tasks and then call runMigration98 directly).
+			// In production every prior migration has already run so the source
+			// table has all of these columns and the list is exhaustive.
+			const fullColumnList = [
+				'id',
+				'space_id',
+				'task_number',
+				'title',
+				'description',
+				'status',
+				'priority',
+				'labels',
+				'workflow_run_id',
+				'preferred_workflow_id',
+				'created_by_task_id',
+				'result',
+				'depends_on',
+				'active_session',
+				'task_agent_session_id',
+				'approval_source',
+				'approval_reason',
+				'approved_at',
+				'block_reason',
+				'archived_at',
+				'created_at',
+				'started_at',
+				'completed_at',
+				'updated_at',
+				'pending_action_index',
+				'pending_checkpoint_type',
+				'reported_status',
+				'reported_summary',
+				'pending_completion_submitted_by_node_id',
+				'pending_completion_submitted_at',
+				'pending_completion_reason',
+			];
+			const existingColumns = new Set(
+				(db.prepare(`PRAGMA table_info('space_tasks')`).all() as Array<{ name: string }>).map(
+					(r) => r.name
+				)
+			);
+			const copyColumns = fullColumnList.filter((c) => existingColumns.has(c));
+			const copyColsSql = copyColumns.join(', ');
+
+			// Capture existing non-autoindex DDL so we can re-create exactly the
+			// indexes the table had — no more, no less. Some earlier migrations
+			// intentionally dropped indexes (e.g. M71 removed idx_space_tasks_status
+			// when its column semantics changed); we must not silently re-add them.
+			const existingIndexDdl = (
+				db
+					.prepare(
+						`SELECT sql FROM sqlite_master
+						 WHERE type='index' AND tbl_name='space_tasks' AND sql IS NOT NULL`
+					)
+					.all() as Array<{ sql: string }>
+			)
+				.map((r) => r.sql)
+				.filter((sql) => !!sql);
+
+			db.exec('PRAGMA foreign_keys = OFF');
+			db.exec('BEGIN');
+			try {
+				db.exec(`
+					CREATE TABLE space_tasks_m98_new (
+						id TEXT PRIMARY KEY,
+						space_id TEXT NOT NULL,
+						task_number INTEGER NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT NOT NULL DEFAULT '',
+						status TEXT NOT NULL DEFAULT 'open'
+							CHECK(status IN ('open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
+						priority TEXT NOT NULL DEFAULT 'normal'
+							CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+						labels TEXT NOT NULL DEFAULT '[]',
+						workflow_run_id TEXT,
+						preferred_workflow_id TEXT,
+						created_by_task_id TEXT,
+						result TEXT,
+						depends_on TEXT NOT NULL DEFAULT '[]',
+						active_session TEXT
+							CHECK(active_session IN ('worker', 'leader')),
+						task_agent_session_id TEXT,
+						approval_source TEXT,
+						approval_reason TEXT,
+						approved_at INTEGER,
+						block_reason TEXT,
+						archived_at INTEGER,
+						created_at INTEGER NOT NULL,
+						started_at INTEGER,
+						completed_at INTEGER,
+						updated_at INTEGER NOT NULL,
+						pending_action_index INTEGER DEFAULT NULL,
+						pending_checkpoint_type TEXT DEFAULT NULL
+							CHECK(pending_checkpoint_type IN ('completion_action', 'gate', 'task_completion')),
+						reported_status TEXT DEFAULT NULL
+							CHECK(reported_status IS NULL OR reported_status IN ('done', 'blocked', 'cancelled')),
+						reported_summary TEXT DEFAULT NULL,
+						pending_completion_submitted_by_node_id TEXT DEFAULT NULL,
+						pending_completion_submitted_at INTEGER DEFAULT NULL,
+						pending_completion_reason TEXT DEFAULT NULL,
+						FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+						FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+					)
+				`);
+				db.exec(
+					`INSERT INTO space_tasks_m98_new (${copyColsSql}) SELECT ${copyColsSql} FROM space_tasks`
+				);
+				db.exec(`DROP TABLE space_tasks`);
+				db.exec(`ALTER TABLE space_tasks_m98_new RENAME TO space_tasks`);
+				// Re-create exactly the indexes that existed before the rebuild.
+				// Using IF NOT EXISTS on each so a DDL that happens to use the
+				// non-IF-EXISTS form still applies cleanly.
+				for (const ddl of existingIndexDdl) {
+					const normalized = ddl.replace(
+						/^CREATE (UNIQUE )?INDEX /i,
+						(_m, unique) => `CREATE ${unique ?? ''}INDEX IF NOT EXISTS `
+					);
+					db.exec(normalized);
+				}
+				db.exec('COMMIT');
+			} catch (err) {
+				db.exec('ROLLBACK');
+				throw err;
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
 }

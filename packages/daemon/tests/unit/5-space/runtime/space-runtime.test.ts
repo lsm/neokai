@@ -88,6 +88,7 @@ function buildLinearWorkflow(
 		startNodeId: nodes[0].id,
 		rules: [],
 		tags: [],
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -293,6 +294,7 @@ describe('SpaceRuntime', () => {
 					endNodeId: 'step-bad',
 					rules: [],
 					tags: [],
+					completionAutonomyLevel: 3,
 				});
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
@@ -389,6 +391,7 @@ describe('SpaceRuntime', () => {
 				endNodeId,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Multi Run');
@@ -419,6 +422,7 @@ describe('SpaceRuntime', () => {
 				endNodeId,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Custom Multi Run');
@@ -445,6 +449,7 @@ describe('SpaceRuntime', () => {
 					startNodeId: STEP_A,
 					rules: [],
 					tags: [],
+					completionAutonomyLevel: 3,
 				});
 			} finally {
 				db.exec('PRAGMA foreign_keys = ON');
@@ -1104,6 +1109,7 @@ describe('SpaceRuntime', () => {
 				endNodeId,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1147,6 +1153,7 @@ describe('SpaceRuntime', () => {
 				endNodeId,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1176,6 +1183,7 @@ describe('SpaceRuntime', () => {
 				startNodeId: STEP_A,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1211,6 +1219,7 @@ describe('SpaceRuntime', () => {
 				endNodeId,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1245,6 +1254,7 @@ describe('SpaceRuntime', () => {
 				endNodeId,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1284,6 +1294,7 @@ describe('SpaceRuntime', () => {
 				channels: [{ id: 'ch-1', from: 'Code', to: 'Review', label: 'submit' }],
 				startNodeId: STEP_A,
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1328,6 +1339,7 @@ describe('SpaceRuntime', () => {
 				nodes,
 				startNodeId: stepId,
 				endNodeId,
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

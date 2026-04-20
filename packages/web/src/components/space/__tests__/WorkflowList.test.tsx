@@ -69,6 +69,7 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		completionAutonomyLevel: 3,
 		...overrides,
 	};
 }

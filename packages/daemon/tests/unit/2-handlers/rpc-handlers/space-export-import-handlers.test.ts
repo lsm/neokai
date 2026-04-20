@@ -82,6 +82,7 @@ function createSchema(db: Database): void {
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
 			instructions TEXT DEFAULT NULL,
+			completion_autonomy_level INTEGER NOT NULL DEFAULT 3,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -373,6 +374,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'Pipeline',
 				nodes: [{ name: 'Code', agentId: agent.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
@@ -394,6 +396,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'Pipeline',
 				nodes: [{ name: 'Code', agentId: coder.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
@@ -412,12 +415,14 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'WF1',
 				nodes: [{ name: 'S1', agentId: agent.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'WF2',
 				nodes: [{ name: 'S2', agentId: agent.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.workflows', {
@@ -440,6 +445,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'W',
 				nodes: [{ name: 'S', agentId: agent.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.bundle', {
@@ -459,12 +465,14 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'W1',
 				nodes: [{ name: 'S', agentId: a1.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 			workflowManager.createWorkflow({
 				spaceId: SPACE_ID,
 				name: 'W2',
 				nodes: [{ name: 'S', agentId: a1.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.bundle', {
@@ -530,6 +538,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'Pipeline',
 				nodes: [{ name: 'S', agentId: agent.id }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const bundle = makeBundle(
@@ -662,6 +671,7 @@ describe('Space Export/Import RPC Handlers', () => {
 					name: 'Pipeline',
 					nodes: [{ name: 'S', agentId: agent.id }],
 					transitions: [],
+					completionAutonomyLevel: 3,
 				});
 
 				const bundle = makeBundle(
@@ -715,6 +725,7 @@ describe('Space Export/Import RPC Handlers', () => {
 					name: 'Pipeline',
 					nodes: [{ name: 'S', agentId: agent.id }],
 					transitions: [],
+					completionAutonomyLevel: 3,
 				});
 
 				const bundle = makeBundle(
@@ -765,6 +776,7 @@ describe('Space Export/Import RPC Handlers', () => {
 					name: 'Pipeline',
 					nodes: [{ name: 'OldStep', agentId: agent.id }],
 					transitions: [],
+					completionAutonomyLevel: 3,
 				});
 
 				const bundle = makeBundle(
@@ -963,6 +975,7 @@ describe('Space Export/Import RPC Handlers', () => {
 					name: 'ToReplace',
 					nodes: [{ name: 'S', agentId: existingAgent.id }],
 					transitions: [],
+					completionAutonomyLevel: 3,
 				});
 
 				// Bundle: replace "ToReplace" but the replacement references a ghost agent
@@ -1125,6 +1138,7 @@ describe('Space Export/Import RPC Handlers', () => {
 				name: 'Pipe',
 				nodes: [{ name: 's1', agentId: existingAgentId }],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 			const oldWorkflowId = existingWf.id;
 

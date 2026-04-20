@@ -172,6 +172,7 @@ function buildLinearWorkflow(
 		nodes: workflowNodes,
 		startNodeId: nodes[0].id,
 		tags: [],
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -1107,6 +1108,7 @@ describe('SpaceRuntime — notification events', () => {
 				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1141,6 +1143,7 @@ describe('SpaceRuntime — notification events', () => {
 				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1193,6 +1196,7 @@ describe('SpaceRuntime — notification events', () => {
 				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1333,6 +1337,7 @@ describe('SpaceRuntime — notification events', () => {
 				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1372,6 +1377,7 @@ describe('SpaceRuntime — notification events', () => {
 				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1469,6 +1475,7 @@ describe('SpaceRuntime — notification events', () => {
 				endNodeId: SYNTHETIC_END_NODE_ID,
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1512,6 +1519,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-coder-sum',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			// startWorkflowRun creates the task for the start (Coder) node
@@ -1559,6 +1567,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-nosummary',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			// startWorkflowRun creates the task for the start node
@@ -1599,6 +1608,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-upstream-prio',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			// startWorkflowRun creates the task for the start (Coder/upstream) node
@@ -1665,6 +1675,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-nt-a',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1722,6 +1733,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-mt-start',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1788,6 +1800,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-mtnr-start',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1837,6 +1850,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-empty-res',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1874,6 +1888,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-bidi-a',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1933,6 +1948,7 @@ describe('SpaceRuntime — notification events', () => {
 				startNodeId: 'step-slot-parallel',
 				rules: [],
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

@@ -153,6 +153,7 @@ function makeLinearWorkflow(steps: Array<{ id: string; agentId: string }>): {
 			order: 0,
 		})),
 		startNodeId: steps[0].id,
+		completionAutonomyLevel: 3,
 	});
 	const run = runRepo.createRun({ spaceId: SPACE_ID, workflowId: workflow.id, title: 'Test' });
 	return { workflow, run };

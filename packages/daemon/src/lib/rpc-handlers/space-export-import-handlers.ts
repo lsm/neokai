@@ -235,6 +235,10 @@ export function buildWorkflowCreateParams(
 		name,
 		nodes,
 		tags: exported.tags,
+		// Fall back to 3 when the exported bundle predates completionAutonomyLevel.
+		// 3 ("Low Approval") matches the DB column default and is the safest neutral
+		// choice for imports where the exporter didn't specify a level.
+		completionAutonomyLevel: exported.completionAutonomyLevel ?? 3,
 	};
 	if (startNodeId) params.startNodeId = startNodeId;
 	if (endNodeId) params.endNodeId = endNodeId;

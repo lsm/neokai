@@ -464,6 +464,7 @@ describe('TaskAgentManager', () => {
 				],
 				startNodeId: fallbackStepId,
 				tags: ['default'],
+				completionAutonomyLevel: 3,
 			});
 
 			const task = await makeTask(ctx.taskManager);

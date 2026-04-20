@@ -23,6 +23,7 @@ import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTaskReportResultRepository } from '../../../storage/repositories/space-task-report-result-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
@@ -86,6 +87,12 @@ export interface TaskAgentToolsConfig {
 	workflowRunId: string;
 	/** Task repository for direct DB reads. */
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Append-only audit log for `report_result` tool calls. Design v2 (Task #39):
+	 * the task-agent `report_result` is purely audit — it does not mutate task
+	 * state or emit `space.task.done`. Each call appends one row here.
+	 */
+	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Node execution repository for querying execution state in list_group_members. */
 	nodeExecutionRepo: NodeExecutionRepository;
 	/** Task manager for validated status transitions. */
@@ -171,6 +178,7 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		space,
 		workflowRunId,
 		taskRepo,
+		taskReportResultRepo,
 		nodeExecutionRepo,
 		taskManager,
 		messageInjector,
@@ -221,13 +229,18 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 
 	return {
 		/**
-		 * Report the final outcome of the task and close the task lifecycle.
+		 * Record a progress report (Design v2 — Task #39, append-only audit).
 		 *
-		 * The agent supplies only a summary + optional evidence. The runtime —
-		 * not this tool — decides the final task status via the completion-
-		 * action pipeline. Internally we mark the task as `done` so the
-		 * CompletionDetector picks it up; the pipeline may flip it to
-		 * `needs_attention` / `blocked` / etc. based on its actions.
+		 * Post Stage-2, `report_result` is NOT a terminal tool. It simply appends
+		 * one row to `space_task_report_results` so the full history of reports
+		 * issued during a task is preserved. It never mutates task status, never
+		 * emits `space.task.done`, and never triggers the completion-action
+		 * pipeline.
+		 *
+		 * Terminal state is decided by:
+		 *   - End-node agents: via `approve_task` (auto-close when autonomy
+		 *     permits) or `submit_for_approval` (human review).
+		 *   - Human operators: via `spaceTask.approvePendingCompletion` RPC.
 		 */
 		async report_result(args: ReportResultInput): Promise<ToolResult> {
 			const { summary, evidence } = args;
@@ -237,43 +250,23 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 			}
 
-			// Serialize evidence into the summary so downstream consumers (PR
-			// reviewers, verification actions) can inspect it. The dedicated
-			// structured column is a Stage-3 concern.
-			const serializedSummary = evidence
-				? `${summary}\n\n<!-- evidence -->\n${JSON.stringify(evidence, null, 2)}`
-				: summary;
-
 			try {
-				await taskManager.setTaskStatus(taskId, 'done', {
-					result: serializedSummary,
+				const record = taskReportResultRepo.append({
+					taskId,
+					spaceId: space.id,
+					workflowNodeId: null,
+					agentName: 'task-agent',
+					summary,
+					evidence: evidence ?? null,
 				});
-
-				// Emit DaemonHub event so the Space Agent is notified of task completion.
-				// Completion-action pipeline may later downgrade to `space.task.failed`.
-				if (daemonHub) {
-					const eventPayload = {
-						sessionId: 'global',
-						taskId,
-						spaceId: space.id,
-						status: 'done' as const,
-						summary: summary ?? '',
-						workflowRunId,
-						taskTitle: mainTask.title,
-					};
-					void daemonHub.emit('space.task.done', eventPayload).catch((err) => {
-						log.warn(
-							`Failed to emit space.task.done for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
-						);
-					});
-				}
 
 				return jsonResult({
 					success: true,
 					taskId,
-					summary,
+					reportId: record.id,
 					message:
-						'Result recorded. The completion-action pipeline will determine the final task status.',
+						'Report recorded (audit-only). This does not close the task. ' +
+						'Use approve_task or submit_for_approval on an end node to finalize.',
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -803,8 +796,12 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 	const tools = [
 		tool(
 			'report_result',
-			'Mark the task as completed, failed, or cancelled and record the result summary. ' +
-				'Call this when the workflow reaches a terminal node or an unrecoverable error occurs.',
+			'Record a progress report for this task as an append-only audit entry. ' +
+				'This does NOT close the task — it only appends a summary (and optional evidence) ' +
+				'to the task report history. Terminal completion is handled by `approve_task` ' +
+				'(end-node, self-close when autonomy permits) or `submit_for_approval` (end-node, ' +
+				'human review). Use `report_result` to share intermediate outcomes, status updates, ' +
+				'or findings without ending the workflow run.',
 			ReportResultSchema.shape,
 			(args) => handlers.report_result(args)
 		),

@@ -134,6 +134,10 @@ const exportedWorkflowBaseSchema = z.object({
 	endNode: z.string().optional(),
 	tags: z.array(z.string()),
 	channels: z.array(exportedWorkflowChannelSchema).optional(),
+	// Optional in schema for backward compatibility with v1 exports that predate
+	// the completionAutonomyLevel field. Import code falls back to a sensible
+	// default when the field is absent.
+	completionAutonomyLevel: z.number().int().min(1).max(5).optional(),
 });
 
 const exportBundleBaseSchema = z.object({
@@ -266,6 +270,7 @@ export function exportWorkflow(
 		nodes: exportedNodes,
 		startNode,
 		tags: workflow.tags,
+		completionAutonomyLevel: workflow.completionAutonomyLevel,
 	};
 	if (endNode !== undefined) result.endNode = endNode;
 	if (workflow.description !== undefined) result.description = workflow.description;
@@ -415,7 +420,12 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
 		}
 	}
 
-	return { ok: true, value: { version: 1, ...result.data } };
+	// Zod's `z.number().min(1).max(5)` widens to `number`; at runtime the schema
+	// guarantees 1-5, so we assert to the nominal SpaceAutonomyLevel union.
+	return {
+		ok: true,
+		value: { version: 1, ...result.data } as ExportedSpaceWorkflow,
+	};
 }
 
 /**
@@ -464,7 +474,11 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
 			name: result.data.name,
 			...(result.data.description !== undefined ? { description: result.data.description } : {}),
 			agents: result.data.agents.map((a) => ({ version: 1 as const, ...a })),
-			workflows: result.data.workflows.map((w) => ({ version: 1 as const, ...w })),
+			// Zod widens `completionAutonomyLevel` to `number`; the schema enforces 1-5
+			// at runtime, so casting to ExportedSpaceWorkflow is safe here.
+			workflows: result.data.workflows.map(
+				(w) => ({ version: 1 as const, ...w }) as ExportedSpaceWorkflow
+			),
 			exportedAt: result.data.exportedAt,
 			...(result.data.exportedFrom !== undefined ? { exportedFrom: result.data.exportedFrom } : {}),
 		},

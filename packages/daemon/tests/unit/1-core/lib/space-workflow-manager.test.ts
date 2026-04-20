@@ -36,6 +36,7 @@ describe('SpaceWorkflowManager', () => {
 					{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					{ id: 'node-2', name: 'Step Two', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			expect(result.startNodeId).toBe('node-1');
@@ -52,6 +53,7 @@ describe('SpaceWorkflowManager', () => {
 				],
 				startNodeId: null as unknown as string,
 				endNodeId: null as unknown as string,
+				completionAutonomyLevel: 3,
 			});
 
 			expect(result.startNodeId).toBe('node-1');
@@ -68,6 +70,7 @@ describe('SpaceWorkflowManager', () => {
 				],
 				startNodeId: 'node-2',
 				endNodeId: 'node-1',
+				completionAutonomyLevel: 3,
 			});
 
 			expect(result.startNodeId).toBe('node-2');
@@ -83,6 +86,7 @@ describe('SpaceWorkflowManager', () => {
 						{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					],
 					startNodeId: '  ',
+					completionAutonomyLevel: 3,
 				})
 			).toThrow('startNodeId must be a non-empty string');
 		});
@@ -96,6 +100,7 @@ describe('SpaceWorkflowManager', () => {
 						{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					],
 					endNodeId: '   ',
+					completionAutonomyLevel: 3,
 				})
 			).toThrow('endNodeId must be a non-empty string');
 		});
@@ -109,6 +114,7 @@ describe('SpaceWorkflowManager', () => {
 						{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					],
 					startNodeId: 'nonexistent-node',
+					completionAutonomyLevel: 3,
 				})
 			).toThrow('startNodeId "nonexistent-node" does not match any node in this workflow');
 		});
@@ -122,6 +128,7 @@ describe('SpaceWorkflowManager', () => {
 						{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					],
 					endNodeId: 'nonexistent-node',
+					completionAutonomyLevel: 3,
 				})
 			).toThrow('endNodeId "nonexistent-node" does not match any node in this workflow');
 		});
@@ -138,6 +145,7 @@ describe('SpaceWorkflowManager', () => {
 				],
 				startNodeId: 'node-1',
 				endNodeId: 'node-2',
+				completionAutonomyLevel: 3,
 			});
 
 			const updated = manager.updateWorkflow(created.id, {});
@@ -155,6 +163,7 @@ describe('SpaceWorkflowManager', () => {
 				],
 				startNodeId: 'node-2',
 				endNodeId: 'node-1',
+				completionAutonomyLevel: 3,
 			});
 
 			const updated = manager.updateWorkflow(created.id, { startNodeId: null, endNodeId: null });
@@ -170,6 +179,7 @@ describe('SpaceWorkflowManager', () => {
 					{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					{ id: 'node-2', name: 'Step Two', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			const updated = manager.updateWorkflow(created.id, {
@@ -187,6 +197,7 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			expect(() => manager.updateWorkflow(created.id, { startNodeId: 'nonexistent' })).toThrow(
@@ -201,6 +212,7 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			expect(() => manager.updateWorkflow(created.id, { endNodeId: 'nonexistent' })).toThrow(
@@ -215,6 +227,7 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{ id: 'node-old', name: 'Old Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			const updated = manager.updateWorkflow(created.id, {
@@ -237,6 +250,7 @@ describe('SpaceWorkflowManager', () => {
 				nodes: [
 					{ id: 'node-old', name: 'Old Step', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			expect(() =>
@@ -267,6 +281,7 @@ describe('SpaceWorkflowManager', () => {
 					{ id: 'node-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 					{ id: 'node-2', name: 'Step Two', agents: [{ agentId: 'agent-1', name: 'coder' }] },
 				],
+				completionAutonomyLevel: 3,
 			});
 
 			expect(() => manager.updateWorkflow(created.id, { startNodeId: '  ' })).toThrow(

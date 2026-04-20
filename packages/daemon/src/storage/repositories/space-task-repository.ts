@@ -272,6 +272,18 @@ export class SpaceTaskRepository {
 			fields.push('pending_checkpoint_type = ?');
 			values.push(params.pendingCheckpointType ?? null);
 		}
+		if (params.pendingCompletionSubmittedByNodeId !== undefined) {
+			fields.push('pending_completion_submitted_by_node_id = ?');
+			values.push(params.pendingCompletionSubmittedByNodeId ?? null);
+		}
+		if (params.pendingCompletionSubmittedAt !== undefined) {
+			fields.push('pending_completion_submitted_at = ?');
+			values.push(params.pendingCompletionSubmittedAt ?? null);
+		}
+		if (params.pendingCompletionReason !== undefined) {
+			fields.push('pending_completion_reason = ?');
+			values.push(params.pendingCompletionReason ?? null);
+		}
 		if (params.reportedStatus !== undefined) {
 			fields.push('reported_status = ?');
 			values.push(params.reportedStatus ?? null);
@@ -420,6 +432,10 @@ export class SpaceTaskRepository {
 			pendingActionIndex: (row.pending_action_index as number | null) ?? null,
 			pendingCheckpointType:
 				(row.pending_checkpoint_type as SpaceTask['pendingCheckpointType']) ?? null,
+			pendingCompletionSubmittedByNodeId:
+				(row.pending_completion_submitted_by_node_id as string | null) ?? null,
+			pendingCompletionSubmittedAt: (row.pending_completion_submitted_at as number | null) ?? null,
+			pendingCompletionReason: (row.pending_completion_reason as string | null) ?? null,
 			reportedStatus: (row.reported_status as SpaceTask['reportedStatus']) ?? null,
 			reportedSummary: (row.reported_summary as string | null) ?? null,
 			createdAt: row.created_at as number,

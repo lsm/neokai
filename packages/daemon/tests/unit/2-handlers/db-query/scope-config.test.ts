@@ -64,13 +64,14 @@ describe('scope-config', () => {
 				'space_workflow_nodes',
 				'space_workflow_runs',
 				'space_tasks',
+				'space_task_report_results',
 				'space_worktrees',
 				'gate_data',
 				'channel_cycles',
 				'workflow_run_artifacts',
 				'workflow_run_artifact_cache',
 			]);
-			expect(names).toHaveLength(10);
+			expect(names).toHaveLength(11);
 		});
 
 		it('all table configs have a description', () => {

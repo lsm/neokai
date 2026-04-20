@@ -120,6 +120,7 @@ function buildSimpleWorkflow(
 		tags: [],
 		channels,
 		gates,
+		completionAutonomyLevel: 3,
 	});
 }
 

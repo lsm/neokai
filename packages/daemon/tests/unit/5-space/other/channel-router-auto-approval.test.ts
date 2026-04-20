@@ -86,6 +86,7 @@ function buildWorkflowWithGates(
 		tags: [],
 		channels,
 		gates,
+		completionAutonomyLevel: 3,
 	});
 }
 

@@ -282,8 +282,23 @@ export interface SpaceTask {
 	 * Type of checkpoint the task is currently paused at. Null when not paused.
 	 * - `completion_action`: paused at a node completion action
 	 * - `gate`: paused at a gate requiring human approval
+	 * - `task_completion`: paused awaiting human approval of a submit_for_approval request
 	 */
-	pendingCheckpointType: 'completion_action' | 'gate' | null;
+	pendingCheckpointType: 'completion_action' | 'gate' | 'task_completion' | null;
+	/**
+	 * Node ID of the end-node agent that called `submit_for_approval`. Set when the
+	 * task enters `review` status via that tool; cleared on approve/reject.
+	 */
+	pendingCompletionSubmittedByNodeId?: string | null;
+	/**
+	 * Timestamp (ms) when `submit_for_approval` was called. Null when not pending.
+	 */
+	pendingCompletionSubmittedAt?: number | null;
+	/**
+	 * Agent-supplied rationale passed to `submit_for_approval`. Shown to the human
+	 * in the approval banner. Null when the agent did not provide one.
+	 */
+	pendingCompletionReason?: string | null;
 	/**
 	 * Metadata for the completion action the task is currently paused at, derived from
 	 * `workflow.endNode.completionActions[pendingActionIndex]` at read time.
@@ -450,11 +465,48 @@ export interface UpdateSpaceTaskParams {
 	/** Index of the completion action awaiting approval; null to clear */
 	pendingActionIndex?: number | null;
 	/** Type of checkpoint the task is paused at; null to clear */
-	pendingCheckpointType?: 'completion_action' | 'gate' | null;
+	pendingCheckpointType?: 'completion_action' | 'gate' | 'task_completion' | null;
+	/**
+	 * Node ID of the agent that called `submit_for_approval`; null to clear.
+	 * See `SpaceTask.pendingCompletionSubmittedByNodeId`.
+	 */
+	pendingCompletionSubmittedByNodeId?: string | null;
+	/** Timestamp (ms) when `submit_for_approval` was called; null to clear. */
+	pendingCompletionSubmittedAt?: number | null;
+	/** Agent-supplied rationale for `submit_for_approval`; null to clear. */
+	pendingCompletionReason?: string | null;
 	/** Agent-reported terminal status from `report_result`; null to clear */
 	reportedStatus?: SpaceReportedStatus | null;
 	/** Agent-reported summary from `report_result`; null to clear */
 	reportedSummary?: string | null;
+}
+
+/**
+ * Append-only audit record of an end-node agent's `report_result` call.
+ *
+ * `report_result` is pure outcome reporting — each call creates a new row here
+ * rather than overwriting the previous one, so the full history is visible
+ * post-hoc. Writing to this table does NOT touch `task.reportedStatus`; that
+ * is set only by `approve_task` (agent self-close) or by the runtime after a
+ * human approves a `submit_for_approval` request.
+ */
+export interface SpaceTaskReportResult {
+	/** Unique identifier */
+	id: string;
+	/** Task this result belongs to */
+	taskId: string;
+	/** Space this task belongs to (denormalized for fast per-space queries) */
+	spaceId: string;
+	/** Workflow node ID of the reporting agent */
+	workflowNodeId: string | null;
+	/** Agent name (slot) that reported */
+	agentName: string | null;
+	/** Human-readable summary */
+	summary: string;
+	/** Structured evidence, if supplied; stored as JSON blob */
+	evidence: Record<string, unknown> | null;
+	/** Record creation timestamp (milliseconds since epoch) */
+	recordedAt: number;
 }
 
 // ============================================================================
@@ -1062,6 +1114,16 @@ export interface SpaceWorkflow {
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
 	/**
+	 * Minimum space autonomy level at which `approve_task` (agent-self-close) is
+	 * available to end-node agents. When `space.autonomyLevel < completionAutonomyLevel`,
+	 * end-node agents only see `submit_for_approval` (human review required).
+	 *
+	 * This is the workflow's threshold for auto-closing; it is independent of the
+	 * `requiredLevel` on individual gates and completion actions, which gate their
+	 * own execution steps. Required (no default) — set explicitly per workflow.
+	 */
+	completionAutonomyLevel: SpaceAutonomyLevel;
+	/**
 	 * Name of the built-in template this workflow was created from or last synced to.
 	 * `undefined` for user-created workflows not based on any template.
 	 */
@@ -1106,6 +1168,13 @@ export interface CreateSpaceWorkflowParams {
 	tags?: string[];
 	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
+	/**
+	 * Minimum space autonomy level at which `approve_task` is offered to end-node
+	 * agents. See `SpaceWorkflow.completionAutonomyLevel`. Optional here so the
+	 * caller (builder, importer, template seeder) can omit it when the repository
+	 * layer supplies an explicit value.
+	 */
+	completionAutonomyLevel?: SpaceAutonomyLevel;
 	/**
 	 * Name of the built-in template this workflow is being created from.
 	 * When set, `templateHash` must also be provided.
@@ -1158,6 +1227,12 @@ export interface UpdateSpaceWorkflowParams {
 	tags?: string[] | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
+	/**
+	 * Updates the workflow's `completionAutonomyLevel` (minimum space autonomy
+	 * level at which `approve_task` is offered on end-node agents). See
+	 * `SpaceWorkflow.completionAutonomyLevel`.
+	 */
+	completionAutonomyLevel?: SpaceAutonomyLevel;
 	/** Update template tracking (used when syncing from a template). */
 	templateName?: string | null;
 	templateHash?: string | null;
@@ -1340,6 +1415,13 @@ export interface ExportedSpaceWorkflow {
 	 * Directed messaging channels. `from`/`to` use node names. Channel `id` is stripped.
 	 */
 	channels?: ExportedWorkflowChannel[];
+	/**
+	 * Minimum autonomy level (1-5) required for end-node agents to self-close
+	 * the task via `approve_task`. Below this threshold, `approve_task` becomes
+	 * a no-op and the agent must use `submit_for_approval` to request human
+	 * review. Optional for backward compat with pre-Design-v2 exports.
+	 */
+	completionAutonomyLevel?: SpaceAutonomyLevel;
 }
 
 /**

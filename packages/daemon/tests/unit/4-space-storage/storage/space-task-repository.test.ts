@@ -218,6 +218,39 @@ describe('SpaceTaskRepository', () => {
 			const updated = repo.updateTask(task.id, { taskAgentSessionId: null });
 			expect(updated!.taskAgentSessionId).toBeUndefined();
 		});
+
+		it('round-trips pendingCompletion* fields (set then clear)', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			// On create, all three fields should be null.
+			expect(task.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(task.pendingCompletionSubmittedAt).toBeNull();
+			expect(task.pendingCompletionReason).toBeNull();
+
+			// Set via update.
+			const ts = Date.now();
+			const updated = repo.updateTask(task.id, {
+				pendingCheckpointType: 'task_completion',
+				pendingCompletionSubmittedByNodeId: 'node-end',
+				pendingCompletionSubmittedAt: ts,
+				pendingCompletionReason: 'ready for review',
+			});
+			expect(updated!.pendingCheckpointType).toBe('task_completion');
+			expect(updated!.pendingCompletionSubmittedByNodeId).toBe('node-end');
+			expect(updated!.pendingCompletionSubmittedAt).toBe(ts);
+			expect(updated!.pendingCompletionReason).toBe('ready for review');
+
+			// Clear via update with nulls.
+			const cleared = repo.updateTask(task.id, {
+				pendingCheckpointType: null,
+				pendingCompletionSubmittedByNodeId: null,
+				pendingCompletionSubmittedAt: null,
+				pendingCompletionReason: null,
+			});
+			expect(cleared!.pendingCheckpointType).toBeNull();
+			expect(cleared!.pendingCompletionSubmittedByNodeId).toBeNull();
+			expect(cleared!.pendingCompletionSubmittedAt).toBeNull();
+			expect(cleared!.pendingCompletionReason).toBeNull();
+		});
 	});
 
 	describe('getTaskBySessionId', () => {

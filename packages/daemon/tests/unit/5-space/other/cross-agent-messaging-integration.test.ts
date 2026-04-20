@@ -131,6 +131,7 @@ function seedWorkflowRunWithChannels(
 		spaceId,
 		name: `Integration Test Workflow ${Math.random().toString(36).slice(2)}`,
 		nodes: [{ name: 'step', agents: [{ agentId: 'agent-1', name: 'agent' }] }],
+		completionAutonomyLevel: 3,
 	});
 
 	const runRepo = new SpaceWorkflowRunRepository(db);
@@ -173,6 +174,7 @@ function makeTestDb(): TestDb {
 		spaceId,
 		name: 'Integration Test Workflow',
 		nodes: [{ name: 'step', agents: [{ agentId: 'agent-1', name: 'agent' }] }],
+		completionAutonomyLevel: 3,
 	});
 	const run = workflowRunRepo.createRun({
 		spaceId,

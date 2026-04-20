@@ -118,6 +118,7 @@ function seedWorkflowRun(db: BunDatabase, spaceId: string): string {
 		transitions: [],
 		startNodeId: '',
 		rules: [],
+		completionAutonomyLevel: 3,
 	});
 	const runRepo = new SpaceWorkflowRunRepository(db);
 	const run = runRepo.createRun({

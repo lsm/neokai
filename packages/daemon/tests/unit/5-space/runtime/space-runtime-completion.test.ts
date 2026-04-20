@@ -106,6 +106,7 @@ function buildLinearWorkflow(
 		rules: [],
 		tags: [],
 		channels,
+		completionAutonomyLevel: 3,
 	});
 }
 
@@ -642,6 +643,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				],
 				startNodeId: 'chan-plan',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -676,6 +678,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -744,6 +747,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -789,6 +793,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -832,6 +837,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -871,6 +877,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -917,6 +924,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				rules: [],
 				tags: [],
 				transitions: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1028,6 +1036,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				startNodeId: 'en-start',
 				endNodeId: 'en-end',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 			expect(workflow.endNodeId).toBe('en-end');
 
@@ -1078,6 +1087,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				startNodeId: 'ec-sibling',
 				endNodeId: 'ec-end',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1143,6 +1153,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				startNodeId: 'coder-node',
 				endNodeId: 'reviewer-node',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1193,6 +1204,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				],
 				startNodeId: 'no-en-1',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			// Simulate a legacy workflow row persisted before end_node_id existed.
@@ -1221,6 +1233,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				startNodeId: 'rs-start',
 				endNodeId: 'rs-end',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
@@ -1253,6 +1266,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 				startNodeId: 'enc-start',
 				endNodeId: 'enc-end',
 				tags: [],
+				completionAutonomyLevel: 3,
 			});
 
 			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

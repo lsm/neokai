@@ -79,6 +79,7 @@ function buildSingleStepWorkflow(
 		startNodeId: stepId,
 		rules: [],
 		tags,
+		completionAutonomyLevel: 3,
 	});
 }
 

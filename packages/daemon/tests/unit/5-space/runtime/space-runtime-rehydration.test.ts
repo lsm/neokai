@@ -82,6 +82,7 @@ function buildLinearWorkflow(
 		startNodeId: nodes[0].id,
 		rules: [],
 		tags: [],
+		completionAutonomyLevel: 3,
 	});
 }
 

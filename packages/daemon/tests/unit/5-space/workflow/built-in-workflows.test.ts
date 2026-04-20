@@ -1056,6 +1056,7 @@ describe('seedBuiltInWorkflows()', () => {
 			spaceId: SPACE_ID,
 			name: 'My Custom Workflow',
 			nodes: [{ name: 'Code', agentId: CODER_ID }],
+			completionAutonomyLevel: 3,
 		});
 
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
@@ -1705,6 +1706,7 @@ describe('Coding Workflow export/import round-trip', () => {
 			startNodeId: undefined,
 			tags: exported.tags,
 			channels: exported.channels,
+			completionAutonomyLevel: exported.completionAutonomyLevel ?? 3,
 		});
 
 		// Verify the re-imported workflow

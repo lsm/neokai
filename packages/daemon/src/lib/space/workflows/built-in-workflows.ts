@@ -297,9 +297,13 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
 	'All four Plan Reviewers have approved the plan — your job is to fan the plan out into ' +
 	'standalone follow-up tasks using the `create_standalone_task` MCP tool.\n\n' +
-	'**You MUST call `report_result` as your final action.** It is the only signal the runtime ' +
-	'accepts as completion — finishing without it leaves the workflow stuck. Do all task ' +
-	'creation BEFORE calling `report_result`.\n\n' +
+	'TOOL CONTRACT (Design v2):\n' +
+	'- `report_result({ summary, evidence? })` — append-only audit. Records the dispatch ' +
+	'outcome. Does NOT close the task.\n' +
+	'- `approve_task()` — closes this task as done. Call after every required downstream task ' +
+	'has been created.\n' +
+	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
+	'Use when autonomy blocks self-close.\n\n' +
 	'Steps:\n' +
 	'1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
 	'Identify each actionable work item.\n' +
@@ -307,28 +311,40 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'clear, imperative title and a description that gives the downstream worker everything they ' +
 	'need (context, acceptance criteria, references to the plan).\n' +
 	'3. Collect the returned task IDs.\n' +
-	'4. Call `report_result(status="done", summary="Created N tasks from plan: <short list>", ' +
-	'evidence={ created_task_ids: [<ids>] })` as your last tool call.\n\n' +
+	'4. Call `report_result({ summary: "Created N tasks from plan: <short list>", ' +
+	'evidence: { created_task_ids: [<ids>] } })` to record the dispatch audit entry.\n' +
+	'5. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
+	'`submit_for_approval({ reason: "..." })` instead.\n\n' +
 	'Do NOT implement the work items yourself. Do NOT create fewer tasks than the plan requires. ' +
-	'If the plan is empty or ambiguous, send feedback to Planning before calling report_result.';
+	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
 const FULLSTACK_CODING_PROMPT =
 	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
 	'write tests, and keep one PR updated across review and QA cycles.\n\n' +
-	'When implementation is ready, ensure the PR is open and mergeable, write code-pr-gate with ' +
-	'field pr_url, then call report_result() to mark Coding complete.';
+	'When implementation is ready, ensure the PR is open and mergeable and write code-pr-gate with ' +
+	'field pr_url so Review can activate. Coding is not the end node — the task-completion tools ' +
+	'(`approve_task`, `submit_for_approval`) are not available to you.';
 
 const FULLSTACK_REVIEW_PROMPT =
 	'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
 	'maintainability, and coverage before QA.\n\n' +
 	'If the change is ready for QA, write to review-approval-gate (field: approved = true). ' +
-	'If changes are needed, send actionable feedback to Coding.';
+	'If changes are needed, send actionable feedback to Coding. Review is not the end node, ' +
+	'so the task-completion tools are not available to you.';
 
 const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
 	'frontend tests, and browser-based checks for critical flows.\n\n' +
-	'If everything passes, call report_result() with the QA evidence summary. ' +
-	'If issues are found, send a detailed fix list to Coding.';
+	'TOOL CONTRACT (Design v2):\n' +
+	'- `report_result({ summary, evidence? })` — append-only audit. Records what you observed ' +
+	'during this cycle. Does NOT close the task.\n' +
+	'- `approve_task()` — closes this task as done. Only call after the PR is actually merged ' +
+	'and the workspace is synced.\n' +
+	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
+	'Use when autonomy blocks self-close.\n\n' +
+	'If everything passes, merge the PR, sync the worktree, then call `report_result` followed by ' +
+	'`approve_task`. If issues are found, send a detailed fix list to Coding and record a ' +
+	'`report_result({ summary: "QA failed: ..." })` audit entry; do NOT call `approve_task`.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -416,16 +432,20 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'- The Review → Coding channel is gated by `review-posted-gate` — the runtime ' +
 							'checks GitHub for a fresh review before releasing your message. If you skip ' +
 							'`gh pr review`, the gate will block and the coder will never hear from you.\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal ' +
-							'the runtime accepts as completion — finishing your turn without it leaves the ' +
-							'workflow stuck. Do all your review work — read files, run tests, post comments ' +
-							'to GitHub, send messages to Coding — BEFORE calling `report_result`. After it ' +
-							'returns, do not invoke any other tools.\n\n' +
+							'TOOL CONTRACT (Design v2):\n' +
+							'- `report_result({ summary, evidence? })` — append-only audit. Records what you ' +
+							'observed. Does NOT close the task. Call it every cycle (changes-requested AND ' +
+							'approval) so the audit log has a clear trail of each decision.\n' +
+							'- `approve_task()` — closes this task as done. Call this ONLY when you are ' +
+							'satisfied the work is shippable. It is gated by autonomy level; the runtime ' +
+							'will tell you if the level is too low.\n' +
+							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
+							'closing. Use when the change is risky or the autonomy rules block self-close.\n\n' +
 							'Review checklist:\n' +
 							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
 							'2. Check for correctness, style, test coverage, and integration impact\n' +
 							'3. Run the relevant tests yourself if uncertain\n' +
-							'4. If changes needed:\n' +
+							'4. If changes are needed:\n' +
 							'   a. Post a summary review: `gh pr review <pr-url> --request-changes ' +
 							'--body-file /tmp/review.md`. Capture the returned review URL.\n' +
 							'   b. For each issue, post a line-level comment: `gh api ' +
@@ -435,11 +455,15 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'data={ pr_url: "<url>", review_url: "<gh pr review url>", ' +
 							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
-							'thread. Do NOT call `report_result` — leave the workflow open for the next round.\n' +
+							'thread.\n' +
+							'   d. Call `report_result({ summary: "Requested changes: ...", evidence: { ' +
+							'prUrl, reviewUrl } })` so the cycle is recorded. Do NOT call `approve_task` — ' +
+							'the workflow must stay open for the next cycle.\n' +
 							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
-							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
-							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
+							'`report_result({ summary, evidence: { prUrl } })` to record the audit entry, ' +
+							'and finally call `approve_task()` to close the task. If autonomy blocks ' +
+							'self-close, call `submit_for_approval({ reason: "..." })` instead.',
 					},
 				},
 			],
@@ -451,6 +475,9 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
+	// Default coding loop — reviewer may auto-close when space runs at the
+	// standard "trusted but supervised" tier (3).
+	completionAutonomyLevel: 3,
 	gates: [
 		{
 			id: 'code-ready-gate',
@@ -564,21 +591,24 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 						value:
 							'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
 							'research findings for completeness, accuracy, and quality.\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
-							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
-							'stuck. Do all your review work BEFORE calling `report_result`; it must be your last ' +
-							'tool call. Do not call it when requesting more research — leave the workflow open ' +
-							'for the next round in that case.\n\n' +
+							'TOOL CONTRACT (Design v2):\n' +
+							'- `report_result({ summary, evidence? })` — append-only audit. Records what you ' +
+							'observed during this cycle. Does NOT close the task.\n' +
+							'- `approve_task()` — closes the task as done. Call only when satisfied.\n' +
+							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
+							'closing. Use when autonomy rules block self-close or the finding is sensitive.\n\n' +
 							'Review checklist:\n' +
 							'1. Read all research documents in the PR (`gh pr diff`)\n' +
 							'2. Check completeness: does the research answer the original question?\n' +
 							'3. Check accuracy: are claims supported by evidence or sources?\n' +
 							'4. Check clarity: are findings well-organized and easy to follow?\n' +
-							'5. If more research needed: send_message back to Research with specific areas to ' +
-							'investigate (do NOT call `report_result`)\n' +
-							'6. If satisfied: verify the PR is still open and mergeable, then call ' +
-							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
-							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
+							'5. If more research is needed: send_message back to Research with specific areas ' +
+							'to investigate, then `report_result({ summary: "Requested more research: ..." })` ' +
+							'to record the cycle. Do NOT call `approve_task` — leave the workflow open.\n' +
+							'6. If satisfied: verify the PR is still open and mergeable, call ' +
+							'`report_result({ summary, evidence: { prUrl } })` to record the final audit ' +
+							'entry, then `approve_task()` to close. If autonomy blocks self-close, call ' +
+							'`submit_for_approval({ reason: "..." })` instead.',
 					},
 				},
 			],
@@ -590,6 +620,9 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 	tags: ['research'],
 	createdAt: 0,
 	updatedAt: 0,
+	// Research is low-risk (read-only investigation + PR of findings) — permit
+	// auto-close at a more conservative autonomy tier than coding loops.
+	completionAutonomyLevel: 2,
 	gates: [
 		{
 			id: 'research-ready-gate',
@@ -654,13 +687,16 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 						value:
 							'You are the sole Reviewer in a single-node Review-Only workflow. There is no planning ' +
 							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
-							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
-							'stuck. Do all review work BEFORE calling `report_result`; it must be your last tool ' +
-							'call.\n\n' +
+							'TOOL CONTRACT (Design v2):\n' +
+							'- `report_result({ summary, evidence? })` — append-only audit. Records what you ' +
+							'observed. Does NOT close the task.\n' +
+							'- `approve_task()` — closes the task as done. Call only after you have posted ' +
+							'your review to the PR via `gh pr review`.\n' +
+							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
+							'closing. Use when autonomy blocks self-close.\n\n' +
 							'**You MUST post your review to the PR via `gh pr review` BEFORE calling ' +
-							'`report_result`.** An internal summary is not enough — the author must be able to see ' +
-							'your feedback on GitHub. Use:\n' +
+							'`approve_task` or `submit_for_approval`.** An internal summary is not enough — the ' +
+							'author must be able to see your feedback on GitHub. Use:\n' +
 							'- `gh pr review <pr-url> --body-file <file>` with `--approve`, `--request-changes`, or ' +
 							'`--comment`.\n' +
 							'- `gh api repos/{owner}/{repo}/pulls/{n}/comments` for line-level comments anchored to ' +
@@ -670,11 +706,11 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'2. Check for correctness, security, performance, and style issues\n' +
 							'3. Verify test coverage is adequate\n' +
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
-							'where relevant) — this is required, not optional, and the runtime verifies at ' +
-							'least one review/comment exists before accepting completion\n' +
-							'5. Summarize your findings clearly for the task record\n' +
-							'6. Call `report_result({ summary, evidence: { prUrl } })` as your final action. ' +
-							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
+							'where relevant) — this is required, not optional; the runtime verifies at least one ' +
+							'review/comment exists before accepting completion\n' +
+							'5. Call `report_result({ summary, evidence: { prUrl } })` to record the audit entry\n' +
+							'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
+							'`submit_for_approval({ reason: "..." })` instead.',
 					},
 				},
 			],
@@ -686,6 +722,9 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 	tags: ['review'],
 	createdAt: 0,
 	updatedAt: 0,
+	// Review-only is low-risk (no code changes, only feedback posting) — permit
+	// auto-close at the same conservative tier as Research.
+	completionAutonomyLevel: 2,
 };
 
 /**
@@ -886,6 +925,10 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 	tags: ['planning', 'decomposition'],
 	createdAt: 0,
 	updatedAt: 0,
+	// Plan & Decompose ends by creating follow-up tasks (no merges, no
+	// destructive actions) but does alter the task graph — match the default
+	// Coding Workflow tier.
+	completionAutonomyLevel: 3,
 	gates: [
 		{
 			id: 'plan-pr-gate',
@@ -982,8 +1025,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'2. Add/update unit, integration, and UI tests as needed\n' +
 							'3. Open or update the PR and ensure it remains mergeable\n' +
 							'4. Write code-pr-gate with field pr_url so Review can activate\n' +
-							'5. Call report_result() with a concise coding handoff summary\n' +
-							'6. Share blockers clearly with Reviewer/QA when needed',
+							'5. Share blockers clearly with Reviewer/QA when needed',
 					},
 				},
 			],
@@ -1020,23 +1062,21 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 						value:
 							FULLSTACK_QA_PROMPT +
 							'\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
-							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
-							'stuck. `report_result` must be your last tool call. Do not call it when sending ' +
-							'feedback to Coding — leave the workflow open for the next round in that case.\n\n' +
 							'Expected inputs: Reviewer-approved PR.\n' +
 							'Expected outputs: PR merged and worktree synced, or QA feedback to Coding.\n\n' +
 							'Steps:\n' +
 							'1. Run backend and frontend test suites\n' +
 							'2. Run browser-based critical-path validation\n' +
 							'3. Validate CI and mergeability\n' +
-							'4. If fail: send detailed failures and repro steps to Coding (do NOT call ' +
-							'`report_result`)\n' +
+							'4. If fail: send detailed failures and repro steps to Coding, then call ' +
+							'`report_result({ summary: "QA failed: ..." })` to record the audit entry. Do ' +
+							'NOT call `approve_task` — leave the workflow open for the next Coding cycle.\n' +
 							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call `report_result({ summary, evidence: { prUrl, testOutput } })` confirming ' +
-							'merge and sync. Do NOT pass a `status` — the runtime verifies the PR is actually ' +
-							'merged before accepting completion.',
+							'7. Call `report_result({ summary, evidence: { prUrl, testOutput } })` to record ' +
+							'the audit entry, then `approve_task()` as your final action. If autonomy blocks ' +
+							'self-close, call `submit_for_approval({ reason: "..." })` instead. The runtime ' +
+							'also verifies the PR is actually merged before accepting completion.',
 					},
 				},
 			],
@@ -1048,6 +1088,9 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	tags: ['fullstack', 'qa', 'browser-testing'],
 	createdAt: 0,
 	updatedAt: 0,
+	// QA loop ends with the QA node actually merging the PR — permit auto-close
+	// only at the highest "autonomous with safety nets" tier.
+	completionAutonomyLevel: 4,
 	gates: [
 		{
 			id: 'code-pr-gate',
@@ -1264,6 +1307,7 @@ export function seedBuiltInWorkflows(
 					? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
 					: undefined,
 				gates: template.gates ? [...template.gates] : undefined,
+				completionAutonomyLevel: template.completionAutonomyLevel,
 				templateName: template.name,
 				templateHash: computeWorkflowHash(template),
 			});

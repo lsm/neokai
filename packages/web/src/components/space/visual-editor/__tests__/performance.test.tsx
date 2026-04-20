@@ -107,6 +107,7 @@ function buildLargeWorkflow(): SpaceWorkflow {
 		tags: [],
 		createdAt: 0,
 		updatedAt: 0,
+		completionAutonomyLevel: 3,
 	};
 }
 

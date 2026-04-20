@@ -121,6 +121,7 @@ async function createSpaceWithPausedTask(page: Page): Promise<PausedTaskFixture>
 				],
 				startNodeId: nodeId,
 				endNodeId: nodeId,
+				completionAutonomyLevel: 3,
 			})) as { workflow: { id: string } };
 			const workflowId = wfRes.workflow.id;
 

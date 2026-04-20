@@ -64,6 +64,7 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTaskReportResultRepository } from '../../../storage/repositories/space-task-report-result-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -73,6 +74,7 @@ import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import type { SubSessionMemberInfo } from '../tools/task-agent-tools';
 import { createTaskAgentMcpServer } from '../tools/task-agent-tools';
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { createEndNodeHandlers } from '../tools/end-node-handlers';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
 import { ChannelResolver } from './channel-resolver';
@@ -89,8 +91,6 @@ import {
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
 import { SpaceTaskManager } from '../managers/space-task-manager';
-import type { ReportResultInput } from '../tools/task-agent-tool-schemas';
-import { jsonResult } from '../tools/tool-result';
 
 const log = new Logger('task-agent-manager');
 
@@ -115,6 +115,14 @@ export interface TaskAgentManagerConfig {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task repository — direct DB reads */
 	taskRepo: SpaceTaskRepository;
+	/**
+	 * Append-only audit log for `report_result` tool calls from end-node agents.
+	 * Every `report_result` invocation writes one row here — the table is the
+	 * source of truth for "what did the agent observe", independent of the
+	 * task's reported/terminal status. Task #39: this separation is what keeps
+	 * Coding↔Review loops from closing on review feedback.
+	 */
+	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Workflow run repository — reading and updating runs */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Gate data repository — for reading and writing gate runtime data in node agent tools */
@@ -540,6 +548,7 @@ export class TaskAgentManager {
 				space,
 				workflowRunId,
 				taskRepo: this.config.taskRepo,
+				taskReportResultRepo: this.config.taskReportResultRepo,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				taskManager,
 				messageInjector: (subSessionId, message) =>
@@ -878,7 +887,7 @@ export class TaskAgentManager {
 					agentSlotName: execution.agentName,
 					gateData: gateDataSnapshot,
 				});
-				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution);
+				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution, space);
 				const kickoffMessage = runtimeContract
 					? `${initialMessage}\n\n${runtimeContract}`
 					: initialMessage;
@@ -1754,12 +1763,53 @@ export class TaskAgentManager {
 	/**
 	 * Build a runtime contract for a specific node execution from the current
 	 * workflow graph, including gate requirements derived from outbound channels.
+	 *
+	 * The `space` argument is used to determine whether `approve_task` is
+	 * currently unlocked by the space's autonomy level. When unlocked, the
+	 * prompt tells the agent it can self-close; otherwise the prompt tells the
+	 * agent that `submit_for_approval` is the only way to finalize. This keeps
+	 * the system prompt aligned with what the MCP handler actually enforces at
+	 * call time.
 	 */
 	private buildNodeExecutionRuntimeContract(
 		workflow: SpaceWorkflow | null,
-		execution: NodeExecution
+		execution: NodeExecution,
+		space: Space | null
 	): string {
 		const isEndNode = !!workflow?.endNodeId && execution.workflowNodeId === workflow.endNodeId;
+
+		// Compute whether approve_task is currently unlocked for this space.
+		// The MCP handler re-checks at call time, so this is purely for prompt
+		// accuracy — the tool is registered unconditionally on end-node sessions.
+		const spaceLevel = space?.autonomyLevel ?? 1;
+		const requiredLevel = workflow?.completionAutonomyLevel ?? 5;
+		const approveUnlocked = spaceLevel >= requiredLevel;
+
+		// Design v2 end-node tool contract (Task #39):
+		//   - report_result: append-only audit — does NOT close the task.
+		//   - approve_task : self-close (autonomy-gated).
+		//   - submit_for_approval: human sign-off (always available).
+		// Keep these strings in sync with `node-agent-tools.ts` and
+		// `task-agent-manager.ts` where the handlers live.
+		const endNodeContractLines = (indent: string): string[] => {
+			if (!isEndNode) return [];
+			const lines = [
+				`${indent}- report_result({ summary, evidence? }) — APPEND-ONLY AUDIT. Records what you observed; does NOT close the task. Every call is a new entry.`,
+			];
+			if (approveUnlocked) {
+				lines.push(
+					`${indent}- approve_task({}) — Close this task as done (self-approval). Unlocked for this space (autonomy ${spaceLevel} >= required ${requiredLevel}). Use as your FINAL action when you are satisfied the work is complete.`
+				);
+			} else {
+				lines.push(
+					`${indent}- approve_task({}) — NOT AVAILABLE: space autonomy ${spaceLevel} < workflow completionAutonomyLevel ${requiredLevel}. Do NOT call this tool; use submit_for_approval instead.`
+				);
+			}
+			lines.push(
+				`${indent}- submit_for_approval({ reason? }) — Request human sign-off. Always available to end-node agents. Use when autonomy blocks self-close OR the outcome is risky enough to escalate.`
+			);
+			return lines;
+		};
 
 		const fallback = [
 			'## Runtime Execution Contract',
@@ -1767,14 +1817,10 @@ export class TaskAgentManager {
 			'Tools available:',
 			'  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
 			'  - save({ summary?, data? }) — persist your output at any time (call multiple times as needed)',
-			isEndNode
-				? '  - report_result({ summary, evidence? }) — YOU ARE THE END NODE: call this when the workflow is complete to close the run. Do NOT pass a status; the runtime decides the terminal state via completion actions.'
-				: null,
+			...endNodeContractLines('  '),
 			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
 			'Only contact the task-agent via send_message if you are blocked or need human input.',
-		]
-			.filter(Boolean)
-			.join('\n');
+		].join('\n');
 
 		if (!workflow) {
 			return fallback;
@@ -1803,18 +1849,10 @@ export class TaskAgentManager {
 			'Tools available:',
 			'  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
 			'  - save({ summary?, data? }) — persist your output (summary text and/or structured data like pr_url)',
-		];
-
-		if (isEndNode) {
-			lines.push(
-				'  - report_result({ summary, evidence? }) — YOU ARE THE END NODE: call this when the workflow is complete. Do NOT pass a status; the runtime decides the terminal state via completion actions. `evidence` is an optional object (prUrl, commitSha, testOutput, …) supporting your summary.'
-			);
-		}
-
-		lines.push(
+			...endNodeContractLines('  '),
 			'  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
-			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool'
-		);
+			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
+		];
 
 		if (outboundGatedChannels.length === 0) {
 			lines.push('No outbound gated channels are currently mapped from this agent/node.');
@@ -1859,9 +1897,18 @@ export class TaskAgentManager {
 			'Only contact the task-agent via send_message if you are blocked or need human input.'
 		);
 		if (isEndNode) {
-			lines.push(
-				'When your work is complete, call report_result({ summary: "...", evidence: { prUrl?: "...", commitSha?: "...", testOutput?: "...", ... } }) to close the workflow run. Do NOT pass a `status` — the runtime runs completion actions to decide the terminal state.'
-			);
+			// Closure guidance: record audit first (report_result), then finalize
+			// via the appropriate tool. This replaces the old (incorrect) guidance
+			// that said report_result closes the run.
+			if (approveUnlocked) {
+				lines.push(
+					'When your work is complete: (1) call report_result({ summary, evidence? }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your report — decides the terminal status via completion actions.'
+				);
+			} else {
+				lines.push(
+					'When your work is complete: (1) call report_result({ summary, evidence? }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+				);
+			}
 		}
 		return lines.join('\n');
 	}
@@ -2070,6 +2117,7 @@ export class TaskAgentManager {
 			space,
 			workflowRunId: rehydrateWorkflowRunId,
 			taskRepo: this.config.taskRepo,
+			taskReportResultRepo: this.config.taskReportResultRepo,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			taskManager,
 			messageInjector: (subSessionId, message) =>
@@ -2621,75 +2669,33 @@ export class TaskAgentManager {
 			? this.buildAgentNameAliasesForExecution(workflow, execution)
 			: this.agentNameVariants(agentName);
 
-		// Build onReportResult callback for end-node agents so they can close the workflow run.
+		// Design v2 tool contract (Task #39):
+		//   `report_result`      — append-only audit. Does NOT close the task.
+		//   `approve_task`       — closes the task as done (self-approval). Gated
+		//                          by `space.autonomyLevel >= workflow.completionAutonomyLevel`.
+		//   `submit_for_approval` — request human review of completion.
 		//
-		// Records the agent's reported intent (status + summary) into
-		// `space_tasks.reported_status` / `reported_summary`, but does NOT directly
-		// transition `space_tasks.status`. The runtime resolves the final task status
-		// on the next tick via `resolveCompletionWithActions`, which honors the
-		// supervised-mode review gate. See `CompletionDetector.isComplete`.
+		// The previous behaviour where `report_result` set `reportedStatus='done'`
+		// caused cycle-graphs like Coding↔Review to close the moment the Reviewer
+		// reported feedback. Splitting audit from closure restores the intended
+		// iterative semantics.
 		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
-		let onReportResult:
-			| ((args: ReportResultInput) => Promise<ReturnType<typeof jsonResult>>)
-			| undefined;
-		if (isEndNode) {
-			const capturedTaskId = taskId;
-			const capturedSpaceId = spaceId;
-			onReportResult = async (args: ReportResultInput) => {
-				const task = this.config.taskRepo.getTask(capturedTaskId);
-				if (!task)
-					return jsonResult({ success: false, error: `Task not found: ${capturedTaskId}` });
-
-				// Serialize optional evidence into the summary so completion-action
-				// verifiers and downstream consumers can inspect it. The agent
-				// does NOT pass a status — the runtime always records `done` and
-				// lets the completion-action pipeline decide the terminal state.
-				const serializedSummary = args.evidence
-					? `${args.summary}\n\n<!-- evidence -->\n${JSON.stringify(args.evidence, null, 2)}`
-					: args.summary;
-
-				// Idempotency: if the agent re-invokes report_result with the same outcome
-				// (retry, double-call, etc.), skip the DB write and the broadcast — they
-				// would be no-ops that still wake every subscriber.
-				const successPayload = jsonResult({
-					success: true,
-					taskId: capturedTaskId,
-					summary: args.summary,
-					message:
-						'Result recorded. The completion-action pipeline will determine the final task status (supervised mode may pause for human approval).',
-				});
-				if (task.reportedStatus === 'done' && task.reportedSummary === serializedSummary) {
-					return successPayload;
-				}
-
-				try {
-					const updated = this.config.taskRepo.updateTask(capturedTaskId, {
-						reportedStatus: 'done',
-						reportedSummary: serializedSummary,
-					});
-
-					if (this.config.daemonHub && updated) {
-						void this.config.daemonHub
-							.emit('space.task.updated', {
-								sessionId: 'global',
-								spaceId: capturedSpaceId,
-								taskId: capturedTaskId,
-								task: updated,
-							})
-							.catch((err) => {
-								log.warn(
-									`Failed to emit space.task.updated for task ${capturedTaskId}: ${err instanceof Error ? err.message : String(err)}`
-								);
-							});
-					}
-
-					return successPayload;
-				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					return jsonResult({ success: false, error: message });
-				}
-			};
-		}
+		const endNodeHandlers = isEndNode
+			? createEndNodeHandlers({
+					taskId,
+					spaceId,
+					workflow,
+					workflowNodeId,
+					agentName,
+					taskRepo: this.config.taskRepo,
+					taskReportResultRepo: this.config.taskReportResultRepo,
+					spaceManager: this.config.spaceManager,
+					daemonHub: this.config.daemonHub,
+				})
+			: undefined;
+		const onReportResult = endNodeHandlers?.onReportResult;
+		const onApproveTask = endNodeHandlers?.onApproveTask;
+		const onSubmitForApproval = endNodeHandlers?.onSubmitForApproval;
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
 		// Looks up the live AgentSession by the enclosing-scope subSessionId, then
@@ -2754,6 +2760,8 @@ export class TaskAgentManager {
 				workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
 			},
 			onReportResult,
+			onApproveTask,
+			onSubmitForApproval,
 			artifactRepo: this.config.artifactRepo,
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManager.getSpace(sid);

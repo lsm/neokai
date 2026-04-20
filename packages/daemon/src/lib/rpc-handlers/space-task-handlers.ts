@@ -275,4 +275,93 @@ export function setupSpaceTaskHandlers(
 
 		return task;
 	});
+
+	// ─── spaceTask.approvePendingCompletion ─────────────────────────────────────
+	// Design v2 (Task #39): human approval / rejection for tasks paused at a
+	// `submit_for_approval` checkpoint (`pendingCheckpointType === 'task_completion'`).
+	//
+	// - `approved: true`  → transitions the task review → done, stamps approval
+	//   metadata, clears pending-completion fields, and fires `space.task.updated`.
+	// - `approved: false` → transitions the task back to in_progress so the end-node
+	//   agent can revise its output; clears pending-completion fields. The optional
+	//   `reason` is written to `approvalReason` as a rejection rationale.
+	//
+	// The handler refuses to operate on tasks that are not paused at a
+	// `task_completion` checkpoint to avoid accidentally closing in-flight work.
+	messageHub.onRequest('spaceTask.approvePendingCompletion', async (data) => {
+		const params = data as {
+			spaceId: string;
+			taskId: string;
+			approved: boolean;
+			reason?: string | null;
+		};
+
+		if (!params.spaceId) throw new Error('spaceId is required');
+		if (!params.taskId) throw new Error('taskId is required');
+		if (typeof params.approved !== 'boolean') throw new Error('approved must be a boolean');
+
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
+		const taskManager = taskManagerFactory(params.spaceId);
+		const currentTask = await taskManager.getTask(params.taskId);
+		if (!currentTask) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		if (currentTask.pendingCheckpointType !== 'task_completion') {
+			throw new Error(
+				`Task ${params.taskId} is not awaiting submit_for_approval review ` +
+					`(pendingCheckpointType=${currentTask.pendingCheckpointType ?? 'null'}).`
+			);
+		}
+
+		if (currentTask.status !== 'review') {
+			throw new Error(
+				`Task ${params.taskId} is not in 'review' status ` + `(current: ${currentTask.status}).`
+			);
+		}
+
+		let task;
+		if (params.approved) {
+			// review → done. Stamp human approval metadata and clear pending flags.
+			task = await taskManager.setTaskStatus(params.taskId, 'done', {
+				approvalSource: 'human',
+				approvalReason: params.reason ?? undefined,
+			});
+			// Clear the pending-completion fields. setTaskStatus does not touch them,
+			// so apply them in a follow-up update so the banner/UI stops rendering.
+			task = await taskManager.updateTask(params.taskId, {
+				pendingCheckpointType: null,
+				pendingCompletionSubmittedByNodeId: null,
+				pendingCompletionSubmittedAt: null,
+				pendingCompletionReason: null,
+			});
+		} else {
+			// review → in_progress (reject). Reason captured as approvalReason for audit.
+			task = await taskManager.setTaskStatus(params.taskId, 'in_progress');
+			task = await taskManager.updateTask(params.taskId, {
+				pendingCheckpointType: null,
+				pendingCompletionSubmittedByNodeId: null,
+				pendingCompletionSubmittedAt: null,
+				pendingCompletionReason: null,
+				approvalReason: params.reason ?? null,
+			});
+		}
+
+		daemonHub
+			.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: params.spaceId,
+				taskId: params.taskId,
+				task,
+			})
+			.catch((err) => {
+				log.warn('Failed to emit space.task.updated:', err);
+			});
+
+		return task;
+	});
 }

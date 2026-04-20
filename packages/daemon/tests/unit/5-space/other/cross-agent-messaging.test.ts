@@ -222,6 +222,7 @@ function makeStepCtx(
 		transitions: [],
 		startNodeId: '',
 		rules: [],
+		completionAutonomyLevel: 3,
 	});
 	const workflowRunRepo = new SpaceWorkflowRunRepository(db);
 	const run = workflowRunRepo.createRun({
@@ -471,6 +472,7 @@ function buildSingleStepWf(ctx: TaskCtx) {
 		transitions: [],
 		startNodeId: stepId,
 		rules: [],
+		completionAutonomyLevel: 3,
 	});
 }
 
