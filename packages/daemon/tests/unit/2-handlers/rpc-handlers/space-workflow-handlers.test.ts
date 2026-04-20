@@ -28,6 +28,7 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash';
 import { getBuiltInWorkflows } from '../../../../src/lib/space/workflows/built-in-workflows';
@@ -135,6 +136,12 @@ function createMockSpaceAgentManager(
 	} as unknown as SpaceAgentManager;
 }
 
+function createMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
+	return {
+		deleteByWorkflowId: mock(() => 0),
+	} as unknown as SpaceWorkflowRunRepository;
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('space-workflow-handlers', () => {
@@ -144,6 +151,7 @@ describe('space-workflow-handlers', () => {
 	let spaceManager: SpaceManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceAgentManager: SpaceAgentManager;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
 
 	function setup(
 		space: Space | null = mockSpace,
@@ -157,7 +165,15 @@ describe('space-workflow-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		workflowManager = createMockWorkflowManager(workflow);
 		spaceAgentManager = createMockSpaceAgentManager(agents);
-		setupSpaceWorkflowHandlers(hub, spaceManager, workflowManager, daemonHub, spaceAgentManager);
+		workflowRunRepo = createMockWorkflowRunRepo();
+		setupSpaceWorkflowHandlers(
+			hub,
+			spaceManager,
+			workflowManager,
+			daemonHub,
+			spaceAgentManager,
+			workflowRunRepo
+		);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -707,6 +723,435 @@ describe('space-workflow-handlers', () => {
 			await expect(
 				call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
 			).rejects.toThrow('Cannot sync: no SpaceAgent found with name');
+		});
+	});
+
+	// ─── spaceWorkflow.detectDuplicateDrift ───────────────────────────────────
+	//
+	// Surfaces groups of workflows in the same space that share a `templateName`
+	// and a known built-in name, but have diverging `templateHash` values.
+
+	describe('spaceWorkflow.detectDuplicateDrift', () => {
+		function setupWithWorkflows(workflows: SpaceWorkflow[]) {
+			setup(mockSpace, mockWorkflow);
+			(workflowManager.listWorkflows as ReturnType<typeof mock>).mockReturnValue(workflows);
+		}
+
+		it('throws when spaceId is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflow.detectDuplicateDrift', {})).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when space not found', async () => {
+			setup(null, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.detectDuplicateDrift', { spaceId: 'ghost' })
+			).rejects.toThrow('Space not found: ghost');
+		});
+
+		it('returns empty reports when the space has no workflows', async () => {
+			setupWithWorkflows([]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toEqual([]);
+		});
+
+		it('returns empty reports when no duplicates share a templateName', async () => {
+			const [t1] = getBuiltInWorkflows();
+			setupWithWorkflows([
+				{
+					...mockWorkflow,
+					id: 'wf-a',
+					templateName: t1.name,
+					templateHash: 'hash-1',
+					createdAt: 100,
+				},
+			]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toEqual([]);
+		});
+
+		it('excludes groups whose rows all share the same hash (duplicates without drift)', async () => {
+			const [t1] = getBuiltInWorkflows();
+			setupWithWorkflows([
+				{
+					...mockWorkflow,
+					id: 'wf-a',
+					templateName: t1.name,
+					templateHash: 'same-hash',
+					createdAt: 100,
+				},
+				{
+					...mockWorkflow,
+					id: 'wf-b',
+					templateName: t1.name,
+					templateHash: 'same-hash',
+					createdAt: 200,
+				},
+			]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toEqual([]);
+		});
+
+		it('excludes groups keyed on a non-built-in templateName', async () => {
+			setupWithWorkflows([
+				{
+					...mockWorkflow,
+					id: 'wf-a',
+					templateName: 'Custom Template',
+					templateHash: 'h1',
+					createdAt: 100,
+				},
+				{
+					...mockWorkflow,
+					id: 'wf-b',
+					templateName: 'Custom Template',
+					templateHash: 'h2',
+					createdAt: 200,
+				},
+			]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toEqual([]);
+		});
+
+		it('returns a drift report when rows share a built-in templateName with diverging hashes', async () => {
+			const [t1] = getBuiltInWorkflows();
+			setupWithWorkflows([
+				{
+					...mockWorkflow,
+					id: 'wf-older',
+					templateName: t1.name,
+					templateHash: 'old-hash',
+					createdAt: 100,
+				},
+				{
+					...mockWorkflow,
+					id: 'wf-newer',
+					templateName: t1.name,
+					templateHash: 'new-hash',
+					createdAt: 200,
+				},
+			]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toHaveLength(1);
+			const report = result.reports[0];
+			expect(report.templateName).toBe(t1.name);
+			expect(report.rows).toHaveLength(2);
+			// Newest-first ordering
+			expect(report.rows[0].id).toBe('wf-newer');
+			expect(report.rows[1].id).toBe('wf-older');
+			expect(report.rows[0].templateHash).toBe('new-hash');
+		});
+
+		it('treats null-vs-non-null hashes as drift', async () => {
+			const [t1] = getBuiltInWorkflows();
+			setupWithWorkflows([
+				{
+					...mockWorkflow,
+					id: 'wf-a',
+					templateName: t1.name,
+					templateHash: undefined,
+					createdAt: 100,
+				},
+				{
+					...mockWorkflow,
+					id: 'wf-b',
+					templateName: t1.name,
+					templateHash: 'h1',
+					createdAt: 200,
+				},
+			]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toHaveLength(1);
+			expect(result.reports[0].rows).toHaveLength(2);
+		});
+
+		it('returns multiple reports when multiple built-in templates drift', async () => {
+			const [t1, t2] = getBuiltInWorkflows();
+			setupWithWorkflows([
+				{
+					...mockWorkflow,
+					id: 'a1',
+					templateName: t1.name,
+					templateHash: 'a-old',
+					createdAt: 100,
+				},
+				{
+					...mockWorkflow,
+					id: 'a2',
+					templateName: t1.name,
+					templateHash: 'a-new',
+					createdAt: 200,
+				},
+				{
+					...mockWorkflow,
+					id: 'b1',
+					templateName: t2.name,
+					templateHash: 'b-old',
+					createdAt: 50,
+				},
+				{
+					...mockWorkflow,
+					id: 'b2',
+					templateName: t2.name,
+					templateHash: 'b-new',
+					createdAt: 300,
+				},
+			]);
+			const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+				spaceId: 'space-1',
+			})) as { reports: DuplicateDriftReport[] };
+			expect(result.reports).toHaveLength(2);
+			const names = result.reports.map((r) => r.templateName).sort();
+			expect(names).toEqual([t1.name, t2.name].sort());
+		});
+	});
+
+	// ─── spaceWorkflow.resyncDuplicates ───────────────────────────────────────
+
+	describe('spaceWorkflow.resyncDuplicates', () => {
+		function agentsForTemplate(template: SpaceWorkflow): Array<{ id: string; name: string }> {
+			const names = new Set<string>();
+			for (const node of template.nodes) {
+				for (const a of node.agents) {
+					names.add(a.agentId);
+				}
+			}
+			return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, name }));
+		}
+
+		function setupWithGroup(
+			group: SpaceWorkflow[],
+			agents: Array<{ id: string; name: string }> = []
+		) {
+			setup(mockSpace, group[0] ?? null, agents);
+			(workflowManager.listWorkflows as ReturnType<typeof mock>).mockReturnValue(group);
+		}
+
+		it('throws when spaceId is missing', async () => {
+			setup();
+			await expect(
+				call('spaceWorkflow.resyncDuplicates', { templateName: 'Coding Workflow' })
+			).rejects.toThrow('spaceId is required');
+		});
+
+		it('throws when templateName is missing', async () => {
+			setup();
+			await expect(call('spaceWorkflow.resyncDuplicates', { spaceId: 'space-1' })).rejects.toThrow(
+				'templateName is required'
+			);
+		});
+
+		it('throws when space not found', async () => {
+			setup(null, mockWorkflow);
+			await expect(
+				call('spaceWorkflow.resyncDuplicates', {
+					spaceId: 'ghost',
+					templateName: 'Coding Workflow',
+				})
+			).rejects.toThrow('Space not found: ghost');
+		});
+
+		it('throws when templateName is not a built-in', async () => {
+			setup();
+			await expect(
+				call('spaceWorkflow.resyncDuplicates', {
+					spaceId: 'space-1',
+					templateName: 'My Custom Template',
+				})
+			).rejects.toThrow('Built-in template "My Custom Template" not found');
+		});
+
+		it('throws when no rows exist for the given templateName', async () => {
+			const [template] = getBuiltInWorkflows();
+			setupWithGroup([], agentsForTemplate(template));
+			await expect(
+				call('spaceWorkflow.resyncDuplicates', {
+					spaceId: 'space-1',
+					templateName: template.name,
+				})
+			).rejects.toThrow(`No workflows found for templateName "${template.name}"`);
+		});
+
+		it('keeps the newest row, deletes older rows, and overwrites kept row from the template', async () => {
+			const [template] = getBuiltInWorkflows();
+			const agents = agentsForTemplate(template);
+			const older: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-older',
+				templateName: template.name,
+				templateHash: 'old',
+				createdAt: 100,
+			};
+			const newer: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-newer',
+				templateName: template.name,
+				templateHash: 'new',
+				createdAt: 200,
+			};
+			setupWithGroup([older, newer], agents);
+
+			const templateHash = computeWorkflowHash(template);
+			const updatedWf: SpaceWorkflow = { ...newer, templateHash };
+			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(updatedWf);
+			(workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(true);
+
+			const result = (await call('spaceWorkflow.resyncDuplicates', {
+				spaceId: 'space-1',
+				templateName: template.name,
+			})) as { workflow: SpaceWorkflow; keptWorkflowId: string; deletedIds: string[] };
+
+			// Kept the newest row.
+			expect(result.keptWorkflowId).toBe('wf-newer');
+			// Deleted the older row.
+			expect(result.deletedIds).toEqual(['wf-older']);
+			expect(workflowManager.deleteWorkflow).toHaveBeenCalledWith('wf-older');
+			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-newer');
+
+			// Overwrote kept row with template content.
+			expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
+			const [calledId, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>)
+				.mock.calls[0] as [string, Record<string, unknown>];
+			expect(calledId).toBe('wf-newer');
+			expect(calledParams.name).toBe(template.name);
+			expect(calledParams.templateName).toBe(template.name);
+			expect(calledParams.templateHash).toBe(templateHash);
+
+			// Emitted spaceWorkflow.deleted for the older row and spaceWorkflow.updated for the kept row.
+			expect(daemonHub.emit).toHaveBeenCalledWith('spaceWorkflow.deleted', {
+				sessionId: 'global',
+				spaceId: 'space-1',
+				workflowId: 'wf-older',
+			});
+			expect(daemonHub.emit).toHaveBeenCalledWith(
+				'spaceWorkflow.updated',
+				expect.objectContaining({
+					sessionId: 'global',
+					spaceId: 'space-1',
+				})
+			);
+		});
+
+		it('handles a group of one — no deletions, just overwrite the single row', async () => {
+			const [template] = getBuiltInWorkflows();
+			const agents = agentsForTemplate(template);
+			const only: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-only',
+				templateName: template.name,
+				templateHash: 'whatever',
+				createdAt: 100,
+			};
+			setupWithGroup([only], agents);
+
+			const templateHash = computeWorkflowHash(template);
+			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue({
+				...only,
+				templateHash,
+			});
+
+			const result = (await call('spaceWorkflow.resyncDuplicates', {
+				spaceId: 'space-1',
+				templateName: template.name,
+			})) as { keptWorkflowId: string; deletedIds: string[] };
+
+			expect(result.keptWorkflowId).toBe('wf-only');
+			expect(result.deletedIds).toEqual([]);
+			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+			expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
+		});
+
+		it('throws when no SpaceAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
+			// Regression: previously resyncDuplicates deleted the older rows
+			// before validating agent resolution. If agent resolution threw,
+			// duplicates were permanently lost with no resync performed. The
+			// handler must now validate first, update second, delete last.
+			const [template] = getBuiltInWorkflows();
+			const older: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-older',
+				templateName: template.name,
+				templateHash: 'old',
+				createdAt: 100,
+			};
+			const newer: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-newer',
+				templateName: template.name,
+				templateHash: 'new',
+				createdAt: 200,
+			};
+			// Empty agents list — required roles won't resolve
+			setupWithGroup([older, newer], []);
+
+			await expect(
+				call('spaceWorkflow.resyncDuplicates', {
+					spaceId: 'space-1',
+					templateName: template.name,
+				})
+			).rejects.toThrow('Cannot resync: no SpaceAgent found with name');
+
+			// Crucially: no destructive work happened.
+			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+			expect(workflowManager.updateWorkflow).not.toHaveBeenCalled();
+			expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalled();
+		});
+
+		it('explicitly deletes runs for each removed duplicate workflow', async () => {
+			// Regression: migration 60 rebuilt space_workflow_runs without ON
+			// DELETE CASCADE on workflow_id, so removing a workflow alone leaves
+			// orphan runs. resyncDuplicates must call deleteByWorkflowId for
+			// each deleted row.
+			const [template] = getBuiltInWorkflows();
+			const agents = agentsForTemplate(template);
+			const older1: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-older-1',
+				templateName: template.name,
+				templateHash: 'old-1',
+				createdAt: 100,
+			};
+			const older2: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-older-2',
+				templateName: template.name,
+				templateHash: 'old-2',
+				createdAt: 150,
+			};
+			const newer: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-newer',
+				templateName: template.name,
+				templateHash: 'new',
+				createdAt: 200,
+			};
+			setupWithGroup([older1, older2, newer], agents);
+
+			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
+			(workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(true);
+
+			await call('spaceWorkflow.resyncDuplicates', {
+				spaceId: 'space-1',
+				templateName: template.name,
+			});
+
+			expect(workflowRunRepo.deleteByWorkflowId).toHaveBeenCalledWith('wf-older-1');
+			expect(workflowRunRepo.deleteByWorkflowId).toHaveBeenCalledWith('wf-older-2');
+			expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-newer');
 		});
 	});
 });

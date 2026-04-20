@@ -421,6 +421,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   now that it has been replaced by the Plan & Decompose workflow.
 	//   Only deletes rows with no active workflow runs so in-flight work is preserved.
 	runMigration96(db);
+
+	// Migration 97: Delete orphan built-in workflow rows — rows whose `name` matches
+	//   a known built-in template but whose `template_name` column is NULL. These are
+	//   pre-template-tracking duplicates left over when a later seed created a fresh
+	//   row alongside the orphan. Any runs referencing an orphan workflow are deleted
+	//   first (M60 rebuilt space_workflow_runs without an ON DELETE CASCADE FK, so
+	//   the migration handles the cleanup explicitly).
+	runMigration97(db);
 }
 
 /**
@@ -470,6 +478,74 @@ export function runMigration96(db: BunDatabase): void {
 		// Defensive: swallow errors on ancient schemas. The migration's only job
 		// is a cleanup nudge — failing here would block unrelated migrations.
 	}
+}
+
+/**
+ * Migration 97 — Delete orphan built-in workflow rows.
+ *
+ * Clears pre-template-tracking rows that match a known built-in workflow name
+ * but have `template_name IS NULL`. These rows predate the template-tracking
+ * columns (see migration 90) and were typically superseded by a fresh seed row
+ * that already carries `template_name`. Leaving them in place breaks drift
+ * detection and confuses the workflow list UI.
+ *
+ * Idempotent — running the migration twice deletes 0 rows on the second pass.
+ *
+ * Orphaned-run handling: the `space_workflow_runs.workflow_id` FK was dropped
+ * in migration 60, so deleting a workflow does NOT cascade to its runs. To
+ * avoid leaving dangling run rows we first delete any runs that reference an
+ * orphan workflow. This is acceptable because orphan rows have not been used
+ * for new seeding since template tracking shipped — any run referencing one
+ * is stale.
+ *
+ * Complements migration 96 (which deletes Full-Cycle rows without active runs):
+ * M96 targets rows by exact name; this migration targets pre-tracking orphans
+ * across the built-in set (including legacy names like "Coding with QA
+ * Workflow" and "Full-Cycle Coding Workflow" for users upgrading from older
+ * databases).
+ */
+export function runMigration97(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) return;
+	// Guard on the template_name column existing — if migration 90 hasn't run
+	// yet (shouldn't happen in practice, but defensive) skip silently.
+	if (!tableHasColumn(db, 'space_workflows', 'template_name')) return;
+
+	// Built-in workflow names at the time this migration was authored. Mirrors
+	// `getBuiltInWorkflows()` in built-in-workflows.ts, plus the two legacy
+	// names retired in PR #1539 so orphan rows on upgraded databases are also
+	// cleaned up. Kept inline — migrations must be self-contained and stable
+	// across future template changes.
+	const BUILT_IN_NAMES = [
+		'Coding Workflow',
+		'Coding with QA Workflow',
+		'Full-Cycle Coding Workflow',
+		'Fullstack QA Loop Workflow',
+		'Plan & Decompose Workflow',
+		'Research Workflow',
+		'Review-Only Workflow',
+	];
+
+	const placeholders = BUILT_IN_NAMES.map(() => '?').join(', ');
+
+	// Clean up dangling runs first — there is no FK cascade from
+	// space_workflow_runs.workflow_id anymore (M60 rebuilt the table without
+	// it), so we do it explicitly to avoid leaving orphaned run rows.
+	if (tableExists(db, 'space_workflow_runs')) {
+		db.prepare(
+			`DELETE FROM space_workflow_runs
+			  WHERE workflow_id IN (
+			    SELECT id FROM space_workflows
+			    WHERE template_name IS NULL
+			      AND name IN (${placeholders})
+			  )`
+		).run(...BUILT_IN_NAMES);
+	}
+
+	db.prepare(
+		`DELETE FROM space_workflows
+		  WHERE template_name IS NULL
+		    AND name IN (${placeholders})`
+	).run(...BUILT_IN_NAMES);
 }
 
 /**

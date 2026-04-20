@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceExportBundle } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceExportBundle, DuplicateDriftReport } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
@@ -104,14 +104,39 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 // Workflow Card
 // ============================================================================
 
+/**
+ * Duplicate-drift info for a single workflow card.
+ *
+ * Computed at the list level (one RPC call per space) and passed down so each
+ * card can render a "Duplicate" badge + a "Resync duplicates" action on the
+ * newest row in a drift group.
+ */
+interface DuplicateDriftInfo {
+	/** Shared `templateName` that formed the drift group. */
+	templateName: string;
+	/** Total rows in the drift group (always >= 2). */
+	groupSize: number;
+	/** True if this workflow is the newest row in the group (becomes the kept row on resync). */
+	isNewest: boolean;
+}
+
 interface WorkflowCardProps {
 	workflow: SpaceWorkflow;
 	spaceId: string;
 	spaceName: string;
 	onEdit: () => void;
+	duplicateDrift?: DuplicateDriftInfo;
+	onResyncDuplicates?: (templateName: string) => Promise<void>;
 }
 
-function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProps) {
+function WorkflowCard({
+	workflow,
+	spaceId,
+	spaceName,
+	onEdit,
+	duplicateDrift,
+	onResyncDuplicates,
+}: WorkflowCardProps) {
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -121,6 +146,11 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 	const [syncing, setSyncing] = useState(false);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [confirmSync, setConfirmSync] = useState(false);
+
+	// Duplicate-drift resync state
+	const [confirmDupResync, setConfirmDupResync] = useState(false);
+	const [dupResyncing, setDupResyncing] = useState(false);
+	const [dupResyncError, setDupResyncError] = useState<string | null>(null);
 
 	// Check for template drift whenever workflow changes (if it came from a template)
 	useEffect(() => {
@@ -197,6 +227,20 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 		}
 	}
 
+	async function handleResyncDuplicates() {
+		if (!duplicateDrift || !onResyncDuplicates) return;
+		setDupResyncing(true);
+		setDupResyncError(null);
+		try {
+			await onResyncDuplicates(duplicateDrift.templateName);
+			setConfirmDupResync(false);
+		} catch (err) {
+			setDupResyncError(err instanceof Error ? err.message : 'Resync failed');
+		} finally {
+			setDupResyncing(false);
+		}
+	}
+
 	return (
 		<div class="bg-dark-850 border border-dark-700 rounded-lg p-4 hover:border-dark-600 transition-colors group">
 			{deleteError && (
@@ -238,6 +282,22 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 									Outdated
 								</span>
 							)}
+							{duplicateDrift && (
+								<span
+									class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-orange-900/30 border border-orange-700/50 rounded text-orange-400"
+									title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template with diverging content. Resync keeps the newest row and removes the rest.`}
+								>
+									<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
+										/>
+									</svg>
+									Duplicate ×{duplicateDrift.groupSize}
+								</span>
+							)}
 						</div>
 					)}
 				</div>
@@ -273,6 +333,15 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 									title="Sync from template (overwrites local changes)"
 								>
 									Sync
+								</button>
+							)}
+							{duplicateDrift?.isNewest && (
+								<button
+									onClick={() => setConfirmDupResync(true)}
+									class="px-2.5 py-1 text-xs text-orange-400 hover:text-orange-200 bg-dark-800 hover:bg-dark-700 rounded border border-orange-700/50 hover:border-orange-600/70 transition-colors"
+									title={`Remove ${duplicateDrift.groupSize - 1} older duplicate${duplicateDrift.groupSize - 1 === 1 ? '' : 's'} and resync this workflow from the built-in template`}
+								>
+									Resync duplicates
 								</button>
 							)}
 							<button
@@ -338,6 +407,58 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 					</>
 				)}
 			</div>
+
+			{/* Resync duplicates confirmation modal */}
+			{confirmDupResync && duplicateDrift && (
+				<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+					<div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
+						<h3 class="text-sm font-semibold text-gray-100 mb-2">Resync duplicate workflows?</h3>
+						<p class="text-xs text-gray-400 mb-1">
+							This space has{' '}
+							<span class="font-medium text-gray-200">{duplicateDrift.groupSize} rows</span> sharing
+							the <span class="font-medium text-gray-200">"{duplicateDrift.templateName}"</span>{' '}
+							template with diverging content.
+						</p>
+						<p class="text-xs text-gray-400 mb-1">
+							The newest row <span class="font-medium text-gray-200">"{workflow.name}"</span> will
+							be kept and resynced from the built-in template. The remaining{' '}
+							<span class="font-medium text-gray-200">
+								{duplicateDrift.groupSize - 1} older{' '}
+								{duplicateDrift.groupSize - 1 === 1 ? 'row' : 'rows'}
+							</span>{' '}
+							will be deleted.
+						</p>
+						<p class="text-xs text-red-400 mb-4">
+							Local edits to the older rows and any workflow runs attached to them will be
+							permanently lost.
+						</p>
+						{dupResyncError && (
+							<div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+								{dupResyncError}
+							</div>
+						)}
+						<div class="flex items-center gap-2 justify-end">
+							<button
+								onClick={() => {
+									setConfirmDupResync(false);
+									setDupResyncError(null);
+								}}
+								disabled={dupResyncing}
+								class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={handleResyncDuplicates}
+								disabled={dupResyncing}
+								class="px-3 py-1.5 text-xs font-medium text-white bg-orange-700 hover:bg-orange-600 rounded transition-colors disabled:opacity-50"
+							>
+								{dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 
 			{/* Sync from template confirmation modal */}
 			{confirmSync && (
@@ -407,6 +528,68 @@ export function WorkflowList({
 	const [importBundle, setImportBundle] = useState<SpaceExportBundle | null>(null);
 	const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
 	const [isExecuting, setIsExecuting] = useState(false);
+
+	// Map of workflow id → duplicate-drift info (only present for workflows in a drift group).
+	const [duplicateDriftMap, setDuplicateDriftMap] = useState<Map<string, DuplicateDriftInfo>>(
+		new Map()
+	);
+
+	// Fetch duplicate-drift reports whenever the set of workflows changes. We
+	// watch the list of (id, updatedAt) tuples so the effect re-runs when a
+	// workflow is added, removed, or edited.
+	const driftKey = workflows
+		.map((w) => `${w.id}:${w.updatedAt}`)
+		.sort()
+		.join('|');
+	useEffect(() => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		let cancelled = false;
+		hub
+			.request<{ reports: DuplicateDriftReport[] }>('spaceWorkflow.detectDuplicateDrift', {
+				spaceId,
+			})
+			.then((result) => {
+				if (cancelled) return;
+				const map = new Map<string, DuplicateDriftInfo>();
+				for (const report of result.reports) {
+					// Rows are newest-first; the first entry becomes the kept row on resync.
+					for (const [i, row] of report.rows.entries()) {
+						map.set(row.id, {
+							templateName: report.templateName,
+							groupSize: report.rows.length,
+							isNewest: i === 0,
+						});
+					}
+				}
+				setDuplicateDriftMap(map);
+			})
+			.catch(() => {
+				// Non-fatal — drift reporting is best-effort.
+			});
+
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
+	}, [spaceId, driftKey]);
+
+	async function handleResyncDuplicates(templateName: string) {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Connection lost.');
+			throw new Error('Not connected');
+		}
+		const result = await hub.request<{ deletedIds: string[] }>('spaceWorkflow.resyncDuplicates', {
+			spaceId,
+			templateName,
+		});
+		const removed = result.deletedIds.length;
+		toast.success(
+			`Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}`
+		);
+	}
 
 	// ─── Import/Export helpers ──────────────────────────────────────────────
 
@@ -588,6 +771,8 @@ export function WorkflowList({
 									spaceId={spaceId}
 									spaceName={spaceName}
 									onEdit={() => onEditWorkflow(wf.id)}
+									duplicateDrift={duplicateDriftMap.get(wf.id)}
+									onResyncDuplicates={handleResyncDuplicates}
 								/>
 							))}
 						</div>
