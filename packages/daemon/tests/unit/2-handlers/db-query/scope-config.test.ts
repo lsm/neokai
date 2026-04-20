@@ -71,7 +71,7 @@ describe('scope-config', () => {
 				'workflow_run_artifacts',
 				'workflow_run_artifact_cache',
 			]);
-			expect(names).toHaveLength(10);
+			expect(names).toHaveLength(11);
 		});
 
 		it('all table configs have a description', () => {
