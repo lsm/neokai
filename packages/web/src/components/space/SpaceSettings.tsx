@@ -10,12 +10,14 @@
 import { useState, useEffect } from 'preact/hooks';
 import type { Space, SpaceExportBundle, SpaceAutonomyLevel } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
 import { downloadBundle } from './export-import-utils.ts';
 import { navigateToSpaces } from '../../lib/router.ts';
 import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
+import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary.tsx';
 
 interface SpaceSettingsProps {
 	space: Space;
@@ -277,6 +279,11 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 									</button>
 								))}
 							</div>
+							<AutonomyWorkflowSummary
+								level={autonomyLevel}
+								workflows={spaceStore.workflows.value}
+								class="mt-2"
+							/>
 						</div>
 
 						{isDirty && (
