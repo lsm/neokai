@@ -852,6 +852,17 @@ export interface ContextMessageBreakdown {
 	attachmentTokens: number;
 	assistantMessageTokens: number;
 	userMessageTokens: number;
+	/**
+	 * Tokens consumed by content redirected into the conversation
+	 * (e.g. sub-agent outputs). Exposed by the SDK alongside other
+	 * per-category totals.
+	 */
+	redirectedContextTokens?: number;
+	/**
+	 * Tokens the SDK couldn't attribute to any single category —
+	 * useful for detecting breakdown drift over time.
+	 */
+	unattributedTokens?: number;
 	toolCallsByType?: Array<{ name: string; callTokens: number; resultTokens: number }>;
 	attachmentsByType?: Array<{ name: string; tokens: number }>;
 }

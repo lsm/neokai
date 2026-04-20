@@ -92,6 +92,8 @@ export class ContextFetcher {
 					attachmentTokens: response.messageBreakdown.attachmentTokens,
 					assistantMessageTokens: response.messageBreakdown.assistantMessageTokens,
 					userMessageTokens: response.messageBreakdown.userMessageTokens,
+					redirectedContextTokens: response.messageBreakdown.redirectedContextTokens,
+					unattributedTokens: response.messageBreakdown.unattributedTokens,
 					toolCallsByType: response.messageBreakdown.toolCallsByType,
 					attachmentsByType: response.messageBreakdown.attachmentsByType,
 				}
