@@ -534,6 +534,9 @@ export class SpaceRuntimeService {
 			onGateChanged: (runId, gateId) => {
 				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
 			},
+			activateNode: async (runId, nodeId) => {
+				await this.activateWorkflowNode(runId, nodeId);
+			},
 			getSpaceAutonomyLevel: async (sid) => {
 				const s = await spaceManagerForApproval.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
@@ -697,6 +700,54 @@ export class SpaceRuntimeService {
 			notificationSink: this.runtime.getNotificationSink(),
 		});
 		return router.onGateDataChanged(runId, gateId);
+	}
+
+	/**
+	 * Lazily activate a workflow node.
+	 *
+	 * Builds a scoped ChannelRouter (same dependencies as `notifyGateDataChanged`)
+	 * and delegates to `ChannelRouter.activateNode()`, which either reuses an
+	 * existing node_execution for cyclic re-entry (preserving `agentSessionId` so
+	 * history survives) or creates a pending execution for the tick loop to spawn.
+	 *
+	 * Exposed so the Space Agent's `send_message_to_task` tool can target a
+	 * specific node even when that node has no live session yet.
+	 */
+	async activateWorkflowNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
+		if (!this.config.gateDataRepo) {
+			throw new Error(
+				'activateWorkflowNode requires gateDataRepo to be configured on SpaceRuntimeService.'
+			);
+		}
+		const run = this.config.workflowRunRepo.getRun(runId);
+		let workspacePath: string | undefined;
+		if (run) {
+			const space = await this.config.spaceManager.getSpace(run.spaceId);
+			workspacePath = space?.workspacePath;
+		}
+		const spaceManager = this.config.spaceManager;
+		const taskAgentManager = this.taskAgentManager;
+		const router = new ChannelRouter({
+			taskRepo: this.config.taskRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			workflowManager: this.config.spaceWorkflowManager,
+			agentManager: this.config.spaceAgentManager,
+			nodeExecutionRepo: this.nodeExecutionRepo,
+			gateDataRepo: this.config.gateDataRepo,
+			channelCycleRepo: this.config.channelCycleRepo,
+			db: this.config.db,
+			workspacePath,
+			getSpaceAutonomyLevel: async (spaceId) => {
+				const s = await spaceManager.getSpace(spaceId);
+				return s?.autonomyLevel ?? 1;
+			},
+			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
+			// Forward the runtime's current sink so activation-driven reopens of
+			// terminal runs still surface `workflow_run_reopened` to the Space
+			// Agent session (mirrors `notifyGateDataChanged` above).
+			notificationSink: this.runtime.getNotificationSink(),
+		});
+		return router.activateNode(runId, nodeId);
 	}
 
 	/**

@@ -22,7 +22,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
+import type { NodeExecution, SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
@@ -40,6 +40,35 @@ import { enrichTaskWithPendingAction } from '../runtime/pending-action';
 
 function normalizeAgentNameToken(value: string): string {
 	return value.trim().toLowerCase();
+}
+
+/**
+ * Resolve a `node_id` selector ({execution UUID, agent name}) to a concrete
+ * node_execution row. Preference order:
+ *   1. Exact match on `NodeExecution.id` (execution UUID)
+ *   2. Most recently created execution matching the agent name (case-insensitive)
+ *
+ * Under the DB's UNIQUE constraint on `(workflowRunId, workflowNodeId, agentName)`
+ * an agent name only duplicates when it appears in multiple workflow nodes; in
+ * that case the most recent creation is chosen.
+ *
+ * Returns null when no execution matches.
+ */
+function resolveNodeExecution(executions: NodeExecution[], selector: string): NodeExecution | null {
+	const trimmed = selector.trim();
+	if (!trimmed) return null;
+	// 1. Exact execution id.
+	const byId = executions.find((exec) => exec.id === trimmed);
+	if (byId) return byId;
+
+	// 2. Agent-name match (case-insensitive). `executions` is ordered ASC by
+	//    createdAt (per NodeExecutionRepository.listByWorkflowRun), so the last
+	//    matching row is the most recent.
+	const targetName = normalizeAgentNameToken(trimmed);
+	const byName = executions.filter(
+		(exec) => normalizeAgentNameToken(exec.agentName) === targetName
+	);
+	return byName.at(-1) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +103,18 @@ export interface SpaceAgentToolsConfig {
 	daemonHub?: DaemonHub;
 	/** Callback to trigger channel re-evaluation after gate data changes. */
 	onGateChanged?: (runId: string, gateId: string) => void;
+	/**
+	 * Callback to lazily activate a workflow node.
+	 *
+	 * Used by `send_message_to_task` when the caller targets a specific workflow node
+	 * (via `node_id`) and that node has no live agent session: the callback invokes
+	 * `ChannelRouter.activateNode()` which reuses an existing session (cyclic re-entry)
+	 * or creates a pending node_execution that the tick loop will pick up.
+	 *
+	 * When omitted, `send_message_to_task` can still deliver to already-live sessions
+	 * but cannot activate inactive nodes.
+	 */
+	activateNode?: (runId: string, nodeId: string) => Promise<void>;
 	/**
 	 * Resolves the space's current autonomy level.
 	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
@@ -115,6 +156,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		gateDataRepo,
 		daemonHub,
 		onGateChanged,
+		activateNode,
 		getSpaceAutonomyLevel,
 		myAgentName,
 		myAgentNameAliases,
@@ -446,32 +488,170 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Inject a message into a running task agent session.
+		 * Send a message to a task. Targets the Task Agent by default; optionally
+		 * targets a specific workflow node via `node_id` (execution UUID or agent name).
+		 *
+		 * Auto-spawn / auto-activate semantics:
+		 * - When no `node_id` is given and the Task Agent has not been spawned yet,
+		 *   `taskAgentManager.ensureTaskAgentSession()` is called first so the message
+		 *   is injected as the first input (effectively starting the task).
+		 * - When `node_id` is given but the target node has no live sub-session, the
+		 *   `activateNode` callback (if configured) is invoked to lazily activate the
+		 *   node, reusing an existing session for cyclic re-entry or marking a pending
+		 *   execution that the tick loop will spawn.
+		 *
+		 * Tombstone model: archived tasks are the only non-recoverable state; every
+		 * other status (open/in_progress/review/done/blocked/cancelled) can be
+		 * reactivated.
 		 */
-		async send_message_to_task(args: { task_id: string; message: string }): Promise<ToolResult> {
+		async send_message_to_task(args: {
+			task_id?: string;
+			task_number?: number;
+			message: string;
+			node_id?: string;
+		}): Promise<ToolResult> {
 			if (!taskAgentManager) {
 				return jsonResult({
 					success: false,
 					error: 'Task agent communication is not available in this context.',
 				});
 			}
-			const task = taskRepo.getTask(args.task_id);
-			if (!task) {
-				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			// --- Resolve task by id or by space-scoped task number ---
+			let task: SpaceTask | null = null;
+			if (args.task_id) {
+				task = taskRepo.getTask(args.task_id);
+				if (!task) {
+					return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+				}
+			} else if (typeof args.task_number === 'number') {
+				task = taskRepo.getTaskByNumber(spaceId, args.task_number);
+				if (!task) {
+					return jsonResult({
+						success: false,
+						error: `Task not found in this space with task_number=${args.task_number}`,
+					});
+				}
+			} else {
+				return jsonResult({
+					success: false,
+					error: 'Either task_id or task_number must be provided.',
+				});
 			}
 			if (task.spaceId !== spaceId) {
 				return jsonResult({
 					success: false,
-					error: `Task ${args.task_id} does not belong to this space.`,
+					error: `Task ${task.id} does not belong to this space.`,
+				});
+			}
+			if (task.status === 'archived') {
+				return jsonResult({
+					success: false,
+					error: `Task ${task.id} is archived — create a new task.`,
+				});
+			}
+
+			// --- Path A: no node_id — send to the Task Agent (auto-spawn if needed) ---
+			if (!args.node_id) {
+				try {
+					await taskAgentManager.ensureTaskAgentSession(task.id);
+					await taskAgentManager.injectTaskAgentMessage(task.id, args.message);
+					return jsonResult({ success: true, task_id: task.id, target: 'task-agent' });
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					return jsonResult({ success: false, error: message });
+				}
+			}
+
+			// --- Path B: node_id provided — target a specific workflow node ---
+			if (!task.workflowRunId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${task.id} has no workflow run — cannot target node_id.`,
+				});
+			}
+			const allExecutions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+			const resolved = resolveNodeExecution(allExecutions, args.node_id);
+			if (!resolved) {
+				return jsonResult({
+					success: false,
+					error:
+						`Node not found for task ${task.id}: "${args.node_id}". ` +
+						`Expected an execution UUID or an agent name present in this workflow run.`,
+				});
+			}
+
+			// Attempt direct injection when the execution already has a live session.
+			if (resolved.agentSessionId) {
+				try {
+					await taskAgentManager.injectSubSessionMessage(resolved.agentSessionId, args.message);
+					return jsonResult({
+						success: true,
+						task_id: task.id,
+						target: 'node',
+						node_execution_id: resolved.id,
+						agent_name: resolved.agentName,
+						activated: false,
+					});
+				} catch {
+					// Fall through to activation path — the session may be dead; activateNode
+					// will either revive it (cyclic re-entry) or reset the execution to pending.
+				}
+			}
+
+			// No live session → activate and retry.
+			if (!activateNode) {
+				return jsonResult({
+					success: false,
+					error: `Node "${resolved.agentName}" has no live session and no activation callback is configured.`,
 				});
 			}
 			try {
-				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
-				return jsonResult({ success: true, task_id: args.task_id });
+				await activateNode(task.workflowRunId, resolved.workflowNodeId);
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
+				return jsonResult({
+					success: false,
+					error: `Failed to activate node "${resolved.agentName}": ${message}`,
+				});
 			}
+
+			// Re-read the execution — activateNode may have restored the session id.
+			const refreshedExecution = nodeExecutionRepo.getById(resolved.id);
+			const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
+			if (sessionIdAfter) {
+				try {
+					await taskAgentManager.injectSubSessionMessage(sessionIdAfter, args.message);
+					return jsonResult({
+						success: true,
+						task_id: task.id,
+						target: 'node',
+						node_execution_id: resolved.id,
+						agent_name: resolved.agentName,
+						activated: true,
+					});
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					return jsonResult({
+						success: false,
+						error: `Failed to inject message into node "${resolved.agentName}": ${message}`,
+					});
+				}
+			}
+
+			// No live session yet — the tick loop will spawn one. Surface that state so
+			// the caller knows activation succeeded but delivery is deferred.
+			return jsonResult({
+				success: true,
+				task_id: task.id,
+				target: 'node',
+				node_execution_id: resolved.id,
+				agent_name: resolved.agentName,
+				activated: true,
+				delivered: false,
+				message:
+					`Node "${resolved.agentName}" was activated but does not yet have a live session; ` +
+					`the message was not injected. Retry after the node starts.`,
+			});
 		},
 
 		/**
@@ -996,12 +1176,27 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		// Task agent communication tools
 		tool(
 			'send_message_to_task',
-			'Inject a message into a running task agent session. Use this to provide real-time guidance, corrections, or context to a task that is currently executing.',
+			'Send a message to a task. Targets the Task Agent by default; optionally target a specific workflow node via node_id (execution UUID or agent name like "coder"/"reviewer"). If the task or node has not started yet, it will be spawned/activated automatically (unless the task is archived). Provide either task_id or task_number — if both are given, task_id takes precedence.',
 			{
 				task_id: z
 					.string()
-					.describe('ID of the task whose agent session should receive the message'),
+					.optional()
+					.describe(
+						'ID of the task whose agent session should receive the message. Either task_id or task_number is required.'
+					),
+				task_number: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('Space-scoped numeric task ID (e.g. 37). Used when task_id is not provided.'),
 				message: z.string().describe('Message to inject into the task agent session'),
+				node_id: z
+					.string()
+					.optional()
+					.describe(
+						'Optional workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). When present, the message is routed to that node\'s sub-session instead of the Task Agent; the node is activated automatically if it has no live session.'
+					),
 			},
 			(args) => handlers.send_message_to_task(args)
 		),
