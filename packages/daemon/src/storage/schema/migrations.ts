@@ -412,10 +412,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Also removes orphan duplicate built-in workflow rows that have no active runs.
 	runMigration94(db);
 
-	// Migration 95: Remove the legacy "Full-Cycle Coding Workflow" built-in template
+	// Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
+	//   Used as an idempotency marker so completion actions are not re-fired when
+	//   a workflow run is reopened (done → in_progress) and later completes again.
+	runMigration95(db);
+
+	// Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template
 	//   now that it has been replaced by the Plan & Decompose workflow.
 	//   Only deletes rows with no active workflow runs so in-flight work is preserved.
-	runMigration95(db);
+	runMigration96(db);
 }
 
 /**
@@ -428,7 +433,7 @@ export function runMigration94(db: BunDatabase): void {
 }
 
 /**
- * Migration 95: Remove the legacy "Full-Cycle Coding Workflow" built-in template.
+ * Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template.
  *
  * The Full-Cycle workflow was replaced by the Plan & Decompose Workflow. Delete
  * its rows from `space_workflows` across all spaces — but only if the row has no
@@ -438,7 +443,7 @@ export function runMigration94(db: BunDatabase): void {
  *
  * Idempotent: if no rows match (already removed or never seeded), this is a no-op.
  */
-export function runMigration95(db: BunDatabase): void {
+export function runMigration96(db: BunDatabase): void {
 	if (!tableExists(db, 'space_workflows')) {
 		return;
 	}
@@ -6149,5 +6154,25 @@ export function runMigration93(db: BunDatabase): void {
 		db.prepare('SELECT sdk_origin_path FROM sessions LIMIT 1').all();
 	} catch {
 		db.exec('ALTER TABLE sessions ADD COLUMN sdk_origin_path TEXT');
+	}
+}
+
+/**
+ * Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
+ *
+ * Used as an idempotency marker so that end-node `completionActions` on a
+ * workflow run are fired at most once per physical completion. When a run is
+ * reopened from `done` or `cancelled` back to `in_progress` (because a peer
+ * agent sent a follow-up message, a gate was re-evaluated, or a user resumed
+ * the task), and subsequently completes again, the runtime uses this marker
+ * to skip re-firing its completion actions. The marker is never cleared on
+ * reopen — once fired, always fired.
+ */
+export function runMigration95(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_runs')) return;
+	if (!tableHasColumn(db, 'space_workflow_runs', 'completion_actions_fired_at')) {
+		db.exec(
+			`ALTER TABLE space_workflow_runs ADD COLUMN completion_actions_fired_at INTEGER DEFAULT NULL`
+		);
 	}
 }

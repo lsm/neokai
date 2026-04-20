@@ -362,6 +362,77 @@ describe('SessionNotificationSink', () => {
 		});
 	});
 
+	describe('workflow_run_reopened event', () => {
+		it('formats a reopen from done with attribution', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'workflow_run_reopened',
+				spaceId: SPACE_ID,
+				runId: 'run-rx',
+				fromStatus: 'done',
+				reason: 'user follow-up message arrived',
+				by: 'user',
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			const { message } = factory.calls[0];
+			expect(message).toContain('[TASK_EVENT] workflow_run_reopened');
+			expect(message).toContain("reopened from 'done'");
+			expect(message).toContain("back to 'in_progress'");
+			expect(message).toContain('user follow-up message arrived');
+			expect(message).toContain('(by: user)');
+
+			const json = extractJson(message);
+			expect(json.kind).toBe('workflow_run_reopened');
+			expect(json.runId).toBe('run-rx');
+			expect(json.fromStatus).toBe('done');
+			expect(json.by).toBe('user');
+			expect(json.autonomyLevel).toBe(1);
+		});
+
+		it('formats a reopen from cancelled attributed to a gate', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'workflow_run_reopened',
+				spaceId: SPACE_ID,
+				runId: 'run-cx',
+				fromStatus: 'cancelled',
+				reason: 'gate "approve-pr" opened',
+				by: 'gate:approve-pr',
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			const { message } = factory.calls[0];
+			expect(message).toContain("reopened from 'cancelled'");
+			expect(message).toContain('gate:approve-pr');
+
+			const json = extractJson(message);
+			expect(json.fromStatus).toBe('cancelled');
+			expect(json.by).toBe('gate:approve-pr');
+		});
+
+		it('uses defer delivery mode', async () => {
+			const { sink, factory } = makeSink();
+			const event: SpaceNotificationEvent = {
+				kind: 'workflow_run_reopened',
+				spaceId: SPACE_ID,
+				runId: 'run-1',
+				fromStatus: 'done',
+				reason: 'r',
+				by: 'user',
+				timestamp: TIMESTAMP,
+			};
+
+			await sink.notify(event);
+
+			expect(factory.calls[0].opts?.deliveryMode).toBe('defer');
+		});
+	});
+
 	describe('error handling', () => {
 		it('logs warning and does not throw when session not found', async () => {
 			const { sink, factory } = makeSink({

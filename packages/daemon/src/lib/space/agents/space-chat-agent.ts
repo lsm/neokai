@@ -327,6 +327,17 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`node is stuck or to read intermediate outputs from individual agents.`
 	);
 
+	// Multi-session coordination note
+	sections.push(`\n## Multi-Session Coordination\n`);
+	sections.push(
+		`Other sessions in this Space — task agents, worker/coder sessions, and any ad-hoc sessions created ` +
+			`with this Space as their context — now share the same \`space-agent-tools\` MCP surface you use. ` +
+			`That means:\n` +
+			`  - Task agents can send messages back to you directly via \`send_message_to_agent\`/\`send_message_to_task\`.\n` +
+			`  - Coordination is bidirectional: you are not the only agent that can inspect tasks, approve gates, or message peers.\n` +
+			`  - When you receive a message from another session, verify the sender context (task id, workflow run id) before acting.`
+	);
+
 	// Operator-supplied context appended last — after all contract sections —
 	// so the NeoKai system contract cannot be overridden by user content.
 	if (context.background) {

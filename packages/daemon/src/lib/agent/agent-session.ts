@@ -685,6 +685,27 @@ export class AgentSession
 	}
 
 	/**
+	 * Merge additional runtime MCP servers into the in-memory session config.
+	 *
+	 * Unlike `setRuntimeMcpServers`, this preserves existing entries and only
+	 * overwrites the keys present in `additional`. Used when a cross-cutting
+	 * subsystem (e.g., `SpaceRuntimeService`) wants to attach a shared MCP
+	 * server (like `space-agent-tools`) to a session without disturbing other
+	 * runtime-attached servers (e.g., `task-agent`, `db-query`, `room-tools`)
+	 * that may have been added by other owners.
+	 */
+	mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): void {
+		const existing = this.session.config?.mcpServers ?? {};
+		this.session.config = {
+			...this.session.config,
+			mcpServers: {
+				...existing,
+				...additional,
+			},
+		};
+	}
+
+	/**
 	 * Apply a runtime system prompt to in-memory session config only.
 	 * Used to inject context-specific instructions (e.g. room workflow guidance)
 	 * without persisting them to the database.

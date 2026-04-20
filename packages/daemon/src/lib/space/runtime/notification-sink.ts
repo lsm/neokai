@@ -198,6 +198,46 @@ export interface CompletionActionExecutedEvent {
 	timestamp: string;
 }
 
+/**
+ * A previously-terminal workflow run (`done` or `cancelled`) has been reopened
+ * back to `in_progress` because new inbound activity arrived before the parent
+ * task was archived.
+ *
+ * Triggers include:
+ * - Peer agent `send_message` to an agent in the run (`by: '<agentName>'`).
+ * - User/task-agent message routed to an agent in the run (`by: 'user'`).
+ * - Gate data changed via `write_gate` MCP tool (`by: 'gate:<gateId>'`).
+ *
+ * Archive is the only tombstone: once `SpaceTask.archivedAt` is set, the run
+ * cannot be reopened and the ChannelRouter throws `ActivationError` instead of
+ * emitting this event.
+ *
+ * Consumers (Space Agent, UI) should surface that a "finished" task is active
+ * again — the previous completion_action audit trail remains valid, and the
+ * runtime does NOT re-fire completion actions on subsequent completions of
+ * the reopened run.
+ */
+export interface WorkflowRunReopenedEvent {
+	kind: 'workflow_run_reopened';
+	/** Space the workflow run belongs to. */
+	spaceId: string;
+	/** Workflow run that was reopened. */
+	runId: string;
+	/** Terminal status the run was in just before reopening. */
+	fromStatus: 'done' | 'cancelled';
+	/** Human-readable reason the run was reopened. */
+	reason: string;
+	/**
+	 * Identifier for *who* / *what* caused the reopen:
+	 * - `agent:<agentName>` — a peer agent sent a message.
+	 * - `user` — a user message arrived.
+	 * - `gate:<gateId>` — a gate's data changed.
+	 */
+	by: string;
+	/** ISO-8601 timestamp when the event was emitted. */
+	timestamp: string;
+}
+
 /** A workflow run has reached a terminal state (done, cancelled, or blocked). */
 export interface WorkflowRunCompletedEvent {
 	kind: 'workflow_run_completed';
@@ -246,6 +286,7 @@ export type SpaceNotificationEvent =
 	| WorkflowRunBlockedEvent
 	| TaskTimeoutEvent
 	| WorkflowRunCompletedEvent
+	| WorkflowRunReopenedEvent
 	| AgentAutoCompletedEvent
 	| AgentCrashEvent
 	| TaskRetryEvent
