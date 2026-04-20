@@ -806,6 +806,25 @@ export class TaskAgentManager {
 				throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
 			}
 
+			// Defensive guarantee: verify the node-agent MCP server is present in the
+			// sub-session's effective config. If a registry collision, race, or refactor
+			// regression ever drops it, self-heal by re-attaching before the first turn
+			// kicks off — and emit a loud warning so the regression surfaces in logs.
+			//
+			// This is a belt-and-braces check to prevent silent recurrence of the
+			// "No such tool available" failure mode where the Coder→Reviewer handoff
+			// died because mcp__node-agent__send_message was unregistered.
+			this.ensureNodeAgentAttached(spawned, {
+				taskId,
+				subSessionId: actualSessionId,
+				agentName: execution.agentName,
+				spaceId: space.id,
+				workflowRunId: workflowRun.id,
+				workspacePath,
+				workflowNodeId: execution.workflowNodeId,
+				phase: 'spawn',
+			});
+
 			this.registerCompletionCallback(actualSessionId, async () => {
 				await this.handleSubSessionComplete(taskId, execution.workflowNodeId, actualSessionId);
 			});
@@ -1713,6 +1732,7 @@ export class TaskAgentManager {
 			isEndNode
 				? '  - report_result({ status, summary }) — YOU ARE THE END NODE: call this when the workflow is complete to close the run'
 				: null,
+			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
 			'Only contact the task-agent via send_message if you are blocked or need human input.',
 		]
 			.filter(Boolean)
@@ -1754,7 +1774,8 @@ export class TaskAgentManager {
 		}
 
 		lines.push(
-			'  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery'
+			'  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
+			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool'
 		);
 
 		if (outboundGatedChannels.length === 0) {
@@ -2206,6 +2227,18 @@ export class TaskAgentManager {
 		};
 		agentSession.setRuntimeMcpServers(mergedMcpServers);
 
+		// Defensive guarantee — see ensureNodeAgentAttached docs.
+		this.ensureNodeAgentAttached(agentSession, {
+			taskId,
+			subSessionId,
+			agentName: execution.agentName,
+			spaceId,
+			workflowRunId,
+			workspacePath,
+			workflowNodeId: execution.workflowNodeId,
+			phase: 'rehydrate',
+		});
+
 		// --- Register in in-memory maps
 		if (!this.subSessions.has(taskId)) {
 			this.subSessions.set(taskId, new Map());
@@ -2357,6 +2390,116 @@ export class TaskAgentManager {
 	}
 
 	/**
+	 * Verify that a workflow node sub-session has the `node-agent` MCP server attached
+	 * to its in-memory config, and self-heal by re-attaching if it's missing.
+	 *
+	 * This is a defensive guard against silent recurrence of the failure mode in
+	 * PR #1535 where a Coder sub-session ran without `node-agent`, causing
+	 * `mcp__node-agent__send_message` to return "No such tool available" and the
+	 * Coder→Reviewer handoff to die silently. The session then idled out at the
+	 * 30-minute timeout with no diagnostic trail.
+	 *
+	 * Called from both spawn and rehydrate paths to guarantee the invariant:
+	 *   "every workflow-node sub-session has `node-agent` attached BEFORE first turn".
+	 *
+	 * If the server is missing (which should never happen given the merge logic in
+	 * createSubSession + rehydrateSubSession), this method:
+	 *   1. Logs a loud error tagged with the spawn/rehydrate phase for diagnosis.
+	 *   2. Re-builds and re-attaches `node-agent` (preserving any registry-sourced
+	 *      MCP servers that may already be present in the config).
+	 *   3. Re-verifies attachment; if still missing, throws — better to fail spawn
+	 *      visibly than to start an unrecoverable session.
+	 */
+	ensureNodeAgentAttached(
+		session: AgentSession,
+		ctx: {
+			taskId: string;
+			subSessionId: string;
+			agentName: string;
+			spaceId: string;
+			workflowRunId: string;
+			workspacePath: string;
+			workflowNodeId: string;
+			phase: 'spawn' | 'rehydrate' | 'restore';
+		}
+	): void {
+		// `session.config` may be absent on restored ghost sessions before the first
+		// query setup, so read defensively — treat as empty servers map.
+		const currentMcpServers =
+			(session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined) ?? {};
+		if (currentMcpServers['node-agent']) {
+			// Invariant holds — log at debug level for traceability.
+			log.debug(
+				`TaskAgentManager.ensureNodeAgentAttached: node-agent present on session ${ctx.subSessionId} (phase=${ctx.phase})`
+			);
+			return;
+		}
+
+		log.error(
+			`TaskAgentManager.ensureNodeAgentAttached: node-agent MCP server MISSING on workflow sub-session ${ctx.subSessionId} ` +
+				`(task=${ctx.taskId}, agent=${ctx.agentName}, phase=${ctx.phase}). ` +
+				`Visible servers: [${Object.keys(currentMcpServers).sort().join(', ')}]. ` +
+				`Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
+		);
+
+		this.reinjectNodeAgentMcpServer(session, ctx);
+
+		const verifyMcpServers =
+			(session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined) ?? {};
+		if (!verifyMcpServers['node-agent']) {
+			throw new Error(
+				`TaskAgentManager.ensureNodeAgentAttached: failed to re-attach node-agent to session ${ctx.subSessionId} after self-heal attempt`
+			);
+		}
+		log.info(
+			`TaskAgentManager.ensureNodeAgentAttached: successfully re-attached node-agent to session ${ctx.subSessionId} (phase=${ctx.phase})`
+		);
+	}
+
+	/**
+	 * Build (or re-build) the per-session node-agent MCP server and merge it into
+	 * the session's runtime MCP map, preserving any other MCP servers already present.
+	 *
+	 * Used by the defensive self-heal path in ensureNodeAgentAttached and as a
+	 * restore primitive callable when a sub-session needs node-agent re-attached
+	 * (e.g., after a refactor regression or registry collision drops it).
+	 *
+	 * Note: `setRuntimeMcpServers` REPLACES the in-memory mcpServers map, so we
+	 * must merge with the current map to avoid dropping registry-sourced servers
+	 * that were attached at session creation.
+	 */
+	reinjectNodeAgentMcpServer(
+		session: AgentSession,
+		ctx: {
+			taskId: string;
+			subSessionId: string;
+			agentName: string;
+			spaceId: string;
+			workflowRunId: string;
+			workspacePath: string;
+			workflowNodeId: string;
+		}
+	): void {
+		const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+			ctx.taskId,
+			ctx.subSessionId,
+			ctx.agentName,
+			ctx.spaceId,
+			ctx.workflowRunId,
+			ctx.workspacePath,
+			ctx.workflowNodeId
+		);
+
+		const currentMcpServers =
+			(session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined) ?? {};
+		const merged: Record<string, McpServerConfig> = {
+			...currentMcpServers,
+			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+		};
+		session.setRuntimeMcpServers(merged);
+	}
+
+	/**
 	 * Build a node agent MCP server for a newly spawned sub-session.
 	 * Called from the `buildNodeAgentMcpServer` callback passed to createTaskAgentMcpServer().
 	 *
@@ -2498,6 +2641,49 @@ export class TaskAgentManager {
 			};
 		}
 
+		// Self-heal callback for the agent-callable `restore_node_agent` tool.
+		// Looks up the live AgentSession by the session ID we baked into the closure
+		// at server-build time, then calls reinjectNodeAgentMcpServer to (re)attach
+		// node-agent. Belt-and-braces: the tool call itself is proof the server is
+		// already attached, but re-injecting protects against partial/torn registry
+		// state and emits a structured log entry for diagnosis.
+		const capturedTaskId = taskId;
+		const capturedSubSessionId = subSessionId;
+		const capturedAgentName = agentName;
+		const capturedSpaceId = spaceId;
+		const capturedWorkflowRunId = workflowRunId;
+		const capturedWorkspacePath = workspacePath;
+		const capturedWorkflowNodeId = workflowNodeId;
+		const onRestoreNodeAgent = (args: { reason?: string }): void => {
+			const liveSession = this.getSubSession(capturedSubSessionId);
+			if (!liveSession) {
+				log.warn(
+					`TaskAgentManager.onRestoreNodeAgent: no live AgentSession found for sub-session ${capturedSubSessionId} ` +
+						`(task=${capturedTaskId}, agent=${capturedAgentName}). Reason: ${args.reason ?? '<unspecified>'}`
+				);
+				return;
+			}
+			try {
+				this.reinjectNodeAgentMcpServer(liveSession, {
+					taskId: capturedTaskId,
+					subSessionId: capturedSubSessionId,
+					agentName: capturedAgentName,
+					spaceId: capturedSpaceId,
+					workflowRunId: capturedWorkflowRunId,
+					workspacePath: capturedWorkspacePath,
+					workflowNodeId: capturedWorkflowNodeId,
+				});
+				log.info(
+					`TaskAgentManager.onRestoreNodeAgent: re-attached node-agent for sub-session ${capturedSubSessionId} ` +
+						`(task=${capturedTaskId}, agent=${capturedAgentName}, reason=${args.reason ?? '<unspecified>'})`
+				);
+			} catch (err) {
+				log.error(
+					`TaskAgentManager.onRestoreNodeAgent: failed to re-attach node-agent for sub-session ${capturedSubSessionId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		};
+
 		return createNodeAgentMcpServer({
 			mySessionId: subSessionId,
 			myAgentName: agentName,
@@ -2522,6 +2708,7 @@ export class TaskAgentManager {
 				const s = await spaceManager.getSpace(sid);
 				return s?.autonomyLevel ?? 1;
 			},
+			onRestoreNodeAgent,
 		});
 	}
 }

@@ -53,6 +53,7 @@ import {
 	ReadGateSchema,
 	WriteArtifactSchema,
 	ListArtifactsSchema,
+	RestoreNodeAgentSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -64,6 +65,7 @@ import type {
 	ReadGateInput,
 	WriteArtifactInput,
 	ListArtifactsInput,
+	RestoreNodeAgentInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 
@@ -172,6 +174,18 @@ export interface NodeAgentToolsConfig {
 	 * Optional — when absent, artifact tools are not registered.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Optional callback invoked when the agent calls `restore_node_agent`.
+	 *
+	 * Wired by TaskAgentManager to re-attach the per-session node-agent MCP server
+	 * (preserving any other registry-sourced servers) and emit a structured log
+	 * entry for diagnosis. The callback is fire-and-forget from the tool's
+	 * perspective — failures are logged but do not block the tool result.
+	 *
+	 * When omitted (e.g. in unit tests), the tool still succeeds and reports the
+	 * visible MCP server names but performs no server-side reattachment.
+	 */
+	onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
 }
 
 // ---------------------------------------------------------------------------
@@ -769,6 +783,50 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		// ── Self-heal ────────────────────────────────────────────────────
+
+		/**
+		 * Self-heal primitive.
+		 *
+		 * Successfully invoking this tool is itself proof that the node-agent
+		 * MCP server is registered for the current session — if the server were
+		 * missing, the SDK would have rejected the call with "No such tool
+		 * available". The handler additionally invokes the optional
+		 * `onRestoreNodeAgent` callback (wired by TaskAgentManager) which
+		 * re-attaches the per-session node-agent server as a belt-and-braces
+		 * measure and writes a structured log entry for diagnosis.
+		 *
+		 * The result reports back the visible MCP server names so the agent can
+		 * confirm its environment before retrying a critical handoff.
+		 */
+		async restore_node_agent(args: RestoreNodeAgentInput): Promise<ToolResult> {
+			const reason = args.reason?.trim();
+			log.info(
+				`node-agent.restore_node_agent invoked by session ${mySessionId} ` +
+					`(agent=${myAgentName}, task=${config.taskId}, reason=${reason ?? '<unspecified>'})`
+			);
+
+			try {
+				if (config.onRestoreNodeAgent) {
+					await config.onRestoreNodeAgent({ reason });
+				}
+			} catch (err) {
+				log.warn(
+					`node-agent.restore_node_agent: server-side reattachment callback failed for session ${mySessionId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+
+			return jsonResult({
+				success: true,
+				sessionId: mySessionId,
+				agentName: myAgentName,
+				message:
+					'node-agent MCP server is registered for this session — the fact that this tool ' +
+					'call succeeded proves it. If a previous mcp__node-agent__send_message call ' +
+					'returned "No such tool available", retry it now.',
+			});
+		},
 	};
 }
 
@@ -847,6 +905,17 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 				'Use `data` for machine-readable artifacts like pr_url, commit_sha, test_results.',
 			SaveSchema.shape,
 			(args) => handlers.save(args)
+		),
+		tool(
+			'restore_node_agent',
+			'Self-heal primitive — call when you suspect the node-agent MCP server is unhealthy ' +
+				'(e.g. a previous mcp__node-agent__send_message returned "No such tool available"). ' +
+				'The fact that this call succeeds proves node-agent is registered for your session. ' +
+				'The handler also re-attaches the server on the daemon side as a belt-and-braces ' +
+				'measure and emits a structured log line for diagnosis. After calling, retry the ' +
+				'failed tool once.',
+			RestoreNodeAgentSchema.shape,
+			(args) => handlers.restore_node_agent(args)
 		),
 		...(config.artifactRepo
 			? [
