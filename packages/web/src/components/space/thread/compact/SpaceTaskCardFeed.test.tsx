@@ -419,6 +419,78 @@ describe('SpaceTaskCardFeed', () => {
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Agent');
 	});
 
+	/**
+	 * Regression guard: the agent pill should have consistent breathing room
+	 * above the first body row regardless of which SDK block type is first
+	 * (system:init, text, thinking, tool_use). Previously `pt-0.5` on the
+	 * body wrapper left the `Session Started` card butted up against the
+	 * agent header pill.
+	 */
+	describe('agent header spacing (first block type parity)', () => {
+		const firstBlockScenarios: Array<{
+			name: string;
+			build: () => ParsedThreadRow[];
+		}> = [
+			{
+				name: 'system:init first',
+				build: () => [
+					{
+						id: '1',
+						sessionId: 'sess-coder',
+						label: 'Coder Agent',
+						taskId: 'task-1',
+						taskTitle: 'Task One',
+						createdAt: 1,
+						turnIndex: undefined,
+						turnHiddenMessageCount: undefined,
+						message: {
+							type: 'system',
+							subtype: 'init',
+							model: 'sonnet-4-5',
+							permissionMode: 'default',
+							tools: ['Read', 'Write'],
+							mcp_servers: [],
+						} as any,
+						fallbackText: null,
+					},
+				],
+			},
+			{
+				name: 'text first',
+				build: () => [makeAssistantTextRow('1', 'Coder Agent', 'hello world')],
+			},
+			{
+				name: 'tool_use first',
+				build: () => [makeToolUseRow('1', 'Coder Agent', 'Read')],
+			},
+			{
+				name: 'user message first',
+				build: () => [makeUserRow('1', 'Coder Agent', 'Start coding please')],
+			},
+		];
+
+		for (const scenario of firstBlockScenarios) {
+			it(`applies consistent body top-padding when ${scenario.name}`, () => {
+				const { container } = render(
+					<SpaceTaskCardFeed
+						parsedRows={scenario.build()}
+						taskId="task-1"
+						maps={fakeMaps as any}
+						isAgentActive={false}
+					/>
+				);
+				const body = container.querySelector('[data-testid="compact-block-body"]') as HTMLElement;
+				expect(body).toBeTruthy();
+				// The body wrapper must apply a non-minimal top padding so the
+				// first block does not butt against the agent header pill.
+				// We check the class list rather than the computed style
+				// because jsdom doesn't resolve Tailwind utility classes.
+				expect(body.className).toContain('pt-2');
+				expect(body.className).not.toContain('pt-0.5');
+			});
+		}
+	});
+
 	it('renders subagent result/error rows (no filtering)', () => {
 		const rows = [
 			makeToolUseRow('a1', 'Task Agent', 'Task', 'sess-task'),
