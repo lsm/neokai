@@ -63,13 +63,15 @@ describe('parseNumstat', () => {
 });
 
 describe('parseCommitLog', () => {
+	const DL = '\x1F'; // COMMIT_LOG_FIELD_DELIMITER — must mirror the producer in artifact-git-ops.
+
 	it('returns empty array for empty output', () => {
 		expect(parseCommitLog('')).toEqual([]);
 	});
 
 	it('parses a single commit with numstat lines', () => {
 		const input = [
-			'COMMIT:abc123|feat: do thing|Alice|1700000000',
+			`COMMIT:abc123${DL}feat: do thing${DL}Alice${DL}1700000000`,
 			'5\t2\tsrc/a.ts',
 			'3\t0\tsrc/b.ts',
 		].join('\n');
@@ -89,9 +91,9 @@ describe('parseCommitLog', () => {
 
 	it('parses multiple commits and separates their stats', () => {
 		const input = [
-			'COMMIT:aaa|first|A|1700000000',
+			`COMMIT:aaa${DL}first${DL}A${DL}1700000000`,
 			'5\t2\tfile1',
-			'COMMIT:bbb|second|B|1700000100',
+			`COMMIT:bbb${DL}second${DL}B${DL}1700000100`,
 			'3\t1\tfile2',
 			'1\t0\tfile3',
 		].join('\n');
@@ -105,11 +107,22 @@ describe('parseCommitLog', () => {
 	});
 
 	it('tolerates commits with no numstat body', () => {
-		const input = 'COMMIT:abc|no files|X|1700000000';
+		const input = `COMMIT:abc${DL}no files${DL}X${DL}1700000000`;
 		const commits = parseCommitLog(input);
 		expect(commits).toHaveLength(1);
 		expect(commits[0].additions).toBe(0);
 		expect(commits[0].fileCount).toBe(0);
+	});
+
+	it('preserves commit subjects that contain a pipe character', () => {
+		// Regression for the `|` delimiter: previously a subject like
+		// `fix: handle | in input` would shift author/timestamp fields.
+		const input = `COMMIT:deadbeef${DL}fix: handle | in input${DL}Bob${DL}1700000200`;
+		const commits = parseCommitLog(input);
+		expect(commits).toHaveLength(1);
+		expect(commits[0].message).toBe('fix: handle | in input');
+		expect(commits[0].author).toBe('Bob');
+		expect(commits[0].timestamp).toBe(1700000200 * 1000);
 	});
 });
 

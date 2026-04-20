@@ -160,8 +160,23 @@ export function parseNumstat(output: string): DiffSummary {
 }
 
 /**
- * Parse `git log --format=COMMIT:%H|%s|%aN|%at --numstat` output. Each
- * commit block starts with a `COMMIT:` line followed by numstat lines.
+ * Field delimiter used inside the `COMMIT:` header line produced by
+ * `git log --format`. We use the ASCII Unit Separator (`\x1F`) rather than
+ * `|` so commit subjects (`%s`) that legitimately contain pipe characters
+ * (e.g. `fix: handle | in input`) don't shift the author/timestamp fields.
+ */
+export const COMMIT_LOG_FIELD_DELIMITER = '\x1F';
+
+/**
+ * `git log --format` string used by both the sync RPC handler and the
+ * background job handler. Keeping it in one place means the parser and the
+ * producer always agree on the delimiter.
+ */
+export const COMMIT_LOG_FORMAT = `--format=COMMIT:%H${COMMIT_LOG_FIELD_DELIMITER}%s${COMMIT_LOG_FIELD_DELIMITER}%aN${COMMIT_LOG_FIELD_DELIMITER}%at`;
+
+/**
+ * Parse `git log --format=COMMIT:%H\x1F%s\x1F%aN\x1F%at --numstat` output.
+ * Each commit block starts with a `COMMIT:` line followed by numstat lines.
  */
 export function parseCommitLog(output: string): CommitInfo[] {
 	const commits: CommitInfo[] = [];
@@ -170,7 +185,7 @@ export function parseCommitLog(output: string): CommitInfo[] {
 	for (const line of output.split('\n')) {
 		if (line.startsWith('COMMIT:')) {
 			if (current) commits.push(current);
-			const parts = line.slice('COMMIT:'.length).split('|');
+			const parts = line.slice('COMMIT:'.length).split(COMMIT_LOG_FIELD_DELIMITER);
 			current = {
 				sha: parts[0]?.trim() ?? '',
 				message: parts[1]?.trim() ?? '',
