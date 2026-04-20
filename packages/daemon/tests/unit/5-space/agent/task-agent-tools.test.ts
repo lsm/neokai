@@ -389,7 +389,7 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('marks task as completed with summary', async () => {
+	test('records summary and marks task done (runtime pipeline decides terminal status)', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Main task',
@@ -400,20 +400,22 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id'));
 
 		const result = await handlers.report_result({
-			status: 'done',
 			summary: 'All steps completed successfully.',
 		});
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(true);
-		expect(parsed.status).toBe('done');
 		expect(parsed.summary).toBe('All steps completed successfully.');
+		// `status` is intentionally NOT echoed — the agent does not control it.
+		expect(parsed.status).toBeUndefined();
 
 		const updated = ctx.taskRepo.getTask(mainTask.id);
+		// The tool always records `done`; the completion-action pipeline may
+		// later downgrade it. Downstream tests cover that.
 		expect(updated?.status).toBe('done');
 	});
 
-	test('marks task as needs_attention with error', async () => {
+	test('records evidence alongside the summary', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Main task',
@@ -424,44 +426,26 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id'));
 
 		const result = await handlers.report_result({
-			status: 'blocked',
-			summary: 'An error occurred.',
-			error: 'Tests failed in CI.',
+			summary: 'PR opened.',
+			evidence: {
+				prUrl: 'https://github.com/example/repo/pull/42',
+				commitSha: 'abc1234',
+			},
 		});
 		const parsed = JSON.parse(result.content[0].text);
-
 		expect(parsed.success).toBe(true);
-		expect(parsed.status).toBe('blocked');
 
 		const updated = ctx.taskRepo.getTask(mainTask.id);
-		expect(updated?.status).toBe('blocked');
-	});
-
-	test('marks task as cancelled', async () => {
-		const mainTask = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'Main task',
-			description: '',
-			status: 'in_progress',
-		});
-
-		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id'));
-
-		const result = await handlers.report_result({
-			status: 'cancelled',
-			summary: 'User cancelled the task.',
-		});
-		const parsed = JSON.parse(result.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.status).toBe('cancelled');
+		expect(updated?.status).toBe('done');
+		expect(updated?.result).toContain('PR opened.');
+		expect(updated?.result).toContain('https://github.com/example/repo/pull/42');
+		expect(updated?.result).toContain('abc1234');
 	});
 
 	test('returns error when task not found', async () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, 'task-does-not-exist', 'run-id'));
 
 		const result = await handlers.report_result({
-			status: 'done',
 			summary: 'Done.',
 		});
 		const parsed = JSON.parse(result.content[0].text);
@@ -471,7 +455,7 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 	});
 
 	test('returns error when status transition is invalid', async () => {
-		// completed → completed is not a valid transition
+		// done → done is not a valid transition
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Already done',
@@ -482,7 +466,6 @@ describe('createTaskAgentToolHandlers — report_result', () => {
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id'));
 
 		const result = await handlers.report_result({
-			status: 'done',
 			summary: 'Done again?',
 		});
 		const parsed = JSON.parse(result.content[0].text);
@@ -506,7 +489,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('emits space.task.done event when status is done', async () => {
+	test('emits space.task.done event with summary', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Test Task',
@@ -520,7 +503,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 			daemonHub: hub,
 		});
 
-		await handlers.report_result({ status: 'done', summary: 'All done.' });
+		await handlers.report_result({ summary: 'All done.' });
 
 		// The mock emit is synchronous (records events before returning Promise.resolve()),
 		// so no async flush is needed — assertions can run immediately.
@@ -534,7 +517,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 		expect(emittedEvents[0].payload.taskTitle).toBe('Test Task');
 	});
 
-	test('emits space.task.failed event when status is needs_attention', async () => {
+	test('always emits space.task.done (runtime pipeline decides final status)', async () => {
 		const mainTask = ctx.taskRepo.createTask({
 			spaceId: ctx.spaceId,
 			title: 'Failing Task',
@@ -548,40 +531,18 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 			daemonHub: hub,
 		});
 
+		// The agent can no longer self-certify "blocked" — it always reports a
+		// summary and the completion-action pipeline decides if the task should
+		// end up blocked/needs_attention.
 		await handlers.report_result({
-			status: 'blocked',
-			summary: 'Tests failed.',
-			error: 'CI pipeline error',
+			summary: 'Tests failed — summary only; pipeline may flip to needs_attention.',
 		});
 
 		expect(emittedEvents).toHaveLength(1);
-		expect(emittedEvents[0].name).toBe('space.task.failed');
+		expect(emittedEvents[0].name).toBe('space.task.done');
 		expect(emittedEvents[0].payload.taskId).toBe(mainTask.id);
-		expect(emittedEvents[0].payload.spaceId).toBe(ctx.spaceId);
-		expect(emittedEvents[0].payload.status).toBe('blocked');
-		expect(emittedEvents[0].payload.summary).toBe('Tests failed.');
+		expect(emittedEvents[0].payload.status).toBe('done');
 		expect(emittedEvents[0].payload.taskTitle).toBe('Failing Task');
-	});
-
-	test('emits space.task.failed event when status is cancelled', async () => {
-		const mainTask = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'Cancelled Task',
-			description: '',
-			status: 'in_progress',
-		});
-		const { hub, emittedEvents } = makeMockDaemonHub();
-
-		const handlers = createTaskAgentToolHandlers({
-			...makeConfig(ctx, mainTask.id, 'run-789'),
-			daemonHub: hub,
-		});
-
-		await handlers.report_result({ status: 'cancelled', summary: 'User cancelled.' });
-
-		expect(emittedEvents).toHaveLength(1);
-		expect(emittedEvents[0].name).toBe('space.task.failed');
-		expect(emittedEvents[0].payload.status).toBe('cancelled');
 	});
 
 	test('does not emit events when daemonHub is not provided', async () => {
@@ -595,7 +556,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 		// No daemonHub in config
 		const handlers = createTaskAgentToolHandlers(makeConfig(ctx, mainTask.id, 'run-id'));
 
-		const result = await handlers.report_result({ status: 'done', summary: 'Done.' });
+		const result = await handlers.report_result({ summary: 'Done.' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		// Should still succeed — hub is optional
@@ -616,7 +577,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 			daemonHub: hub,
 		});
 
-		await handlers.report_result({ status: 'done', summary: 'Done.' });
+		await handlers.report_result({ summary: 'Done.' });
 
 		expect(emittedEvents[0].payload.sessionId).toBe('global');
 	});
@@ -629,7 +590,7 @@ describe('createTaskAgentToolHandlers — report_result DaemonHub events', () =>
 			daemonHub: hub,
 		});
 
-		const result = await handlers.report_result({ status: 'done', summary: 'Done.' });
+		const result = await handlers.report_result({ summary: 'Done.' });
 		const parsed = JSON.parse(result.content[0].text);
 
 		expect(parsed.success).toBe(false);

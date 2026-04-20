@@ -32,6 +32,10 @@ import type { SpaceTask, SpaceWorkflowRun, SpaceWorkflow, Space } from '@neokai/
 import type { SpaceAutonomyLevel, CompletionAction } from '@neokai/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import type {
+	InstructionActionExecutor,
+	McpToolExecutor,
+} from '../../../../src/lib/space/runtime/completion-action-executors.ts';
 
 // ---------------------------------------------------------------------------
 // MockNotificationSink
@@ -1259,5 +1263,553 @@ describe('SpaceRuntime — completion actions', () => {
 		);
 		const enriched = enrichTaskWithPendingAction(task, workflowRunRepo, workflowManager);
 		expect(enriched.pendingAction).toBeUndefined();
+	});
+
+	// ─── Pipeline is the sole arbiter of terminal status ──────────────────
+	//
+	// Stage-2 invariant: the runtime does NOT read `reportedStatus` to decide
+	// the terminal status. An agent that calls `report_result` only signals
+	// "I'm done talking" — the completion-action pipeline determines whether
+	// that translates to `done` or `blocked`. These tests pin that contract:
+	// even legacy DB values like `reportedStatus='blocked'` or `'cancelled'`
+	// must NOT bypass the pipeline.
+
+	test('pipeline runs even when reportedStatus is "blocked" — actions succeed → task done', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'sole-action',
+				name: 'Sole Action',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "ok"',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Legacy value — an old agent might still write 'blocked', but the
+		// runtime must not honor it as a terminal veto.
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'blocked',
+			reportedSummary: 'I think I failed',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		// The pipeline — NOT reportedStatus — gets to decide. Action succeeded,
+		// so the task is done.
+		expect(task.status).toBe('done');
+		expect(task.approvalSource).toBe('auto_policy');
+	});
+
+	test('pipeline runs even when reportedStatus is "cancelled" — actions decide outcome', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'cancel-cover',
+				name: 'Cancel Cover',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'exit 1',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'cancelled',
+			reportedSummary: 'cancelled',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		// Action failed → task is blocked. 'cancelled' reportedStatus did NOT
+		// short-circuit the pipeline; the action's failure is what matters.
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Cancel Cover');
+	});
+
+	test('"agent lies" — reports success but VERIFY action fails → task blocked', async () => {
+		// Canonical scenario from the task brief: an agent calls report_result
+		// claiming completion, but a post-completion verification action proves
+		// it did not actually do the work (e.g. PR not merged). The runtime
+		// must NOT trust the agent's word — the task must end `blocked`.
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'verify-pr',
+				name: 'Verify PR Merged',
+				type: 'script',
+				requiredLevel: 2,
+				// Simulated "PR not merged" assertion — exit 1 means verification failed.
+				script: 'echo "PR is still OPEN" >&2; exit 1',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		// Agent claims success with evidence
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'Merged PR #42',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Verify PR Merged');
+	});
+
+	// ─── Instruction completion action ────────────────────────────────────
+
+	test('instruction action with no executor configured → task blocked with clear reason', async () => {
+		setAutonomyLevel(5);
+		// Intentionally no instructionActionExecutor — covers the
+		// misconfiguration path. The runtime must refuse to silently succeed.
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'verify-quality',
+				name: 'QA Verifier',
+				type: 'instruction',
+				requiredLevel: 2,
+				agentName: 'qa-agent',
+				instruction: 'Verify the QA checklist is satisfied.',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		// Exact wording is stable enough to pin — the caller's audit log depends
+		// on it.
+		expect(task.result).toContain('no instructionActionExecutor configured');
+	});
+
+	test('instruction action with executor that passes → task done', async () => {
+		setAutonomyLevel(5);
+		const calls: Array<{ agent: string; instruction: string }> = [];
+		const executor: InstructionActionExecutor = async (action) => {
+			calls.push({ agent: action.agentName, instruction: action.instruction });
+			return { success: true, reason: 'verifier agreed' };
+		};
+		const rt = makeRuntime({ instructionActionExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'qa-verify',
+				name: 'QA Verifier',
+				type: 'instruction',
+				requiredLevel: 2,
+				agentName: 'qa-agent',
+				instruction: 'Verify the QA checklist.',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+		// Executor received the action's agentName + instruction — proves the
+		// dispatch path is wired correctly, not just reading a bool.
+		expect(calls).toHaveLength(1);
+		expect(calls[0].agent).toBe('qa-agent');
+		expect(calls[0].instruction).toBe('Verify the QA checklist.');
+	});
+
+	test('instruction action with executor that fails → task blocked with verifier reason', async () => {
+		setAutonomyLevel(5);
+		const executor: InstructionActionExecutor = async () => ({
+			success: false,
+			reason: 'checklist item #3 not satisfied',
+		});
+		const rt = makeRuntime({ instructionActionExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'qa-verify',
+				name: 'QA Verifier',
+				type: 'instruction',
+				requiredLevel: 2,
+				agentName: 'qa-agent',
+				instruction: 'Verify.',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toBe('checklist item #3 not satisfied');
+	});
+
+	test('instruction action whose executor throws → task blocked with error message', async () => {
+		setAutonomyLevel(5);
+		const executor: InstructionActionExecutor = async () => {
+			throw new Error('session crashed');
+		};
+		const rt = makeRuntime({ instructionActionExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'qa-verify',
+				name: 'QA Verifier',
+				type: 'instruction',
+				requiredLevel: 2,
+				agentName: 'qa-agent',
+				instruction: 'Verify.',
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('session crashed');
+	});
+
+	// ─── mcp_call completion action ───────────────────────────────────────
+
+	test('mcp_call action with no executor configured → task blocked with clear reason', async () => {
+		setAutonomyLevel(5);
+		const rt = makeRuntime();
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'mcp-check',
+				name: 'MCP Check',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'pr_status',
+				args: { prUrl: 'https://github.com/o/r/pull/1' },
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('no mcpToolExecutor configured');
+	});
+
+	test('mcp_call with no expect + executor returns anything → task done', async () => {
+		setAutonomyLevel(5);
+		const executor: McpToolExecutor = async () => ({ whatever: true });
+		const rt = makeRuntime({ mcpToolExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'mcp-ping',
+				name: 'MCP Ping',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'ping',
+				args: {},
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+		expect(taskRepo.getTask(tasks[0].id)!.status).toBe('done');
+	});
+
+	test('mcp_call with passing expect assertion → task done', async () => {
+		setAutonomyLevel(5);
+		const calls: Array<{ tool: string; args: Record<string, string> }> = [];
+		const executor: McpToolExecutor = async (action) => {
+			if (action.type !== 'mcp_call') throw new Error('unexpected');
+			calls.push({ tool: action.tool, args: action.args });
+			return { state: 'MERGED' };
+		};
+		const rt = makeRuntime({ mcpToolExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'verify-merged',
+				name: 'Verify Merged',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'pr_status',
+				args: { prUrl: 'https://github.com/o/r/pull/1' },
+				expect: { path: 'state', op: 'eq', value: 'MERGED' },
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'Merged PR #1',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		expect(taskRepo.getTask(tasks[0].id)!.status).toBe('done');
+		expect(calls[0].tool).toBe('pr_status');
+		expect(calls[0].args.prUrl).toBe('https://github.com/o/r/pull/1');
+	});
+
+	test('mcp_call with failing expect assertion → task blocked with path/value reason', async () => {
+		setAutonomyLevel(5);
+		const executor: McpToolExecutor = async () => ({ state: 'OPEN' });
+		const rt = makeRuntime({ mcpToolExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'verify-merged',
+				name: 'Verify Merged',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'pr_status',
+				args: { prUrl: 'x' },
+				expect: { path: 'state', op: 'eq', value: 'MERGED' },
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'Merged PR #1',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('"OPEN"');
+		expect(task.result).toContain('"MERGED"');
+	});
+
+	test('mcp_call with throwing executor → task blocked with error reason', async () => {
+		setAutonomyLevel(5);
+		const executor: McpToolExecutor = async () => {
+			throw new Error('server unavailable');
+		};
+		const rt = makeRuntime({ mcpToolExecutor: executor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'verify-merged',
+				name: 'Verify Merged',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'pr_status',
+				args: { prUrl: 'x' },
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'Merged PR #1',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('server unavailable');
+	});
+
+	// ─── Mixed action types in one pipeline ───────────────────────────────
+
+	test('script + instruction + mcp_call all succeed → task done', async () => {
+		// A realistic QA end-node composition: deterministic script verifies
+		// PR merge state, an instruction agent verifies the summary is
+		// sufficient, and a lightweight MCP call records the success.
+		// The pipeline runs actions in order and demands every one succeed.
+		setAutonomyLevel(5);
+		const instructionCalls: string[] = [];
+		const mcpCalls: string[] = [];
+		const instructionExecutor: InstructionActionExecutor = async (action) => {
+			instructionCalls.push(action.agentName);
+			return { success: true };
+		};
+		const mcpExecutor: McpToolExecutor = async (action) => {
+			if (action.type !== 'mcp_call') throw new Error('unexpected');
+			mcpCalls.push(action.tool);
+			return { ok: true };
+		};
+		const rt = makeRuntime({
+			instructionActionExecutor: instructionExecutor,
+			mcpToolExecutor: mcpExecutor,
+		});
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'a1',
+				name: 'Script OK',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'echo "ok"',
+			},
+			{
+				id: 'a2',
+				name: 'Instruction OK',
+				type: 'instruction',
+				requiredLevel: 2,
+				agentName: 'qa-agent',
+				instruction: 'Verify.',
+			},
+			{
+				id: 'a3',
+				name: 'Mcp OK',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'post_comment',
+				args: {},
+				expect: { path: 'ok', op: 'truthy' },
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('done');
+		expect(instructionCalls).toEqual(['qa-agent']);
+		expect(mcpCalls).toEqual(['post_comment']);
+	});
+
+	test('pipeline short-circuits on first failure — later actions are not executed', async () => {
+		setAutonomyLevel(5);
+		const mcpCalls: string[] = [];
+		const mcpExecutor: McpToolExecutor = async (action) => {
+			if (action.type !== 'mcp_call') throw new Error('unexpected');
+			mcpCalls.push(action.tool);
+			return { ok: true };
+		};
+		const rt = makeRuntime({ mcpToolExecutor: mcpExecutor });
+
+		const actions: CompletionAction[] = [
+			{
+				id: 'a1',
+				name: 'Failing Script',
+				type: 'script',
+				requiredLevel: 2,
+				script: 'exit 1',
+			},
+			{
+				id: 'a2',
+				name: 'MCP after failure',
+				type: 'mcp_call',
+				requiredLevel: 2,
+				server: 'github',
+				tool: 'should_not_fire',
+				args: {},
+			},
+		];
+		const workflow = buildWorkflowWithActions(SPACE_ID, workflowManager, actions);
+
+		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+		taskRepo.updateTask(tasks[0].id, {
+			status: 'in_progress',
+			reportedStatus: 'done',
+			reportedSummary: 'done',
+		});
+		seedNodeExec(db, run.id, 'end-node', 'worker', 'idle');
+
+		await rt.executeTick();
+
+		const task = taskRepo.getTask(tasks[0].id)!;
+		expect(task.status).toBe('blocked');
+		expect(task.result).toContain('Failing Script');
+		// Crucial: the MCP action after the failing script MUST NOT have been
+		// invoked. Emitting side effects after a verification failure could
+		// e.g. post premature GitHub reviews.
+		expect(mcpCalls).toEqual([]);
 	});
 });

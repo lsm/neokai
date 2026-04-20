@@ -261,8 +261,8 @@ function CompletionActionDetails({ action }: { action: CompletionAction }) {
 					Show instruction
 				</summary>
 				<p class="mt-2 p-2 bg-dark-900/60 border border-dark-700 rounded text-[11px] text-gray-300">
-					<span class="text-gray-500">→ node </span>
-					<span class="font-mono">{action.targetNodeId}</span>
+					<span class="text-gray-500">→ agent </span>
+					<span class="font-mono">{action.agentName}</span>
 				</p>
 				<pre
 					class="mt-1 p-2 bg-dark-900/60 border border-dark-700 rounded overflow-x-auto whitespace-pre-wrap text-[11px] text-gray-300"

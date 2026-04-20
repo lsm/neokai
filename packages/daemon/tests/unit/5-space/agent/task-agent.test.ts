@@ -221,12 +221,31 @@ describe('buildTaskAgentSystemPrompt — human gate handling', () => {
 	});
 });
 
-describe('buildTaskAgentSystemPrompt — result handling', () => {
-	test('uses cancelled instead of failed for error handling in Workflow Execution Instructions', () => {
+describe('buildTaskAgentSystemPrompt — result handling (Stage-2 result-only contract)', () => {
+	test('documents report_result as summary + optional evidence (no status)', () => {
+		// Stage-2 invariant: agents do NOT self-certify terminal status. The
+		// prompt must tell them to pass only `summary` + `evidence` — the
+		// runtime decides the final status via completion actions.
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('cancelled');
-		// Should not contain the stale "failed" status
-		expect(prompt).not.toMatch(/status: "failed"/);
+		expect(prompt).toContain('summary');
+		expect(prompt).toContain('evidence');
+	});
+
+	test('explicitly instructs agents NOT to pass a status field', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toMatch(/Do NOT pass a `status`|do not pass a `status`/i);
+	});
+
+	test('references the completion-action pipeline as the status arbiter', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt.toLowerCase()).toContain('completion-action');
+	});
+
+	test('must not advertise the old status="done"/"blocked"/"failed" contract', () => {
+		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).not.toMatch(/status\s*[:=]\s*["']done["']/);
+		expect(prompt).not.toMatch(/status\s*[:=]\s*["']blocked["']/);
+		expect(prompt).not.toMatch(/status\s*[:=]\s*["']failed["']/);
 	});
 });
 

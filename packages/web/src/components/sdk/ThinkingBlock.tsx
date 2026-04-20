@@ -47,6 +47,16 @@ export function ThinkingBlock({
 
 	const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
+	// Defense in depth: render nothing when there's no thinking content to
+	// show. Opus 4.7 and other models running with `thinking.display = 'omitted'`
+	// emit thinking blocks with an empty string + a signature for multi-turn
+	// continuity — we should not render a stub "Thinking · 0 characters" card.
+	// Upstream callers (SDKAssistantMessage) also filter, but a component that
+	// guards itself is easier to compose safely.
+	if (typeof content !== 'string' || content.trim().length === 0) {
+		return null;
+	}
+
 	// Check if content exceeds preview height
 	useLayoutEffect(() => {
 		if (contentRef.current) {

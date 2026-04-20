@@ -362,6 +362,55 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 								);
 								gateWriteResult = { gateId, gateOpen: evalResult.open };
 
+								// Multi-round review history: every time the reviewer writes a
+								// `review_url` to this gate, append an append-only artifact row
+								// so we get one record per cycle (cycle 0, 1, 2 …) without any
+								// deduplication. The per-cycle artifactKey makes each write a
+								// distinct row even though the table uses upsert semantics.
+								//
+								// Note: `comment_urls` is not a gate field (so it's stripped from
+								// `authorizedData`), but we still want to persist it alongside the
+								// review for the audit trail — pull it straight from the original
+								// `data` payload the reviewer supplied.
+								if (
+									config.artifactRepo &&
+									gateId === 'review-posted-gate' &&
+									typeof authorizedData.review_url === 'string' &&
+									authorizedData.review_url.length > 0
+								) {
+									try {
+										const priorReviews = config.artifactRepo.listByRun(workflowRunId, {
+											artifactType: 'review',
+										});
+										const cycle = priorReviews.length;
+										const artifactData: Record<string, unknown> = {
+											review_url: authorizedData.review_url,
+											cycle,
+											submittedAt: new Date().toISOString(),
+										};
+										const rawCommentUrls = (data as Record<string, unknown>).comment_urls;
+										if (
+											Array.isArray(rawCommentUrls) &&
+											rawCommentUrls.every((u) => typeof u === 'string')
+										) {
+											artifactData.comment_urls = rawCommentUrls;
+										}
+										config.artifactRepo.upsert({
+											id: crypto.randomUUID(),
+											runId: workflowRunId,
+											nodeId: workflowNodeId,
+											artifactType: 'review',
+											artifactKey: `cycle-${cycle}`,
+											data: artifactData,
+										});
+									} catch (err) {
+										log.warn(
+											`Failed to append review artifact for run "${workflowRunId}":`,
+											err instanceof Error ? err.message : String(err)
+										);
+									}
+								}
+
 								if (onGateDataChanged) {
 									void onGateDataChanged(workflowRunId, gateId).catch((err) => {
 										log.warn(
@@ -871,9 +920,10 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			? [
 					tool(
 						'report_result',
-						'Mark the workflow as completed, failed, or cancelled and record the final result. ' +
+						'Record the final result of the workflow — the runtime decides the terminal status via completion actions. ' +
 							'Only available to the end node of the workflow. ' +
-							'Call this when the workflow has reached its terminal state.',
+							'Provide a human-readable summary and optional structured evidence (prUrl, commitSha, testOutput, …). ' +
+							'Do NOT pass a `status` — the completion-action pipeline is the sole arbiter of success/failure.',
 						ReportResultSchema.shape,
 						(args) => onReportResult(args)
 					),
