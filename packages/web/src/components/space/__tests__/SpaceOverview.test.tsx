@@ -6,11 +6,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { RuntimeState, Space, SpaceTask } from '@neokai/shared';
+import type { RuntimeState, Space, SpaceTask, SpaceWorkflow } from '@neokai/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
+let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
 let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
 let mockSessions: ReturnType<
 	typeof signal<{ id: string; title?: string; status: string; lastActiveAt: number }[]>
@@ -28,6 +29,7 @@ vi.mock('../../../lib/space-store', () => ({
 			space: mockSpace,
 			loading: mockLoading,
 			tasks: mockTasks,
+			workflows: mockWorkflows,
 			runtimeState: mockRuntimeState,
 			sessions: mockSessions,
 			pauseSpace: mockPauseSpace,
@@ -50,6 +52,7 @@ vi.mock('../../../lib/router', () => ({
 mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
+mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockRuntimeState = signal<RuntimeState | null>(null);
 mockSessions = signal([]);
 
@@ -104,6 +107,7 @@ describe('SpaceOverview', () => {
 		mockSpace.value = null;
 		mockLoading.value = false;
 		mockTasks.value = [];
+		mockWorkflows.value = [];
 		mockRuntimeState.value = null;
 		mockSessions.value = [];
 		mockPauseSpace.mockClear();

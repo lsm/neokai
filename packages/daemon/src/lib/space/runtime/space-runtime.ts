@@ -29,7 +29,7 @@ import type {
 	SpaceWorkflowRun,
 	WorkflowChannel,
 } from '@neokai/shared';
-import { resolveNodeAgents } from '@neokai/shared';
+import { isAutonomousWithoutActions, resolveNodeAgents } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -1887,15 +1887,16 @@ export class SpaceRuntime {
 		const actions = endNode?.completionActions;
 
 		if (!actions || actions.length === 0) {
-			// No completion actions — use simple autonomy check
-			const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
+			// No completion actions — use shared autonomy threshold.
+			// `isAutonomousWithoutActions` is also consumed by the web UI so the
+			// two surfaces cannot drift.
+			const autonomous = isAutonomousWithoutActions(spaceLevel);
+			const completionStatus = autonomous ? 'done' : 'review';
 			return {
 				status: completionStatus,
 				result: taskResult,
-				completedAt: spaceLevel >= 2 ? Date.now() : null,
-				...(completionStatus === 'done'
-					? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
-					: {}),
+				completedAt: autonomous ? Date.now() : null,
+				...(autonomous ? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() } : {}),
 			};
 		}
 
@@ -1922,15 +1923,14 @@ export class SpaceRuntime {
 			log.warn(
 				`SpaceRuntime: cannot execute completion actions — space ${spaceId} not found or has no workspacePath`
 			);
-			// Fall through to binary autonomy check
-			const completionStatus = spaceLevel >= 2 ? 'done' : 'review';
+			// Fall through to shared autonomy threshold
+			const autonomous = isAutonomousWithoutActions(spaceLevel);
+			const completionStatus = autonomous ? 'done' : 'review';
 			return {
 				status: completionStatus,
 				result: taskResult,
-				completedAt: spaceLevel >= 2 ? Date.now() : null,
-				...(completionStatus === 'done'
-					? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
-					: {}),
+				completedAt: autonomous ? Date.now() : null,
+				...(autonomous ? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() } : {}),
 			};
 		}
 		const workspacePath = space.workspacePath;
