@@ -32,12 +32,10 @@ import { computeWorkflowHash } from './template-hash.ts';
 const CODING_CODE_NODE = 'tpl-coding-code';
 const CODING_REVIEW_NODE = 'tpl-coding-review';
 
-// V2 node IDs
-const V2_PLANNING_NODE = 'tpl-v2-planning';
-const V2_PLAN_REVIEW_NODE = 'tpl-v2-plan-review';
-const V2_CODING_NODE = 'tpl-v2-coding';
-const V2_REVIEW_NODE = 'tpl-v2-review';
-const V2_QA_NODE = 'tpl-v2-qa';
+// Plan & Decompose node IDs
+const PD_PLANNING_NODE = 'tpl-pd-planning';
+const PD_PLAN_REVIEW_NODE = 'tpl-pd-plan-review';
+const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 
 const FULLSTACK_CODING_NODE = 'tpl-fullstack-coding';
 const FULLSTACK_REVIEW_NODE = 'tpl-fullstack-review';
@@ -139,73 +137,52 @@ const MERGE_PR_COMPLETION_ACTION: CompletionAction = {
 	script: PR_MERGE_BASH_SCRIPT,
 };
 
-const V2_PLANNING_PROMPT =
-	'You are the Planning node in a Full-Cycle Coding Workflow. Your role is to turn the task into a ' +
-	'concrete, actionable implementation plan that downstream nodes (Code, Review, QA) can execute ' +
-	'without guessing.\n\n' +
+const PD_PLANNING_PROMPT =
+	'You are the Planning node in a Plan & Decompose Workflow. Your role is to turn the user goal ' +
+	'into a concrete, decomposable plan that a Task Dispatcher can fan out into standalone tasks.\n\n' +
 	'Your plan must include:\n' +
-	'- Scope: what is being changed and what is explicitly out of scope\n' +
-	'- Steps: ordered list of implementation steps with file paths where possible\n' +
-	'- Dependencies: external libraries, APIs, or prior work required\n' +
-	'- Testing strategy: what tests to write, what to verify\n' +
-	'- Risk areas: edge cases, backward compatibility, performance concerns\n' +
-	'- Open questions: anything you cannot resolve from the codebase alone\n\n' +
-	'Write the plan to a file (e.g. `plan.md`), commit it, and open/update a PR. ' +
-	'The plan-pr-gate will automatically verify the PR before Plan Review starts.';
+	'- Goal summary: what is being built, migrated, or delivered, in one paragraph\n' +
+	'- Work items: a numbered list of actionable items — each a unit small enough for one task, ' +
+	'with a clear title, 2-4 sentence description, and suggested priority (low/normal/high/urgent)\n' +
+	'- Dependencies: between work items (item B depends on item A)\n' +
+	'- Out of scope: what is intentionally not included\n' +
+	'- Open questions: anything that needs clarification before tasks are dispatched\n\n' +
+	'Write the plan to `plan.md` at the repo root, commit it, and open/update a PR targeting the ' +
+	'default branch. The plan-pr-gate will automatically verify the PR before Plan Review starts.';
 
-const V2_PLAN_REVIEW_PROMPT =
-	'You are the Plan Review node in a Full-Cycle Coding Workflow. You receive a plan from the ' +
-	'Planning node and must critically evaluate it before coding begins.\n\n' +
-	'Evaluate the plan against these criteria:\n' +
-	'- Completeness: are all requirements addressed? Are edge cases considered?\n' +
-	'- Feasibility: can each step be implemented as described? Are estimates realistic?\n' +
-	'- Testing: is the testing strategy sufficient? Are integration tests included?\n' +
-	'- Risk: are risks identified and mitigated? Is the rollback strategy clear?\n' +
-	'- Scope: is the scope well-bounded? Does it avoid unnecessary changes?\n\n' +
-	'If the plan is sound, approve it by writing to plan-approval-gate (field: approved = true). ' +
-	'If changes are needed, send specific feedback to the Planning node via the feedback channel ' +
-	'explaining what must be revised.';
+const PD_PLAN_REVIEW_PROMPT =
+	'You are one of four parallel Reviewers in the Plan Review node of a Plan & Decompose Workflow. ' +
+	'You receive a plan from the Planning node and must evaluate it through your specific lens ' +
+	'before tasks are dispatched. You do not coordinate with other reviewers; vote independently.\n\n' +
+	'Steps:\n' +
+	'1. Read the plan file in the PR (`gh pr diff` and `gh pr view`).\n' +
+	'2. Evaluate the plan against your lens criteria (described below).\n' +
+	'3. Post your review to the PR with `gh pr review <url> --comment --body "<your review>"` so ' +
+	'the Planner and peer reviewers can see your feedback in the PR thread.\n' +
+	'4. Vote by writing to plan-approval-gate: call send_message to the "Task Dispatcher" node ' +
+	'with `data: { reviewer_name: "<your lens>", approved: true|false, comments_url: "<pr url>" }`. ' +
+	'The vote counts toward the 4-of-4 approval threshold.\n' +
+	'5. If you reject, also send a message to the Planning node via the feedback channel ' +
+	'describing what needs to change, so the Planner can revise and re-open.';
 
-const V2_CODING_PROMPT =
-	'You are the Coding node in a Full-Cycle Coding Workflow. You receive an approved plan from ' +
-	'Plan Review and must implement it faithfully.\n\n' +
-	'Implementation guidelines:\n' +
-	'- Follow the plan step-by-step; do not deviate without documenting why\n' +
-	"- Write clean, well-structured code following the project's existing conventions\n" +
-	"- Write tests as specified in the plan's testing strategy\n" +
-	'- Make atomic commits with clear messages describing each change\n' +
-	'- Ensure all existing tests still pass after your changes\n' +
-	'- Open a pull request with a clear title and description summarizing the changes\n\n' +
-	'If the plan has gaps or you encounter unexpected issues, send feedback to the Planning node ' +
-	'via the Coding→Planning channel before proceeding with assumptions.\n\n' +
-	'When implementation is complete, write the PR URL to code-pr-gate (field: pr_url) ' +
-	'so Code Review can begin.';
-
-const V2_CODE_REVIEW_PROMPT =
-	'You are one of three parallel reviewers in the Code Review node of a Full-Cycle Coding Workflow. ' +
-	'You review the implementation independently — do not coordinate with other reviewers.\n\n' +
-	'Review criteria:\n' +
-	'- Correctness: does the code implement the plan correctly? Are there logic errors?\n' +
-	'- Regressions: could these changes break existing functionality?\n' +
-	'- Maintainability: is the code readable, well-structured, and documented?\n' +
-	'- Test coverage: are new behaviors covered? Are edge cases tested?\n' +
-	'- Security: are there injection risks, auth bypasses, or data leaks?\n' +
-	'- Performance: are there N+1 queries, unbounded loops, or memory leaks?\n\n' +
-	'Record a clear APPROVE or REJECT vote with concise reasoning. Use the read-merge-write ' +
-	"pattern for the votes map to avoid overwriting other reviewers' votes.";
-
-const V2_QA_PROMPT =
-	'You are the QA node in a Full-Cycle Coding Workflow. You receive code that has passed ' +
-	'Code Review (all 3 reviewers approved) and must validate it from an execution and ' +
-	'release-readiness perspective.\n\n' +
-	'QA checklist:\n' +
-	'- Run the full test suite and verify all tests pass\n' +
-	'- Check CI pipeline status on the PR\n' +
-	'- Verify the PR is mergeable (no conflicts, required checks passing)\n' +
-	'- Confirm the changes match what was planned and reviewed\n' +
-	'- Spot-check critical paths manually if possible\n\n' +
-	'If QA passes, call report_result() with a concise final validation summary. ' +
-	'If QA fails, send detailed feedback to Coding so fixes can be made and re-tested.';
+const PD_TASK_DISPATCHER_PROMPT =
+	'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
+	'All four Plan Reviewers have approved the plan — your job is to fan the plan out into ' +
+	'standalone follow-up tasks using the `create_standalone_task` MCP tool.\n\n' +
+	'**You MUST call `report_result` as your final action.** It is the only signal the runtime ' +
+	'accepts as completion — finishing without it leaves the workflow stuck. Do all task ' +
+	'creation BEFORE calling `report_result`.\n\n' +
+	'Steps:\n' +
+	'1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
+	'Identify each actionable work item.\n' +
+	'2. For each item, call `create_standalone_task({ title, description, priority })`. Use a ' +
+	'clear, imperative title and a description that gives the downstream worker everything they ' +
+	'need (context, acceptance criteria, references to the plan).\n' +
+	'3. Collect the returned task IDs.\n' +
+	'4. Call `report_result(status="done", summary="Created N tasks from plan: <short list>", ' +
+	'evidence={ created_task_ids: [<ids>] })` as your last tool call.\n\n' +
+	'Do NOT implement the work items yourself. Do NOT create fewer tasks than the plan requires. ' +
+	'If the plan is empty or ambiguous, send feedback to Planning before calling report_result.';
 
 const FULLSTACK_CODING_PROMPT =
 	'You are the Coder in a Fullstack QA Loop workflow. You implement backend + frontend changes, ' +
@@ -560,35 +537,89 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 };
 
 /**
- * Full-Cycle Coding Workflow
+ * Bash script for the Plan & Decompose end-node completion action.
  *
- * Five-node graph with planning, plan review, coding, parallel code review, and QA.
- * QA is the terminal node and calls report_result() on success.
+ * Verifies that the Task Dispatcher actually fanned the plan out into at least
+ * one standalone task during this workflow run. Without this guard, a Task
+ * Dispatcher that ran report_result() without creating tasks would look
+ * successful on the surface but leave the user with zero follow-up work.
+ *
+ * Environment variables required (injected by the completion-action executor):
+ *   NEOKAI_DB_PATH            — absolute path to the SQLite database file
+ *   NEOKAI_SPACE_ID           — the owning space ID
+ *   NEOKAI_WORKFLOW_START_ISO — ISO-8601 timestamp marking the run's start
+ */
+const PLAN_AND_DECOMPOSE_VERIFY_SCRIPT = [
+	'# Verify at least one follow-up task was created during this workflow run.',
+	'if [ -z "$NEOKAI_DB_PATH" ] || [ -z "$NEOKAI_SPACE_ID" ] || [ -z "$NEOKAI_WORKFLOW_START_ISO" ]; then',
+	'  echo "Missing NEOKAI_DB_PATH, NEOKAI_SPACE_ID, or NEOKAI_WORKFLOW_START_ISO" >&2',
+	'  exit 1',
+	'fi',
+	'# Portable ISO → epoch-seconds conversion (BSD date on macOS lacks -d).',
+	'if command -v gdate >/dev/null 2>&1; then',
+	'  CREATED_AT=$(gdate -d "$NEOKAI_WORKFLOW_START_ISO" +%s)',
+	'elif date -d "$NEOKAI_WORKFLOW_START_ISO" +%s >/dev/null 2>&1; then',
+	'  CREATED_AT=$(date -d "$NEOKAI_WORKFLOW_START_ISO" +%s)',
+	'else',
+	'  # BSD date (-j -f) fallback',
+	'  CREATED_AT=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${NEOKAI_WORKFLOW_START_ISO%%.*}" +%s 2>/dev/null || echo 0)',
+	'fi',
+	'if [ -z "$CREATED_AT" ] || [ "$CREATED_AT" = "0" ]; then',
+	'  echo "Could not parse NEOKAI_WORKFLOW_START_ISO=$NEOKAI_WORKFLOW_START_ISO" >&2',
+	'  exit 1',
+	'fi',
+	'CREATED_AT_MS=$((CREATED_AT * 1000))',
+	'COUNT=$(sqlite3 "$NEOKAI_DB_PATH" "SELECT COUNT(*) FROM space_tasks WHERE space_id=\'$NEOKAI_SPACE_ID\' AND created_at > $CREATED_AT_MS;")',
+	'if [ -z "$COUNT" ] || [ "$COUNT" -lt 1 ]; then',
+	'  echo "No tasks created in this run (count=$COUNT)" >&2',
+	'  exit 1',
+	'fi',
+	'jq -n --argjson n "$COUNT" \'{"status":"verified","created_count":$n}\'',
+].join('\n');
+
+const PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION: CompletionAction = {
+	id: 'verify-tasks-created',
+	name: 'Verify tasks created',
+	description:
+		'Checks that the Task Dispatcher created at least one standalone task during this workflow run.',
+	type: 'script',
+	// Match the highest non-destructive autonomy tier — verification is safe to
+	// run automatically even at conservative autonomy levels.
+	requiredLevel: 1,
+	script: PLAN_AND_DECOMPOSE_VERIFY_SCRIPT,
+};
+
+/**
+ * Plan & Decompose Workflow
+ *
+ * Three-node graph: Planner → 4-Reviewer Plan Review → Task Dispatcher.
+ * Useful for multi-task goals ("build X feature", "migrate Y system") that
+ * should be broken into smaller standalone tasks before any coding starts.
  *
  * Main progression:
  *   Planning → Plan Review (plan-pr-gate: script verifies plan PR is open/mergeable)
- *   Plan Review → Coding (plan-approval-gate: reviewer approves)
- *   Coding → Code Review (code-pr-gate: coder publishes PR URL)
- *   Code Review → QA (review-votes-gate: all 3 approve)
+ *   Plan Review → Task Dispatcher (plan-approval-gate: all 4 reviewers approve)
  *
- * Cyclic feedback paths (ungated):
- *   Code Review → Coding (review feedback)
- *   QA → Coding (QA feedback)
+ * Cyclic feedback:
+ *   Plan Review → Planning (revision requests, maxCycles: 5)
  *
- * Additional feedback channels:
- *   Plan Review → Planning (plan revision requests)
- *   Coding → Planning (clarification requests)
+ * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
+ * and calls `report_result(..., evidence={ created_task_ids })`. A script-based
+ * completion action then verifies that at least one task was actually created.
  */
-export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
+export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
-	name: 'Full-Cycle Coding Workflow',
+	name: 'Plan & Decompose Workflow',
 	description:
-		'Full-cycle coding workflow with planning, plan review, parallel code review, and QA. ' +
-		'QA is the terminal node; feedback from review or QA loops back to Coding.',
+		'Planning-only workflow that ends by creating follow-up tasks rather than writing code. ' +
+		'A Planner drafts a plan PR, four Reviewers review it through different lenses ' +
+		'(architecture, security, correctness, UX), and a Task Dispatcher fans the approved plan ' +
+		'out into standalone tasks via create_standalone_task. Use for multi-task goals that ' +
+		'should be broken down before any coding starts.',
 	nodes: [
 		{
-			id: V2_PLANNING_NODE,
+			id: PD_PLANNING_NODE,
 			name: 'Planning',
 			agents: [
 				{
@@ -596,213 +627,140 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'planner',
 					customPrompt: {
 						value:
-							V2_PLANNING_PROMPT +
+							PD_PLANNING_PROMPT +
 							'\n\n' +
-							'Expected inputs: Task description from the workflow trigger.\n' +
-							'Expected outputs: A committed plan file in an open, mergeable PR.\n\n' +
+							'Expected inputs: A high-level goal from the workflow trigger.\n' +
+							'Expected outputs: `plan.md` committed to a PR branch, with an open mergeable PR.\n\n' +
 							'Steps:\n' +
-							'1. Analyze the task requirements and explore the relevant codebase\n' +
-							'2. Identify affected files, dependencies, and potential risks\n' +
-							'3. Write a structured plan (scope, steps, testing strategy, risks)\n' +
-							'4. Commit the plan file to the branch\n' +
-							'5. Open or update the PR so plan-pr-gate can verify it\n\n' +
-							'If re-activated after Plan Review feedback: revise the plan based on the reviewer comments, ' +
-							'commit updates, and push to the same PR branch.',
+							'1. Analyze the goal and explore the relevant codebase\n' +
+							'2. Decompose the goal into concrete, small-enough work items\n' +
+							'3. Write `plan.md` — one section per work item with title, description, priority\n' +
+							'4. Commit and open/update a PR against the default branch\n' +
+							'5. Wait for plan-pr-gate to verify mergeability\n\n' +
+							'If re-activated after Plan Review feedback: address each reviewer comment, ' +
+							'update `plan.md`, and push to the same PR branch.',
 					},
 				},
 			],
 		},
 		{
-			id: V2_PLAN_REVIEW_NODE,
+			id: PD_PLAN_REVIEW_NODE,
 			name: 'Plan Review',
 			agents: [
 				{
 					agentId: 'Reviewer',
-					name: 'reviewer',
+					name: 'architecture-reviewer',
 					customPrompt: {
 						value:
-							V2_PLAN_REVIEW_PROMPT +
+							PD_PLAN_REVIEW_PROMPT +
 							'\n\n' +
-							'Expected inputs: A committed plan from the Planning node (plan-pr-gate satisfied).\n' +
-							'Expected outputs: Approval signal or specific revision feedback.\n\n' +
-							'Steps:\n' +
-							'1. Read the plan file committed by the Planner\n' +
-							'2. Evaluate completeness, feasibility, testing strategy, and risks\n' +
-							'3. If approved: write to plan-approval-gate (field: approved = true)\n' +
-							'4. If revisions needed: send specific feedback to Planning via the feedback channel\n\n' +
-							'Do NOT approve plans that lack a testing strategy or have unbounded scope.',
+							'Your lens: **Architecture**. Focus on module boundaries, coupling between work ' +
+							'items, long-term maintainability, and whether the decomposition will hold up as ' +
+							'the system grows. Flag items that smuggle unrelated concerns together or create ' +
+							'hidden cross-cutting dependencies.\n\n' +
+							'When voting, use `reviewer_name: "architecture"` in the plan-approval-gate data.',
+					},
+				},
+				{
+					agentId: 'Reviewer',
+					name: 'security-reviewer',
+					customPrompt: {
+						value:
+							PD_PLAN_REVIEW_PROMPT +
+							'\n\n' +
+							'Your lens: **Security**. Focus on the threat model, input validation, ' +
+							'authentication/authorization, secrets handling, and supply-chain risk for any ' +
+							'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
+							'or rely on untrusted input without validation.\n\n' +
+							'When voting, use `reviewer_name: "security"` in the plan-approval-gate data.',
+					},
+				},
+				{
+					agentId: 'Reviewer',
+					name: 'correctness-reviewer',
+					customPrompt: {
+						value:
+							PD_PLAN_REVIEW_PROMPT +
+							'\n\n' +
+							'Your lens: **Correctness**. Focus on edge cases, error handling, data ' +
+							'consistency across failures, idempotency, and race conditions. Flag items ' +
+							'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
+							'whose tests would not catch the obvious regressions.\n\n' +
+							'When voting, use `reviewer_name: "correctness"` in the plan-approval-gate data.',
+					},
+				},
+				{
+					agentId: 'Reviewer',
+					name: 'ux-reviewer',
+					customPrompt: {
+						value:
+							PD_PLAN_REVIEW_PROMPT +
+							'\n\n' +
+							'Your lens: **UX**. Focus on user-visible behavior, API ergonomics, ' +
+							'documentation, error messages, and upgrade/migration experience for ' +
+							'existing users. Flag items that change public interfaces without describing ' +
+							'what users will see or how docs will be updated.\n\n' +
+							'When voting, use `reviewer_name: "ux"` in the plan-approval-gate data.',
 					},
 				},
 			],
 		},
 		{
-			id: V2_CODING_NODE,
-			name: 'Coding',
+			id: PD_TASK_DISPATCHER_NODE,
+			name: 'Task Dispatcher',
 			agents: [
 				{
-					agentId: 'Coder',
-					name: 'coder',
+					agentId: 'General',
+					name: 'task-dispatcher',
 					customPrompt: {
 						value:
-							V2_CODING_PROMPT +
+							PD_TASK_DISPATCHER_PROMPT +
 							'\n\n' +
-							'Expected inputs: An approved plan from Plan Review (plan-approval-gate satisfied).\n' +
-							'Expected outputs: Implementation with PR opened and code-pr-gate signaled.\n\n' +
-							'Steps:\n' +
-							'1. Read the approved plan and follow it step-by-step\n' +
-							'2. Implement changes with atomic, well-described commits\n' +
-							"3. Write tests as specified in the plan's testing strategy\n" +
-							'4. Run the test suite and fix any failures\n' +
-							'5. Open a PR with `gh pr create` — clear title and description\n' +
-							'6. Write the PR URL to code-pr-gate (field: pr_url) to start Code Review\n\n' +
-							'If re-activated after review or QA feedback: address each issue, push fixes, and re-run tests.',
+							'Expected inputs: An approved plan PR (plan-approval-gate satisfied — all 4 ' +
+							'reviewers voted `approved: true`).\n' +
+							'Expected outputs: One standalone task per actionable work item in the plan, ' +
+							'then report_result() with `evidence.created_task_ids`.\n\n' +
+							'Tool contract:\n' +
+							"- `create_standalone_task` is available from the space's MCP server and " +
+							'creates a task owned by the same space as this workflow.',
 					},
 				},
 			],
-		},
-		{
-			id: V2_REVIEW_NODE,
-			name: 'Code Review',
-			agents: [
-				{
-					agentId: 'Reviewer',
-					name: 'Reviewer 1',
-					customPrompt: {
-						value:
-							V2_CODE_REVIEW_PROMPT +
-							'\n\n' +
-							'Review the pull request for correctness, style, and test coverage. ' +
-							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-							'(2) add your entry (key: "Reviewer 1", value: "approved" or "rejected") to the map, ' +
-							'(3) write the complete updated map back via write_gate on review-votes-gate (field: votes). ' +
-							'Never write only your own entry — always include all existing votes to avoid overwriting peers. ' +
-							'If you reject, send actionable feedback to Coding.',
-					},
-				},
-				{
-					agentId: 'Reviewer',
-					name: 'Reviewer 2',
-					customPrompt: {
-						value:
-							V2_CODE_REVIEW_PROMPT +
-							'\n\n' +
-							'Review the pull request for correctness, style, and test coverage. ' +
-							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-							'(2) add your entry (key: "Reviewer 2", value: "approved" or "rejected") to the map, ' +
-							'(3) write the complete updated map back via write_gate on review-votes-gate (field: votes). ' +
-							'Never write only your own entry — always include all existing votes to avoid overwriting peers. ' +
-							'If you reject, send actionable feedback to Coding.',
-					},
-				},
-				{
-					agentId: 'Reviewer',
-					name: 'Reviewer 3',
-					customPrompt: {
-						value:
-							V2_CODE_REVIEW_PROMPT +
-							'\n\n' +
-							'Review the pull request for correctness, style, and test coverage. ' +
-							'To record your vote: (1) use read_gate to fetch the current votes map from review-votes-gate, ' +
-							'(2) add your entry (key: "Reviewer 3", value: "approved" or "rejected") to the map, ' +
-							'(3) write the complete updated map back via write_gate on review-votes-gate (field: votes). ' +
-							'Never write only your own entry — always include all existing votes to avoid overwriting peers. ' +
-							'If you reject, send actionable feedback to Coding.',
-					},
-				},
-			],
-		},
-		{
-			id: V2_QA_NODE,
-			name: 'QA',
-			agents: [
-				{
-					agentId: 'QA',
-					name: 'qa',
-					customPrompt: {
-						value:
-							V2_QA_PROMPT +
-							'\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal the ' +
-							'runtime accepts as completion — finishing your turn without it leaves the workflow ' +
-							'stuck. `report_result` must be your last tool call. Do not call it when sending ' +
-							'feedback to Coding — leave the workflow open for the next round in that case.\n\n' +
-							'Expected inputs: Code Review approved (review-votes-gate: 3 approvals).\n' +
-							'Expected outputs: PR merged and worktree synced, or detailed feedback to Coding.\n\n' +
-							'Steps:\n' +
-							'1. Run the full test suite and record results\n' +
-							'2. Check CI pipeline status on the PR\n' +
-							'3. Verify the PR is mergeable (no conflicts)\n' +
-							'4. Confirm changes match the approved plan\n' +
-							'5. If issues found: send detailed feedback to Coding via QA → Coding channel ' +
-							'(do NOT call `report_result`)\n' +
-							'6. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
-							'7. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'8. Call `report_result(status="done", summary=...)` confirming merge and sync\n\n' +
-							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
-					},
-				},
-			],
+			completionActions: [PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION],
 		},
 	],
-	startNodeId: V2_PLANNING_NODE,
-	endNodeId: V2_QA_NODE,
-	tags: ['coding', 'v2', 'parallel-review', 'default'],
+	startNodeId: PD_PLANNING_NODE,
+	endNodeId: PD_TASK_DISPATCHER_NODE,
+	tags: ['planning', 'decomposition'],
 	createdAt: 0,
 	updatedAt: 0,
 	gates: [
 		{
 			id: 'plan-pr-gate',
 			label: 'PR Ready',
-			description: 'Planning PR is open and mergeable so plan review can start.',
+			description: 'Planning PR is open and mergeable so Plan Review can start.',
 			fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
 			script: {
 				interpreter: 'bash',
 				source: PR_READY_BASH_SCRIPT,
 				timeoutMs: 30000,
 			},
-			resetOnCycle: false,
-		},
-		{
-			id: 'plan-approval-gate',
-			label: 'Approval',
-			description:
-				'Plan has been reviewed and approved. Auto-approved at autonomy level ≥ 3; ' +
-				'pauses for human sign-off below that.',
-			fields: [
-				{
-					name: 'approved',
-					type: 'boolean',
-					writers: [],
-					check: { op: '==', value: true },
-				},
-			],
-			requiredLevel: 3,
 			resetOnCycle: true,
 		},
 		{
-			id: 'code-pr-gate',
-			label: 'PR Ready',
+			id: 'plan-approval-gate',
+			label: 'Plan Approvals',
 			description:
-				'Code has been implemented and a pull request has been opened. ' +
-				'resetOnCycle is false: the same PR is updated across fix cycles — coder pushes ' +
-				'new commits to the existing branch rather than opening a new PR each time.',
-			fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
-			resetOnCycle: false,
-		},
-		{
-			id: 'review-votes-gate',
-			label: 'Votes',
-			description:
-				'All three reviewers have approved the code changes. ' +
-				'Agents must read the current votes map first, add their entry, then write the full map back ' +
-				'(read-merge-write) — write_gate performs a shallow merge so writing only your own entry ' +
-				"would overwrite all other reviewers' votes.",
+				'All four Plan Reviewers must approve the plan before Task Dispatcher activates. ' +
+				'Each reviewer writes to the `approvals` map with their lens name as the key ' +
+				'(architecture, security, correctness, ux) and `approved: true` as the value. ' +
+				'Gate passes when ≥ 4 entries are approved.',
 			fields: [
 				{
-					name: 'votes',
+					name: 'approvals',
 					type: 'map',
 					writers: ['reviewer'],
-					check: { op: 'count', match: 'approved', min: 3 },
+					check: { op: 'count', match: 'approved', min: 4 },
 				},
 			],
 			resetOnCycle: true,
@@ -817,45 +775,15 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 		},
 		{
 			from: 'Plan Review',
-			to: 'Coding',
+			to: 'Task Dispatcher',
 			gateId: 'plan-approval-gate',
-			label: 'Plan Review → Coding',
-		},
-		{
-			from: 'Coding',
-			to: 'Code Review',
-			gateId: 'code-pr-gate',
-			label: 'Coding → Code Review',
-		},
-		{
-			from: 'Code Review',
-			to: 'QA',
-			gateId: 'review-votes-gate',
-			label: 'Code Review → QA',
-		},
-		{
-			from: 'Code Review',
-			to: 'Coding',
-			maxCycles: 5,
-			label: 'Code Review → Coding (feedback)',
-		},
-		{
-			from: 'QA',
-			to: 'Coding',
-			maxCycles: 5,
-			label: 'QA → Coding (issues found)',
+			label: 'Plan Review → Task Dispatcher',
 		},
 		{
 			from: 'Plan Review',
 			to: 'Planning',
 			maxCycles: 5,
-			label: 'Plan Review → Planning (feedback)',
-		},
-		{
-			from: 'Coding',
-			to: 'Planning',
-			maxCycles: 5,
-			label: 'Coding → Planning (feedback)',
+			label: 'Plan Review → Planning (revision requested)',
 		},
 	],
 };
@@ -1034,17 +962,21 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
  * to persist them with real SpaceAgent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-	// FULL_CYCLE_CODING_WORKFLOW is first so it becomes the default workflow selected by
+	// CODING_WORKFLOW is first so it becomes the default workflow selected by
 	// spaceWorkflowRun.start (which picks workflows[0] ordered by created_at ASC).
-	// The full-cycle workflow is the primary/comprehensive default. Additional templates
-	// provide lighter loops or specialized flows (research, review-only, fullstack QA loop).
+	// It is tagged `default` and covers the most common case — a single implementation
+	// task with one engineer and one reviewer.
+	//
+	// PLAN_AND_DECOMPOSE_WORKFLOW is tagged `planning` / `decomposition` (NOT `default`)
+	// so the LLM picks it explicitly for multi-task goals that should be broken down
+	// before coding starts.
 	//
 	// Note: this ordering only affects *newly created* spaces. seedBuiltInWorkflows is
 	// insert-only (it skips if any workflows already exist), so existing spaces keep
 	// whatever ordering was seeded when they were first created.
 	return [
-		FULL_CYCLE_CODING_WORKFLOW,
 		CODING_WORKFLOW,
+		PLAN_AND_DECOMPOSE_WORKFLOW,
 		FULLSTACK_QA_LOOP_WORKFLOW,
 		RESEARCH_WORKFLOW,
 		REVIEW_ONLY_WORKFLOW,

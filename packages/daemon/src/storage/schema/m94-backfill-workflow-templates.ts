@@ -136,7 +136,7 @@ const MERGE_PR_COMPLETION_ACTION: CompletionActionShape = {
 // First 64 chars of `PR_READY_BASH_SCRIPT` (joined with \n) — matches what
 // `computeWorkflowHash` captures via `g.script.source.slice(0, 64)`. Must be
 // exactly 64 characters; any shorter and `fingerprintMatches` becomes dead
-// code for templates with scripted gates (Coding, Research, Full-Cycle,
+// code for templates with scripted gates (Coding, Research, Plan & Decompose,
 // Coding+QA) and the migration falls back to the row's own hash.
 const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON when available; fal';
 
@@ -199,47 +199,37 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 		endNodeCompletionActions: undefined,
 	},
 	{
-		name: 'Full-Cycle Coding Workflow',
+		name: 'Plan & Decompose Workflow',
 		description:
-			'Full-cycle coding workflow with planning, plan review, parallel code review, and QA. ' +
-			'QA is the terminal node; feedback from review or QA loops back to Coding.',
+			'Decompose a broad user goal into standalone follow-up tasks. A Planner writes a plan PR, ' +
+			'four parallel Reviewers (architecture, security, correctness, UX) approve, and a Task ' +
+			'Dispatcher fans the approved plan out into individual tasks via `create_standalone_task`. ' +
+			'Task Dispatcher is the terminal node.',
 		instructions: '',
-		nodeNames: ['Planning', 'Plan Review', 'Coding', 'Code Review', 'QA'],
-		endNodeName: 'QA',
+		nodeNames: ['Planning', 'Plan Review', 'Task Dispatcher'],
+		endNodeName: 'Task Dispatcher',
 		channels: [
 			{ from: 'Planning', to: 'Plan Review' },
-			{ from: 'Plan Review', to: 'Coding' },
-			{ from: 'Coding', to: 'Code Review' },
-			{ from: 'Code Review', to: 'QA' },
-			{ from: 'Code Review', to: 'Coding' },
-			{ from: 'QA', to: 'Coding' },
+			{ from: 'Plan Review', to: 'Task Dispatcher' },
 			{ from: 'Plan Review', to: 'Planning' },
-			{ from: 'Coding', to: 'Planning' },
 		],
 		gates: [
 			{
 				id: 'plan-pr-gate',
-				resetOnCycle: false,
+				resetOnCycle: true,
 				fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' } }],
 				scriptSource: PR_READY_SCRIPT_PREFIX,
 			},
 			{
 				id: 'plan-approval-gate',
-				requiredLevel: 3,
 				resetOnCycle: true,
-				fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
-			},
-			{
-				id: 'code-pr-gate',
-				resetOnCycle: false,
-				fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' } }],
-			},
-			{
-				id: 'review-votes-gate',
-				resetOnCycle: true,
-				fields: [{ name: 'votes', type: 'map', check: { op: 'count', match: 'approved', min: 3 } }],
+				fields: [
+					{ name: 'approvals', type: 'map', check: { op: 'count', match: 'approved', min: 4 } },
+				],
 			},
 		],
+		// Plan & Decompose's end-node completion action verifies ≥1 task was
+		// created — it's injected by the live template, not by the M94 backfill.
 		endNodeCompletionActions: undefined,
 	},
 	{

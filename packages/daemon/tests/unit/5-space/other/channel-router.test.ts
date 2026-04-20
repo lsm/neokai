@@ -1981,9 +1981,9 @@ describe('ChannelRouter', () => {
 		// -----------------------------------------------------------------------
 
 		test('review-votes-gate: QA blocked until all 3 reviewers approve (min: 3)', async () => {
-			// Mirrors the FULL_CYCLE_CODING_WORKFLOW review-votes-gate:
-			// Each of the 3 reviewer nodes writes independently to review-votes-gate.
-			// QA only activates when vote count reaches 3.
+			// Parallel vote-counting gate pattern (also used by the Plan & Decompose
+			// plan-approval-gate with min:4): each reviewer writes independently, and
+			// the downstream node only activates once the vote count reaches the min.
 			const gate: Gate = {
 				id: 'review-votes-gate',
 				fields: [
@@ -2159,7 +2159,8 @@ describe('ChannelRouter', () => {
 			const NODE_QA = 'node-qa-loop';
 			const NODE_DONE = 'node-done-qa';
 
-			// Gates matching FULL_CYCLE_CODING_WORKFLOW design
+			// Gates mirroring a code-review pipeline: PR-gate guarding review,
+			// vote-counting gate guarding QA
 			const gateCodePr: Gate = {
 				id: 'code-pr-gate',
 				fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],

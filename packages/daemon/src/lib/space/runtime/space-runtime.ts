@@ -77,6 +77,16 @@ function buildAwaitingApprovalReason(
 export interface SpaceRuntimeConfig {
 	/** Raw Bun SQLite database — used to create per-space SpaceTaskManagers */
 	db: BunDatabase;
+	/**
+	 * Optional absolute path to the SQLite database file.
+	 *
+	 * Threaded through from `SpaceRuntimeServiceConfig` so completion action
+	 * scripts can query the live DB via the `sqlite3` CLI. Injected into the
+	 * script env as `NEOKAI_DB_PATH` (after `buildRestrictedEnv` has stripped
+	 * the `NEOKAI_*` prefix). When absent, completion actions that depend on
+	 * DB access must detect the missing var and fail fast.
+	 */
+	dbPath?: string;
 	/** Space manager for listing spaces and fetching workspace paths */
 	spaceManager: SpaceManager;
 	/** Agent manager for resolving agents */
@@ -2022,6 +2032,17 @@ export class SpaceRuntime {
 		});
 		delete env['NEOKAI_GATE_ID'];
 		env['NEOKAI_COMPLETION_ACTION_ID'] = action.id;
+		env['NEOKAI_SPACE_ID'] = spaceId;
+		if (this.config.dbPath) {
+			env['NEOKAI_DB_PATH'] = this.config.dbPath;
+		}
+		// Resolve the run's start time so scripts can scope DB queries to work
+		// performed during THIS run (e.g. tasks created after the run began).
+		const runRecord = this.config.workflowRunRepo.getRun(runId);
+		if (runRecord) {
+			const startIso = new Date(runRecord.createdAt).toISOString();
+			env['NEOKAI_WORKFLOW_START_ISO'] = startIso;
+		}
 		try {
 			env['NEOKAI_ARTIFACT_DATA_JSON'] = JSON.stringify(artifactData);
 		} catch {
