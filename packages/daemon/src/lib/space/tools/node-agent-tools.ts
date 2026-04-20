@@ -920,9 +920,10 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			? [
 					tool(
 						'report_result',
-						'Mark the workflow as completed, failed, or cancelled and record the final result. ' +
+						'Record the final result of the workflow — the runtime decides the terminal status via completion actions. ' +
 							'Only available to the end node of the workflow. ' +
-							'Call this when the workflow has reached its terminal state.',
+							'Provide a human-readable summary and optional structured evidence (prUrl, commitSha, testOutput, …). ' +
+							'Do NOT pass a `status` — the completion-action pipeline is the sole arbiter of success/failure.',
 						ReportResultSchema.shape,
 						(args) => onReportResult(args)
 					),

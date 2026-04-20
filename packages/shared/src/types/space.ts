@@ -1379,24 +1379,54 @@ export interface ScriptCompletionAction extends CompletionActionBase {
 	script: string;
 }
 
-/** Agent instruction — sends a prompt to a specific node agent for execution */
+/** Agent instruction — spawns a short-lived SpaceAgent session to verify an outcome */
 export interface InstructionCompletionAction extends CompletionActionBase {
 	type: 'instruction';
-	/** Node ID of the agent that receives the instruction */
-	targetNodeId: string;
+	/**
+	 * Name of the SpaceAgent that should execute the instruction. The runtime
+	 * spawns an ephemeral session bound to this agent, injects a
+	 * `report_verification` tool, and awaits its response.
+	 */
+	agentName: string;
 	/** Prompt text — supports `{{artifact.field}}` template interpolation */
 	instruction: string;
+	/**
+	 * Maximum time to wait for the spawned agent to call
+	 * `report_verification`. Defaults to 120000ms (2 minutes).
+	 */
+	timeoutMs?: number;
 }
 
 /** Direct MCP tool invocation — no agent reasoning needed */
 export interface McpCallCompletionAction extends CompletionActionBase {
 	type: 'mcp_call';
-	/** MCP server name (must be enabled in the space's skills config) */
+	/** MCP server id (must be enabled in the space's skills config) */
 	server: string;
 	/** Tool name on the MCP server */
 	tool: string;
 	/** Tool arguments — values support `{{artifact.field}}` template interpolation */
 	args: Record<string, string>;
+	/**
+	 * Optional assertion applied to the tool result. The runtime extracts the
+	 * value at `path` from the result object and compares it via `op` to
+	 * `value`. If the assertion fails, the action fails.
+	 */
+	expect?: McpCallExpectation;
+}
+
+/**
+ * Assertion applied to the JSON result of an `mcp_call` completion action.
+ *
+ * `path` uses a dot/bracket accessor syntax (e.g. `data.items[0].status`).
+ * Empty path matches the whole result.
+ */
+export interface McpCallExpectation {
+	/** Dot/bracket accessor path into the tool result (e.g. `status`, `data.items[0].ok`). */
+	path: string;
+	/** Comparison operator. */
+	op: 'eq' | 'neq' | 'contains' | 'exists' | 'truthy';
+	/** Right-hand side. Required for `eq`/`neq`/`contains`, ignored for `exists`/`truthy`. */
+	value?: unknown;
 }
 
 // ── Approval Records ──────────────────────────────────────────────────────
