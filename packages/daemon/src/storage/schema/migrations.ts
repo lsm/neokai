@@ -411,6 +411,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   for workflows seeded by earlier code paths that silently dropped these fields.
 	//   Also removes orphan duplicate built-in workflow rows that have no active runs.
 	runMigration94(db);
+
+	// Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
+	//   Used as an idempotency marker so completion actions are not re-fired when
+	//   a workflow run is reopened (done → in_progress) and later completes again.
+	runMigration95(db);
 }
 
 /**
@@ -6104,5 +6109,25 @@ export function runMigration93(db: BunDatabase): void {
 		db.prepare('SELECT sdk_origin_path FROM sessions LIMIT 1').all();
 	} catch {
 		db.exec('ALTER TABLE sessions ADD COLUMN sdk_origin_path TEXT');
+	}
+}
+
+/**
+ * Migration 95: Add completion_actions_fired_at column to space_workflow_runs.
+ *
+ * Used as an idempotency marker so that end-node `completionActions` on a
+ * workflow run are fired at most once per physical completion. When a run is
+ * reopened from `done` or `cancelled` back to `in_progress` (because a peer
+ * agent sent a follow-up message, a gate was re-evaluated, or a user resumed
+ * the task), and subsequently completes again, the runtime uses this marker
+ * to skip re-firing its completion actions. The marker is never cleared on
+ * reopen — once fired, always fired.
+ */
+export function runMigration95(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflow_runs')) return;
+	if (!tableHasColumn(db, 'space_workflow_runs', 'completion_actions_fired_at')) {
+		db.exec(
+			`ALTER TABLE space_workflow_runs ADD COLUMN completion_actions_fired_at INTEGER DEFAULT NULL`
+		);
 	}
 }

@@ -2587,6 +2587,10 @@ export class TaskAgentManager {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: (sid) => this.isSessionAlive(sid),
+			// Forward the runtime's current sink so a peer-agent `send_message`
+			// that auto-reopens a terminal run still emits `workflow_run_reopened`
+			// into the Space Agent session.
+			notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
 		});
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: this.config.nodeExecutionRepo,

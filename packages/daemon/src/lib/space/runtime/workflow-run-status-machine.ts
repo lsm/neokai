@@ -11,10 +11,13 @@
  *   in_progress    → cancelled     (explicit cancellation via API)
  *   blocked        → in_progress   (human resolved the blocking issue)
  *   blocked        → cancelled     (explicit cancellation while blocked)
+ *   done           → in_progress   (reopen: follow-up message to a "finished" run)
+ *   cancelled      → in_progress   (reopen: resume a previously cancelled run)
  *
- * Terminal states (no outbound transitions):
- *   done      — run finished successfully, immutable
- *   cancelled — run stopped, immutable
+ * The only true tombstone for the unit of work is `SpaceTask.archivedAt`;
+ * workflow-run status is a *lifecycle* state that can re-enter `in_progress`
+ * as long as the parent task has not been archived. See ChannelRouter for the
+ * archive check that guards reopen.
  */
 
 import type { WorkflowRunStatus } from '@neokai/shared';
@@ -22,8 +25,9 @@ import type { WorkflowRunStatus } from '@neokai/shared';
 /**
  * Map from a source status to the set of allowed target statuses.
  *
- * Terminal states (done, cancelled) have empty target sets —
- * no transitions out of them are permitted.
+ * `done` and `cancelled` are NOT terminal — they can re-enter `in_progress` when
+ * the parent task is still live (not archived). The archive check lives in
+ * ChannelRouter; this table just permits the transition.
  */
 export const VALID_TRANSITIONS: Readonly<
 	Record<WorkflowRunStatus, ReadonlySet<WorkflowRunStatus>>
@@ -31,8 +35,8 @@ export const VALID_TRANSITIONS: Readonly<
 	pending: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
 	in_progress: new Set<WorkflowRunStatus>(['done', 'blocked', 'cancelled']),
 	blocked: new Set<WorkflowRunStatus>(['in_progress', 'cancelled']),
-	done: new Set<WorkflowRunStatus>(),
-	cancelled: new Set<WorkflowRunStatus>(),
+	done: new Set<WorkflowRunStatus>(['in_progress']),
+	cancelled: new Set<WorkflowRunStatus>(['in_progress']),
 };
 
 /**

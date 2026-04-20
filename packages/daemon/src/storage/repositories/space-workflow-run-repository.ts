@@ -22,6 +22,13 @@ export interface UpdateWorkflowRunParams {
 	failureReason?: WorkflowRunFailureReason | null;
 	startedAt?: number | null;
 	completedAt?: number | null;
+	/**
+	 * Timestamp at which the run's end-node completion actions have been fired.
+	 * Pass `null` only when explicitly clearing the marker (uncommon). Once set,
+	 * the marker survives reopen transitions so completion actions are never
+	 * re-fired on subsequent completions.
+	 */
+	completionActionsFiredAt?: number | null;
 }
 
 export class SpaceWorkflowRunRepository {
@@ -147,6 +154,10 @@ export class SpaceWorkflowRunRepository {
 			fields.push('completed_at = ?');
 			values.push(params.completedAt ?? null);
 		}
+		if (params.completionActionsFiredAt !== undefined) {
+			fields.push('completion_actions_fired_at = ?');
+			values.push(params.completionActionsFiredAt ?? null);
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -214,6 +225,7 @@ export class SpaceWorkflowRunRepository {
 			startedAt: (row.started_at as number | null) ?? null,
 			updatedAt: row.updated_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
+			completionActionsFiredAt: (row.completion_actions_fired_at as number | null) ?? null,
 		};
 	}
 }
