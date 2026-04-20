@@ -32,6 +32,7 @@ import {
 	getDiffBaseRef,
 	CACHE_KEY_GATE_ARTIFACTS,
 	CACHE_KEY_COMMITS,
+	COMMIT_LOG_FORMAT,
 	fileDiffCacheKey,
 	FILE_DIFF_SIZE_LIMIT_BYTES,
 } from '../space/artifact-git-ops';
@@ -47,8 +48,6 @@ export interface SyncArtifactHandlerDeps {
 	spaceWorktreeManager: SpaceWorktreeManager;
 	daemonHub: DaemonHub;
 }
-
-export type SyncArtifactQueue = 'gateArtifacts' | 'commits' | 'fileDiff';
 
 interface SyncPayload {
 	runId: string;
@@ -125,6 +124,13 @@ async function handleSyncGateArtifacts(
 			status: 'error',
 			data,
 			error: 'Worktree path unresolved',
+		});
+		emitCacheUpdated(deps.daemonHub, {
+			spaceId: spaceId ?? '',
+			runId,
+			taskId: taskId ?? '',
+			cacheKey: CACHE_KEY_GATE_ARTIFACTS,
+			status: 'error',
 		});
 		return { ok: false, reason: 'worktree-unresolved' };
 	}
@@ -211,6 +217,13 @@ async function handleSyncCommits(
 			data: { commits: [], baseRef: null, isGitRepo: false },
 			error: 'Worktree path unresolved',
 		});
+		emitCacheUpdated(deps.daemonHub, {
+			spaceId: spaceId ?? '',
+			runId,
+			taskId: taskId ?? '',
+			cacheKey: CACHE_KEY_COMMITS,
+			status: 'error',
+		});
 		return { ok: false, reason: 'worktree-unresolved' };
 	}
 
@@ -237,7 +250,7 @@ async function handleSyncCommits(
 
 	let logOutput = '';
 	try {
-		const args = ['log', '--format=COMMIT:%H|%s|%aN|%at', '--numstat'];
+		const args = ['log', COMMIT_LOG_FORMAT, '--numstat'];
 		if (range) args.push(range);
 		logOutput = await execGit(args, worktreePath);
 	} catch (err) {
@@ -293,6 +306,13 @@ async function handleSyncFileDiff(
 			status: 'error',
 			data: { diff: '', additions: 0, deletions: 0, filePath, truncated: false },
 			error: 'Worktree path unresolved',
+		});
+		emitCacheUpdated(deps.daemonHub, {
+			spaceId: spaceId ?? '',
+			runId,
+			taskId: taskId ?? '',
+			cacheKey: fileDiffCacheKey(filePath),
+			status: 'error',
 		});
 		return { ok: false, reason: 'worktree-unresolved' };
 	}
