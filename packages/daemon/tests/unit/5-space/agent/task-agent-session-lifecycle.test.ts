@@ -286,6 +286,8 @@ function makeCtx(): TestCtx {
 
 	const mockSpaceRuntimeService = {
 		createOrGetRuntime: async (_spaceId: string) => runtime,
+		getSharedRuntime: () => runtime,
+		notifyGateDataChanged: async (_runId: string, _gateId: string) => {},
 	};
 
 	const mockSessionManager = {
@@ -450,6 +452,8 @@ describe('Task Agent Session Lifecycle', () => {
 				spaceWorkflowManager: ctx.workflowManager,
 				spaceRuntimeService: {
 					createOrGetRuntime: async () => ctx.runtime,
+					getSharedRuntime: () => ctx.runtime,
+					notifyGateDataChanged: async () => {},
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
@@ -514,6 +518,8 @@ describe('Task Agent Session Lifecycle', () => {
 				spaceWorkflowManager: ctx.workflowManager,
 				spaceRuntimeService: {
 					createOrGetRuntime: async () => ctx.runtime,
+					getSharedRuntime: () => ctx.runtime,
+					notifyGateDataChanged: async () => {},
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
@@ -584,6 +590,8 @@ describe('Task Agent Session Lifecycle', () => {
 				spaceWorkflowManager: ctx.workflowManager,
 				spaceRuntimeService: {
 					createOrGetRuntime: async () => ctx.runtime,
+					getSharedRuntime: () => ctx.runtime,
+					notifyGateDataChanged: async () => {},
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
@@ -672,6 +680,8 @@ describe('Task Agent Session Lifecycle', () => {
 				spaceWorkflowManager: ctx.workflowManager,
 				spaceRuntimeService: {
 					createOrGetRuntime: async () => ctx.runtime,
+					getSharedRuntime: () => ctx.runtime,
+					notifyGateDataChanged: async () => {},
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
@@ -729,6 +739,8 @@ describe('Task Agent Session Lifecycle', () => {
 				spaceWorkflowManager: ctx.workflowManager,
 				spaceRuntimeService: {
 					createOrGetRuntime: async () => ctx.runtime,
+					getSharedRuntime: () => ctx.runtime,
+					notifyGateDataChanged: async () => {},
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,
@@ -782,6 +794,8 @@ describe('Task Agent Session Lifecycle', () => {
 				spaceWorkflowManager: ctx.workflowManager,
 				spaceRuntimeService: {
 					createOrGetRuntime: async () => ctx.runtime,
+					getSharedRuntime: () => ctx.runtime,
+					notifyGateDataChanged: async () => {},
 				} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 				taskRepo: ctx.taskRepo,
 				workflowRunRepo: ctx.workflowRunRepo,

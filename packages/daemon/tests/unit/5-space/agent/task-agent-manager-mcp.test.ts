@@ -265,6 +265,8 @@ function buildManager(opts: {
 		spaceWorkflowManager: workflowManager,
 		spaceRuntimeService: {
 			createOrGetRuntime: async (_spaceId: string) => runtime,
+			getSharedRuntime: () => runtime,
+			notifyGateDataChanged: async (_runId: string, _gateId: string) => {},
 		} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,
@@ -436,8 +438,12 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 		const session = [...createdSessions.values()][0]!;
 		const mcpServers = session._mcpServers;
 		expect(mcpServers['task-agent']).toBeDefined();
-		// Only the task-agent server should be present
-		expect(Object.keys(mcpServers)).toEqual(['task-agent']);
+		// `space-agent-tools` is now always attached to space-scoped sessions so
+		// task agents can coordinate with the rest of the Space (list tasks,
+		// send messages, etc.). When the registry is empty, only these two
+		// built-in servers should be present.
+		expect(mcpServers['space-agent-tools']).toBeDefined();
+		expect(Object.keys(mcpServers).sort()).toEqual(['space-agent-tools', 'task-agent']);
 	});
 });
 
