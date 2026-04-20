@@ -564,6 +564,5 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 			'coder-tester': buildTesterAgentDef(),
 			...helperAgents,
 		},
-		contextAutoQueue: false,
 	};
 }

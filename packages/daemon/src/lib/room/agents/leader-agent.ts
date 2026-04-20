@@ -1462,6 +1462,5 @@ export function createLeaderAgentInit(
 		provider: config.provider,
 		agent: 'Leader',
 		agents: allAgents,
-		contextAutoQueue: false,
 	};
 }

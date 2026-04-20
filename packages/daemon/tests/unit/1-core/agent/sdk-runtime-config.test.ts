@@ -14,7 +14,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import type { Database } from '../../../../src/storage/database';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { Logger } from '../../../../src/lib/logger';
 
 describe('SDKRuntimeConfig', () => {
@@ -23,7 +23,7 @@ describe('SDKRuntimeConfig', () => {
 	let mockDb: Database;
 	let mockDaemonHub: DaemonHub;
 	let mockSettingsManager: SettingsManager;
-	let mockMessageQueue: MessageQueue;
+	let mockContextTracker: ContextTracker;
 	let mockLogger: Logger;
 	let mockQueryObject: Query | null;
 	let firstMessageReceived: boolean;
@@ -31,8 +31,8 @@ describe('SDKRuntimeConfig', () => {
 	let updateSessionSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let setDisabledMcpServersSpy: ReturnType<typeof mock>;
-	let enqueueSpy: ReturnType<typeof mock>;
-	let isRunningSpy: ReturnType<typeof mock>;
+	let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
+	let getContextUsageSpy: ReturnType<typeof mock>;
 	let restartQuerySpy: ReturnType<typeof mock>;
 
 	// SDK method spies
@@ -80,12 +80,13 @@ describe('SDKRuntimeConfig', () => {
 			setDisabledMcpServers: setDisabledMcpServersSpy,
 		} as unknown as SettingsManager;
 
-		enqueueSpy = mock(async () => {});
-		isRunningSpy = mock(() => true);
-		mockMessageQueue = {
-			enqueue: enqueueSpy,
-			isRunning: isRunningSpy,
-		} as unknown as MessageQueue;
+		updateWithDetailedBreakdownSpy = mock(() => {});
+		mockContextTracker = {
+			updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
+			getContextInfo: mock(() => null),
+			restoreFromMetadata: mock(() => {}),
+			setModel: mock(() => {}),
+		} as unknown as ContextTracker;
 
 		mockLogger = {
 			log: mock(() => {}),
@@ -99,11 +100,26 @@ describe('SDKRuntimeConfig', () => {
 		setMaxThinkingTokensSpy = mock(async () => {});
 		setPermissionModeSpy = mock(async () => {});
 		mcpServerStatusSpy = mock(async () => []);
+		getContextUsageSpy = mock(async () => ({
+			categories: [{ name: 'System prompt', tokens: 3600, color: 'gray' }],
+			totalTokens: 3600,
+			maxTokens: 200000,
+			rawMaxTokens: 200000,
+			percentage: 1.8,
+			gridRows: [],
+			model: 'claude-sonnet-4-6',
+			memoryFiles: [],
+			mcpTools: [],
+			agents: [],
+			isAutoCompactEnabled: false,
+			apiUsage: null,
+		}));
 
 		mockQueryObject = {
 			setMaxThinkingTokens: setMaxThinkingTokensSpy,
 			setPermissionMode: setPermissionModeSpy,
 			mcpServerStatus: mcpServerStatusSpy,
+			getContextUsage: getContextUsageSpy,
 		} as unknown as Query;
 
 		restartQuerySpy = mock(async () => {});
@@ -118,7 +134,7 @@ describe('SDKRuntimeConfig', () => {
 			db: mockDb,
 			daemonHub: mockDaemonHub,
 			settingsManager: mockSettingsManager,
-			messageQueue: mockMessageQueue,
+			contextTracker: mockContextTracker,
 			logger: mockLogger,
 			queryObject: mockQueryObject,
 			firstMessageReceived,
@@ -391,19 +407,46 @@ describe('SDKRuntimeConfig', () => {
 			expect(restartQuerySpy).not.toHaveBeenCalled();
 		});
 
-		it('should queue /context when message queue is running', async () => {
-			isRunningSpy.mockReturnValue(true);
+		it('refreshes context via SDK getContextUsage() after tools update', async () => {
 			config = createConfig();
 
 			const tools = { disabledTools: ['Edit'] };
 			await config.updateToolsConfig(tools as Session['config']['tools']);
 
-			expect(enqueueSpy).toHaveBeenCalledWith('/context', true);
+			expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+			expect(updateWithDetailedBreakdownSpy).toHaveBeenCalled();
+			expect(emitSpy).toHaveBeenCalledWith(
+				'context.updated',
+				expect.objectContaining({
+					sessionId: 'test-session-id',
+					contextInfo: expect.any(Object),
+				})
+			);
 		});
 
-		it('should not queue /context when message queue is not running', async () => {
-			isRunningSpy.mockReturnValue(false);
-			config = createConfig();
+		it('skips context refresh when no live query handle', async () => {
+			config = createConfig({ queryObject: null });
+
+			const tools = { disabledTools: ['Edit'] };
+			const result = await config.updateToolsConfig(tools as Session['config']['tools']);
+
+			expect(result).toEqual({ success: true });
+			expect(getContextUsageSpy).not.toHaveBeenCalled();
+			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
+		});
+
+		it('never injects /context into any message queue', async () => {
+			// Guard against regressions: the legacy slash-command flow is gone.
+			// A message queue spy is provided purely to assert it's not touched.
+			const enqueueSpy = mock(async () => {});
+			const mqStub = {
+				enqueue: enqueueSpy,
+				isRunning: () => true,
+			};
+			config = createConfig({
+				// Even if someone accidentally wires a queue in, it must not be used.
+				...({ messageQueue: mqStub } as unknown as Partial<SDKRuntimeConfigContext>),
+			});
 
 			const tools = { disabledTools: ['Edit'] };
 			await config.updateToolsConfig(tools as Session['config']['tools']);
@@ -424,18 +467,15 @@ describe('SDKRuntimeConfig', () => {
 			});
 		});
 
-		it('should handle /context queue failure gracefully', async () => {
-			enqueueSpy.mockRejectedValue(new Error('Queue error'));
+		it('swallows getContextUsage failures and still reports success', async () => {
+			getContextUsageSpy.mockRejectedValue(new Error('SDK error'));
 			config = createConfig();
 
 			const tools = { disabledTools: ['Glob'] };
 			const result = await config.updateToolsConfig(tools as Session['config']['tools']);
 
 			expect(result).toEqual({ success: true });
-			expect(mockLogger.warn).toHaveBeenCalledWith(
-				'Failed to queue /context after tools update:',
-				expect.any(Error)
-			);
+			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
 		});
 
 		it('should return error on failure', async () => {

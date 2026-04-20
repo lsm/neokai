@@ -82,6 +82,16 @@ function buildAwaitingApprovalReason(
 export interface SpaceRuntimeConfig {
 	/** Raw Bun SQLite database — used to create per-space SpaceTaskManagers */
 	db: BunDatabase;
+	/**
+	 * Optional absolute path to the SQLite database file.
+	 *
+	 * Threaded through from `SpaceRuntimeServiceConfig` so completion action
+	 * scripts can query the live DB via the `sqlite3` CLI. Injected into the
+	 * script env as `NEOKAI_DB_PATH` (after `buildRestrictedEnv` has stripped
+	 * the `NEOKAI_*` prefix). When absent, completion actions that depend on
+	 * DB access must detect the missing var and fail fast.
+	 */
+	dbPath?: string;
 	/** Space manager for listing spaces and fetching workspace paths */
 	spaceManager: SpaceManager;
 	/** Agent manager for resolving agents */
@@ -357,6 +367,19 @@ export class SpaceRuntime {
 		// sink was wired (e.g. ticks that ran before provisioning completed at daemon startup)
 		// get a chance to re-notify on the next tick.
 		this.notifiedTaskSet.clear();
+	}
+
+	/**
+	 * Returns the currently-configured NotificationSink.
+	 *
+	 * Exposed so collaborators that construct their own `ChannelRouter` instances
+	 * (e.g. `SpaceRuntimeService.notifyGateDataChanged` or the per-run router
+	 * created inside `TaskAgentManager`) can plumb the same sink through,
+	 * ensuring `workflow_run_reopened` events reach the Space Agent session
+	 * regardless of which code path triggered the reopen.
+	 */
+	getNotificationSink(): NotificationSink {
+		return this.notificationSink;
 	}
 
 	/**
@@ -936,6 +959,23 @@ export class SpaceRuntime {
 			return null;
 		}
 
+		// Idempotency guard: if this run's completion actions have already fired
+		// once, do not re-execute on resume. This can only happen if the task was
+		// reopened after a prior successful completion — completion actions are
+		// side-effectful and fire at most once per run.
+		if (run.completionActionsFiredAt != null) {
+			return await this.finalizeResume(spaceId, taskId, {
+				status: 'done',
+				result: task.reportedSummary ?? null,
+				completedAt: Date.now(),
+				approvalSource: 'human',
+				approvalReason: options?.approvalReason ?? null,
+				approvedAt: Date.now(),
+				pendingActionIndex: null,
+				pendingCheckpointType: null,
+			});
+		}
+
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
 		const actions = endNode?.completionActions;
@@ -1048,6 +1088,9 @@ export class SpaceRuntime {
 		// the task was awaiting approval) and persist the human-supplied approval
 		// reason (when given) so the audit trail records *why* this task was
 		// approved, not just *that* it was.
+		// Stamp the run so a future reopen of this workflow run does NOT re-fire
+		// completion actions — they are side-effectful and must run at most once.
+		this.config.workflowRunRepo.updateRun(run.id, { completionActionsFiredAt: Date.now() });
 		return await this.finalizeResume(spaceId, taskId, {
 			status: 'done',
 			result: task.reportedSummary ?? null,
@@ -1856,6 +1899,23 @@ export class SpaceRuntime {
 			};
 		}
 
+		// Idempotency guard: if this run's completion actions have already fired
+		// once (initial completion succeeded → run was reopened → now completing
+		// again), skip re-execution. Completion actions are side-effectful
+		// (script runs, MCP calls, etc.) and must not re-fire on a reopened run.
+		const runRecord = this.config.workflowRunRepo.getRun(runId);
+		if (runRecord?.completionActionsFiredAt != null) {
+			return {
+				status: 'done' as const,
+				result: taskResult,
+				completedAt: Date.now(),
+				approvalSource: 'auto_policy' as const,
+				approvedAt: Date.now(),
+				pendingActionIndex: null,
+				pendingCheckpointType: null,
+			};
+		}
+
 		// Resolve workspace path once for all actions
 		const space = await this.config.spaceManager.getSpace(spaceId);
 		if (!space?.workspacePath) {
@@ -1935,7 +1995,10 @@ export class SpaceRuntime {
 			}
 		}
 
-		// All actions executed — task is done
+		// All actions executed — task is done. Stamp the run so a future reopen
+		// of this workflow run does NOT re-execute the same side-effectful
+		// actions. See the guard at the top of this method.
+		this.config.workflowRunRepo.updateRun(runId, { completionActionsFiredAt: Date.now() });
 		return {
 			status: 'done' as const,
 			result: taskResult,
@@ -2117,6 +2180,17 @@ export class SpaceRuntime {
 		});
 		delete env['NEOKAI_GATE_ID'];
 		env['NEOKAI_COMPLETION_ACTION_ID'] = action.id;
+		env['NEOKAI_SPACE_ID'] = spaceId;
+		if (this.config.dbPath) {
+			env['NEOKAI_DB_PATH'] = this.config.dbPath;
+		}
+		// Resolve the run's start time so scripts can scope DB queries to work
+		// performed during THIS run (e.g. tasks created after the run began).
+		const runRecord = this.config.workflowRunRepo.getRun(runId);
+		if (runRecord) {
+			const startIso = new Date(runRecord.createdAt).toISOString();
+			env['NEOKAI_WORKFLOW_START_ISO'] = startIso;
+		}
 		try {
 			env['NEOKAI_ARTIFACT_DATA_JSON'] = JSON.stringify(artifactData);
 		} catch {

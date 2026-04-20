@@ -17,7 +17,8 @@ import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import type { SettingsManager } from '../settings-manager';
-import type { MessageQueue } from './message-queue';
+import type { ContextTracker } from './context-tracker';
+import { ContextFetcher } from './context-fetcher';
 
 /**
  * Context interface - what SDKRuntimeConfig needs from AgentSession
@@ -28,8 +29,8 @@ export interface SDKRuntimeConfigContext {
 	readonly db: Database;
 	readonly daemonHub: DaemonHub;
 	readonly settingsManager: SettingsManager;
-	readonly messageQueue: MessageQueue;
 	readonly logger: Logger;
+	readonly contextTracker: ContextTracker;
 
 	// SDK state
 	readonly queryObject: Query | null;
@@ -172,7 +173,7 @@ export class SDKRuntimeConfig {
 	 * Update tools configuration and restart query to apply changes
 	 */
 	async updateToolsConfig(tools: Session['config']['tools']): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, settingsManager, messageQueue, logger } = this.ctx;
+		const { session, db, daemonHub, settingsManager, logger } = this.ctx;
 
 		try {
 			// 1. Update session config in memory and DB
@@ -188,14 +189,11 @@ export class SDKRuntimeConfig {
 				await this.ctx.restartQuery();
 			}
 
-			// 3. Queue /context to get updated context breakdown
-			if (messageQueue.isRunning()) {
-				try {
-					await messageQueue.enqueue('/context', true);
-				} catch (contextError) {
-					logger.warn('Failed to queue /context after tools update:', contextError);
-				}
-			}
+			// 3. Refresh context breakdown via the SDK's native method.
+			// Previously this queued `/context` into the message stream, but we
+			// no longer consume those replies and they'd surface as visible
+			// messages in the transcript. Use `query.getContextUsage()` directly.
+			await this.refreshContextUsage();
 
 			// 4. Emit event for StateManager
 			await daemonHub.emit('session.updated', {
@@ -209,6 +207,30 @@ export class SDKRuntimeConfig {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 			logger.error('Failed to update tools config:', error);
 			return { success: false, error: errorMessage };
+		}
+	}
+
+	/**
+	 * Fetch fresh context usage via the SDK and update the tracker + UI.
+	 *
+	 * Best-effort: errors are logged but do not fail the outer operation.
+	 * Silently skips when there is no live query handle (e.g. pre-start).
+	 */
+	private async refreshContextUsage(): Promise<void> {
+		const { session, daemonHub, contextTracker, queryObject, logger } = this.ctx;
+		if (!queryObject) return;
+
+		try {
+			const fetcher = new ContextFetcher(session.id);
+			const contextInfo = await fetcher.fetch(queryObject);
+			if (!contextInfo) return;
+			contextTracker.updateWithDetailedBreakdown(contextInfo);
+			await daemonHub.emit('context.updated', {
+				sessionId: session.id,
+				contextInfo,
+			});
+		} catch (error) {
+			logger.warn('Failed to refresh context usage after tools update:', error);
 		}
 	}
 }

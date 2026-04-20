@@ -1,17 +1,18 @@
 /**
- * ContextTracker - Context window usage tracking via /context command
+ * ContextTracker - Context window usage tracking
  *
- * Context info is obtained by parsing the /context slash command response
- * after each user message. This provides accurate, categorized breakdown
- * of the context window usage.
+ * Context info is obtained from the Claude Agent SDK's native
+ * `query.getContextUsage()` method (adapted via `ContextFetcher`).
+ * It's refreshed every N stream events, at every turn end, and after
+ * context compaction.
  */
 
 import type { ContextInfo } from '@neokai/shared';
 
 export class ContextTracker {
 	/**
-	 * Current context info - the latest snapshot of context window usage
-	 * Updated after each /context command response
+	 * Current context info - the latest snapshot of context window usage.
+	 * Updated by SDKMessageHandler via `updateWithDetailedBreakdown()`.
 	 */
 	private currentContextInfo: ContextInfo | null = null;
 
@@ -35,7 +36,7 @@ export class ContextTracker {
 	}
 
 	/**
-	 * Update context info with detailed breakdown from /context command
+	 * Update context info with detailed breakdown from the SDK.
 	 */
 	updateWithDetailedBreakdown(contextInfo: ContextInfo): void {
 		this.currentContextInfo = contextInfo;
@@ -43,9 +44,9 @@ export class ContextTracker {
 	}
 
 	/**
-	 * Update model (no-op: model is parsed from /context output)
+	 * Update model (no-op: model is now reported directly by the SDK).
 	 */
 	setModel(_model: string): void {
-		// Model is extracted from /context command output, not tracked here
+		// Model is extracted from SDK getContextUsage() output, not tracked here.
 	}
 }

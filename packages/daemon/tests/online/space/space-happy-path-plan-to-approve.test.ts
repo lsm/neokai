@@ -2,8 +2,8 @@
  * Space Happy Path — Plan-to-Approve Flow
  *
  * End-to-end integration test for the Planning → Plan Review → Coding gate sequence
- * in FULL_CYCLE_CODING_WORKFLOW.  Instead of running real LLM agents, this test writes gate
- * data directly via RPC to simulate agent actions and verify the gate/channel
+ * in the TEST_FULL_CYCLE_WORKFLOW fixture.  Instead of running real LLM agents, this test
+ * writes gate data directly via RPC to simulate agent actions and verify the gate/channel
  * machinery activates the correct downstream nodes.
  *
  * ## Workflow gates under test
@@ -99,7 +99,7 @@ describe('Space Happy Path — Plan-to-Approve Flow', () => {
 			);
 
 			// At least one pending task should exist for the Planning node.
-			// The start node in FULL_CYCLE_CODING_WORKFLOW is "Planning" (planner agent).
+			// The start node in TEST_FULL_CYCLE_WORKFLOW is "Planning" (planner agent).
 			expect(tasks.length).toBeGreaterThanOrEqual(1);
 			const planningTask = tasks.find((t) => t.title === 'Planning');
 			expect(planningTask).toBeDefined();

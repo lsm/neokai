@@ -15,8 +15,8 @@
  *   - Legacy Coding Workflow backfill (template_name + canonical template_hash
  *     + merge-pr injected on Review end node)
  *   - Legacy Research Workflow backfill (similar)
- *   - Review-Only / Full-Cycle workflows backfill template_name but do NOT
- *     inject completionActions (those templates have no end-node actions)
+ *   - Review-Only workflow backfills template_name but does NOT inject
+ *     completionActions (that template has no end-node actions)
  *   - Hash self-verification: the hashes my inlined fingerprints produce for
  *     each of the 5 built-in templates must match the canonical
  *     `computeWorkflowHash()` output. This guards against fingerprint drift.

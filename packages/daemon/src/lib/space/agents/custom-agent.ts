@@ -379,7 +379,6 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 			provider,
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
-			contextAutoQueue: false,
 			roomSkillOverrides,
 			mcpServers: extraMcpServers,
 		};
@@ -398,7 +397,6 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 		type: 'worker',
 		model,
 		provider,
-		contextAutoQueue: false,
 		roomSkillOverrides,
 		mcpServers: extraMcpServers,
 	};
