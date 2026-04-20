@@ -179,6 +179,94 @@ const MERGE_PR_COMPLETION_ACTION: CompletionAction = {
 	script: PR_MERGE_BASH_SCRIPT,
 };
 
+/**
+ * Verifies the PR associated with the end-node is actually merged on GitHub.
+ * Used by QA workflows where the agent is expected to run `gh pr merge` itself
+ * — this action double-checks that the merge actually happened so the agent
+ * cannot "lie" about completion.
+ *
+ * Exits 0 on merged, non-zero with a descriptive message otherwise.
+ */
+const VERIFY_PR_MERGED_BASH_SCRIPT = [
+	'# Resolve PR URL from artifact data or current branch',
+	'PR_URL=$(jq -r \'.pr_url // .url // .merged_pr_url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -z "$PR_URL" ]; then',
+	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+	'fi',
+	'if [ -z "$PR_URL" ]; then',
+	'  echo "verify-pr-merged: no PR URL found — cannot verify merge" >&2',
+	'  exit 1',
+	'fi',
+	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
+	'if [ "$PR_STATE" != "MERGED" ]; then',
+	'  echo "verify-pr-merged: PR $PR_URL is in state \\"$PR_STATE\\", expected MERGED" >&2',
+	'  exit 1',
+	'fi',
+	'echo "verify-pr-merged: PR $PR_URL is merged"',
+	'jq -n --arg url "$PR_URL" \'{"verified_pr_url":$url,"status":"merged"}\'',
+].join('\n');
+
+/**
+ * Completion action for QA-style workflows whose end-node agent is expected to
+ * perform the merge itself (e.g. Coding-with-QA, Full-Cycle Coding). The
+ * script exits non-zero if the PR is not actually merged, causing the task
+ * to end in `blocked` instead of silently completing.
+ */
+const VERIFY_PR_MERGED_COMPLETION_ACTION: CompletionAction = {
+	id: 'verify-pr-merged',
+	name: 'Verify PR merged',
+	description:
+		'Verifies the PR associated with the task is in state MERGED on GitHub. ' +
+		'Fails the task if the agent claims completion without having actually merged.',
+	type: 'script',
+	requiredLevel: 2,
+	artifactType: 'pr',
+	script: VERIFY_PR_MERGED_BASH_SCRIPT,
+};
+
+/**
+ * Script that verifies the PR associated with a Review-Only task has at least
+ * one review comment or submitted review posted. Prevents the Reviewer from
+ * "claiming reviewed" without actually posting feedback on GitHub.
+ */
+const VERIFY_REVIEW_POSTED_BASH_SCRIPT = [
+	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
+	'if [ -z "$PR_URL" ]; then',
+	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
+	'fi',
+	'if [ -z "$PR_URL" ]; then',
+	'  echo "verify-review-posted: no PR URL found — cannot verify review was posted" >&2',
+	'  exit 1',
+	'fi',
+	'REVIEW_COUNT=$(gh pr view "$PR_URL" --json reviews -q \'.reviews | length\' 2>/dev/null || echo 0)',
+	'COMMENT_COUNT=$(gh pr view "$PR_URL" --json comments -q \'.comments | length\' 2>/dev/null || echo 0)',
+	'TOTAL=$((REVIEW_COUNT + COMMENT_COUNT))',
+	'if [ "$TOTAL" -lt 1 ]; then',
+	'  echo "verify-review-posted: PR $PR_URL has no reviews or review comments — reviewer did not post" >&2',
+	'  exit 1',
+	'fi',
+	'echo "verify-review-posted: PR $PR_URL has $REVIEW_COUNT reviews and $COMMENT_COUNT comments"',
+	'jq -n --arg url "$PR_URL" --arg reviews "$REVIEW_COUNT" --arg comments "$COMMENT_COUNT" \\',
+	'  \'{"pr_url":$url,"review_count":($reviews|tonumber),"comment_count":($comments|tonumber)}\'',
+].join('\n');
+
+/**
+ * Completion action for Review-Only workflows. The reviewer is expected to
+ * post their findings on the PR; this script verifies at least one
+ * review/comment was posted before the task is allowed to close as done.
+ */
+const VERIFY_REVIEW_POSTED_COMPLETION_ACTION: CompletionAction = {
+	id: 'verify-review-posted',
+	name: 'Verify review posted',
+	description:
+		'Verifies the Reviewer actually posted review feedback on the PR (review or review-comment). ' +
+		'Fails the task if the agent reports completion without having posted anything.',
+	type: 'script',
+	requiredLevel: 2,
+	artifactType: 'pr',
+	script: VERIFY_REVIEW_POSTED_BASH_SCRIPT,
+};
+
 const V2_PLANNING_PROMPT =
 	'You are the Planning node in a Full-Cycle Coding Workflow. Your role is to turn the task into a ' +
 	'concrete, actionable implementation plan that downstream nodes (Code, Review, QA) can execute ' +
@@ -389,7 +477,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'thread. Do NOT call `report_result` — leave the workflow open for the next round.\n' +
 							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
-							'`report_result(status="done", summary=...)` as your final action',
+							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
+							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
 					},
 				},
 			],
@@ -538,7 +627,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'5. If more research needed: send_message back to Research with specific areas to ' +
 							'investigate (do NOT call `report_result`)\n' +
 							'6. If satisfied: verify the PR is still open and mergeable, then call ' +
-							'`report_result(status="done", summary=...)` as your final action',
+							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
+							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
 					},
 				},
 			],
@@ -635,12 +725,15 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'2. Check for correctness, security, performance, and style issues\n' +
 							'3. Verify test coverage is adequate\n' +
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
-							'where relevant) — this is required, not optional\n' +
+							'where relevant) — this is required, not optional, and the runtime verifies at ' +
+							'least one review/comment exists before accepting completion\n' +
 							'5. Summarize your findings clearly for the task record\n' +
-							'6. Call `report_result(status="done", summary=...)` as your final action',
+							'6. Call `report_result({ summary, evidence: { prUrl } })` as your final action. ' +
+							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
 					},
 				},
 			],
+			completionActions: [VERIFY_REVIEW_POSTED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: REVIEW_REVIEW_NODE,
@@ -828,11 +921,14 @@ export const FULL_CYCLE_CODING_WORKFLOW: SpaceWorkflow = {
 							'(do NOT call `report_result`)\n' +
 							'6. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'7. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'8. Call `report_result(status="done", summary=...)` confirming merge and sync\n\n' +
+							'8. Call `report_result({ summary, evidence: { prUrl, testOutput } })` confirming ' +
+							'merge and sync. Do NOT pass a `status` — the runtime verifies the PR is actually ' +
+							'merged before accepting completion.\n\n' +
 							'On failure, Coding fixes issues and reviewers re-vote before QA runs again.',
 					},
 				},
 			],
+			completionActions: [VERIFY_PR_MERGED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: V2_PLANNING_NODE,
@@ -1045,10 +1141,13 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'`report_result`)\n' +
 							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call `report_result(status="done", summary=...)` confirming merge and sync',
+							'7. Call `report_result({ summary, evidence: { prUrl, testOutput } })` confirming ' +
+							'merge and sync. Do NOT pass a `status` — the runtime verifies the PR is actually ' +
+							'merged before accepting completion.',
 					},
 				},
 			],
+			completionActions: [VERIFY_PR_MERGED_COMPLETION_ACTION],
 		},
 	],
 	startNodeId: FULLSTACK_CODING_NODE,
