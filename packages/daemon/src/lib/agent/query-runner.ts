@@ -244,9 +244,8 @@ export class QueryRunner {
 			// for workflow sub-sessions) is missing from session config at first turn.
 			// Always logged at info level so production logs preserve the evidence trail.
 			const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-			const sessionContext = session.context as Record<string, unknown> | undefined;
 			const isWorkflowSubSession = !!(
-				sessionContext?.spaceId &&
+				session.context?.spaceId &&
 				session.id.includes(':task:') &&
 				session.id.includes(':exec:')
 			);

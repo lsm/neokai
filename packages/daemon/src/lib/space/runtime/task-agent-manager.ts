@@ -2448,7 +2448,7 @@ export class TaskAgentManager {
 			workflowRunId: string;
 			workspacePath: string;
 			workflowNodeId: string;
-			phase: 'spawn' | 'rehydrate' | 'restore';
+			phase: 'spawn' | 'rehydrate';
 		}
 	): void {
 		// `session.config` may be absent on restored ghost sessions before the first
@@ -2678,44 +2678,38 @@ export class TaskAgentManager {
 		}
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
-		// Looks up the live AgentSession by the session ID we baked into the closure
-		// at server-build time, then calls reinjectNodeAgentMcpServer to (re)attach
-		// node-agent. Belt-and-braces: the tool call itself is proof the server is
-		// already attached, but re-injecting protects against partial/torn registry
-		// state and emits a structured log entry for diagnosis.
-		const capturedTaskId = taskId;
-		const capturedSubSessionId = subSessionId;
-		const capturedAgentName = agentName;
-		const capturedSpaceId = spaceId;
-		const capturedWorkflowRunId = workflowRunId;
-		const capturedWorkspacePath = workspacePath;
-		const capturedWorkflowNodeId = workflowNodeId;
+		// Looks up the live AgentSession by the enclosing-scope subSessionId, then
+		// calls reinjectNodeAgentMcpServer to (re)attach node-agent. Belt-and-braces:
+		// the tool call itself is proof the server is already attached, but re-injecting
+		// protects against partial/torn registry state and emits a structured log entry
+		// for diagnosis. All identity vars (taskId, subSessionId, etc.) are `const` in
+		// the enclosing scope, so the closure captures them safely without aliasing.
 		const onRestoreNodeAgent = (args: { reason?: string }): void => {
-			const liveSession = this.getSubSession(capturedSubSessionId);
+			const liveSession = this.getSubSession(subSessionId);
 			if (!liveSession) {
 				log.warn(
-					`TaskAgentManager.onRestoreNodeAgent: no live AgentSession found for sub-session ${capturedSubSessionId} ` +
-						`(task=${capturedTaskId}, agent=${capturedAgentName}). Reason: ${args.reason ?? '<unspecified>'}`
+					`TaskAgentManager.onRestoreNodeAgent: no live AgentSession found for sub-session ${subSessionId} ` +
+						`(task=${taskId}, agent=${agentName}). Reason: ${args.reason ?? '<unspecified>'}`
 				);
 				return;
 			}
 			try {
 				this.reinjectNodeAgentMcpServer(liveSession, {
-					taskId: capturedTaskId,
-					subSessionId: capturedSubSessionId,
-					agentName: capturedAgentName,
-					spaceId: capturedSpaceId,
-					workflowRunId: capturedWorkflowRunId,
-					workspacePath: capturedWorkspacePath,
-					workflowNodeId: capturedWorkflowNodeId,
+					taskId,
+					subSessionId,
+					agentName,
+					spaceId,
+					workflowRunId,
+					workspacePath,
+					workflowNodeId,
 				});
 				log.info(
-					`TaskAgentManager.onRestoreNodeAgent: re-attached node-agent for sub-session ${capturedSubSessionId} ` +
-						`(task=${capturedTaskId}, agent=${capturedAgentName}, reason=${args.reason ?? '<unspecified>'})`
+					`TaskAgentManager.onRestoreNodeAgent: re-attached node-agent for sub-session ${subSessionId} ` +
+						`(task=${taskId}, agent=${agentName}, reason=${args.reason ?? '<unspecified>'})`
 				);
 			} catch (err) {
 				log.error(
-					`TaskAgentManager.onRestoreNodeAgent: failed to re-attach node-agent for sub-session ${capturedSubSessionId}: ${err instanceof Error ? err.message : String(err)}`
+					`TaskAgentManager.onRestoreNodeAgent: failed to re-attach node-agent for sub-session ${subSessionId}: ${err instanceof Error ? err.message : String(err)}`
 				);
 			}
 		};
