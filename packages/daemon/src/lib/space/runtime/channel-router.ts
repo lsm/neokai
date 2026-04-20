@@ -745,13 +745,19 @@ export class ChannelRouter {
 			return evaluateGate(gateDef, runtimeData);
 		}
 
-		// Script-based gates acquire the semaphore and pass executor + context
+		// Script-based gates acquire the semaphore and pass executor + context.
+		// Inject workflow start time as ISO8601 so scripts that need to filter by
+		// "since workflow start" (e.g. review-posted-gate) have a stable reference.
+		const run = this.config.workflowRunRepo.getRun(runId);
+		const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
+
 		const scriptExecutor: GateScriptExecutorFn = executeGateScript;
 		const scriptContext: GateScriptContext = {
 			workspacePath: this.config.workspacePath ?? process.cwd(),
 			gateId,
 			runId,
 			gateData: runtimeData,
+			workflowStartIso,
 		};
 
 		return this.withScriptSemaphore(async () => {
