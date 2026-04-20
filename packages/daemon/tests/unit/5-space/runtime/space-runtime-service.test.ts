@@ -265,6 +265,10 @@ describe('SpaceRuntimeService', () => {
 			return {
 				getSessionAsync: mock(async () => session),
 				createSession: mock(async () => 'space:chat:space-1'),
+				// Startup backfill calls listSessions() for the non-space-chat
+				// member-session sweep. Default to empty — tests that care
+				// override this mock.
+				listSessions: mock(() => [] as Session[]),
 			} as unknown as SessionManager;
 		}
 
@@ -425,8 +429,9 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			// Two subscriptions are registered: space.created and session.created.
-			expect(unsubFn).toHaveBeenCalledTimes(2);
+			// Three subscriptions are registered: space.created, session.created,
+			// and session.deleted (which releases per-session db-query servers).
+			expect(unsubFn).toHaveBeenCalledTimes(3);
 		});
 	});
 

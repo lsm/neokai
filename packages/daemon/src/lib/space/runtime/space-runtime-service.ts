@@ -299,6 +299,33 @@ export class SpaceRuntimeService {
 			{ sessionId: 'global' }
 		);
 		this.unsubscribers.push(unsubSessionCreated);
+
+		// When a session is deleted, release any per-session db-query server we
+		// spun up for it so read-only SQLite handles don't accumulate on a
+		// long-lived daemon serving many short-lived worker sessions.
+		const unsubSessionDeleted = daemonHub.on(
+			'session.deleted',
+			(event) => {
+				this.releaseMemberSessionDbQuery(event.sessionId);
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubSessionDeleted);
+	}
+
+	/**
+	 * Close and evict the db-query server instance (if any) we attached to the
+	 * given member session. Safe to call for sessions that never had one.
+	 */
+	private releaseMemberSessionDbQuery(sessionId: string): void {
+		const server = this.memberSessionDbQueryServers.get(sessionId);
+		if (!server) return;
+		try {
+			server.close();
+		} catch (err) {
+			log.warn(`Failed to close db-query server for member session ${sessionId}:`, err);
+		}
+		this.memberSessionDbQueryServers.delete(sessionId);
 	}
 
 	/**
@@ -335,20 +362,30 @@ export class SpaceRuntimeService {
 		// other session that already lives inside a Space. We do this on startup
 		// so a daemon restart doesn't leave pre-existing member sessions without
 		// coordination tools.
-		try {
-			const all = sessionManager.listSessions({ includeArchived: false });
-			for (const session of all) {
-				if (!session.context?.spaceId) continue;
-				void this.attachSpaceToolsToMemberSession(session).catch((err) => {
-					log.error(
-						`Failed to attach space tools to existing session ${session.id} (space ${session.context?.spaceId}):`,
-						err
-					);
-				});
+		//
+		// Run sequentially rather than in parallel: each attach performs a space
+		// lookup and a session lookup (both hit SQLite), and a daemon restarting
+		// with many Space member sessions would otherwise issue a thundering
+		// herd of reads. Sequential is fast enough — the work is small per
+		// session and happens once at startup — and avoids the burst.
+		void (async () => {
+			try {
+				const all = sessionManager.listSessions({ includeArchived: false });
+				for (const session of all) {
+					if (!session.context?.spaceId) continue;
+					try {
+						await this.attachSpaceToolsToMemberSession(session);
+					} catch (err) {
+						log.error(
+							`Failed to attach space tools to existing session ${session.id} (space ${session.context?.spaceId}):`,
+							err
+						);
+					}
+				}
+			} catch (err) {
+				log.error('Failed to iterate existing sessions for space-tool attachment:', err);
 			}
-		} catch (err) {
-			log.error('Failed to iterate existing sessions for space-tool attachment:', err);
-		}
+		})();
 	}
 
 	/**
@@ -431,14 +468,7 @@ export class SpaceRuntimeService {
 		if (this.config.dbPath) {
 			// Close any stale instance for this session (e.g., on re-provision
 			// after daemon restart) to avoid leaking read-only SQLite handles.
-			const existing = this.memberSessionDbQueryServers.get(session.id);
-			if (existing) {
-				try {
-					existing.close();
-				} catch (err) {
-					log.warn(`Failed to close stale db-query server for session ${session.id}:`, err);
-				}
-			}
+			this.releaseMemberSessionDbQuery(session.id);
 			const dbQueryServer = createDbQueryMcpServer({
 				dbPath: this.config.dbPath,
 				scopeType: 'space',

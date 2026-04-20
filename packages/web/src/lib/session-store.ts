@@ -158,16 +158,6 @@ class SessionStore {
 	 */
 	private activeMessagesSubscriptionId: string | null = null;
 
-	/**
-	 * Messages that were locally appended (optimistic UI) for the current
-	 * session but have not yet been reflected in the LiveQuery snapshot.
-	 *
-	 * Keyed by uuid. On LiveQuery snapshot/delta, entries whose uuid matches
-	 * a canonical row are cleared; entries that never match are preserved
-	 * until the session switches (at which point they're cleared wholesale).
-	 */
-	private pendingLocalMessageUuids: Set<string> = new Set();
-
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
 	// ========================================
@@ -216,7 +206,6 @@ class SessionStore {
 		this._initialMessageCount.value = 0;
 		this._hasMoreMessages.value = false;
 		this._contextInfo.value = null; // Clear context info on session switch
-		this.pendingLocalMessageUuids.clear();
 		// Invalidate any in-flight LiveQuery events for the previous session.
 		// Events already queued in the event loop will see this guard and be
 		// dropped before touching the fresh sdkMessages signal.
@@ -348,10 +337,7 @@ class SessionStore {
 	/**
 	 * Subscribe to the `messages.bySession` LiveQuery for a session.
 	 *
-	 * On snapshot, replaces `sdkMessages` with the canonical server row set
-	 * while preserving any optimistic local messages that don't yet have a
-	 * canonical counterpart (matched by uuid).
-	 *
+	 * On snapshot, replaces `sdkMessages` with the canonical server row set.
 	 * On delta, applies added/removed/updated rows incrementally.
 	 *
 	 * Stale events arriving after a session switch are filtered out by
@@ -423,49 +409,31 @@ class SessionStore {
 	/**
 	 * Apply a LiveQuery snapshot to the sdkMessages signal.
 	 *
-	 * Replaces the canonical messages wholesale, but preserves any optimistic
-	 * local messages (those tracked in `pendingLocalMessageUuids`) that the
-	 * server snapshot doesn't yet include. This avoids flicker when the user
-	 * has just sent a message: their local echo stays visible until the
-	 * server delta overwrites it.
+	 * Replaces the canonical messages wholesale. The daemon persists every
+	 * user message to `sdk_messages` before acking `message.send`, and the
+	 * LiveQuery delta fires within a single event-loop tick, so no
+	 * client-side optimistic echo is required to show a freshly-sent message
+	 * — it appears on the next delta.
 	 */
 	private _applyMessagesSnapshot(rows: ChatMessage[]): void {
-		const incomingUuids = new Set(
-			rows
-				.map((m) => (m as ChatMessage & { uuid?: string }).uuid)
-				.filter((u): u is string => typeof u === 'string' && u.length > 0)
-		);
+		const sorted = rows
+			.slice()
+			.sort(
+				(a, b) =>
+					((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
+					((b as ChatMessage & { timestamp?: number }).timestamp || 0)
+			);
 
-		// Preserve any optimistic local messages not yet reflected in the snapshot.
-		const preservedLocals = this.sdkMessages.value.filter((m) => {
-			const uuid = (m as ChatMessage & { uuid?: string }).uuid;
-			return uuid && this.pendingLocalMessageUuids.has(uuid) && !incomingUuids.has(uuid);
-		});
-
-		// Any pending local whose uuid IS in the snapshot is now canonical — drop it
-		// from the pending set so it doesn't keep getting "preserved" forever.
-		for (const uuid of Array.from(this.pendingLocalMessageUuids)) {
-			if (incomingUuids.has(uuid)) {
-				this.pendingLocalMessageUuids.delete(uuid);
-			}
-		}
-
-		const merged = [...rows, ...preservedLocals].sort(
-			(a, b) =>
-				((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
-				((b as ChatMessage & { timestamp?: number }).timestamp || 0)
-		);
-
-		this.sdkMessages.value = merged;
+		this.sdkMessages.value = sorted;
 		this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
 		this._initialMessageCount.value = rows.length;
-		this._syncCommandsFromSDKMessages(merged);
+		this._syncCommandsFromSDKMessages(sorted);
 	}
 
 	/**
 	 * Apply a LiveQuery delta to the sdkMessages signal.
 	 *
-	 * - added: appended (deduped by uuid against existing rows)
+	 * - added: appended (deduped by id — the LiveQuery engine diffs rows by `id`)
 	 * - removed: filtered out by id
 	 * - updated: replaced in-place by id
 	 *
@@ -479,34 +447,21 @@ class SessionStore {
 			const removedIds = new Set(
 				(event.removed as Array<{ id?: unknown }>).map((r) => r.id).filter((id) => id != null)
 			);
-			const removedUuids = new Set(
-				(event.removed as Array<ChatMessage & { uuid?: string }>)
-					.map((r) => r.uuid)
-					.filter((u): u is string => typeof u === 'string' && u.length > 0)
-			);
 			next = next.filter((m) => {
 				const id = (m as ChatMessage & { id?: unknown }).id;
-				const uuid = (m as ChatMessage & { uuid?: string }).uuid;
-				if (id != null && removedIds.has(id)) return false;
-				if (uuid && removedUuids.has(uuid)) return false;
-				return true;
+				return !(id != null && removedIds.has(id));
 			});
 		}
 
 		if (event.updated?.length) {
 			const updatedById = new Map<unknown, ChatMessage>();
-			const updatedByUuid = new Map<string, ChatMessage>();
 			for (const row of event.updated as ChatMessage[]) {
 				const id = (row as ChatMessage & { id?: unknown }).id;
-				const uuid = (row as ChatMessage & { uuid?: string }).uuid;
 				if (id != null) updatedById.set(id, row);
-				if (uuid) updatedByUuid.set(uuid, row);
 			}
 			next = next.map((m) => {
 				const id = (m as ChatMessage & { id?: unknown }).id;
-				const uuid = (m as ChatMessage & { uuid?: string }).uuid;
 				if (id != null && updatedById.has(id)) return updatedById.get(id)!;
-				if (uuid && updatedByUuid.has(uuid)) return updatedByUuid.get(uuid)!;
 				return m;
 			});
 		}
@@ -515,22 +470,10 @@ class SessionStore {
 			const existingIds = new Set(
 				next.map((m) => (m as ChatMessage & { id?: unknown }).id).filter((id) => id != null)
 			);
-			const existingUuids = new Set(
-				next
-					.map((m) => (m as ChatMessage & { uuid?: string }).uuid)
-					.filter((u): u is string => typeof u === 'string' && u.length > 0)
-			);
 			const trulyNew: ChatMessage[] = [];
 			for (const row of event.added as ChatMessage[]) {
 				const id = (row as ChatMessage & { id?: unknown }).id;
-				const uuid = (row as ChatMessage & { uuid?: string }).uuid;
 				if (id != null && existingIds.has(id)) continue;
-				if (uuid && existingUuids.has(uuid)) {
-					// Optimistic echo being replaced by the canonical row — swap in place
-					next = next.map((m) => ((m as ChatMessage & { uuid?: string }).uuid === uuid ? row : m));
-					this.pendingLocalMessageUuids.delete(uuid);
-					continue;
-				}
 				trulyNew.push(row);
 			}
 			if (trulyNew.length) {
