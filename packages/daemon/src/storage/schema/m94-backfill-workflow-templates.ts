@@ -143,7 +143,8 @@ const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON whe
 // First 64 chars of `REVIEW_POSTED_BASH_SCRIPT` (joined with \n). Used by the
 // Coding Workflow's review-posted-gate to verify a reviewer has posted a
 // GitHub review before the Review → Coding feedback channel releases.
-const REVIEW_POSTED_SCRIPT_PREFIX = 'PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-';
+const REVIEW_POSTED_SCRIPT_PREFIX =
+	"PR_URL=$(jq -r '.pr_url // empty' <<< \"${NEOKAI_GATE_DATA_JSON:-";
 
 /**
  * Known built-in templates and their fingerprints.

@@ -290,7 +290,46 @@ describe('CODING_WORKFLOW Done node — merge-pr completion action (Task #41 Bug
 	test('at autonomy 4, Done node task proceeds — merge action auto-executes (exits review)', async () => {
 		setAutonomyLevel(4);
 		const rt = makeRuntime();
-		const workflow = buildWorkflowWithMergeAction();
+
+		// Build a workflow whose end-node carries a stand-in completion action with
+		// the same `requiredLevel` as the real merge-pr action. We intentionally do
+		// NOT use the real merge-pr script here — its `gh pr merge` fallback can
+		// reach outside the sandbox (e.g. pick up the CWD's git remote) and tries
+		// to merge an actual PR. The lifecycle invariant under test is pure: at
+		// autonomy >= requiredLevel, the action must auto-execute and the task
+		// must NOT park at `pendingCheckpointType === 'completion_action'`.
+		const endNodeId = 'done-node';
+		const workflow = workflowManager.createWorkflow({
+			spaceId: SPACE_ID,
+			name: `Merge Authority Auto ${Date.now()}`,
+			description: '',
+			nodes: [
+				{
+					id: endNodeId,
+					name: 'Done',
+					agents: [{ agentId: AGENT_ID, name: 'coder' }],
+					completionActions: [
+						{
+							id: 'merge-pr',
+							type: 'script',
+							requiredLevel: extractMergePrAction().requiredLevel,
+							label: 'Merge PR (test stand-in)',
+							description: 'No-op stand-in used to avoid real `gh pr merge` in tests.',
+							script: {
+								interpreter: 'bash',
+								source: 'echo "stand-in merge ok"',
+								timeoutMs: 2000,
+							},
+						},
+					],
+				},
+			],
+			transitions: [],
+			startNodeId: endNodeId,
+			endNodeId,
+			rules: [],
+			tags: [],
+		});
 
 		const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 		taskRepo.updateTask(tasks[0].id, {
@@ -303,10 +342,9 @@ describe('CODING_WORKFLOW Done node — merge-pr completion action (Task #41 Bug
 		await rt.executeTick();
 
 		const task = taskRepo.getTask(tasks[0].id)!;
-		// At autonomy >= requiredLevel the action auto-executes. It may succeed or
-		// fail (depending on whether gh/jq are available in this sandbox), but it
-		// MUST NOT leave the task parked at `review` with pendingCheckpointType set
-		// — that would mean the pause logic ignored the autonomy level.
+		// At autonomy >= requiredLevel the action auto-executes. It MUST NOT leave
+		// the task parked at `review` with pendingCheckpointType set — that would
+		// mean the pause logic ignored the autonomy level.
 		expect(task.pendingCheckpointType).not.toBe('completion_action');
 	});
 });
