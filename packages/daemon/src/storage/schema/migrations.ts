@@ -416,6 +416,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   Used as an idempotency marker so completion actions are not re-fired when
 	//   a workflow run is reopened (done → in_progress) and later completes again.
 	runMigration95(db);
+
+	// Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template
+	//   now that it has been replaced by the Plan & Decompose workflow.
+	//   Only deletes rows with no active workflow runs so in-flight work is preserved.
+	runMigration96(db);
 }
 
 /**
@@ -425,6 +430,46 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
  */
 export function runMigration94(db: BunDatabase): void {
 	runMigration94External(db);
+}
+
+/**
+ * Migration 96: Remove the legacy "Full-Cycle Coding Workflow" built-in template.
+ *
+ * The Full-Cycle workflow was replaced by the Plan & Decompose Workflow. Delete
+ * its rows from `space_workflows` across all spaces — but only if the row has no
+ * active runs, so any in-flight work keeps executing. Orphan rows without active
+ * runs are safe to remove because the in-memory WorkflowExecutor holds a snapshot
+ * of the workflow definition for the lifetime of each run.
+ *
+ * Idempotent: if no rows match (already removed or never seeded), this is a no-op.
+ */
+export function runMigration96(db: BunDatabase): void {
+	if (!tableExists(db, 'space_workflows')) {
+		return;
+	}
+	// Guard against older schemas that may pre-date space_workflow_runs.
+	const hasRunsTable = tableExists(db, 'space_workflow_runs');
+
+	let stmt: string;
+	if (hasRunsTable) {
+		stmt = `
+			DELETE FROM space_workflows
+			WHERE name = 'Full-Cycle Coding Workflow'
+			  AND id NOT IN (
+			    SELECT DISTINCT workflow_id
+			    FROM space_workflow_runs
+			    WHERE status IN ('pending', 'in_progress', 'blocked')
+			  )
+		`;
+	} else {
+		stmt = `DELETE FROM space_workflows WHERE name = 'Full-Cycle Coding Workflow'`;
+	}
+	try {
+		db.exec(stmt);
+	} catch {
+		// Defensive: swallow errors on ancient schemas. The migration's only job
+		// is a cleanup nudge — failing here would block unrelated migrations.
+	}
 }
 
 /**
