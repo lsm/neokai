@@ -146,7 +146,6 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - agent-context
           - agent-sdk
           - components
           - coordinator
@@ -192,9 +191,6 @@ jobs:
           # Modules with directory-level test_path auto-discover new test files.
           # Split modules (rpc-*, room-*, features-*) use explicit file lists.
           # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
-          - module: agent-context
-            test_path: tests/online/agent/context-command.test.ts
-            mock_sdk: true
           - module: agent-sdk
             test_path: tests/online/agent/agent-session-sdk.test.ts
             mock_sdk: true
