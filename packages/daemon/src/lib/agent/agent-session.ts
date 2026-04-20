@@ -137,8 +137,6 @@ export interface AgentSessionInit {
 	/** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
 	agents?: Record<string, import('@neokai/shared').AgentDefinition>;
 
-	/** Disable automatic /context queuing after each turn (default: true) */
-	contextAutoQueue?: boolean;
 	/**
 	 * Room-level skill overrides applied on top of the global skills registry.
 	 * Skills with enabled=false in this list are excluded from injection even if
@@ -230,9 +228,6 @@ export class AgentSession
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 	originalEnvVars: OriginalEnvVars = {};
 	processExitedPromise: Promise<void> | null = null;
-	// Whether to auto-queue /context after each turn (default: true)
-	// Disabled for room-managed agents to prevent interleaved messages after terminal state
-	contextAutoQueueEnabled = true;
 
 	// Session state
 	private _isCleaningUp = false;
@@ -455,9 +450,6 @@ export class AgentSession
 			appMcpServerRepo,
 			init.roomSkillOverrides
 		);
-		if (init.contextAutoQueue === false) {
-			agentSession.contextAutoQueueEnabled = false;
-		}
 		return agentSession;
 	}
 
@@ -490,8 +482,6 @@ export class AgentSession
 			skillsManager,
 			appMcpServerRepo
 		);
-		// Worker/leader sessions managed by room runtime should not auto-queue /context
-		agentSession.contextAutoQueueEnabled = false;
 		return agentSession;
 	}
 

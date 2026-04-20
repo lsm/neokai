@@ -215,6 +215,5 @@ export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSession
 		type: 'general',
 		model: config.model ?? DEFAULT_GENERAL_MODEL,
 		provider: config.provider,
-		contextAutoQueue: false,
 	};
 }
