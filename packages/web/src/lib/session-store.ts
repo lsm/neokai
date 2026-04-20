@@ -1,32 +1,45 @@
 /**
  * SessionStore - Unified session state management with pure WebSocket architecture
  *
- * ARCHITECTURE: Pure WebSocket (no REST API)
- * - Initial state: Fetched via RPC over WebSocket on session select
- * - Updates: Real-time via state channel subscriptions
- * - Pagination: Loaded via RPC over WebSocket
- * - Single subscription source (replaces StateChannel + useSessionSubscriptions)
- * - Promise-chain lock for atomic session switching
- * - 2 subscriptions per session (state.session + state.sdkMessages.delta)
- * - 6 operations per switch (reduced from 50+)
+ * ARCHITECTURE: Pure WebSocket + LiveQuery
+ * - Session-scoped realtime messages: LiveQuery subscription on `messages.bySession`
+ *   (snapshot on subscribe, delta on subsequent row changes, automatic resubscribe
+ *   on reconnect through connectionManager's hub instance)
+ * - Session metadata / agent state / errors: `state.session` channel subscription
+ * - Pagination for older messages: RPC (`message.sdkMessages`) — LiveQuery returns
+ *   the most recent window; older rows are loaded on demand and prepended client-side.
  *
  * Signals (reactive state):
  * - activeSessionId: Current session ID
  * - sessionState: Unified session state (sessionInfo, agentState, commandsData, contextInfo, error)
- * - sdkMessages: SDK message array
+ * - sdkMessages: SDK message array (LiveQuery-driven)
  *
  * Computed accessors (derived state):
  * - sessionInfo, agentState, contextInfo, commandsData, error, isCompacting, isWorking
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@neokai/shared';
+import type {
+	Session,
+	ContextInfo,
+	AgentProcessingState,
+	SessionState,
+	LiveQuerySnapshotEvent,
+	LiveQueryDeltaEvent,
+} from '@neokai/shared';
 import type { ChatMessage } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
+
+/**
+ * Maximum number of top-level messages the LiveQuery window keeps in memory.
+ * Matches the default page size used by the `message.sdkMessages` RPC so
+ * behaviour matches the previous non-LiveQuery path on first load.
+ */
+const LIVE_QUERY_MESSAGE_LIMIT = 200;
 
 const logger = new Logger('kai:web:sessionstore');
 
@@ -135,6 +148,26 @@ class SessionStore {
 	 */
 	private readonly _contextInfo = signal<ContextInfo | null>(null);
 
+	/**
+	 * Current LiveQuery subscription ID for `messages.bySession`.
+	 *
+	 * Tracked so stale events arriving after a session switch (queued in the
+	 * JS event loop between the unsubscribe and the handler teardown, or
+	 * received after the server ack but before the client knows about the
+	 * switch) are discarded rather than applied to the new session's state.
+	 */
+	private activeMessagesSubscriptionId: string | null = null;
+
+	/**
+	 * Messages that were locally appended (optimistic UI) for the current
+	 * session but have not yet been reflected in the LiveQuery snapshot.
+	 *
+	 * Keyed by uuid. On LiveQuery snapshot/delta, entries whose uuid matches
+	 * a canonical row are cleared; entries that never match are preserved
+	 * until the session switches (at which point they're cleared wholesale).
+	 */
+	private pendingLocalMessageUuids: Set<string> = new Set();
+
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
 	// ========================================
@@ -183,6 +216,11 @@ class SessionStore {
 		this._initialMessageCount.value = 0;
 		this._hasMoreMessages.value = false;
 		this._contextInfo.value = null; // Clear context info on session switch
+		this.pendingLocalMessageUuids.clear();
+		// Invalidate any in-flight LiveQuery events for the previous session.
+		// Events already queued in the event loop will see this guard and be
+		// dropped before touching the fresh sdkMessages signal.
+		this.activeMessagesSubscriptionId = null;
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
@@ -201,17 +239,20 @@ class SessionStore {
 	// ========================================
 
 	/**
-	 * Start subscriptions for a session
-	 * Only 3 subscriptions: state.session, state.sdkMessages, state.sdkMessages.delta
+	 * Start subscriptions for a session.
 	 *
-	 * NOTE: sdk.message subscription removed - the SDK's query() with AsyncGenerator
-	 * yields complete messages, not stream_event tokens. Messages arrive via
-	 * state.sdkMessages and state.sdkMessages.delta channels.
+	 * Subscriptions:
+	 *   1. `state.session` — session metadata + agent state + commands + error
+	 *   2. `context.updated` — fast-path context info updates
+	 *   3. `session.retryAttempt` — SDK retry events
+	 *   4. LiveQuery `messages.bySession` — realtime SDK message stream
+	 *      (snapshot on subscribe, deltas on subsequent row changes)
 	 *
-	 * ARCHITECTURE: Pure WebSocket
-	 * - Subscriptions set up handlers for future events
-	 * - Initial state fetched via RPC calls (over same WebSocket)
-	 * - No REST API calls needed
+	 * ARCHITECTURE: LiveQuery supersedes the previous
+	 * `state.sdkMessages` RPC + `state.sdkMessages.delta` event pair. The
+	 * daemon's ReactiveDatabase notifies table-change for every write to
+	 * `sdk_messages`, which drives the LiveQuery re-evaluation; the client
+	 * never needs a separate "fetch initial + listen to deltas" coordination.
 	 */
 	private async startSubscriptions(sessionId: string): Promise<void> {
 		try {
@@ -255,65 +296,10 @@ class SessionStore {
 			this.cleanupFunctions.push(unsubSessionState);
 
 			// 2. Context updates (fast path - bypasses full state.session round-trip)
-			// The daemon also sends context via state.session, but subscribing directly here
-			// ensures the UI updates as soon as context.updated fires on the session channel.
-			// FIX: Use direct signal to avoid race condition where events are dropped
-			// when sessionState.value is null (during initial load)
 			const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
 				this._contextInfo.value = contextInfo;
 			});
 			this.cleanupFunctions.push(unsubContextUpdated);
-
-			// 3. SDK messages delta (for incremental updates)
-			// Set up BEFORE fetching initial state to avoid race conditions
-			// FIX: Add deduplication to prevent double messages after Safari reconnection
-			// This can happen when events are queued during reconnection and replayed,
-			// while the server also resends them after subscription re-establishment.
-			const unsubSDKMessagesDelta = hub.onEvent<{
-				added?: ChatMessage[];
-			}>('state.sdkMessages.delta', (delta) => {
-				if (delta.added?.length) {
-					// Upsert by uuid: new messages are appended, but if a message with the
-					// same uuid already exists (e.g. a neokai_action being resolved), it is
-					// replaced in-place so the UI reflects the updated state.
-					const messageMap = new Map(
-						this.sdkMessages.value
-							.filter((m) => (m as ChatMessage & { uuid?: string }).uuid)
-							.map((m) => [(m as ChatMessage & { uuid?: string }).uuid!, m])
-					);
-					// Preserve existing messages that have no uuid (can't be keyed in the map)
-					const existingNoUuid = this.sdkMessages.value.filter(
-						(m) => !(m as ChatMessage & { uuid?: string }).uuid
-					);
-					let changed = false;
-					const trulyNew: ChatMessage[] = [];
-					for (const msg of delta.added) {
-						const uuid = (msg as ChatMessage & { uuid?: string }).uuid;
-						if (uuid && messageMap.has(uuid)) {
-							// Update in-place (handles resolved neokai_action messages)
-							messageMap.set(uuid, msg);
-							changed = true;
-						} else {
-							trulyNew.push(msg);
-							changed = true;
-						}
-					}
-					if (changed) {
-						const updated = [
-							...existingNoUuid,
-							...Array.from(messageMap.values()),
-							...trulyNew,
-						].sort(
-							(a, b) =>
-								((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
-								((b as ChatMessage & { timestamp?: number }).timestamp || 0)
-						);
-						this.sdkMessages.value = updated;
-						this._syncCommandsFromSDKMessages(trulyNew);
-					}
-				}
-			});
-			this.cleanupFunctions.push(unsubSDKMessagesDelta);
 
 			// 3. API retry attempt events (from SDK retry handling)
 			const unsubRetryAttempt = hub.onEvent<{
@@ -341,9 +327,18 @@ class SessionStore {
 			});
 			this.cleanupFunctions.push(unsubRetryAttempt);
 
-			// 4. Fetch initial state via RPC (pure WebSocket - no REST API)
-			// This replaces the old REST API calls and state.sdkMessages subscription
-			await this.fetchInitialState(hub, sessionId);
+			// 4. Fetch session-scoped state (metadata + agent state + commands) via RPC.
+			//    Messages are NOT fetched here — they arrive via the LiveQuery snapshot
+			//    below.  We still need the session RPC because session state is
+			//    push-based (server decides when to broadcast) and there is no
+			//    LiveQuery yet for the `sessions` row.
+			await this.fetchInitialSessionState(hub, sessionId);
+
+			// 5. Subscribe to the messages LiveQuery for this session.
+			//    Errors here are intentionally non-fatal — session state can still
+			//    be useful to display (e.g. to show the error banner), and the
+			//    LiveQuery will re-subscribe automatically on reconnect.
+			await this.subscribeToMessagesLiveQuery(hub, sessionId);
 		} catch (err) {
 			logger.error('Failed to start subscriptions:', err);
 			toast.error('Failed to connect to daemon');
@@ -351,23 +346,222 @@ class SessionStore {
 	}
 
 	/**
-	 * Fetch initial state via RPC calls (pure WebSocket)
-	 * Replaces REST API calls for session data and messages
+	 * Subscribe to the `messages.bySession` LiveQuery for a session.
+	 *
+	 * On snapshot, replaces `sdkMessages` with the canonical server row set
+	 * while preserving any optimistic local messages that don't yet have a
+	 * canonical counterpart (matched by uuid).
+	 *
+	 * On delta, applies added/removed/updated rows incrementally.
+	 *
+	 * Stale events arriving after a session switch are filtered out by
+	 * comparing against `activeMessagesSubscriptionId`.
 	 */
-	private async fetchInitialState(
+	private async subscribeToMessagesLiveQuery(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		sessionId: string
+	): Promise<void> {
+		const subscriptionId = `messages:${sessionId}:${Date.now()}`;
+		this.activeMessagesSubscriptionId = subscriptionId;
+
+		// Snapshot handler
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+			this._applyMessagesSnapshot(event.rows as ChatMessage[]);
+		});
+		this.cleanupFunctions.push(unsubSnapshot);
+
+		// Delta handler
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+			this._applyMessagesDelta(event);
+		});
+		this.cleanupFunctions.push(unsubDelta);
+
+		// Reconnect handler — re-subscribe with the same subscriptionId on reconnect.
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'messages.bySession',
+					params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+					subscriptionId,
+				})
+				.catch((err) => {
+					logger.warn('Messages LiveQuery re-subscribe failed:', err);
+				});
+		});
+		this.cleanupFunctions.push(unsubReconnect);
+
+		// Also push a cleanup that tells the server to drop the subscription.
+		this.cleanupFunctions.push(() => {
+			const activeHub = connectionManager.getHubIfConnected();
+			if (activeHub) {
+				activeHub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {
+					/* best-effort — server will clean up on disconnect anyway */
+				});
+			}
+		});
+
+		try {
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'messages.bySession',
+				params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+				subscriptionId,
+			});
+		} catch (err) {
+			logger.error('Failed to subscribe to messages LiveQuery:', err);
+			// Don't rethrow — we still want session state to be usable even if
+			// the LiveQuery failed (e.g. session was deleted between select and
+			// subscribe). The UI will render whatever sdkMessages currently holds.
+		}
+	}
+
+	/**
+	 * Apply a LiveQuery snapshot to the sdkMessages signal.
+	 *
+	 * Replaces the canonical messages wholesale, but preserves any optimistic
+	 * local messages (those tracked in `pendingLocalMessageUuids`) that the
+	 * server snapshot doesn't yet include. This avoids flicker when the user
+	 * has just sent a message: their local echo stays visible until the
+	 * server delta overwrites it.
+	 */
+	private _applyMessagesSnapshot(rows: ChatMessage[]): void {
+		const incomingUuids = new Set(
+			rows
+				.map((m) => (m as ChatMessage & { uuid?: string }).uuid)
+				.filter((u): u is string => typeof u === 'string' && u.length > 0)
+		);
+
+		// Preserve any optimistic local messages not yet reflected in the snapshot.
+		const preservedLocals = this.sdkMessages.value.filter((m) => {
+			const uuid = (m as ChatMessage & { uuid?: string }).uuid;
+			return uuid && this.pendingLocalMessageUuids.has(uuid) && !incomingUuids.has(uuid);
+		});
+
+		// Any pending local whose uuid IS in the snapshot is now canonical — drop it
+		// from the pending set so it doesn't keep getting "preserved" forever.
+		for (const uuid of Array.from(this.pendingLocalMessageUuids)) {
+			if (incomingUuids.has(uuid)) {
+				this.pendingLocalMessageUuids.delete(uuid);
+			}
+		}
+
+		const merged = [...rows, ...preservedLocals].sort(
+			(a, b) =>
+				((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
+				((b as ChatMessage & { timestamp?: number }).timestamp || 0)
+		);
+
+		this.sdkMessages.value = merged;
+		this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
+		this._initialMessageCount.value = rows.length;
+		this._syncCommandsFromSDKMessages(merged);
+	}
+
+	/**
+	 * Apply a LiveQuery delta to the sdkMessages signal.
+	 *
+	 * - added: appended (deduped by uuid against existing rows)
+	 * - removed: filtered out by id
+	 * - updated: replaced in-place by id
+	 *
+	 * Messages keyed by `id` (the DB row id we surfaced in `messages.bySession`)
+	 * give stable diffing even when the SDK message itself lacks a uuid.
+	 */
+	private _applyMessagesDelta(event: LiveQueryDeltaEvent): void {
+		let next = this.sdkMessages.value.slice();
+
+		if (event.removed?.length) {
+			const removedIds = new Set(
+				(event.removed as Array<{ id?: unknown }>).map((r) => r.id).filter((id) => id != null)
+			);
+			const removedUuids = new Set(
+				(event.removed as Array<ChatMessage & { uuid?: string }>)
+					.map((r) => r.uuid)
+					.filter((u): u is string => typeof u === 'string' && u.length > 0)
+			);
+			next = next.filter((m) => {
+				const id = (m as ChatMessage & { id?: unknown }).id;
+				const uuid = (m as ChatMessage & { uuid?: string }).uuid;
+				if (id != null && removedIds.has(id)) return false;
+				if (uuid && removedUuids.has(uuid)) return false;
+				return true;
+			});
+		}
+
+		if (event.updated?.length) {
+			const updatedById = new Map<unknown, ChatMessage>();
+			const updatedByUuid = new Map<string, ChatMessage>();
+			for (const row of event.updated as ChatMessage[]) {
+				const id = (row as ChatMessage & { id?: unknown }).id;
+				const uuid = (row as ChatMessage & { uuid?: string }).uuid;
+				if (id != null) updatedById.set(id, row);
+				if (uuid) updatedByUuid.set(uuid, row);
+			}
+			next = next.map((m) => {
+				const id = (m as ChatMessage & { id?: unknown }).id;
+				const uuid = (m as ChatMessage & { uuid?: string }).uuid;
+				if (id != null && updatedById.has(id)) return updatedById.get(id)!;
+				if (uuid && updatedByUuid.has(uuid)) return updatedByUuid.get(uuid)!;
+				return m;
+			});
+		}
+
+		if (event.added?.length) {
+			const existingIds = new Set(
+				next.map((m) => (m as ChatMessage & { id?: unknown }).id).filter((id) => id != null)
+			);
+			const existingUuids = new Set(
+				next
+					.map((m) => (m as ChatMessage & { uuid?: string }).uuid)
+					.filter((u): u is string => typeof u === 'string' && u.length > 0)
+			);
+			const trulyNew: ChatMessage[] = [];
+			for (const row of event.added as ChatMessage[]) {
+				const id = (row as ChatMessage & { id?: unknown }).id;
+				const uuid = (row as ChatMessage & { uuid?: string }).uuid;
+				if (id != null && existingIds.has(id)) continue;
+				if (uuid && existingUuids.has(uuid)) {
+					// Optimistic echo being replaced by the canonical row — swap in place
+					next = next.map((m) => ((m as ChatMessage & { uuid?: string }).uuid === uuid ? row : m));
+					this.pendingLocalMessageUuids.delete(uuid);
+					continue;
+				}
+				trulyNew.push(row);
+			}
+			if (trulyNew.length) {
+				next = [...next, ...trulyNew].sort(
+					(a, b) =>
+						((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
+						((b as ChatMessage & { timestamp?: number }).timestamp || 0)
+				);
+			}
+			this._syncCommandsFromSDKMessages(trulyNew);
+		}
+
+		this.sdkMessages.value = next;
+	}
+
+	/**
+	 * Fetch initial session state via RPC.
+	 *
+	 * Messages are NOT fetched here — they arrive via the LiveQuery
+	 * `messages.bySession` snapshot pushed on subscribe. Keeping the message
+	 * and session fetches separate is what unlocks the reactive message
+	 * stream: the client no longer has to coordinate a "first RPC then delta"
+	 * handoff, so there's no window where messages could be dropped.
+	 */
+	private async fetchInitialSessionState(
 		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
 		sessionId: string
 	): Promise<void> {
 		try {
-			// Fetch session state and messages in parallel
-			const [sessionState, messagesState] = await Promise.all([
-				hub.request<SessionState>('state.session', { sessionId }),
-				hub.request<{ sdkMessages: ChatMessage[]; hasMore: boolean }>('state.sdkMessages', {
-					sessionId,
-				}),
-			]);
+			const sessionState = await hub.request<SessionState>('state.session', { sessionId });
 
-			// Update signals with initial state
 			if (sessionState) {
 				this.sessionState.value = sessionState;
 
@@ -396,79 +590,9 @@ class SessionStore {
 					},
 					timestamp: Date.now(),
 				};
-				return;
-			}
-
-			if (messagesState?.sdkMessages) {
-				// CRITICAL FIX: Merge instead of replace to preserve newer messages
-				// that arrived via delta subscription during reconnection
-				//
-				// Root cause: When client reconnects, delta subscription becomes active
-				// immediately (subscribeOptimistic), and fetchInitialState runs in parallel.
-				// If newer messages arrive via delta BEFORE fetchInitialState completes,
-				// a simple replace would lose those newer messages.
-				//
-				// Solution: Use the server's timestamp as the synchronization point.
-				// Keep any existing messages that are newer than the server's snapshot,
-				// then merge and deduplicate by UUID.
-
-				const snapshotTimestamp = (messagesState as unknown as { timestamp?: number }).timestamp;
-				const currentMessages = this.sdkMessages.value;
-				const initialSnapshot = messagesState.sdkMessages;
-
-				// Track initial message count and hasMore from server response
-				this._initialMessageCount.value = initialSnapshot.length;
-				this._hasMoreMessages.value = messagesState.hasMore ?? false;
-
-				if (snapshotTimestamp && currentMessages.length > 0) {
-					// Preserve newer messages that arrived via delta during reconnection
-					// Messages from DB have timestamp added, so we filter by it
-					const newerMessages = currentMessages.filter(
-						(m) => ((m as unknown as { timestamp?: number }).timestamp || 0) >= snapshotTimestamp
-					);
-
-					if (newerMessages.length > 0) {
-						// Merge: server snapshot + newer delta messages
-						const messageMap = new Map<string, ChatMessage>();
-
-						// Add snapshot messages
-						for (const msg of initialSnapshot) {
-							const uuid = (msg as ChatMessage & { uuid?: string }).uuid;
-							if (uuid) {
-								messageMap.set(uuid, msg);
-							}
-						}
-
-						// Newer messages override (they're more recent)
-						for (const msg of newerMessages) {
-							const uuid = (msg as ChatMessage & { uuid?: string }).uuid;
-							if (uuid) {
-								messageMap.set(uuid, msg);
-							}
-						}
-
-						// Convert back to array, sorted by timestamp
-						// Messages from DB have timestamp added, so we can sort by it
-						this.sdkMessages.value = Array.from(messageMap.values()).sort(
-							(a, b) =>
-								((a as unknown as { timestamp?: number }).timestamp || 0) -
-								((b as unknown as { timestamp?: number }).timestamp || 0)
-						);
-					} else {
-						// No newer messages, use snapshot directly
-						this.sdkMessages.value = initialSnapshot;
-					}
-				} else {
-					// No timestamp in response or first load, use snapshot directly
-					this.sdkMessages.value = initialSnapshot;
-				}
-
-				// Sync slash commands from system:init message in initial load.
-				// Handles sessions that already have messages (e.g., after page reload).
-				this._syncCommandsFromSDKMessages(this.sdkMessages.value);
 			}
 		} catch (err) {
-			logger.error('Failed to fetch initial state:', err);
+			logger.error('Failed to fetch initial session state:', err);
 			// Set error state so UI shows error instead of infinite loading
 			this.sessionState.value = {
 				sessionInfo: null,
@@ -546,7 +670,11 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			await this.fetchInitialState(hub, sessionId);
+			// Refresh session state only; the LiveQuery already re-subscribes on
+			// reconnect (via the onConnection handler wired in
+			// subscribeToMessagesLiveQuery), so messages do not need a separate
+			// refresh path.
+			await this.fetchInitialSessionState(hub, sessionId);
 		} catch (err) {
 			logger.error('Failed to refresh state:', err);
 			// Don't throw - subscriptions will still receive updates

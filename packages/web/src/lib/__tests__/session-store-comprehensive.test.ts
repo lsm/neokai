@@ -14,6 +14,7 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 const mockHub = {
 	request: vi.fn().mockResolvedValue({ acknowledged: true }),
 	onEvent: vi.fn(() => vi.fn()),
+	onConnection: vi.fn(() => vi.fn()),
 	joinChannel: vi.fn(),
 	leaveChannel: vi.fn(),
 	isConnected: vi.fn(() => true),
@@ -181,68 +182,12 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			expect(sessionStore.sessionState.value).toEqual(mockSessionState);
 		});
 
-		it('should fetch and set SDK messages', async () => {
-			const mockMessages: SDKMessage[] = [
-				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Hello' }] },
-				{ uuid: 'msg-2', type: 'text', role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
-			];
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return Promise.resolve({ sdkMessages: mockMessages, timestamp: 1000 });
-			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
-
-			await sessionStore.select('session-1');
-
-			expect(sessionStore.sdkMessages.value).toEqual(mockMessages);
-		});
-
-		it('should merge messages with newer delta messages', async () => {
-			const mockMessages: SDKMessage[] = [
-				{
-					uuid: 'msg-1',
-					type: 'text',
-					role: 'user',
-					content: [{ type: 'text', text: 'Old' }],
-				} as SDKMessage & { timestamp: number },
-			];
-
-			const newerMessage: SDKMessage = {
-				uuid: 'msg-2',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Newer' }],
-			} as SDKMessage & { timestamp: number };
-			(newerMessage as SDKMessage & { timestamp: number }).timestamp = 2000;
-
-			// Simulate newer message arriving via delta before fetch completes
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					// Simulate delta arriving immediately
-					setTimeout(() => {
-						callback({ added: [newerMessage] });
-					}, 0);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				// Snapshot has timestamp 1000, newer message has timestamp 2000
-				return Promise.resolve({ sdkMessages: mockMessages, timestamp: 1000 });
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			// Should have both messages, sorted by timestamp
-			expect(sessionStore.sdkMessages.value.length).toBeGreaterThanOrEqual(1);
-		});
+		// NOTE: messages are now streamed through the `messages.bySession`
+		// LiveQuery instead of being pulled via an RPC during
+		// `fetchInitialSessionState`. The delivery path is covered by the
+		// "LiveQuery messages.bySession subscription" describe block below and
+		// by the daemon-side test at
+		// `packages/daemon/tests/unit/2-handlers/rpc-handlers/live-query-messages.test.ts`.
 
 		it('should handle fetch errors gracefully', async () => {
 			mockHub.request.mockRejectedValue(new Error('Fetch failed'));
@@ -443,131 +388,128 @@ describe('SessionStore - Comprehensive Coverage', () => {
 		});
 	});
 
-	describe('SDK message delta subscription', () => {
-		it('should add messages from delta subscription', async () => {
-			const newMessages: SDKMessage[] = [
-				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Hello' }] },
-				{ uuid: 'msg-2', type: 'text', role: 'assistant', content: [{ type: 'text', text: 'Hi' }] },
+	describe('LiveQuery messages.bySession subscription', () => {
+		/**
+		 * Helper to drive the LiveQuery path from a test.
+		 *
+		 * `fire('liveQuery.snapshot' | 'liveQuery.delta', event)` invokes every
+		 * handler that `hub.onEvent()` has registered — the snapshot/delta
+		 * handlers installed by sessionStore.select() filter on
+		 * `event.subscriptionId`, so tests can target a specific subscription.
+		 */
+		interface LqMockHub {
+			request: ReturnType<typeof vi.fn>;
+			onEvent: (channel: string, callback: (data: unknown) => void) => () => void;
+			fire: (channel: string, data: unknown) => void;
+			readonly subscriptionId: string | null;
+		}
+
+		function installLiveQueryHub(): LqMockHub {
+			const handlers = new Map<string, Array<(data: unknown) => void>>();
+			let capturedSubscriptionId: string | null = null;
+
+			mockHub.request.mockImplementation((channel: string, params?: Record<string, unknown>) => {
+				if (channel === 'state.session') {
+					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+				}
+				if (channel === 'liveQuery.subscribe') {
+					capturedSubscriptionId = String(params?.subscriptionId ?? '');
+					return Promise.resolve({ subscriptionId: capturedSubscriptionId });
+				}
+				if (channel === 'liveQuery.unsubscribe') {
+					return Promise.resolve({ ok: true });
+				}
+				return Promise.resolve(undefined);
+			});
+
+			mockHub.onEvent.mockImplementation((channel: string, callback: (data: unknown) => void) => {
+				const list = handlers.get(channel) ?? [];
+				list.push(callback);
+				handlers.set(channel, list);
+				return () => {
+					const l = handlers.get(channel);
+					if (!l) return;
+					const i = l.indexOf(callback);
+					if (i >= 0) l.splice(i, 1);
+				};
+			});
+
+			return {
+				request: mockHub.request,
+				onEvent: mockHub.onEvent,
+				fire: (channel, data) => {
+					for (const h of handlers.get(channel) ?? []) h(data);
+				},
+				get subscriptionId() {
+					return capturedSubscriptionId;
+				},
+			};
+		}
+
+		it('applies a LiveQuery snapshot to sdkMessages', async () => {
+			const hub = installLiveQueryHub();
+			await sessionStore.select('session-1');
+			const subId = hub.subscriptionId!;
+			expect(subId).toBeTruthy();
+
+			const rows: SDKMessage[] = [
+				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Hi' }] },
+				{
+					uuid: 'msg-2',
+					type: 'text',
+					role: 'assistant',
+					content: [{ type: 'text', text: 'Hello' }],
+				},
 			];
+			hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows });
 
-			mockHub.request.mockResolvedValue({
-				sessionInfo: { id: 'session-1' },
-				sdkMessages: [],
-			});
-
-			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					deltaCallback = callback;
-				}
-				return vi.fn();
-			});
-
-			await sessionStore.select('session-1');
-
-			// Simulate delta messages arriving
-			if (deltaCallback) {
-				deltaCallback({ added: newMessages });
-			}
-
-			expect(sessionStore.sdkMessages.value).toEqual(newMessages);
+			expect(sessionStore.sdkMessages.value.map((m) => m.uuid)).toEqual(['msg-1', 'msg-2']);
 		});
 
-		it('should deduplicate messages by uuid', async () => {
-			const existingMessage: SDKMessage = {
-				uuid: 'msg-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Original' }],
-			};
-
-			const updatedMessage: SDKMessage = {
-				uuid: 'msg-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Updated' }],
-			};
-
-			mockHub.request.mockResolvedValue({
-				sessionInfo: { id: 'session-1' },
-				sdkMessages: [],
-			});
-
-			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					deltaCallback = callback;
-				}
-				return vi.fn();
-			});
-
+		it('applies LiveQuery delta added rows to sdkMessages', async () => {
+			const hub = installLiveQueryHub();
 			await sessionStore.select('session-1');
+			const subId = hub.subscriptionId!;
 
-			// Add original message
-			if (deltaCallback) {
-				deltaCallback({ added: [existingMessage] });
-			}
+			// Start from empty snapshot so the delta add is the only change.
+			hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [] });
 
-			// Try to add same uuid again (should be filtered out)
-			if (deltaCallback) {
-				deltaCallback({ added: [updatedMessage] });
-			}
+			const added: SDKMessage[] = [
+				{ uuid: 'msg-added', type: 'text', role: 'user', content: [{ type: 'text', text: 'A' }] },
+			];
+			hub.fire('liveQuery.delta', {
+				subscriptionId: subId,
+				added,
+				updated: [],
+				removed: [],
+			});
 
-			// Should only have one message (deduplicated)
-			const msgCount = sessionStore.sdkMessages.value.filter((m) => m.uuid === 'msg-1').length;
-			expect(msgCount).toBe(1);
+			expect(sessionStore.sdkMessages.value.some((m) => m.uuid === 'msg-added')).toBe(true);
 		});
 
-		it('should not add messages when delta has no added array', async () => {
-			mockHub.request.mockResolvedValue({
-				sessionInfo: { id: 'session-1' },
-				sdkMessages: [],
-			});
-
-			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					deltaCallback = callback;
-				}
-				return vi.fn();
-			});
-
+		it('ignores snapshot/delta events for a different subscriptionId', async () => {
+			const hub = installLiveQueryHub();
 			await sessionStore.select('session-1');
+			const subId = hub.subscriptionId!;
 
-			const initialCount = sessionStore.sdkMessages.value.length;
+			hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [] });
 
-			// Call with empty delta
-			if (deltaCallback) {
-				deltaCallback({});
-			}
-
-			expect(sessionStore.sdkMessages.value.length).toBe(initialCount);
-		});
-
-		it('should not add messages when delta has empty added array', async () => {
-			mockHub.request.mockResolvedValue({
-				sessionInfo: { id: 'session-1' },
-				sdkMessages: [],
+			// Fire a delta for an unrelated subscription — should be ignored.
+			hub.fire('liveQuery.delta', {
+				subscriptionId: 'some-other-id',
+				added: [
+					{
+						uuid: 'ghost',
+						type: 'text',
+						role: 'user',
+						content: [{ type: 'text', text: 'x' }],
+					},
+				],
+				updated: [],
+				removed: [],
 			});
 
-			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					deltaCallback = callback;
-				}
-				return vi.fn();
-			});
-
-			await sessionStore.select('session-1');
-
-			const initialCount = sessionStore.sdkMessages.value.length;
-
-			// Call with empty added array
-			if (deltaCallback) {
-				deltaCallback({ added: [] });
-			}
-
-			expect(sessionStore.sdkMessages.value.length).toBe(initialCount);
+			expect(sessionStore.sdkMessages.value.some((m) => m.uuid === 'ghost')).toBe(false);
 		});
 	});
 
@@ -725,18 +667,66 @@ describe('SessionStore - Comprehensive Coverage', () => {
 	});
 
 	describe('hasMoreMessages (pagination inference)', () => {
+		// `hasMoreMessages` is now set from the `messages.bySession` LiveQuery
+		// snapshot: it becomes true when the snapshot returns the full limit of
+		// rows (and therefore might be truncating older messages) and false
+		// otherwise. We drive it through the same hub mock the store sees.
+
+		const LIMIT = 200; // matches LIVE_QUERY_MESSAGE_LIMIT
+
 		beforeEach(async () => {
-			// Clear session state to ensure each test starts fresh
 			await sessionStore.select(null);
 		});
 
 		afterEach(async () => {
-			// Clear session state to avoid interference
 			await sessionStore.select(null);
 		});
 
-		it('should return false when initial load returns less than 100 messages', async () => {
-			const messages: SDKMessage[] = Array(50)
+		function installLiveQueryHubCapturing(): {
+			fire: (channel: string, data: unknown) => void;
+			readonly subscriptionId: string | null;
+		} {
+			const handlers = new Map<string, Array<(data: unknown) => void>>();
+			let subId: string | null = null;
+
+			mockHub.request.mockImplementation((channel: string, params?: Record<string, unknown>) => {
+				if (channel === 'state.session') {
+					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
+				}
+				if (channel === 'liveQuery.subscribe') {
+					subId = String(params?.subscriptionId ?? '');
+					return Promise.resolve({ subscriptionId: subId });
+				}
+				return Promise.resolve(undefined);
+			});
+			mockHub.onEvent.mockImplementation((ch: string, cb: (data: unknown) => void) => {
+				const list = handlers.get(ch) ?? [];
+				list.push(cb);
+				handlers.set(ch, list);
+				return () => {
+					const l = handlers.get(ch);
+					if (!l) return;
+					const i = l.indexOf(cb);
+					if (i >= 0) l.splice(i, 1);
+				};
+			});
+
+			return {
+				fire: (ch, data) => {
+					for (const h of handlers.get(ch) ?? []) h(data);
+				},
+				get subscriptionId() {
+					return subId;
+				},
+			};
+		}
+
+		it('is false when the snapshot is shorter than the limit', async () => {
+			const hub = installLiveQueryHubCapturing();
+			await sessionStore.select('session-1');
+			const subId = hub.subscriptionId!;
+
+			const rows: SDKMessage[] = Array(50)
 				.fill(null)
 				.map((_, i) => ({
 					uuid: `msg-${i}`,
@@ -744,24 +734,17 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					role: 'user',
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
-
-			mockHub.request.mockImplementation((method: string) => {
-				if (method === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				if (method === 'state.sdkMessages') {
-					return Promise.resolve({ sdkMessages: messages });
-				}
-				return Promise.resolve(undefined);
-			});
-
-			await sessionStore.select('session-1');
+			hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows });
 
 			expect(sessionStore.hasMoreMessages.value).toBe(false);
 		});
 
-		it('should return true when initial load returns exactly 100 messages', async () => {
-			const messages: SDKMessage[] = Array(100)
+		it('is true when the snapshot fills the limit exactly', async () => {
+			const hub = installLiveQueryHubCapturing();
+			await sessionStore.select('session-1');
+			const subId = hub.subscriptionId!;
+
+			const rows: SDKMessage[] = Array(LIMIT)
 				.fill(null)
 				.map((_, i) => ({
 					uuid: `msg-${i}`,
@@ -769,61 +752,18 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					role: 'user',
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
+			hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows });
 
-			mockHub.request.mockImplementation((method: string) => {
-				if (method === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				if (method === 'state.sdkMessages') {
-					return Promise.resolve({ sdkMessages: messages, hasMore: true });
-				}
-				return Promise.resolve(undefined);
-			});
-
-			await sessionStore.select('session-1');
-
-			// Verify messages were loaded and hasMoreMessages is true
-			expect(sessionStore.sdkMessages.value).toHaveLength(100);
+			expect(sessionStore.sdkMessages.value).toHaveLength(LIMIT);
 			expect(sessionStore.hasMoreMessages.value).toBe(true);
 		});
 
-		it('should return false when initial load returns less than 100 messages', async () => {
-			const messages: SDKMessage[] = Array(50)
-				.fill(null)
-				.map((_, i) => ({
-					uuid: `msg-${i}`,
-					type: 'text',
-					role: 'user',
-					content: [{ type: 'text', text: `Message ${i}` }],
-				}));
-
-			mockHub.request.mockImplementation((method: string) => {
-				if (method === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				if (method === 'state.sdkMessages') {
-					return Promise.resolve({ sdkMessages: messages });
-				}
-				return Promise.resolve(undefined);
-			});
-
+		it('is false when the snapshot is empty', async () => {
+			const hub = installLiveQueryHubCapturing();
 			await sessionStore.select('session-1');
+			const subId = hub.subscriptionId!;
 
-			expect(sessionStore.hasMoreMessages.value).toBe(false);
-		});
-
-		it('should return false when no messages loaded', async () => {
-			mockHub.request.mockImplementation((method: string) => {
-				if (method === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				if (method === 'state.sdkMessages') {
-					return Promise.resolve({ sdkMessages: [] });
-				}
-				return Promise.resolve(undefined);
-			});
-
-			await sessionStore.select('session-1');
+			hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [] });
 
 			expect(sessionStore.hasMoreMessages.value).toBe(false);
 		});
@@ -1038,582 +978,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 			await sessionStore.select('error-session');
 
 			expect(toast.error).toHaveBeenCalledWith('Failed to connect to daemon');
-		});
-	});
-
-	describe('fetchInitialState message merge with timestamps', () => {
-		it('should merge messages preserving newer delta messages', async () => {
-			// Snapshot messages (from server)
-			const snapshotMessages: SDKMessage[] = [
-				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'First' }] },
-			];
-			(snapshotMessages[0] as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			// Delta message (newer)
-			const deltaMessage: SDKMessage = {
-				uuid: 'msg-2',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Second' }],
-			};
-			(deltaMessage as SDKMessage & { timestamp: number }).timestamp = 2000;
-
-			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					deltaCallback = callback;
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				// Add delay to simulate network latency
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({ sdkMessages: snapshotMessages, timestamp: 1500 });
-					}, 20);
-				});
-			});
-
-			await sessionStore.select('session-1');
-
-			// Simulate delta arriving while fetch is in progress (but after subscription setup)
-			if (deltaCallback) {
-				deltaCallback({ added: [deltaMessage] });
-			}
-
-			// Wait for fetch to complete and merge
-			await new Promise((resolve) => setTimeout(resolve, 50));
-
-			// Should have merged both messages
-			const messages = sessionStore.sdkMessages.value;
-			expect(messages.length).toBe(2);
-		});
-
-		it('should use snapshot directly when no timestamp in response', async () => {
-			const snapshotMessages: SDKMessage[] = [
-				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Test' }] },
-			];
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				// No timestamp in response
-				return Promise.resolve({ sdkMessages: snapshotMessages });
-			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
-
-			await sessionStore.select('session-1');
-
-			expect(sessionStore.sdkMessages.value).toEqual(snapshotMessages);
-		});
-
-		it('should use snapshot directly when current messages are empty', async () => {
-			const snapshotMessages: SDKMessage[] = [
-				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'Test' }] },
-			];
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return Promise.resolve({ sdkMessages: snapshotMessages, timestamp: 1000 });
-			});
-			mockHub.onEvent.mockReturnValue(vi.fn());
-
-			// Clear messages before select
-			sessionStore.sdkMessages.value = [];
-
-			await sessionStore.select('session-1');
-
-			// Should have snapshot messages directly (no merge needed)
-			expect(sessionStore.sdkMessages.value).toEqual(snapshotMessages);
-		});
-
-		it('should merge messages from both sources', async () => {
-			const snapshotMessages: SDKMessage[] = [
-				{ uuid: 'msg-1', type: 'text', role: 'user', content: [{ type: 'text', text: 'First' }] },
-			];
-			(snapshotMessages[0] as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			const deltaMessage: SDKMessage = {
-				uuid: 'msg-2',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Second' }],
-			};
-			(deltaMessage as SDKMessage & { timestamp: number }).timestamp = 2000;
-
-			// Set up delta callback
-			let deltaCallback: ((delta: { added?: SDKMessage[] }) => void) | null = null;
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					deltaCallback = callback;
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({ sdkMessages: snapshotMessages, timestamp: 1500 });
-					}, 20);
-				});
-			});
-
-			await sessionStore.select('session-1');
-
-			// Add delta with newer timestamp
-			if (deltaCallback) {
-				deltaCallback({ added: [deltaMessage] });
-			}
-
-			await new Promise((resolve) => setTimeout(resolve, 50));
-
-			// Should have merged both messages
-			const messages = sessionStore.sdkMessages.value;
-			expect(messages.length).toBeGreaterThanOrEqual(1);
-		});
-
-		it('should filter and merge only newer messages by timestamp', async () => {
-			// Snapshot messages from server
-			const snapshotMsg1: SDKMessage = {
-				uuid: 'msg-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Snapshot 1' }],
-			};
-			(snapshotMsg1 as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			const snapshotMsg2: SDKMessage = {
-				uuid: 'msg-2',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Snapshot 2' }],
-			};
-			(snapshotMsg2 as SDKMessage & { timestamp: number }).timestamp = 1200;
-
-			// Delta messages - one older, one newer than snapshot timestamp
-			const olderDeltaMsg: SDKMessage = {
-				uuid: 'delta-old',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Old delta' }],
-			};
-			(olderDeltaMsg as SDKMessage & { timestamp: number }).timestamp = 1400; // Before snapshotTimestamp
-
-			const newerDeltaMsg: SDKMessage = {
-				uuid: 'delta-new',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'New delta' }],
-			};
-			(newerDeltaMsg as SDKMessage & { timestamp: number }).timestamp = 1600; // After snapshotTimestamp
-
-			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					// Trigger delta immediately when subscription starts
-					setTimeout(() => {
-						callback({ added: [olderDeltaMsg, newerDeltaMsg] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				// Delay to allow delta to arrive first
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({
-							sdkMessages: [snapshotMsg1, snapshotMsg2],
-							timestamp: 1500, // Newer than olderDeltaMsg, older than newerDeltaMsg
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			// Should have merged messages: snapshot + newer delta (filtered)
-			const messages = sessionStore.sdkMessages.value;
-			const uuids = messages.map((m) => m.uuid);
-
-			// Should have snapshot messages and the newer delta
-			expect(uuids).toContain('msg-1');
-			expect(uuids).toContain('msg-2');
-			expect(uuids).toContain('delta-new');
-		});
-
-		it('should use snapshot when no newer messages exist (lines 294-296)', async () => {
-			// Delta message with older timestamp
-			const olderDeltaMsg: SDKMessage = {
-				uuid: 'delta-old',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Old delta' }],
-			};
-			(olderDeltaMsg as SDKMessage & { timestamp: number }).timestamp = 1000; // Before snapshotTimestamp
-
-			// Snapshot message
-			const snapshotMsg: SDKMessage = {
-				uuid: 'snapshot-1',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Snapshot' }],
-			};
-			(snapshotMsg as SDKMessage & { timestamp: number }).timestamp = 1200;
-
-			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					// Trigger delta immediately when subscription starts
-					setTimeout(() => {
-						callback({ added: [olderDeltaMsg] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				// Delay fetch longer than delta arrival
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({
-							sdkMessages: [snapshotMsg],
-							timestamp: 1500, // After all delta messages (1000 < 1500)
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			// Should use snapshot directly since delta timestamp (1000) < snapshotTimestamp (1500)
-			const messages = sessionStore.sdkMessages.value;
-			expect(messages.length).toBe(1);
-			expect(messages[0].uuid).toBe('snapshot-1');
-		});
-
-		it('should handle messages without uuid during merge', async () => {
-			// Snapshot message without uuid
-			const snapshotMsg: SDKMessage = {
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'No UUID' }],
-			} as SDKMessage;
-			(snapshotMsg as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			// Delta message with uuid and newer timestamp
-			const deltaMsg: SDKMessage = {
-				uuid: 'delta-1',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'With UUID' }],
-			};
-			(deltaMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
-
-			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					setTimeout(() => {
-						callback({ added: [deltaMsg] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({
-							sdkMessages: [snapshotMsg],
-							timestamp: 1500,
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			// Should have only the delta message with uuid
-			const messages = sessionStore.sdkMessages.value;
-			expect(messages.some((m) => m.uuid === 'delta-1')).toBe(true);
-		});
-
-		it('should handle newer message without uuid in merge', async () => {
-			// Snapshot message with uuid
-			const snapshotMsg: SDKMessage = {
-				uuid: 'snapshot-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Snapshot' }],
-			};
-			(snapshotMsg as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			// Newer delta message WITHOUT uuid - tests the `if (msg.uuid)` branch in newerMessages loop
-			const newerMsgNoUuid: SDKMessage = {
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'No UUID newer' }],
-			} as SDKMessage;
-			(newerMsgNoUuid as SDKMessage & { timestamp: number }).timestamp = 1600;
-
-			// Also add one with uuid to ensure merge happens
-			const newerMsgWithUuid: SDKMessage = {
-				uuid: 'newer-1',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'With UUID newer' }],
-			};
-			(newerMsgWithUuid as SDKMessage & { timestamp: number }).timestamp = 1700;
-
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					setTimeout(() => {
-						callback({ added: [newerMsgNoUuid, newerMsgWithUuid] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({
-							sdkMessages: [snapshotMsg],
-							timestamp: 1500,
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			const messages = sessionStore.sdkMessages.value;
-			// Should have messages with uuids (snapshot-1 and newer-1)
-			expect(messages.some((m) => m.uuid === 'snapshot-1')).toBe(true);
-			expect(messages.some((m) => m.uuid === 'newer-1')).toBe(true);
-		});
-
-		it('should handle delta message without timestamp using fallback 0', async () => {
-			// Snapshot message
-			const snapshotMsg: SDKMessage = {
-				uuid: 'snapshot-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Snapshot' }],
-			};
-			(snapshotMsg as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			// Delta message WITHOUT timestamp - tests `|| 0` fallback in filter
-			const deltaMsgNoTimestamp: SDKMessage = {
-				uuid: 'delta-no-ts',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'No timestamp' }],
-			};
-			// Intentionally not setting timestamp
-
-			// Newer delta message with timestamp
-			const newerMsg: SDKMessage = {
-				uuid: 'newer-1',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Newer' }],
-			};
-			(newerMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
-
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					setTimeout(() => {
-						// Add both - one without timestamp, one with
-						callback({ added: [deltaMsgNoTimestamp, newerMsg] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({
-							sdkMessages: [snapshotMsg],
-							timestamp: 1500,
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			const messages = sessionStore.sdkMessages.value;
-			// The message without timestamp (0 < 1500) should be filtered out
-			// Only snapshot-1 and newer-1 should remain
-			const uuids = messages.map((m) => m.uuid);
-			expect(uuids).toContain('snapshot-1');
-			expect(uuids).toContain('newer-1');
-		});
-
-		it('should sort merged messages by timestamp', async () => {
-			// Create messages with different timestamps
-			const msg1: SDKMessage = {
-				uuid: 'msg-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'First' }],
-			};
-			(msg1 as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			const msg2: SDKMessage = {
-				uuid: 'msg-2',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Second' }],
-			};
-			(msg2 as SDKMessage & { timestamp: number }).timestamp = 1100;
-
-			const newerMsg: SDKMessage = {
-				uuid: 'msg-3',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Third' }],
-			};
-			(newerMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
-
-			// Trigger delta IMMEDIATELY when subscription is set up (before fetch completes)
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					setTimeout(() => {
-						callback({ added: [newerMsg] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						// Snapshot at timestamp 1500, so msg-3 (1600) is newer
-						resolve({
-							sdkMessages: [msg1, msg2],
-							timestamp: 1500,
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			// Messages should be sorted by timestamp
-			const messages = sessionStore.sdkMessages.value;
-			expect(messages.length).toBe(3);
-
-			// Verify order by checking timestamps are ascending
-			for (let i = 1; i < messages.length; i++) {
-				const prevTimestamp =
-					(messages[i - 1] as SDKMessage & { timestamp?: number }).timestamp || 0;
-				const currTimestamp = (messages[i] as SDKMessage & { timestamp?: number }).timestamp || 0;
-				expect(currTimestamp).toBeGreaterThanOrEqual(prevTimestamp);
-			}
-		});
-
-		it('should handle sorting messages without timestamp using fallback 0', async () => {
-			// Snapshot message with uuid but NO timestamp - tests || 0 in sort
-			const snapshotNoTs: SDKMessage = {
-				uuid: 'snapshot-no-ts',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Snapshot no timestamp' }],
-			};
-			// Intentionally not setting timestamp
-
-			// Snapshot message with timestamp
-			const snapshotWithTs: SDKMessage = {
-				uuid: 'snapshot-with-ts',
-				type: 'text',
-				role: 'assistant',
-				content: [{ type: 'text', text: 'Snapshot with timestamp' }],
-			};
-			(snapshotWithTs as SDKMessage & { timestamp: number }).timestamp = 1000;
-
-			// Newer delta message with timestamp (to trigger merge)
-			const newerMsg: SDKMessage = {
-				uuid: 'newer-1',
-				type: 'text',
-				role: 'user',
-				content: [{ type: 'text', text: 'Newer' }],
-			};
-			(newerMsg as SDKMessage & { timestamp: number }).timestamp = 1600;
-
-			mockHub.onEvent.mockImplementation((channel, callback) => {
-				if (channel === 'state.sdkMessages.delta') {
-					setTimeout(() => {
-						callback({ added: [newerMsg] });
-					}, 5);
-				}
-				return vi.fn();
-			});
-
-			mockHub.request.mockImplementation((channel) => {
-				if (channel === 'state.session') {
-					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
-				}
-				return new Promise((resolve) => {
-					setTimeout(() => {
-						resolve({
-							// Include message without timestamp in snapshot
-							sdkMessages: [snapshotNoTs, snapshotWithTs],
-							timestamp: 1500,
-						});
-					}, 50);
-				});
-			});
-
-			await sessionStore.select('session-1');
-			await new Promise((resolve) => setTimeout(resolve, 20));
-
-			// All messages with uuid should be present
-			const messages = sessionStore.sdkMessages.value;
-			const uuids = messages.map((m) => m.uuid);
-			expect(uuids).toContain('snapshot-no-ts');
-			expect(uuids).toContain('snapshot-with-ts');
-			expect(uuids).toContain('newer-1');
-
-			// Message without timestamp should be sorted first (timestamp || 0 = 0)
-			const firstMsg = messages[0];
-			expect(firstMsg.uuid).toBe('snapshot-no-ts');
 		});
 	});
 
