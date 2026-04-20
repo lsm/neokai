@@ -71,7 +71,7 @@ class TestDaemonHub {
 // ---------------------------------------------------------------------------
 
 interface MockAgentSession {
-	session: { id: string };
+	session: { id: string; config: { mcpServers?: Record<string, unknown> } };
 	getProcessingState: () => AgentProcessingState;
 	setRuntimeMcpServers: (servers: Record<string, unknown>) => void;
 	setRuntimeSystemPrompt: (sp: unknown) => void;
@@ -85,11 +85,15 @@ interface MockAgentSession {
 
 function makeMockSession(sessionId: string): MockAgentSession {
 	const m: MockAgentSession = {
-		session: { id: sessionId },
+		session: { id: sessionId, config: { mcpServers: {} } },
 		_mcpServers: {},
 		getProcessingState: () => ({ status: 'idle' }) as AgentProcessingState,
 		setRuntimeMcpServers(servers) {
 			m._mcpServers = servers;
+			// Mirror the real AgentSession.setRuntimeMcpServers behaviour so
+			// ensureNodeAgentAttached's `session.config.mcpServers` check sees the
+			// merged map after spawn / self-heal.
+			m.session.config = { ...m.session.config, mcpServers: servers };
 		},
 		setRuntimeSystemPrompt(_sp: unknown) {},
 		async startStreamingQuery() {},
@@ -1089,5 +1093,389 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 		const args = capturedRestoreArgs.get(agentSessionId);
 		expect(args).toBeDefined();
 		expect(args!.appMcpServerRepo).toBe(mockAppMcpServerRepo);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// ensureNodeAgentAttached + reinjectNodeAgentMcpServer (defensive self-heal
+// for workflow sub-sessions — Task #37)
+// ---------------------------------------------------------------------------
+
+describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session invariant (Task #37)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				/* best-effort */
+			}
+		}
+	});
+
+	test('does nothing when node-agent is already present in session.config.mcpServers', () => {
+		const { manager, fromInitSpy, dir } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const session = makeMockSession('sub-session-ok');
+		// Pre-populate node-agent in the session config — invariant already holds.
+		session.session.config.mcpServers = { 'node-agent': { name: 'node-agent' } };
+
+		// Fail loudly if reinjectNodeAgentMcpServer is called — it must not be.
+		const mgr = manager as unknown as {
+			reinjectNodeAgentMcpServer: (...args: unknown[]) => void;
+			ensureNodeAgentAttached: (s: unknown, c: unknown) => void;
+		};
+		const originalReinject = mgr.reinjectNodeAgentMcpServer.bind(manager);
+		let reinjectCalled = false;
+		mgr.reinjectNodeAgentMcpServer = (...args) => {
+			reinjectCalled = true;
+			return originalReinject(...args);
+		};
+
+		mgr.ensureNodeAgentAttached(session, {
+			taskId: 'task-1',
+			subSessionId: 'sub-session-ok',
+			agentName: 'coder',
+			spaceId: 'space-1',
+			workflowRunId: 'run-1',
+			workspacePath: '/tmp',
+			workflowNodeId: 'node-1',
+			phase: 'spawn',
+		});
+
+		expect(reinjectCalled).toBe(false);
+		// Server map untouched.
+		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
+	});
+
+	test('self-heals by re-injecting node-agent when missing', () => {
+		const { manager, fromInitSpy, dir } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const session = makeMockSession('sub-session-broken');
+		// node-agent is missing — registry servers may still be there.
+		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
+
+		const mgr = manager as unknown as {
+			ensureNodeAgentAttached: (s: unknown, c: unknown) => void;
+			reinjectNodeAgentMcpServer: (s: unknown, c: unknown) => void;
+		};
+
+		// Stub reinject so we don't have to wire a full workflow run; record the call
+		// and simulate the server-side merge that the real implementation would do.
+		const originalReinject = mgr.reinjectNodeAgentMcpServer.bind(manager);
+		let reinjectCallCount = 0;
+		mgr.reinjectNodeAgentMcpServer = (s, _ctx) => {
+			reinjectCallCount++;
+			const sess = s as MockAgentSession;
+			sess.setRuntimeMcpServers({
+				...(sess.session.config.mcpServers ?? {}),
+				'node-agent': { name: 'node-agent', _stub: true },
+			});
+		};
+
+		try {
+			mgr.ensureNodeAgentAttached(session, {
+				taskId: 'task-1',
+				subSessionId: 'sub-session-broken',
+				agentName: 'coder',
+				spaceId: 'space-1',
+				workflowRunId: 'run-1',
+				workspacePath: '/tmp',
+				workflowNodeId: 'node-1',
+				phase: 'spawn',
+			});
+		} finally {
+			mgr.reinjectNodeAgentMcpServer = originalReinject;
+		}
+
+		expect(reinjectCallCount).toBe(1);
+		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
+		// Pre-existing servers must be preserved during self-heal.
+		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
+	});
+
+	test('throws when re-injection fails to add node-agent', () => {
+		const { manager, fromInitSpy, dir } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const session = makeMockSession('sub-session-broken');
+		session.session.config.mcpServers = {};
+
+		const mgr = manager as unknown as {
+			ensureNodeAgentAttached: (s: unknown, c: unknown) => void;
+			reinjectNodeAgentMcpServer: (s: unknown, c: unknown) => void;
+		};
+		const originalReinject = mgr.reinjectNodeAgentMcpServer.bind(manager);
+		// Simulate a broken reinject that does not add node-agent.
+		mgr.reinjectNodeAgentMcpServer = () => {
+			/* no-op — fails to re-attach */
+		};
+
+		try {
+			expect(() =>
+				mgr.ensureNodeAgentAttached(session, {
+					taskId: 'task-1',
+					subSessionId: 'sub-session-broken',
+					agentName: 'coder',
+					spaceId: 'space-1',
+					workflowRunId: 'run-1',
+					workspacePath: '/tmp',
+					workflowNodeId: 'node-1',
+					phase: 'spawn',
+				})
+			).toThrow(/failed to re-attach node-agent/);
+		} finally {
+			mgr.reinjectNodeAgentMcpServer = originalReinject;
+		}
+	});
+});
+
+describe('TaskAgentManager.reinjectNodeAgentMcpServer — server-side restore primitive (Task #37)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				/* best-effort */
+			}
+		}
+	});
+
+	test('builds and merges node-agent into session config without dropping existing servers', () => {
+		const { manager, fromInitSpy, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		const session = makeMockSession('sub-session-reinject');
+		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
+
+		// Stub the underlying server builder so we don't need a fully wired workflow run.
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			() => {
+				return { name: 'node-agent', _stub: true } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			reinjectNodeAgentMcpServer: (s: unknown, c: unknown) => void;
+		};
+		mgr.reinjectNodeAgentMcpServer(session, {
+			taskId: 'task-1',
+			subSessionId: 'sub-session-reinject',
+			agentName: 'coder',
+			spaceId: space.id,
+			workflowRunId: '',
+			workspacePath: space.workspacePath,
+			workflowNodeId: 'node-1',
+		});
+
+		// Both the registry server and the freshly built node-agent must be present.
+		expect(session._mcpServers['node-agent']).toBeDefined();
+		expect(session._mcpServers['registry-mcp']).toBeDefined();
+		// The mirror on session.config.mcpServers must match.
+		expect(session.session.config.mcpServers!['node-agent']).toBeDefined();
+		expect(session.session.config.mcpServers!['registry-mcp']).toBeDefined();
+	});
+});
+
+describe('TaskAgentManager.buildNodeAgentMcpServerForSession — onRestoreNodeAgent callback wiring (Task #37)', () => {
+	const spies: Array<{ mockRestore: () => void }> = [];
+	const dirs: string[] = [];
+
+	afterEach(() => {
+		for (const spy of spies.splice(0)) spy.mockRestore();
+		for (const dir of dirs.splice(0)) {
+			try {
+				rmSync(dir, { recursive: true });
+			} catch {
+				/* best-effort */
+			}
+		}
+	});
+
+	test('passes an onRestoreNodeAgent callback into createNodeAgentMcpServer', () => {
+		const { manager, fromInitSpy, dir, space, taskManager } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				capturedConfig = config as unknown as Record<string, unknown>;
+				return { server: {}, cleanup: () => {} } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+		};
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-1',
+			'sub-session-restore-test',
+			'coder',
+			space.id,
+			'',
+			space.workspacePath,
+			'node-1'
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		expect(typeof capturedConfig!['onRestoreNodeAgent']).toBe('function');
+
+		// Use taskManager to keep linter happy — exposes the seeded test space wiring.
+		expect(taskManager).toBeDefined();
+	});
+
+	test('onRestoreNodeAgent callback re-injects node-agent on a live sub-session', async () => {
+		const { manager, fromInitSpy, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		// Step 1: stub the server builder so buildNodeAgentMcpServerForSession can run
+		// without requiring a full workflow definition. The first call (server build)
+		// returns a captured config holding the onRestoreNodeAgent callback. The second
+		// call (triggered by the callback's reinject path) returns a stub server.
+		let capturedConfig: Record<string, unknown> | null = null;
+		const builtServers: unknown[] = [];
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				if (capturedConfig === null) {
+					capturedConfig = config as unknown as Record<string, unknown>;
+				}
+				const stub = { name: 'node-agent', _stub: true } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+				builtServers.push(stub);
+				return stub;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		// Step 2: create a sub-session and register it in the subSessions map so
+		// getSubSession() can find it from the callback closure.
+		const subSessionId = 'sub-session-restore-live';
+		const init = {
+			sessionId: subSessionId,
+			sessionType: 'space_task_agent' as const,
+			title: 'Restore live test',
+			workspacePath: '/tmp',
+		};
+		await manager.createSubSession('task-restore', subSessionId, init as never);
+
+		// Step 3: build the node-agent server for the sub-session. The build call
+		// captures the onRestoreNodeAgent callback we want to test.
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+			getSubSession(id: string): MockAgentSession | undefined;
+		};
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-restore',
+			subSessionId,
+			'coder',
+			space.id,
+			'',
+			space.workspacePath,
+			'node-1'
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		const onRestoreNodeAgent = capturedConfig!['onRestoreNodeAgent'] as (args: {
+			reason?: string;
+		}) => void;
+		expect(typeof onRestoreNodeAgent).toBe('function');
+
+		// Step 4: invoke the callback — it should re-attach node-agent on the live session.
+		const liveSession = mgr.getSubSession(subSessionId);
+		expect(liveSession).toBeDefined();
+		// Pre-condition: node-agent is NOT in the session config (sub-session was
+		// created without injecting it via init.mcpServers in this test path).
+		expect(liveSession!.session.config.mcpServers?.['node-agent']).toBeUndefined();
+
+		onRestoreNodeAgent({ reason: 'test trigger' });
+
+		// Post-condition: node-agent should now be present after the self-heal path.
+		expect(liveSession!.session.config.mcpServers?.['node-agent']).toBeDefined();
+	});
+
+	test('onRestoreNodeAgent is a no-op (logs only) when no live sub-session is found', () => {
+		const { manager, fromInitSpy, dir, space } = buildManager({});
+		spies.push(fromInitSpy);
+		dirs.push(dir);
+
+		let capturedConfig: Record<string, unknown> | null = null;
+		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
+			(config) => {
+				if (capturedConfig === null) {
+					capturedConfig = config as unknown as Record<string, unknown>;
+				}
+				return { name: 'node-agent', _stub: true } as unknown as ReturnType<
+					typeof nodeAgentToolsModule.createNodeAgentMcpServer
+				>;
+			}
+		);
+		spies.push(mcpServerSpy);
+
+		const mgr = manager as unknown as {
+			buildNodeAgentMcpServerForSession(
+				taskId: string,
+				subSessionId: string,
+				agentName: string,
+				spaceId: string,
+				workflowRunId: string,
+				workspacePath: string,
+				workflowNodeIdHint?: string
+			): unknown;
+		};
+		mgr.buildNodeAgentMcpServerForSession(
+			'task-1',
+			'sub-session-not-registered',
+			'coder',
+			space.id,
+			'',
+			space.workspacePath,
+			'node-1'
+		);
+
+		expect(capturedConfig).not.toBeNull();
+		const onRestoreNodeAgent = capturedConfig!['onRestoreNodeAgent'] as (args: {
+			reason?: string;
+		}) => void;
+
+		// Should not throw — just log a warning when the sub-session is missing.
+		expect(() => onRestoreNodeAgent({ reason: 'not-registered' })).not.toThrow();
 	});
 });
