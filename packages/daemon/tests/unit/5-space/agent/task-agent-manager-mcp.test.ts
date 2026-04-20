@@ -261,6 +261,9 @@ function buildManager(opts: {
 		spaceWorkflowManager: workflowManager,
 		spaceRuntimeService: {
 			createOrGetRuntime: async (_spaceId: string) => runtime,
+			getSharedRuntime: () => ({
+				getNotificationSink: () => ({ notify: async () => {} }),
+			}),
 		} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service.ts').SpaceRuntimeService,
 		taskRepo,
 		workflowRunRepo,

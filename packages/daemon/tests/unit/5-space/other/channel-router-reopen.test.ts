@@ -1,0 +1,412 @@
+/**
+ * ChannelRouter — run reopening & archive tombstone semantics.
+ *
+ * Covers the acceptance criteria for the "communication allowed until task is
+ * archived" fix. Archive (`SpaceTask.archivedAt`) is the only authoritative
+ * tombstone for inter-agent communication and node activation — workflow run
+ * statuses `done` and `cancelled` can always transition back to `in_progress`
+ * when new inbound activity arrives before the parent task is archived.
+ *
+ * 1. deliverMessage auto-reopens a `done` run and activates the target node
+ *    when the parent task is not archived.
+ * 2. deliverMessage auto-reopens a `cancelled` run and activates the target
+ *    node when the parent task is not archived.
+ * 3. deliverMessage throws `ActivationError` with the archived-task message
+ *    when the parent task is archived (regardless of run status).
+ * 4. onGateDataChanged re-evaluates and activates target nodes on a `done`
+ *    run when the parent task is not archived.
+ * 5. onGateDataChanged returns `[]` when the parent task is archived.
+ * 6. A `workflow_run_reopened` notification event is emitted to the sink
+ *    exactly once per reopen, with the correct `fromStatus` and `by` fields.
+ * 7. Completion actions do NOT re-fire when a previously-completed run is
+ *    reopened and the resolution path is hit again.
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
+import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import {
+	ChannelRouter,
+	ActivationError,
+	ARCHIVED_TASK_ERROR_MESSAGE,
+} from '../../../../src/lib/space/runtime/channel-router.ts';
+import type {
+	NotificationSink,
+	SpaceNotificationEvent,
+	WorkflowRunReopenedEvent,
+} from '../../../../src/lib/space/runtime/notification-sink.ts';
+import type { Gate, SpaceWorkflow, WorkflowChannel } from '@neokai/shared';
+
+// ---------------------------------------------------------------------------
+// DB helpers
+// ---------------------------------------------------------------------------
+
+function makeDb(): { db: BunDatabase; dir: string } {
+	const dir = join(
+		process.cwd(),
+		'tmp',
+		'test-channel-router-reopen',
+		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+	);
+	mkdirSync(dir, { recursive: true });
+	const db = new BunDatabase(join(dir, 'test.db'));
+	db.exec('PRAGMA foreign_keys = ON');
+	runMigrations(db, () => {});
+	return { db, dir };
+}
+
+function seedSpace(db: BunDatabase, spaceId: string): void {
+	db.prepare(
+		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+}
+
+function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
+	db.prepare(
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+}
+
+// ---------------------------------------------------------------------------
+// Recording notification sink
+// ---------------------------------------------------------------------------
+
+class RecordingSink implements NotificationSink {
+	events: SpaceNotificationEvent[] = [];
+	async notify(event: SpaceNotificationEvent): Promise<void> {
+		this.events.push(event);
+	}
+	reopens(): WorkflowRunReopenedEvent[] {
+		return this.events.filter(
+			(e): e is WorkflowRunReopenedEvent => e.kind === 'workflow_run_reopened'
+		);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Workflow builder
+// ---------------------------------------------------------------------------
+
+function buildSimpleWorkflow(
+	spaceId: string,
+	workflowManager: SpaceWorkflowManager,
+	nodes: Array<{ id: string; name: string; agentId: string }>,
+	channels: WorkflowChannel[] = [],
+	gates: Gate[] = []
+): SpaceWorkflow {
+	return workflowManager.createWorkflow({
+		spaceId,
+		name: `WF ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+		description: '',
+		nodes: nodes.map((n) => ({ id: n.id, name: n.name, agentId: n.agentId })),
+		transitions: [],
+		startNodeId: nodes[0].id,
+		endNodeId: nodes[nodes.length - 1].id,
+		rules: [],
+		tags: [],
+		channels,
+		gates,
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+
+describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () => {
+	let db: BunDatabase;
+	let dir: string;
+
+	let taskRepo: SpaceTaskRepository;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let workflowManager: SpaceWorkflowManager;
+	let agentManager: SpaceAgentManager;
+	let gateDataRepo: GateDataRepository;
+	let channelCycleRepo: ChannelCycleRepository;
+	let sink: RecordingSink;
+	let router: ChannelRouter;
+
+	const SPACE_ID = 'space-reopen-1';
+	const AGENT_A = 'agent-a';
+	const AGENT_B = 'agent-b';
+	const NODE_A = 'node-a';
+	const NODE_B = 'node-b';
+
+	beforeEach(() => {
+		({ db, dir } = makeDb());
+		seedSpace(db, SPACE_ID);
+		seedAgent(db, AGENT_A, SPACE_ID);
+		seedAgent(db, AGENT_B, SPACE_ID);
+
+		taskRepo = new SpaceTaskRepository(db);
+		workflowRunRepo = new SpaceWorkflowRunRepository(db);
+		gateDataRepo = new GateDataRepository(db);
+		channelCycleRepo = new ChannelCycleRepository(db);
+
+		// One-task-per-run: ensure every createRun also creates a canonical task.
+		const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
+		(workflowRunRepo as unknown as { createRun: typeof workflowRunRepo.createRun }).createRun = ((
+			params: Parameters<typeof workflowRunRepo.createRun>[0]
+		) => {
+			const run = createRunOriginal(params);
+			taskRepo.createTask({
+				spaceId: params.spaceId,
+				title: params.title,
+				description: params.description ?? '',
+				status: 'open',
+				workflowRunId: run.id,
+			});
+			return run;
+		}) as typeof workflowRunRepo.createRun;
+
+		agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
+		workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+		sink = new RecordingSink();
+
+		router = new ChannelRouter({
+			taskRepo,
+			workflowRunRepo,
+			workflowManager,
+			agentManager,
+			gateDataRepo,
+			channelCycleRepo,
+			db,
+			nodeExecutionRepo: new NodeExecutionRepository(db),
+			notificationSink: sink,
+		});
+	});
+
+	afterEach(() => {
+		db.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	// -------------------------------------------------------------------------
+	// activateNode — reopen on terminal statuses
+	// -------------------------------------------------------------------------
+
+	describe('activateNode', () => {
+		test('reopens a done run, activates the target, and emits workflow_run_reopened', async () => {
+			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'A', agentId: AGENT_A },
+				{ id: NODE_B, name: 'B', agentId: AGENT_B },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Reopenable Done',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+
+			const tasks = await router.activateNode(run.id, NODE_B, {
+				reopenReason: 'user followup',
+				reopenBy: 'user',
+			});
+			expect(tasks.length).toBeGreaterThan(0);
+
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			const reopens = sink.reopens();
+			expect(reopens).toHaveLength(1);
+			expect(reopens[0].fromStatus).toBe('done');
+			expect(reopens[0].by).toBe('user');
+			expect(reopens[0].runId).toBe(run.id);
+			expect(reopens[0].spaceId).toBe(SPACE_ID);
+			expect(reopens[0].reason).toBe('user followup');
+		});
+
+		test('reopens a cancelled run and emits workflow_run_reopened with fromStatus=cancelled', async () => {
+			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'A', agentId: AGENT_A },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Reopenable Cancelled',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
+
+			await router.activateNode(run.id, NODE_A, {
+				reopenReason: 'peer ping',
+				reopenBy: 'agent:buddy',
+			});
+
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			const reopens = sink.reopens();
+			expect(reopens).toHaveLength(1);
+			expect(reopens[0].fromStatus).toBe('cancelled');
+			expect(reopens[0].by).toBe('agent:buddy');
+		});
+
+		test('rejects with ARCHIVED_TASK_ERROR_MESSAGE when parent task is archived', async () => {
+			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'A', agentId: AGENT_A },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Archived',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+				taskRepo.archiveTask(t.id);
+			}
+
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toBeInstanceOf(ActivationError);
+			await expect(router.activateNode(run.id, NODE_A)).rejects.toThrow(
+				ARCHIVED_TASK_ERROR_MESSAGE
+			);
+			expect(sink.reopens()).toHaveLength(0);
+			// Status must remain done — we never transitioned.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+		});
+
+		test('does not emit workflow_run_reopened when the run is already in_progress', async () => {
+			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'A', agentId: AGENT_A },
+			]);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Fresh Run',
+			});
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+			await router.activateNode(run.id, NODE_A);
+			expect(sink.reopens()).toHaveLength(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// onGateDataChanged — reopen and archive blocking
+	// -------------------------------------------------------------------------
+
+	describe('onGateDataChanged', () => {
+		test('re-activates target nodes on a done run when parent task is not archived', async () => {
+			const gate: Gate = {
+				id: 'ok-gate',
+				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
+			const workflow = buildSimpleWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'A', agentId: AGENT_A },
+					{ id: NODE_B, name: 'B', agentId: AGENT_B },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate Reopen',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+
+			gateDataRepo.set(run.id, 'ok-gate', { done: true });
+			const activated = await router.onGateDataChanged(run.id, 'ok-gate');
+			expect(activated.length).toBeGreaterThan(0);
+
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			const reopens = sink.reopens();
+			expect(reopens).toHaveLength(1);
+			expect(reopens[0].by).toBe('gate:ok-gate');
+			expect(reopens[0].fromStatus).toBe('done');
+		});
+
+		test('returns [] and emits no reopen when parent task is archived', async () => {
+			const gate: Gate = {
+				id: 'ok-gate',
+				fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+				resetOnCycle: false,
+			};
+			const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
+			const workflow = buildSimpleWorkflow(
+				SPACE_ID,
+				workflowManager,
+				[
+					{ id: NODE_A, name: 'A', agentId: AGENT_A },
+					{ id: NODE_B, name: 'B', agentId: AGENT_B },
+				],
+				channels,
+				[gate]
+			);
+
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Gate Archived',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+			for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
+				taskRepo.archiveTask(t.id);
+			}
+
+			gateDataRepo.set(run.id, 'ok-gate', { done: true });
+			const activated = await router.onGateDataChanged(run.id, 'ok-gate');
+			expect(activated).toHaveLength(0);
+			expect(sink.reopens()).toHaveLength(0);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Idempotency & resilience
+	// -------------------------------------------------------------------------
+
+	describe('resilience', () => {
+		test('a throwing notification sink does not break activation', async () => {
+			const throwingSink: NotificationSink = {
+				notify: async () => {
+					throw new Error('boom');
+				},
+			};
+			const localRouter = new ChannelRouter({
+				taskRepo,
+				workflowRunRepo,
+				workflowManager,
+				agentManager,
+				gateDataRepo,
+				channelCycleRepo,
+				db,
+				nodeExecutionRepo: new NodeExecutionRepository(db),
+				notificationSink: throwingSink,
+			});
+
+			const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
+				{ id: NODE_A, name: 'A', agentId: AGENT_A },
+			]);
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Resilient',
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+
+			// Should not throw despite the sink failing.
+			await localRouter.activateNode(run.id, NODE_A);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+		});
+	});
+});

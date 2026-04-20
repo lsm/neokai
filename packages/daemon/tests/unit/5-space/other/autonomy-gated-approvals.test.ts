@@ -268,6 +268,7 @@ describe('ChannelRouter.onGateDataChanged — requiredLevel enforcement', () => 
 		};
 		const taskRepo = {
 			listByWorkflowRun: mock(() => []),
+			listByWorkflowRunIncludingArchived: mock(() => []),
 		};
 		const agentManager = {
 			getAgent: mock(() => null),
@@ -342,7 +343,10 @@ describe('ChannelRouter.onGateDataChanged — requiredLevel enforcement', () => 
 			})),
 		};
 		const router = new ChannelRouter({
-			taskRepo: { listByWorkflowRun: mock(() => []) } as never,
+			taskRepo: {
+				listByWorkflowRun: mock(() => []),
+				listByWorkflowRunIncludingArchived: mock(() => []),
+			} as never,
 			workflowRunRepo: workflowRunRepo as never,
 			workflowManager: { getWorkflow: mock(() => workflow) } as never,
 			agentManager: { getAgent: mock(() => null) } as never,
@@ -443,6 +447,7 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 			taskRepo: {
 				listTasks: mock(() => []),
 				listByWorkflowRun: mock(() => []),
+				listByWorkflowRunIncludingArchived: mock(() => []),
 			} as never,
 			nodeExecutionRepo: { listByWorkflowRun: mock(() => []) } as never,
 			workflowRunRepo: workflowRunRepo as never,
@@ -637,7 +642,10 @@ describe('space-agent-tools approve_gate — autonomy enforcement', () => {
 				getWorkflow: mock(() => workflow),
 				listWorkflows: mock(() => []),
 			} as never,
-			taskRepo: { listByWorkflowRun: mock(() => []) } as never,
+			taskRepo: {
+				listByWorkflowRun: mock(() => []),
+				listByWorkflowRunIncludingArchived: mock(() => []),
+			} as never,
 			nodeExecutionRepo: {} as never,
 			workflowRunRepo: makeWorkflowRunRepo() as never,
 			taskManager: { setTaskStatus: mock(async () => {}) } as never,
