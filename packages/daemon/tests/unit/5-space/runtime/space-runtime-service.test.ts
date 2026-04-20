@@ -637,3 +637,121 @@ function makeTestDb(): { db: BunDatabase; dir: string } {
 	runMigrations(db, () => {});
 	return { db, dir };
 }
+
+// ─── activateWorkflowNode — notification sink forwarding ─────────────────────
+//
+// Regression guard: SpaceRuntimeService.activateWorkflowNode must forward the
+// runtime's current NotificationSink into the scoped ChannelRouter so that
+// ChannelRouter.activateNode()'s `workflow_run_reopened` events propagate to
+// the Space Agent session. Without the sink wiring, reopens of terminal runs
+// would be silently dropped.
+
+describe('activateWorkflowNode() — notification forwarding', () => {
+	test('forwards workflow_run_reopened to the current NotificationSink when reopening a done run', async () => {
+		const { db, dir } = makeTestDb();
+		try {
+			const SPACE_ID = 'space-act-sink-1';
+			const AGENT_ID = 'agent-act-sink-1';
+			const NODE_A = 'node-act-a';
+			const NODE_B = 'node-act-b';
+
+			// Seed space + agents
+			db.prepare(
+				`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+				 allowed_models, session_ids, slug, status, created_at, updated_at)
+				 VALUES (?, '/tmp/ws', 'Test', '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+			).run(SPACE_ID, SPACE_ID, Date.now(), Date.now());
+			db.prepare(
+				`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+				 VALUES (?, ?, 'A', '', null, '[]', '', ?, ?)`
+			).run(AGENT_ID, SPACE_ID, Date.now(), Date.now());
+
+			// Build real repos/managers on this DB
+			const taskRepo = new SpaceTaskRepo(db);
+			const workflowRunRepo = new SpaceWorkflowRunRepo(db);
+			const { GateDataRepository } = await import(
+				'../../../../src/storage/repositories/gate-data-repository.ts'
+			);
+			const { ChannelCycleRepository } = await import(
+				'../../../../src/storage/repositories/channel-cycle-repository.ts'
+			);
+			const gateDataRepo = new GateDataRepository(db);
+			const channelCycleRepo = new ChannelCycleRepository(db);
+			const agentRepo = new SpaceAgentRepository(db);
+			const agentManager = new AgentMgr(agentRepo);
+			const workflowRepo = new SpaceWorkflowRepository(db);
+			const workflowManager = new WorkflowMgr(workflowRepo);
+			const spaceManager = new SpaceMgr(db);
+
+			// Minimal two-node workflow
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `WF ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: NODE_A, name: 'A', agentId: AGENT_ID },
+					{ id: NODE_B, name: 'B', agentId: AGENT_ID },
+				],
+				transitions: [],
+				startNodeId: NODE_A,
+				endNodeId: NODE_B,
+				rules: [],
+				tags: [],
+				channels: [],
+				gates: [],
+			});
+
+			// Create a run + canonical task, then mark the run as `done`.
+			const run = workflowRunRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'Reopen me',
+			});
+			taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Reopen me',
+				description: '',
+				status: 'open',
+				workflowRunId: run.id,
+			});
+			workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+
+			// Build the service with all deps the activateWorkflowNode path needs.
+			const service = new SpaceRuntimeService({
+				db,
+				spaceManager: spaceManager as unknown as SpaceManager,
+				spaceAgentManager: agentManager as unknown as SpaceAgentManager,
+				spaceWorkflowManager: workflowManager as unknown as SpaceWorkflowManager,
+				workflowRunRepo,
+				taskRepo,
+				tickIntervalMs: 60_000,
+				gateDataRepo,
+				channelCycleRepo,
+			});
+
+			// Install a recording sink AFTER construction — mirrors the real wiring
+			// order (service is built before the Space Agent session exists).
+			const sink = new MockSink();
+			service.setNotificationSink(sink);
+
+			// Activating a node on a `done` run must reopen it and notify.
+			await service.activateWorkflowNode(run.id, NODE_B);
+
+			const reopens = sink.events.filter((e) => e.kind === 'workflow_run_reopened');
+			expect(reopens).toHaveLength(1);
+			expect(reopens[0].kind).toBe('workflow_run_reopened');
+			if (reopens[0].kind === 'workflow_run_reopened') {
+				expect(reopens[0].runId).toBe(run.id);
+				expect(reopens[0].spaceId).toBe(SPACE_ID);
+				expect(reopens[0].fromStatus).toBe('done');
+			}
+		} finally {
+			try {
+				db.close();
+			} catch {
+				/* ignore */
+			}
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});

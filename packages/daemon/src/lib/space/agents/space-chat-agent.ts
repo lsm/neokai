@@ -313,10 +313,12 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 		`Use these tools to directly interact with running task agents and inspect their workflow execution state:\n`
 	);
 	sections.push(
-		`- **\`send_message_to_task\`** — Inject a message into a running task agent session. ` +
-			`Use this to provide real-time guidance, corrections, or new context to a task agent ` +
-			`that is currently executing. Call \`get_task_detail\` first to confirm the task is \`in_progress\`. ` +
-			`The message is delivered asynchronously to the agent's session.`
+		`- **\`send_message_to_task\`** — Send a message to a task. Targets the Task Agent by default; ` +
+			`optionally target a specific workflow node via \`node_id\` (execution UUID or agent name like ` +
+			`\`"coder"\`/\`"reviewer"\`). Auto-spawns the Task Agent when the task has not started yet, and ` +
+			`auto-activates the targeted node when its sub-session is not running. Archived tasks are the ` +
+			`only state that refuses delivery. Provide \`task_id\` or \`task_number\` — if both are given, ` +
+			`\`task_id\` wins. The message is delivered asynchronously to the target session.`
 	);
 	sections.push('');
 	sections.push(

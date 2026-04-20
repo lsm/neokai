@@ -28,7 +28,8 @@ import {
 	createSpaceAgentMcpServer,
 	createSpaceAgentToolHandlers,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
+import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 // ---------------------------------------------------------------------------
 // DB + space setup helpers
@@ -1524,5 +1525,527 @@ describe('createSpaceAgentToolHandlers — approve_task guard', () => {
 		const parsed = JSON.parse(result.content[0].text);
 		expect(parsed.success).toBe(true);
 		expect(parsed.task.status).toBe('done');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// send_message_to_task — node targeting, auto-spawn, task_number resolution
+// ---------------------------------------------------------------------------
+
+interface FakeTaskAgentManager {
+	manager: TaskAgentManager;
+	ensureCalls: string[];
+	taskAgentInjects: Array<{ taskId: string; message: string }>;
+	subSessionInjects: Array<{ sessionId: string; message: string }>;
+	/** Session IDs that should throw `Sub-session not found` on inject. */
+	deadSessionIds: Set<string>;
+	/** Hook invoked before ensureTaskAgentSession resolves. Allows simulating
+	 *  side-effects such as assigning a taskAgentSessionId. */
+	onEnsure?: (taskId: string) => Promise<void> | void;
+}
+
+function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
+	const state: Omit<FakeTaskAgentManager, 'manager'> = {
+		ensureCalls: [],
+		taskAgentInjects: [],
+		subSessionInjects: [],
+		deadSessionIds: new Set(),
+	};
+	const manager = {
+		async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
+			state.ensureCalls.push(taskId);
+			if (state.onEnsure) await state.onEnsure(taskId);
+			const task = ctx.taskRepo.getTask(taskId);
+			if (!task) throw new Error(`Task not found: ${taskId}`);
+			// Synthesise a sessionId the same way the real manager would.
+			if (!task.taskAgentSessionId) {
+				ctx.taskRepo.updateTask(taskId, {
+					taskAgentSessionId: `space:${task.spaceId}:task:${taskId}`,
+					status: task.status === 'open' ? 'in_progress' : task.status,
+				});
+			}
+			return ctx.taskRepo.getTask(taskId) as SpaceTask;
+		},
+		async injectTaskAgentMessage(taskId: string, message: string): Promise<void> {
+			state.taskAgentInjects.push({ taskId, message });
+		},
+		async injectSubSessionMessage(sessionId: string, message: string): Promise<void> {
+			if (state.deadSessionIds.has(sessionId)) {
+				throw new Error(`Sub-session not found: ${sessionId}`);
+			}
+			state.subSessionInjects.push({ sessionId, message });
+		},
+	} as unknown as TaskAgentManager;
+	return { manager, ...state };
+}
+
+describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	async function createTask(title = 'Test Task'): Promise<SpaceTask> {
+		const created = await ctx.taskManager.createTask({
+			title,
+			description: 'desc',
+			priority: 'normal',
+		});
+		return created;
+	}
+
+	function makeHandlersWith(
+		tam: FakeTaskAgentManager,
+		opts: { activateNode?: (runId: string, nodeId: string) => Promise<void> } = {}
+	) {
+		return createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			taskAgentManager: tam.manager,
+			activateNode: opts.activateNode,
+		});
+	}
+
+	test('returns an error when the task agent manager is unavailable', async () => {
+		const handlers = createSpaceAgentToolHandlers({
+			spaceId: ctx.spaceId,
+			runtime: ctx.runtime,
+			workflowManager: ctx.workflowManager,
+			taskRepo: ctx.taskRepo,
+			workflowRunRepo: ctx.workflowRunRepo,
+			taskManager: ctx.taskManager,
+			spaceAgentManager: ctx.agentManager,
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			// intentionally omitting taskAgentManager
+		});
+		const task = await createTask();
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			message: 'hi',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Task agent communication');
+	});
+
+	test('returns an error when neither task_id nor task_number is provided', async () => {
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({ message: 'hi' });
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toMatch(/task_id or task_number/);
+	});
+
+	test('auto-spawns the task agent and injects when no node_id is provided', async () => {
+		const task = await createTask('Auto-spawn task');
+		expect(task.taskAgentSessionId).toBeFalsy();
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_id: task.id,
+			message: 'kick off work',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.target).toBe('task-agent');
+		expect(tam.ensureCalls).toEqual([task.id]);
+		expect(tam.taskAgentInjects).toEqual([{ taskId: task.id, message: 'kick off work' }]);
+		// task-agent session id is now recorded on the task
+		const refreshed = ctx.taskRepo.getTask(task.id);
+		expect(refreshed?.taskAgentSessionId).toBeTruthy();
+	});
+
+	test('auto-spawn reopens done/cancelled tasks (archived is the only tombstone)', async () => {
+		const task = await createTask('Reopen task');
+		ctx.taskRepo.updateTask(task.id, { status: 'done' });
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_id: task.id,
+			message: 'please revisit',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(tam.ensureCalls).toEqual([task.id]);
+		expect(tam.taskAgentInjects).toEqual([{ taskId: task.id, message: 'please revisit' }]);
+	});
+
+	test('returns an error when the task is archived', async () => {
+		const task = await createTask('Archived task');
+		ctx.taskRepo.updateTask(task.id, { status: 'archived' });
+
+		const tam = makeFakeTaskAgentManager(ctx);
+
+		const resultNoNode = await makeHandlersWith(tam).send_message_to_task({
+			task_id: task.id,
+			message: 'hello',
+		});
+		const parsedNoNode = JSON.parse(resultNoNode.content[0].text);
+		expect(parsedNoNode.success).toBe(false);
+		expect(parsedNoNode.error).toMatch(/archived/);
+
+		const resultWithNode = await makeHandlersWith(tam).send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'hello',
+		});
+		const parsedWithNode = JSON.parse(resultWithNode.content[0].text);
+		expect(parsedWithNode.success).toBe(false);
+		expect(parsedWithNode.error).toMatch(/archived/);
+
+		// Neither path should have touched the task agent.
+		expect(tam.ensureCalls).toHaveLength(0);
+		expect(tam.taskAgentInjects).toHaveLength(0);
+		expect(tam.subSessionInjects).toHaveLength(0);
+	});
+
+	test('resolves task_number to the correct task', async () => {
+		const taskA = await createTask('task A');
+		const taskB = await createTask('task B');
+		expect(taskA.taskNumber).not.toBe(taskB.taskNumber);
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_number: taskB.taskNumber,
+			message: 'hi B',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task_id).toBe(taskB.id);
+		expect(tam.taskAgentInjects).toEqual([{ taskId: taskB.id, message: 'hi B' }]);
+	});
+
+	test('returns an error when task_number does not match any task in this space', async () => {
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_number: 99_999,
+			message: 'hi',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('99999');
+	});
+
+	test('node_id by agent name routes directly to the live sub-session', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Coder');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(
+			ctx.spaceId,
+			wf.id,
+			'Node target run'
+		);
+		const task = tasks[0];
+		// Seed two executions: a terminated Coder with a live session + a fresh Reviewer.
+		const coderExec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-session-live',
+			status: 'idle',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const activateCalls: Array<[string, string]> = [];
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async (r, n) => {
+				activateCalls.push([r, n]);
+			},
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'refactor the parser',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.target).toBe('node');
+		expect(parsed.node_execution_id).toBe(coderExec.id);
+		expect(parsed.agent_name).toBe('coder');
+		expect(parsed.activated).toBe(false);
+		// Direct-injection path must skip activateNode.
+		expect(activateCalls).toHaveLength(0);
+		expect(tam.subSessionInjects).toEqual([
+			{ sessionId: 'coder-session-live', message: 'refactor the parser' },
+		]);
+		// The Task Agent path was not touched.
+		expect(tam.ensureCalls).toHaveLength(0);
+		expect(tam.taskAgentInjects).toHaveLength(0);
+	});
+
+	test('node_id by execution UUID targets that specific execution', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF UUID');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'UUID target');
+		const task = tasks[0];
+		// Two executions for the same agent name — UUID targeting must disambiguate.
+		const reviewerA = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			agentSessionId: 'reviewer-a-session',
+			status: 'idle',
+		});
+		const reviewerB = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer-2',
+			agentSessionId: 'reviewer-b-session',
+			status: 'in_progress',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, { activateNode: async () => {} });
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: reviewerB.id,
+			message: 'please re-review',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.node_execution_id).toBe(reviewerB.id);
+		expect(tam.subSessionInjects).toEqual([
+			{ sessionId: 'reviewer-b-session', message: 'please re-review' },
+		]);
+		// Ensure the other reviewer was never touched.
+		expect(tam.subSessionInjects.some((r) => r.sessionId === reviewerA.agentSessionId)).toBe(false);
+	});
+
+	test('auto-activates and injects when the targeted node has no live session', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Lazy');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Lazy activate');
+		const task = tasks[0];
+		// Seed execution with NO agentSessionId — simulating a never-spawned node.
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const activateCalls: Array<[string, string]> = [];
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async (runId, nodeId) => {
+				activateCalls.push([runId, nodeId]);
+				// Simulate ChannelRouter.activateNode() restoring a reusable session id.
+				ctx.nodeExecutionRepo.update(exec.id, {
+					status: 'in_progress',
+					agentSessionId: 'reviewer-session-newly-restored',
+				});
+			},
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'reviewer',
+			message: 'please re-review',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.activated).toBe(true);
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
+		expect(tam.subSessionInjects).toEqual([
+			{
+				sessionId: 'reviewer-session-newly-restored',
+				message: 'please re-review',
+			},
+		]);
+	});
+
+	test('reports deferred delivery when activation creates no live session', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF Deferred'
+		);
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Deferred');
+		const task = tasks[0];
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async () => {
+				// Activation succeeded but did not attach a live session id — the tick
+				// loop will spawn one later. The handler surfaces `delivered: false`.
+			},
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'reviewer',
+			message: 'queued reminder',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.activated).toBe(true);
+		expect(parsed.delivered).toBe(false);
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(tam.subSessionInjects).toHaveLength(0);
+	});
+
+	test('returns an error when node_id does not match any execution', async () => {
+		const wf = buildSingleStepWorkflow(
+			ctx.spaceId,
+			ctx.workflowManager,
+			ctx.agentId,
+			'WF NotFound'
+		);
+		const { tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'run');
+		const task = tasks[0];
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, { activateNode: async () => {} });
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'nonexistent-agent',
+			message: 'hi',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('Node not found');
+	});
+
+	test('returns an error when node_id is provided but the task has no workflow run', async () => {
+		const task = await createTask('No workflow task');
+		expect(task.workflowRunId).toBeFalsy();
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, { activateNode: async () => {} });
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'hi',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('no workflow run');
+	});
+
+	test('agent-name resolution is case-insensitive', async () => {
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Case');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Case run');
+		const task = tasks[0];
+
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'Reviewer',
+			agentSessionId: 'reviewer-session-1',
+			status: 'in_progress',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const handlers = makeHandlersWith(tam, { activateNode: async () => {} });
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'REVIEWER',
+			message: 'please look again',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.node_execution_id).toBe(exec.id);
+		expect(tam.subSessionInjects).toEqual([
+			{ sessionId: 'reviewer-session-1', message: 'please look again' },
+		]);
+	});
+
+	test('task_id takes precedence when both task_id and task_number are supplied', async () => {
+		const taskA = await createTask('task A');
+		const taskB = await createTask('task B');
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_id: taskA.id,
+			task_number: taskB.taskNumber,
+			message: 'hello',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task_id).toBe(taskA.id);
+		expect(tam.taskAgentInjects).toEqual([{ taskId: taskA.id, message: 'hello' }]);
+	});
+
+	test('falls back to activateNode when a previously-live session rejects injection', async () => {
+		// Execution has an agentSessionId but the sub-session is dead (e.g. daemon
+		// restart cleaned it up). First injection throws; handler must fall through
+		// to activateNode, which revives the execution with a fresh session id.
+		const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Dead');
+		const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Dead session');
+		const task = tasks[0];
+		const exec = ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: run.id,
+			workflowNodeId: wf.startNodeId,
+			agentName: 'coder',
+			agentSessionId: 'coder-dead',
+			status: 'idle',
+		});
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		tam.deadSessionIds.add('coder-dead');
+		const activateCalls: Array<[string, string]> = [];
+		const handlers = makeHandlersWith(tam, {
+			activateNode: async (runId, nodeId) => {
+				activateCalls.push([runId, nodeId]);
+				ctx.nodeExecutionRepo.update(exec.id, {
+					status: 'in_progress',
+					agentSessionId: 'coder-new',
+				});
+			},
+		});
+
+		const result = await handlers.send_message_to_task({
+			task_id: task.id,
+			node_id: 'coder',
+			message: 'retry',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.activated).toBe(true);
+		expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
+		expect(tam.subSessionInjects).toEqual([{ sessionId: 'coder-new', message: 'retry' }]);
+	});
+
+	test('returns an error when the target task belongs to a different space', async () => {
+		const otherSpaceId = 'space-other-owner';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-workspace');
+		const foreignTaskId = `task-foreign-${Math.random().toString(36).slice(2)}`;
+		ctx.db
+			.prepare(
+				`INSERT INTO space_tasks (id, space_id, task_number, title, description,
+					status, priority, depends_on, created_at, updated_at)
+				 VALUES (?, ?, 1, 'Foreign task', '', 'open', 'normal', '[]', ?, ?)`
+			)
+			.run(foreignTaskId, otherSpaceId, Date.now(), Date.now());
+
+		const tam = makeFakeTaskAgentManager(ctx);
+		const result = await makeHandlersWith(tam).send_message_to_task({
+			task_id: foreignTaskId,
+			message: 'hi',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('does not belong to this space');
 	});
 });
