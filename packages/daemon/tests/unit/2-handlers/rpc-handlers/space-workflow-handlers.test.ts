@@ -28,6 +28,7 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash';
 import { getBuiltInWorkflows } from '../../../../src/lib/space/workflows/built-in-workflows';
@@ -135,6 +136,12 @@ function createMockSpaceAgentManager(
 	} as unknown as SpaceAgentManager;
 }
 
+function createMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
+	return {
+		deleteByWorkflowId: mock(() => 0),
+	} as unknown as SpaceWorkflowRunRepository;
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('space-workflow-handlers', () => {
@@ -144,6 +151,7 @@ describe('space-workflow-handlers', () => {
 	let spaceManager: SpaceManager;
 	let workflowManager: SpaceWorkflowManager;
 	let spaceAgentManager: SpaceAgentManager;
+	let workflowRunRepo: SpaceWorkflowRunRepository;
 
 	function setup(
 		space: Space | null = mockSpace,
@@ -157,7 +165,15 @@ describe('space-workflow-handlers', () => {
 		spaceManager = createMockSpaceManager(space);
 		workflowManager = createMockWorkflowManager(workflow);
 		spaceAgentManager = createMockSpaceAgentManager(agents);
-		setupSpaceWorkflowHandlers(hub, spaceManager, workflowManager, daemonHub, spaceAgentManager);
+		workflowRunRepo = createMockWorkflowRunRepo();
+		setupSpaceWorkflowHandlers(
+			hub,
+			spaceManager,
+			workflowManager,
+			daemonHub,
+			spaceAgentManager,
+			workflowRunRepo
+		);
 	}
 
 	const call = (method: string, data: unknown) => {
@@ -1059,7 +1075,11 @@ describe('space-workflow-handlers', () => {
 			expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
 		});
 
-		it('throws when no SpaceAgent resolves a required role (rolls back nothing — same contract as syncFromTemplate)', async () => {
+		it('throws when no SpaceAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
+			// Regression: previously resyncDuplicates deleted the older rows
+			// before validating agent resolution. If agent resolution threw,
+			// duplicates were permanently lost with no resync performed. The
+			// handler must now validate first, update second, delete last.
 			const [template] = getBuiltInWorkflows();
 			const older: SpaceWorkflow = {
 				...mockWorkflow,
@@ -1084,6 +1104,54 @@ describe('space-workflow-handlers', () => {
 					templateName: template.name,
 				})
 			).rejects.toThrow('Cannot resync: no SpaceAgent found with name');
+
+			// Crucially: no destructive work happened.
+			expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
+			expect(workflowManager.updateWorkflow).not.toHaveBeenCalled();
+			expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalled();
+		});
+
+		it('explicitly deletes runs for each removed duplicate workflow', async () => {
+			// Regression: migration 60 rebuilt space_workflow_runs without ON
+			// DELETE CASCADE on workflow_id, so removing a workflow alone leaves
+			// orphan runs. resyncDuplicates must call deleteByWorkflowId for
+			// each deleted row.
+			const [template] = getBuiltInWorkflows();
+			const agents = agentsForTemplate(template);
+			const older1: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-older-1',
+				templateName: template.name,
+				templateHash: 'old-1',
+				createdAt: 100,
+			};
+			const older2: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-older-2',
+				templateName: template.name,
+				templateHash: 'old-2',
+				createdAt: 150,
+			};
+			const newer: SpaceWorkflow = {
+				...mockWorkflow,
+				id: 'wf-newer',
+				templateName: template.name,
+				templateHash: 'new',
+				createdAt: 200,
+			};
+			setupWithGroup([older1, older2, newer], agents);
+
+			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
+			(workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(true);
+
+			await call('spaceWorkflow.resyncDuplicates', {
+				spaceId: 'space-1',
+				templateName: template.name,
+			});
+
+			expect(workflowRunRepo.deleteByWorkflowId).toHaveBeenCalledWith('wf-older-1');
+			expect(workflowRunRepo.deleteByWorkflowId).toHaveBeenCalledWith('wf-older-2');
+			expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-newer');
 		});
 	});
 });

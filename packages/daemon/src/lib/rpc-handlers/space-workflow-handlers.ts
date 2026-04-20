@@ -23,6 +23,7 @@ import type {
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
 	DuplicateDriftReport,
+	SpaceWorkflow,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -30,16 +31,92 @@ import type { SpaceWorkflowManager } from '../space/managers/space-workflow-mana
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { getBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { computeWorkflowHash } from '../space/workflows/template-hash';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-handlers');
+
+/**
+ * Resolve a template (built-in workflow) against a space's agents and produce
+ * the `UpdateSpaceWorkflowParams` that overwrites an existing row with the
+ * template's canonical content.
+ *
+ * Shared by `spaceWorkflow.syncFromTemplate` and `spaceWorkflow.resyncDuplicates`.
+ *
+ * Throws synchronously if any node references an agent name that doesn't exist
+ * in the target space — callers rely on this to validate BEFORE performing any
+ * destructive work (e.g. deleting duplicate rows).
+ *
+ * @param errorVerb   Appears in thrown error messages (e.g. "sync", "resync")
+ *                    so users see "Cannot sync: …" vs. "Cannot resync: …".
+ */
+function buildTemplateUpdateParams(
+	spaceAgentManager: SpaceAgentManager,
+	spaceId: string,
+	template: SpaceWorkflow,
+	errorVerb: 'sync' | 'resync'
+): UpdateSpaceWorkflowParams {
+	const spaceAgents = spaceAgentManager.listBySpaceId(spaceId);
+	function resolveAgentId(roleName: string): string | undefined {
+		return spaceAgents.find((a) => a.name.toLowerCase() === roleName.toLowerCase())?.id;
+	}
+
+	const nodeIdMap = new Map<string, string>();
+	for (const node of template.nodes) {
+		nodeIdMap.set(node.id, generateUUID());
+	}
+
+	const newNodes = template.nodes.map((node) => {
+		const resolvedAgents = node.agents.map((a) => {
+			const resolvedId = resolveAgentId(a.agentId);
+			if (!resolvedId) {
+				throw new Error(
+					`Cannot ${errorVerb}: no SpaceAgent found with name "${a.agentId}" in space "${spaceId}".`
+				);
+			}
+			return { ...a, agentId: resolvedId };
+		});
+		return {
+			id: nodeIdMap.get(node.id)!,
+			name: node.name,
+			agents: resolvedAgents,
+			...(node.completionActions ? { completionActions: node.completionActions } : {}),
+		};
+	});
+
+	const newStartNodeId = nodeIdMap.get(template.startNodeId);
+	if (!newStartNodeId) {
+		throw new Error(`Template "${template.name}" has invalid startNodeId.`);
+	}
+	const newEndNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId) : undefined;
+	const newChannels = template.channels
+		? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
+		: null;
+	const newGates = template.gates ? [...template.gates] : null;
+	const templateHash = computeWorkflowHash(template);
+
+	return {
+		name: template.name,
+		description: template.description ?? null,
+		instructions: template.instructions ?? null,
+		nodes: newNodes,
+		startNodeId: newStartNodeId,
+		endNodeId: newEndNodeId ?? null,
+		channels: newChannels,
+		gates: newGates,
+		tags: [...template.tags],
+		templateName: template.name,
+		templateHash,
+	};
+}
 
 export function setupSpaceWorkflowHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	workflowManager: SpaceWorkflowManager,
 	daemonHub: DaemonHub,
-	spaceAgentManager: SpaceAgentManager
+	spaceAgentManager: SpaceAgentManager,
+	workflowRunRepo: SpaceWorkflowRunRepository
 ): void {
 	// ─── spaceWorkflow.create ────────────────────────────────────────────────
 	messageHub.onRequest('spaceWorkflow.create', async (data) => {
@@ -345,66 +422,23 @@ export function setupSpaceWorkflowHandlers(
 			);
 		}
 
-		// Resolve agent role names → space agent UUIDs
-		const spaceAgents = spaceAgentManager.listBySpaceId(params.spaceId);
-		function resolveAgentId(roleName: string): string | undefined {
-			return spaceAgents.find((a) => a.name.toLowerCase() === roleName.toLowerCase())?.id;
-		}
+		// Build the overwrite params. Throws synchronously if any node references
+		// an agent name that doesn't exist in this space — nothing is mutated
+		// in that case.
+		const updateParams = buildTemplateUpdateParams(
+			spaceAgentManager,
+			params.spaceId,
+			template,
+			'sync'
+		);
 
-		// Build new node list from template, assigning fresh UUIDs to node IDs
-		const nodeIdMap = new Map<string, string>();
-		for (const node of template.nodes) {
-			nodeIdMap.set(node.id, generateUUID());
-		}
-
-		const newNodes = template.nodes.map((node) => {
-			const resolvedAgents = node.agents.map((a) => {
-				const resolvedId = resolveAgentId(a.agentId);
-				if (!resolvedId) {
-					throw new Error(
-						`Cannot sync: no SpaceAgent found with name "${a.agentId}" in space "${params.spaceId}".`
-					);
-				}
-				return { ...a, agentId: resolvedId };
-			});
-			return {
-				id: nodeIdMap.get(node.id)!,
-				name: node.name,
-				agents: resolvedAgents,
-				...(node.completionActions ? { completionActions: node.completionActions } : {}),
-			};
-		});
-
-		const newStartNodeId = nodeIdMap.get(template.startNodeId);
-		if (!newStartNodeId) {
-			throw new Error(`Template "${template.name}" has invalid startNodeId.`);
-		}
-
-		const newEndNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId) : undefined;
-
-		const newChannels = template.channels
-			? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
-			: null;
-
-		const newGates = template.gates ? [...template.gates] : null;
-
-		// Compute the template hash for drift tracking
-		const templateHash = computeWorkflowHash(template);
+		// Preserve the existing workflow's templateName rather than adopting the
+		// template's name — they should match already, but this guards against
+		// manual edits to the stored templateName.
+		updateParams.templateName = workflow.templateName;
 
 		// Overwrite the workflow
-		const updated = workflowManager.updateWorkflow(params.id, {
-			name: template.name,
-			description: template.description ?? null,
-			instructions: template.instructions ?? null,
-			nodes: newNodes,
-			startNodeId: newStartNodeId,
-			endNodeId: newEndNodeId ?? null,
-			channels: newChannels,
-			gates: newGates,
-			tags: [...template.tags],
-			templateName: workflow.templateName,
-			templateHash,
-		});
+		const updated = workflowManager.updateWorkflow(params.id, updateParams);
 
 		if (!updated) {
 			throw new Error(`Workflow not found: ${params.id}`);
@@ -485,13 +519,18 @@ export function setupSpaceWorkflowHandlers(
 
 	// ─── spaceWorkflow.resyncDuplicates ──────────────────────────────────────
 	// Resolves a duplicate-drift group by:
-	//   1. Keeping the newest (by createdAt) workflow row for the given
-	//      `templateName` in the space.
-	//   2. Deleting every older row in the group (cascade-removing their
-	//      workflow runs — which is acceptable because this is a user-initiated
-	//      cleanup, gated by a confirmation dialog in the UI).
-	//   3. Overwriting the kept row with the current built-in template via
-	//      the same logic as `spaceWorkflow.syncFromTemplate`.
+	//   1. Building the template overwrite params (validates that every agent
+	//      role in the template resolves to a SpaceAgent in this space — throws
+	//      BEFORE any row is mutated if validation fails).
+	//   2. Overwriting the kept row (newest by createdAt) with the canonical
+	//      built-in template, matching `spaceWorkflow.syncFromTemplate`.
+	//   3. Only after (2) succeeds: deleting every older row in the group and
+	//      their workflow runs. Runs are deleted explicitly because migration
+	//      60 rebuilt `space_workflow_runs` without an ON DELETE CASCADE on
+	//      `workflow_id`, so dropping a workflow alone would leave orphans.
+	//
+	// This ordering is deliberate — if agent resolution fails on step 1 the
+	// duplicates must remain on disk so the user can retry after fixing agents.
 	messageHub.onRequest('spaceWorkflow.resyncDuplicates', async (data) => {
 		const params = data as { spaceId: string; templateName: string };
 
@@ -526,13 +565,35 @@ export function setupSpaceWorkflowHandlers(
 			);
 		}
 
-		// Sort newest-first. Keep the first, delete the rest.
+		// Sort newest-first. Keep the first, the rest are candidates for deletion.
 		group.sort((a, b) => b.createdAt - a.createdAt);
 		const kept = group[0];
 		const toDelete = group.slice(1);
 
+		// Build the overwrite params BEFORE any destructive work. If this throws
+		// (e.g. an agent role is missing), no rows have been touched and the
+		// user can retry after fixing their space agents.
+		const updateParams = buildTemplateUpdateParams(
+			spaceAgentManager,
+			params.spaceId,
+			template,
+			'resync'
+		);
+
+		// Overwrite the kept row first. If the update fails the duplicates stay
+		// on disk.
+		const updated = workflowManager.updateWorkflow(kept.id, updateParams);
+		if (!updated) {
+			throw new Error(`Workflow not found: ${kept.id}`);
+		}
+
+		// Only now — after the kept row is safely resynced — remove the duplicates.
+		// Runs are deleted explicitly because the space_workflow_runs FK is not
+		// ON DELETE CASCADE (migration 60 dropped it). Without this the rows
+		// would orphan and show up in no UI but still consume disk.
 		const deletedIds: string[] = [];
 		for (const wf of toDelete) {
+			workflowRunRepo.deleteByWorkflowId(wf.id);
 			const ok = workflowManager.deleteWorkflow(wf.id);
 			if (ok) {
 				deletedIds.push(wf.id);
@@ -546,67 +607,6 @@ export function setupSpaceWorkflowHandlers(
 						log.warn('Failed to emit spaceWorkflow.deleted:', err);
 					});
 			}
-		}
-
-		// If the kept row is already a verbatim copy of the template there's
-		// no content to overwrite — but we still refresh the stored hash so
-		// drift detection clears immediately. The overwrite below re-derives
-		// everything from the template, so this is safe.
-		const spaceAgents = spaceAgentManager.listBySpaceId(params.spaceId);
-		function resolveAgentId(roleName: string): string | undefined {
-			return spaceAgents.find((a) => a.name.toLowerCase() === roleName.toLowerCase())?.id;
-		}
-
-		const nodeIdMap = new Map<string, string>();
-		for (const node of template.nodes) {
-			nodeIdMap.set(node.id, generateUUID());
-		}
-
-		const newNodes = template.nodes.map((node) => {
-			const resolvedAgents = node.agents.map((a) => {
-				const resolvedId = resolveAgentId(a.agentId);
-				if (!resolvedId) {
-					throw new Error(
-						`Cannot resync: no SpaceAgent found with name "${a.agentId}" in space "${params.spaceId}".`
-					);
-				}
-				return { ...a, agentId: resolvedId };
-			});
-			return {
-				id: nodeIdMap.get(node.id)!,
-				name: node.name,
-				agents: resolvedAgents,
-				...(node.completionActions ? { completionActions: node.completionActions } : {}),
-			};
-		});
-
-		const newStartNodeId = nodeIdMap.get(template.startNodeId);
-		if (!newStartNodeId) {
-			throw new Error(`Template "${template.name}" has invalid startNodeId.`);
-		}
-		const newEndNodeId = template.endNodeId ? nodeIdMap.get(template.endNodeId) : undefined;
-		const newChannels = template.channels
-			? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
-			: null;
-		const newGates = template.gates ? [...template.gates] : null;
-		const templateHash = computeWorkflowHash(template);
-
-		const updated = workflowManager.updateWorkflow(kept.id, {
-			name: template.name,
-			description: template.description ?? null,
-			instructions: template.instructions ?? null,
-			nodes: newNodes,
-			startNodeId: newStartNodeId,
-			endNodeId: newEndNodeId ?? null,
-			channels: newChannels,
-			gates: newGates,
-			tags: [...template.tags],
-			templateName: template.name,
-			templateHash,
-		});
-
-		if (!updated) {
-			throw new Error(`Workflow not found: ${kept.id}`);
 		}
 
 		daemonHub

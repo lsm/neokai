@@ -210,6 +210,21 @@ export class SpaceWorkflowRunRepository {
 	}
 
 	/**
+	 * Delete every run that belongs to a given workflow.
+	 *
+	 * Needed because migration 60 rebuilt `space_workflow_runs` without an
+	 * `ON DELETE CASCADE` FK on `workflow_id`, so callers that remove a workflow
+	 * must explicitly clean up its runs to avoid orphans.
+	 *
+	 * @returns The number of rows deleted.
+	 */
+	deleteByWorkflowId(workflowId: string): number {
+		const stmt = this.db.prepare(`DELETE FROM space_workflow_runs WHERE workflow_id = ?`);
+		const result = stmt.run(workflowId);
+		return result.changes;
+	}
+
+	/**
 	 * Convert a database row to a SpaceWorkflowRun object
 	 */
 	private rowToRun(row: Record<string, unknown>): SpaceWorkflowRun {
