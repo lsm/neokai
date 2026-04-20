@@ -5,10 +5,10 @@
 # | Trigger                              | Tests Run                                      | Rationale                      |
 # |--------------------------------------|-----------------------------------------------|--------------------------------|
 # | PR to dev                            | check + unit + online                         | Fast feedback for PRs          |
-# | Push to dev                          | e2e only                                      | Already passed unit/online    |
+# | Push to dev                          | none                                          | Dev merge is not gated        |
 # | PR to main                           | all tests (check + unit + online + e2e + web + CLI) | Full gate              |
 # | Push to main                         | all tests                                     | Full gate for main branch     |
-# | workflow_dispatch (run_e2e_only=true) | discover + build + e2e only                   | Selective E2E on PR branches  |
+# | workflow_dispatch (run_e2e_only=true) | discover + build + e2e only                   | Selective E2E on any branch   |
 #
 # Release is handled separately in release.yml (triggered by version tags).
 # Test coverage (unit, online, web) is uploaded to Coveralls.
@@ -727,8 +727,8 @@ jobs:
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
-  # Waits for test jobs; proceeds if they passed or were skipped (push to dev).
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
+  # Waits for test jobs; proceeds if they passed or were skipped.
   # ============================================
 
   build:
@@ -738,7 +738,7 @@ jobs:
     if: >-
       always() &&
       (github.event_name == 'pull_request' && github.base_ref == 'main' ||
-       github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') ||
+       github.event_name == 'push' && github.ref == 'refs/heads/main' ||
        github.event_name == 'workflow_dispatch') &&
       (github.event.inputs.run_e2e_only == 'true' ||
        (needs.discover.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
@@ -807,13 +807,13 @@ jobs:
   # Tests are split into two groups:
   #   - no-llm: UI-only tests (run fully parallel)
   #   - llm: Tests requiring LLM round-trips (max 4 parallel)
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
   # ============================================
 
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -891,7 +891,7 @@ jobs:
   # ============================================
   # E2E TESTS - No LLM (Matrix, fully parallel)
   # UI-only tests that don't require LLM API calls
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
   # ============================================
 
   e2e-no-llm:
@@ -1030,7 +1030,7 @@ jobs:
   # ============================================
   # E2E TESTS - LLM Required (Matrix, max 4 parallel)
   # Tests that send messages and wait for LLM responses
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
   # ============================================
 
   e2e-llm:
@@ -1241,25 +1241,25 @@ jobs:
             FAILED=1
           fi
 
-          # build: PR to main, push to dev, push to main (skip on PR to dev)
+          # build: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
             FAILED=1
           fi
 
-          # discover: PR to main, push to dev, push to main (skip on PR to dev)
+          # discover: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
           if [[ "${{ needs.discover.result }}" == "failure" ]]; then
             echo "❌ discover failed"
             FAILED=1
           fi
 
-          # e2e-no-llm: PR to main, push to dev, push to main (skip on PR to dev)
+          # e2e-no-llm: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
           if [[ "${{ needs.e2e-no-llm.result }}" == "failure" ]]; then
             echo "❌ e2e-no-llm failed"
             FAILED=1
           fi
 
-          # e2e-llm: PR to main, push to dev, push to main (skip on PR to dev)
+          # e2e-llm: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
           if [[ "${{ needs.e2e-llm.result }}" == "failure" ]]; then
             echo "❌ e2e-llm failed"
             FAILED=1
