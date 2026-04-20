@@ -2,6 +2,121 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.9.0] - 2026-04-20
+
+A major release introducing the **Space Workflow System** — a multi-agent orchestration platform with visual workflow editing, channel-based routing, approval gates, and autonomy levels. ~1,145 commits since v0.8.0.
+
+### Added
+
+#### Space Workflow System
+- **Visual workflow editor**: Drag-and-drop canvas with DAG auto-layout, zoom/pan controls, multi-select, node/edge config panels, per-slot agent overrides, and SVG edge rendering
+- **Channel + Gate topology**: Separated `WorkflowChannel` (routing) and `Gate` (policy) types; unified `channels` column; gate scripts with restricted execution env; gate label/color/script-indicator UI
+- **Built-in workflows**: Coding, Coding+QA, Research, Review-Only, and Plan & Decompose (replacing Full-Cycle); workflow template sync with drift detection and confirmation UI
+- **LLM-driven workflow selection**: Space chat agent auto-selects workflows for standalone tasks; `suggest_workflow` MCP tool; configurable per-space tiebreaker
+- **Task Agent**: First-class node with `send_message`, `list_reachable_agents`, `list_group_members`, `report_done`, `idle`/`save`/auto-gate-write primitives; worktree isolation via `SpaceWorktreeManager`; peer communication tools for node agents
+- **Approval gates**: Backend RPCs, canvas/thread inline approval UI, reason-based blocked-task banner, audit trail with `SpaceApprovalSource` tracking
+- **Parallel node execution**: Shared gates enable parallel agent runs; iteration detection and capping in `WorkflowExecutor`; cyclic channel support
+- **Workflow run artifacts**: Persisted artifacts per run with `GateArtifactsView` and `FileDiffView`
+- **Runtime pause/resume**: Lifecycle controls on space overview; Stop/Start runtime button; force-stop stale session groups
+- **Autonomy levels**: `supervised` vs `semi_autonomous` per workflow; "X of Y workflows autonomous" selector; autonomy-gated approvals
+- **Coding Workflow V2**: Coder↔Reviewer loop hardening with PR-posted review comments and verification; explorer/fact-checker/tester sub-agents for planner, coder, and reviewer roles
+- **Completion actions pipeline**: `script`, `instruction`, and `mcp_call` completion actions with audit trail, approval reason tracking, pause/resume flow, and `task_awaiting_approval` events
+- **Space Sessions page**: New Sessions list page and tab; full-width task view with agent session navigation; slug-based URL routing; numeric per-space task IDs
+
+#### Neo Agent
+- Side-panel AI assistant with `Cmd+J` shortcut, slide-out panel with Chat, Activity, and Confirmation UI
+- Query tools (rooms, spaces, workflows, goals, tasks, skills, MCP servers) and action tools (config, messaging, space/workflow, goal/task, Undo)
+- Security tier system, `MessageOrigin` tracking, `ViaNeoIndicator` badge, signal-based `NeoStore` with LiveQuery
+- Neo settings section and online conversation flow tests
+
+#### Missions (Goal V2)
+- **Measurable missions**: Structured metrics with adaptive replanning; metric history time-series
+- **Recurring missions**: Cron scheduling with execution identity, manual trigger, and recovery
+- **Semi-autonomous mode** for coder/general tasks
+- Mission detail page with header, status sidebar, and main content sections; type-specific creation and detail views; "Goal" → "Mission" UI terminology rename
+
+#### Skills & MCP Registry
+- Global skills registry UI with per-room enablement overrides; built-in `playwright`, `playwright-interactive`, `chrome-devtools-mcp`, `web-search-mcp`, `fetch-mcp`, and `brave-search` seeds; async validation via `SKILL_VALIDATE` job queue
+- Application-level MCP settings panel with per-room enablement; `AppMcpLifecycleManager`; reactive `mcp.registry.listErrors` RPC
+- `db-query` MCP server: scoped read-only SQL access with validation layer
+
+#### References System (`@`-mentions)
+- File, folder, task, and goal resolvers with shared reference types
+- `ReferenceAutocomplete` component, `useReferenceAutocomplete` hook, `MentionToken` rendering
+- `@mention` routing to specific agents in task thread composer; scoped to workflow agents only
+- File index service with polling-based cache refresh
+
+#### Short IDs
+- Human-readable IDs for tasks and goals (`task-123`, `goal-42`); `ShortIdAllocator` with atomic counter allocation; backfill migrations; short IDs accepted in RPC handlers and URLs with click-to-copy badges
+
+#### Provider & Session
+- **GitHub Copilot** as transparent `AgentSession` backend via embedded Anthropic-compatible server
+- **Anthropic-compatible HTTP bridge** backed by `codex` app-server
+- **GLM-5-Turbo** model support
+- Provider-aware session creation, provider-grouped model picker with availability dots, provider badge in session status bar
+- Explicit `(modelId, providerId)` pairs for deterministic routing; filter unauthenticated providers from picker
+- Graceful degradation on provider unavailability; model switching in TaskView with auto-fallback on rate/usage limits
+- OpenAI token refresh/login in settings for Codex
+- Native `getContextUsage()` replacing `/context` text parsing
+
+#### Frontend & UI
+- **TaskViewV2**: Turn-based conversation view with `TurnSummaryBlock`, `RuntimeMessageRenderer`, `AgentTurnBlock`; client-side pagination; `ReadonlySessionChat` and `SlideOutPanel`
+- **LiveQuery migration**: `ChatContainer`, `tasks.byRoom`, `goals.byRoom`, group messages, room skills, and task thread messages migrated to LiveQuery with stale-event guards and reconnect handling
+- **Compact task thread**: Config-switchable compact renderer, cleaner agent headers, clickable hidden-message dividers, system:init cards, agent completion state indicators
+- **Glass-style chat composer** with multiline-aware bottom padding
+- **Mobile polish**: `BottomTabBar` with iOS-style navigation, room-specific bottom tabs, iOS Safari safe-area fix, compact Task Agent node on mobile canvas, redesigned mobile task view header
+- **UI overhaul**: Room tab restructure, Agents redesign, visual consistency pass; Button/IconButton/NavIconButton unification; typography + prose refinements; design-tokens module
+- **Inbox view**: Direct approve/reject from Inbox without TaskView navigation; semantic status borders; inline reject form
+- **Goals editor**: Two-step create wizard, improved cards, metric progress bars, execution history
+- **Task UX**: Action dropdown with complete/cancel dialogs, circular progress indicator, reactivate/archive actions, full manual task-status control, `TaskArtifactsPanel`, canvas mode toggle, blocked-reason display
+- **`EntityStore<T>`** generic signal-based frontend store pattern; migrated `RoomStore`, `roomSkills`, and global skills
+- Agent overlay chat panel, activity members list, workspace history, draft message auto-save with 200k char limit
+- Workflow Rules Editor, Custom Agent List and Editor, Space export/import (backend + UI)
+
+#### Backend Infrastructure
+- **`ChannelRouter`** with lazy node activation, gate evaluation, and cyclic iteration tracking
+- **Job queue** replacing `setInterval`/`queueMicrotask`: `room.tick`, `github.poll`, `session.titleGeneration`, `job_queue.cleanup`, `SKILL_VALIDATE`
+- **`ReactiveDatabase`** threaded through managers and repositories; `notifyChange` hooks on `GoalRepository`, `TaskRepository`, `SessionGroupRepository`
+- **Named-query registry** with column aliasing and JSON parsing; `liveQuery.subscribe`/`unsubscribe` RPC handlers
+- `CompletionDetector` for all-agents-done detection; `NodeExecutionManager` and `node_executions` table
+- `AppMcpLifecycleManager` with per-room enablement; room-scoped sessions guarded against missing workspace paths; `defaultPath` propagation and validation
+- Live `DaemonHub` event bridging for `room.*`/`goal.*`/`task.*` updates via `StateManager`
+- `NotificationSink` interface for Space Agent event injection
+
+### Changed
+
+- **Terminology**: `step` → `node` across storage, runtime, types, and UI; `slot_role` → `agent_name`; `Goal` → `Mission` in UI copy; "Room Agent" → "Coordinator"
+- **Transitions removed**: Replaced legacy `WorkflowTransition` with gated channels; removed `advance()` in favor of agent-driven progression; dropped session group tables and `currentNodeId`
+- **Task lifecycle**: `failed` state made non-terminal (messages + retry); `archived` status added; `cancelled` → `completed` transition allowed; `needs_attention` auto-revives on new message
+- **Lazy loading**: `GoalsEditor`, `RoomAgents`, `RoomSettings`, and `/spaces` page loaded on demand
+- **Parallelization**: Daemon unit test shard runner; split rpc online tests into 4 shards; split online space tests and cross-provider tests into 2 jobs each
+- **Workflow auto-selection**: Simplified multi-agent space to explicit `workflowId` or AI auto-select only
+- Leader gets `create_task`, task management tools, and verifies PR mergeability before `submit_for_review`
+- `Config.workspaceRoot` is now optional; `--workspace` flag removed; default DB path with PID lock
+- `report_result` now result-only; completion pipeline is sole status arbiter
+- Server-side slicing of `spaceTaskMessages.byTask` for compact view
+
+### Fixed
+
+- **Space communication**: Keep node-agent sessions reachable until task is archived; node-agent injection invariant + agent-callable restore
+- **Space workflow**: Persist `completionActions` and backfill workflow template tracking; space task review status handling; merge `listGateData` with event updates to prevent race
+- **Mobile/iOS**: iOS Safari safe-area gap, bottom tab bar overlap, model dropdown overflow, pointer-event intercepts, `pb-bottom-bar` layout
+- **Worktree**: Resolve Task Agent worktree path under `~/.neokai` instead of source repo; artifacts tab uses task worktree path for git diff
+- **Sessions**: Resume SDK sessions across workspace/worktree path changes; show stop button in space session composer when agent is running; session error layout + retry button
+- **Context**: Refresh context usage after `/compact` completes
+- **Runtime**: Recover stuck leaders after rate-limit expiry; clear group rate limit on resume and message send; early return after successful fallback model switch
+- **N+1 queries**: Fixed room/task loading queries; added missing DB indexes; parallelized subscriptions; bundled session info into `getGroup`
+- **E2E**: Numerous E2E fixes for canvas-based channels, mission terminology, reference autocomplete, gate approval, happy-path pipeline, mobile duplicate overview, workspace selection, pointer events
+
+### CI
+
+- **E2E removed from all automatic triggers** — E2E must now be invoked via `workflow_dispatch` with `run_e2e_only=true`
+- Suppressed Node.js 20 deprecation warning in GitHub Actions
+- Enabled web tests on PRs to `dev` and fixed 28 pre-existing test failures
+- Remove broken Microsoft apt repos before `apt-get update`
+- Add `ripgrep` to CI and release sandbox dependencies
+- Setup-devproxy composite action with caching; simplified CI by removing intermediate gate jobs
+
 ## [0.7.1] - 2026-03-15
 
 ### Fixed
