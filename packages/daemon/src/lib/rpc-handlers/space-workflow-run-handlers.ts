@@ -46,6 +46,7 @@ import {
 	getDiffBaseRef,
 	CACHE_KEY_GATE_ARTIFACTS,
 	CACHE_KEY_COMMITS,
+	COMMIT_LOG_FORMAT,
 	fileDiffCacheKey,
 	commitFilesCacheKey,
 	commitFileDiffCacheKey,
@@ -68,9 +69,10 @@ const log = new Logger('space-workflow-run-handlers');
 const CACHE_STALE_AFTER_MS = 30_000;
 
 /**
- * Best-effort enqueue helper. We look for an existing pending job for the same
- * queue + payload shape before enqueuing, so repeated panel opens don't stack
- * dozens of duplicate sync jobs.
+ * Best-effort enqueue helper. We look for an existing pending OR processing job
+ * for the same queue + payload shape before enqueuing, so repeated panel opens
+ * don't stack dozens of duplicate sync jobs — including the case where a sync
+ * is already in-flight (status `processing`) when the panel re-opens.
  */
 function enqueueSyncOnce(
 	jobQueue: JobQueueRepository,
@@ -78,8 +80,12 @@ function enqueueSyncOnce(
 	payload: Record<string, unknown>
 ): void {
 	try {
-		const pending = jobQueue.listJobs({ queue, status: 'pending', limit: 20 });
-		const match = pending.find((j) => {
+		const inFlight = jobQueue.listJobs({
+			queue,
+			status: ['pending', 'processing'],
+			limit: 20,
+		});
+		const match = inFlight.find((j) => {
 			for (const [k, v] of Object.entries(payload)) {
 				if (j.payload?.[k] !== v) return false;
 			}
@@ -824,7 +830,7 @@ export function setupSpaceWorkflowRunHandlers(
 
 		let logOutput = '';
 		try {
-			const args = ['log', '--format=COMMIT:%H|%s|%aN|%at', '--numstat'];
+			const args = ['log', COMMIT_LOG_FORMAT, '--numstat'];
 			if (range) args.push(range);
 			logOutput = await execGit(args, worktreePath);
 		} catch (err) {
