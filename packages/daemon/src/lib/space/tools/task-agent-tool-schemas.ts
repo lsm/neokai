@@ -25,10 +25,13 @@ import type { SpaceReportedStatus } from '@neokai/shared';
 // ---------------------------------------------------------------------------
 
 /**
- * Possible final statuses for a task result. Mirrors `SpaceReportedStatus`
- * (the shared type written to `space_tasks.reported_status`); the `satisfies`
- * clause locks the two together so adding a value to one without the other
- * fails to compile.
+ * Possible final statuses the runtime may assign to a task. Agents do NOT
+ * self-certify status — the completion-action pipeline is the sole arbiter.
+ * These values are only used internally by the runtime when resolving tasks.
+ *
+ * Mirrors `SpaceReportedStatus` (the shared type written to
+ * `space_tasks.reported_status`); the `satisfies` clause locks the two
+ * together so adding a value to one without the other fails to compile.
  */
 const TASK_RESULT_STATUS_VALUES = [
 	'done',
@@ -41,22 +44,39 @@ export const TaskResultStatusSchema = z.enum(TASK_RESULT_STATUS_VALUES);
 export type TaskResultStatus = SpaceReportedStatus;
 
 /**
- * Schema for `report_result` input.
- * Reports the final outcome of the task and closes the task lifecycle.
+ * Schema for `report_result` input (post-Stage-2).
+ *
+ * The agent reports only a human-readable summary plus optional structured
+ * evidence. The runtime — not the agent — decides the final task status via
+ * the completion-action pipeline. Passing a `status` field is a validation
+ * error (enforced by `.strict()`).
  */
-export const ReportResultSchema = z.object({
-	/** Final task status. */
-	status: TaskResultStatusSchema.describe(
-		"Final task status: 'done' (success), 'blocked' (human intervention required), or 'cancelled'"
-	),
-	/** Human-readable summary of what was accomplished or why it stopped. */
-	summary: z.string().describe('Human-readable summary of the task outcome'),
-	/** Optional error message when status is blocked or cancelled. */
-	error: z
-		.string()
-		.describe('Error details when the task ended in blocked state or was cancelled')
-		.optional(),
-});
+export const ReportResultSchema = z
+	.object({
+		/** Human-readable summary of what was accomplished. */
+		summary: z
+			.string()
+			.describe(
+				'Human-readable summary of what you did and the outcome. The runtime — not this summary — decides the final task status via completion actions.'
+			),
+		/** Optional structured evidence supporting the summary. */
+		evidence: z
+			.object({
+				/** URL of the pull request, if applicable. */
+				prUrl: z.string().describe('URL of the pull request, if applicable').optional(),
+				/** Commit SHA of the final change, if applicable. */
+				commitSha: z.string().describe('Commit SHA of the final change, if applicable').optional(),
+				/** Test output or validation snippet, if applicable. */
+				testOutput: z
+					.string()
+					.describe('Test output or validation snippet, if applicable')
+					.optional(),
+			})
+			.passthrough()
+			.describe('Optional structured evidence supporting your summary')
+			.optional(),
+	})
+	.strict();
 
 export type ReportResultInput = z.infer<typeof ReportResultSchema>;
 

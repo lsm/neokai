@@ -239,6 +239,30 @@ export class QueryRunner {
 			let queryOptions = await optionsBuilder.build();
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
+			// Structured log of MCP servers visible to this query. Critical for diagnosing
+			// "No such tool available" issues where an expected MCP server (e.g. node-agent
+			// for workflow sub-sessions) is missing from session config at first turn.
+			// Always logged at info level so production logs preserve the evidence trail.
+			const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+			const isWorkflowSubSession = !!(
+				session.context?.spaceId &&
+				session.id.includes(':task:') &&
+				session.id.includes(':exec:')
+			);
+			logger.info(
+				`QueryRunner.start(): session ${session.id} mcp servers visible at first turn: ` +
+					`[${mcpServerNames.join(', ')}]` +
+					(isWorkflowSubSession ? ' (workflow sub-session)' : '')
+			);
+			if (isWorkflowSubSession && !mcpServerNames.includes('node-agent')) {
+				logger.error(
+					`QueryRunner.start(): workflow sub-session ${session.id} is MISSING the 'node-agent' MCP server. ` +
+						`Visible servers: [${mcpServerNames.join(', ')}]. ` +
+						`The agent will not be able to call mcp__node-agent__* tools (send_message, save, list_peers, etc). ` +
+						`This is a runtime injection failure — see TaskAgentManager.spawnWorkflowNodeAgentForExecution and createSubSession.`
+				);
+			}
+
 			// Apply provider env vars
 			{
 				const { getProviderService } = await import('../provider-service');

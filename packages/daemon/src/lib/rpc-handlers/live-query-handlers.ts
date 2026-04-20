@@ -1196,6 +1196,119 @@ WHERE j.value = s.id AND s.status != 'archived' AND s.type != 'space_chat'
 ORDER BY s.last_active_at DESC, s.id DESC
 `.trim();
 
+/**
+ * SQL for `messages.bySession` LiveQuery.
+ *
+ * Returns SDK messages for a session in the same shape that
+ * `SDKMessageRepository.getSDKMessages()` produces:
+ *   - Top-level messages (no `parent_tool_use_id`), limited to the most recent
+ *     N rows (by timestamp DESC).
+ *   - Plus subagent messages (rows whose `parent_tool_use_id` is a tool_use id
+ *     emitted by one of those top-level assistant rows).
+ *   - User messages with `send_status = 'deferred'` or `'enqueued'` are
+ *     excluded, matching the RPC behavior.
+ *
+ * Parameters (positional, via `?1` / `?2`):
+ *   ?1 — session_id (used twice because the CTE references sdk_messages twice)
+ *   ?2 — top-level row limit (default 100 from the client)
+ *
+ * Mapping: the raw row carries the JSON-serialised SDK message in `content`,
+ * plus `timestamp` (epoch ms), `sendStatus`, and `origin`.  `mapMessageRow`
+ * inflates the JSON and merges the extras to produce a ChatMessage-shaped
+ * object.
+ */
+const MESSAGES_BY_SESSION_SQL = `
+WITH top_level AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin
+  FROM sdk_messages
+  WHERE session_id = ?1
+    AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+  ORDER BY timestamp DESC, id DESC
+  LIMIT ?2
+),
+tool_use_ids AS (
+  SELECT DISTINCT json_extract(je.value, '$.id') AS id
+  FROM top_level,
+       json_each(json_extract(top_level.sdk_message, '$.message.content')) AS je
+  WHERE json_extract(top_level.sdk_message, '$.type') = 'assistant'
+    AND json_extract(je.value, '$.type') = 'tool_use'
+    AND json_extract(je.value, '$.id') IS NOT NULL
+),
+subagent AS (
+  SELECT
+    sm.id AS id,
+    sm.sdk_message AS sdk_message,
+    sm.timestamp AS timestamp,
+    sm.send_status AS send_status,
+    sm.origin AS origin
+  FROM sdk_messages sm
+  WHERE sm.session_id = ?1
+    AND json_extract(sm.sdk_message, '$.parent_tool_use_id') IN (SELECT id FROM tool_use_ids)
+    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+)
+SELECT
+  id,
+  sdk_message                                                       AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
+  send_status                                                       AS sendStatus,
+  origin                                                            AS origin
+FROM top_level
+UNION ALL
+SELECT
+  id,
+  sdk_message                                                       AS content,
+  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
+  send_status                                                       AS sendStatus,
+  origin                                                            AS origin
+FROM subagent
+ORDER BY timestamp ASC, id ASC
+`.trim();
+
+/**
+ * Map a raw `messages.bySession` row into a ChatMessage-shaped object.
+ *
+ * Mirrors the behaviour of `SDKMessageRepository.getSDKMessages()`:
+ *   - Parse the `sdk_message` JSON blob and spread its fields onto the output.
+ *   - Override `origin` with the DB column value — explicit `undefined` is
+ *     preserved so any SDK-level `origin?: SDKMessageOrigin` object gets
+ *     stripped in favour of NeoKai's `MessageOrigin` string.
+ *   - Attach `timestamp` (epoch ms, computed SQL-side).
+ *   - Attach `sendStatus` only when the DB column equals `'failed'`, so the UI
+ *     can render the retry affordance without carrying 'consumed' through the
+ *     message stream.
+ *   - Attach `id` so client-side LiveQuery diffing is stable even when the
+ *     SDK message lacks a `uuid`.
+ */
+function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
+	const contentRaw = row.content;
+	let parsed: Record<string, unknown> = {};
+	if (typeof contentRaw === 'string') {
+		try {
+			parsed = JSON.parse(contentRaw) as Record<string, unknown>;
+		} catch {
+			// Corrupted JSON — return a sentinel object so the client doesn't crash.
+			parsed = { type: 'unknown', rawContent: contentRaw };
+		}
+	}
+
+	const extras: Record<string, unknown> = {
+		id: row.id,
+		timestamp: typeof row.timestamp === 'number' ? row.timestamp : Number(row.timestamp ?? 0),
+		origin: row.origin != null ? row.origin : undefined,
+	};
+	if (row.sendStatus === 'failed') {
+		extras.sendStatus = 'failed';
+	}
+
+	return { ...parsed, ...extras };
+}
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 	[
 		'tasks.byRoom',
@@ -1338,6 +1451,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		},
 	],
 	[
+		'messages.bySession',
+		{
+			sql: MESSAGES_BY_SESSION_SQL,
+			paramCount: 2,
+			mapRow: mapMessageRow,
+		},
+	],
+	[
 		'sessions.list',
 		{
 			sql: SESSIONS_LIST_SQL,
@@ -1414,6 +1535,7 @@ export function setupLiveQueryHandlers(
 	const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
 	const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
 	const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
+	const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
 
 	// -------------------------------------------------------------------------
 	// liveQuery.subscribe
@@ -1496,6 +1618,27 @@ export function setupLiveQueryHandlers(
 			const spaceId = params[0] as string;
 			if (!stmtSpace.get(spaceId)) {
 				throw new Error(`Unauthorized: space "${spaceId}" not found`);
+			}
+		} else if (queryName === 'messages.bySession') {
+			// Verify the session exists. We intentionally do not restrict by
+			// session type (users can view their own worker, room_chat, space_chat,
+			// task_agent, etc. sessions), and the WebSocket clientId check above
+			// already requires an active connection.
+			const targetSessionId = params[0] as string;
+			if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
+				throw new Error('Unauthorized: messages.bySession requires a non-empty sessionId');
+			}
+			if (!stmtSession.get(targetSessionId)) {
+				throw new Error(`Unauthorized: session "${targetSessionId}" not found`);
+			}
+			// Validate the limit parameter is a positive integer so bad input
+			// (e.g. NaN, negative numbers) doesn't silently produce an empty result
+			// set that the client would interpret as "no messages".
+			const limit = params[1];
+			if (typeof limit !== 'number' || !Number.isInteger(limit) || limit <= 0 || limit > 10000) {
+				throw new Error(
+					`Unauthorized: messages.bySession limit must be an integer in [1, 10000], got ${String(limit)}`
+				);
 			}
 		}
 

@@ -151,7 +151,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 		}
 	});
 
-	test('seeded agents/workflows are present and V2 review node carries 3 reviewer slots', async ({
+	test('seeded agents/workflows are present and Plan Review node carries 4 reviewer slots', async ({
 		page,
 	}) => {
 		// Navigate to the space configure view where Agents/Workflows tabs are available.
@@ -172,7 +172,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 		await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 
 		await page.getByTestId('space-configure-tab-workflows').click();
-		await expect(page.getByText('Full-Cycle Coding Workflow', { exact: true })).toBeVisible({
+		await expect(page.getByText('Plan & Decompose Workflow', { exact: true })).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -186,11 +186,11 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
 					nodes: Array<{ name: string; agents?: Array<{ name: string }> }>;
 				}>;
 			};
-			const v2 = list.workflows.find((w) => w.name === 'Full-Cycle Coding Workflow');
-			const reviewNode = v2?.nodes.find((n) => n.name === 'Code Review');
+			const planDecompose = list.workflows.find((w) => w.name === 'Plan & Decompose Workflow');
+			const reviewNode = planDecompose?.nodes.find((n) => n.name === 'Plan Review');
 			return reviewNode?.agents?.length ?? 0;
 		});
-		expect(reviewSlotCount).toBe(3);
+		expect(reviewSlotCount).toBe(4);
 	});
 
 	test('workflow run task opens task route and shows thread activity', async ({ page }) => {

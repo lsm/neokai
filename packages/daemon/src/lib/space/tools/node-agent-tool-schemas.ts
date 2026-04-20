@@ -228,6 +228,38 @@ export const ListArtifactsSchema = z.object({
 export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
 
 // ---------------------------------------------------------------------------
+// restore_node_agent
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `restore_node_agent` input.
+ *
+ * Self-heal primitive — invoked by a sub-session agent when it detects (or
+ * suspects) that node-agent tools are unavailable. The fact that this tool
+ * call succeeds is itself proof that node-agent is registered for the
+ * current session; the handler additionally re-attaches node-agent on the
+ * server side as a belt-and-braces measure and returns the visible MCP
+ * server names so the agent can confirm its environment.
+ *
+ * Use this when:
+ *   - A previous `mcp__node-agent__send_message` (or other node-agent tool)
+ *     unexpectedly returned "No such tool available".
+ *   - You want to verify the node-agent environment before performing a
+ *     critical handoff.
+ */
+export const RestoreNodeAgentSchema = z.object({
+	/** Optional human-readable reason for the restore — recorded in logs. */
+	reason: z
+		.string()
+		.describe(
+			'Optional human-readable reason for invoking restore (recorded in logs for diagnosis)'
+		)
+		.optional(),
+});
+
+export type RestoreNodeAgentInput = z.infer<typeof RestoreNodeAgentSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export
 // ---------------------------------------------------------------------------
 
@@ -244,6 +276,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
 	read_gate: ReadGateSchema,
 	write_artifact: WriteArtifactSchema,
 	list_artifacts: ListArtifactsSchema,
+	restore_node_agent: RestoreNodeAgentSchema,
 } as const;
 
 export type NodeAgentToolName = keyof typeof NODE_AGENT_TOOL_SCHEMAS;

@@ -9,7 +9,7 @@
  */
 
 import { useState, useCallback } from 'preact/hooks';
-import type { RuntimeState, SpaceTask, SpaceAutonomyLevel } from '@neokai/shared';
+import type { RuntimeState, SpaceTask, SpaceAutonomyLevel, SpaceWorkflow } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import {
 	navigateToSpaceTask,
@@ -23,6 +23,7 @@ import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
@@ -176,9 +177,11 @@ function RuntimeControlBar({
 
 function AutonomyLevelBar({
 	level,
+	workflows,
 	onChange,
 }: {
 	level: SpaceAutonomyLevel;
+	workflows: SpaceWorkflow[];
 	onChange: (level: SpaceAutonomyLevel) => void;
 }) {
 	return (
@@ -209,6 +212,7 @@ function AutonomyLevelBar({
 					/>
 				))}
 			</div>
+			<AutonomyWorkflowSummary level={level} workflows={workflows} compact class="mt-2.5" />
 		</div>
 	);
 }
@@ -315,6 +319,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	const loading = spaceStore.loading.value;
 	const space = spaceStore.space.value;
 	const tasks = spaceStore.tasks.value;
+	const workflows = spaceStore.workflows.value;
 	const runtimeState = spaceStore.runtimeState.value;
 
 	// Recent sessions — sorted by lastActiveAt, top 5 (computed before early returns)
@@ -385,6 +390,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 				{/* Autonomy level */}
 				<AutonomyLevelBar
 					level={space.autonomyLevel ?? 1}
+					workflows={workflows}
 					onChange={(l) => void handleAutonomyChange(l)}
 				/>
 

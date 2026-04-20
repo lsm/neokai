@@ -146,15 +146,21 @@ describe('completionActions persistence — seed path (Bug A regression)', () =>
 		expect(endNode!.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
 	});
 
-	test('Review-Only Workflow end node has no completionActions (template has none)', () => {
-		// Negative control — only templates with endNodeCompletionActions should
-		// persist them. Review-Only explicitly has none; if we ever start injecting
-		// stray actions, this test catches it.
+	test('Review-Only Workflow end node has VERIFY_REVIEW_POSTED_COMPLETION_ACTION attached', () => {
+		// Stage-2: the Review-Only end node now ships with a verification action
+		// that confirms the Reviewer actually posted review feedback on the PR.
+		// Without it, a Reviewer agent could call `report_result` without doing
+		// anything and the task would terminate `done` on trust alone. The
+		// completion-action pipeline closes that "agent lies" gap.
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		const endNode = wf!.nodes.find((n) => n.id === wf!.endNodeId);
 		expect(endNode).toBeDefined();
-		expect(endNode!.completionActions).toBeUndefined();
+		expect(endNode!.completionActions).toBeDefined();
+		const verify = endNode!.completionActions!.find((a) => a.id === 'verify-review-posted');
+		expect(verify).toBeDefined();
+		expect(verify!.type).toBe('script');
+		expect(verify!.artifactType).toBe('pr');
 	});
 
 	test('seeded workflows persist templateName + canonical templateHash', () => {

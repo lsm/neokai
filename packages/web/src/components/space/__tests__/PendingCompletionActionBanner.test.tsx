@@ -257,7 +257,7 @@ describe('PendingCompletionActionBanner', () => {
 				name: 'notify-team',
 				type: 'instruction',
 				requiredLevel: 2,
-				targetNodeId: 'n-x',
+				agentName: 'NotifyAgent',
 				instruction: 'Post a summary to #eng',
 			}),
 		];

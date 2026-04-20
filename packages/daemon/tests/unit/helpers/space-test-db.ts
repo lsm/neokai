@@ -234,7 +234,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
 
-	// Workflow run artifact cache (migration 95). Stores JSON-serialised results
+	// Workflow run artifact cache (migration 98). Stores JSON-serialised results
 	// of the expensive git subprocess calls backing the TaskArtifactsPanel so the
 	// panel serves from SQLite instead of running git inline on every open.
 	db.exec(`

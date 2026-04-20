@@ -10,12 +10,12 @@
  *   5.  canTransition: in_progress → cancelled — valid
  *   6.  canTransition: needs_attention → in_progress — valid
  *   7.  canTransition: needs_attention → cancelled — valid
- *   8.  canTransition: completed → * — all invalid (terminal)
- *   9.  canTransition: cancelled → * — all invalid (terminal)
+ *   8.  canTransition: completed → in_progress — valid (reopen); all other targets invalid
+ *   9.  canTransition: cancelled → in_progress — valid (reopen); all other targets invalid
  *   10. canTransition: pending → completed — invalid
  *   11. canTransition: pending → needs_attention — invalid
  *   12. assertValidTransition: throws with run ID in message
- *   13. assertValidTransition: throws with "none" when no transitions allowed
+ *   13. assertValidTransition: throws with "in_progress" allow-list when invalid reopen target
  *
  *   Repository (transitionStatus):
  *   14. transitionStatus: persists the new status on a valid transition
@@ -23,7 +23,7 @@
  *   16. transitionStatus: sets completed_at when transitioning to cancelled
  *   17. transitionStatus: throws on not-found run
  *   18. transitionStatus: throws on invalid transition (in_progress → pending)
- *   19. transitionStatus: throws on invalid transition (completed → in_progress)
+ *   19. transitionStatus: allows reopen transition (completed → in_progress)
  *
  *   Rehydration integration:
  *   20. getRehydratableRuns: returns in_progress runs
@@ -141,28 +141,21 @@ describe('canTransition', () => {
 		expect(canTransition('blocked', 'cancelled')).toBe(true);
 	});
 
-	test('8. completed → any status is invalid (terminal state)', () => {
-		const allStatuses: WorkflowRunStatus[] = [
-			'pending',
-			'in_progress',
-			'done',
-			'cancelled',
-			'blocked',
-		];
-		for (const to of allStatuses) {
+	test('8. done → in_progress is valid (reopen); all other targets are invalid', () => {
+		// Archive is the only task tombstone; a `done` run can be reopened back
+		// to `in_progress` when new inbound activity arrives before the parent
+		// task is archived.
+		expect(canTransition('done', 'in_progress')).toBe(true);
+		for (const to of ['pending', 'done', 'cancelled', 'blocked'] as WorkflowRunStatus[]) {
 			expect(canTransition('done', to)).toBe(false);
 		}
 	});
 
-	test('9. cancelled → any status is invalid (terminal state)', () => {
-		const allStatuses: WorkflowRunStatus[] = [
-			'pending',
-			'in_progress',
-			'completed',
-			'cancelled',
-			'blocked',
-		];
-		for (const to of allStatuses) {
+	test('9. cancelled → in_progress is valid (reopen); all other targets are invalid', () => {
+		// Same reopen policy as `done`: a cancelled run can still be reopened
+		// until the parent task is archived.
+		expect(canTransition('cancelled', 'in_progress')).toBe(true);
+		for (const to of ['pending', 'done', 'cancelled', 'blocked'] as WorkflowRunStatus[]) {
 			expect(canTransition('cancelled', to)).toBe(false);
 		}
 	});
@@ -192,17 +185,23 @@ describe('canTransition', () => {
 
 describe('assertValidTransition', () => {
 	test('12. includes run ID in error message when provided', () => {
-		expect(() => assertValidTransition('done', 'in_progress', 'run-abc')).toThrow(/run run-abc/);
+		// done → cancelled is invalid (only `in_progress` is allowed from done).
+		expect(() => assertValidTransition('done', 'cancelled', 'run-abc')).toThrow(/run run-abc/);
 	});
 
-	test('13. error lists "none" when terminal state has no allowed transitions', () => {
-		expect(() => assertValidTransition('cancelled', 'pending')).toThrow(/none/);
+	test('13. error lists the allowed set when the target is not permitted', () => {
+		// cancelled → pending is invalid; the only allowed transition from
+		// `cancelled` is `in_progress`. The error should enumerate the allowed set.
+		expect(() => assertValidTransition('cancelled', 'pending')).toThrow(/in_progress/);
 	});
 
 	test('does not throw on valid transition', () => {
 		expect(() => assertValidTransition('pending', 'in_progress')).not.toThrow();
 		expect(() => assertValidTransition('in_progress', 'done')).not.toThrow();
 		expect(() => assertValidTransition('blocked', 'in_progress')).not.toThrow();
+		// Reopen transitions
+		expect(() => assertValidTransition('done', 'in_progress')).not.toThrow();
+		expect(() => assertValidTransition('cancelled', 'in_progress')).not.toThrow();
 	});
 });
 
@@ -256,15 +255,24 @@ describe('SpaceWorkflowRunRepository.transitionStatus', () => {
 		expect(runRepo.getRun(runId)?.status).toBe('in_progress');
 	});
 
-	test('19. throws on invalid transition completed → in_progress (terminal state)', () => {
+	test('19. allows reopen transition completed → in_progress', () => {
+		// `done` is a soft terminal state — the run can be reopened to
+		// `in_progress` when new inbound activity arrives before the parent
+		// task is archived. The only disallowed targets from `done` are the
+		// other lifecycle statuses (pending, done, cancelled, blocked).
 		const { runId } = createWorkflowAndRun(db, SPACE);
 		runRepo.transitionStatus(runId, 'in_progress');
 		runRepo.transitionStatus(runId, 'done');
-		expect(() => runRepo.transitionStatus(runId, 'in_progress')).toThrow(
+
+		const reopened = runRepo.transitionStatus(runId, 'in_progress');
+		expect(reopened.status).toBe('in_progress');
+		expect(runRepo.getRun(runId)?.status).toBe('in_progress');
+
+		// But other transitions out of `done` remain invalid.
+		runRepo.transitionStatus(runId, 'done'); // back to done
+		expect(() => runRepo.transitionStatus(runId, 'cancelled')).toThrow(
 			/Invalid workflow run status transition/
 		);
-		// Status must remain completed (immutable terminal state)
-		expect(runRepo.getRun(runId)?.status).toBe('done');
 	});
 });
 

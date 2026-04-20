@@ -91,6 +91,52 @@ function makeWorkflow(overrides?: Partial<SpaceWorkflow>): SpaceWorkflow {
 			{ id: 'node-2', name: 'Code', agents: [{ agentId: 'agent-1', name: 'Coder' }] },
 		],
 		startNodeId: 'node-1',
+		channels: [
+			{
+				id: 'ch-plan-to-code',
+				from: 'Plan',
+				to: 'Code',
+				label: 'Plan → Code',
+				gateId: 'plan-ready-gate',
+			},
+			{
+				id: 'ch-code-to-plan',
+				from: 'Code',
+				to: 'Plan',
+				label: 'Code → Plan (feedback)',
+				maxCycles: 3,
+			},
+		],
+		gates: [
+			{
+				id: 'plan-ready-gate',
+				label: 'PR Ready',
+				description: 'Planner has opened a plan PR',
+				fields: [
+					{
+						name: 'pr_url',
+						type: 'string',
+						writers: ['Plan'],
+						check: { op: 'exists' },
+					},
+				],
+				resetOnCycle: false,
+			},
+			{
+				id: 'code-pr-gate',
+				label: 'Code PR',
+				description: 'Coder has opened a code PR',
+				fields: [
+					{
+						name: 'pr_url',
+						type: 'string',
+						writers: ['Code'],
+						check: { op: 'exists' },
+					},
+				],
+				resetOnCycle: false,
+			},
+		],
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -124,7 +170,7 @@ describe('buildCustomAgentSystemPrompt', () => {
 });
 
 describe('buildCustomAgentTaskMessage', () => {
-	it('includes factual task, workflow, and space context', () => {
+	it('includes factual task, runtime location, role, previous work, project context, and instructions', () => {
 		const message = buildCustomAgentTaskMessage(
 			makeConfig({
 				task: makeTask({
@@ -133,25 +179,206 @@ describe('buildCustomAgentTaskMessage', () => {
 					priority: 'high',
 				}),
 				workflowRun: makeWorkflowRun({ title: 'Auth rollout', description: 'Production' }),
-				workflow: makeWorkflow(),
+				workflow: makeWorkflow({ instructions: 'Use conventional commits.' }),
 				space: makeSpace({
 					backgroundContext: 'Monorepo project',
 					instructions: 'Run tests before finishing.',
 				}),
+				workspacePath: '/workspaces/auth',
 				previousTaskSummaries: ['Task 0: added login page'],
+				nodeId: 'node-1',
+				agentSlotName: 'Coder',
 			})
 		);
 
+		// Task section
+		expect(message).toContain('## Your Task');
 		expect(message).toContain('Ship auth flow');
 		expect(message).toContain('Implement auth flow');
-		expect(message).toContain('Workflow Context');
-		expect(message).toContain('Auth rollout');
-		expect(message).toContain('Workflow Structure');
-		expect(message).toContain('Nodes:');
-		expect(message).toContain('Plan');
+		expect(message).toContain('**Priority:** high');
+
+		// Runtime Location
+		expect(message).toContain('## Runtime Location');
+		expect(message).toContain('- Worktree: /workspaces/auth');
+		expect(message).toContain('- PR: none yet');
+
+		// Your Role
+		expect(message).toContain('## Your Role in This Workflow');
+		expect(message).toContain('- Node: Plan');
+		expect(message).toContain('- Peers: Code');
+
+		// Previous work
+		expect(message).toContain('## Previous Work on This Goal');
+		expect(message).toContain('- Task 0: added login page');
+
+		// Project context
+		expect(message).toContain('## Project Context');
 		expect(message).toContain('Monorepo project');
+
+		// Standing instructions (space + workflow combined)
+		expect(message).toContain('## Standing Instructions');
 		expect(message).toContain('Run tests before finishing.');
-		expect(message).toContain('Task 0: added login page');
+		expect(message).toContain('Use conventional commits.');
+	});
+
+	it('renders task description in the first 500 characters (action-first ordering)', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				task: makeTask({
+					title: 'Ship auth flow',
+					description: 'Implement passwordless auth end-to-end.',
+				}),
+				workflow: makeWorkflow(),
+				workflowRun: makeWorkflowRun(),
+				space: makeSpace({
+					backgroundContext: 'A'.repeat(5000),
+					instructions: 'B'.repeat(5000),
+				}),
+			})
+		);
+
+		const head = message.slice(0, 500);
+		expect(head).toContain('Implement passwordless auth end-to-end.');
+	});
+
+	it('renders PR URL from gate data when present', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow: makeWorkflow(),
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'node-1',
+				gateData: [
+					{ gateId: 'plan-ready-gate', data: {} },
+					{ gateId: 'code-pr-gate', data: { pr_url: 'https://github.com/org/repo/pull/42' } },
+				],
+			})
+		);
+
+		expect(message).toContain('- PR: https://github.com/org/repo/pull/42');
+		expect(message).not.toContain('- PR: none yet');
+	});
+
+	it('scopes channels and writable gates to the current node', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow: makeWorkflow(),
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'node-1', // "Plan" node
+				agentSlotName: 'Coder',
+			})
+		);
+
+		// Plan → Code outbound channel should show, Code → Plan should not
+		expect(message).toContain('Channels from this node:');
+		expect(message).toContain('Code (Plan → Code)');
+		expect(message).not.toContain('Plan (Code → Plan');
+
+		// Only the plan-ready-gate is writable by Plan; code-pr-gate should not appear.
+		expect(message).toContain('Gates you can write:');
+		expect(message).toContain('plan-ready-gate');
+		expect(message).not.toMatch(/code-pr-gate/);
+	});
+
+	it('does not contain node UUIDs', () => {
+		const workflow = makeWorkflow();
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow,
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'node-1',
+			})
+		);
+
+		for (const node of workflow.nodes) {
+			expect(message).not.toContain(`id: \`${node.id}\``);
+			expect(message).not.toContain(node.id);
+		}
+	});
+
+	it('omits Runtime Location PR value as "none yet" when gate data is absent', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow: makeWorkflow(),
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'node-1',
+			})
+		);
+		expect(message).toContain('- PR: none yet');
+	});
+
+	it('omits Your Role section when workflow or node are absent', () => {
+		const messageNoWorkflow = buildCustomAgentTaskMessage(makeConfig());
+		expect(messageNoWorkflow).not.toContain('## Your Role in This Workflow');
+
+		// Workflow provided but nodeId not resolvable → section omitted.
+		const messageUnknownNode = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow: makeWorkflow(),
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'does-not-exist',
+			})
+		);
+		expect(messageUnknownNode).not.toContain('## Your Role in This Workflow');
+	});
+
+	it('cleanly omits missing sections (no empty headers)', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				space: makeSpace({ backgroundContext: '', instructions: '' }),
+			})
+		);
+
+		expect(message).not.toContain('## Previous Work on This Goal');
+		expect(message).not.toContain('## Project Context');
+		expect(message).not.toContain('## Standing Instructions');
+		// Runtime Location is always rendered so we don't check its absence here.
+		expect(message).toContain('## Your Task');
+	});
+
+	it('omits channels/gates sub-lines when current node has none', () => {
+		const workflow = makeWorkflow({
+			nodes: [{ id: 'solo', name: 'Solo', agents: [{ agentId: 'agent-1', name: 'Solo' }] }],
+			startNodeId: 'solo',
+			channels: [],
+			gates: [],
+		});
+
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow,
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'solo',
+				agentSlotName: 'Solo',
+			})
+		);
+
+		expect(message).toContain('- Node: Solo');
+		expect(message).not.toContain('- Peers:');
+		expect(message).not.toContain('Channels from this node:');
+		expect(message).not.toContain('Gates you can write:');
+	});
+
+	it('renders Standing Instructions last, after Project Context', () => {
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow: makeWorkflow({ instructions: 'WF instructions.' }),
+				workflowRun: makeWorkflowRun(),
+				space: makeSpace({
+					backgroundContext: 'Project context block',
+					instructions: 'Space instructions.',
+				}),
+				nodeId: 'node-1',
+			})
+		);
+
+		const contextIdx = message.indexOf('## Project Context');
+		const standingIdx = message.indexOf('## Standing Instructions');
+		expect(contextIdx).toBeGreaterThan(-1);
+		expect(standingIdx).toBeGreaterThan(contextIdx);
+
+		const standingBlock = message.slice(standingIdx);
+		expect(standingBlock).toContain('Space instructions.');
+		expect(standingBlock).toContain('WF instructions.');
 	});
 
 	it('does not inject hidden behavioral instructions', () => {
@@ -169,7 +396,23 @@ describe('buildCustomAgentTaskMessage', () => {
 			})
 		);
 
-		expect(message).not.toContain('## Instructions');
+		// Old standalone heading is gone — replaced by ## Standing Instructions.
+		expect(message).not.toContain('## Instructions\n');
+	});
+
+	it('handles workflow without channels or gates (backward compat)', () => {
+		const barebonesWorkflow = makeWorkflow({ channels: undefined, gates: undefined });
+		const message = buildCustomAgentTaskMessage(
+			makeConfig({
+				workflow: barebonesWorkflow,
+				workflowRun: makeWorkflowRun(),
+				nodeId: 'node-1',
+			})
+		);
+
+		expect(message).toContain('- Node: Plan');
+		expect(message).not.toContain('Channels from this node:');
+		expect(message).not.toContain('Gates you can write:');
 	});
 });
 

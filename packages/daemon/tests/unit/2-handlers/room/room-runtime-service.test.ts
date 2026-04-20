@@ -1059,7 +1059,6 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 		const setRuntimeMcpServersSpy = mock((_servers: unknown) => {});
 		return {
 			session: {
-				contextAutoQueueEnabled: true,
 				setRuntimeMcpServers: setRuntimeMcpServersSpy,
 			} as unknown as AgentSession,
 			setRuntimeMcpServersSpy,
