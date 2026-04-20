@@ -274,6 +274,18 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'Typed artifacts produced by workflow node agents (PRs, commit sets, test results, deployments).',
 	},
+	{
+		tableName: 'workflow_run_artifact_cache',
+		scopeJoin: {
+			localColumn: 'run_id',
+			joinTable: 'space_workflow_runs',
+			joinPkColumn: 'id',
+			scopeColumn: 'space_id',
+		},
+		blacklistedColumns: [],
+		description:
+			'JSON-serialised cache of git-derived artifact data (gate diffs, commit log, per-file diffs) populated by background sync jobs and served to the TaskArtifactsPanel.',
+	},
 ];
 
 /**

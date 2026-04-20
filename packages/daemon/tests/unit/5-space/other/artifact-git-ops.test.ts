@@ -1,0 +1,207 @@
+/**
+ * Tests for packages/daemon/src/lib/space/artifact-git-ops.ts
+ *
+ * Covers the pure parsers (parseNumstat, parseCommitLog, countDiffLines) and
+ * the merge-base in-process TTL cache (getDiffBaseRef, invalidateDiffBaseRef).
+ * execGit itself isn't unit-tested here — its behaviour is exercised
+ * end-to-end by the handler tests that shell out to real git.
+ */
+
+import { describe, expect, it, beforeEach } from 'bun:test';
+import {
+	parseNumstat,
+	parseCommitLog,
+	countDiffLines,
+	getDiffBaseRef,
+	invalidateDiffBaseRef,
+	mergeBaseCacheSize,
+	fileDiffCacheKey,
+	commitFilesCacheKey,
+	commitFileDiffCacheKey,
+	CACHE_KEY_GATE_ARTIFACTS,
+	CACHE_KEY_COMMITS,
+	FILE_DIFF_SIZE_LIMIT_BYTES,
+	MERGE_BASE_TTL_MS,
+} from '../../../../src/lib/space/artifact-git-ops';
+
+describe('parseNumstat', () => {
+	it('returns zero totals for empty output', () => {
+		const summary = parseNumstat('');
+		expect(summary.files).toEqual([]);
+		expect(summary.totalAdditions).toBe(0);
+		expect(summary.totalDeletions).toBe(0);
+	});
+
+	it('parses standard additions/deletions lines', () => {
+		const output = ['5\t2\tsrc/a.ts', '10\t0\tsrc/b.ts', '0\t3\tsrc/c.ts'].join('\n');
+		const summary = parseNumstat(output);
+		expect(summary.files).toHaveLength(3);
+		expect(summary.totalAdditions).toBe(15);
+		expect(summary.totalDeletions).toBe(5);
+	});
+
+	it('treats binary files (- / -) as zero-stat entries', () => {
+		const summary = parseNumstat('-\t-\tassets/image.png\n5\t1\tsrc/a.ts');
+		expect(summary.files).toEqual([
+			{ path: 'assets/image.png', additions: 0, deletions: 0 },
+			{ path: 'src/a.ts', additions: 5, deletions: 1 },
+		]);
+		expect(summary.totalAdditions).toBe(5);
+		expect(summary.totalDeletions).toBe(1);
+	});
+
+	it('handles paths containing tabs', () => {
+		const summary = parseNumstat('5\t2\tpath/with\ttab.ts');
+		expect(summary.files[0].path).toBe('path/with\ttab.ts');
+		expect(summary.files[0].additions).toBe(5);
+	});
+
+	it('ignores blank lines', () => {
+		const summary = parseNumstat('\n5\t2\tsrc/a.ts\n\n\n');
+		expect(summary.files).toHaveLength(1);
+	});
+});
+
+describe('parseCommitLog', () => {
+	it('returns empty array for empty output', () => {
+		expect(parseCommitLog('')).toEqual([]);
+	});
+
+	it('parses a single commit with numstat lines', () => {
+		const input = [
+			'COMMIT:abc123|feat: do thing|Alice|1700000000',
+			'5\t2\tsrc/a.ts',
+			'3\t0\tsrc/b.ts',
+		].join('\n');
+
+		const commits = parseCommitLog(input);
+		expect(commits).toHaveLength(1);
+		expect(commits[0]).toMatchObject({
+			sha: 'abc123',
+			message: 'feat: do thing',
+			author: 'Alice',
+			additions: 8,
+			deletions: 2,
+			fileCount: 2,
+		});
+		expect(commits[0].timestamp).toBe(1700000000 * 1000);
+	});
+
+	it('parses multiple commits and separates their stats', () => {
+		const input = [
+			'COMMIT:aaa|first|A|1700000000',
+			'5\t2\tfile1',
+			'COMMIT:bbb|second|B|1700000100',
+			'3\t1\tfile2',
+			'1\t0\tfile3',
+		].join('\n');
+
+		const commits = parseCommitLog(input);
+		expect(commits).toHaveLength(2);
+		expect(commits[0].additions).toBe(5);
+		expect(commits[0].fileCount).toBe(1);
+		expect(commits[1].additions).toBe(4);
+		expect(commits[1].fileCount).toBe(2);
+	});
+
+	it('tolerates commits with no numstat body', () => {
+		const input = 'COMMIT:abc|no files|X|1700000000';
+		const commits = parseCommitLog(input);
+		expect(commits).toHaveLength(1);
+		expect(commits[0].additions).toBe(0);
+		expect(commits[0].fileCount).toBe(0);
+	});
+});
+
+describe('countDiffLines', () => {
+	it('returns zeros for empty input', () => {
+		expect(countDiffLines('')).toEqual({ additions: 0, deletions: 0 });
+	});
+
+	it('counts + and - lines, ignoring +++/--- headers', () => {
+		const diff = [
+			'--- a/src/a.ts',
+			'+++ b/src/a.ts',
+			'@@ -1,3 +1,4 @@',
+			' unchanged',
+			'+added',
+			'+another add',
+			'-removed',
+		].join('\n');
+		expect(countDiffLines(diff)).toEqual({ additions: 2, deletions: 1 });
+	});
+});
+
+describe('cache key helpers', () => {
+	it('exposes stable constants', () => {
+		expect(CACHE_KEY_GATE_ARTIFACTS).toBe('gateArtifacts');
+		expect(CACHE_KEY_COMMITS).toBe('commits');
+		expect(FILE_DIFF_SIZE_LIMIT_BYTES).toBe(100 * 1024);
+	});
+
+	it('generates deterministic file/commit keys', () => {
+		expect(fileDiffCacheKey('src/a.ts')).toBe('fileDiff:src/a.ts');
+		expect(commitFilesCacheKey('abc123')).toBe('commitFiles:abc123');
+		expect(commitFileDiffCacheKey('abc123', 'src/a.ts')).toBe('commitFileDiff:abc123:src/a.ts');
+	});
+});
+
+describe('getDiffBaseRef / merge-base cache', () => {
+	beforeEach(() => {
+		invalidateDiffBaseRef();
+	});
+
+	it('memoises the result per worktree path for MERGE_BASE_TTL_MS', async () => {
+		// A non-existent path means every git probe fails → the function
+		// returns the empty-string fallback. That is still a legitimate cache
+		// entry and should be reused on the second call.
+		const path = '/tmp/nonexistent-worktree-for-cache-test';
+		const firstCallStart = Date.now();
+		const first = await getDiffBaseRef(path);
+		const firstCallDuration = Date.now() - firstCallStart;
+		expect(first).toBe('');
+		expect(mergeBaseCacheSize()).toBe(1);
+
+		// The second call should hit the in-memory cache and return immediately.
+		const secondCallStart = Date.now();
+		const second = await getDiffBaseRef(path);
+		const secondCallDuration = Date.now() - secondCallStart;
+		expect(second).toBe('');
+		// Be generous: second call must still be noticeably faster than the first
+		// (which ran 3 × merge-base subprocess probes). In CI we allow a 50ms
+		// buffer because the cached path is < 1 ms but scheduling can add noise.
+		expect(secondCallDuration).toBeLessThan(Math.max(50, firstCallDuration));
+	});
+
+	it('invalidates the cache when TTL expires', async () => {
+		const path = '/tmp/nonexistent-worktree-ttl';
+		// Seed the cache with TTL=0 so the next call is already stale.
+		await getDiffBaseRef(path, { ttlMs: 0 });
+		expect(mergeBaseCacheSize()).toBe(1);
+
+		// When we call again with a future `now`, the cached entry has
+		// expired and a fresh probe runs (returning '' since git can't find
+		// the path). The cache entry is then refreshed.
+		await getDiffBaseRef(path, { now: Date.now() + 60_000, ttlMs: 60_000 });
+		expect(mergeBaseCacheSize()).toBe(1);
+	});
+
+	it('invalidateDiffBaseRef() with no args clears the whole cache', async () => {
+		await getDiffBaseRef('/tmp/a');
+		await getDiffBaseRef('/tmp/b');
+		expect(mergeBaseCacheSize()).toBe(2);
+		invalidateDiffBaseRef();
+		expect(mergeBaseCacheSize()).toBe(0);
+	});
+
+	it('invalidateDiffBaseRef(path) drops only the matching entry', async () => {
+		await getDiffBaseRef('/tmp/a');
+		await getDiffBaseRef('/tmp/b');
+		invalidateDiffBaseRef('/tmp/a');
+		expect(mergeBaseCacheSize()).toBe(1);
+	});
+
+	it('defaults the TTL to MERGE_BASE_TTL_MS', () => {
+		expect(MERGE_BASE_TTL_MS).toBe(60_000);
+	});
+});

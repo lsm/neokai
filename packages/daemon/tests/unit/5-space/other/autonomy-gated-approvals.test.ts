@@ -1269,7 +1269,18 @@ describe('Human approval path — not subject to autonomy checks', () => {
 			mockDaemonHub as never,
 			{ listByWorkflowRun: () => [] } as never,
 			{ getTaskWorktreePath: async () => null } as never,
-			{ listByRun: () => [] } as never
+			{ listByRun: () => [] } as never,
+			{
+				get: () => null,
+				upsert: () => ({}),
+				listByRun: () => [],
+				deleteByRun: () => 0,
+				deleteByRunTask: () => 0,
+			} as never,
+			{
+				enqueue: () => ({}),
+				listJobs: () => [],
+			} as never
 		);
 
 		const handler = handlers.get('spaceWorkflowRun.approveGate');

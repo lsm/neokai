@@ -26,6 +26,9 @@ import type { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runti
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
+import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -224,6 +227,59 @@ function createMockSpaceWorktreeManager(worktreePath: string | null = null): Spa
 	} as unknown as SpaceWorktreeManager;
 }
 
+function createMockArtifactRepo(): WorkflowRunArtifactRepository {
+	return {
+		upsert: mock(() => ({
+			id: 'artifact-1',
+			runId: 'run-1',
+			kind: 'generic',
+			data: {},
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		})),
+		listByRun: mock(() => []),
+		deleteByRun: mock(() => 0),
+	} as unknown as WorkflowRunArtifactRepository;
+}
+
+function createMockArtifactCacheRepo(): WorkflowRunArtifactCacheRepository {
+	return {
+		get: mock(() => null),
+		upsert: mock(() => ({
+			id: 'cache-1',
+			runId: 'run-1',
+			taskId: '',
+			cacheKey: 'gateArtifacts',
+			status: 'ok',
+			data: {},
+			error: null,
+			syncedAt: Date.now(),
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		})),
+		listByRun: mock(() => []),
+		deleteByRun: mock(() => 0),
+		deleteByRunTask: mock(() => 0),
+	} as unknown as WorkflowRunArtifactCacheRepository;
+}
+
+function createMockJobQueue(): JobQueueRepository {
+	return {
+		enqueue: mock(() => ({
+			id: 'job-1',
+			queue: 'spaceWorkflowRun.syncGateArtifacts',
+			payload: {},
+			status: 'pending',
+			attempts: 0,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			runAt: Date.now(),
+			priority: 0,
+		})),
+		listJobs: mock(() => []),
+	} as unknown as JobQueueRepository;
+}
+
 // ─── Test Suite ───────────────────────────────────────────────────────────────
 
 describe('space-workflow-run-handlers', () => {
@@ -281,7 +337,10 @@ describe('space-workflow-run-handlers', () => {
 			taskManagerFactory,
 			daemonHub,
 			spaceTaskRepo,
-			spaceWorktreeManager
+			spaceWorktreeManager,
+			createMockArtifactRepo(),
+			createMockArtifactCacheRepo(),
+			createMockJobQueue()
 		);
 	}
 
@@ -605,7 +664,10 @@ describe('space-workflow-run-handlers', () => {
 				taskManagerFactory,
 				daemonHub,
 				createMockSpaceTaskRepo([mockTask]),
-				createMockSpaceWorktreeManager()
+				createMockSpaceWorktreeManager(),
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			// Should not throw even though one cancelTask failed
@@ -676,7 +738,10 @@ describe('space-workflow-run-handlers', () => {
 				taskManagerFactory,
 				daemonHub,
 				createMockSpaceTaskRepo([mockTask]),
-				createMockSpaceWorktreeManager()
+				createMockSpaceWorktreeManager(),
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			const result = await call('spaceWorkflowRun.listGateData', { runId: 'run-1' });
@@ -728,7 +793,10 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			await call('spaceWorkflowRun.getGateArtifacts', {
@@ -762,7 +830,10 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			// The handler will run git diff in /tmp/task-worktree but that path doesn't exist,
@@ -794,7 +865,10 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			// The handler will try to run git diff in /tmp/test-workspace (fallback),
@@ -826,7 +900,10 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
@@ -894,7 +971,10 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			await call('spaceWorkflowRun.getFileDiff', {
@@ -927,7 +1007,10 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			await call('spaceWorkflowRun.getFileDiff', {
@@ -958,12 +1041,267 @@ describe('space-workflow-run-handlers', () => {
 				mock(() => createMockTaskManager()),
 				createMockDaemonHub(),
 				mockTaskRepo,
-				mockWorktreeManager
+				mockWorktreeManager,
+				createMockArtifactRepo(),
+				createMockArtifactCacheRepo(),
+				createMockJobQueue()
 			);
 
 			await expect(
 				call('spaceWorkflowRun.getFileDiff', { runId: 'run-1', filePath: 'src/foo.ts' })
 			).rejects.toThrow('No workspace path found for run: run-1');
+		});
+	});
+
+	// ─── spaceWorkflowRun.getGateArtifacts — cache-first behaviour ───────────
+
+	describe('spaceWorkflowRun.getGateArtifacts — cache-first', () => {
+		function setupWithRepos(opts: {
+			cachedRow?: {
+				data: Record<string, unknown>;
+				status: 'ok' | 'syncing' | 'error';
+				syncedAt: number;
+			} | null;
+		}) {
+			const cacheRepo = {
+				get: mock(() =>
+					opts.cachedRow
+						? {
+								id: 'c1',
+								runId: 'run-1',
+								taskId: '',
+								cacheKey: 'gateArtifacts',
+								status: opts.cachedRow.status,
+								data: opts.cachedRow.data,
+								error: null,
+								syncedAt: opts.cachedRow.syncedAt,
+								createdAt: opts.cachedRow.syncedAt,
+								updatedAt: opts.cachedRow.syncedAt,
+							}
+						: null
+				),
+				upsert: mock(() => ({})),
+				listByRun: mock(() => []),
+				deleteByRun: mock(() => 0),
+				deleteByRunTask: mock(() => 0),
+			} as unknown as WorkflowRunArtifactCacheRepository;
+
+			const jobQueueRepo = {
+				enqueue: mock(() => ({ id: 'j1' })),
+				listJobs: mock(() => []),
+			} as unknown as JobQueueRepository;
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(mockSpace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				createMockSpaceTaskRepo([mockTask]),
+				createMockSpaceWorktreeManager('/tmp/fake-worktree'),
+				createMockArtifactRepo(),
+				cacheRepo,
+				jobQueueRepo
+			);
+
+			return { cacheRepo, jobQueueRepo };
+		}
+
+		it('returns fresh cached data without enqueuing a sync job', async () => {
+			const { cacheRepo, jobQueueRepo } = setupWithRepos({
+				cachedRow: {
+					data: { files: [{ path: 'a.ts', additions: 1, deletions: 0 }] },
+					status: 'ok',
+					syncedAt: Date.now(), // fresh — within 30s window
+				},
+			});
+
+			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
+				runId: 'run-1',
+			})) as {
+				files: unknown[];
+				cached: boolean;
+				status: string;
+			};
+
+			expect(result.cached).toBe(true);
+			expect(result.status).toBe('ok');
+			expect(result.files).toHaveLength(1);
+			expect(cacheRepo.get).toHaveBeenCalled();
+			expect(jobQueueRepo.enqueue).not.toHaveBeenCalled();
+		});
+
+		it('enqueues a refresh job when cached data is stale', async () => {
+			const { jobQueueRepo } = setupWithRepos({
+				cachedRow: {
+					data: { files: [] },
+					status: 'ok',
+					syncedAt: Date.now() - 120_000, // 2 minutes old — stale
+				},
+			});
+
+			await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' });
+
+			expect(jobQueueRepo.enqueue).toHaveBeenCalledWith(
+				expect.objectContaining({
+					queue: 'spaceWorkflowRun.syncGateArtifacts',
+					payload: expect.objectContaining({ runId: 'run-1' }),
+				})
+			);
+		});
+
+		it('still returns stale cached data while the refresh runs', async () => {
+			setupWithRepos({
+				cachedRow: {
+					data: { files: [{ path: 'stale.ts', additions: 1, deletions: 0 }] },
+					status: 'ok',
+					syncedAt: Date.now() - 120_000,
+				},
+			});
+
+			const result = (await call('spaceWorkflowRun.getGateArtifacts', {
+				runId: 'run-1',
+			})) as { files: unknown[]; cached: boolean };
+
+			expect(result.cached).toBe(true);
+			expect(result.files).toHaveLength(1);
+		});
+
+		it('enqueues a sync job when no cache row exists (falls through to sync probe)', async () => {
+			const { jobQueueRepo } = setupWithRepos({ cachedRow: null });
+
+			// The sync probe will attempt git in /tmp/fake-worktree and return empty
+			// stats. We only care that the enqueue happened.
+			await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
+
+			expect(jobQueueRepo.enqueue).toHaveBeenCalledWith(
+				expect.objectContaining({ queue: 'spaceWorkflowRun.syncGateArtifacts' })
+			);
+		});
+
+		it('skips enqueue when an equivalent pending job already exists', async () => {
+			const cacheRepo = {
+				get: mock(() => null),
+				upsert: mock(() => ({})),
+				listByRun: mock(() => []),
+				deleteByRun: mock(() => 0),
+				deleteByRunTask: mock(() => 0),
+			} as unknown as WorkflowRunArtifactCacheRepository;
+
+			// listJobs returns an existing pending job with matching payload.
+			const jobQueueRepo = {
+				enqueue: mock(() => ({ id: 'should-not-be-called' })),
+				listJobs: mock(() => [
+					{
+						id: 'existing',
+						queue: 'spaceWorkflowRun.syncGateArtifacts',
+						payload: { runId: 'run-1' },
+					},
+				]),
+			} as unknown as JobQueueRepository;
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(mockSpace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				createMockSpaceTaskRepo([mockTask]),
+				createMockSpaceWorktreeManager('/tmp/fake-worktree'),
+				createMockArtifactRepo(),
+				cacheRepo,
+				jobQueueRepo
+			);
+
+			await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
+
+			expect(jobQueueRepo.listJobs).toHaveBeenCalled();
+			expect(jobQueueRepo.enqueue).not.toHaveBeenCalled();
+		});
+	});
+
+	// ─── spaceWorkflowRun.getFileDiff — truncation metadata ──────────────────
+
+	describe('spaceWorkflowRun.getFileDiff — cache truncation', () => {
+		it('returns truncated:true when cached diff exceeds size limit', async () => {
+			const largePayload = 'x'.repeat(150 * 1024);
+			const cacheRepo = {
+				get: mock(() => ({
+					id: 'c1',
+					runId: 'run-1',
+					taskId: '',
+					cacheKey: 'fileDiff:src/big.ts',
+					status: 'ok',
+					data: {
+						diff: largePayload.slice(0, 100 * 1024),
+						additions: 0,
+						deletions: 0,
+						filePath: 'src/big.ts',
+						truncated: true,
+						originalSize: largePayload.length,
+					},
+					error: null,
+					syncedAt: Date.now(),
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				})),
+				upsert: mock(() => ({})),
+				listByRun: mock(() => []),
+				deleteByRun: mock(() => 0),
+				deleteByRunTask: mock(() => 0),
+			} as unknown as WorkflowRunArtifactCacheRepository;
+
+			const jobQueueRepo = {
+				enqueue: mock(() => ({})),
+				listJobs: mock(() => []),
+			} as unknown as JobQueueRepository;
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupSpaceWorkflowRunHandlers(
+				hub,
+				createMockSpaceManager(mockSpace),
+				createMockWorkflowManager(),
+				createMockRunRepo(mockRun),
+				createMockGateDataRepo(),
+				createMockRuntimeService(),
+				mock(() => createMockTaskManager()),
+				createMockDaemonHub(),
+				createMockSpaceTaskRepo([mockTask]),
+				createMockSpaceWorktreeManager('/tmp/fake-worktree'),
+				createMockArtifactRepo(),
+				cacheRepo,
+				jobQueueRepo
+			);
+
+			const result = (await call('spaceWorkflowRun.getFileDiff', {
+				runId: 'run-1',
+				filePath: 'src/big.ts',
+			})) as {
+				truncated: boolean;
+				originalSize: number;
+				diff: string;
+			};
+
+			expect(result.truncated).toBe(true);
+			expect(result.originalSize).toBe(150 * 1024);
+			expect(result.diff.length).toBe(100 * 1024);
 		});
 	});
 });

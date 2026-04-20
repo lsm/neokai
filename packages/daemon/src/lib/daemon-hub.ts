@@ -490,6 +490,21 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		gateId: string;
 		data: Record<string, unknown>;
 	};
+	/**
+	 * Emitted when a workflow_run_artifact_cache row has been written by a
+	 * background sync job (spaceWorkflowRun.syncGateArtifacts, syncCommits,
+	 * syncFileDiff). The frontend TaskArtifactsPanel subscribes and refetches
+	 * the affected cache entry instead of relying on polling.
+	 */
+	'space.artifactCache.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		/** Task id (may be empty string when the entry is run-level). */
+		taskId: string;
+		cacheKey: string;
+		status: 'ok' | 'syncing' | 'error';
+	};
 
 	// Pending agent message events (queue-until-active)
 	// See packages/daemon/src/storage/repositories/pending-agent-message-repository.ts

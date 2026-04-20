@@ -14,9 +14,14 @@
  * - spaceWorkflowRun.getCommits         - Returns git commits between branch point and HEAD with per-commit stats
  * - spaceWorkflowRun.getCommitFileDiff  - Returns unified diff for a specific file in a specific commit
  * - spaceWorkflowRun.writeGateData  - Writes arbitrary gate data (E2E test infrastructure only)
+ *
+ * Artifact-git RPCs (`getGateArtifacts`, `getFileDiff`, `getCommits`,
+ * `getCommitFileDiff`) are cache-first: the handler reads the most recent row
+ * from `workflow_run_artifact_cache` and returns it synchronously; if the row
+ * is missing or stale, a background sync job is enqueued that refreshes the
+ * cache and emits `space.artifactCache.updated` for the frontend.
  */
 
-import { execFile } from 'node:child_process';
 import { isAbsolute } from 'node:path';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
@@ -25,65 +30,70 @@ import type { SpaceWorkflowManager } from '../space/managers/space-workflow-mana
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
+import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@neokai/shared';
+import {
+	execGit,
+	isGitRepo,
+	parseNumstat,
+	parseCommitLog,
+	countDiffLines,
+	getDiffBaseRef,
+	CACHE_KEY_GATE_ARTIFACTS,
+	CACHE_KEY_COMMITS,
+	fileDiffCacheKey,
+	commitFilesCacheKey,
+	commitFileDiffCacheKey,
+	FILE_DIFF_SIZE_LIMIT_BYTES,
+} from '../space/artifact-git-ops';
+import {
+	SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
+	SPACE_WORKFLOW_RUN_SYNC_COMMITS,
+	SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
+} from '../job-queue-constants';
 import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-run-handlers');
 
-// ─── Git diff utilities ───────────────────────────────────────────────────────
-
-interface FileDiffStat {
-	path: string;
-	additions: number;
-	deletions: number;
-}
-
-interface DiffSummary {
-	files: FileDiffStat[];
-	totalAdditions: number;
-	totalDeletions: number;
-}
+/**
+ * Cache freshness window. Anything older is treated as stale and triggers a
+ * refresh enqueue (but the old data is still returned synchronously so the UI
+ * has something to render).
+ */
+const CACHE_STALE_AFTER_MS = 30_000;
 
 /**
- * Parse `git diff --numstat` output into structured file stats.
- * Each line is: `<additions>\t<deletions>\t<path>`
- * Binary files show `-\t-\t<path>` — those get 0/0 stats.
+ * Best-effort enqueue helper. We look for an existing pending job for the same
+ * queue + payload shape before enqueuing, so repeated panel opens don't stack
+ * dozens of duplicate sync jobs.
  */
-function parseNumstat(output: string): DiffSummary {
-	const files: FileDiffStat[] = [];
-	let totalAdditions = 0;
-	let totalDeletions = 0;
-
-	for (const line of output.split('\n')) {
-		if (!line.trim()) continue;
-		const parts = line.split('\t');
-		if (parts.length < 3) continue;
-		const additions = parseInt(parts[0], 10) || 0;
-		const deletions = parseInt(parts[1], 10) || 0;
-		const path = parts.slice(2).join('\t');
-		files.push({ path, additions, deletions });
-		totalAdditions += additions;
-		totalDeletions += deletions;
-	}
-
-	return { files, totalAdditions, totalDeletions };
-}
-
-/**
- * Async wrapper around `execFile('git', ...)`.
- * Non-blocking — does not stall the event loop during git I/O.
- */
-function execGit(args: string[], cwd: string, timeout = 10000): Promise<string> {
-	return new Promise((resolve, reject) => {
-		execFile('git', args, { cwd, encoding: 'utf8', timeout }, (err, stdout) => {
-			if (err) reject(err);
-			else resolve(stdout as string);
+function enqueueSyncOnce(
+	jobQueue: JobQueueRepository,
+	queue: string,
+	payload: Record<string, unknown>
+): void {
+	try {
+		const pending = jobQueue.listJobs({ queue, status: 'pending', limit: 20 });
+		const match = pending.find((j) => {
+			for (const [k, v] of Object.entries(payload)) {
+				if (j.payload?.[k] !== v) return false;
+			}
+			return true;
 		});
-	});
+		if (match) return;
+		jobQueue.enqueue({ queue, payload, runAt: Date.now() });
+	} catch (err) {
+		log.warn(`Failed to enqueue ${queue} sync job:`, err);
+	}
+}
+
+function isCacheFresh(syncedAt: number, now: number = Date.now()): boolean {
+	return now - syncedAt < CACHE_STALE_AFTER_MS;
 }
 
 /**
@@ -145,80 +155,6 @@ async function resolveWorktreePath(
 	return space?.workspacePath ?? null;
 }
 
-/**
- * Returns true when `worktreePath` is inside a git repository.
- * Uses `git rev-parse --git-dir` which exits non-zero outside a repo.
- */
-async function isGitRepo(worktreePath: string): Promise<boolean> {
-	try {
-		await execGit(['rev-parse', '--git-dir'], worktreePath, 5000);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-/**
- * Get the diff base ref for a worktree.
- * Tries `origin/dev` merge-base first; falls back to empty string (uncommitted only).
- */
-async function getDiffBaseRef(worktreePath: string): Promise<string> {
-	for (const candidate of ['origin/dev', 'origin/main', 'origin/master']) {
-		try {
-			const base = await execGit(['merge-base', 'HEAD', candidate], worktreePath, 5000);
-			if (base.trim()) return base.trim();
-		} catch {
-			// candidate not available
-		}
-	}
-	return '';
-}
-
-interface CommitInfo {
-	sha: string;
-	message: string;
-	author: string;
-	timestamp: number;
-	additions: number;
-	deletions: number;
-	fileCount: number;
-}
-
-/**
- * Parse `git log --format=COMMIT:%H|%s|%aN|%at --numstat` output.
- * Each commit block starts with a "COMMIT:" line followed by numstat lines.
- */
-function parseCommitLog(output: string): CommitInfo[] {
-	const commits: CommitInfo[] = [];
-	let current: CommitInfo | null = null;
-
-	for (const line of output.split('\n')) {
-		if (line.startsWith('COMMIT:')) {
-			if (current) commits.push(current);
-			const parts = line.slice('COMMIT:'.length).split('|');
-			current = {
-				sha: parts[0]?.trim() ?? '',
-				message: parts[1]?.trim() ?? '',
-				author: parts[2]?.trim() ?? '',
-				timestamp: parseInt(parts[3]?.trim() ?? '0', 10) * 1000,
-				additions: 0,
-				deletions: 0,
-				fileCount: 0,
-			};
-		} else if (current && line.trim()) {
-			// numstat line: <additions>\t<deletions>\t<path>
-			const parts = line.split('\t');
-			if (parts.length >= 3) {
-				current.additions += parseInt(parts[0], 10) || 0;
-				current.deletions += parseInt(parts[1], 10) || 0;
-				current.fileCount += 1;
-			}
-		}
-	}
-	if (current) commits.push(current);
-	return commits;
-}
-
 /** Factory that creates a SpaceTaskManager bound to a specific spaceId. */
 export type SpaceWorkflowRunTaskManagerFactory = (spaceId: string) => SpaceTaskManager;
 
@@ -233,7 +169,9 @@ export function setupSpaceWorkflowRunHandlers(
 	daemonHub: DaemonHub,
 	spaceTaskRepo: SpaceTaskRepository,
 	spaceWorktreeManager: SpaceWorktreeManager,
-	artifactRepo: WorkflowRunArtifactRepository
+	artifactRepo: WorkflowRunArtifactRepository,
+	artifactCacheRepo: WorkflowRunArtifactCacheRepository,
+	jobQueue: JobQueueRepository
 ): void {
 	/**
 	 * Helper: notify the channel router that gate data has changed.
@@ -698,8 +636,10 @@ export function setupSpaceWorkflowRunHandlers(
 
 	// ─── spaceWorkflowRun.getGateArtifacts ───────────────────────────────────
 	//
-	// Returns the list of changed files and diff summary (additions, deletions)
-	// for the workspace associated with a workflow run.
+	// Cache-first: returns the most recent cache row for CACHE_KEY_GATE_ARTIFACTS
+	// immediately and enqueues a background sync job if the row is missing or
+	// stale. Frontend receives `space.artifactCache.updated` when the refresh
+	// completes.
 	messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
 		const params = data as { runId: string; taskId?: string };
 
@@ -708,8 +648,28 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		// Resolve the worktree path: prefer the task-specific git worktree (where
-		// the agent commits its work) over the root workspace path.
+		const taskId = params.taskId ?? '';
+		const cached = artifactCacheRepo.get(params.runId, CACHE_KEY_GATE_ARTIFACTS, taskId);
+
+		if (!cached || !isCacheFresh(cached.syncedAt)) {
+			enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS, {
+				runId: params.runId,
+				taskId: params.taskId,
+			});
+		}
+
+		if (cached && cached.status !== 'error') {
+			return {
+				...cached.data,
+				cached: true,
+				syncedAt: cached.syncedAt,
+				status: cached.status,
+			};
+		}
+
+		// Cache miss or previous failure — fall back to a synchronous probe so the
+		// panel has something to render on first-load. The background job will
+		// overwrite with the authoritative row shortly.
 		const worktreePath = await resolveWorktreePath(
 			run.id,
 			run.spaceId,
@@ -726,7 +686,6 @@ export function setupSpaceWorkflowRunHandlers(
 			return { files: [], totalAdditions: 0, totalDeletions: 0, worktreePath, isGitRepo: false };
 		}
 
-		// Uncommitted changes only: working tree vs HEAD
 		let numstatOutput = '';
 		try {
 			numstatOutput = await execGit(['diff', 'HEAD', '--numstat'], worktreePath);
@@ -740,8 +699,10 @@ export function setupSpaceWorkflowRunHandlers(
 
 	// ─── spaceWorkflowRun.getFileDiff ────────────────────────────────────────
 	//
-	// Returns the unified diff for a specific file in the run's worktree.
-	// Uses the same base ref logic as getGateArtifacts.
+	// Cache-first: returns the cached file diff (up to FILE_DIFF_SIZE_LIMIT_BYTES)
+	// and enqueues a background sync if the row is missing or stale. Large diffs
+	// are stored truncated; callers can detect `truncated: true` and request a
+	// full-file read if needed.
 	messageHub.onRequest('spaceWorkflowRun.getFileDiff', async (data) => {
 		const params = data as { runId: string; filePath: string; taskId?: string };
 
@@ -756,8 +717,27 @@ export function setupSpaceWorkflowRunHandlers(
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-		// Resolve the worktree path: prefer the task-specific git worktree (where
-		// the agent commits its work) over the root workspace path.
+		const taskId = params.taskId ?? '';
+		const cacheKey = fileDiffCacheKey(params.filePath);
+		const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+
+		if (!cached || !isCacheFresh(cached.syncedAt)) {
+			enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF, {
+				runId: params.runId,
+				taskId: params.taskId,
+				filePath: params.filePath,
+			});
+		}
+
+		if (cached && cached.status !== 'error') {
+			return {
+				...cached.data,
+				cached: true,
+				syncedAt: cached.syncedAt,
+				status: cached.status,
+			};
+		}
+
 		const worktreePath = await resolveWorktreePath(
 			run.id,
 			run.spaceId,
@@ -774,7 +754,6 @@ export function setupSpaceWorkflowRunHandlers(
 			return { diff: '', additions: 0, deletions: 0, filePath: params.filePath };
 		}
 
-		// Uncommitted diff: working tree vs HEAD
 		let diff = '';
 		try {
 			diff = await execGit(['diff', 'HEAD', '--', params.filePath], worktreePath);
@@ -782,27 +761,49 @@ export function setupSpaceWorkflowRunHandlers(
 			log.warn('git diff HEAD for file failed:', err);
 		}
 
-		// Parse per-file stats from the diff itself
-		let additions = 0;
-		let deletions = 0;
-		for (const line of diff.split('\n')) {
-			if (line.startsWith('+') && !line.startsWith('+++')) additions++;
-			else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
-		}
+		const { additions, deletions } = countDiffLines(diff);
+		const truncated = diff.length > FILE_DIFF_SIZE_LIMIT_BYTES;
+		const returnedDiff = truncated ? diff.slice(0, FILE_DIFF_SIZE_LIMIT_BYTES) : diff;
 
-		return { diff, additions, deletions, filePath: params.filePath };
+		return {
+			diff: returnedDiff,
+			additions,
+			deletions,
+			filePath: params.filePath,
+			truncated,
+			originalSize: diff.length,
+		};
 	});
 
 	// ─── spaceWorkflowRun.getCommits ─────────────────────────────────────────
 	//
-	// Returns the list of commits between the branch point (baseRef) and HEAD,
-	// with per-commit addition/deletion/file-count stats.
+	// Cache-first: returns the cached CACHE_KEY_COMMITS row and enqueues a
+	// background sync if stale/missing.
 	messageHub.onRequest('spaceWorkflowRun.getCommits', async (data) => {
 		const params = data as { runId: string; taskId?: string };
 		if (!params.runId) throw new Error('runId is required');
 
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const taskId = params.taskId ?? '';
+		const cached = artifactCacheRepo.get(params.runId, CACHE_KEY_COMMITS, taskId);
+
+		if (!cached || !isCacheFresh(cached.syncedAt)) {
+			enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_COMMITS, {
+				runId: params.runId,
+				taskId: params.taskId,
+			});
+		}
+
+		if (cached && cached.status !== 'error') {
+			return {
+				...cached.data,
+				cached: true,
+				syncedAt: cached.syncedAt,
+				status: cached.status,
+			};
+		}
 
 		const worktreePath = await resolveWorktreePath(
 			run.id,
@@ -836,8 +837,9 @@ export function setupSpaceWorkflowRunHandlers(
 
 	// ─── spaceWorkflowRun.getCommitFiles ─────────────────────────────────────
 	//
-	// Returns the list of files changed in a specific commit with per-file stats.
-	// Uses `git diff-tree --numstat -r <sha>`.
+	// Cache-first: reads from the commitFiles:<sha> cache key. Falls back to a
+	// sync probe on cache miss since these rows are only refreshed on demand
+	// (commit history is immutable — no background sync job needed).
 	messageHub.onRequest('spaceWorkflowRun.getCommitFiles', async (data) => {
 		const params = data as { runId: string; taskId?: string; commitSha: string };
 		if (!params.runId) throw new Error('runId is required');
@@ -847,6 +849,13 @@ export function setupSpaceWorkflowRunHandlers(
 
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const taskId = params.taskId ?? '';
+		const cacheKey = commitFilesCacheKey(params.commitSha);
+		const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+		if (cached && cached.status === 'ok') {
+			return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
+		}
 
 		const worktreePath = await resolveWorktreePath(
 			run.id,
@@ -873,13 +882,27 @@ export function setupSpaceWorkflowRunHandlers(
 		}
 
 		const summary = parseNumstat(numstatOutput);
-		return { files: summary.files };
+		const payload = { files: summary.files };
+		// Commit file lists are immutable — cache indefinitely on first read.
+		try {
+			artifactCacheRepo.upsert({
+				runId: params.runId,
+				taskId,
+				cacheKey,
+				status: 'ok',
+				data: payload,
+			});
+		} catch (err) {
+			log.warn('Failed to persist commitFiles cache:', err);
+		}
+		return payload;
 	});
 
 	// ─── spaceWorkflowRun.getCommitFileDiff ──────────────────────────────────
 	//
-	// Returns the unified diff for a specific file within a specific commit
-	// using `git show <sha> -- <filePath>`.
+	// Cache-first: reads from the commitFileDiff:<sha>:<path> cache key. Commit
+	// contents are immutable so there's no staleness concern — the row is
+	// populated lazily on first request and reused forever.
 	messageHub.onRequest('spaceWorkflowRun.getCommitFileDiff', async (data) => {
 		const params = data as {
 			runId: string;
@@ -900,6 +923,13 @@ export function setupSpaceWorkflowRunHandlers(
 
 		const run = workflowRunRepo.getRun(params.runId);
 		if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
+
+		const taskId = params.taskId ?? '';
+		const cacheKey = commitFileDiffCacheKey(params.commitSha, params.filePath);
+		const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+		if (cached && cached.status === 'ok') {
+			return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
+		}
 
 		const worktreePath = await resolveWorktreePath(
 			run.id,
@@ -922,14 +952,29 @@ export function setupSpaceWorkflowRunHandlers(
 			log.warn('git show for commit file failed:', err);
 		}
 
-		let additions = 0;
-		let deletions = 0;
-		for (const line of diff.split('\n')) {
-			if (line.startsWith('+') && !line.startsWith('+++')) additions++;
-			else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+		const { additions, deletions } = countDiffLines(diff);
+		const truncated = diff.length > FILE_DIFF_SIZE_LIMIT_BYTES;
+		const returnedDiff = truncated ? diff.slice(0, FILE_DIFF_SIZE_LIMIT_BYTES) : diff;
+		const payload = {
+			diff: returnedDiff,
+			additions,
+			deletions,
+			filePath: params.filePath,
+			truncated,
+			originalSize: diff.length,
+		};
+		try {
+			artifactCacheRepo.upsert({
+				runId: params.runId,
+				taskId,
+				cacheKey,
+				status: 'ok',
+				data: payload,
+			});
+		} catch (err) {
+			log.warn('Failed to persist commitFileDiff cache:', err);
 		}
-
-		return { diff, additions, deletions, filePath: params.filePath };
+		return payload;
 	});
 
 	// ─── spaceWorkflowRun.listArtifacts ─────────────────────────────────────
