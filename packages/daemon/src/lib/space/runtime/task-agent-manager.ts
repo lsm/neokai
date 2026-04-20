@@ -811,6 +811,13 @@ export class TaskAgentManager {
 			});
 
 			if (shouldKickoff) {
+				// Snapshot gate data for this workflow run so the builder can render the
+				// current PR URL (and any other derived runtime fields) in the user
+				// message. Safe to call even on fresh runs — returns [] when empty.
+				const gateDataSnapshot = this.config.gateDataRepo
+					.listByRun(workflowRun.id)
+					.map((record) => ({ gateId: record.gateId, data: record.data }));
+
 				const initialMessage = buildCustomAgentTaskMessage({
 					customAgent: customAgent!,
 					task,
@@ -820,6 +827,9 @@ export class TaskAgentManager {
 					sessionId: actualSessionId,
 					workspacePath,
 					slotOverrides,
+					nodeId: execution.workflowNodeId,
+					agentSlotName: execution.agentName,
+					gateData: gateDataSnapshot,
 				});
 				const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution);
 				const kickoffMessage = runtimeContract
