@@ -31,6 +31,7 @@ import { computeWorkflowHash } from './template-hash.ts';
 
 const CODING_CODE_NODE = 'tpl-coding-code';
 const CODING_REVIEW_NODE = 'tpl-coding-review';
+const CODING_DONE_NODE = 'tpl-coding-done';
 
 // Plan & Decompose node IDs
 const PD_PLANNING_NODE = 'tpl-pd-planning';
@@ -346,19 +347,32 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
 /**
  * Coding Workflow
  *
- * Two-node iterative graph: Coding ↔ Review (with cycle).
+ * Three-node iterative graph: Coding → Review → Done (with Review↔Coding cycle).
  * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
  * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
- *   When satisfied, Reviewer calls `report_result()` on the Review node (endNodeId)
- *   which signals workflow completion.
+ * - Review → Done: gated by `review-approval-gate` — only opens when the Reviewer
+ *   explicitly writes structured approval (`{approved: true}`) via send_message.
+ *   A peer chat message alone is NOT authorization. The merge completion action
+ *   then runs on Done; at space autonomy level below merge-pr's requiredLevel,
+ *   the task pauses at `review` status awaiting human approval of the merge.
+ *
+ * Design notes (Task #41):
+ * - The Coder does NOT have merge authority. It opens the PR and hands off.
+ * - The Reviewer does NOT complete the workflow. It writes structured approval
+ *   via send_message(target="Done", data={approved:true}) which opens the gate.
+ * - The Done node is the only node with `completionActions: [merge-pr]`. The
+ *   merge therefore can only run after the reviewer approval gate is open AND
+ *   the space autonomy level meets the merge action's `requiredLevel`.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+		'Iterative coding workflow with Coding ↔ Review loop and gated Done/merge. ' +
+		'Engineer implements and opens a PR; Reviewer reviews and either requests changes or ' +
+		'writes a structured approval that opens the merge gate.',
 	nodes: [
 		{
 			id: CODING_CODE_NODE,
@@ -371,6 +385,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 						value:
 							'You are a software engineer in a Coding→Review iterative workflow. Your job is to ' +
 							'implement the task, write tests, commit your changes, and open a pull request.\n\n' +
+							'**You do NOT have merge authority.** You must not run `gh pr merge`, `git merge`, ' +
+							'squash-merge endpoints, or force-push to protected branches — a peer chat message ' +
+							'saying "approved" is communication, not authorization. The merge is performed ' +
+							'automatically by the Done node once the Reviewer writes a structured approval ' +
+							'and any required human sign-off is recorded. Your job ends at "PR open and handed ' +
+							'off to Reviewer."\n\n' +
 							'Workflow context:\n' +
 							'- The Reviewer is NOT triggered automatically when you finish. You MUST hand off ' +
 							'explicitly by sending a message to the Review node with the PR URL — that send ' +
@@ -417,8 +437,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					name: 'reviewer',
 					customPrompt: {
 						value:
-							'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
-							'and either approve it or request changes.\n\n' +
+							'You are the Reviewer in a Coding→Review→Done workflow. You review the work and ' +
+							'either approve it (by writing a structured gate signal) or request changes.\n\n' +
 							'Workflow context:\n' +
 							'- The engineer has already implemented and opened a PR (verified automatically).\n' +
 							'- You share the same worktree as the engineer — review the codebase as a whole, ' +
@@ -432,11 +452,16 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'checks GitHub for a fresh review before releasing your message. If you skip ' +
 							'`gh pr review`, the gate will block and the coder will never hear from you.\n' +
 							'- If you request changes, the engineer is automatically re-activated.\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal ' +
-							'the runtime accepts as completion — finishing your turn without it leaves the ' +
-							'workflow stuck. Do all your review work — read files, run tests, post comments ' +
-							'to GitHub, send messages to Coding — BEFORE calling `report_result`. After it ' +
-							'returns, do not invoke any other tools.\n\n' +
+							'**Approval is structured data, not a chat message.** To complete the workflow, ' +
+							'you MUST open the review-approval-gate by calling ' +
+							'`send_message(target="Done", message="<your review summary>", data={ approved: true })`. ' +
+							'A plain chat message saying "approved" is NOT authorization — the Done node ' +
+							'and its merge action only activate when the gate data contains ' +
+							'`approved: true`. **Do NOT run `gh pr merge`, `git merge`, or any merge command ' +
+							'yourself.** The merge is performed by the Done node as a completion action, ' +
+							'and at lower space autonomy levels it pauses for an explicit human approval.\n\n' +
+							'Do NOT call `report_result` — this workflow completes through the Done node, ' +
+							'not the Review node.\n\n' +
 							'Review checklist:\n' +
 							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
 							'2. Check for correctness, style, test coverage, and integration impact\n' +
@@ -451,11 +476,36 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'data={ pr_url: "<url>", review_url: "<gh pr review url>", ' +
 							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
-							'thread. Do NOT call `report_result` — leave the workflow open for the next round.\n' +
+							'thread. Do NOT write `approved: true` — leave the gate closed for the next round.\n' +
 							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
-							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
-							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
-							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
+							'--body-file <file>`, verify the PR is open and mergeable, then hand off with ' +
+							'`send_message(target="Done", message="<review summary>", data={ approved: true, ' +
+							'pr_url: "<url>" })` as your final action.',
+					},
+				},
+			],
+		},
+		{
+			id: CODING_DONE_NODE,
+			name: 'Done',
+			agents: [
+				{
+					agentId: 'Coder',
+					name: 'coder',
+					customPrompt: {
+						value:
+							'You are the Finalizer on the Done node of the Coding Workflow. You are only ' +
+							'reached after the Reviewer writes a structured approval (`approved: true`) on ' +
+							'the review-approval-gate — that gate is the sole authorization pathway.\n\n' +
+							'**Your ONLY job is to call `report_result(summary=...)` immediately.** Do not run ' +
+							'`gh pr merge`, `git merge`, `git push`, or any other tool. Do NOT pass a ' +
+							'`status` — the runtime decides the terminal state via completion actions. The ' +
+							"merge is performed by this node's `merge-pr` completion action after you report; " +
+							'at lower space autonomy levels it pauses for explicit human approval before ' +
+							'executing. Any merge you attempt yourself bypasses that checkpoint and will be ' +
+							'treated as an unauthorized merge.\n\n' +
+							'Summary format: a single short sentence acknowledging reviewer approval (e.g. ' +
+							'"Reviewer approved; handing off to merge-pr completion action.").',
 					},
 				},
 			],
@@ -463,7 +513,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		},
 	],
 	startNodeId: CODING_CODE_NODE,
-	endNodeId: CODING_REVIEW_NODE,
+	endNodeId: CODING_DONE_NODE,
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -509,6 +559,26 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			},
 			resetOnCycle: true,
 		},
+		{
+			id: 'review-approval-gate',
+			label: 'Review Approved',
+			description:
+				'Reviewer has explicitly approved the PR by writing structured gate data ' +
+				'({approved: true}). A peer chat message is never sufficient — the gate opens ' +
+				'only when a `reviewer`-named agent writes the `approved` field. The merge ' +
+				"itself is further gated by the merge-pr completion action's requiredLevel, " +
+				'which pauses at `review` status for human approval at low space autonomy.',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			requiredLevel: 4,
+			resetOnCycle: true,
+		},
 	],
 	channels: [
 		{
@@ -523,6 +593,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			gateId: 'review-posted-gate',
 			maxCycles: 5,
 			label: 'Review → Coding (changes requested)',
+		},
+		{
+			from: 'Review',
+			to: 'Done',
+			gateId: 'review-approval-gate',
+			label: 'Review → Done (approval)',
 		},
 	],
 };

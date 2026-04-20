@@ -140,6 +140,11 @@ const MERGE_PR_COMPLETION_ACTION: CompletionActionShape = {
 // Coding+QA) and the migration falls back to the row's own hash.
 const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON when available; fal';
 
+// First 64 chars of `REVIEW_POSTED_BASH_SCRIPT` (joined with \n). Used by the
+// Coding Workflow's review-posted-gate to verify a reviewer has posted a
+// GitHub review before the Review → Coding feedback channel releases.
+const REVIEW_POSTED_SCRIPT_PREFIX = 'PR_URL=$(jq -r \'.pr_url // empty\' <<< "${NEOKAI_GATE_DATA_JSON:-';
+
 /**
  * Known built-in templates and their fingerprints.
  * Order is not significant — matched by `name`.
@@ -148,13 +153,16 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 	{
 		name: 'Coding Workflow',
 		description:
-			'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+			'Iterative coding workflow with Coding ↔ Review loop and gated Done/merge. ' +
+			'Engineer implements and opens a PR; Reviewer reviews and either requests changes or ' +
+			'writes a structured approval that opens the merge gate.',
 		instructions: '',
-		nodeNames: ['Coding', 'Review'],
-		endNodeName: 'Review',
+		nodeNames: ['Coding', 'Review', 'Done'],
+		endNodeName: 'Done',
 		channels: [
 			{ from: 'Coding', to: 'Review' },
 			{ from: 'Review', to: 'Coding' },
+			{ from: 'Review', to: 'Done' },
 		],
 		gates: [
 			{
@@ -162,6 +170,18 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 				resetOnCycle: true,
 				fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' } }],
 				scriptSource: PR_READY_SCRIPT_PREFIX,
+			},
+			{
+				id: 'review-posted-gate',
+				resetOnCycle: true,
+				fields: [{ name: 'review_url', type: 'string', check: { op: 'exists' } }],
+				scriptSource: REVIEW_POSTED_SCRIPT_PREFIX,
+			},
+			{
+				id: 'review-approval-gate',
+				requiredLevel: 4,
+				resetOnCycle: true,
+				fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
 			},
 		],
 		endNodeCompletionActions: [MERGE_PR_COMPLETION_ACTION],

@@ -144,15 +144,16 @@ function seedLegacyCodingWorkflow(
 		createdAt?: number;
 		/** Default false — null template_name simulates pre-M90 legacy rows. */
 		withTemplateFields?: boolean;
-		/** Default false — when true, end node has completionActions already. */
+		/** Default false — when true, end (Done) node has completionActions already. */
 		withCompletionActions?: boolean;
 	}
-): { workflowId: string; codingNodeId: string; reviewNodeId: string } {
+): { workflowId: string; codingNodeId: string; reviewNodeId: string; doneNodeId: string } {
 	const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow');
 	if (!template) throw new Error('Coding Workflow template missing');
 
 	const codingNodeId = `${opts.id}-n-coding`;
 	const reviewNodeId = `${opts.id}-n-review`;
+	const doneNodeId = `${opts.id}-n-done`;
 
 	insertWorkflow(db, {
 		id: opts.id,
@@ -162,7 +163,7 @@ function seedLegacyCodingWorkflow(
 		channels: template.channels ?? [],
 		gates: template.gates ?? [],
 		startNodeId: codingNodeId,
-		endNodeId: reviewNodeId,
+		endNodeId: doneNodeId,
 		templateName: opts.withTemplateFields ? template.name : null,
 		templateHash: opts.withTemplateFields ? computeWorkflowHash(template) : null,
 		createdAt: opts.createdAt,
@@ -175,11 +176,18 @@ function seedLegacyCodingWorkflow(
 		config: { agents: [{ agentId: 'a-coder', name: 'coder' }] },
 	});
 
-	const reviewConfig: Record<string, unknown> = {
-		agents: [{ agentId: 'a-reviewer', name: 'reviewer' }],
+	insertNode(db, {
+		id: reviewNodeId,
+		workflowId: opts.id,
+		name: 'Review',
+		config: { agents: [{ agentId: 'a-reviewer', name: 'reviewer' }] },
+	});
+
+	const doneConfig: Record<string, unknown> = {
+		agents: [{ agentId: 'a-coder', name: 'coder' }],
 	};
 	if (opts.withCompletionActions) {
-		reviewConfig.completionActions = [
+		doneConfig.completionActions = [
 			{
 				id: 'merge-pr',
 				name: 'Merge PR',
@@ -190,9 +198,9 @@ function seedLegacyCodingWorkflow(
 			},
 		];
 	}
-	insertNode(db, { id: reviewNodeId, workflowId: opts.id, name: 'Review', config: reviewConfig });
+	insertNode(db, { id: doneNodeId, workflowId: opts.id, name: 'Done', config: doneConfig });
 
-	return { workflowId: opts.id, codingNodeId, reviewNodeId };
+	return { workflowId: opts.id, codingNodeId, reviewNodeId, doneNodeId };
 }
 
 describe('Migration 94: backfill workflow template tracking & completion actions', () => {
@@ -276,6 +284,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		const wfId = 'wf-diverged';
 		const codingId = 'n-d-coding';
 		const reviewId = 'n-d-review';
+		const doneId = 'n-d-done';
 		insertWorkflow(db, {
 			id: wfId,
 			spaceId: 'sp-1',
@@ -283,10 +292,11 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 			description: template.description + ' — user edited',
 			channels: template.channels ?? [],
 			gates: template.gates ?? [],
-			endNodeId: reviewId,
+			endNodeId: doneId,
 		});
 		insertNode(db, { id: codingId, workflowId: wfId, name: 'Coding' });
 		insertNode(db, { id: reviewId, workflowId: wfId, name: 'Review' });
+		insertNode(db, { id: doneId, workflowId: wfId, name: 'Done' });
 
 		runMigration94(db);
 
@@ -301,7 +311,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 	});
 
 	test('legacy Coding Workflow: sets template_name + canonical hash + injects merge-pr', () => {
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
+		const { workflowId, doneNodeId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-1',
 			spaceId: 'sp-1',
 		});
@@ -315,7 +325,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(row.template_name).toBe('Coding Workflow');
 		expect(row.template_hash).toBe(expectedHash);
 
-		const cfg = readNodeConfig(db, reviewNodeId) as {
+		const cfg = readNodeConfig(db, doneNodeId) as {
 			completionActions?: Array<{ id: string; type: string; artifactType?: string }>;
 		};
 		expect(cfg.completionActions).toBeDefined();
@@ -387,18 +397,18 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 	});
 
 	test('idempotent — running twice yields the same result', () => {
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
+		const { workflowId, doneNodeId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-idem',
 			spaceId: 'sp-1',
 		});
 
 		runMigration94(db);
 		const rowAfter1 = readWorkflow(db, workflowId)!;
-		const cfgAfter1 = readNodeConfig(db, reviewNodeId);
+		const cfgAfter1 = readNodeConfig(db, doneNodeId);
 
 		runMigration94(db);
 		const rowAfter2 = readWorkflow(db, workflowId)!;
-		const cfgAfter2 = readNodeConfig(db, reviewNodeId);
+		const cfgAfter2 = readNodeConfig(db, doneNodeId);
 
 		expect(rowAfter2).toEqual(rowAfter1);
 		expect(cfgAfter2).toEqual(cfgAfter1);
@@ -447,7 +457,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 	});
 
 	test('existing completionActions on end node preserved (no duplicate injection)', () => {
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
+		const { workflowId, doneNodeId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-has-action',
 			spaceId: 'sp-1',
 			withCompletionActions: true, // already has merge-pr
@@ -455,7 +465,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 		runMigration94(db);
 
-		const cfg = readNodeConfig(db, reviewNodeId) as {
+		const cfg = readNodeConfig(db, doneNodeId) as {
 			completionActions?: Array<{ id: string; script?: string }>;
 		};
 		// Must not duplicate — already had a merge-pr with "# existing script".
@@ -599,7 +609,7 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 	test('row already backfilled is left alone (no redundant writes)', () => {
 		const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!;
-		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
+		const { workflowId, doneNodeId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-already-backfilled',
 			spaceId: 'sp-1',
 			withTemplateFields: true,
@@ -607,12 +617,12 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		});
 
 		const beforeRow = readWorkflow(db, workflowId)!;
-		const beforeCfg = readNodeConfig(db, reviewNodeId);
+		const beforeCfg = readNodeConfig(db, doneNodeId);
 
 		runMigration94(db);
 
 		const afterRow = readWorkflow(db, workflowId)!;
-		const afterCfg = readNodeConfig(db, reviewNodeId);
+		const afterCfg = readNodeConfig(db, doneNodeId);
 
 		expect(afterRow.template_name).toBe(template.name);
 		expect(afterRow.template_hash).toBe(computeWorkflowHash(template));
