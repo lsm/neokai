@@ -83,6 +83,7 @@ export function PendingTaskCompletionBanner({
 	if (task.pendingCheckpointType !== 'task_completion') return null;
 
 	const agentReason = task.pendingCompletionReason?.trim();
+	const reportedSummary = task.reportedSummary?.trim();
 	const submittedBy = task.pendingCompletionSubmittedByNodeId;
 	const submittedAgo = formatPendingSince(task.pendingCompletionSubmittedAt ?? null);
 
@@ -125,6 +126,15 @@ export function PendingTaskCompletionBanner({
 						</button>
 					</div>
 				</div>
+
+				{reportedSummary && (
+					<div class="text-xs" data-testid="pending-task-completion-reported-summary">
+						<p class="text-amber-400/80">Agent's reported outcome:</p>
+						<p class="mt-0.5 p-2 bg-dark-900/60 border border-dark-700 rounded text-[11px] text-gray-300 whitespace-pre-wrap">
+							{reportedSummary}
+						</p>
+					</div>
+				)}
 
 				{agentReason && (
 					<div class="text-xs" data-testid="pending-task-completion-agent-reason">
