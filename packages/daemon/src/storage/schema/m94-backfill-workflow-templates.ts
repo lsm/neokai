@@ -146,15 +146,30 @@ const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON whe
  */
 const KNOWN_TEMPLATES: TemplateShape[] = [
 	{
+		// Coding Workflow — evolved to a 3-node graph in the Coder↔Reviewer-loop
+		// fix (Task #39): Coding ↔ Review plus an approval-gated Done handoff.
+		// The Reviewer was being allowed to mark the run 'done' on round-1
+		// "request changes" because Review was both the loop node AND the end
+		// node, so any `report_result()` on Review (including in the changes
+		// path) prematurely terminated the run. The fix moves the terminal
+		// `report_result()` to a dedicated Done closer node and gates the
+		// Review → Done channel on `approved: true`.
+		//
+		// This migration's inlined fingerprint tracks the current template —
+		// the `hash self-verification` test in migration-94_test.ts enforces
+		// that these two stay in lockstep.
 		name: 'Coding Workflow',
 		description:
-			'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+			'Iterative coding workflow with Coding ↔ Review loop and an approval-gated Done handoff. ' +
+			'Engineer implements and opens a PR; Reviewer either requests changes (loop stays open) or ' +
+			'approves and passes through to Done, which finalizes the run.',
 		instructions: '',
-		nodeNames: ['Coding', 'Review'],
-		endNodeName: 'Review',
+		nodeNames: ['Coding', 'Review', 'Done'],
+		endNodeName: 'Done',
 		channels: [
 			{ from: 'Coding', to: 'Review' },
 			{ from: 'Review', to: 'Coding' },
+			{ from: 'Review', to: 'Done' },
 		],
 		gates: [
 			{
@@ -162,6 +177,11 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
 				resetOnCycle: true,
 				fields: [{ name: 'pr_url', type: 'string', check: { op: 'exists' } }],
 				scriptSource: PR_READY_SCRIPT_PREFIX,
+			},
+			{
+				id: 'review-approval-gate',
+				resetOnCycle: false,
+				fields: [{ name: 'approved', type: 'boolean', check: { op: '==', value: true } }],
 			},
 		],
 		endNodeCompletionActions: [MERGE_PR_COMPLETION_ACTION],

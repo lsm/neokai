@@ -235,7 +235,8 @@ describe('completionActions persistence — updateWorkflow round-trip (Bug B reg
 		const before = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		const codingNode = before.nodes.find((n) => n.name === 'Coding')!;
 		const reviewNode = before.nodes.find((n) => n.name === 'Review')!;
-		expect(reviewNode.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
+		const doneNode = before.nodes.find((n) => n.name === 'Done')!;
+		expect(doneNode.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
 
 		// Pass nodes back as-is (mimicking a UI that re-emits the full node list
 		// on every save, preserving each node's completionActions).
@@ -250,14 +251,19 @@ describe('completionActions persistence — updateWorkflow round-trip (Bug B reg
 					id: reviewNode.id,
 					name: reviewNode.name,
 					agents: reviewNode.agents,
-					completionActions: reviewNode.completionActions,
+				},
+				{
+					id: doneNode.id,
+					name: doneNode.name,
+					agents: doneNode.agents,
+					completionActions: doneNode.completionActions,
 				},
 			],
 		});
 
 		const after = manager.getWorkflow(before.id)!;
-		const afterReview = after.nodes.find((n) => n.name === 'Review')!;
-		expect(afterReview.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
+		const afterDone = after.nodes.find((n) => n.name === 'Done')!;
+		expect(afterDone.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
 	});
 
 	test('update with explicit completionActions=[] on a node clears them (caller intent honored)', () => {
@@ -266,6 +272,7 @@ describe('completionActions persistence — updateWorkflow round-trip (Bug B reg
 		const before = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		const reviewNode = before.nodes.find((n) => n.name === 'Review')!;
 		const codingNode = before.nodes.find((n) => n.name === 'Coding')!;
+		const doneNode = before.nodes.find((n) => n.name === 'Done')!;
 
 		manager.updateWorkflow(before.id, {
 			nodes: [
@@ -278,16 +285,21 @@ describe('completionActions persistence — updateWorkflow round-trip (Bug B reg
 					id: reviewNode.id,
 					name: reviewNode.name,
 					agents: reviewNode.agents,
+				},
+				{
+					id: doneNode.id,
+					name: doneNode.name,
+					agents: doneNode.agents,
 					completionActions: [],
 				},
 			],
 		});
 
 		const after = manager.getWorkflow(before.id)!;
-		const afterReview = after.nodes.find((n) => n.name === 'Review')!;
+		const afterDone = after.nodes.find((n) => n.name === 'Done')!;
 		// Empty array → end node has no actions (repo stores `undefined` when
 		// empty array). Either empty array or undefined is acceptable; assert
 		// that no action is present.
-		expect(afterReview.completionActions?.length ?? 0).toBe(0);
+		expect(afterDone.completionActions?.length ?? 0).toBe(0);
 	});
 });

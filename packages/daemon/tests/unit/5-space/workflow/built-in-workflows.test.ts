@@ -96,18 +96,32 @@ function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
 // ---------------------------------------------------------------------------
 
 describe('CODING_WORKFLOW template', () => {
-	test('has two nodes: Coding, Review', () => {
-		expect(CODING_WORKFLOW.nodes).toHaveLength(2);
-		expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review']);
+	test('has three nodes: Coding, Review, Done', () => {
+		expect(CODING_WORKFLOW.nodes).toHaveLength(3);
+		expect(CODING_WORKFLOW.nodes.map((s) => s.name)).toEqual(['Coding', 'Review', 'Done']);
 	});
 
 	test('step agentId placeholders are correct', () => {
 		expect(CODING_WORKFLOW.nodes[0].agents[0]?.name).toBe('coder');
 		expect(CODING_WORKFLOW.nodes[1].agents[0]?.name).toBe('reviewer');
+		expect(CODING_WORKFLOW.nodes[2].agents[0]?.name).toBe('closer');
 	});
 
-	test('has two channels', () => {
-		expect(CODING_WORKFLOW.channels).toHaveLength(2);
+	test('Done node uses the General preset agent so any space has it', () => {
+		const doneNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		expect(doneNode.agents[0]?.agentId).toBe('General');
+	});
+
+	test('Done node carries the merge-pr completion action (not Review)', () => {
+		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+		const doneNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		expect(reviewNode.completionActions ?? []).toEqual([]);
+		expect(doneNode.completionActions).toBeDefined();
+		expect(doneNode.completionActions!.map((a) => a.id)).toContain('merge-pr');
+	});
+
+	test('has three channels', () => {
+		expect(CODING_WORKFLOW.channels).toHaveLength(3);
 	});
 
 	test('Coding → Review channel is gated by code-ready-gate', () => {
@@ -128,6 +142,14 @@ describe('CODING_WORKFLOW template', () => {
 		expect(ch!.maxCycles).toBe(5);
 	});
 
+	test('Review → Done channel is gated by review-approval-gate', () => {
+		const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Done');
+		expect(ch).toBeDefined();
+		expect(ch!.gateId).toBe('review-approval-gate');
+		// Not cyclic — one-shot approval handoff
+		expect(ch!.maxCycles).toBeUndefined();
+	});
+
 	test('all channels have direction one-way', () => {
 		for (const ch of CODING_WORKFLOW.channels!) {
 			expect('direction' in ch).toBe(false); // direction field removed
@@ -142,13 +164,10 @@ describe('CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('has two gates: code-ready-gate and review-posted-gate', () => {
-		expect(CODING_WORKFLOW.gates).toHaveLength(2);
+	test('has three gates: code-ready-gate, review-posted-gate, and review-approval-gate', () => {
+		expect(CODING_WORKFLOW.gates).toHaveLength(3);
 		const gateIds = CODING_WORKFLOW.gates!.map((g) => g.id).sort();
-		expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
-		for (const gate of CODING_WORKFLOW.gates!) {
-			expect(gate.fields).toHaveLength(1);
-		}
+		expect(gateIds).toEqual(['code-ready-gate', 'review-approval-gate', 'review-posted-gate']);
 	});
 
 	test('review-posted-gate has review_url field writable only by reviewer', () => {
@@ -189,6 +208,26 @@ describe('CODING_WORKFLOW template', () => {
 		expect(prField.check.op).toBe('exists');
 	});
 
+	test('review-approval-gate has an approved boolean field writable by reviewer', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+		expect(gate.fields).toHaveLength(1);
+		const approved = gate.fields.find((f) => f.name === 'approved')!;
+		expect(approved).toBeDefined();
+		expect(approved.type).toBe('boolean');
+		expect(approved.writers).toEqual(['reviewer']);
+		expect(approved.check).toEqual({ op: '==', value: true });
+	});
+
+	test('review-approval-gate does NOT reset on cycle (terminal approval)', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+		expect(gate.resetOnCycle).toBe(false);
+	});
+
+	test('review-approval-gate has no script (pure boolean approval, not a PR check)', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
+		expect(gate.script).toBeUndefined();
+	});
+
 	test('code-ready-gate has a bash script that checks PR mergeability and outputs pr_url', () => {
 		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'code-ready-gate')!;
 		expect(gate.script).toBeDefined();
@@ -218,14 +257,24 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.startNodeId).toBe(codeStep?.id);
 	});
 
-	test('endNodeId points to the Review step', () => {
-		const reviewStep = CODING_WORKFLOW.nodes.find((s) => s.name === 'Review');
-		expect(CODING_WORKFLOW.endNodeId).toBe(reviewStep?.id);
+	test('endNodeId points to the Done step (not Review — approval gate must open first)', () => {
+		const doneStep = CODING_WORKFLOW.nodes.find((s) => s.name === 'Done');
+		expect(CODING_WORKFLOW.endNodeId).toBe(doneStep?.id);
 	});
 
 	test('endNodeId references a valid node in the graph', () => {
 		const nodeIds = new Set(CODING_WORKFLOW.nodes.map((n) => n.id));
 		expect(nodeIds.has(CODING_WORKFLOW.endNodeId!)).toBe(true);
+	});
+
+	test('the only path into the endNode is the approval-gated Review → Done channel', () => {
+		const doneNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		const channelsIntoDone = CODING_WORKFLOW.channels!.filter((c) => {
+			const tos = Array.isArray(c.to) ? c.to : [c.to];
+			return tos.includes(doneNode.name);
+		});
+		expect(channelsIntoDone).toHaveLength(1);
+		expect(channelsIntoDone[0].gateId).toBe('review-approval-gate');
 	});
 
 	test('does not reference leader', () => {
@@ -829,19 +878,21 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('CODING_WORKFLOW seeded correctly — two nodes with real agent IDs', async () => {
+	test('CODING_WORKFLOW seeded correctly — three nodes with real agent IDs', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.nodes).toHaveLength(2);
+		expect(wf!.nodes).toHaveLength(3);
 		expect(wf!.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
 		expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
+		// Done node uses the General preset agent
+		expect(wf!.nodes[2].agents[0]?.agentId).toBe(roleMap.general);
 	});
 
-	test('CODING_WORKFLOW seeded with two channels (gated Coding→Review, gated Review→Coding)', async () => {
+	test('CODING_WORKFLOW seeded with three channels (Coding→Review gated, Review→Coding cyclic, Review→Done approval-gated)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		expect(wf.channels).toHaveLength(2);
+		expect(wf.channels).toHaveLength(3);
 
 		const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
 		expect(codeToReview).toBeDefined();
@@ -853,14 +904,18 @@ describe('seedBuiltInWorkflows()', () => {
 		// message cannot be delivered until a GitHub review is visible.
 		expect(reviewToCode!.gateId).toBe('review-posted-gate');
 		expect(reviewToCode!.maxCycles).toBe(5);
+
+		const reviewToDone = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Done');
+		expect(reviewToDone).toBeDefined();
+		expect(reviewToDone!.gateId).toBe('review-approval-gate');
 	});
 
-	test('CODING_WORKFLOW seeded with two gates (code-ready-gate + review-posted-gate)', async () => {
+	test('CODING_WORKFLOW seeded with three gates (code-ready-gate, review-posted-gate, review-approval-gate)', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-		expect(wf.gates).toHaveLength(2);
+		expect(wf.gates).toHaveLength(3);
 		const gateIds = wf.gates!.map((g) => g.id).sort();
-		expect(gateIds).toEqual(['code-ready-gate', 'review-posted-gate']);
+		expect(gateIds).toEqual(['code-ready-gate', 'review-approval-gate', 'review-posted-gate']);
 	});
 
 	test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -1278,8 +1333,25 @@ describe('seedBuiltInWorkflows()', () => {
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 		const codeNode = wf.nodes.find((n) => n.name === 'Coding');
 		expect(codeNode?.agents[0].customPrompt?.value).toContain('gh pr create');
+		// Reviewer hands off via send_message to Done with an approval payload —
+		// it does NOT call report_result (that tool is only wired for the end node).
 		const reviewNode = wf.nodes.find((n) => n.name === 'Review');
-		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_result(');
+		expect(reviewNode?.agents[0].customPrompt?.value).toContain('target="Done"');
+		expect(reviewNode?.agents[0].customPrompt?.value).toContain('approved: true');
+		// Done node is the one that calls report_result to finalize the workflow.
+		const doneNode = wf.nodes.find((n) => n.name === 'Done');
+		expect(doneNode?.agents[0].customPrompt?.value).toContain('report_result(');
+	});
+
+	test('CODING_WORKFLOW seeded Done node carries the merge-pr completion action', () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+		const doneNode = wf.nodes.find((n) => n.name === 'Done')!;
+		expect(doneNode.completionActions).toBeDefined();
+		expect(doneNode.completionActions!.map((a) => a.id)).toContain('merge-pr');
+		// Review node no longer holds the completion action — it's been moved to Done.
+		const reviewNode = wf.nodes.find((n) => n.name === 'Review')!;
+		expect(reviewNode.completionActions ?? []).toEqual([]);
 	});
 
 	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
@@ -1621,6 +1693,14 @@ describe('Coding Workflow export/import round-trip', () => {
 			createdAt: 0,
 			updatedAt: 0,
 		},
+		{
+			id: GENERAL_ID,
+			spaceId: SPACE_ID,
+			name: 'General',
+			customPrompt: null,
+			createdAt: 0,
+			updatedAt: 0,
+		},
 	];
 
 	beforeEach(() => {
@@ -1658,18 +1738,21 @@ describe('Coding Workflow export/import round-trip', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	test('exported Coding Workflow preserves two channels and Review→Coding cycle', () => {
+	test('exported Coding Workflow preserves three channels including the Review→Done approval handoff', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
 		const exported = exportWorkflow(wf, mockAgents);
 		expect(exported.channels).toBeDefined();
 		// gateId is stripped during export (gates are separate entities)
-		expect(exported.channels).toHaveLength(2);
+		expect(exported.channels).toHaveLength(3);
 
 		const reviewToCode = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
+
+		const reviewToDone = exported.channels!.find((c) => c.from === 'Review' && c.to === 'Done');
+		expect(reviewToDone).toBeDefined();
 	});
 
 	test('exported Coding Workflow channels do not include gate field (gates are separate entities)', () => {
@@ -1721,8 +1804,8 @@ describe('Coding Workflow export/import round-trip', () => {
 			.listWorkflows(SPACE_ID)
 			.find((w) => w.name === CODING_WORKFLOW.name)!;
 		expect(reimported).toBeDefined();
-		expect(reimported.nodes).toHaveLength(2);
-		expect(reimported.channels).toHaveLength(2);
+		expect(reimported.nodes).toHaveLength(3);
+		expect(reimported.channels).toHaveLength(3);
 
 		// Coding → Review channel preserved
 		const codeToReview = reimported.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
@@ -1732,6 +1815,10 @@ describe('Coding Workflow export/import round-trip', () => {
 		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
+
+		// Review → Done approval-gated handoff preserved
+		const reviewToDone = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Done');
+		expect(reviewToDone).toBeDefined();
 	});
 });
 
@@ -1792,11 +1879,22 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
 		expect(prompt).toContain('/replies');
 	});
 
-	test('Review node reviewer has non-empty customPrompt', () => {
+	test('Review node reviewer prompt instructs approval via send_message to Done (not report_result)', () => {
 		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const reviewer = reviewNode.agents[0];
 		expect(reviewer.customPrompt?.value).toBeDefined();
-		expect(reviewer.customPrompt?.value).toContain('report_result');
+		expect(reviewer.customPrompt!.value).toContain('target="Done"');
+		expect(reviewer.customPrompt!.value).toContain('approved: true');
+		// The Reviewer does NOT call report_result — it's an end-node-only tool now,
+		// and the end node is Done.
+		expect(reviewer.customPrompt!.value).not.toContain('report_result(status');
+	});
+
+	test('Done node closer prompt instructs immediate report_result', () => {
+		const doneNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		const closer = doneNode.agents[0];
+		expect(closer.customPrompt?.value).toBeDefined();
+		expect(closer.customPrompt!.value).toContain('report_result(');
 	});
 
 	test('Review node reviewer customPrompt requires posting to GitHub and echoing review_url', () => {

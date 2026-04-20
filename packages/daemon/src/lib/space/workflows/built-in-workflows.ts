@@ -31,6 +31,7 @@ import { computeWorkflowHash } from './template-hash.ts';
 
 const CODING_CODE_NODE = 'tpl-coding-code';
 const CODING_REVIEW_NODE = 'tpl-coding-review';
+const CODING_DONE_NODE = 'tpl-coding-done';
 
 // V2 node IDs
 const V2_PLANNING_NODE = 'tpl-v2-planning';
@@ -369,19 +370,38 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
 /**
  * Coding Workflow
  *
- * Two-node iterative graph: Coding ↔ Review (with cycle).
+ * Three-node graph: Coding ↔ Review (iterative loop) → Done (terminal).
  * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
  * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
- *   When satisfied, Reviewer calls `report_result()` on the Review node (endNodeId)
- *   which signals workflow completion.
+ * - Review → Done: gated by `review-approval-gate` — Reviewer must write the
+ *   boolean `approved: true` to open the gate. Only then does the Done node
+ *   activate and finalize the workflow via `report_result()`.
+ *
+ * Why a dedicated Done node?
+ *
+ * Workflow completion is driven by `task.reportedStatus` being set. Previously
+ * the Review node was the `endNodeId`, so the Reviewer's `report_result()` call
+ * immediately completed the run — even when the reviewer had only requested
+ * changes earlier in the turn. That made the Coder → Review → Coder loop fragile:
+ * any `report_result()` slip marked the whole run `done`, and the next
+ * send_message from Coder failed with "Cannot activate node for run in status 'done'".
+ *
+ * The Done node moves the completion signal behind an approval-carrying gate.
+ * The Reviewer no longer has `report_result` available (it is an end-node-only
+ * tool). To complete the workflow the Reviewer must explicitly
+ *   send_message(target='Done', data={ approved: true })
+ * which writes `review-approval-gate.approved`, opens the gate, activates the
+ * Done node, and the closer immediately calls `report_result()`.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
 	spaceId: '',
 	name: 'Coding Workflow',
 	description:
-		'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
+		'Iterative coding workflow with Coding ↔ Review loop and an approval-gated Done handoff. ' +
+		'Engineer implements and opens a PR; Reviewer either requests changes (loop stays open) or ' +
+		'approves and passes through to Done, which finalizes the run.',
 	nodes: [
 		{
 			id: CODING_CODE_NODE,
@@ -441,7 +461,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 					customPrompt: {
 						value:
 							'You are the Reviewer in a Coding→Review iterative workflow. You review the work ' +
-							'and either approve it or request changes.\n\n' +
+							'and either request changes or approve it.\n\n' +
 							'Workflow context:\n' +
 							'- The engineer has already implemented and opened a PR (verified automatically).\n' +
 							'- You share the same worktree as the engineer — review the codebase as a whole, ' +
@@ -455,11 +475,15 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'checks GitHub for a fresh review before releasing your message. If you skip ' +
 							'`gh pr review`, the gate will block and the coder will never hear from you.\n' +
 							'- If you request changes, the engineer is automatically re-activated.\n\n' +
-							'**You MUST call `report_result` to end this workflow.** It is the only signal ' +
-							'the runtime accepts as completion — finishing your turn without it leaves the ' +
-							'workflow stuck. Do all your review work — read files, run tests, post comments ' +
-							'to GitHub, send messages to Coding — BEFORE calling `report_result`. After it ' +
-							'returns, do not invoke any other tools.\n\n' +
+							'**Completion is handled by the Done node — you do NOT call `report_result` here.** ' +
+							'The runtime only accepts completion from Done. When you are satisfied, handoff to ' +
+							'Done by sending an approval message:\n\n' +
+							'    send_message(target="Done", message="Approved: <short summary>", ' +
+							'data={ approved: true })\n\n' +
+							'That send writes the `review-approval-gate.approved` field, opens the gate, and ' +
+							'activates Done, which finalizes the run. If you finish your turn without either ' +
+							'(a) sending changes back to Coding or (b) sending the approval message to Done, ' +
+							'the workflow stalls.\n\n' +
 							'Review checklist:\n' +
 							'1. Read the PR diff (`gh pr diff`) AND explore the worktree for context\n' +
 							'2. Check for correctness, style, test coverage, and integration impact\n' +
@@ -476,9 +500,30 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
 							'thread. Do NOT call `report_result` — leave the workflow open for the next round.\n' +
 							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
-							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
-							'`report_result({ summary, evidence: { prUrl } })` as your final action. ' +
-							'Do NOT pass a `status` — the runtime decides the terminal state via completion actions.',
+							'--body-file <file>`, verify the PR is open and mergeable, then send the Done ' +
+							'handoff above (`send_message(target="Done", message="Approved: <short summary>", ' +
+							'data={ approved: true })`) as your final action. Do NOT call `report_result` — ' +
+							'the Done closer owns that step and the runtime handles PR merge via the ' +
+							'completion action.',
+					},
+				},
+			],
+		},
+		{
+			id: CODING_DONE_NODE,
+			name: 'Done',
+			agents: [
+				{
+					agentId: 'General',
+					name: 'closer',
+					customPrompt: {
+						value:
+							'You are the Done node of the Coding Workflow. The Reviewer has already approved ' +
+							'the PR — your only job is to finalize the run.\n\n' +
+							'Call `report_result(status="done", summary="Reviewer approved; run complete.")` ' +
+							'immediately as your first and only tool call. Do not read files, run tests, or ' +
+							'send messages. The runtime will handle PR merge via the completion action after ' +
+							'you return.',
 					},
 				},
 			],
@@ -486,7 +531,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		},
 	],
 	startNodeId: CODING_CODE_NODE,
-	endNodeId: CODING_REVIEW_NODE,
+	endNodeId: CODING_DONE_NODE,
 	tags: ['coding', 'default'],
 	createdAt: 0,
 	updatedAt: 0,
@@ -532,6 +577,24 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			},
 			resetOnCycle: true,
 		},
+		{
+			id: 'review-approval-gate',
+			label: 'Review Approval',
+			description:
+				'Reviewer has approved the PR for completion. The Reviewer writes ' +
+				'`approved: true` via `send_message(target="Done", data={ approved: true })`. ' +
+				'Only when this gate opens does the Done node activate and finalize the run — ' +
+				'this prevents completion from firing on a "request changes" round.',
+			fields: [
+				{
+					name: 'approved',
+					type: 'boolean',
+					writers: ['reviewer'],
+					check: { op: '==', value: true },
+				},
+			],
+			resetOnCycle: false,
+		},
 	],
 	channels: [
 		{
@@ -546,6 +609,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			gateId: 'review-posted-gate',
 			maxCycles: 5,
 			label: 'Review → Coding (changes requested)',
+		},
+		{
+			from: 'Review',
+			to: 'Done',
+			gateId: 'review-approval-gate',
+			label: 'Review → Done (approved)',
 		},
 	],
 };
