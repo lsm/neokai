@@ -23,7 +23,6 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import type {
 	CompletionAction,
 	SpaceAutonomyLevel,
-	SpaceReportedStatus,
 	SpaceTask,
 	UpdateSpaceTaskParams,
 	SpaceWorkflow,
@@ -49,6 +48,12 @@ import { type NotificationSink, NullNotificationSink } from './notification-sink
 import { buildRestrictedEnv, collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
 import { CompletionDetector } from './completion-detector';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
+import {
+	type CompletionActionExecutionResult,
+	type InstructionActionExecutor,
+	type McpToolExecutor,
+	runMcpCallAction,
+} from './completion-action-executors';
 import {
 	MAX_BLOCKED_RUN_RETRIES,
 	MAX_TASK_AGENT_CRASH_RETRIES,
@@ -161,6 +166,19 @@ export interface SpaceRuntimeConfig {
 	 * `selectWorkflowWithLlmDefault` from `./llm-workflow-selector`.
 	 */
 	selectWorkflowWithLlm?: SelectWorkflowWithLlm;
+	/**
+	 * Optional executor for `instruction` completion actions. Spawns an
+	 * ephemeral agent session to verify an outcome. When not provided,
+	 * instruction actions fail with a configuration error — the runtime
+	 * refuses to silently skip a human-authored verification step.
+	 */
+	instructionActionExecutor?: InstructionActionExecutor;
+	/**
+	 * Optional executor for `mcp_call` completion actions. Invokes the named
+	 * tool on the named MCP server. When not provided, mcp_call actions fail
+	 * with a configuration error.
+	 */
+	mcpToolExecutor?: McpToolExecutor;
 }
 
 interface StartWorkflowRunOptions {
@@ -339,6 +357,19 @@ export class SpaceRuntime {
 		// sink was wired (e.g. ticks that ran before provisioning completed at daemon startup)
 		// get a chance to re-notify on the next tick.
 		this.notifiedTaskSet.clear();
+	}
+
+	/**
+	 * Returns the currently-configured NotificationSink.
+	 *
+	 * Exposed so collaborators that construct their own `ChannelRouter` instances
+	 * (e.g. `SpaceRuntimeService.notifyGateDataChanged` or the per-run router
+	 * created inside `TaskAgentManager`) can plumb the same sink through,
+	 * ensuring `workflow_run_reopened` events reach the Space Agent session
+	 * regardless of which code path triggered the reopen.
+	 */
+	getNotificationSink(): NotificationSink {
+		return this.notificationSink;
 	}
 
 	/**
@@ -567,12 +598,12 @@ export class SpaceRuntime {
 				canonicalTask.status !== 'review' &&
 				canonicalTask.status !== 'cancelled'
 			) {
-				const reportedStatus = canonicalTask.reportedStatus ?? 'done';
+				// The completion-action pipeline is the sole arbiter of terminal
+				// status — we no longer read `reportedStatus` from the agent.
 				const params = await this.resolveCompletionWithActions(
 					run.spaceId,
 					run.id,
 					workflow,
-					reportedStatus,
 					nextResult,
 					spaceLevel,
 					canonicalTask.id
@@ -918,6 +949,23 @@ export class SpaceRuntime {
 			return null;
 		}
 
+		// Idempotency guard: if this run's completion actions have already fired
+		// once, do not re-execute on resume. This can only happen if the task was
+		// reopened after a prior successful completion — completion actions are
+		// side-effectful and fire at most once per run.
+		if (run.completionActionsFiredAt != null) {
+			return await this.finalizeResume(spaceId, taskId, {
+				status: 'done',
+				result: task.reportedSummary ?? null,
+				completedAt: Date.now(),
+				approvalSource: 'human',
+				approvalReason: options?.approvalReason ?? null,
+				approvedAt: Date.now(),
+				pendingActionIndex: null,
+				pendingCheckpointType: null,
+			});
+		}
+
 		const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
 		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
 		const actions = endNode?.completionActions;
@@ -958,11 +1006,16 @@ export class SpaceRuntime {
 			const action = actions[i];
 			if (i === startIndex || spaceLevel >= action.requiredLevel) {
 				// First action was human-approved; subsequent ones auto-execute if autonomy permits
-				const ok = await this.executeCompletionAction(action, spaceId, run.id, space.workspacePath);
-				if (!ok) {
+				const result = await this.executeCompletionAction(
+					action,
+					spaceId,
+					run.id,
+					space.workspacePath
+				);
+				if (!result.success) {
 					return await this.finalizeResume(spaceId, taskId, {
 						status: 'blocked',
-						result: `Completion action "${action.name}" failed`,
+						result: result.reason ?? `Completion action "${action.name}" failed`,
 					});
 				}
 				// Emit audit-trail event for each successfully executed action. This
@@ -1025,6 +1078,9 @@ export class SpaceRuntime {
 		// the task was awaiting approval) and persist the human-supplied approval
 		// reason (when given) so the audit trail records *why* this task was
 		// approved, not just *that* it was.
+		// Stamp the run so a future reopen of this workflow run does NOT re-fire
+		// completion actions — they are side-effectful and must run at most once.
+		this.config.workflowRunRepo.updateRun(run.id, { completionActionsFiredAt: Date.now() });
 		return await this.finalizeResume(spaceId, taskId, {
 			status: 'done',
 			result: task.reportedSummary ?? null,
@@ -1488,16 +1544,14 @@ export class SpaceRuntime {
 				let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
 
 				if (!taskAlreadyResolved) {
-					// Resolve final status using the agent's reported intent as the base.
-					// Defaults to 'done' when the agent did not report (legacy/fallback path);
-					// the runtime never auto-completes without a reported intent in the new
-					// model, but we tolerate the missing-report case for safety.
-					const reportedStatus = canonicalTask.reportedStatus ?? 'done';
+					// The completion-action pipeline is the sole arbiter of terminal
+					// status. The agent's `report_result` only records a summary +
+					// optional evidence on `reportedSummary`; terminal status is
+					// decided entirely by the outcome of the actions below.
 					const params = await this.resolveCompletionWithActions(
 						meta.spaceId,
 						runId,
 						meta.workflow,
-						reportedStatus,
 						nextTaskResult,
 						spaceLevel,
 						canonicalTask.id
@@ -1794,6 +1848,11 @@ export class SpaceRuntime {
 	 * Resolve the task completion status, executing completion actions if the
 	 * end node defines them.
 	 *
+	 * The completion-action pipeline is the **sole arbiter** of terminal task
+	 * status. The agent's `report_result` only records a summary + optional
+	 * evidence; whether the task ends `done` / `needs_attention` / `blocked`
+	 * is decided entirely by the outcomes of the actions below.
+	 *
 	 * Flow:
 	 * 1. If the end node has no completionActions → fall back to binary autonomy check.
 	 * 2. For each action in definition order:
@@ -1809,31 +1868,10 @@ export class SpaceRuntime {
 		spaceId: string,
 		runId: string,
 		workflow: SpaceWorkflow | null,
-		reportedStatus: SpaceReportedStatus,
 		taskResult: string | null,
 		spaceLevel: SpaceAutonomyLevel,
 		taskId: string
 	): Promise<UpdateSpaceTaskParams> {
-		// Non-success outcomes pass through directly. Completion actions are a
-		// success-path review gate ("flip to done after verifying X"); they
-		// don't apply when the agent reported `blocked` or `cancelled`.
-		if (reportedStatus === 'blocked') {
-			return {
-				status: 'blocked' as const,
-				result: taskResult,
-				blockReason: 'execution_failed',
-				completedAt: Date.now(),
-			};
-		}
-		if (reportedStatus === 'cancelled') {
-			return {
-				status: 'cancelled' as const,
-				result: taskResult,
-				completedAt: Date.now(),
-			};
-		}
-
-		// reportedStatus === 'done' — run the success-path review gate.
 		// Find end node's completion actions
 		const endNode = workflow?.nodes.find((n) => n.id === workflow.endNodeId);
 		const actions = endNode?.completionActions;
@@ -1848,6 +1886,23 @@ export class SpaceRuntime {
 				...(completionStatus === 'done'
 					? { approvalSource: 'auto_policy' as const, approvedAt: Date.now() }
 					: {}),
+			};
+		}
+
+		// Idempotency guard: if this run's completion actions have already fired
+		// once (initial completion succeeded → run was reopened → now completing
+		// again), skip re-execution. Completion actions are side-effectful
+		// (script runs, MCP calls, etc.) and must not re-fire on a reopened run.
+		const runRecord = this.config.workflowRunRepo.getRun(runId);
+		if (runRecord?.completionActionsFiredAt != null) {
+			return {
+				status: 'done' as const,
+				result: taskResult,
+				completedAt: Date.now(),
+				approvalSource: 'auto_policy' as const,
+				approvedAt: Date.now(),
+				pendingActionIndex: null,
+				pendingCheckpointType: null,
 			};
 		}
 
@@ -1875,11 +1930,11 @@ export class SpaceRuntime {
 			const action = actions[i];
 			if (spaceLevel >= action.requiredLevel) {
 				// Auto-execute
-				const ok = await this.executeCompletionAction(action, spaceId, runId, workspacePath);
-				if (!ok) {
+				const result = await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+				if (!result.success) {
 					return {
 						status: 'blocked' as const,
-						result: `Completion action "${action.name}" failed`,
+						result: result.reason ?? `Completion action "${action.name}" failed`,
 					};
 				}
 				// Emit audit-trail event for the auto-executed action. Mirrors the
@@ -1930,7 +1985,10 @@ export class SpaceRuntime {
 			}
 		}
 
-		// All actions executed — task is done
+		// All actions executed — task is done. Stamp the run so a future reopen
+		// of this workflow run does NOT re-execute the same side-effectful
+		// actions. See the guard at the top of this method.
+		this.config.workflowRunRepo.updateRun(runId, { completionActionsFiredAt: Date.now() });
 		return {
 			status: 'done' as const,
 			result: taskResult,
@@ -1980,37 +2038,127 @@ export class SpaceRuntime {
 	/**
 	 * Execute a single completion action.
 	 *
-	 * Currently supports `script` type only. `instruction` and `mcp_call` types
-	 * log a warning and are skipped (future implementation).
+	 * Dispatches by `action.type`:
+	 *   - `script`       → inline bash executor
+	 *   - `instruction`  → `config.instructionActionExecutor` (injected)
+	 *   - `mcp_call`     → `config.mcpToolExecutor` (injected) + `expect` assertion
+	 *
+	 * The `switch` is exhaustive — adding a new `CompletionAction` variant to
+	 * the shared type without a case here is a compile-time error (the
+	 * `never` check at the bottom of the switch guarantees this).
+	 *
+	 * Every path returns a `CompletionActionExecutionResult` — failures carry
+	 * a human-readable `reason` so the task's `result` field is descriptive.
 	 */
 	private async executeCompletionAction(
 		action: CompletionAction,
 		spaceId: string,
 		runId: string,
 		workspacePath: string
-	): Promise<boolean> {
-		if (action.type !== 'script') {
-			log.warn(
-				`SpaceRuntime: completion action type "${action.type}" not yet implemented ` +
-					`(action: ${action.id}, space: ${spaceId}); treating as success`
-			);
-			return true;
-		}
+	): Promise<CompletionActionExecutionResult> {
+		const artifactData = this.resolveArtifactData(action, runId);
 
-		// Resolve artifact data for script env injection
-		let artifactData: Record<string, unknown> = {};
-		if (action.artifactType && this.config.artifactRepo) {
-			const artifacts = this.config.artifactRepo.listByRun(runId, {
-				artifactType: action.artifactType,
-			});
-			if (action.artifactKey) {
-				const match = artifacts.find((a) => a.artifactKey === action.artifactKey);
-				if (match) artifactData = match.data;
-			} else if (artifacts.length > 0) {
-				artifactData = artifacts[0].data;
+		switch (action.type) {
+			case 'script':
+				return this.executeScriptCompletionAction(
+					action,
+					spaceId,
+					runId,
+					workspacePath,
+					artifactData
+				);
+			case 'instruction': {
+				const executor = this.config.instructionActionExecutor;
+				if (!executor) {
+					const reason =
+						'instruction completion action is not supported: no instructionActionExecutor configured';
+					log.warn(`SpaceRuntime: ${reason} (action: ${action.id}, space: ${spaceId})`);
+					return { success: false, reason };
+				}
+				try {
+					log.info(
+						`SpaceRuntime: executing instruction completion action "${action.name}" (${action.id}) ` +
+							`for space ${spaceId}, run ${runId} → agent "${action.agentName}"`
+					);
+					const result = await executor(action, {
+						spaceId,
+						runId,
+						workspacePath,
+						artifactData,
+					});
+					if (!result.success) {
+						log.warn(
+							`SpaceRuntime: instruction action "${action.name}" verification failed: ` +
+								`${result.reason ?? '(no reason provided)'}`
+						);
+					}
+					return result;
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					log.warn(`SpaceRuntime: instruction action "${action.name}" threw: ${message}`);
+					return { success: false, reason: `instruction executor threw: ${message}` };
+				}
+			}
+			case 'mcp_call': {
+				const executor = this.config.mcpToolExecutor;
+				if (!executor) {
+					const reason =
+						'mcp_call completion action is not supported: no mcpToolExecutor configured';
+					log.warn(`SpaceRuntime: ${reason} (action: ${action.id}, space: ${spaceId})`);
+					return { success: false, reason };
+				}
+				log.info(
+					`SpaceRuntime: executing mcp_call completion action "${action.name}" (${action.id}) ` +
+						`for space ${spaceId}, run ${runId} → ${action.server}.${action.tool}`
+				);
+				return await runMcpCallAction(
+					action,
+					{ spaceId, runId, workspacePath, artifactData },
+					executor
+				);
+			}
+			default: {
+				// Exhaustiveness guard — adding a new variant to CompletionAction
+				// without a case here is a type error. `void _never` silences the
+				// unused-var lint without changing runtime behavior.
+				const _never: never = action;
+				void _never;
+				return {
+					success: false,
+					reason: `unknown completion action type: ${String((action as { type?: string }).type)}`,
+				};
 			}
 		}
+	}
 
+	/**
+	 * Resolve artifact data for a completion action. Shared by all action
+	 * types so `instruction` and `mcp_call` executors can template-interpolate
+	 * against the same artifact shape that `script` actions consume via env.
+	 */
+	private resolveArtifactData(action: CompletionAction, runId: string): Record<string, unknown> {
+		if (!action.artifactType || !this.config.artifactRepo) return {};
+		const artifacts = this.config.artifactRepo.listByRun(runId, {
+			artifactType: action.artifactType,
+		});
+		if (action.artifactKey) {
+			const match = artifacts.find((a) => a.artifactKey === action.artifactKey);
+			return match?.data ?? {};
+		}
+		return artifacts[0]?.data ?? {};
+	}
+
+	/**
+	 * Execute a `script` completion action: spawn bash with a restricted env,
+	 * stream stdout/stderr with a maxBuffer, and honor a 2-minute SIGKILL timeout.
+	 */
+	private async executeScriptCompletionAction(
+		action: Extract<CompletionAction, { type: 'script' }>,
+		spaceId: string,
+		runId: string,
+		workspacePath: string,
+		artifactData: Record<string, unknown>
+	): Promise<CompletionActionExecutionResult> {
 		// Reuse gate script executor's restricted env builder.
 		// Pass a synthetic gateId — buildRestrictedEnv sets NEOKAI_GATE_ID from it,
 		// which we immediately override with the correct action-specific var.
@@ -2029,7 +2177,7 @@ export class SpaceRuntime {
 		}
 
 		log.info(
-			`SpaceRuntime: executing completion action "${action.name}" (${action.id}) ` +
+			`SpaceRuntime: executing script completion action "${action.name}" (${action.id}) ` +
 				`for space ${spaceId}, run ${runId}`
 		);
 
@@ -2058,25 +2206,26 @@ export class SpaceRuntime {
 			]);
 
 			if (exitResult.timedOut) {
-				log.warn(
-					`SpaceRuntime: completion action "${action.name}" timed out ` +
-						`after ${COMPLETION_ACTION_TIMEOUT_MS}ms`
-				);
-				return false;
-			} else if (exitResult.code !== 0) {
+				const reason = `script timed out after ${COMPLETION_ACTION_TIMEOUT_MS}ms`;
+				log.warn(`SpaceRuntime: completion action "${action.name}" ${reason}`);
+				return { success: false, reason: `${action.name}: ${reason}` };
+			}
+			if (exitResult.code !== 0) {
+				const stderrSnippet = stderrResult.text.trim().slice(0, 500);
 				log.warn(
 					`SpaceRuntime: completion action "${action.name}" failed ` +
-						`(exit ${exitResult.code}): ${stderrResult.text.trim().slice(0, 500)}`
+						`(exit ${exitResult.code}): ${stderrSnippet}`
 				);
-				return false;
+				return {
+					success: false,
+					reason: `${action.name}: script exited ${exitResult.code}${stderrSnippet ? ` — ${stderrSnippet}` : ''}`,
+				};
 			}
-			return true;
+			return { success: true };
 		} catch (err) {
-			log.warn(
-				`SpaceRuntime: completion action "${action.name}" error: ` +
-					`${err instanceof Error ? err.message : String(err)}`
-			);
-			return false;
+			const message = err instanceof Error ? err.message : String(err);
+			log.warn(`SpaceRuntime: completion action "${action.name}" error: ${message}`);
+			return { success: false, reason: `${action.name}: ${message}` };
 		}
 	}
 

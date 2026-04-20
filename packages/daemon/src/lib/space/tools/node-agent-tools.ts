@@ -53,6 +53,7 @@ import {
 	ReadGateSchema,
 	WriteArtifactSchema,
 	ListArtifactsSchema,
+	RestoreNodeAgentSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
@@ -64,6 +65,7 @@ import type {
 	ReadGateInput,
 	WriteArtifactInput,
 	ListArtifactsInput,
+	RestoreNodeAgentInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 
@@ -172,6 +174,18 @@ export interface NodeAgentToolsConfig {
 	 * Optional — when absent, artifact tools are not registered.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Optional callback invoked when the agent calls `restore_node_agent`.
+	 *
+	 * Wired by TaskAgentManager to re-attach the per-session node-agent MCP server
+	 * (preserving any other registry-sourced servers) and emit a structured log
+	 * entry for diagnosis. The callback is fire-and-forget from the tool's
+	 * perspective — failures are logged but do not block the tool result.
+	 *
+	 * When omitted (e.g. in unit tests), the tool still succeeds and reports the
+	 * visible MCP server names but performs no server-side reattachment.
+	 */
+	onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +375,55 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 									scriptContext ? { ...scriptContext, gateId, gateData: updated.data } : undefined
 								);
 								gateWriteResult = { gateId, gateOpen: evalResult.open };
+
+								// Multi-round review history: every time the reviewer writes a
+								// `review_url` to this gate, append an append-only artifact row
+								// so we get one record per cycle (cycle 0, 1, 2 …) without any
+								// deduplication. The per-cycle artifactKey makes each write a
+								// distinct row even though the table uses upsert semantics.
+								//
+								// Note: `comment_urls` is not a gate field (so it's stripped from
+								// `authorizedData`), but we still want to persist it alongside the
+								// review for the audit trail — pull it straight from the original
+								// `data` payload the reviewer supplied.
+								if (
+									config.artifactRepo &&
+									gateId === 'review-posted-gate' &&
+									typeof authorizedData.review_url === 'string' &&
+									authorizedData.review_url.length > 0
+								) {
+									try {
+										const priorReviews = config.artifactRepo.listByRun(workflowRunId, {
+											artifactType: 'review',
+										});
+										const cycle = priorReviews.length;
+										const artifactData: Record<string, unknown> = {
+											review_url: authorizedData.review_url,
+											cycle,
+											submittedAt: new Date().toISOString(),
+										};
+										const rawCommentUrls = (data as Record<string, unknown>).comment_urls;
+										if (
+											Array.isArray(rawCommentUrls) &&
+											rawCommentUrls.every((u) => typeof u === 'string')
+										) {
+											artifactData.comment_urls = rawCommentUrls;
+										}
+										config.artifactRepo.upsert({
+											id: crypto.randomUUID(),
+											runId: workflowRunId,
+											nodeId: workflowNodeId,
+											artifactType: 'review',
+											artifactKey: `cycle-${cycle}`,
+											data: artifactData,
+										});
+									} catch (err) {
+										log.warn(
+											`Failed to append review artifact for run "${workflowRunId}":`,
+											err instanceof Error ? err.message : String(err)
+										);
+									}
+								}
 
 								if (onGateDataChanged) {
 									void onGateDataChanged(workflowRunId, gateId).catch((err) => {
@@ -769,6 +832,50 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 		},
+
+		// ── Self-heal ────────────────────────────────────────────────────
+
+		/**
+		 * Self-heal primitive.
+		 *
+		 * Successfully invoking this tool is itself proof that the node-agent
+		 * MCP server is registered for the current session — if the server were
+		 * missing, the SDK would have rejected the call with "No such tool
+		 * available". The handler additionally invokes the optional
+		 * `onRestoreNodeAgent` callback (wired by TaskAgentManager) which
+		 * re-attaches the per-session node-agent server as a belt-and-braces
+		 * measure and writes a structured log entry for diagnosis.
+		 *
+		 * The result reports back the visible MCP server names so the agent can
+		 * confirm its environment before retrying a critical handoff.
+		 */
+		async restore_node_agent(args: RestoreNodeAgentInput): Promise<ToolResult> {
+			const reason = args.reason?.trim();
+			log.info(
+				`node-agent.restore_node_agent invoked by session ${mySessionId} ` +
+					`(agent=${myAgentName}, task=${config.taskId}, reason=${reason ?? '<unspecified>'})`
+			);
+
+			try {
+				if (config.onRestoreNodeAgent) {
+					await config.onRestoreNodeAgent({ reason });
+				}
+			} catch (err) {
+				log.warn(
+					`node-agent.restore_node_agent: server-side reattachment callback failed for session ${mySessionId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+
+			return jsonResult({
+				success: true,
+				sessionId: mySessionId,
+				agentName: myAgentName,
+				message:
+					'node-agent MCP server is registered for this session — the fact that this tool ' +
+					'call succeeded proves it. If a previous mcp__node-agent__send_message call ' +
+					'returned "No such tool available", retry it now.',
+			});
+		},
 	};
 }
 
@@ -848,6 +955,17 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			SaveSchema.shape,
 			(args) => handlers.save(args)
 		),
+		tool(
+			'restore_node_agent',
+			'Self-heal primitive — call when you suspect the node-agent MCP server is unhealthy ' +
+				'(e.g. a previous mcp__node-agent__send_message returned "No such tool available"). ' +
+				'The fact that this call succeeds proves node-agent is registered for your session. ' +
+				'The handler also re-attaches the server on the daemon side as a belt-and-braces ' +
+				'measure and emits a structured log line for diagnosis. After calling, retry the ' +
+				'failed tool once.',
+			RestoreNodeAgentSchema.shape,
+			(args) => handlers.restore_node_agent(args)
+		),
 		...(config.artifactRepo
 			? [
 					tool(
@@ -871,9 +989,10 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			? [
 					tool(
 						'report_result',
-						'Mark the workflow as completed, failed, or cancelled and record the final result. ' +
+						'Record the final result of the workflow — the runtime decides the terminal status via completion actions. ' +
 							'Only available to the end node of the workflow. ' +
-							'Call this when the workflow has reached its terminal state.',
+							'Provide a human-readable summary and optional structured evidence (prUrl, commitSha, testOutput, …). ' +
+							'Do NOT pass a `status` — the completion-action pipeline is the sole arbiter of success/failure.',
 						ReportResultSchema.shape,
 						(args) => onReportResult(args)
 					),

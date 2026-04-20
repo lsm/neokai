@@ -47,52 +47,79 @@ describe('TaskResultStatusSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
-// report_result
+// report_result (post-Stage-2: result-only; terminal status decided by runtime)
 // ---------------------------------------------------------------------------
 
 describe('ReportResultSchema', () => {
-	test('accepts completed status with summary', () => {
-		const result = ReportResultSchema.safeParse({ status: 'done', summary: 'Task done.' });
+	test('accepts summary-only payload', () => {
+		const result = ReportResultSchema.safeParse({ summary: 'Task complete.' });
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.status).toBe('done');
-			expect(result.data.error).toBeUndefined();
+			expect(result.data.summary).toBe('Task complete.');
+			expect(result.data.evidence).toBeUndefined();
 		}
 	});
 
-	test('accepts needs_attention status with summary and error', () => {
+	test('accepts summary + evidence with the known fields', () => {
 		const result = ReportResultSchema.safeParse({
-			status: 'blocked',
-			summary: 'Blocked on auth issue.',
-			error: 'OAuth token expired',
+			summary: 'Shipped PR.',
+			evidence: {
+				prUrl: 'https://github.com/o/r/pull/1',
+				commitSha: 'abc123',
+				testOutput: 'ok (12 tests)',
+			},
 		});
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.status).toBe('blocked');
-			expect(result.data.error).toBe('OAuth token expired');
+			expect(result.data.evidence?.prUrl).toBe('https://github.com/o/r/pull/1');
+			expect(result.data.evidence?.commitSha).toBe('abc123');
+			expect(result.data.evidence?.testOutput).toBe('ok (12 tests)');
 		}
 	});
 
-	test('accepts cancelled status', () => {
+	test('accepts evidence with extra fields (passthrough)', () => {
+		// Evidence is defined with `.passthrough()` so agents can attach domain-
+		// specific keys without needing the schema updated each time.
 		const result = ReportResultSchema.safeParse({
-			status: 'cancelled',
-			summary: 'User cancelled the task.',
+			summary: 'Done.',
+			evidence: {
+				prUrl: 'https://github.com/o/r/pull/1',
+				deployUrl: 'https://staging.example.com',
+			},
 		});
 		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.evidence?.prUrl).toBe('https://github.com/o/r/pull/1');
+			// Passthrough keeps the extra key reachable on the parsed value
+			expect((result.data.evidence as Record<string, unknown> | undefined)?.deployUrl).toBe(
+				'https://staging.example.com'
+			);
+		}
 	});
 
-	test('rejects invalid status value', () => {
-		const result = ReportResultSchema.safeParse({ status: 'failed', summary: 'Bad.' });
+	test('rejects payload carrying a `status` field (strict mode)', () => {
+		// Stage-2 invariant: agents can no longer self-certify terminal status.
+		// Passing `status` must be a validation error, not silently accepted.
+		const result = ReportResultSchema.safeParse({ status: 'done', summary: 'x' });
 		expect(result.success).toBe(false);
+		if (!result.success) {
+			// The error should mention the unrecognized key to give the caller a
+			// useful nudge toward the new shape.
+			const joined = result.error.issues.map((i) => i.message).join(' | ');
+			expect(joined.toLowerCase()).toContain('unrecognized');
+		}
 	});
 
-	test('rejects missing status', () => {
-		const result = ReportResultSchema.safeParse({ summary: 'Done.' });
+	test('rejects payload carrying an `error` field (strict mode)', () => {
+		const result = ReportResultSchema.safeParse({
+			summary: 'x',
+			error: 'something',
+		});
 		expect(result.success).toBe(false);
 	});
 
 	test('rejects missing summary', () => {
-		const result = ReportResultSchema.safeParse({ status: 'done' });
+		const result = ReportResultSchema.safeParse({ evidence: { prUrl: 'x' } });
 		expect(result.success).toBe(false);
 	});
 
@@ -102,15 +129,14 @@ describe('ReportResultSchema', () => {
 	});
 
 	test('rejects non-string summary', () => {
-		const result = ReportResultSchema.safeParse({ status: 'done', summary: 99 });
+		const result = ReportResultSchema.safeParse({ summary: 99 });
 		expect(result.success).toBe(false);
 	});
 
-	test('rejects non-string error', () => {
+	test('rejects evidence with non-string prUrl', () => {
 		const result = ReportResultSchema.safeParse({
-			status: 'cancelled',
-			summary: 'done',
-			error: { message: 'oops' },
+			summary: 'x',
+			evidence: { prUrl: 123 },
 		});
 		expect(result.success).toBe(false);
 	});

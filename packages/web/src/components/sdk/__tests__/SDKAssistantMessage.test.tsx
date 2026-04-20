@@ -328,6 +328,134 @@ describe('SDKAssistantMessage', () => {
 
 			expect(container.textContent).toContain('Let me think about this carefully');
 		});
+
+		/**
+		 * Opus 4.7 (and other models running with `thinking.display = 'omitted'`)
+		 * emits a thinking block with an empty `thinking` string but a
+		 * signature for multi-turn continuity. The UI should treat that as
+		 * "no thinking to show" and NOT render the amber card — otherwise
+		 * the user sees "Thinking · 0 characters" in the transcript.
+		 */
+		it('should NOT render a thinking card when thinking payload is empty (Opus 4.7 case)', async () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{ type: 'thinking', thinking: '', signature: 'sig_abc123' },
+						{ type: 'text', text: 'Here is my response.' },
+					],
+					model: 'claude-opus-4-7',
+					stop_reason: 'end_turn',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			// No thinking card at all
+			expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
+			expect(container.textContent).not.toContain('0 characters');
+			// Text block still renders (async via MarkdownRenderer)
+			await waitFor(() => {
+				expect(container.textContent).toContain('Here is my response');
+			});
+		});
+
+		it('should NOT render a thinking card for whitespace-only thinking payload', async () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{ type: 'thinking', thinking: '   \n\t  ' },
+						{ type: 'text', text: 'Only whitespace thinking.' },
+					],
+					model: 'claude-opus-4-7',
+					stop_reason: 'end_turn',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
+			await waitFor(() => {
+				expect(container.textContent).toContain('Only whitespace thinking');
+			});
+		});
+
+		it('should still render valid thinking on same-model messages (no regression)', () => {
+			// A thinking block that *has* content must still render — we only
+			// skip when the payload is empty/whitespace.
+			const message = {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{ type: 'thinking', thinking: 'Real reasoning here.', signature: 'sig_xyz' },
+						{ type: 'text', text: 'And the answer.' },
+					],
+					model: 'claude-opus-4-7',
+					stop_reason: 'end_turn',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
+			expect(container.textContent).toContain('Real reasoning here');
+		});
+
+		it('should filter empty thinking blocks alongside non-empty ones', () => {
+			// Mixed: one empty thinking, one populated — only the populated
+			// one should render.
+			const message = {
+				type: 'assistant',
+				message: {
+					id: 'msg_test',
+					type: 'message',
+					role: 'assistant',
+					content: [
+						{ type: 'thinking', thinking: '', signature: 'sig_empty' },
+						{ type: 'thinking', thinking: 'Actual reasoning.' },
+						{ type: 'text', text: 'Reply.' },
+					],
+					model: 'claude-opus-4-7',
+					stop_reason: 'end_turn',
+					stop_sequence: null,
+					usage: { input_tokens: 10, output_tokens: 20 },
+				},
+				parent_tool_use_id: null,
+				uuid: createUUID(),
+				session_id: 'test-session',
+			} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			const cards = container.querySelectorAll('[data-testid="thinking-block"]');
+			expect(cards.length).toBe(1);
+			expect(container.textContent).toContain('Actual reasoning');
+		});
 	});
 
 	describe('Error State', () => {

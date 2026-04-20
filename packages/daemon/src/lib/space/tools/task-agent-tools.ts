@@ -223,40 +223,47 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		/**
 		 * Report the final outcome of the task and close the task lifecycle.
 		 *
-		 * Updates the main SpaceTask status to one of:
-		 *   completed        — task succeeded; summary records the result
-		 *   blocked          — task requires human intervention
-		 *   cancelled        — task was cancelled
+		 * The agent supplies only a summary + optional evidence. The runtime —
+		 * not this tool — decides the final task status via the completion-
+		 * action pipeline. Internally we mark the task as `done` so the
+		 * CompletionDetector picks it up; the pipeline may flip it to
+		 * `needs_attention` / `blocked` / etc. based on its actions.
 		 */
 		async report_result(args: ReportResultInput): Promise<ToolResult> {
-			const { status, summary } = args;
+			const { summary, evidence } = args;
 
 			const mainTask = taskRepo.getTask(taskId);
 			if (!mainTask) {
 				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
 			}
 
+			// Serialize evidence into the summary so downstream consumers (PR
+			// reviewers, verification actions) can inspect it. The dedicated
+			// structured column is a Stage-3 concern.
+			const serializedSummary = evidence
+				? `${summary}\n\n<!-- evidence -->\n${JSON.stringify(evidence, null, 2)}`
+				: summary;
+
 			try {
-				await taskManager.setTaskStatus(taskId, status, {
-					result: summary,
-					...(status === 'blocked' ? { blockReason: 'execution_failed' as const } : {}),
+				await taskManager.setTaskStatus(taskId, 'done', {
+					result: serializedSummary,
 				});
 
-				// Emit DaemonHub event so the Space Agent is notified of task completion/failure.
+				// Emit DaemonHub event so the Space Agent is notified of task completion.
+				// Completion-action pipeline may later downgrade to `space.task.failed`.
 				if (daemonHub) {
 					const eventPayload = {
 						sessionId: 'global',
 						taskId,
 						spaceId: space.id,
-						status,
+						status: 'done' as const,
 						summary: summary ?? '',
 						workflowRunId,
 						taskTitle: mainTask.title,
 					};
-					const eventName = status === 'done' ? 'space.task.done' : 'space.task.failed';
-					void daemonHub.emit(eventName, eventPayload).catch((err) => {
+					void daemonHub.emit('space.task.done', eventPayload).catch((err) => {
 						log.warn(
-							`Failed to emit ${eventName} for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+							`Failed to emit space.task.done for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
 						);
 					});
 				}
@@ -264,9 +271,9 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 				return jsonResult({
 					success: true,
 					taskId,
-					status,
 					summary,
-					message: `Task has been marked as "${status}". The task lifecycle is now closed.`,
+					message:
+						'Result recorded. The completion-action pipeline will determine the final task status.',
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
