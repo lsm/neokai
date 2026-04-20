@@ -66,14 +66,14 @@ jobs:
           fi
           echo "All package.json versions match v$VERSION"
 
-      - name: Verify commit is on main branch
+      - name: Verify commit is on dev branch
         run: |
-          if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main'; then
-            echo "ERROR: Tagged commit $GITHUB_SHA is not on the main branch"
-            echo "Releases must be tagged on commits that exist on main"
+          if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/dev'; then
+            echo "ERROR: Tagged commit $GITHUB_SHA is not on the dev branch"
+            echo "Releases must be tagged on commits that exist on dev"
             exit 1
           fi
-          echo "Commit $GITHUB_SHA is on main branch"
+          echo "Commit $GITHUB_SHA is on dev branch"
 
       - name: Wait for CI to pass
         run: |
