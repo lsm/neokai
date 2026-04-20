@@ -24,7 +24,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
 	CODING_WORKFLOW,
-	FULL_CYCLE_CODING_WORKFLOW,
+	PLAN_AND_DECOMPOSE_WORKFLOW,
 	FULLSTACK_QA_LOOP_WORKFLOW,
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
@@ -399,72 +399,82 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 	});
 });
 
-describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
-	test('has five nodes', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.nodes).toHaveLength(5);
+describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
+	test('has three nodes', () => {
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.nodes).toHaveLength(3);
 	});
 
 	test('node names are correct', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.nodes.map((n) => n.name)).toEqual([
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((n) => n.name)).toEqual([
 			'Planning',
 			'Plan Review',
-			'Coding',
-			'Code Review',
-			'QA',
+			'Task Dispatcher',
 		]);
 	});
 
 	test('node agent placeholders are correct', () => {
-		const nodes = FULL_CYCLE_CODING_WORKFLOW.nodes;
-		// agents[0].name is the role string (lowercase); agentId is the capitalized placeholder
-		expect(nodes[0].agents[0]?.name).toBe('planner'); // Planning
-		expect(nodes[1].agents[0]?.name).toBe('reviewer'); // Plan Review
-		expect(nodes[2].agents[0]?.name).toBe('coder'); // Coding
-		// Code Review uses three agents[]
-		expect(nodes[3].agents).toHaveLength(3);
-		expect(nodes[3].agents?.map((a) => a.agentId)).toEqual(['Reviewer', 'Reviewer', 'Reviewer']);
-		expect(nodes[3].agents?.map((a) => a.name)).toEqual(['Reviewer 1', 'Reviewer 2', 'Reviewer 3']);
-		expect(nodes[4].agents[0]?.name).toBe('qa'); // QA
+		const nodes = PLAN_AND_DECOMPOSE_WORKFLOW.nodes;
+		// Planning: single Planner
+		expect(nodes[0].agents).toHaveLength(1);
+		expect(nodes[0].agents[0]?.agentId).toBe('Planner');
+		expect(nodes[0].agents[0]?.name).toBe('planner');
+		// Plan Review: four Reviewers (architecture, security, correctness, ux)
+		expect(nodes[1].agents).toHaveLength(4);
+		expect(nodes[1].agents.map((a) => a.agentId)).toEqual([
+			'Reviewer',
+			'Reviewer',
+			'Reviewer',
+			'Reviewer',
+		]);
+		expect(nodes[1].agents.map((a) => a.name)).toEqual([
+			'architecture-reviewer',
+			'security-reviewer',
+			'correctness-reviewer',
+			'ux-reviewer',
+		]);
+		// Task Dispatcher: single General agent
+		expect(nodes[2].agents).toHaveLength(1);
+		expect(nodes[2].agents[0]?.agentId).toBe('General');
+		expect(nodes[2].agents[0]?.name).toBe('task-dispatcher');
 	});
 
-	test('all V2 nodes define explicit custom prompts', () => {
-		// customPrompt is on each WorkflowNodeAgent, not on WorkflowNode
-		for (const node of FULL_CYCLE_CODING_WORKFLOW.nodes) {
+	test('all nodes define explicit custom prompts', () => {
+		for (const node of PLAN_AND_DECOMPOSE_WORKFLOW.nodes) {
 			for (const agent of node.agents) {
 				expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
 			}
 		}
 	});
 
-	test('startNodeId points to the Planning (planner) node', () => {
-		const planningNode = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Planning');
-		expect(FULL_CYCLE_CODING_WORKFLOW.startNodeId).toBe(planningNode?.id);
+	test('startNodeId points to the Planning node', () => {
+		const planningNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Planning');
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.startNodeId).toBe(planningNode?.id);
 	});
 
-	test('endNodeId points to the QA node', () => {
-		const qaNode = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA');
-		expect(FULL_CYCLE_CODING_WORKFLOW.endNodeId).toBe(qaNode?.id);
+	test('endNodeId points to the Task Dispatcher node', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		);
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.endNodeId).toBe(dispatcherNode?.id);
 	});
 
 	test('endNodeId references a valid node in the graph', () => {
-		const nodeIds = new Set(FULL_CYCLE_CODING_WORKFLOW.nodes.map((n) => n.id));
-		expect(nodeIds.has(FULL_CYCLE_CODING_WORKFLOW.endNodeId!)).toBe(true);
+		const nodeIds = new Set(PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((n) => n.id));
+		expect(nodeIds.has(PLAN_AND_DECOMPOSE_WORKFLOW.endNodeId!)).toBe(true);
 	});
 
-	test('has four gates', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.gates).toHaveLength(4);
+	test('has two gates', () => {
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.gates).toHaveLength(2);
 	});
 
 	test('gate IDs are correct', () => {
-		const ids = FULL_CYCLE_CODING_WORKFLOW.gates!.map((g) => g.id);
+		const ids = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.map((g) => g.id);
 		expect(ids).toContain('plan-pr-gate');
 		expect(ids).toContain('plan-approval-gate');
-		expect(ids).toContain('code-pr-gate');
-		expect(ids).toContain('review-votes-gate');
 	});
 
 	test('plan-pr-gate has script-based PR check with pr_url output', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-pr-gate')!;
+		const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-pr-gate')!;
 		expect(gate.fields).toHaveLength(1);
 		expect(gate.fields[0].name).toBe('pr_url');
 		expect(gate.fields[0].type).toBe('string');
@@ -472,112 +482,57 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		expect(gate.fields[0].writers).toEqual(['*']);
 		expect(gate.script?.interpreter).toBe('bash');
 		expect(gate.script?.source.length).toBeGreaterThan(0);
-		expect(gate.resetOnCycle).toBe(false);
-	});
-
-	test('plan-approval-gate has boolean == true field with requiredLevel for auto-approval', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
-		expect(gate.fields[0].name).toBe('approved');
-		expect(gate.fields[0].check).toMatchObject({ op: '==', value: true });
-		expect(gate.fields[0].writers).toEqual([]);
-		expect(gate.label).toBe('Approval');
-		expect(gate.requiredLevel).toBe(3);
+		// Planning can cycle back from Plan Review; PR state must be re-verified each cycle.
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('code-pr-gate has string exists field with coder writer', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
-		expect(gate.fields[0].name).toBe('pr_url');
-		expect(gate.fields[0].type).toBe('string');
-		expect(gate.fields[0].check.op).toBe('exists');
-		expect(gate.fields[0].writers).toContain('coder');
-		// Preserved across fix cycles -- coder updates the existing PR rather than opening a new one
-		expect(gate.resetOnCycle).toBe(false);
-	});
-
-	test('review-votes-gate has map count field requiring min 3 approved', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'review-votes-gate')!;
+	test('plan-approval-gate requires all four reviewers to approve', () => {
+		const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		expect(gate.fields).toHaveLength(1);
+		expect(gate.fields[0].name).toBe('approvals');
 		expect(gate.fields[0].type).toBe('map');
-		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 3 });
+		expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 		expect(gate.fields[0].writers).toContain('reviewer');
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('has 8 node-level channels', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.channels).toHaveLength(8);
+	test('has three channels', () => {
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.channels).toHaveLength(3);
 	});
 
 	test('main progression channels have correct gateIds', () => {
-		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!;
+		const ch = PLAN_AND_DECOMPOSE_WORKFLOW.channels!;
 
-		const planToReview = ch.find((c) => c.from === 'Planning' && c.to === 'Plan Review');
-		expect(planToReview?.gateId).toBe('plan-pr-gate');
+		const planningToReview = ch.find((c) => c.from === 'Planning' && c.to === 'Plan Review');
+		expect(planningToReview?.gateId).toBe('plan-pr-gate');
 
-		const reviewToCoding = ch.find((c) => c.from === 'Plan Review' && c.to === 'Coding');
-		expect(reviewToCoding?.gateId).toBe('plan-approval-gate');
-
-		const codingToReview = ch.find((c) => c.from === 'Coding' && c.to === 'Code Review');
-		expect(codingToReview?.gateId).toBe('code-pr-gate');
+		const reviewToDispatcher = ch.find(
+			(c) => c.from === 'Plan Review' && c.to === 'Task Dispatcher'
+		);
+		expect(reviewToDispatcher?.gateId).toBe('plan-approval-gate');
 	});
 
-	test('Code Review-to-QA uses review-votes-gate', () => {
-		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!;
-		const reviewToQA = ch.find((c) => c.from === 'Code Review' && c.to === 'QA');
-		expect(reviewToQA?.gateId).toBe('review-votes-gate');
-	});
-
-	test('cyclic channels have maxCycles set', () => {
-		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!;
-
-		const qaToCoding = ch.find((c) => c.from === 'QA' && c.to === 'Coding');
-		expect(qaToCoding?.gateId).toBeUndefined();
-		expect(qaToCoding?.maxCycles).toBe(5);
-
-		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
-		expect(reviewToCoding?.gateId).toBeUndefined();
-		expect(reviewToCoding?.maxCycles).toBe(5);
-
-		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
-		expect(reviewToPlanning?.gateId).toBeUndefined();
-		expect(reviewToPlanning?.maxCycles).toBe(5);
-
-		const codingToPlanning = ch.find((c) => c.from === 'Coding' && c.to === 'Planning');
-		expect(codingToPlanning?.gateId).toBeUndefined();
-		expect(codingToPlanning?.maxCycles).toBe(5);
-	});
-
-	test('ungated feedback channels have no gateId', () => {
-		const ch = FULL_CYCLE_CODING_WORKFLOW.channels!;
-		const reviewToCoding = ch.find((c) => c.from === 'Code Review' && c.to === 'Coding');
-		expect(reviewToCoding).toBeDefined();
-		expect(reviewToCoding?.gateId).toBeUndefined();
-
-		const qaToCoding = ch.find((c) => c.from === 'QA' && c.to === 'Coding');
-		expect(qaToCoding).toBeDefined();
-		expect(qaToCoding?.gateId).toBeUndefined();
-
+	test('feedback channel Plan Review → Planning is ungated and cyclic', () => {
+		const ch = PLAN_AND_DECOMPOSE_WORKFLOW.channels!;
 		const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
 		expect(reviewToPlanning).toBeDefined();
 		expect(reviewToPlanning?.gateId).toBeUndefined();
-
-		const codingToPlanning = ch.find((c) => c.from === 'Coding' && c.to === 'Planning');
-		expect(codingToPlanning).toBeDefined();
-		expect(codingToPlanning?.gateId).toBeUndefined();
+		expect(reviewToPlanning?.maxCycles).toBe(5);
 	});
 
 	test('all channels have direction one-way', () => {
-		for (const ch of FULL_CYCLE_CODING_WORKFLOW.channels!) {
+		for (const ch of PLAN_AND_DECOMPOSE_WORKFLOW.channels!) {
 			expect('direction' in ch).toBe(false); // direction field removed
 		}
 	});
 
 	test('all channel from/to fields reference valid node names or agent slot names', () => {
 		const refs = new Set<string>();
-		for (const node of FULL_CYCLE_CODING_WORKFLOW.nodes) {
+		for (const node of PLAN_AND_DECOMPOSE_WORKFLOW.nodes) {
 			refs.add(node.name);
 			for (const agent of node.agents ?? []) refs.add(agent.name);
 		}
-		for (const ch of FULL_CYCLE_CODING_WORKFLOW.channels!) {
+		for (const ch of PLAN_AND_DECOMPOSE_WORKFLOW.channels!) {
 			expect(refs.has(ch.from as string)).toBe(true);
 			if (Array.isArray(ch.to)) {
 				for (const target of ch.to) {
@@ -589,52 +544,71 @@ describe('FULL_CYCLE_CODING_WORKFLOW template', () => {
 		}
 	});
 
-	test('code review node contains three reviewer slots with read-merge-write customPrompt', () => {
-		const reviewNode = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Code Review')!;
-		expect(reviewNode.agents).toHaveLength(3);
-		for (const slot of reviewNode.agents ?? []) {
-			// slot.customPrompt contains the task instructions
-			expect(slot.customPrompt?.value).toContain('read_gate');
-			expect(slot.customPrompt?.value).toContain('write_gate');
-			// Must warn against writing only own entry to prevent overwriting peers.
-			expect(slot.customPrompt?.value).toContain('overwriting');
+	test('Plan Review node lens names cover architecture / security / correctness / ux', () => {
+		const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+		expect(reviewNode.agents).toHaveLength(4);
+		const expected = [
+			{ name: 'architecture-reviewer', lens: 'architecture' },
+			{ name: 'security-reviewer', lens: 'security' },
+			{ name: 'correctness-reviewer', lens: 'correctness' },
+			{ name: 'ux-reviewer', lens: 'ux' },
+		];
+		for (let i = 0; i < expected.length; i++) {
+			const slot = reviewNode.agents[i];
+			expect(slot.name).toBe(expected[i].name);
+			// Each reviewer's prompt should reference their lens name and the approval gate
+			expect(slot.customPrompt?.value.toLowerCase()).toContain(expected[i].lens);
+			expect(slot.customPrompt?.value).toContain('plan-approval-gate');
 		}
 	});
 
-	test('QA node agent slot customPrompt describes pass and fail actions', () => {
-		const qa = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
-		// Node-level instructions were removed; agent slots carry the task instructions
-		expect(qa.agents[0].customPrompt?.value).toContain('report_result');
+	test('Task Dispatcher prompt instructs use of create_standalone_task and report_result', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
+		expect(prompt).toContain('create_standalone_task');
+		expect(prompt).toContain('report_result');
+		expect(prompt).toContain('created_task_ids');
 	});
 
-	test('review-votes-gate description mentions read-merge-write requirement', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'review-votes-gate')!;
-		expect(gate.description).toContain('read-merge-write');
-	});
-
-	test('code-pr-gate description explains it is preserved across fix cycles', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'code-pr-gate')!;
-		expect(gate.description).toContain('resetOnCycle');
-		expect(gate.description).toMatch(/fix cycles/i);
+	test('Task Dispatcher node carries a verify-tasks-created completion action', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		expect(dispatcherNode.completionActions).toBeDefined();
+		expect(dispatcherNode.completionActions).toHaveLength(1);
+		const action = dispatcherNode.completionActions![0];
+		expect(action.id).toBe('verify-tasks-created');
+		expect(action.type).toBe('script');
+		// Safe verification — should run without elevated autonomy.
+		expect(action.requiredLevel).toBe(1);
+		// Script must use the injected env vars.
+		expect(action.type === 'script' && action.script).toBeDefined();
+		if (action.type === 'script') {
+			expect(action.script).toContain('NEOKAI_DB_PATH');
+			expect(action.script).toContain('NEOKAI_SPACE_ID');
+			expect(action.script).toContain('NEOKAI_WORKFLOW_START_ISO');
+			expect(action.script).toContain('space_tasks');
+		}
 	});
 
 	test('does not reference leader', () => {
-		expect(hasLeaderAgentId(FULL_CYCLE_CODING_WORKFLOW)).toBe(false);
+		expect(hasLeaderAgentId(PLAN_AND_DECOMPOSE_WORKFLOW)).toBe(false);
 	});
 
 	test('template id and spaceId are empty (not space-specific)', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.id).toBe('');
-		expect(FULL_CYCLE_CODING_WORKFLOW.spaceId).toBe('');
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.id).toBe('');
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.spaceId).toBe('');
 	});
 
-	// maxIterations removed from CreateSpaceWorkflowParams; per-channel maxCycles used instead.
-
-	test('has the default tag so workflow selector ranks it first for coding requests', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.tags).toContain('default');
+	test('does NOT have the default tag — selected explicitly for planning goals', () => {
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.tags).not.toContain('default');
 	});
 
-	test('has the coding tag', () => {
-		expect(FULL_CYCLE_CODING_WORKFLOW.tags).toContain('coding');
+	test('has the planning and decomposition tags', () => {
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.tags).toContain('planning');
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.tags).toContain('decomposition');
 	});
 });
 
@@ -652,9 +626,14 @@ describe('getBuiltInWorkflows()', () => {
 		expect(names).toContain(CODING_WORKFLOW.name);
 	});
 
-	test('includes FULL_CYCLE_CODING_WORKFLOW', () => {
+	test('includes PLAN_AND_DECOMPOSE_WORKFLOW', () => {
 		const names = getBuiltInWorkflows().map((w) => w.name);
-		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
+	});
+
+	test('does NOT include the legacy Full-Cycle Coding Workflow', () => {
+		const names = getBuiltInWorkflows().map((w) => w.name);
+		expect(names).not.toContain('Full-Cycle Coding Workflow');
 	});
 
 	test('includes FULLSTACK_QA_LOOP_WORKFLOW', () => {
@@ -785,17 +764,17 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
-		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
 		expect(names).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
 
-	test('Full-Cycle Coding Workflow seeding preserves explicit node custom prompts', async () => {
+	test('Plan & Decompose Workflow seeding preserves explicit node custom prompts', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name);
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
 		expect(wf).toBeDefined();
 		// customPrompt is on each WorkflowNodeAgent, not on WorkflowNode
 		for (const node of wf!.nodes) {
@@ -929,77 +908,67 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(wf!.nodes[0].agents[0]?.agentId).toBe(REVIEWER_ID);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded correctly — five nodes with code-review agents[]', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded correctly — three nodes with 4 parallel reviewers', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name);
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
 		expect(wf).toBeDefined();
-		expect(wf!.nodes).toHaveLength(5);
+		expect(wf!.nodes).toHaveLength(3);
 		expect(wf!.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID); // Planning
-		expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer); // Plan Review
-		expect(wf!.nodes[2].agents[0]?.agentId).toBe(CODER_ID); // Coding
-		// Code Review has three agents (all reviewer)
-		expect(wf!.nodes[3].agents).toHaveLength(3);
-		expect(wf!.nodes[3].agents?.map((a) => a.agentId)).toEqual([
+		// Plan Review has four agents (all reviewer)
+		expect(wf!.nodes[1].agents).toHaveLength(4);
+		expect(wf!.nodes[1].agents?.map((a) => a.agentId)).toEqual([
+			roleMap.reviewer,
 			roleMap.reviewer,
 			roleMap.reviewer,
 			roleMap.reviewer,
 		]);
-		expect(wf!.nodes[3].agents?.map((a) => a.name)).toEqual([
-			'Reviewer 1',
-			'Reviewer 2',
-			'Reviewer 3',
+		expect(wf!.nodes[1].agents?.map((a) => a.name)).toEqual([
+			'architecture-reviewer',
+			'security-reviewer',
+			'correctness-reviewer',
+			'ux-reviewer',
 		]);
-		expect(wf!.nodes[4].agents[0]?.agentId).toBe(QA_ID); // QA
+		expect(wf!.nodes[2].agents[0]?.agentId).toBe(GENERAL_ID); // Task Dispatcher
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with 8 node-level channels', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 3 node-level channels', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		expect(wf.channels).toHaveLength(8);
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+		expect(wf.channels).toHaveLength(3);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with 4 gates', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 2 gates', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		expect(wf.gates).toHaveLength(4);
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+		expect(wf.gates).toHaveLength(2);
 		const gateIds = wf.gates!.map((g) => g.id);
 		expect(gateIds).toContain('plan-pr-gate');
 		expect(gateIds).toContain('plan-approval-gate');
-		expect(gateIds).toContain('code-pr-gate');
-		expect(gateIds).toContain('review-votes-gate');
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded channels use gateId (not legacy gate)', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels split into 2 gated + 1 ungated feedback', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
-		// 4 channels have gateIds (8 total minus 4 ungated feedback/cycle channels)
-		expect(gatedChannels).toHaveLength(4);
-	});
-
-	test('FULL_CYCLE_CODING_WORKFLOW seeded cyclic channels have maxCycles set', async () => {
-		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-		const wf = manager
-			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+		expect(gatedChannels).toHaveLength(2);
 		const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
-		// 4 cyclic: Plan Review→Planning, Coding→Planning, QA→Coding, Code Review→Coding
-		expect(cyclicChannels).toHaveLength(4);
+		// One cyclic feedback channel: Plan Review → Planning
+		expect(cyclicChannels).toHaveLength(1);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded channels reference node names or reviewer slot names', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels reference node names or reviewer slot names', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		const refs = new Set<string>();
 		for (const node of wf.nodes) {
 			refs.add(node.name);
@@ -1017,19 +986,32 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with default tag for workflow selector ranking', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded without default tag — picked explicitly for planning', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		expect(wf.tags).toContain('default');
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+		expect(wf.tags).not.toContain('default');
+		expect(wf.tags).toContain('planning');
+		expect(wf.tags).toContain('decomposition');
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded alongside CODING_WORKFLOW — both present', async () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded alongside CODING_WORKFLOW — both present', async () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
-		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
+	});
+
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded Task Dispatcher preserves completionActions', async () => {
+		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager
+			.listWorkflows(SPACE_ID)
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+		const dispatcherNode = wf.nodes.find((n) => n.name === 'Task Dispatcher')!;
+		expect(dispatcherNode.completionActions).toBeDefined();
+		expect(dispatcherNode.completionActions).toHaveLength(1);
+		expect(dispatcherNode.completionActions![0].id).toBe('verify-tasks-created');
 	});
 
 	test('all seeded workflows have the real spaceId assigned', async () => {
@@ -1107,8 +1089,9 @@ describe('seedBuiltInWorkflows()', () => {
 	});
 
 	test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
-		// 'qa' is used by FULL_CYCLE_CODING_WORKFLOW and FULLSTACK_QA_LOOP_WORKFLOW.
-		// Pre-validation catches missing roles before any workflow is persisted.
+		// 'qa' is used by FULLSTACK_QA_LOOP_WORKFLOW and is a shared role across
+		// multiple templates. Pre-validation catches missing roles before any
+		// workflow is persisted.
 		const brokenResolver = (role: string): string | undefined =>
 			role === 'qa' ? undefined : roleMap[role];
 
@@ -1130,7 +1113,7 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(result.errors).toHaveLength(0);
 		expect(result.seeded).toHaveLength(5);
 		expect(result.seeded).toContain('Coding Workflow');
-		expect(result.seeded).toContain('Full-Cycle Coding Workflow');
+		expect(result.seeded).toContain('Plan & Decompose Workflow');
 		expect(result.seeded).toContain('Coding with QA Workflow');
 		expect(result.seeded).toContain('Research Workflow');
 		expect(result.seeded).toContain('Review-Only Workflow');
@@ -1212,7 +1195,7 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const templatePrefixes = [
 			'tpl-coding-',
-			'tpl-v2-',
+			'tpl-pd-',
 			'tpl-fullstack-',
 			'tpl-research-',
 			'tpl-review-',
@@ -1282,17 +1265,18 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(reviewNode?.agents[0].customPrompt?.value).toContain('report_result(');
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded nodes preserve customPrompt content', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		const planNode = wf.nodes.find((n) => n.name === 'Planning');
 		expect(planNode?.agents[0].customPrompt?.value).toContain('plan-pr-gate');
-		const codingNode = wf.nodes.find((n) => n.name === 'Coding');
-		expect(codingNode?.agents[0].customPrompt?.value).toContain('code-pr-gate');
-		const qaNode = wf.nodes.find((n) => n.name === 'QA');
-		expect(qaNode?.agents[0].customPrompt?.value).toContain('report_result');
+		const planReviewNode = wf.nodes.find((n) => n.name === 'Plan Review');
+		expect(planReviewNode?.agents[0].customPrompt?.value).toContain('plan-approval-gate');
+		const dispatcherNode = wf.nodes.find((n) => n.name === 'Task Dispatcher');
+		expect(dispatcherNode?.agents[0].customPrompt?.value).toContain('create_standalone_task');
+		expect(dispatcherNode?.agents[0].customPrompt?.value).toContain('report_result');
 	});
 
 	test('RESEARCH_WORKFLOW seeded nodes preserve customPrompt content', () => {
@@ -1333,19 +1317,16 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(gate.resetOnCycle).toBe(true);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW gate resetOnCycle flags are preserved', () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW gate resetOnCycle flags are preserved', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		const planPr = wf.gates!.find((g) => g.id === 'plan-pr-gate')!;
-		expect(planPr.resetOnCycle).toBe(false);
-		const codePr = wf.gates!.find((g) => g.id === 'code-pr-gate')!;
-		expect(codePr.resetOnCycle).toBe(false);
+		// Planning cycles back on feedback; PR state must be re-verified per cycle.
+		expect(planPr.resetOnCycle).toBe(true);
 		const planApproval = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
 		expect(planApproval.resetOnCycle).toBe(true);
-		const reviewVotes = wf.gates!.find((g) => g.id === 'review-votes-gate')!;
-		expect(reviewVotes.resetOnCycle).toBe(true);
 	});
 
 	// ─── Channel ID assignment ──────────────────────────────────────────────
@@ -1376,48 +1357,51 @@ describe('seedBuiltInWorkflows()', () => {
 
 	// ─── plan-approval-gate auto-approval via requiredLevel ──────────────────
 
-	test('FULL_CYCLE_CODING_WORKFLOW plan-approval-gate uses requiredLevel instead of human writer', () => {
-		const gate = FULL_CYCLE_CODING_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
-		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual([]);
-		expect(gate.requiredLevel).toBe(3);
+	test('PLAN_AND_DECOMPOSE_WORKFLOW plan-approval-gate requires four reviewer approvals', () => {
+		const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
+		const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
+		expect(approvalsField.type).toBe('map');
+		expect(approvalsField.writers).toContain('reviewer');
+		expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 	});
 
-	test('seeded plan-approval-gate preserves requiredLevel and external-only writers', () => {
+	test('seeded plan-approval-gate preserves map-count check with min=4', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
-		const approvedField = gate.fields.find((f) => f.name === 'approved')!;
-		expect(approvedField.writers).toEqual([]);
-		expect(gate.requiredLevel).toBe(3);
+		const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
+		expect(approvalsField.type).toBe('map');
+		expect(approvalsField.writers).toContain('reviewer');
+		expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
 	});
 
 	// ─── getBuiltInWorkflows ordering ────────────────────────────────────────
 
-	test('getBuiltInWorkflows returns FULL_CYCLE_CODING_WORKFLOW first', () => {
-		// FULL_CYCLE_CODING_WORKFLOW is first so spaceWorkflowRun.start (which picks
-		// workflows[0] ordered by created_at ASC) defaults to the comprehensive workflow.
+	test('getBuiltInWorkflows returns CODING_WORKFLOW first', () => {
+		// CODING_WORKFLOW is first so spaceWorkflowRun.start (which picks
+		// workflows[0] ordered by created_at ASC) defaults to the single-task
+		// coding loop. PLAN_AND_DECOMPOSE_WORKFLOW is opt-in (no `default` tag).
 		const templates = getBuiltInWorkflows();
-		expect(templates[0].name).toBe(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(templates[0].name).toBe(CODING_WORKFLOW.name);
 	});
 
-	test('listWorkflows returns FULL_CYCLE_CODING_WORKFLOW first after DB seeding', () => {
+	test('listWorkflows returns CODING_WORKFLOW first after DB seeding', () => {
 		// Verifies the DB-level ordering guarantee: listWorkflows uses
 		// ORDER BY created_at ASC, rowid ASC. When all workflows are seeded within
 		// the same millisecond, rowid (insertion order) is the tiebreaker, so
-		// FULL_CYCLE_CODING_WORKFLOW (seeded first) must be returned at index 0.
+		// CODING_WORKFLOW (seeded first) must be returned at index 0.
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows[0].name).toBe(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(workflows[0].name).toBe(CODING_WORKFLOW.name);
 	});
 
 	test('getBuiltInWorkflows returns all five templates', () => {
 		const templates = getBuiltInWorkflows();
 		expect(templates).toHaveLength(5);
 		const names = templates.map((t) => t.name);
-		expect(names).toContain(FULL_CYCLE_CODING_WORKFLOW.name);
+		expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
 		expect(names).toContain(CODING_WORKFLOW.name);
 		expect(names).toContain(FULLSTACK_QA_LOOP_WORKFLOW.name);
 		expect(names).toContain(RESEARCH_WORKFLOW.name);
@@ -1442,11 +1426,12 @@ describe('seedBuiltInWorkflows()', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		// Templates use title-case role placeholders that must resolve case-insensitively.
+		// Plan & Decompose: Planning(Planner) → Plan Review(4×Reviewer) → Task Dispatcher(General)
 		expect(wf.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
-		expect(wf.nodes[2].agents[0]?.agentId).toBe(CODER_ID);
-		expect(wf.nodes[4].agents[0]?.agentId).toBe(QA_ID);
+		expect(wf.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
+		expect(wf.nodes[2].agents[0]?.agentId).toBe(GENERAL_ID);
 	});
 
 	test('no seeded agent IDs contain template placeholder names', () => {
@@ -1510,11 +1495,11 @@ describe('seedBuiltInWorkflows()', () => {
 		expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
 		for (const node of wf.nodes) {
 			for (const agent of node.agents) {
 				expect(agent.customPrompt).toBeDefined();
@@ -1523,29 +1508,35 @@ describe('seedBuiltInWorkflows()', () => {
 		}
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW Code Review node reviewer slots have customPrompt containing slot name', () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review node reviewer slots have lens-specific customPrompt', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		const codeReviewNode = wf.nodes.find((n) => n.name === 'Code Review')!;
-		expect(codeReviewNode.agents).toHaveLength(3);
-		for (const agent of codeReviewNode.agents) {
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+		const planReviewNode = wf.nodes.find((n) => n.name === 'Plan Review')!;
+		expect(planReviewNode.agents).toHaveLength(4);
+		const seenLenses = new Set<string>();
+		for (const agent of planReviewNode.agents) {
 			expect(agent.customPrompt).toBeDefined();
 			expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
-			// Each reviewer's customPrompt should contain their specific slot name
-			expect(agent.customPrompt!.value).toContain(agent.name);
+			// Each reviewer's lens should be embedded as reviewer_name "<lens>" inside the prompt
+			for (const lens of ['architecture', 'security', 'correctness', 'ux']) {
+				if (agent.customPrompt!.value.includes(`"${lens}"`)) {
+					seenLenses.add(lens);
+				}
+			}
 		}
+		expect(seenLenses.size).toBe(4);
 	});
 
-	test('FULL_CYCLE_CODING_WORKFLOW non-Code-Review nodes have non-empty customPrompt', () => {
+	test('PLAN_AND_DECOMPOSE_WORKFLOW non-Plan-Review nodes have non-empty customPrompt', () => {
 		seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const wf = manager
 			.listWorkflows(SPACE_ID)
-			.find((w) => w.name === FULL_CYCLE_CODING_WORKFLOW.name)!;
-		const nonReviewNodes = wf.nodes.filter((n) => n.name !== 'Code Review');
-		expect(nonReviewNodes.length).toBe(4); // Planning, Plan Review, Coding, QA
-		for (const node of nonReviewNodes) {
+			.find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+		const otherNodes = wf.nodes.filter((n) => n.name !== 'Plan Review');
+		expect(otherNodes.length).toBe(2); // Planning, Task Dispatcher
+		for (const node of otherNodes) {
 			for (const agent of node.agents) {
 				expect(agent.customPrompt).toBeDefined();
 				expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
@@ -1856,42 +1847,37 @@ describe('REVIEW_ONLY_WORKFLOW agent slot customPrompt', () => {
 	});
 });
 
-describe('FULL_CYCLE_CODING_WORKFLOW agent slot customPrompt', () => {
-	test('Planning node planner has non-empty customPrompt', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
+describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
+	test('Planning node planner has non-empty customPrompt referencing plan-pr-gate', () => {
+		const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
 		const agent = node.agents[0];
 		expect(agent.customPrompt?.value).toBeDefined();
 		expect(agent.customPrompt?.value).toContain('plan-pr-gate');
 	});
 
-	test('Plan Review node reviewer has non-empty customPrompt', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-		const agent = node.agents[0];
-		expect(agent.customPrompt?.value).toBeDefined();
-		expect(agent.customPrompt?.value).toContain('plan-approval-gate');
-	});
-
-	test('Coding node coder has non-empty customPrompt', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-		const agent = node.agents[0];
-		expect(agent.customPrompt?.value).toBeDefined();
-		expect(agent.customPrompt?.value).toContain('code-pr-gate');
-	});
-
-	test('Code Review node all 3 reviewers have customPrompt with vote guidance', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Code Review')!;
-		expect(node.agents).toHaveLength(3);
+	test('Plan Review node has 4 lens-specific reviewers, each referencing plan-approval-gate and its lens', () => {
+		const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
+		expect(node.agents).toHaveLength(4);
+		const lenses = ['architecture', 'security', 'correctness', 'ux'];
+		const seenLenses: string[] = [];
 		for (const agent of node.agents) {
 			expect(agent.customPrompt?.value).toBeDefined();
-			expect(agent.customPrompt?.value).toContain('vote');
-			expect(agent.customPrompt?.value).toContain(agent.name);
+			expect(agent.customPrompt?.value).toContain('plan-approval-gate');
+			// Each reviewer's prompt references its specific lens
+			const lensForAgent = lenses.find((l) => agent.customPrompt!.value.includes(`"${l}"`));
+			expect(lensForAgent).toBeDefined();
+			seenLenses.push(lensForAgent!);
 		}
+		// All four lenses must be represented exactly once
+		expect(seenLenses.sort()).toEqual([...lenses].sort());
 	});
 
-	test('QA node has non-empty customPrompt', () => {
-		const node = FULL_CYCLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
+	test('Task Dispatcher node prompt references create_standalone_task and report_result', () => {
+		const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Task Dispatcher')!;
+		expect(node.agents).toHaveLength(1);
 		const agent = node.agents[0];
 		expect(agent.customPrompt?.value).toBeDefined();
+		expect(agent.customPrompt?.value).toContain('create_standalone_task');
 		expect(agent.customPrompt?.value).toContain('report_result');
 	});
 });

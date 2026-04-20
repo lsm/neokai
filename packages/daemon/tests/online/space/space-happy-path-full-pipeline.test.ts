@@ -1,9 +1,11 @@
 /**
  * Space Happy Path — Full Pipeline End-to-End Test
  *
- * Single end-to-end integration test that drives the entire FULL_CYCLE_CODING_WORKFLOW
- * pipeline from run start to completion, simulating every agent action via gate
- * writes rather than real LLM sessions.
+ * Single end-to-end integration test that drives the entire legacy five-node
+ * coding pipeline (TEST_FULL_CYCLE_WORKFLOW fixture) from run start to completion,
+ * simulating every agent action via gate writes rather than real LLM sessions.
+ * The fixture exercises the same gate/channel primitives still used by the
+ * current Coding, Coding with QA, and Plan & Decompose workflows.
  *
  * ## Full pipeline under test
  *
