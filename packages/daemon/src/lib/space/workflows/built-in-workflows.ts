@@ -350,7 +350,10 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * Three-node iterative graph: Coding → Review → Done (with Review↔Coding cycle).
  * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
- * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
+ * - Review → Coding: gated by `review-posted-gate` — a bash script verifies the
+ *   Reviewer has actually posted a GitHub review (via `gh pr review`) before
+ *   the changes-requested message is delivered back to Coding. Capped at 5
+ *   cycles to prevent runaway ping-pong.
  * - Review → Done: gated by `review-approval-gate` — only opens when the Reviewer
  *   explicitly writes structured approval (`{approved: true}`) via send_message.
  *   A peer chat message alone is NOT authorization. The merge completion action
