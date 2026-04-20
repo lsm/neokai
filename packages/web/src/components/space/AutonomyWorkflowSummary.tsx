@@ -85,7 +85,7 @@ export function AutonomyWorkflowSummary({
 									{wf.blockedBy.map((b, idx) => (
 										<span key={b.actionId}>
 											{idx > 0 && ', '}
-											<span class="text-gray-400">{b.nodeName}</span> (requires level{' '}
+											<span class="text-gray-400">{b.actionName}</span> (requires level{' '}
 											{b.requiredLevel})
 										</span>
 									))}

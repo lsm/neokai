@@ -101,7 +101,7 @@ describe('AutonomyWorkflowSummary', () => {
 
 		const details = getByTestId('autonomy-workflow-summary-details');
 		expect(details.textContent).toContain('Coding Workflow');
-		expect(details.textContent).toContain('Ship');
+		expect(details.textContent).toContain('Merge PR');
 		expect(details.textContent).toContain('requires level 4');
 	});
 

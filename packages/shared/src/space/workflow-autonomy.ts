@@ -54,6 +54,8 @@ export interface BlockingAction {
 	nodeName: string;
 	/** `CompletionAction.id` */
 	actionId: string;
+	/** `CompletionAction.name` — user-facing action label (e.g. "Merge PR"). */
+	actionName: string;
 	/** `CompletionAction.requiredLevel` — the minimum Space autonomy level to auto-run it. */
 	requiredLevel: number;
 }
@@ -132,6 +134,7 @@ export function countAutonomousWorkflows(
 			.map((a) => ({
 				nodeName: a.nodeName,
 				actionId: a.actionId,
+				actionName: a.actionName,
 				requiredLevel: a.requiredLevel,
 			}));
 

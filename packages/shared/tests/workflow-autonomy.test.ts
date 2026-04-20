@@ -181,6 +181,7 @@ describe('countAutonomousWorkflows', () => {
 				{
 					nodeName: 'Deploy',
 					actionId: 'h1',
+					actionName: 'Merge PR',
 					requiredLevel: 4,
 				},
 			],
@@ -218,10 +219,12 @@ describe('countAutonomousWorkflows', () => {
 		expect(atThree.blocking[0].blockedBy.map((b) => b.actionId).sort()).toEqual(['p1', 's2']);
 		expect(atThree.blocking[0].blockedBy.find((b) => b.actionId === 'p1')).toMatchObject({
 			nodeName: 'Plan',
+			actionName: 'Dispatch',
 			requiredLevel: 4,
 		});
 		expect(atThree.blocking[0].blockedBy.find((b) => b.actionId === 's2')).toMatchObject({
 			nodeName: 'Ship',
+			actionName: 'Release',
 			requiredLevel: 5,
 		});
 	});
