@@ -2232,3 +2232,87 @@ describe('node-agent-tools: async gate evaluation', () => {
 		expect(data.gateWrite).toBeUndefined();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: restore_node_agent (self-heal primitive)
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: restore_node_agent', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('returns success with session/agent identity even without onRestoreNodeAgent callback', async () => {
+		const config = makeConfig(ctx);
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.restore_node_agent({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		expect(data.sessionId).toBe(ctx.coderSessionId);
+		expect(data.agentName).toBe('coder');
+		expect(typeof data.message).toBe('string');
+		expect(data.message).toContain('node-agent MCP server is registered');
+	});
+
+	test('invokes onRestoreNodeAgent callback with the supplied reason', async () => {
+		const captured: Array<{ reason?: string }> = [];
+		const config = makeConfig(ctx, {
+			onRestoreNodeAgent: (args) => {
+				captured.push(args);
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		await handlers.restore_node_agent({ reason: 'previous send_message returned No such tool' });
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0]!.reason).toBe('previous send_message returned No such tool');
+	});
+
+	test('still returns success when the onRestoreNodeAgent callback throws', async () => {
+		const config = makeConfig(ctx, {
+			onRestoreNodeAgent: () => {
+				throw new Error('reattach failed');
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.restore_node_agent({ reason: 'diagnostic' });
+		const data = JSON.parse(result.content[0].text);
+
+		// The tool MUST report success — calling it at all proves node-agent is registered.
+		// Server-side reattach failures are logged but must not block the agent's recovery flow.
+		expect(data.success).toBe(true);
+		expect(data.sessionId).toBe(ctx.coderSessionId);
+	});
+
+	test('awaits async onRestoreNodeAgent callback before returning', async () => {
+		let resolved = false;
+		const config = makeConfig(ctx, {
+			onRestoreNodeAgent: async () => {
+				await new Promise((r) => setTimeout(r, 10));
+				resolved = true;
+			},
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		await handlers.restore_node_agent({});
+
+		expect(resolved).toBe(true);
+	});
+
+	test('createNodeAgentMcpServer registers restore_node_agent tool', () => {
+		const config = makeConfig(ctx);
+		const server = createNodeAgentMcpServer(config);
+		const registered = Object.keys(
+			(server as unknown as { instance: { _registeredTools: Record<string, unknown> } }).instance
+				._registeredTools
+		);
+		expect(registered).toContain('restore_node_agent');
+	});
+});
