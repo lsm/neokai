@@ -1,7 +1,7 @@
 # Space Autonomy & Human-in-the-Loop Gap Analysis
 
-Date: 2026-04-12  
-Last updated: 2026-04-15
+Date: 2026-04-12
+Last updated: 2026-04-20
 
 ## Architecture Summary
 
@@ -15,15 +15,22 @@ The space/task/workflow system has three orthogonal control layers:
 
 ### How Autonomy Works Today
 
-Autonomy has exactly **one policy function** — `resolveCompletionWithActions` in `space-runtime.ts` — invoked from two completion paths (the single-task and multi-node-run branches of the tick loop). Levels (1–5) decide both the terminal task status and which completion actions auto-execute:
+Autonomy has multiple enforcement surfaces across the runtime:
 
-```
-level 1:          workflow completes -> task status = 'review' (human must approve)
-level >= 2:       workflow completes -> task status = 'done' if autonomy >= every action's requiredLevel
-                                       else 'review' paused at first action whose requiredLevel exceeds autonomy
-```
+1. **`resolveCompletionWithActions`** in `space-runtime.ts` — invoked from two completion paths (the single-task and multi-node-run branches of the tick loop). Levels (1–5) decide both the terminal task status and which completion actions auto-execute:
+   ```
+   level 1:          workflow completes -> task status = 'review' (human must approve)
+   level >= 2:       workflow completes -> task status = 'done' if autonomy >= every action's requiredLevel
+                                          else 'review' paused at first action whose requiredLevel exceeds autonomy
+   ```
 
-During execution, all levels behave identically; only the terminal resolution differs.
+2. **Gate auto-approval** in `channel-router.ts` — gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` during inter-node routing (not just at completion time).
+
+3. **Agent prompt gating** in `task-agent-manager.ts` — end-node agents receive `approve_task()` tool only when `spaceLevel >= workflow.completionAutonomyLevel`; otherwise they get `submit_for_approval()` instead.
+
+4. **Three completion-action types** in `completion-action-executors.ts` — `script` (bash), `instruction` (verification agent), and `mcp_call` (tool invocation + `expect` assertions) — each with its own `requiredLevel`.
+
+Shared logic lives in `packages/shared/src/space/workflow-autonomy.ts` (`isWorkflowAutonomousAtLevel()`, `countAutonomousWorkflows()`, `EMPTY_ACTIONS_AUTONOMY_THRESHOLD = 2`).
 
 ---
 
@@ -70,11 +77,13 @@ that must guide every implementation decision in this gap list.
 
 **Status:** Implemented (completion actions + workflow templates)
 
-PR merge is now handled via two complementary mechanisms:
+PR merge is handled via two complementary mechanisms:
 - **Short workflows** (Coding, Research): `MERGE_PR_COMPLETION_ACTION` on the end node's `completionActions[]` — a script completion action (`requiredLevel: 4`) that squash-merges via `gh pr merge --squash` and syncs the worktree
-- **Long workflows** (Full-Cycle, Fullstack QA): QA node prompt includes merge + worktree sync steps (merge is part of the QA validation, not a separate node)
+- **QA-gated workflows** (Coding with QA): QA node is the end node with a `verify-pr-merged` completion action (`mcp_call` type, `requiredLevel: 2`) that double-checks the merge happened
+- **Decomposition workflow** (Plan & Decompose): End node dispatches standalone tasks via `create_standalone_task`; a `verify-tasks-created` completion action (`requiredLevel: 1`) confirms at least one task was created
 - **Completion action execution loop** in `SpaceRuntime.resolveCompletionWithActions()` — iterates actions in order, auto-executes when `space.autonomyLevel >= action.requiredLevel`, pauses task at `review` with `pendingActionIndex` otherwise
-- **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` migrated from `writers: ['human']` to `writers: ['reviewer']` + `requiredLevel: 3`
+- **Resume path** via `resumeCompletionActions()` — when a human approves a paused completion action, execution continues from `pendingActionIndex`
+- **Gate auto-approval** via `requiredLevel` on gates — `plan-approval-gate` uses `requiredLevel: 3`
 
 Remaining:
 - No gate script template for "wait for N approvals + CI green" (separate from merge logic)
@@ -144,15 +153,23 @@ Gates support `writers: ['human']` and `spaceWorkflowRun.approveGate` RPC exists
 
 ### 4. Execution-Time Autonomy Differentiation
 
-~~Semi-autonomous is identical to supervised during execution.~~ Partially addressed:
-- ✅ Gate auto-approval: gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` (channel-router)
-- ✅ Completion actions: end-node actions auto-execute or pause based on `requiredLevel` vs space level
-- ✅ Agent prompt differentiation: level ≥ 3 grants autonomous retry/reassign (space-chat-agent)
-- Autonomy-aware retry behavior (semi-autonomous retries more aggressively)
-- Autonomous decision-making at workflow branch points
+~~Semi-autonomous is identical to supervised during execution.~~ Significantly addressed:
 
-**Impact:** High — partially addressed by gate auto-approval and completion actions  
-**Effort:** High (remaining items)
+**Implemented:**
+- ✅ Gate auto-approval: gates with `requiredLevel` auto-approve when `space.autonomyLevel >= requiredLevel` (channel-router, fires during inter-node routing not just at completion)
+- ✅ Completion actions: end-node actions auto-execute or pause based on `requiredLevel` vs space level; three action types (`script`, `instruction`, `mcp_call`) each with own `requiredLevel`
+- ✅ Agent prompt gating: end-node agents receive `approve_task()` only when `spaceLevel >= workflow.completionAutonomyLevel`; otherwise get `submit_for_approval()` (task-agent-manager)
+- ✅ Agent prompt differentiation: level ≥ 3 grants autonomous retry/reassign (space-chat-agent)
+- ✅ Notification context: `SessionNotificationSink` includes `autonomyLevel` in every notification so Space Agent knows its autonomy
+- ✅ Shared autonomy logic: `workflow-autonomy.ts` provides `isWorkflowAutonomousAtLevel()`, `countAutonomousWorkflows()` used by both runtime and UI
+
+**Still missing:**
+- Autonomy-aware retry behavior (semi-autonomous retries more aggressively) — fixed retry constants regardless of level
+- Autonomous decision-making at workflow branch points (message routing is not autonomy-differentiated)
+- Per-task autonomy override
+
+**Impact:** High — core autonomy surfaces implemented, retry/routing gaps remain
+**Effort:** Medium (remaining items)
 
 ---
 
@@ -197,12 +214,17 @@ Two parallel autonomy systems exist with different capabilities:
 
 | System | Table | Check Point | Behavior |
 |--------|-------|-------------|----------|
-| Space | `spaces.autonomy_level` | Workflow task completion | Binary: review vs done |
-| Room/Goal | `goals.autonomy_level` | `submit_for_review()` | Richer: planner always needs human, coder auto-approves with `leader_semi_auto` |
+| Space | `spaces.autonomy_level` | Workflow task completion, gate auto-approval, completion actions | 5-level numeric (`1..5`) with per-action `requiredLevel` and shared `workflow-autonomy.ts` logic |
+| Room/Goal | `goals.autonomy_level` | `submit_for_review()` | Binary: `supervised` / `semi_autonomous` — planner always needs human, coder auto-approves with `leader_semi_auto` |
 
-No cross-pollination of patterns between the two systems.
+Space has been upgraded to a richer model than what the Room system offers, but there is no shared abstraction between the two. `workflow-autonomy.ts` is Space-only; Room has not been upgraded. Cross-pollination is one-directional.
 
-**Impact:** High — confusing dual systems  
+**Remaining:**
+- Shared autonomy abstraction that both Room and Space consume
+- Room upgrade from binary to multi-level
+- Unified configuration UI
+
+**Impact:** High — two divergent systems, but Space is now richer than Room
 **Effort:** High
 
 ---
@@ -259,12 +281,19 @@ Tasks can sit in `review` indefinitely:
 
 ### 10. Conditional Branching by Autonomy
 
-Workflow topology is fixed regardless of autonomy level:
-- Can't express "if supervised, route to human-review node; if semi-autonomous, skip to merge node"
-- Would need conditional node type or autonomy-aware channel routing
+~~Workflow topology is fixed regardless of autonomy level.~~ Implicit autonomy-conditional routing exists:
 
-**Impact:** Medium  
-**Effort:** High
+**Implemented (implicit):**
+- Gate `requiredLevel` + channel-router auto-approval: a gated channel auto-opens when `spaceLevel >= gate.requiredLevel`, effectively routing around the gate at higher autonomy
+- `CompletionAction.requiredLevel` on end nodes: at low autonomy the task pauses at `review` for human approval; at high autonomy it auto-completes
+- `workflow.completionAutonomyLevel`: controls which tools the end-node agent receives
+
+**Still missing:**
+- General-purpose conditional nodes ("if autonomy >= 3, take this edge; else take that edge")
+- Autonomy-aware condition evaluation in `workflow-executor.ts` (currently supports `always`, `human`, `condition`, `task_result` — none consider autonomy)
+
+**Impact:** Medium — implicit routing covers many practical cases
+**Effort:** Medium-High (remaining: general conditional nodes)
 
 ---
 
@@ -308,7 +337,7 @@ Remaining (out of scope, tracked separately):
 
 ### 13. No Dead Loop Detection in Spaces
 
-**Status:** Not implemented — *unblocked by completion-semantics rewrite*
+**Status:** Not implemented — *prerequisite landed, ready to implement*
 
 Room has `dead-loop-detector.ts` (Levenshtein similarity-based, 5-fail threshold within 5-minute window)
 that detects infinite gate bounce cycles and escalates to human. Space has nothing equivalent —
@@ -319,13 +348,14 @@ Current Space retry behavior:
 - `MAX_TASK_AGENT_CRASH_RETRIES = 2` — fixed count, no pattern analysis
 - `MAX_BLOCKED_RUN_RETRIES = 1` — fixed count
 - After exhausting retries → `blocked` with `agent_crashed` reason — but no diagnostic of *why*
+- `channel-router.ts` enforces `maxCycles` on cyclic channels, preventing infinite back-loops
+
+The completion-semantics rewrite has landed. `CompletionDetector` inspects canonical `SpaceTask` (not `NodeExecution`), supporting both `task.status` terminal states and `reportedStatus` signals. The prerequisite described below is now fully in place.
 
 Missing:
-- **Stall detection**: with the new completion model (`idle`/`cancelled` are NOT completion
-  signals; only canonical `task.status` is), the runtime can now distinguish "all nodes idle +
+- **Stall detection**: the `CompletionDetector` can now distinguish "all nodes idle +
   no pending activations + task still in_progress + no `reportedStatus`" → **stalled**, not
-  complete. Previously this state was misread as completion. See `completion-detector.ts` TODO
-  marker for the entry point.
+  complete. See `completion-detector.ts` TODO marker (lines 26–29) for the entry point.
 - Similarity detection across failure reasons (are retries hitting the same error?)
 - Escalation with diagnostic summary (what was the agent trying when it failed?)
 - Configurable thresholds per space or workflow
@@ -425,27 +455,22 @@ Missing:
 
 ### 18. Task Retry RPC
 
-**Status:** Not implemented
+**Status:** Partially implemented
 
-With the new completion-semantics rewrite, an unrecoverably blocked end-node leaves
-`task.status = 'blocked'` (with `blockReason='execution_failed'` or `'agent_crashed'`)
-and the workflow run is `blocked`. Humans/agents can already use `task.update` to mark
-the task `cancelled`, `done`, or `archived` — but there is no equivalent for "retry":
-re-spawn the end-node execution and flip the task back to `in_progress`.
+**Implemented (daemon-internal):**
+- `SpaceTaskManager.retryTask()` method — accepts taskId + optional description, transitions `blocked`→`open`, `cancelled`/`done`→`in_progress`. Documented as "daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers)."
+- Space Agent `retry_task` MCP tool — invokes `retryTask()` for the Space Agent to retry blocked tasks autonomously
+- Automatic runtime retry via `attemptBlockedRunRecovery()` — resets blocked node executions to `pending`, transitions run back to `in_progress`, emits `task_retry` notifications with attempt numbers. After `MAX_BLOCKED_RUN_RETRIES=1`, emits `workflow_run_needs_attention`.
+- Generic status transitions via `TaskStatusActions` — `blocked→open` ("Reopen"), `blocked→in_progress` ("Resume") buttons as workaround
 
-Workaround today: cancel the task and start a new workflow run from scratch. This
-discards any partial progress (other node executions, gate artifacts, send_message
-history) and forces re-planning.
+**Missing:**
+- `spaceTask.retry` RPC handler — no public API for the web client to invoke retry
+- Dedicated "Retry" UI button on `TaskBlockedBanner` (current workaround: generic status transitions)
+- Bound on retry attempts for manual/MCP retries to prevent infinite loops (overlaps with Gap #6)
 
-Missing:
-- `task.retry` RPC handler that resets blocked node executions to `pending`, clears
-  the task's blocked state, and resumes the existing workflow run
-- UI affordance on `TaskBlockedBanner` to invoke retry
-- Bound on retry attempts to prevent infinite loops (overlaps with Gap #6)
-
-**Depends on:** Gap #6 (retry semantics), Gap #13 (stall/loop detection for retry budget)  
-**Impact:** Medium — currently humans must restart workflows from scratch  
-**Effort:** Low-Medium
+**Depends on:** Gap #6 (retry semantics), Gap #13 (stall/loop detection for retry budget)
+**Impact:** Medium — daemon-internal retry works; humans lack a direct retry button
+**Effort:** Low (RPC handler + UI button only)
 
 ---
 
@@ -478,21 +503,21 @@ Future workflow authors must respect this invariant; consider it part of the
 | 2 | Approval notification/queue UI | Medium | Medium | **P1** | ✅ PR #1491 |
 | 2b | Action UI (approve/reject/resolve) | High | Medium | **P1** | ✅ PR #1493 |
 | 3 | Approval audit trail | Medium | Low | **P1** | ✅ PR #1481 |
-| 4 | Execution-time autonomy differentiation | High | High | **P2** | Partial |
+| 4 | Execution-time autonomy differentiation | High | Medium | **P2** | Partial |
 | 5 | Task dependency enforcement | Medium | Medium | **P2** | ✅ PR #1488 |
 | 6 | Tiered retry by autonomy level | Medium | Medium | **P2** | |
-| 7 | Room/Space autonomy unification | High | High | **P3** | |
+| 7 | Room/Space autonomy unification | High | High | **P3** | Partial |
 | 8 | Block reason tagging for space tasks | Low-Medium | Low | **P2** | ✅ PR #1486 |
 | 9 | Human review SLA/timeout | Low | Low | **P3** | |
-| 10 | Conditional branching by autonomy | Medium | High | **P3** | |
+| 10 | Conditional branching by autonomy | Medium | Medium-High | **P3** | Partial |
 | 11 | Runtime lifecycle controls | High | Low-Medium | **P1** | ✅ |
 | 12 | Autonomy level UI toggle | Medium | Medium | **P2** | ✅ |
-| 13 | Dead loop detection in spaces | Medium | Medium | **P2** | |
+| 13 | Dead loop detection in spaces | Medium | Medium | **P2** | Unblocked |
 | 14 | PR merge validation in spaces | High | Medium | **P1** | ✅ |
 | 15 | Unified inbox for space approvals | Medium | Low-Medium | **P2** | |
 | 16 | Multi-gate blocking ambiguity | Low | Low | **P3** | |
 | 17 | Consecutive failure escalation | Medium | Low-Medium | **P2** | |
-| 18 | Task retry RPC | Medium | Low-Medium | **P2** | |
+| 18 | Task retry RPC | Medium | Low | **P2** | Partial |
 | 19 | End-node single-agent invariant | n/a | Done | n/a | ✅ |
 
 ## Dependency Graph & Implementation Order
@@ -551,25 +576,68 @@ Gap 12 (Autonomy UI Toggle) — standalone, no dependencies
 |----|--------|---------------|
 | #1464 | Replace `done`/`report_done`/`write_gate` with `idle`/`save`/auto-gate-write | #2b (gate flow) |
 | #1496 | Workflow run artifacts — typed node outputs replacing task-level PR fields | #1 (PR auto-merge prerequisite) |
+| #1505 | Completion-semantics rewrite: canonical task status as sole completion signal, `report_result` append-only, completion action resume path | #13 (prerequisite), #14 (failure blocks task) |
+| #1516 | Autonomy-gated agent approvals: per-field writers-vs-autonomy two-path model | #4 (execution autonomy) |
+| #1517 | Workflow template drift detection + sync from template | Infrastructure |
+| #1533 | `report_result` result-only; completion pipeline sole status arbiter | #13 (prerequisite) |
+| #1537 | "X of Y workflows autonomous" on autonomy selector (`AutonomyWorkflowSummary`) | #12 (autonomy UI) |
+| #1538 | Delete orphan built-in workflows + surface template-drift duplicates | Infrastructure |
+| #1539 | Plan & Decompose workflow replaces Full-Cycle | #1 (workflow templates) |
+| #1541 | Allow communication until task is archived (node session reachability) | Infrastructure |
+| #1543 | Replace /context parsing with native SDK `getContextUsage()` | Infrastructure |
+| #1547 | `send_message_to_task` targets any workflow node (auto-spawn + activate) | Infrastructure |
+| #1551 | Background job queue + cache for artifact git ops | Infrastructure |
+| #1552 | Split `report_result` into audit/approve/submit — end reviewer-loop premature completion | #3 (audit trail), #4 (execution autonomy) |
+
+### New Files (April 16–20)
+
+| File | Purpose | Related Gap |
+|------|---------|-------------|
+| `shared/src/space/workflow-autonomy.ts` | Pure functions: `isWorkflowAutonomousAtLevel()`, `countAutonomousWorkflows()`, `EMPTY_ACTIONS_AUTONOMY_THRESHOLD` | #4, #12 |
+| `runtime/completion-action-executors.ts` | Three action types: `script` (bash), `instruction` (verification agent), `mcp_call` (tool + `expect` assertions) | #1, #4 |
+| `runtime/pending-action.ts` | Read-path enrichment: resolves `pendingAction` from workflow definition for paused tasks | #2b |
+| `tools/end-node-handlers.ts` | Design v2 end-node contract: `report_result` (audit) + `approve_task` (self-close) + `submit_for_approval` (human sign-off) | #3, #4 |
+| `runtime/session-notification-sink.ts` | Notification formatting with `autonomyLevel` context per message | #4 |
+| `space/artifact-git-ops.ts` | Centralized async git subprocess wrappers (diff, numstat, commit log) with TTL memoization | Infrastructure |
+| `storage/workflow-run-artifact-cache-repository.ts` | SQLite cache for git subprocess results keyed by `(run_id, task_id, cache_key)` | Infrastructure |
+| `storage/space-task-report-result-repository.ts` | Append-only audit log for `report_result` calls (summary, evidence, agent_name, node_id) | #3 |
+| `job-handlers/space-workflow-run-artifact.handler.ts` | Background jobs: `syncGateArtifacts`, `syncCommits`, `syncFileDiff` | Infrastructure |
+| `web/AutonomyWorkflowSummary.tsx` | "X of Y workflows autonomous" below autonomy selector | #12 |
+| `web/PendingCompletionActionBanner.tsx` | Approve/reject UI for tasks paused at completion-action checkpoint | #2b |
+| `web/PendingTaskCompletionBanner.tsx` | Approve/send-back UI for tasks paused at task-completion checkpoint | #2b |
 
 ## Key Files Reference
 
 | Component | Path |
 |-----------|------|
 | Space types | `packages/shared/src/types/space.ts` |
+| Shared autonomy logic | `packages/shared/src/space/workflow-autonomy.ts` |
 | Space runtime | `packages/daemon/src/lib/space/runtime/space-runtime.ts` |
+| Completion action executors | `packages/daemon/src/lib/space/runtime/completion-action-executors.ts` |
+| Completion detector | `packages/daemon/src/lib/space/runtime/completion-detector.ts` |
 | Gate evaluator | `packages/daemon/src/lib/space/runtime/gate-evaluator.ts` |
 | Channel router | `packages/daemon/src/lib/space/runtime/channel-router.ts` |
+| Pending action enrichment | `packages/daemon/src/lib/space/runtime/pending-action.ts` |
+| Session notification sink | `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` |
 | Task manager | `packages/daemon/src/lib/space/managers/space-task-manager.ts` |
+| End-node handlers | `packages/daemon/src/lib/space/tools/end-node-handlers.ts` |
 | Space agent tools | `packages/daemon/src/lib/space/tools/space-agent-tools.ts` |
 | Task agent tools | `packages/daemon/src/lib/space/tools/task-agent-tools.ts` |
 | Node agent tools | `packages/daemon/src/lib/space/tools/node-agent-tools.ts` |
 | Node agent tool schemas | `packages/daemon/src/lib/space/tools/node-agent-tool-schemas.ts` |
 | Workflow executor | `packages/daemon/src/lib/space/runtime/workflow-executor.ts` |
-| Session notification sink | `packages/daemon/src/lib/space/runtime/session-notification-sink.ts` |
+| Built-in workflow templates | `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` |
+| Artifact git ops | `packages/daemon/src/lib/space/artifact-git-ops.ts` |
+| Report result repository | `packages/daemon/src/storage/repositories/space-task-report-result-repository.ts` |
+| Artifact cache repository | `packages/daemon/src/storage/repositories/workflow-run-artifact-cache-repository.ts` |
 | Workflow run artifacts repo | `packages/daemon/src/storage/repositories/workflow-run-artifact-repository.ts` |
+| Artifact job handler | `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts` |
 | Space RPC handlers | `packages/daemon/src/lib/rpc-handlers/space-*.ts` |
+| Autonomy workflow summary (UI) | `packages/web/src/components/space/AutonomyWorkflowSummary.tsx` |
+| Pending completion action banner | `packages/web/src/components/space/PendingCompletionActionBanner.tsx` |
+| Pending task completion banner | `packages/web/src/components/space/PendingTaskCompletionBanner.tsx` |
 | Task blocked banner (UI) | `packages/web/src/components/space/TaskBlockedBanner.tsx` |
+| Task status actions (UI) | `packages/web/src/components/space/TaskStatusActions.tsx` |
 | Space tasks list (UI) | `packages/web/src/components/space/SpaceTasks.tsx` |
 | Gate artifacts view (UI) | `packages/web/src/components/space/GateArtifactsView.tsx` |
 | Space store | `packages/web/src/lib/space-store.ts` |
