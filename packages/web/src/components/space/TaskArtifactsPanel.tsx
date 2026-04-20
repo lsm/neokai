@@ -368,28 +368,79 @@ export function TaskArtifactsPanel({
 
 		const taskParams = taskId ? { taskId } : {};
 
-		hub
-			.request<UncommittedResult>('spaceWorkflowRun.getGateArtifacts', { runId, ...taskParams })
-			.then((r) => setUncommitted(r))
-			.catch((err: unknown) => {
-				setUncommittedError(err instanceof Error ? err.message : 'Failed to load changes');
-			})
-			.finally(() => setUncommittedLoading(false));
+		// Cancellation guard — effect reruns / component unmounts should not land
+		// state into the replaced instance.
+		let cancelled = false;
 
-		hub
-			.request<CommitsResult>('spaceWorkflowRun.getCommits', { runId, ...taskParams })
-			.then((r) => setCommitsData(r))
-			.catch((err: unknown) => {
-				setCommitsError(err instanceof Error ? err.message : 'Failed to load commits');
-			})
-			.finally(() => setCommitsLoading(false));
+		const fetchGateArtifacts = () => {
+			hub
+				.request<UncommittedResult>('spaceWorkflowRun.getGateArtifacts', { runId, ...taskParams })
+				.then((r) => {
+					if (!cancelled) setUncommitted(r);
+				})
+				.catch((err: unknown) => {
+					if (!cancelled) {
+						setUncommittedError(err instanceof Error ? err.message : 'Failed to load changes');
+					}
+				})
+				.finally(() => {
+					if (!cancelled) setUncommittedLoading(false);
+				});
+		};
+
+		const fetchCommits = () => {
+			hub
+				.request<CommitsResult>('spaceWorkflowRun.getCommits', { runId, ...taskParams })
+				.then((r) => {
+					if (!cancelled) setCommitsData(r);
+				})
+				.catch((err: unknown) => {
+					if (!cancelled) {
+						setCommitsError(err instanceof Error ? err.message : 'Failed to load commits');
+					}
+				})
+				.finally(() => {
+					if (!cancelled) setCommitsLoading(false);
+				});
+		};
+
+		fetchGateArtifacts();
+		fetchCommits();
 
 		spaceStore
 			.listArtifacts(runId)
-			.then(setArtifacts)
+			.then((result) => {
+				if (!cancelled) setArtifacts(result);
+			})
 			.catch(() => {
 				// Artifact fetch is best-effort — component works without them
 			});
+
+		// Reactively refetch when the background sync job writes a new cache row.
+		// The event carries the cacheKey so we only re-run the relevant RPC.
+		const unsubscribe = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+			runId: string;
+			taskId: string;
+			cacheKey: string;
+			status: 'ok' | 'syncing' | 'error';
+		}>('space.artifactCache.updated', (event) => {
+			if (cancelled) return;
+			if (event.runId !== runId) return;
+			// Task scope: if panel is scoped to a specific task, ignore other tasks.
+			if (taskId && event.taskId && event.taskId !== taskId) return;
+			if (event.cacheKey === 'gateArtifacts') {
+				fetchGateArtifacts();
+			} else if (event.cacheKey === 'commits') {
+				fetchCommits();
+			}
+		});
+
+		return () => {
+			cancelled = true;
+			unsubscribe();
+		};
 	}, [runId, taskId]);
 
 	// ── View routing ─────────────────────────────────────────────────────────

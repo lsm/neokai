@@ -429,6 +429,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   first (M60 rebuilt space_workflow_runs without an ON DELETE CASCADE FK, so
 	//   the migration handles the cleanup explicitly).
 	runMigration97(db);
+
+	// Migration 98: Create workflow_run_artifact_cache table for background-job-backed
+	//   caching of git-derived artifact data (gate artifacts, commits, per-file diffs).
+	//   Opening the TaskArtifactsPanel used to run three git subprocesses inline per RPC
+	//   call; those are now enqueued to the job queue and the cached result is served
+	//   synchronously from this table on subsequent opens.
+	runMigration98(db);
 }
 
 /**
@@ -6251,4 +6258,52 @@ export function runMigration95(db: BunDatabase): void {
 			`ALTER TABLE space_workflow_runs ADD COLUMN completion_actions_fired_at INTEGER DEFAULT NULL`
 		);
 	}
+}
+
+/**
+ * Migration 98: Create `workflow_run_artifact_cache` table.
+ *
+ * Caches the JSON result of the expensive git subprocess calls that power the
+ * TaskArtifactsPanel (merge-base probing, `git diff HEAD --numstat`, `git log
+ * --numstat`, and per-file diffs). Rows are keyed by
+ * `(run_id, task_id, cache_key)`; each cache_key encodes the RPC shape
+ * ("gateArtifacts", "commits", "fileDiff:<path>", "commitFileDiff:<sha>:<path>").
+ *
+ * Writes come from background job handlers in
+ * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`
+ * and from the RPC layer as a warm-cache optimisation. The handler emits a
+ * `space.artifactCache.updated` DaemonHub event after each upsert so the
+ * frontend TaskArtifactsPanel can refetch from the cache without polling.
+ *
+ * `status` tracks whether the current row is fresh data ('ok'), a best-effort
+ * placeholder while a sync is in flight ('syncing'), or a failure from the
+ * last sync attempt ('error'). `synced_at` is the wall-clock time the git
+ * command finished, used by consumers to decide whether to re-enqueue a sync.
+ */
+export function runMigration98(db: BunDatabase): void {
+	if (tableExists(db, 'workflow_run_artifact_cache')) return;
+
+	db.exec(`
+		CREATE TABLE workflow_run_artifact_cache (
+			id TEXT PRIMARY KEY NOT NULL,
+			run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL DEFAULT '',
+			cache_key TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'ok'
+				CHECK(status IN ('ok', 'syncing', 'error')),
+			data TEXT NOT NULL DEFAULT '{}',
+			error TEXT,
+			synced_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(run_id, task_id, cache_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_wrac_run_task ON workflow_run_artifact_cache(run_id, task_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_wrac_run_task_key ON workflow_run_artifact_cache(run_id, task_id, cache_key)`
+	);
 }

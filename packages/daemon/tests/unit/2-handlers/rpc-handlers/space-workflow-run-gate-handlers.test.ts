@@ -15,7 +15,7 @@
 // (it is gated on NODE_ENV !== 'production'; Bun defaults to 'production').
 process.env.NODE_ENV = 'test';
 
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
+import { describe, expect, it, mock, beforeEach, afterAll } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun } from '@neokai/shared';
 import {
@@ -33,6 +33,8 @@ import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/spac
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
 import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
+import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
 
 // ─── Mock module for execFile (async) ─────────────────────────────────────────
@@ -55,6 +57,14 @@ const mockExecFile = mock(
 );
 
 mock.module('node:child_process', () => ({ execFile: mockExecFile }));
+
+// Restore the real node:child_process after this file's tests run so the
+// mocked execFile doesn't leak into other files in the same Bun process
+// (e.g. tests/unit/2-handlers/job-handlers/space-workflow-run-artifact.handler.test.ts
+// shells out to real git and would otherwise see the stub).
+afterAll(() => {
+	mock.module('node:child_process', () => require('node:child_process'));
+});
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -269,7 +279,18 @@ describe('space-workflow-run gate handlers', () => {
 			createMockSpaceWorktreeManager(),
 			{
 				listByRun: mock(() => []),
-			} as unknown as WorkflowRunArtifactRepository
+			} as unknown as WorkflowRunArtifactRepository,
+			{
+				get: mock(() => null),
+				upsert: mock(() => ({})),
+				listByRun: mock(() => []),
+				deleteByRun: mock(() => 0),
+				deleteByRunTask: mock(() => 0),
+			} as unknown as WorkflowRunArtifactCacheRepository,
+			{
+				enqueue: mock(() => ({})),
+				listJobs: mock(() => []),
+			} as unknown as JobQueueRepository
 		);
 	}
 

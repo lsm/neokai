@@ -63,6 +63,13 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
+import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
+import { createSyncArtifactHandlers } from '../job-handlers/space-workflow-run-artifact.handler';
+import {
+	SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
+	SPACE_WORKFLOW_RUN_SYNC_COMMITS,
+	SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
+} from '../job-queue-constants';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import { setupSpaceAgentHandlers } from './space-agent-handlers';
@@ -365,6 +372,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 	const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
 	const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
+	const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
 	const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
 	const pendingMessageRepo = new PendingAgentMessageRepository(deps.db.getDatabase());
 
@@ -672,8 +680,29 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.daemonHub,
 		spaceTaskRepo,
 		spaceWorktreeManager,
-		artifactRepo
+		artifactRepo,
+		artifactCacheRepo,
+		deps.jobQueue
 	);
+
+	// Register background sync handlers that populate workflow_run_artifact_cache.
+	// The RPC handlers above (getGateArtifacts / getCommits / getFileDiff /
+	// getCommitFileDiff) now serve from this cache and enqueue a refresh job
+	// when the cache is stale or missing.
+	const artifactSyncHandlers = createSyncArtifactHandlers({
+		cacheRepo: artifactCacheRepo,
+		workflowRunRepo: spaceWorkflowRunRepo,
+		spaceTaskRepo,
+		spaceManager: deps.spaceManager,
+		spaceWorktreeManager,
+		daemonHub: deps.daemonHub,
+	});
+	deps.jobProcessor.register(
+		SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
+		artifactSyncHandlers.gateArtifacts
+	);
+	deps.jobProcessor.register(SPACE_WORKFLOW_RUN_SYNC_COMMITS, artifactSyncHandlers.commits);
+	deps.jobProcessor.register(SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF, artifactSyncHandlers.fileDiff);
 
 	// Node execution handlers
 	setupNodeExecutionHandlers(deps.messageHub, nodeExecutionRepo, spaceWorkflowRunRepo);

@@ -9,7 +9,11 @@ vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
 
 // ---- Mock connectionManager ----
 const mockRequest = vi.fn();
-const mockHub = { request: mockRequest };
+// `hub.onEvent(channel, handler)` returns an unsubscribe function. The panel
+// subscribes to `space.artifactCache.updated` on mount; the tests don't care
+// about re-renders, so a no-op stub that returns an unsubscribe is sufficient.
+const mockOnEvent = vi.fn(() => () => {});
+const mockHub = { request: mockRequest, onEvent: mockOnEvent };
 
 vi.mock('../../../lib/connection-manager', () => ({
 	connectionManager: {

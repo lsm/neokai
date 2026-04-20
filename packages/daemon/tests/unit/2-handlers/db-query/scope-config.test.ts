@@ -68,8 +68,9 @@ describe('scope-config', () => {
 				'gate_data',
 				'channel_cycles',
 				'workflow_run_artifacts',
+				'workflow_run_artifact_cache',
 			]);
-			expect(names).toHaveLength(9);
+			expect(names).toHaveLength(10);
 		});
 
 		it('all table configs have a description', () => {
