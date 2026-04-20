@@ -7,14 +7,13 @@
  * `(run_id, task_id, cache_key)` and upserted by background job handlers in
  * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`.
  *
- * Each mutation calls `reactiveDb.notifyChange('workflow_run_artifact_cache')`
- * so the matching LiveQuery (`workflowRunArtifactCache.byRun`) streams the
- * new row to the frontend without polling.
+ * The frontend learns about new rows via the `space.artifactCache.updated`
+ * DaemonHub event emitted from the job handlers — there is no LiveQuery on
+ * this table, so the repo does not notify the `ReactiveDatabase`.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 
 const log = new Logger('workflow-run-artifact-cache-repo');
@@ -47,10 +46,7 @@ export interface CacheUpsertParams {
 }
 
 export class WorkflowRunArtifactCacheRepository {
-	constructor(
-		private db: BunDatabase,
-		private reactiveDb?: ReactiveDatabase
-	) {}
+	constructor(private db: BunDatabase) {}
 
 	/**
 	 * Upsert a cache entry. On conflict (same run + task + cache_key) the data,
@@ -86,8 +82,6 @@ export class WorkflowRunArtifactCacheRepository {
 				now
 			) as Record<string, unknown>;
 
-		this.reactiveDb?.notifyChange('workflow_run_artifact_cache');
-
 		return this.rowToRecord(row)!;
 	}
 
@@ -121,9 +115,6 @@ export class WorkflowRunArtifactCacheRepository {
 		const result = this.db
 			.prepare('DELETE FROM workflow_run_artifact_cache WHERE run_id = ?')
 			.run(runId);
-		if (result.changes > 0) {
-			this.reactiveDb?.notifyChange('workflow_run_artifact_cache');
-		}
 		return result.changes;
 	}
 
@@ -135,9 +126,6 @@ export class WorkflowRunArtifactCacheRepository {
 		const result = this.db
 			.prepare('DELETE FROM workflow_run_artifact_cache WHERE run_id = ? AND task_id = ?')
 			.run(runId, taskId);
-		if (result.changes > 0) {
-			this.reactiveDb?.notifyChange('workflow_run_artifact_cache');
-		}
 		return result.changes;
 	}
 

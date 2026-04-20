@@ -1,21 +1,20 @@
 /**
  * WorkflowRunArtifactCacheRepository Tests
  *
- * Verifies CRUD semantics, JSON round-tripping, and that mutations notify
- * the ReactiveDatabase so LiveQuery subscribers get refreshed.
+ * Verifies CRUD semantics and JSON round-tripping. Frontend reactivity lives
+ * in the DaemonHub `space.artifactCache.updated` event emitted by the job
+ * handlers, not in this repo — so there is no LiveQuery/ReactiveDatabase
+ * integration to assert here.
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository';
-import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('WorkflowRunArtifactCacheRepository', () => {
 	let db: Database;
 	let repo: WorkflowRunArtifactCacheRepository;
-	let notifyChangeMock: ReturnType<typeof mock>;
-	let reactiveDb: ReactiveDatabase;
 	const spaceId = 'space-1';
 	const workflowId = 'wf-1';
 	const runId = 'run-1';
@@ -24,9 +23,7 @@ describe('WorkflowRunArtifactCacheRepository', () => {
 		db = new Database(':memory:');
 		createSpaceTables(db);
 
-		notifyChangeMock = mock(() => {});
-		reactiveDb = { notifyChange: notifyChangeMock } as unknown as ReactiveDatabase;
-		repo = new WorkflowRunArtifactCacheRepository(db, reactiveDb);
+		repo = new WorkflowRunArtifactCacheRepository(db);
 
 		const now = Date.now();
 		db.prepare(
@@ -59,11 +56,6 @@ describe('WorkflowRunArtifactCacheRepository', () => {
 			expect(rec.status).toBe('ok');
 			expect(rec.data).toEqual({ files: [{ path: 'a.ts', additions: 3, deletions: 1 }] });
 			expect(rec.syncedAt).toBeGreaterThan(0);
-		});
-
-		it('notifies the reactive db on insert', () => {
-			repo.upsert({ runId, cacheKey: 'gateArtifacts', status: 'ok', data: {} });
-			expect(notifyChangeMock).toHaveBeenCalledWith('workflow_run_artifact_cache');
 		});
 
 		it('overwrites on conflict (same run + task + cacheKey)', () => {
@@ -175,7 +167,7 @@ describe('WorkflowRunArtifactCacheRepository', () => {
 	});
 
 	describe('deleteByRun', () => {
-		it('deletes every row for the run and notifies', () => {
+		it('deletes every row for the run', () => {
 			repo.upsert({ runId, cacheKey: 'gateArtifacts', status: 'ok', data: {} });
 			repo.upsert({
 				runId,
@@ -184,20 +176,16 @@ describe('WorkflowRunArtifactCacheRepository', () => {
 				status: 'ok',
 				data: {},
 			});
-			notifyChangeMock.mockClear();
 
 			const deleted = repo.deleteByRun(runId);
 
 			expect(deleted).toBe(2);
 			expect(repo.listByRun(runId)).toEqual([]);
-			expect(notifyChangeMock).toHaveBeenCalledWith('workflow_run_artifact_cache');
 		});
 
-		it('does not notify when no rows exist', () => {
-			notifyChangeMock.mockClear();
+		it('returns 0 when no rows exist', () => {
 			const deleted = repo.deleteByRun(runId);
 			expect(deleted).toBe(0);
-			expect(notifyChangeMock).not.toHaveBeenCalled();
 		});
 	});
 

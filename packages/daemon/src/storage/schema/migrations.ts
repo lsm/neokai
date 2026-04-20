@@ -6271,9 +6271,9 @@ export function runMigration95(db: BunDatabase): void {
  *
  * Writes come from background job handlers in
  * `packages/daemon/src/lib/job-handlers/space-workflow-run-artifact.handler.ts`
- * and from the RPC layer as a warm-cache optimisation. Each upsert triggers
- * `reactiveDb.notifyChange('workflow_run_artifact_cache')` so any LiveQuery
- * subscribers receive a delta.
+ * and from the RPC layer as a warm-cache optimisation. The handler emits a
+ * `space.artifactCache.updated` DaemonHub event after each upsert so the
+ * frontend TaskArtifactsPanel can refetch from the cache without polling.
  *
  * `status` tracks whether the current row is fresh data ('ok'), a best-effort
  * placeholder while a sync is in flight ('syncing'), or a failure from the

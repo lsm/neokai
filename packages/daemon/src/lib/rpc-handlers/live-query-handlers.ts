@@ -582,42 +582,6 @@ function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * workflowRunArtifactCache.byRun — reactive stream of cached git artifact rows
- * written by the `spaceWorkflowRun.sync*` background job handlers. Each row has
- * a JSON `data` payload specific to its cacheKey (gateArtifacts, commits,
- * fileDiff:<path>, commitFileDiff:<sha>:<path>).
- */
-const WORKFLOW_RUN_ARTIFACT_CACHE_BY_RUN_SQL = `
-SELECT
-  id,
-  run_id      AS runId,
-  task_id     AS taskId,
-  cache_key   AS cacheKey,
-  status,
-  data,
-  error,
-  synced_at   AS syncedAt,
-  created_at  AS createdAt,
-  updated_at  AS updatedAt
-FROM workflow_run_artifact_cache
-WHERE run_id = ?
-ORDER BY updated_at ASC, id ASC
-`.trim();
-
-function mapArtifactCacheRow(row: Record<string, unknown>): Record<string, unknown> {
-	const raw = row.data as string | null;
-	let data: Record<string, unknown> = {};
-	if (raw) {
-		try {
-			data = JSON.parse(raw) as Record<string, unknown>;
-		} catch {
-			log.warn(`Corrupted artifact-cache JSON for id=${row.id} — returning empty data`);
-		}
-	}
-	return { ...row, data };
-}
-
-/**
  * Canonical task timeline query (no projection table):
  * - SDK messages are read directly from sdk_messages joined through session_group_members.
  * - Group/system events are read from task_group_events.
@@ -1426,14 +1390,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 			sql: WORKFLOW_RUN_ARTIFACTS_BY_RUN_SQL,
 			paramCount: 1,
 			mapRow: mapArtifactRow,
-		},
-	],
-	[
-		'workflowRunArtifactCache.byRun',
-		{
-			sql: WORKFLOW_RUN_ARTIFACT_CACHE_BY_RUN_SQL,
-			paramCount: 1,
-			mapRow: mapArtifactCacheRow,
 		},
 	],
 	[
