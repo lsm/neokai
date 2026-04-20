@@ -699,6 +699,7 @@ describe('activateWorkflowNode() — notification forwarding', () => {
 				tags: [],
 				channels: [],
 				gates: [],
+				completionAutonomyLevel: 3,
 			});
 
 			// Create a run + canonical task, then mark the run as `done`.
