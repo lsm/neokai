@@ -29,7 +29,7 @@ import type {
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
-import type { Space } from '@neokai/shared';
+import type { McpServerConfig, Session, Space } from '@neokai/shared';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -425,7 +425,184 @@ describe('SpaceRuntimeService', () => {
 			svc.start();
 			await svc.stop();
 
-			expect(unsubFn).toHaveBeenCalledTimes(1);
+			// Two subscriptions are registered: space.created and session.created.
+			expect(unsubFn).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	// ─── attachSpaceToolsToMemberSession ─────────────────────────────────────
+	//
+	// These tests cover the wider scope introduced for Task #31 Part B:
+	// every session whose `context.spaceId` is set (other than space_chat,
+	// which has its own full-prompt setup, and space_task_agent, which is
+	// managed by TaskAgentManager) should get `space-agent-tools` merged
+	// into its runtime MCP map — without touching its system prompt.
+
+	describe('attachSpaceToolsToMemberSession()', () => {
+		function makeMemberAgentSession() {
+			return {
+				mergeRuntimeMcpServers: mock((_: Record<string, McpServerConfig>) => {}),
+				setRuntimeMcpServers: mock(() => {}),
+				setRuntimeSystemPrompt: mock(() => {}),
+			} as unknown as AgentSession;
+		}
+
+		function makeSessionManager(agent: AgentSession | null): SessionManager {
+			return {
+				getSessionAsync: mock(async () => agent),
+				listSessions: mock(() => [] as Session[]),
+			} as unknown as SessionManager;
+		}
+
+		function buildMemberConfig(opts: {
+			sessionManager: SessionManager;
+			listSessionsResult?: Session[];
+			dbPath?: string;
+		}): SpaceRuntimeServiceConfig {
+			if (opts.listSessionsResult) {
+				(opts.sessionManager as unknown as { listSessions: Mock<() => Session[]> }).listSessions =
+					mock(() => opts.listSessionsResult as Session[]);
+			}
+			return {
+				db: {} as BunDatabase,
+				dbPath: opts.dbPath,
+				spaceManager: createMockSpaceManager(mockSpace),
+				spaceAgentManager: {
+					listBySpaceId: mock(() => []),
+				} as unknown as SpaceAgentManager,
+				spaceWorkflowManager: {
+					listWorkflows: mock(() => []),
+				} as unknown as SpaceWorkflowManager,
+				workflowRunRepo: {} as SpaceWorkflowRunRepository,
+				taskRepo: {} as SpaceTaskRepository,
+				tickIntervalMs: 60_000,
+				sessionManager: opts.sessionManager,
+			};
+		}
+
+		function makeMemberSession(overrides: Partial<Session> = {}): Session {
+			return {
+				id: 'worker-session-1',
+				title: 'Worker',
+				workspacePath: '/tmp/ws',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: { tools: {} },
+				metadata: {},
+				type: 'worker',
+				context: { spaceId: mockSpace.id },
+				...overrides,
+			} as unknown as Session;
+		}
+
+		test('attaches space-agent-tools to a worker session with context.spaceId', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+			const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
+			expect(mergeMock).toHaveBeenCalledTimes(1);
+			const [additional] = mergeMock.mock.calls[0];
+			expect(additional).toHaveProperty('space-agent-tools');
+			// No db-query attached when dbPath is not configured.
+			expect(additional).not.toHaveProperty('db-query');
+			// System prompt must NOT be touched on member sessions.
+			expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
+		});
+
+		test('also attaches db-query when dbPath is configured', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+
+			// db-query opens a real read-only connection, so the file must exist.
+			const dir = join(
+				process.cwd(),
+				'tmp',
+				'test-space-tools',
+				`db-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			mkdirSync(dir, { recursive: true });
+			const dbPath = join(dir, 'test.db');
+			const tmpDb = new BunDatabase(dbPath);
+			tmpDb.close();
+
+			try {
+				const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager, dbPath }));
+
+				await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+				const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
+				expect(mergeMock).toHaveBeenCalledTimes(1);
+				const [additional] = mergeMock.mock.calls[0];
+				expect(additional).toHaveProperty('space-agent-tools');
+				expect(additional).toHaveProperty('db-query');
+
+				await svc.stop();
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		test('skips sessions without context.spaceId', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await svc.attachSpaceToolsToMemberSession(
+				makeMemberSession({ context: { roomId: 'room-1' } })
+			);
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+		});
+
+		test('skips space_chat sessions (handled by setupSpaceAgentSession)', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await svc.attachSpaceToolsToMemberSession(
+				makeMemberSession({ type: 'space_chat', id: `space:chat:${mockSpace.id}` })
+			);
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+		});
+
+		test('skips space_task_agent sessions (handled by TaskAgentManager)', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+			await svc.attachSpaceToolsToMemberSession(makeMemberSession({ type: 'space_task_agent' }));
+
+			expect(agent.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+		});
+
+		test('start() attaches tools to existing member sessions listed by sessionManager', async () => {
+			const agent = makeMemberAgentSession();
+			const sessionManager = makeSessionManager(agent);
+			const listed: Session[] = [
+				makeMemberSession({ id: 'member-1' }),
+				makeMemberSession({ id: 'member-2' }),
+				// A session without spaceId — should be skipped.
+				makeMemberSession({ id: 'no-space', context: {} }),
+			];
+			const svc = new SpaceRuntimeService(
+				buildMemberConfig({ sessionManager, listSessionsResult: listed })
+			);
+
+			svc.start();
+			// Allow the provisioning microtasks to resolve.
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+			const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
+			// Exactly 2 attaches (one per member-N session). The no-space session
+			// is filtered out before getSessionAsync is consulted.
+			expect(mergeMock).toHaveBeenCalledTimes(2);
+
+			await svc.stop();
 		});
 	});
 });

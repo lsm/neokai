@@ -10,7 +10,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { McpServerConfig, Space, SpaceTask } from '@neokai/shared';
+import type { McpServerConfig, Session, Space, SpaceTask } from '@neokai/shared';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -104,6 +104,13 @@ export class SpaceRuntimeService {
 	private readonly nodeExecutionRepo: NodeExecutionRepository;
 	/** Stores db-query server instances per space for cleanup on stop. */
 	private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
+	/**
+	 * Stores db-query server instances attached to member sessions of a space
+	 * (non-space-chat sessions with `context.spaceId`). Keyed by `sessionId`.
+	 * Each entry holds the server instance so it can be closed when the daemon
+	 * stops, mirroring `spaceDbQueryServers` for the space-chat session.
+	 */
+	private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
 
 	constructor(private readonly config: SpaceRuntimeServiceConfig) {
 		// Ensure nodeExecutionRepo is available — create from db if not provided.
@@ -234,12 +241,25 @@ export class SpaceRuntimeService {
 		}
 		this.spaceDbQueryServers.clear();
 
+		// Close all member-session db-query servers as well.
+		for (const [sessionId, server] of this.memberSessionDbQueryServers) {
+			try {
+				server.close();
+			} catch (error) {
+				log.warn(`Failed to close db-query server for member session ${sessionId}:`, error);
+			}
+		}
+		this.memberSessionDbQueryServers.clear();
+
 		log.info('SpaceRuntimeService stopped');
 	}
 
 	/**
-	 * Subscribe to space.created events so newly created spaces get their chat
-	 * sessions provisioned with MCP tools and system prompt.
+	 * Subscribe to space.created and session.created events so newly created
+	 * spaces get their chat sessions provisioned with MCP tools + system
+	 * prompt, and every new session with a `context.spaceId` gets
+	 * `space-agent-tools` (and `db-query`) attached so it can coordinate with
+	 * the rest of the Space.
 	 *
 	 * Called once during start(). No-op when sessionManager or daemonHub are absent.
 	 */
@@ -257,10 +277,34 @@ export class SpaceRuntimeService {
 			{ sessionId: 'global' }
 		);
 		this.unsubscribers.push(unsubCreated);
+
+		// When any new session is created with `context.spaceId`, attach the
+		// shared Space coordination tools. The space-chat session itself is
+		// handled by `setupSpaceAgentSession` (it also sets the system prompt);
+		// the space_task_agent sessions are handled by `TaskAgentManager`
+		// (which merges `space-agent-tools` into its MCP set). This subscription
+		// covers the remaining cases: worker/coder/general/room_chat sessions
+		// that live inside a Space and need to send/receive messages via
+		// `send_message_to_agent`, inspect tasks, etc.
+		const unsubSessionCreated = daemonHub.on(
+			'session.created',
+			(event) => {
+				void this.attachSpaceToolsToMemberSession(event.session).catch((err) => {
+					log.error(
+						`Failed to attach space tools to session ${event.sessionId} (space ${event.session.context?.spaceId ?? '?'}):`,
+						err
+					);
+				});
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubSessionCreated);
 	}
 
 	/**
-	 * Provision space:chat:${spaceId} sessions for all existing spaces.
+	 * Provision space:chat:${spaceId} sessions for all existing spaces, and
+	 * attach `space-agent-tools` to every other existing session whose
+	 * `context.spaceId` is set.
 	 *
 	 * Called during start() to re-attach MCP tools and system prompts to existing
 	 * space chat sessions after a daemon restart. The sessions already exist in DB;
@@ -286,6 +330,131 @@ export class SpaceRuntimeService {
 			.catch((err) => {
 				log.error('Failed to list spaces for session provisioning:', err);
 			});
+
+		// Attach `space-agent-tools` (and, if configured, `db-query`) to every
+		// other session that already lives inside a Space. We do this on startup
+		// so a daemon restart doesn't leave pre-existing member sessions without
+		// coordination tools.
+		try {
+			const all = sessionManager.listSessions({ includeArchived: false });
+			for (const session of all) {
+				if (!session.context?.spaceId) continue;
+				void this.attachSpaceToolsToMemberSession(session).catch((err) => {
+					log.error(
+						`Failed to attach space tools to existing session ${session.id} (space ${session.context?.spaceId}):`,
+						err
+					);
+				});
+			}
+		} catch (err) {
+			log.error('Failed to iterate existing sessions for space-tool attachment:', err);
+		}
+	}
+
+	/**
+	 * Attach the shared `space-agent-tools` MCP server (and, when configured,
+	 * a space-scoped `db-query` server) to a session that lives inside a Space
+	 * but is not the Space-chat session itself.
+	 *
+	 * This widens the tool surface from "space chat session only" to "every
+	 * session in the space", so worker/coder/general/room_chat sessions
+	 * spawned inside a Space can coordinate with the rest of the Space
+	 * (e.g., `send_message_to_agent`, `list_task_members`). Permission gating
+	 * inside each tool handler (autonomyLevel checks, writer checks, etc.)
+	 * ensures widening the surface does not bypass access control.
+	 *
+	 * Explicitly skipped for:
+	 *   - `space_chat` sessions — handled by `setupSpaceAgentSession`, which
+	 *     also sets the system prompt.
+	 *   - `space_task_agent` sessions — handled by `TaskAgentManager`, which
+	 *     merges `space-agent-tools` into its own MCP map.
+	 *
+	 * Uses `mergeRuntimeMcpServers` so any previously-attached MCP servers on
+	 * the session (e.g., room tools) are preserved. The session's system
+	 * prompt is **not** touched.
+	 */
+	async attachSpaceToolsToMemberSession(session: Session): Promise<void> {
+		const { sessionManager } = this.config;
+		if (!sessionManager) return;
+		const spaceId = session.context?.spaceId;
+		if (!spaceId) return;
+
+		// Skip sessions that other owners already manage.
+		if (session.type === 'space_chat') return;
+		if (session.type === 'space_task_agent') return;
+
+		const space = await this.config.spaceManager.getSpace(spaceId);
+		if (!space) {
+			log.warn(
+				`attachSpaceToolsToMemberSession: space "${spaceId}" not found (session ${session.id})`
+			);
+			return;
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(session.id);
+		if (!agentSession) {
+			log.warn(`attachSpaceToolsToMemberSession: agent session not found for ${session.id}`);
+			return;
+		}
+
+		const spaceManagerForApproval = this.config.spaceManager;
+		const mcpServer = createSpaceAgentMcpServer({
+			spaceId: space.id,
+			runtime: this.runtime,
+			workflowManager: this.config.spaceWorkflowManager,
+			taskRepo: this.config.taskRepo,
+			nodeExecutionRepo: this.nodeExecutionRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			taskManager: new SpaceTaskManager(this.config.db, space.id, this.config.reactiveDb),
+			spaceAgentManager: this.config.spaceAgentManager,
+			taskAgentManager: this.taskAgentManager ?? undefined,
+			gateDataRepo: this.config.gateDataRepo,
+			daemonHub: this.config.daemonHub,
+			onGateChanged: (runId, gateId) => {
+				void this.notifyGateDataChanged(runId, gateId).catch(() => {});
+			},
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await spaceManagerForApproval.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
+			// Member sessions don't declare themselves as "space-agent"; they are
+			// ordinary participants in the Space. Leaving myAgentName undefined
+			// means gate writer-authorization paths that rely on matching the
+			// writer name fall through to the autonomy path, which is the
+			// correct gating behavior for non-space-agent callers.
+		});
+
+		const additional: Record<string, McpServerConfig> = {
+			'space-agent-tools': mcpServer as unknown as McpServerConfig,
+		};
+
+		if (this.config.dbPath) {
+			// Close any stale instance for this session (e.g., on re-provision
+			// after daemon restart) to avoid leaking read-only SQLite handles.
+			const existing = this.memberSessionDbQueryServers.get(session.id);
+			if (existing) {
+				try {
+					existing.close();
+				} catch (err) {
+					log.warn(`Failed to close stale db-query server for session ${session.id}:`, err);
+				}
+			}
+			const dbQueryServer = createDbQueryMcpServer({
+				dbPath: this.config.dbPath,
+				scopeType: 'space',
+				scopeValue: space.id,
+			});
+			this.memberSessionDbQueryServers.set(session.id, dbQueryServer);
+			additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
+		}
+
+		// Merge rather than replace — other subsystems (e.g., room tools) may
+		// have already attached their own MCP servers on this session.
+		agentSession.mergeRuntimeMcpServers(additional);
+
+		log.info(
+			`Attached space-agent-tools to member session ${session.id} (space ${space.id}, type ${session.type ?? 'worker'})`
+		);
 	}
 
 	/**
