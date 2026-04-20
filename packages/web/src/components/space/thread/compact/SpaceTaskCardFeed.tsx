@@ -183,7 +183,11 @@ function renderAgentBlock(
 
 			{renderAgentHeaderPill(block, isClickable, handleOpenAgentOverlay, handleHeaderKeyDown)}
 
-			<div class="pl-4 pt-0.5 space-y-1" data-testid="compact-block-body">
+			{/* Body spacing: pt-2 provides consistent breathing room below the
+			    agent pill regardless of the first block type (system:init,
+			    text, thinking, tool_use). The previous pt-0.5 left system:init
+			    cards butting directly against the pill. */}
+			<div class="pl-4 pt-2 space-y-1" data-testid="compact-block-body">
 				{block.rows.flatMap((row) => {
 					const key = String(row.id);
 					const rowNode = renderRow(row, maps, key === runningRowId);
