@@ -7,7 +7,6 @@
  * - MCP servers are NOT included in the init
  * - Model resolution: space.defaultModel → hardcoded default
  * - context includes both spaceId and taskId
- * - contextAutoQueue is false
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -229,13 +228,6 @@ describe('createTaskAgentInit', () => {
 			const config = makeConfig({ workflow: makeWorkflow() });
 			const init = createTaskAgentInit(config);
 			expect(init.mcpServers).toBeUndefined();
-		});
-	});
-
-	describe('contextAutoQueue', () => {
-		test('sets contextAutoQueue to false', () => {
-			const init = createTaskAgentInit(makeConfig());
-			expect(init.contextAutoQueue).toBe(false);
 		});
 	});
 

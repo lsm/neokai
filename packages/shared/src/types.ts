@@ -844,8 +844,34 @@ export interface ContextAPIUsage {
 }
 
 /**
- * Comprehensive context information from /context command
- * Includes model info, token usage, category breakdown, and tool statistics
+ * Per-message-type token breakdown (SDK `getContextUsage()` messageBreakdown)
+ */
+export interface ContextMessageBreakdown {
+	toolCallTokens: number;
+	toolResultTokens: number;
+	attachmentTokens: number;
+	assistantMessageTokens: number;
+	userMessageTokens: number;
+	/**
+	 * Tokens consumed by content redirected into the conversation
+	 * (e.g. sub-agent outputs). Exposed by the SDK alongside other
+	 * per-category totals.
+	 */
+	redirectedContextTokens?: number;
+	/**
+	 * Tokens the SDK couldn't attribute to any single category —
+	 * useful for detecting breakdown drift over time.
+	 */
+	unattributedTokens?: number;
+	toolCallsByType?: Array<{ name: string; callTokens: number; resultTokens: number }>;
+	attachmentsByType?: Array<{ name: string; tokens: number }>;
+}
+
+/**
+ * Comprehensive context information sourced from the Claude Agent SDK
+ * `query.getContextUsage()` call. Includes model info, token usage,
+ * category breakdown, auto-compact threshold, and optional debugging
+ * details (per-message breakdown).
  */
 export interface ContextInfo {
 	model: string | null;
@@ -857,7 +883,12 @@ export interface ContextInfo {
 	breakdown: Record<string, ContextCategoryBreakdown>;
 	// Optional additional info
 	apiUsage?: ContextAPIUsage;
+	// Auto-compaction (from SDK getContextUsage())
+	autoCompactThreshold?: number;
+	isAutoCompactEnabled?: boolean;
+	// Per-message-type breakdown for debugging heavy sessions
+	messageBreakdown?: ContextMessageBreakdown;
 	// Metadata
 	lastUpdated?: number; // Timestamp of last update
-	source?: 'stream' | 'context-command' | 'merged'; // Source of context data
+	source?: 'stream' | 'context-command' | 'sdk-get-context-usage' | 'merged'; // Source of context data
 }
