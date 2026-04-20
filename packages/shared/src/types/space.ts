@@ -1163,6 +1163,35 @@ export interface UpdateSpaceWorkflowParams {
 	templateHash?: string | null;
 }
 
+/**
+ * A single workflow row that participates in a duplicate-drift group.
+ * Part of {@link DuplicateDriftReport}.
+ */
+export interface DuplicateDriftRow {
+	/** Workflow UUID. */
+	id: string;
+	/** Canonical content hash at last sync. May be null for legacy rows. */
+	templateHash: string | null;
+	/** Creation timestamp (ms since epoch). Newest-first ordering is used for resync. */
+	createdAt: number;
+}
+
+/**
+ * One drift group surfaced by `spaceWorkflow.detectDuplicateDrift`.
+ *
+ * A drift group is formed by multiple workflow rows in the same space that
+ * share a `templateName` but carry differing `templateHash` values. These
+ * rows represent template drift — either duplicate seed passes left stale
+ * versions behind, or the source built-in template changed after some rows
+ * were seeded but before others were re-synced.
+ */
+export interface DuplicateDriftReport {
+	/** Shared `templateName` for the group. Always non-empty. */
+	templateName: string;
+	/** Workflow rows in the group, newest-first. Always >= 2 entries. */
+	rows: DuplicateDriftRow[];
+}
+
 // ============================================================================
 // Export / Import Format Types (M8)
 // ============================================================================
