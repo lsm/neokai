@@ -3,15 +3,18 @@
  *
  * Handles:
  * - Creating space tasks with dependency validation
- * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review -> archived)
+ * - Status transitions (open -> in_progress -> done/blocked/cancelled -> archived)
  * - Task assignment and progress tracking
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type {
 	SpaceTask,
 	SpaceTaskStatus,
+	SpaceBlockReason,
+	SpaceApprovalSource,
 	CreateSpaceTaskParams,
 	UpdateSpaceTaskParams,
 } from '@neokai/shared';
@@ -21,13 +24,12 @@ import type {
  * Maps current status -> allowed next statuses
  */
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
-	draft: ['pending'],
-	pending: ['in_progress', 'cancelled'],
-	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
-	review: ['completed', 'needs_attention', 'in_progress'],
-	completed: ['in_progress', 'archived'], // Reactivate or archive
-	needs_attention: ['pending', 'in_progress', 'review', 'archived'], // Restart allowed + archive
-	cancelled: ['pending', 'in_progress', 'completed', 'archived'], // Restart, complete, or archive
+	open: ['in_progress', 'blocked', 'done', 'cancelled'],
+	in_progress: ['open', 'review', 'done', 'blocked', 'cancelled'],
+	review: ['done', 'in_progress', 'cancelled', 'archived'], // Approve, reopen, cancel, or archive
+	done: ['in_progress', 'archived'], // Reactivate or archive
+	blocked: ['open', 'in_progress', 'archived'], // Restart allowed + archive
+	cancelled: ['open', 'in_progress', 'done', 'archived'], // Restart, complete, or archive
 	archived: [], // True terminal state — no going back
 };
 
@@ -43,9 +45,10 @@ export class SpaceTaskManager {
 
 	constructor(
 		private db: BunDatabase,
-		private spaceId: string
+		private spaceId: string,
+		private reactiveDb?: ReactiveDatabase
 	) {
-		this.taskRepo = new SpaceTaskRepository(db);
+		this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
 	}
 
 	/**
@@ -54,12 +57,7 @@ export class SpaceTaskManager {
 	async createTask(params: Omit<CreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
 		// Validate dependency task IDs exist in this space
 		if (params.dependsOn && params.dependsOn.length > 0) {
-			for (const depId of params.dependsOn) {
-				const dep = await this.getTask(depId);
-				if (!dep) {
-					throw new Error(`Dependency task not found in space: ${depId}`);
-				}
-			}
+			await this.validateDependencyIds(params.dependsOn);
 		}
 
 		return this.taskRepo.createTask({ ...params, spaceId: this.spaceId });
@@ -74,6 +72,13 @@ export class SpaceTaskManager {
 			return task;
 		}
 		return null;
+	}
+
+	/**
+	 * Get a task by its space-scoped numeric ID (e.g. task #5)
+	 */
+	async getTaskByNumber(taskNumber: number): Promise<SpaceTask | null> {
+		return this.taskRepo.getTaskByNumber(this.spaceId, taskNumber);
 	}
 
 	/**
@@ -103,7 +108,12 @@ export class SpaceTaskManager {
 	async setTaskStatus(
 		taskId: string,
 		newStatus: SpaceTaskStatus,
-		options?: { result?: string; error?: string }
+		options?: {
+			result?: string;
+			blockReason?: SpaceBlockReason;
+			approvalSource?: SpaceApprovalSource;
+			approvalReason?: string;
+		}
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
@@ -119,26 +129,36 @@ export class SpaceTaskManager {
 
 		const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
 
-		if (newStatus === 'completed') {
-			updates.progress = 100;
+		if (newStatus === 'done' || newStatus === 'blocked') {
 			if (options?.result) updates.result = options.result;
 		}
 
-		if (newStatus === 'needs_attention' && options?.error) {
-			updates.error = options.error;
+		// Stamp blockReason when entering blocked, clear when leaving
+		if (newStatus === 'blocked') {
+			updates.blockReason = options?.blockReason ?? null;
 		}
 
-		// Clear error/result/progress when restarting from a terminal/failed state.
-		// Covers needs_attention, cancelled, and completed → reactivation transitions.
+		// Stamp approval metadata when transitioning from review → done
+		if (task.status === 'review' && newStatus === 'done') {
+			updates.approvalSource = options?.approvalSource ?? null;
+			updates.approvalReason = options?.approvalReason ?? null;
+			updates.approvedAt = Date.now();
+		}
+
+		// Clear result when restarting or deprioritizing.
+		// Covers blocked, cancelled, done → reactivation, and in_progress → open (pause).
 		if (
-			(task.status === 'needs_attention' &&
-				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
-			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress')) ||
-			(task.status === 'completed' && newStatus === 'in_progress')
+			(task.status === 'blocked' && (newStatus === 'open' || newStatus === 'in_progress')) ||
+			(task.status === 'cancelled' && (newStatus === 'open' || newStatus === 'in_progress')) ||
+			(task.status === 'done' && newStatus === 'in_progress') ||
+			(task.status === 'in_progress' && newStatus === 'open')
 		) {
-			updates.error = null;
 			updates.result = null;
-			updates.progress = null;
+			// Clear block reason and approval metadata on reactivation
+			updates.blockReason = null;
+			updates.approvalSource = null;
+			updates.approvalReason = null;
+			updates.approvedAt = null;
 		}
 
 		const updated = this.taskRepo.updateTask(taskId, updates);
@@ -149,30 +169,7 @@ export class SpaceTaskManager {
 		return updated;
 	}
 
-	/**
-	 * Update task progress
-	 */
-	async updateTaskProgress(
-		taskId: string,
-		progress: number,
-		currentStep?: string
-	): Promise<SpaceTask> {
-		const task = await this.getTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		const updated = this.taskRepo.updateTask(taskId, {
-			progress: Math.min(100, Math.max(0, progress)),
-			currentStep,
-		});
-
-		if (!updated) {
-			throw new Error(`Failed to update task progress: ${taskId}`);
-		}
-
-		return updated;
-	}
+	// updateTaskProgress has been removed — progress tracking moved to node-level executions
 
 	/**
 	 * Start a task (mark as in_progress)
@@ -185,14 +182,21 @@ export class SpaceTaskManager {
 	 * Complete a task
 	 */
 	async completeTask(taskId: string, result: string): Promise<SpaceTask> {
-		return this.setTaskStatus(taskId, 'completed', { result });
+		return this.setTaskStatus(taskId, 'done', { result });
 	}
 
 	/**
-	 * Fail a task (mark as needs_attention)
+	 * Fail a task (mark as blocked)
 	 */
-	async failTask(taskId: string, error: string): Promise<SpaceTask> {
-		return this.setTaskStatus(taskId, 'needs_attention', { error });
+	async failTask(
+		taskId: string,
+		error?: string,
+		blockReason?: SpaceBlockReason
+	): Promise<SpaceTask> {
+		return this.setTaskStatus(taskId, 'blocked', {
+			...(error ? { result: error } : {}),
+			blockReason,
+		});
 	}
 
 	/**
@@ -214,7 +218,7 @@ export class SpaceTaskManager {
 		const result = await this.setTaskStatus(taskId, 'cancelled');
 		acc.push(result);
 
-		const pendingTasks = await this.listTasksByStatus('pending');
+		const pendingTasks = await this.listTasksByStatus('open');
 		for (const t of pendingTasks) {
 			if (t.dependsOn?.includes(taskId)) {
 				await this.doCancelCascade(t.id, acc);
@@ -222,35 +226,6 @@ export class SpaceTaskManager {
 		}
 
 		return acc;
-	}
-
-	/**
-	 * Move task to review (work done, awaiting human approval).
-	 * Validates the transition via setTaskStatus, then applies PR metadata.
-	 */
-	async reviewTask(taskId: string, prUrl?: string): Promise<SpaceTask> {
-		// setTaskStatus handles existence check, transition validation, and field clearing
-		await this.setTaskStatus(taskId, 'review');
-
-		// Apply PR metadata on top of the transition
-		const prUpdates: Parameters<SpaceTaskRepository['updateTask']>[1] = {
-			currentStep: prUrl ?? 'Awaiting review',
-			progress: 80,
-		};
-
-		if (prUrl !== undefined) {
-			prUpdates.prUrl = prUrl;
-			const match = prUrl.match(/\/pull\/(\d+)/);
-			prUpdates.prNumber = match ? parseInt(match[1], 10) : null;
-			prUpdates.prCreatedAt = Date.now();
-		}
-
-		const updated = this.taskRepo.updateTask(taskId, prUpdates);
-		if (!updated) {
-			throw new Error(`Failed to update task: ${taskId}`);
-		}
-
-		return updated;
 	}
 
 	/**
@@ -312,6 +287,11 @@ export class SpaceTaskManager {
 			throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
 		}
 
+		// Validate dependency IDs if being updated
+		if (params.dependsOn !== undefined) {
+			await this.validateDependencyIds(params.dependsOn, taskId);
+		}
+
 		// Strip status from the update params so the repo call is clean
 		const { status: _status, ...repoParams } = params;
 		const updated = this.taskRepo.updateTask(taskId, repoParams);
@@ -323,8 +303,8 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Retry a failed, cancelled, or completed task.
-	 * Completed/cancelled tasks are reactivated to in_progress; needs_attention tasks reset to pending.
+	 * Retry a failed, cancelled, or done task.
+	 * Done/cancelled tasks are reactivated to in_progress; blocked tasks reset to open.
 	 * Optionally updates the description on retry.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
@@ -335,16 +315,16 @@ export class SpaceTaskManager {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const retryableStatuses: SpaceTaskStatus[] = ['needs_attention', 'cancelled', 'completed'];
+		const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
 		if (!retryableStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot retry task in '${task.status}' status. Task must be in 'needs_attention', 'cancelled', or 'completed' status.`
+				`Cannot retry task in '${task.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`
 			);
 		}
 
-		// Transition to in_progress for completed/cancelled (reactivation), pending for needs_attention
+		// Transition to in_progress for done/cancelled (reactivation), open for blocked
 		const targetStatus: SpaceTaskStatus =
-			task.status === 'completed' || task.status === 'cancelled' ? 'in_progress' : 'pending';
+			task.status === 'done' || task.status === 'cancelled' ? 'in_progress' : 'open';
 		// Transition first — if this fails, the description is untouched (no partial state)
 		const retried = await this.setTaskStatus(taskId, targetStatus);
 
@@ -358,43 +338,30 @@ export class SpaceTaskManager {
 
 	/**
 	 * Reassign a task to a different agent.
-	 * Only allowed for tasks in 'pending', 'needs_attention', 'cancelled', or 'completed' status.
-	 * Tasks in 'in_progress', 'review', or 'draft' cannot be reassigned.
+	 * Only allowed for tasks in 'open', 'blocked', 'cancelled', or 'done' status.
 	 *
 	 * This is a daemon-internal method called by Space Agent MCP tools (not exposed via RPC handlers).
+	 * TODO: Update callers to use new status values — customAgentId/assignedAgent fields removed.
 	 */
 	async reassignTask(
 		taskId: string,
-		customAgentId: string | null | undefined,
-		assignedAgent?: 'coder' | 'general'
+		_customAgentId?: string | null,
+		_assignedAgent?: string
 	): Promise<SpaceTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const allowedStatuses: SpaceTaskStatus[] = [
-			'pending',
-			'needs_attention',
-			'cancelled',
-			'completed',
-		];
+		const allowedStatuses: SpaceTaskStatus[] = ['open', 'blocked', 'cancelled', 'done'];
 		if (!allowedStatuses.includes(task.status)) {
 			throw new Error(
-				`Cannot reassign task in '${task.status}' status. Task must be in 'pending', 'needs_attention', 'cancelled', or 'completed' status.`
+				`Cannot reassign task in '${task.status}' status. Task must be in 'open', 'blocked', 'cancelled', or 'done' status.`
 			);
 		}
 
-		const updates: UpdateSpaceTaskParams = {};
-		// Only update customAgentId when explicitly provided (undefined = leave as-is)
-		if (customAgentId !== undefined) {
-			updates.customAgentId = customAgentId;
-		}
-		if (assignedAgent !== undefined) {
-			updates.assignedAgent = assignedAgent;
-		}
-
-		return this.updateTask(taskId, updates);
+		// Agent assignment fields removed from SpaceTask — return task unchanged
+		return task;
 	}
 
 	/**
@@ -407,11 +374,100 @@ export class SpaceTaskManager {
 
 		for (const depId of task.dependsOn) {
 			const dep = await this.getTask(depId);
-			if (!dep || dep.status !== 'completed') {
+			if (!dep || dep.status !== 'done') {
 				return false;
 			}
 		}
 
 		return true;
+	}
+
+	/**
+	 * Block all open tasks that depend on the given task with 'dependency_failed'.
+	 * Recurses: if task B depends on A and task C depends on B, blocking A
+	 * cascades to both B and C.
+	 */
+	async blockDependentTasks(taskId: string): Promise<SpaceTask[]> {
+		return this.doBlockCascade(taskId, []);
+	}
+
+	private async doBlockCascade(taskId: string, acc: SpaceTask[]): Promise<SpaceTask[]> {
+		const openTasks = await this.listTasksByStatus('open');
+		for (const t of openTasks) {
+			// Skip tasks already blocked by a prior recursive path in this cascade
+			if (acc.some((a) => a.id === t.id)) continue;
+			if (t.dependsOn?.includes(taskId)) {
+				const blocked = await this.setTaskStatus(t.id, 'blocked', {
+					blockReason: 'dependency_failed',
+					result: `Dependency task ${taskId} failed or was cancelled`,
+				});
+				acc.push(blocked);
+				await this.doBlockCascade(t.id, acc);
+			}
+		}
+		return acc;
+	}
+
+	/**
+	 * Validate that dependency IDs exist in this space and don't create cycles.
+	 * @param depIds - dependency task IDs to validate
+	 * @param taskId - the task being created/updated (omit for new tasks)
+	 */
+	private async validateDependencyIds(depIds: string[], taskId?: string): Promise<void> {
+		for (const depId of depIds) {
+			if (taskId && depId === taskId) {
+				throw new Error('A task cannot depend on itself');
+			}
+			const dep = await this.getTask(depId);
+			if (!dep) {
+				throw new Error(`Dependency task not found in space: ${depId}`);
+			}
+		}
+
+		// Cycle detection: build adjacency from existing tasks + proposed deps
+		if (taskId && depIds.length > 0) {
+			const allTasks = await this.listTasks(true);
+			const adj = new Map<string, string[]>();
+			for (const t of allTasks) {
+				if (t.id === taskId) {
+					adj.set(t.id, [...depIds]); // use proposed deps
+				} else {
+					adj.set(t.id, [...(t.dependsOn ?? [])]);
+				}
+			}
+			if (this.hasCycle(adj)) {
+				throw new Error('Adding these dependencies would create a circular dependency');
+			}
+		}
+	}
+
+	/**
+	 * DFS cycle detection on a directed graph.
+	 * Returns true if any cycle exists.
+	 */
+	private hasCycle(adj: Map<string, string[]>): boolean {
+		const WHITE = 0;
+		const GRAY = 1;
+		const BLACK = 2;
+		const color = new Map<string, number>();
+		for (const id of adj.keys()) {
+			color.set(id, WHITE);
+		}
+
+		const dfs = (node: string): boolean => {
+			color.set(node, GRAY);
+			for (const neighbor of adj.get(node) ?? []) {
+				const c = color.get(neighbor);
+				if (c === GRAY) return true; // back edge → cycle
+				if (c === WHITE && dfs(neighbor)) return true;
+			}
+			color.set(node, BLACK);
+			return false;
+		};
+
+		for (const id of adj.keys()) {
+			if (color.get(id) === WHITE && dfs(id)) return true;
+		}
+		return false;
 	}
 }

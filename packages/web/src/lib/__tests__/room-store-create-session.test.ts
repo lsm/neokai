@@ -18,7 +18,6 @@ function makeMockHub() {
 			return {
 				room: { id: 'room-1', defaultPath: '/workspace', allowedPaths: [] },
 				sessions: [],
-				allTasks: [],
 			};
 		}
 		if (method === 'goal.list') return { goals: [] };

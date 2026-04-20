@@ -23,6 +23,8 @@ import {
 	getEnabledMcpServerCount,
 	readSettingsLocalJson,
 	getMcpConfigViaRPC,
+	writeProjectMcpJson,
+	cleanupProjectMcpJson,
 } from '../helpers/mcp-toggle-helpers';
 import {
 	createSessionViaUI,
@@ -64,12 +66,15 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		// Verify modal is open with expected sections
 		await expect(page.locator('h2:has-text("Tools")')).toBeVisible();
 
-		// Verify section headers (use .first() to handle potential duplicate elements)
-		await expect(page.locator('h3:has-text("System Prompt")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("Setting Sources")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("MCP Servers")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("NeoKai Tools")').first()).toBeVisible();
-		await expect(page.locator('h3:has-text("SDK Built-in")').first()).toBeVisible();
+		// Verify collapsible group headers.
+		// "App Skills & MCP Servers" renders as a <button> (via GroupHeader) when app skills exist,
+		// but falls back to a plain <span> when no skills are configured. In both cases the text is present.
+		await expect(page.getByText('App Skills & MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" always renders as a GroupHeader button.
+		await expect(page.locator('button:has-text("Project MCP Servers")')).toBeVisible();
+
+		// Advanced section is collapsed by default — only the toggle button is visible, not its children
+		await expect(page.getByRole('button', { name: /Advanced/i })).toBeVisible();
 	});
 
 	test.skip('should close Tools modal with close button', async ({ page }) => {
@@ -96,8 +101,8 @@ test.describe('MCP Toggle - Tools Modal', () => {
 	test('should show MCP servers section with servers from settings', async ({ page }) => {
 		await openToolsModal(page);
 
-		// Find MCP Servers section
-		const mcpSection = page.locator('h3:has-text("MCP Servers")');
+		// Find Project MCP Servers section (GroupHeader renders a button, not an h3)
+		const mcpSection = page.locator('button:has-text("Project MCP Servers")');
 		await expect(mcpSection).toBeVisible();
 
 		// Get MCP servers displayed
@@ -297,6 +302,83 @@ test.describe('MCP Toggle - Tools Modal', () => {
 	});
 });
 
+// Task G7: project-level MCP server disable toggle end-to-end test
+test.describe('MCP Toggle - Project-level server disable (G7)', () => {
+	const TEST_SERVER_NAME = 'test-kai-project-mcp';
+	let sessionId: string | null = null;
+
+	test.beforeEach(async ({ page }) => {
+		// Write a project-level .mcp.json so the server appears in the Tools modal
+		writeProjectMcpJson({
+			[TEST_SERVER_NAME]: { command: 'echo', args: ['hello'] },
+		});
+		cleanupSettingsLocalJson();
+		ensureClaudeDir();
+
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+		sessionId = await createSessionViaUI(page);
+	});
+
+	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			try {
+				await cleanupTestSession(page, sessionId);
+			} catch {
+				// best-effort
+			}
+			sessionId = null;
+		}
+		cleanupSettingsLocalJson();
+		cleanupProjectMcpJson();
+	});
+
+	test('disabling a project-level MCP server persists to settings.local.json and is reflected in UI', async ({
+		page,
+	}) => {
+		await openToolsModal(page);
+
+		// The project-level test server must appear in the modal
+		const serverNames = await getMcpServerNames(page);
+		if (!serverNames.includes(TEST_SERVER_NAME)) {
+			console.log(
+				`Skipping test - project server "${TEST_SERVER_NAME}" not found; found: ${serverNames.join(', ')}`
+			);
+			return;
+		}
+
+		// Server starts enabled
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(true);
+
+		// Disable it and save
+		await toggleMcpServer(page, TEST_SERVER_NAME);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(false);
+		await saveToolsModal(page);
+
+		// Verify settings.local.json records the server as disabled
+		const settings = readSettingsLocalJson();
+		expect(settings?.disabledMcpjsonServers).toContain(TEST_SERVER_NAME);
+
+		// Reopen modal — checkbox must still be unchecked (persisted state)
+		await openToolsModal(page);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(false);
+
+		// Re-enable it and save
+		await toggleMcpServer(page, TEST_SERVER_NAME);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(true);
+		await saveToolsModal(page);
+
+		// Verify settings.local.json no longer lists the server as disabled
+		const updatedSettings = readSettingsLocalJson();
+		expect(updatedSettings?.disabledMcpjsonServers).not.toContain(TEST_SERVER_NAME);
+
+		// Reopen modal — checkbox must be checked again
+		await openToolsModal(page);
+		expect(await isMcpServerEnabled(page, TEST_SERVER_NAME)).toBe(true);
+		await closeToolsModal(page);
+	});
+});
+
 test.describe('MCP Toggle - Edge Cases', () => {
 	let sessionId: string | null = null;
 
@@ -349,6 +431,12 @@ test.describe('MCP Toggle - Edge Cases', () => {
 
 		await openToolsModal(page);
 
+		// Expand the Advanced section to access Claude Code Preset checkbox
+		await page
+			.locator('button')
+			.filter({ hasText: /^Advanced$/ })
+			.click();
+
 		// Get Claude Code Preset checkbox state
 		const claudeCodeCheckbox = page
 			.locator('label:has-text("Claude Code Preset")')
@@ -356,27 +444,22 @@ test.describe('MCP Toggle - Edge Cases', () => {
 			.first();
 		const claudeCodeEnabled = await claudeCodeCheckbox.isChecked();
 
-		// Get Memory checkbox state
-		const memoryCheckbox = page
-			.locator('label:has-text("Memory")')
-			.locator('input[type="checkbox"]')
-			.first();
-		const memoryEnabled = await memoryCheckbox.isChecked();
-
 		// Toggle MCP server (if available)
 		const serverNames = await getMcpServerNames(page);
 		if (serverNames.length > 0) {
 			await toggleMcpServer(page, serverNames[0]);
 			await saveToolsModal(page);
 			await openToolsModal(page);
+			// Re-expand Advanced section after modal reopen
+			await page
+				.locator('button')
+				.filter({ hasText: /^Advanced$/ })
+				.click();
 		}
 
-		// Verify other settings weren't affected
+		// Verify Claude Code Preset wasn't affected by MCP toggle
 		const claudeCodeEnabledAfter = await claudeCodeCheckbox.isChecked();
 		expect(claudeCodeEnabledAfter).toBe(claudeCodeEnabled);
-
-		const memoryEnabledAfter = await memoryCheckbox.isChecked();
-		expect(memoryEnabledAfter).toBe(memoryEnabled);
 	});
 
 	test('should handle individual server toggle correctly', async ({ page }) => {

@@ -17,6 +17,16 @@ export default defineConfig({
 			input: {
 				main: resolve(__dirname, 'src/index.html'),
 			},
+			output: {
+				manualChunks(id) {
+					if (id.includes('node_modules/marked')) {
+						return 'vendor-marked';
+					}
+					if (id.includes('node_modules/highlight.js')) {
+						return 'vendor-hljs';
+					}
+				},
+			},
 		},
 	},
 
@@ -27,7 +37,13 @@ export default defineConfig({
 		port: 9283,
 		strictPort: true,
 		host: true,
-		allowedHosts: ['localhost', '127.0.0.1', 'ai0.tailcd822a.ts.net', 'tts.tailcd822a.ts.net'],
+		allowedHosts: [
+			'localhost',
+			'127.0.0.1',
+			'ai0.tailcd822a.ts.net',
+			'tts.tailcd822a.ts.net',
+			'tts',
+		],
 		hmr: {
 			overlay: true,
 			protocol: 'ws',
@@ -82,6 +98,14 @@ export default defineConfig({
 			{
 				find: '@neokai/shared',
 				replacement: resolve(__dirname, '../shared/src/mod.ts'),
+			},
+			{
+				find: /^@neokai\/ui\/(.+)$/,
+				replacement: resolve(__dirname, '../ui/src/$1'),
+			},
+			{
+				find: '@neokai/ui',
+				replacement: resolve(__dirname, '../ui/src/mod.ts'),
 			},
 		],
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],

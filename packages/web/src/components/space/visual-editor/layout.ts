@@ -1,14 +1,16 @@
 /**
- * DAG auto-layout algorithm for the workflow visual editor.
+ * Workflow auto-layout for the visual editor.
  *
- * Performs a layered layout (Sugiyama-style, simplified):
- * 1. Topological sort starting from startStepId following transitions
- * 2. Layer assignment: each node's layer = max(predecessor layers) + 1
- * 3. Horizontal spacing within each layer with centering
- * 4. Orphaned nodes (unreachable from start) are appended below the main graph
+ * The layout is driven by workflow semantics rather than a simple vertical chain:
+ * - workflow channels are resolved into node-to-node relations
+ * - backward / feedback edges are ignored for rank placement by orienting edges
+ *   using the workflow node order
+ * - reviewer-oriented nodes are biased into a side lane so the graph uses
+ *   horizontal space to make relationships clearer by default
  */
 
-import type { WorkflowStep, WorkflowTransition } from '@neokai/shared';
+import type { WorkflowChannel, WorkflowNode } from '@neokai/shared';
+import type { VisualTransition } from './types';
 
 /** A 2D point in canvas coordinates */
 export interface Point {
@@ -16,178 +18,200 @@ export interface Point {
 	y: number;
 }
 
-/** Horizontal gap between nodes in the same layer */
 const H_GAP = 250;
-/** Vertical gap between layers */
-const V_GAP = 150;
-/** Starting y offset for the first layer */
-const START_Y = 50;
-/** Starting x offset for centering calculations */
-const START_X = 50;
+const V_GAP = 170;
+const START_X = 80;
+const START_Y = 96;
 
-/**
- * Compute auto-layout positions for all steps in a workflow.
- *
- * @param steps - All workflow steps (nodes)
- * @param transitions - All workflow transitions (directed edges)
- * @param startStepId - The entry-point step ID
- * @returns A map from step ID to canvas Point {x, y}
- */
-export function autoLayout(
-	steps: WorkflowStep[],
-	transitions: WorkflowTransition[],
-	startStepId: string
-): Map<string, Point> {
-	if (steps.length === 0) {
-		return new Map();
+interface LayoutEdge {
+	from: string;
+	to: string;
+}
+
+function buildEndpointNodeLookup(nodes: WorkflowNode[]): Map<string, string> {
+	const lookup = new Map<string, string>();
+
+	for (const node of nodes) {
+		if (node.name) lookup.set(node.name, node.id);
+
+		for (const agent of node.agents) {
+			if (agent.name) lookup.set(agent.name, node.id);
+			if (agent.agentId) lookup.set(agent.agentId, node.id);
+		}
 	}
 
-	const stepIds = new Set(steps.map((s) => s.id));
+	return lookup;
+}
 
-	// Build adjacency: successors and predecessors
+function buildForwardLayoutEdges(
+	nodes: WorkflowNode[],
+	transitions: VisualTransition[],
+	channels: WorkflowChannel[]
+): LayoutEdge[] {
+	const order = new Map(nodes.map((node, index) => [node.id, index]));
+	const endpointLookup = buildEndpointNodeLookup(nodes);
+	const edges = new Map<string, LayoutEdge>();
+
+	const addEdge = (from: string, to: string) => {
+		if (from === to) return;
+		if (!order.has(from) || !order.has(to)) return;
+
+		const fromOrder = order.get(from)!;
+		const toOrder = order.get(to)!;
+		if (fromOrder === toOrder) return;
+
+		const orientedFrom = fromOrder < toOrder ? from : to;
+		const orientedTo = fromOrder < toOrder ? to : from;
+		edges.set(`${orientedFrom}:${orientedTo}`, { from: orientedFrom, to: orientedTo });
+	};
+
+	for (const transition of transitions) {
+		addEdge(transition.from, transition.to);
+	}
+
+	for (const channel of channels) {
+		if (channel.from === 'task-agent' || channel.from === '*') continue;
+		const fromNodeId = endpointLookup.get(channel.from);
+		if (!fromNodeId) continue;
+
+		const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+		for (const target of targets) {
+			if (target === 'task-agent' || target === '*') continue;
+			const toNodeId = endpointLookup.get(target);
+			if (!toNodeId) continue;
+			addEdge(fromNodeId, toNodeId);
+		}
+	}
+
+	return Array.from(edges.values());
+}
+
+function isReviewerLaneNode(node: WorkflowNode): boolean {
+	if (/review/i.test(node.name)) return true;
+	if (node.agents && node.agents.length > 0) {
+		return node.agents.every((agent) => /review/i.test(agent.name ?? ''));
+	}
+	return false;
+}
+
+function findNearestOpenLane(occupiedLanes: Set<number>, desiredLane: number): number {
+	if (!occupiedLanes.has(desiredLane)) return desiredLane;
+	for (let distance = 1; distance < 12; distance += 1) {
+		const right = desiredLane + distance;
+		if (!occupiedLanes.has(right)) return right;
+		const left = desiredLane - distance;
+		if (!occupiedLanes.has(left)) return left;
+	}
+	return desiredLane + occupiedLanes.size;
+}
+
+export function autoLayout(
+	nodes: WorkflowNode[],
+	transitions: VisualTransition[],
+	startNodeId: string,
+	channels: WorkflowChannel[] = []
+): Map<string, Point> {
+	const positions = new Map<string, Point>();
+	if (nodes.length === 0) return positions;
+
+	const stepIds = new Set(nodes.map((node) => node.id));
+	const order = new Map(nodes.map((node, index) => [node.id, index]));
+	const forwardEdges = buildForwardLayoutEdges(nodes, transitions, channels);
+
 	const successors = new Map<string, string[]>();
 	const predecessors = new Map<string, string[]>();
-	for (const s of steps) {
-		successors.set(s.id, []);
-		predecessors.set(s.id, []);
+	for (const node of nodes) {
+		successors.set(node.id, []);
+		predecessors.set(node.id, []);
 	}
-	for (const t of transitions) {
-		if (!stepIds.has(t.from) || !stepIds.has(t.to)) continue;
-		successors.get(t.from)!.push(t.to);
-		predecessors.get(t.to)!.push(t.from);
+	for (const edge of forwardEdges) {
+		if (!stepIds.has(edge.from) || !stepIds.has(edge.to)) continue;
+		successors.get(edge.from)!.push(edge.to);
+		predecessors.get(edge.to)!.push(edge.from);
 	}
 
-	// ------------------------------------------------------------------
-	// Phase 1: BFS/topological reachability from startStepId
-	// We use Kahn's algorithm on the reachable subgraph to assign layers.
-	// Cycle edges are broken by tracking visited nodes.
-	// ------------------------------------------------------------------
 	const reachable = new Set<string>();
-	const bfsQueue: string[] = [];
-
-	if (stepIds.has(startStepId)) {
-		bfsQueue.push(startStepId);
-		reachable.add(startStepId);
+	const queue: string[] = [];
+	if (stepIds.has(startNodeId)) {
+		reachable.add(startNodeId);
+		queue.push(startNodeId);
 	}
 
-	while (bfsQueue.length > 0) {
-		const current = bfsQueue.shift()!;
+	while (queue.length > 0) {
+		const current = queue.shift()!;
 		for (const next of successors.get(current) ?? []) {
-			if (!reachable.has(next)) {
-				reachable.add(next);
-				bfsQueue.push(next);
-			}
+			if (reachable.has(next)) continue;
+			reachable.add(next);
+			queue.push(next);
 		}
 	}
 
-	// ------------------------------------------------------------------
-	// Phase 2: Layer assignment via longest-path (critical-path) layering.
-	// For each reachable node, layer = max(predecessor layers) + 1.
-	// We process in topological order using Kahn's algorithm; cycle edges
-	// are skipped (the target keeps its already-computed layer).
-	// ------------------------------------------------------------------
-	const layer = new Map<string, number>();
+	const depth = new Map<string, number>();
 	const inDegree = new Map<string, number>();
-
-	// Only consider edges within the reachable set
 	for (const id of reachable) {
-		let deg = 0;
+		let degree = 0;
 		for (const pred of predecessors.get(id) ?? []) {
-			if (reachable.has(pred)) deg++;
+			if (reachable.has(pred)) degree += 1;
 		}
-		inDegree.set(id, deg);
+		inDegree.set(id, degree);
+		if (degree === 0) depth.set(id, 0);
 	}
 
-	// Kahn's queue — start with nodes that have no reachable predecessors
-	const topoQueue: string[] = [];
-	for (const id of reachable) {
-		if (inDegree.get(id) === 0) {
-			topoQueue.push(id);
-			layer.set(id, 0);
-		}
-	}
+	const topo = Array.from(reachable).filter((id) => (inDegree.get(id) ?? 0) === 0);
+	topo.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
 
-	while (topoQueue.length > 0) {
-		const current = topoQueue.shift()!;
-		const currentLayer = layer.get(current) ?? 0;
+	while (topo.length > 0) {
+		const current = topo.shift()!;
+		const currentDepth = depth.get(current) ?? 0;
 		for (const next of successors.get(current) ?? []) {
 			if (!reachable.has(next)) continue;
-			const nextLayer = Math.max(layer.get(next) ?? 0, currentLayer + 1);
-			layer.set(next, nextLayer);
+			depth.set(next, Math.max(depth.get(next) ?? 0, currentDepth + 1));
 			const remaining = (inDegree.get(next) ?? 1) - 1;
 			inDegree.set(next, remaining);
-			if (remaining === 0) {
-				topoQueue.push(next);
-			}
+			if (remaining === 0) topo.push(next);
+		}
+		topo.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+	}
+
+	const maxAssignedDepth = depth.size > 0 ? Math.max(...depth.values()) : 0;
+	let orphanDepth = maxAssignedDepth + 1;
+	for (const node of nodes) {
+		if (!depth.has(node.id)) {
+			depth.set(node.id, orphanDepth);
 		}
 	}
 
-	// Nodes still in the reachable set but not yet processed (cycle members)
-	// assign them after the last assigned layer.
-	const maxAssignedLayer = layer.size > 0 ? Math.max(...layer.values()) : -1;
-	let cycleLayer = maxAssignedLayer + 1;
-	for (const id of reachable) {
-		if (!layer.has(id)) {
-			layer.set(id, cycleLayer++);
+	const occupiedByDepth = new Map<number, Set<number>>();
+	const laneById = new Map<string, number>();
+
+	for (const node of nodes) {
+		const nodeDepth = depth.get(node.id) ?? orphanDepth;
+		const occupied = occupiedByDepth.get(nodeDepth) ?? new Set<number>();
+		occupiedByDepth.set(nodeDepth, occupied);
+
+		let desiredLane = isReviewerLaneNode(node) ? 1 : 0;
+		const preds = (predecessors.get(node.id) ?? []).filter((pred) => laneById.has(pred));
+		if (!isReviewerLaneNode(node) && preds.length > 0) {
+			const avgPredLane =
+				preds.reduce((sum, pred) => sum + (laneById.get(pred) ?? 0), 0) / preds.length;
+			desiredLane = Math.round(avgPredLane * 0.35);
 		}
+
+		const lane = findNearestOpenLane(occupied, desiredLane);
+		occupied.add(lane);
+		laneById.set(node.id, lane);
 	}
 
-	// ------------------------------------------------------------------
-	// Phase 3: Group nodes by layer
-	// ------------------------------------------------------------------
-	const layerGroups = new Map<number, string[]>();
-	for (const [id, l] of layer.entries()) {
-		if (!layerGroups.has(l)) layerGroups.set(l, []);
-		layerGroups.get(l)!.push(id);
-	}
+	const usedLanes = Array.from(laneById.values());
+	const minLane = usedLanes.length > 0 ? Math.min(...usedLanes) : 0;
 
-	// Sort within each layer by step order in the original array for stability
-	const stepOrder = new Map<string, number>(steps.map((s, i) => [s.id, i]));
-	for (const group of layerGroups.values()) {
-		group.sort((a, b) => (stepOrder.get(a) ?? 0) - (stepOrder.get(b) ?? 0));
-	}
-
-	// ------------------------------------------------------------------
-	// Phase 4: Collect orphaned nodes (unreachable from start)
-	// ------------------------------------------------------------------
-	const orphans = steps.filter((s) => !reachable.has(s.id)).map((s) => s.id);
-	orphans.sort((a, b) => (stepOrder.get(a) ?? 0) - (stepOrder.get(b) ?? 0));
-
-	// Determine the widest layer for centering
-	const maxLayerWidth = Math.max(
-		...[...layerGroups.values()].map((g) => g.length),
-		orphans.length,
-		1
-	);
-
-	// ------------------------------------------------------------------
-	// Phase 5: Assign x/y coordinates
-	// ------------------------------------------------------------------
-	const positions = new Map<string, Point>();
-
-	const sortedLayers = [...layerGroups.keys()].sort((a, b) => a - b);
-
-	for (const l of sortedLayers) {
-		const group = layerGroups.get(l)!;
-		const y = START_Y + l * V_GAP;
-		const totalWidth = (group.length - 1) * H_GAP;
-		const maxWidth = (maxLayerWidth - 1) * H_GAP;
-		const xStart = START_X + (maxWidth - totalWidth) / 2;
-		for (let i = 0; i < group.length; i++) {
-			positions.set(group[i], { x: xStart + i * H_GAP, y });
-		}
-	}
-
-	// Place orphans below all reachable layers
-	if (orphans.length > 0) {
-		const orphanLayer = sortedLayers.length;
-		const y = START_Y + orphanLayer * V_GAP;
-		const totalWidth = (orphans.length - 1) * H_GAP;
-		const maxWidth = (maxLayerWidth - 1) * H_GAP;
-		const xStart = START_X + (maxWidth - totalWidth) / 2;
-		for (let i = 0; i < orphans.length; i++) {
-			positions.set(orphans[i], { x: xStart + i * H_GAP, y });
-		}
+	for (const node of nodes) {
+		const nodeDepth = depth.get(node.id) ?? 0;
+		const lane = laneById.get(node.id) ?? 0;
+		positions.set(node.id, {
+			x: START_X + (lane - minLane) * H_GAP,
+			y: START_Y + nodeDepth * V_GAP,
+		});
 	}
 
 	return positions;

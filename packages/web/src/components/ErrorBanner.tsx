@@ -32,7 +32,7 @@ export function ErrorBanner({
 	return (
 		<div
 			data-testid="error-banner"
-			class={`flex-shrink-0 bg-red-500/10 border-t ${borderColors.special.toast.error} px-4 py-3`}
+			class={`flex-shrink-0 bg-dark-900 border-t ${borderColors.special.toast.error} px-4 py-3`}
 		>
 			<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between gap-4">
 				<p class="text-sm text-red-400 flex-1">{error}</p>

@@ -1,37 +1,46 @@
 /**
  * Space Agent Tools — MCP tools for the Space leader agent session.
  *
- * These tools allow the Space agent to start workflow runs, check status,
- * change plans, and query Space tasks. They are in the Space namespace (not Room).
+ * These tools allow the Space agent to inspect workflows, manage existing
+ * workflow runs, and create/query Space tasks. They are in the Space namespace
+ * (not Room).
  *
  * Tools (per M7 spec):
  *   list_workflows      — show all workflows with their descriptions and steps
- *   start_workflow_run  — begin a workflow run (requires explicit workflowId)
  *   get_workflow_run    — check the status of a running workflow
  *   change_plan         — update task description or switch to a different workflow mid-run
  *   list_tasks          — see current and past tasks
  *   get_workflow_detail — get a specific workflow's full definition (steps, transitions, rules)
  *   suggest_workflow    — get workflow recommendations for a described piece of work
  *
- * Design note: workflow selection is LLM-driven. The agent calls list_workflows,
- * reasons about which workflow fits the request, then calls start_workflow_run
- * with an explicit workflowId. There are no server-side heuristics.
+ * Design note: workflow selection is LLM-driven and task-first. The agent uses
+ * workflow discovery tools to reason about orchestration, then creates a task.
+ * Runtime attaches and advances workflow execution from the task lifecycle.
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { SpaceTaskStatus, SpaceTaskPriority, SpaceTaskType } from '@neokai/shared';
+import type { SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
+import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import { jsonResult, SUGGEST_WORKFLOW_STOP_WORDS } from './tool-result';
+import type { DaemonHub } from '../../daemon-hub';
+import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
+import { canTransition } from '../runtime/workflow-run-status-machine';
+import { enrichTaskWithPendingAction } from '../runtime/pending-action';
+
+function normalizeAgentNameToken(value: string): string {
+	return value.trim().toLowerCase();
+}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -46,6 +55,8 @@ export interface SpaceAgentToolsConfig {
 	workflowManager: SpaceWorkflowManager;
 	/** Task repository for read queries (list/filter). */
 	taskRepo: SpaceTaskRepository;
+	/** Node execution repository for workflow run node execution queries. */
+	nodeExecutionRepo: NodeExecutionRepository;
 	/** Workflow run repository for listing and updating runs. */
 	workflowRunRepo: SpaceWorkflowRunRepository;
 	/** Task manager for create/retry/cancel/reassign operations. */
@@ -53,10 +64,33 @@ export interface SpaceAgentToolsConfig {
 	/** Space agent manager for reassign validation. */
 	spaceAgentManager: SpaceAgentManager;
 	/**
-	 * Task Agent Manager for injecting messages into Task Agent sessions.
-	 * Optional — when not provided, send_message_to_task returns an error.
+	 * Task Agent Manager for injecting messages into running task agent sessions.
+	 * When provided, enables the `send_message_to_task` and `list_task_members` tools.
 	 */
-	taskAgentManager?: TaskAgentManager | null;
+	taskAgentManager?: TaskAgentManager;
+	/** Gate data repository for approve_gate tool. */
+	gateDataRepo?: GateDataRepository;
+	/** DaemonHub for emitting gate/task events. */
+	daemonHub?: DaemonHub;
+	/** Callback to trigger channel re-evaluation after gate data changes. */
+	onGateChanged?: (runId: string, gateId: string) => void;
+	/**
+	 * Resolves the space's current autonomy level.
+	 * Required for approve_gate autonomy enforcement: agent approvals are rejected
+	 * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+	 */
+	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
+	/**
+	 * The calling agent's name (e.g., 'space-agent'). Used for gate writer authorization
+	 * in approve_gate: the writers path is taken only when writers include this name or '*'.
+	 * When omitted, only '*' in writers can match (falls back to autonomy path otherwise).
+	 */
+	myAgentName?: string;
+	/**
+	 * Optional name aliases for the calling agent. Checked alongside myAgentName during
+	 * writer authorization.
+	 */
+	myAgentNameAliases?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -73,11 +107,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		runtime,
 		workflowManager,
 		taskRepo,
+		nodeExecutionRepo,
 		workflowRunRepo,
 		taskManager,
 		spaceAgentManager,
 		taskAgentManager,
+		gateDataRepo,
+		daemonHub,
+		onGateChanged,
+		getSpaceAutonomyLevel,
+		myAgentName,
+		myAgentNameAliases,
 	} = config;
+
+	const agentNameAliases = new Set(
+		[myAgentName, ...(myAgentNameAliases ?? [])]
+			.filter((v): v is string => typeof v === 'string')
+			.map((v) => normalizeAgentNameToken(v))
+			.filter((v) => v.length > 0)
+	);
 
 	return {
 		/**
@@ -90,31 +138,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Start a new workflow run with an explicit workflowId.
-		 * The agent must call list_workflows first and pick the right workflow.
-		 */
-		async start_workflow_run(args: {
-			workflow_id: string;
-			title: string;
-			description?: string;
-			goal_id?: string;
-		}): Promise<ToolResult> {
-			try {
-				const { run, tasks } = await runtime.startWorkflowRun(
-					spaceId,
-					args.workflow_id,
-					args.title,
-					args.description,
-					args.goal_id
-				);
-				return jsonResult({ success: true, run, tasks });
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
-		},
-
-		/**
 		 * Get the current status of a workflow run, including its current step.
 		 */
 		async get_workflow_run(args: { run_id: string }): Promise<ToolResult> {
@@ -123,19 +146,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
-			// Include current step info if available
-			let currentStep = null;
-			if (run.currentStepId) {
-				const workflow = workflowManager.getWorkflow(run.workflowId);
-				if (workflow) {
-					currentStep = workflow.steps.find((s) => s.id === run.currentStepId) ?? null;
-				}
-			}
+			// Include node executions for this run
+			const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
 
-			// Include tasks for this run
-			const tasks = taskRepo.listByWorkflowRun(run.id);
-
-			return jsonResult({ success: true, run, currentStep, tasks });
+			return jsonResult({ success: true, run, executions });
 		},
 
 		/**
@@ -156,7 +170,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
 			}
 
-			if (run.status === 'completed' || run.status === 'cancelled') {
+			if (run.status === 'done' || run.status === 'cancelled') {
 				return jsonResult({
 					success: false,
 					error: `Cannot change plan for a ${run.status} run.`,
@@ -174,7 +188,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					});
 				}
 
-				workflowRunRepo.updateStatus(run.id, 'cancelled');
+				workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
 				try {
 					const newDescription = args.description ?? run.description;
@@ -182,8 +196,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 						spaceId,
 						args.workflow_id,
 						run.title,
-						newDescription,
-						run.goalId
+						newDescription
 					);
 					return jsonResult({
 						success: true,
@@ -224,17 +237,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Suggest workflows that best match a description of the intended work.
+		 * Return all workflows in the space so the Space Agent LLM can pick one.
 		 *
-		 * Performs a case-insensitive keyword search over workflow names, descriptions,
-		 * and tags. Always returns ALL available workflows, sorted by relevance
-		 * (number of keyword hits descending). When no keywords match, all workflows
-		 * are returned in creation order.
+		 * Previously this tool did keyword pre-ranking, but that could bias the
+		 * LLM toward a substring-overlap pick (e.g. a "review feedback" task
+		 * always surfacing a "review" workflow first). Selection is fully
+		 * LLM-driven, so we just expose the full catalogue and let the caller
+		 * reason over it.
 		 *
-		 * Selection is still LLM-driven: the agent should use this to rank candidates
-		 * and then call start_workflow_run with an explicit workflow_id.
+		 * The `description` argument is retained for forward compatibility and
+		 * call-site clarity, but is not used by the handler. Callers can still
+		 * read it from structured tool logs for observability.
 		 */
-		async suggest_workflow(args: { description: string }): Promise<ToolResult> {
+		async suggest_workflow(_args: { description: string }): Promise<ToolResult> {
 			const allWorkflows = workflowManager.listWorkflows(spaceId);
 			if (allWorkflows.length === 0) {
 				return jsonResult({
@@ -243,50 +258,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					message: 'No workflows available in this space.',
 				});
 			}
-
-			// Extract meaningful keywords (3+ chars, skip stop words)
-			const keywords = args.description
-				.toLowerCase()
-				.split(/\W+/)
-				.filter((w) => w.length >= 3 && !SUGGEST_WORKFLOW_STOP_WORDS.has(w));
-
-			if (keywords.length === 0) {
-				// No meaningful keywords — return all in creation order
-				return jsonResult({ success: true, workflows: allWorkflows });
-			}
-
-			// Score each workflow by number of keyword hits; return all sorted by score
-			const scored = allWorkflows.map((wf) => {
-				const haystack = [wf.name, wf.description ?? '', ...(wf.tags ?? [])]
-					.join(' ')
-					.toLowerCase();
-				const hits = keywords.filter((kw) => haystack.includes(kw)).length;
-				return { workflow: wf, hits };
-			});
-
-			const anyHits = scored.some((s) => s.hits > 0);
-			if (!anyHits) {
-				// No keyword matches — return all so LLM can still reason
-				return jsonResult({
-					success: true,
-					workflows: allWorkflows,
-					message: 'No direct keyword matches found; returning all workflows for LLM selection.',
-				});
-			}
-
-			// Stable sort descending by hits; 0-hit workflows appear at the end
-			scored.sort((a, b) => b.hits - a.hits);
-			return jsonResult({ success: true, workflows: scored.map((s) => s.workflow) });
+			return jsonResult({ success: true, workflows: allWorkflows });
 		},
 
 		/**
 		 * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
+		 *
+		 * Tasks in the non-compact output are enriched with `pendingAction` when they are
+		 * paused at a completion action, so consumers can render an approval banner
+		 * without a second fetch.
 		 */
 		async list_tasks(args: {
 			status?: SpaceTaskStatus;
 			workflow_run_id?: string;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
 		}): Promise<ToolResult> {
-			let tasks;
+			let tasks: SpaceTask[];
 			if (args.workflow_run_id) {
 				tasks = taskRepo.listByWorkflowRun(args.workflow_run_id);
 				if (args.status) {
@@ -297,7 +287,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			} else {
 				tasks = taskRepo.listBySpace(spaceId);
 			}
-			return jsonResult({ success: true, tasks });
+			if (args.search) {
+				const q = args.search.toLowerCase();
+				tasks = tasks.filter((t) => t.title.toLowerCase().includes(q));
+			}
+			const total = tasks.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			tasks = tasks.slice(offset, offset + limit);
+			if (args.compact) {
+				const compactTasks = tasks.map((t) => ({
+					id: t.id,
+					title: t.title,
+					status: t.status,
+					priority: t.priority,
+					createdAt: t.createdAt,
+				}));
+				return jsonResult({ success: true, total, tasks: compactTasks });
+			}
+			const enrichedTasks = tasks.map((t) =>
+				enrichTaskWithPendingAction(t, workflowRunRepo, workflowManager)
+			);
+			return jsonResult({ success: true, total, tasks: enrichedTasks });
 		},
 
 		/**
@@ -307,29 +318,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 			title: string;
 			description: string;
 			priority?: SpaceTaskPriority;
-			task_type?: SpaceTaskType;
-			assigned_agent?: 'coder' | 'general';
-			custom_agent_id?: string;
+			workflow_id?: string;
 		}): Promise<ToolResult> {
 			try {
-				// Validate custom_agent_id if provided
-				if (args.custom_agent_id) {
-					const agent = spaceAgentManager.getById(args.custom_agent_id);
-					if (!agent) {
-						return jsonResult({
-							success: false,
-							error: `Custom agent not found: ${args.custom_agent_id}`,
-						});
-					}
-				}
-
 				const task = await taskManager.createTask({
 					title: args.title,
 					description: args.description,
 					priority: args.priority,
-					taskType: args.task_type,
-					assignedAgent: args.assigned_agent,
-					customAgentId: args.custom_agent_id,
+					preferredWorkflowId: args.workflow_id ?? null,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
@@ -339,14 +335,31 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Get the full detail of a task by ID.
+		 * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
+		 *
+		 * When the task is paused at a completion action (`pendingCheckpointType ===
+		 * 'completion_action'`), the returned task is enriched with a `pendingAction`
+		 * field describing the action awaiting approval. Script bodies, instruction
+		 * prompts, and MCP tool args are omitted — consumers fetch the workflow for those.
 		 */
-		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
-			const task = await taskManager.getTask(args.task_id);
-			if (!task) {
-				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+		async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
+			let task: SpaceTask | null = null;
+			if (args.task_number !== undefined) {
+				task = await taskManager.getTaskByNumber(args.task_number);
+			} else if (args.task_id) {
+				task = await taskManager.getTask(args.task_id);
+			} else {
+				return jsonResult({
+					success: false,
+					error: 'Either task_id or task_number is required',
+				});
 			}
-			return jsonResult({ success: true, task });
+			if (!task) {
+				const ref = args.task_number !== undefined ? `#${args.task_number}` : args.task_id;
+				return jsonResult({ success: false, error: `Task not found: ${ref}` });
+			}
+			const enriched = enrichTaskWithPendingAction(task, workflowRunRepo, workflowManager);
+			return jsonResult({ success: true, task: enriched });
 		},
 
 		/**
@@ -376,11 +389,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 				const task = await taskManager.cancelTask(args.task_id);
 
 				if (args.cancel_workflow_run && task.workflowRunId) {
-					workflowRunRepo.updateStatus(task.workflowRunId, 'cancelled');
+					// Only cancel if the run exists and the transition is valid (not already terminal).
+					const existingRun = workflowRunRepo.getRun(task.workflowRunId);
+					const runCancelled =
+						existingRun !== null && canTransition(existingRun.status, 'cancelled');
+					if (runCancelled) {
+						workflowRunRepo.transitionStatus(task.workflowRunId, 'cancelled');
+					}
 					return jsonResult({
 						success: true,
 						task,
-						workflowRunCancelled: true,
+						workflowRunCancelled: runCancelled,
 						workflowRunId: task.workflowRunId,
 					});
 				}
@@ -427,39 +446,366 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 		},
 
 		/**
-		 * Send a message to the Task Agent session managing a specific task.
-		 * Use this to check progress, provide feedback, or redirect work.
+		 * Inject a message into a running task agent session.
 		 */
 		async send_message_to_task(args: { task_id: string; message: string }): Promise<ToolResult> {
 			if (!taskAgentManager) {
 				return jsonResult({
 					success: false,
-					error: 'TaskAgentManager is not configured — cannot send messages to task agents.',
+					error: 'Task agent communication is not available in this context.',
 				});
 			}
-
-			// Use taskManager.getTask() (not taskRepo) to enforce space ownership — ensures
-			// Space Agent A cannot inject messages into Space B's Task Agent sessions.
-			const task = await taskManager.getTask(args.task_id);
+			const task = taskRepo.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-
-			if (!task.taskAgentSessionId) {
+			if (task.spaceId !== spaceId) {
 				return jsonResult({
 					success: false,
-					error: `Task ${args.task_id} has no active Task Agent session (status: ${task.status}).`,
-					taskStatus: task.status,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			try {
+				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
+				return jsonResult({ success: true, task_id: args.task_id });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * List all node executions for a task's workflow run.
+		 */
+		async list_task_members(args: { task_id: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (!task.workflowRunId) {
+				return jsonResult({
+					success: true,
+					task_id: args.task_id,
+					executions: [],
+					message: 'This task has no associated workflow run.',
+				});
+			}
+			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+			return jsonResult({ success: true, task_id: args.task_id, executions });
+		},
+
+		/**
+		 * Approve or reject a workflow gate.
+		 * Requires gateDataRepo to be configured.
+		 */
+		async approve_gate(args: {
+			run_id: string;
+			gate_id: string;
+			approved: boolean;
+			reason?: string;
+		}): Promise<ToolResult> {
+			if (!gateDataRepo) {
+				return jsonResult({ success: false, error: 'Gate operations are not available' });
+			}
+
+			const run = workflowRunRepo.getRun(args.run_id);
+			if (!run) {
+				return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
+			}
+			if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+				return jsonResult({
+					success: false,
+					error: `Cannot modify gate on a ${run.status} workflow run`,
+				});
+			}
+
+			// Per-field two-path authorization for agent-originated approvals.
+			// Writers path: 'approved' field's writers includes this agent's name or '*' → allow.
+			// Autonomy path: writers don't include this agent (or empty writers) → require
+			// space.autonomyLevel >= gate.requiredLevel (default 5).
+			// Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
+			if (args.approved && getSpaceAutonomyLevel) {
+				const workflow = workflowManager.getWorkflow(run.workflowId);
+				const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
+				const approvedField = (gateDef?.fields ?? []).find((f) => f.name === 'approved');
+				const writers = approvedField?.writers ?? [];
+				const writerMatches = writers.some((w) => {
+					const normalized = normalizeAgentNameToken(w);
+					return normalized === '*' || agentNameAliases.has(normalized);
+				});
+
+				if (!writerMatches) {
+					// Autonomy path: this agent is not in the writers list
+					const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
+					const spaceLevel = await getSpaceAutonomyLevel(spaceId);
+					if (spaceLevel < effectiveRequiredLevel) {
+						return jsonResult({
+							success: false,
+							error:
+								`Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
+								`${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
+								`Increase space autonomy level or request human approval.`,
+						});
+					}
+				}
+				// Writers path: writerMatches → no autonomy check needed
+			}
+
+			const existing = gateDataRepo.get(args.run_id, args.gate_id);
+
+			if (args.approved) {
+				if (existing?.data?.approved === true) {
+					return jsonResult({
+						success: true,
+						runId: args.run_id,
+						gateId: args.gate_id,
+						gateData: existing.data,
+						message: 'Gate already approved',
+					});
+				}
+
+				const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
+					approved: true,
+					approvedAt: Date.now(),
+					approvalSource: 'agent',
+				});
+
+				// If previously rejected, transition back to in_progress
+				let currentRun = run;
+				if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
+					currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
+					currentRun =
+						workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
+				}
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.workflowRun.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: run.id,
+							run: currentRun,
+						})
+						.catch(() => {});
+					void daemonHub
+						.emit('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: args.run_id,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
+				onGateChanged?.(args.run_id, args.gate_id);
+
+				return jsonResult({
+					success: true,
+					runId: args.run_id,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			} else {
+				if (existing?.data?.approved === false) {
+					return jsonResult({
+						success: true,
+						runId: args.run_id,
+						gateId: args.gate_id,
+						gateData: existing.data,
+						message: 'Gate already rejected',
+					});
+				}
+
+				const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
+					approved: false,
+					rejectedAt: Date.now(),
+					reason: args.reason ?? null,
+					approvalSource: 'agent',
+				});
+
+				if (run.status !== 'blocked') {
+					workflowRunRepo.transitionStatus(args.run_id, 'blocked');
+				}
+				const updatedRun =
+					workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;
+
+				// Block the canonical task with gate_rejected reason
+				const runTasks = taskRepo.listByWorkflowRun(args.run_id);
+				const canonicalTask = runTasks[0];
+				if (canonicalTask && canonicalTask.status !== 'blocked') {
+					await taskManager.setTaskStatus(canonicalTask.id, 'blocked', {
+						result: args.reason ?? 'Gate rejected',
+						blockReason: 'gate_rejected',
+					});
+				}
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.workflowRun.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: run.id,
+							run: updatedRun,
+						})
+						.catch(() => {});
+					void daemonHub
+						.emit('space.gateData.updated', {
+							sessionId: 'global',
+							spaceId: run.spaceId,
+							runId: args.run_id,
+							gateId: args.gate_id,
+							data: gateData.data,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({
+					success: true,
+					runId: args.run_id,
+					gateId: args.gate_id,
+					gateData: gateData.data,
+				});
+			}
+		},
+
+		/**
+		 * Approve a task that is in 'review' status, transitioning it to 'done'.
+		 * Records approval audit trail with agent as the source.
+		 */
+		async approve_task(args: { task_id: string; reason?: string }): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (task.status !== 'review') {
+				return jsonResult({
+					success: false,
+					error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
+				});
+			}
+			// Hard guard against bypassing completion-action execution. A plain
+			// `setTaskStatus('done')` here would skip the pending completion
+			// action(s) entirely, defeating the review gate. Callers must use
+			// `approve_completion_action`, which routes through
+			// `SpaceRuntime.resumeCompletionActions` and runs the pending action.
+			if (task.pendingCheckpointType === 'completion_action') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is paused at a completion-action checkpoint. ` +
+						`Use approve_completion_action instead to run the pending action(s).`,
 				});
 			}
 
 			try {
-				await taskAgentManager.injectTaskAgentMessage(args.task_id, args.message);
-				return jsonResult({
-					success: true,
-					taskId: task.id,
-					taskStatus: task.status,
+				const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
+					result: task.result ?? undefined,
+					approvalSource: 'agent',
+					approvalReason: args.reason,
 				});
+
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.updated', {
+							sessionId: 'global',
+							spaceId,
+							taskId: args.task_id,
+							task: updated,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({ success: true, task: updated });
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Approve a task paused at a completion-action checkpoint
+		 * (`pendingCheckpointType === 'completion_action'`) and resume execution of
+		 * the pending action(s). Unlike `approve_task`, this does not transition the
+		 * task directly to `done` — it delegates to `SpaceRuntime.resumeCompletionActions`,
+		 * which runs the pending action and either:
+		 *   - finishes the task (`done`) once all remaining actions execute,
+		 *   - pauses again (`review`) if another action needs higher autonomy, or
+		 *   - marks the task `blocked` if an action fails.
+		 *
+		 * The optional `reason` is persisted into the task's `approval_reason` column
+		 * as part of the audit trail and surfaces in the `completion_action_executed`
+		 * thread event (with `approvedBy: 'human'`).
+		 */
+		async approve_completion_action(args: {
+			task_id: string;
+			reason?: string;
+		}): Promise<ToolResult> {
+			const task = taskRepo.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (task.spaceId !== spaceId) {
+				return jsonResult({
+					success: false,
+					error: `Task ${args.task_id} does not belong to this space.`,
+				});
+			}
+			if (task.status !== 'review') {
+				return jsonResult({
+					success: false,
+					error: `Task is in '${task.status}' status, not 'review'. Only tasks in review can be approved.`,
+				});
+			}
+			if (task.pendingCheckpointType !== 'completion_action') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is not paused at a completion-action checkpoint ` +
+						`(pendingCheckpointType=${task.pendingCheckpointType ?? 'null'}). ` +
+						`Use approve_task for plain review→done approvals.`,
+				});
+			}
+
+			try {
+				const resumed = await runtime.resumeCompletionActions(spaceId, args.task_id, {
+					approvalReason: args.reason ?? null,
+				});
+				if (!resumed) {
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to resume completion actions for task ${args.task_id} — ` +
+							`task state is inconsistent (see daemon logs for details).`,
+					});
+				}
+
+				// SpaceRuntime.resumeCompletionActions emits notification events but does
+				// not emit the RPC-level space.task.updated hub event; mirror the
+				// approve_task behaviour so frontends refresh.
+				if (daemonHub) {
+					void daemonHub
+						.emit('space.task.updated', {
+							sessionId: 'global',
+							spaceId,
+							taskId: args.task_id,
+							task: resumed,
+						})
+						.catch(() => {});
+				}
+
+				return jsonResult({ success: true, task: resumed });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
@@ -482,22 +828,9 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 	const tools = [
 		tool(
 			'list_workflows',
-			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before starting a run.',
+			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
 			{},
 			() => handlers.list_workflows()
-		),
-		tool(
-			'start_workflow_run',
-			'Begin a workflow run. You must call list_workflows first and choose the workflow whose description and steps best match the request.',
-			{
-				workflow_id: z
-					.string()
-					.describe('ID of the workflow to run (required — choose from list_workflows)'),
-				title: z.string().describe('Short title for this workflow run'),
-				description: z.string().optional().describe('Detailed description of the work to be done'),
-				goal_id: z.string().optional().describe('Goal/mission ID to associate with this run'),
-			},
-			(args) => handlers.start_workflow_run(args)
 		),
 		tool(
 			'get_workflow_run',
@@ -524,7 +857,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'get_workflow_detail',
-			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before starting a run.',
+			'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before creating a task.',
 			{
 				workflow_id: z.string().describe('ID of the workflow to retrieve'),
 			},
@@ -532,40 +865,56 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'suggest_workflow',
-			'Get workflow recommendations for a described piece of work. Returns workflows ranked by keyword relevance against names, descriptions, and tags. Use this to narrow candidates before calling start_workflow_run.',
+			'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
 			{
 				description: z
 					.string()
-					.describe('Description of the work you want to do — used for keyword matching'),
+					.describe(
+						'Description of the work you want to do. Provided for context; the tool returns all workflows regardless.'
+					),
 			},
 			(args) => handlers.suggest_workflow(args)
 		),
 		tool(
 			'list_tasks',
-			'List SpaceTasks for this space. Optionally filter by status or by a specific workflow run.',
+			'List SpaceTasks for this space. Filterable by status and workflow run. Use compact:true and limit/offset to reduce payload size.',
 			{
 				status: z
-					.enum([
-						'draft',
-						'pending',
-						'in_progress',
-						'review',
-						'completed',
-						'needs_attention',
-						'cancelled',
-					])
+					.enum(['open', 'in_progress', 'done', 'blocked', 'cancelled', 'archived'])
 					.optional()
 					.describe('Filter by task status'),
 				workflow_run_id: z
 					.string()
 					.optional()
 					.describe('Filter to only tasks belonging to a specific workflow run'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),
 		tool(
 			'create_standalone_task',
-			'Create a standalone task not associated with any workflow run. Use this to assign ad-hoc work directly to an agent.',
+			'Create a task request. Runtime may attach and execute a workflow for this task during orchestration.',
 			{
 				title: z.string().describe('Short title for the task'),
 				description: z.string().describe('Detailed description of the work to be done'),
@@ -573,32 +922,34 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.enum(['low', 'normal', 'high', 'urgent'])
 					.optional()
 					.describe('Task priority (default: normal)'),
-				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'review'])
-					.optional()
-					.describe('Task type — determines default execution approach'),
-				assigned_agent: z
-					.enum(['coder', 'general'])
-					.optional()
-					.describe('Agent type to execute this task (default: coder)'),
 				custom_agent_id: z
 					.string()
 					.optional()
 					.describe('ID of a custom Space agent to assign this task to'),
+				workflow_id: z
+					.string()
+					.optional()
+					.describe(
+						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Example: "67b42e04-ae03-425d-b267-40527b042dcc" for Coding with QA Workflow.'
+					),
 			},
 			(args) => handlers.create_standalone_task(args)
 		),
 		tool(
 			'get_task_detail',
-			'Get the full detail of a task by ID, including error, result, PR URL, PR number, progress, and current step.',
+			'Retrieve detailed information about a specific task including its status, result, and metadata.',
 			{
-				task_id: z.string().describe('ID of the task to retrieve'),
+				task_id: z.string().optional().describe('UUID of the task to retrieve'),
+				task_number: z
+					.number()
+					.optional()
+					.describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id'),
 			},
 			(args) => handlers.get_task_detail(args)
 		),
 		tool(
 			'retry_task',
-			'Retry a failed (needs_attention) or cancelled task by resetting it to pending. Optionally provide an updated description.',
+			'Retry a failed or cancelled task. Optionally update the task description for the retry attempt.',
 			{
 				task_id: z.string().describe('ID of the task to retry'),
 				description: z
@@ -624,7 +975,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'reassign_task',
-			'Change the agent assignment for a task. Only allowed for tasks in pending, needs_attention, or cancelled status.',
+			'Change the agent assignment for a task. Only allowed for tasks in open, blocked, or cancelled status.',
 			{
 				task_id: z.string().describe('ID of the task to reassign'),
 				custom_agent_id: z
@@ -641,16 +992,60 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			},
 			(args) => handlers.reassign_task(args)
 		),
+
+		// Task agent communication tools
 		tool(
 			'send_message_to_task',
-			'Send a message to the Task Agent session managing a specific task. Use this to check on progress, provide feedback, or redirect work. The message will be delivered directly to the Task Agent which may relay relevant parts to its active sub-session.',
+			'Inject a message into a running task agent session. Use this to provide real-time guidance, corrections, or context to a task that is currently executing.',
 			{
 				task_id: z
 					.string()
-					.describe('ID of the task whose Task Agent session should receive the message'),
-				message: z.string().describe('The message to send to the Task Agent'),
+					.describe('ID of the task whose agent session should receive the message'),
+				message: z.string().describe('Message to inject into the task agent session'),
 			},
 			(args) => handlers.send_message_to_task(args)
+		),
+		tool(
+			'list_task_members',
+			"List all node executions (workflow member agents) for a task. Returns each node's status, result, and saved data. Use this to inspect the detailed execution state of a running or completed workflow task.",
+			{
+				task_id: z.string().describe('ID of the task to inspect'),
+			},
+			(args) => handlers.list_task_members(args)
+		),
+		tool(
+			'approve_gate',
+			'Approve or reject a workflow gate. Use this to control workflow progression by opening or closing gates on workflow runs.',
+			{
+				run_id: z.string().describe('ID of the workflow run'),
+				gate_id: z.string().describe('ID of the gate to approve or reject'),
+				approved: z.boolean().describe('true to approve (open gate), false to reject (block)'),
+				reason: z.string().optional().describe('Reason for approval or rejection'),
+			},
+			(args) => handlers.approve_gate(args)
+		),
+		tool(
+			'approve_task',
+			"Approve a task in 'review' status, transitioning it to 'done'. Use this after reviewing a completed task's output to mark it as approved.",
+			{
+				task_id: z.string().describe('ID of the task to approve'),
+				reason: z.string().optional().describe('Reason for approval'),
+			},
+			(args) => handlers.approve_task(args)
+		),
+		tool(
+			'approve_completion_action',
+			"Approve a task paused at a completion-action checkpoint (pendingCheckpointType='completion_action') and resume execution of the pending action(s). Prefer this over approve_task when the task is specifically paused for completion-action review — it runs the pending action instead of bypassing to 'done'.",
+			{
+				task_id: z.string().describe('ID of the task to approve'),
+				reason: z
+					.string()
+					.optional()
+					.describe(
+						'Rationale for approval. Persisted in the task audit trail and surfaced in the completion_action_executed thread event.'
+					),
+			},
+			(args) => handlers.approve_completion_action(args)
 		),
 	];
 

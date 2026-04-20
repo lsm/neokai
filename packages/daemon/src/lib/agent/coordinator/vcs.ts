@@ -21,7 +21,7 @@ Commit principles:
 - Stage specific files, never use git add -A blindly
 - Separate functional changes from test changes when it makes logical sense
 - Never commit secrets, .env files, or build artifacts
-- Never force push to main/master
+- Never force push to main
 
 CI monitoring:
 - After pushing, check CI status with: gh pr checks or gh run list

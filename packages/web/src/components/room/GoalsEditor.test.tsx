@@ -2,7 +2,7 @@
  * Tests for GoalsEditor Component
  */
 
-import { render, cleanup, fireEvent } from '@testing-library/preact';
+import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GoalsEditor } from './GoalsEditor';
 import type { RoomGoal, TaskSummary } from '@neokai/shared';
@@ -26,8 +26,8 @@ describe('GoalsEditor', () => {
 		priority: 'normal',
 		progress: 50,
 		linkedTaskIds: [],
-		createdAt: Math.floor(Date.now() / 1000) - 86400,
-		updatedAt: Math.floor(Date.now() / 1000),
+		createdAt: Date.now() - 86400 * 1000,
+		updatedAt: Date.now(),
 		...overrides,
 	});
 
@@ -127,6 +127,20 @@ describe('GoalsEditor', () => {
 			const goals = [createMockGoal('goal-1', { description: 'Visible description text' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 			expect(container.textContent).toContain('Visible description text');
+		});
+
+		it('should show relative time for createdAt (not "just now" for old goals)', () => {
+			// createdAt is milliseconds since epoch — 1 day ago
+			const goals = [createMockGoal('goal-1', { createdAt: Date.now() - 86400 * 1000 })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('1 day ago');
+			expect(container.textContent).not.toContain('just now');
+		});
+
+		it('should show "just now" for very recent goals', () => {
+			const goals = [createMockGoal('goal-1', { createdAt: Date.now() - 5000 })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('just now');
 		});
 	});
 
@@ -582,7 +596,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			expect(document.body.querySelector('[data-testid="custom-cron"]')).toBeTruthy();
 		});
@@ -596,7 +610,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			// The "Create" button (not "Skip & Create") should be disabled
 			const createBtn = Array.from(document.body.querySelectorAll('button')).find(
@@ -614,7 +628,7 @@ describe('GoalsEditor', () => {
 			fireEvent.click(recurringBtn!);
 
 			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
-			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+			fireEvent.input(presetSelect!, { target: { value: 'custom' } });
 
 			// "Skip & Create" should NOT be disabled (it uses defaults, not current step 2 values)
 			const skipBtn = Array.from(document.body.querySelectorAll('button')).find(
@@ -987,6 +1001,200 @@ describe('GoalsEditor', () => {
 			expect(container.textContent).toContain('Build auth module');
 			expect(container.textContent).toContain('Write unit tests');
 			expect(container.textContent).toContain('Deploy to staging');
+		});
+	});
+
+	describe('Short ID Badge', () => {
+		it('should show short ID badge when goal has shortId', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-7' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid="goal-short-id-badge-g-7"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toBe('#g-7');
+		});
+
+		it('should not show short ID badge when goal has no shortId', () => {
+			const goals = [createMockGoal('goal-1')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid^="goal-short-id-badge-"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should show tooltip on short ID badge', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-3' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector('[data-testid="goal-short-id-badge-g-3"]');
+			expect(badge?.getAttribute('title')).toBe('Click to copy short ID');
+		});
+
+		it('should stop propagation when clicking badge', () => {
+			const goals = [createMockGoal('goal-1', { shortId: 'g-5' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-5"]'
+			) as HTMLElement;
+
+			// Track expand state — clicking header toggles expand; clicking badge should not
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			fireEvent.click(header);
+			const expandedContent = container.innerHTML;
+
+			// Click badge — expansion state should not change again
+			fireEvent.click(badge);
+			expect(container.innerHTML).toBe(expandedContent);
+		});
+
+		it('should copy short ID to clipboard on click', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				writable: true,
+				configurable: true,
+			});
+
+			const goals = [createMockGoal('goal-1', { shortId: 'g-9' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-9"]'
+			) as HTMLElement;
+
+			fireEvent.click(badge);
+			expect(writeText).toHaveBeenCalledWith('g-9');
+		});
+
+		it('should show visual feedback ("✓ copied") after clicking badge', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				writable: true,
+				configurable: true,
+			});
+
+			const goals = [createMockGoal('goal-1', { shortId: 'g-11' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badge = container.querySelector(
+				'[data-testid="goal-short-id-badge-g-11"]'
+			) as HTMLElement;
+
+			expect(badge.textContent).toBe('#g-11');
+			fireEvent.click(badge);
+			await waitFor(() => {
+				expect(badge.textContent).toBe('✓ copied');
+			});
+		});
+
+		it('should show fallback text for goals without shortId', () => {
+			const goals = [createMockGoal('goal-uuid-only')];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			// Goal title still renders
+			expect(container.textContent).toContain('Goal goal-uuid-only');
+			// But no short ID badge
+			expect(container.querySelector('[data-testid^="goal-short-id-badge-"]')).toBeNull();
+		});
+	});
+
+	describe('Goal Title Navigation (onGoalClick)', () => {
+		it('should render title as a clickable button when onGoalClick is provided', () => {
+			const goals = [createMockGoal('goal-1', { title: 'Clickable Goal' })];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			// Should be a button, not an h4
+			const titleButton = container.querySelector(
+				'button.text-sm.font-semibold'
+			) as HTMLButtonElement;
+			expect(titleButton).toBeTruthy();
+			expect(titleButton.textContent).toBe('Clickable Goal');
+		});
+
+		it('should render title as a plain h4 when onGoalClick is not provided', () => {
+			const goals = [createMockGoal('goal-1', { title: 'Static Goal' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			const h4 = container.querySelector('h4.text-sm.font-semibold');
+			expect(h4).toBeTruthy();
+			expect(h4?.textContent).toBe('Static Goal');
+
+			// No title button
+			expect(container.querySelector('button.text-sm.font-semibold')).toBeNull();
+		});
+
+		it('should call onGoalClick with the correct goalId when title button is clicked', () => {
+			const goals = [createMockGoal('goal-abc', { title: 'Nav Goal' })];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			const titleButton = container.querySelector(
+				'button.text-sm.font-semibold'
+			) as HTMLButtonElement;
+			fireEvent.click(titleButton);
+
+			expect(onGoalClick).toHaveBeenCalledWith('goal-abc');
+		});
+
+		it('should NOT expand/collapse when the title button is clicked (stopPropagation)', () => {
+			const goals = [
+				createMockGoal('goal-1', { title: 'Stop Prop Goal', description: 'Some description' }),
+			];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			// The card header has data-testid="goal-item-header"; clicking title should NOT trigger expand
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			const titleButton = container.querySelector(
+				'button.text-sm.font-semibold'
+			) as HTMLButtonElement;
+
+			// Capture whether expansion toggled by checking for expanded content before and after
+			const expandedContentBefore = container.querySelector(
+				'[data-testid="goal-expanded-content"]'
+			);
+			fireEvent.click(titleButton);
+			const expandedContentAfter = container.querySelector('[data-testid="goal-expanded-content"]');
+
+			// onGoalClick was called
+			expect(onGoalClick).toHaveBeenCalledWith('goal-1');
+			// The header's toggle should NOT have fired — expansion state unchanged
+			expect(expandedContentBefore).toBe(expandedContentAfter);
+		});
+
+		it('should still expand/collapse when the card header (outside title) is clicked', () => {
+			const goals = [createMockGoal('goal-1', { title: 'Expandable Goal' })];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			const header = container.querySelector('[data-testid="goal-item-header"]') as HTMLElement;
+			// Click the header itself (not the button child) to toggle expand
+			fireEvent.click(header);
+
+			// onGoalClick should NOT have been called (clicked header, not title)
+			expect(onGoalClick).not.toHaveBeenCalled();
+		});
+
+		it('should call onGoalClick with the correct goalId for multiple goals', () => {
+			const goals = [
+				createMockGoal('goal-x', { title: 'Goal X' }),
+				createMockGoal('goal-y', { title: 'Goal Y' }),
+			];
+			const onGoalClick = vi.fn();
+			const { container } = render(
+				<GoalsEditor goals={goals} {...defaultHandlers} onGoalClick={onGoalClick} />
+			);
+
+			const titleButtons = container.querySelectorAll('button.text-sm.font-semibold');
+			expect(titleButtons.length).toBe(2);
+
+			fireEvent.click(titleButtons[1]); // click 'Goal Y'
+			expect(onGoalClick).toHaveBeenCalledWith('goal-y');
+			expect(onGoalClick).toHaveBeenCalledTimes(1);
 		});
 	});
 });

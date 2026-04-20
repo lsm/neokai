@@ -5,11 +5,11 @@
  * portable JSON format and validating imported data with Zod schemas.
  *
  * Key remappings performed during export:
- * - Step `id` fields are stripped (regenerated on import)
- * - Step `agentId` UUID → agent name (`agentRef`) — portable across Spaces
- * - Transition `id` stripped; `from`/`to` step UUIDs → step names
- * - `startStepId` UUID → step name (`startStep`)
- * - Rule `appliesTo` step UUIDs → step names (stable across re-import)
+ * - Node `id` fields are stripped (regenerated on import)
+ * - Node `agentId` UUID → agent name (`agentRef`) — portable across Spaces
+ * - Channel `id` stripped; `from`/`to` node/agent UUIDs → names
+ * - `startNodeId` UUID → node name (`startNode`)
+ * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
  *
  * Version policy:
  * - Accept: version === 1
@@ -23,10 +23,9 @@ import type {
 	SpaceWorkflow,
 	ExportedSpaceAgent,
 	ExportedSpaceWorkflow,
-	ExportedWorkflowStep,
-	ExportedWorkflowStepAgent,
-	ExportedWorkflowTransition,
-	ExportedWorkflowRule,
+	ExportedWorkflowChannel,
+	ExportedWorkflowNode,
+	ExportedWorkflowNodeAgent,
 	SpaceExportBundle,
 } from '@neokai/shared';
 
@@ -34,7 +33,7 @@ import type {
 // Zod schemas
 // ============================================================================
 
-const workflowConditionSchema = z
+const _workflowConditionSchema = z
 	.object({
 		type: z.enum(['always', 'human', 'condition', 'task_result']),
 		expression: z.string().optional(),
@@ -59,49 +58,49 @@ const workflowConditionSchema = z
 		}
 	});
 
-const exportedWorkflowStepAgentSchema = z.object({
-	agentRef: z.string().min(1),
-	instructions: z.string().optional(),
+const workflowNodeAgentOverrideSchema = z.object({
+	value: z.string(),
 });
 
-const workflowChannelSchema = z.object({
+/**
+ * Union schema accepting both legacy plain-string overrides and new `{ value }` objects.
+ * Legacy exports stored systemPrompt/instructions as plain strings; the new format uses
+ * `WorkflowNodeAgentOverride { value }`. Both are accepted on import for backward
+ * compatibility — plain strings are normalized to `{ value }` during import.
+ */
+const overrideOrStringSchema = z.union([workflowNodeAgentOverrideSchema, z.string().min(1)]);
+
+const exportedWorkflowNodeAgentSchema = z.object({
+	agentRef: z.string().min(1),
+	name: z.string().min(1),
+	model: z.string().min(1).optional(),
+	systemPrompt: overrideOrStringSchema.optional(),
+	instructions: overrideOrStringSchema.optional(),
+	/** IDs of globally-enabled skills disabled for this slot. */
+	disabledSkillIds: z.array(z.string()).optional(),
+	/**
+	 * Extra MCP servers for this slot.
+	 * Validated as a loose record to stay forward-compatible with SDK McpServerConfig shape changes.
+	 */
+	extraMcpServers: z.record(z.string(), z.unknown()).optional(),
+});
+
+/**
+ * Zod schema for an exported workflow channel.
+ * Differs from the runtime WorkflowChannel schema: `id` is intentionally absent
+ * since channel IDs are space-specific and stripped during export.
+ */
+const exportedWorkflowChannelSchema = z.object({
 	from: z.string().min(1),
 	to: z.union([z.string().min(1), z.array(z.string().min(1))]),
-	direction: z.enum(['one-way', 'bidirectional']),
+	maxCycles: z.number().int().positive().optional(),
 	label: z.string().optional(),
+	gateId: z.string().optional(),
 });
 
-const exportedWorkflowStepSchema = z
-	.object({
-		agentRef: z.string().min(1).optional(),
-		agents: z.array(exportedWorkflowStepAgentSchema).optional(),
-		channels: z.array(workflowChannelSchema).optional(),
-		name: z.string().min(1),
-		instructions: z.string().optional(),
-	})
-	.superRefine((val, ctx) => {
-		const hasAgentRef = val.agentRef !== undefined && val.agentRef.length > 0;
-		const hasAgents = val.agents !== undefined && val.agents.length > 0;
-		if (!hasAgentRef && !hasAgents) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'step must have either agentRef or agents (non-empty)',
-			});
-		}
-	});
-
-const exportedWorkflowTransitionSchema = z.object({
-	fromStep: z.string().min(1),
-	toStep: z.string().min(1),
-	condition: workflowConditionSchema.optional(),
-	order: z.number().int().optional(),
-	isCyclic: z.boolean().optional(),
-});
-
-const exportedWorkflowRuleSchema = z.object({
+const exportedWorkflowNodeSchema = z.object({
+	agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
 	name: z.string().min(1),
-	content: z.string().min(1),
-	appliesTo: z.array(z.string()).optional(),
 });
 
 /** Validates the version field; returns an error string or null. */
@@ -121,23 +120,20 @@ const exportedAgentBaseSchema = z.object({
 	description: z.string().optional(),
 	model: z.string().optional(),
 	provider: z.string().optional(),
-	role: z.string().min(1),
 	systemPrompt: z.string().optional(),
+	instructions: z.string().optional(),
 	tools: z.array(z.string()).optional(),
-	injectWorkflowContext: z.boolean().optional(),
-	config: z.record(z.string(), z.unknown()).optional(),
 });
 
 const exportedWorkflowBaseSchema = z.object({
 	type: z.literal('workflow'),
 	name: z.string().min(1),
 	description: z.string().optional(),
-	steps: z.array(exportedWorkflowStepSchema),
-	transitions: z.array(exportedWorkflowTransitionSchema),
-	startStep: z.string().min(1),
-	rules: z.array(exportedWorkflowRuleSchema),
+	nodes: z.array(exportedWorkflowNodeSchema),
+	startNode: z.string().min(1),
+	endNode: z.string().optional(),
 	tags: z.array(z.string()),
-	config: z.record(z.string(), z.unknown()).optional(),
+	channels: z.array(exportedWorkflowChannelSchema).optional(),
 });
 
 const exportBundleBaseSchema = z.object({
@@ -157,30 +153,46 @@ const exportBundleBaseSchema = z.object({
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 // ============================================================================
+// Normalization helpers
+// ============================================================================
+
+/**
+ * Normalize a legacy override value from the exported format.
+ *
+ * The Zod schema accepts both plain strings (legacy) and `{ value }` objects (new).
+ * This helper converts the union to the canonical `WorkflowNodeAgentOverride` format:
+ * - Plain string → `{ value: <string> }`
+ * - `{ value }` object → passed through as-is
+ * - `undefined` → `undefined`
+ */
+export function normalizeOverride(
+	value: import('@neokai/shared').WorkflowNodeAgentOverride | string | undefined
+): import('@neokai/shared').WorkflowNodeAgentOverride | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value === 'string') return { value };
+	return value;
+}
+
+// ============================================================================
 // Export functions
 // ============================================================================
 
 /**
  * Convert a SpaceAgent to the portable export format.
  * Strips `id`, `spaceId`, `createdAt`, `updatedAt`.
- *
- * `SpaceAgent.toolConfig` (per-tool configuration map) is intentionally **not**
- * exported — it is an implementation detail of the runtime and is not part of the
- * portable format. Only `tools` (the list of tool names) is exported.
  */
 export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	const exported: ExportedSpaceAgent = {
 		version: 1,
 		type: 'agent',
 		name: agent.name,
-		role: agent.role,
 	};
 	if (agent.description !== undefined) exported.description = agent.description;
 	if (agent.model !== undefined) exported.model = agent.model;
 	if (agent.provider !== undefined) exported.provider = agent.provider;
-	if (agent.systemPrompt !== undefined) exported.systemPrompt = agent.systemPrompt;
+	if (agent.customPrompt !== null && agent.customPrompt !== undefined)
+		exported.systemPrompt = agent.customPrompt;
 	if (agent.tools !== undefined) exported.tools = agent.tools;
-	if (agent.injectWorkflowContext === true) exported.injectWorkflowContext = true;
 	return exported;
 }
 
@@ -188,24 +200,27 @@ export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
  * Convert a SpaceWorkflow to the portable export format.
  *
  * Remappings:
- * 1. Step `id` fields are stripped; step `agentId` UUID → agent name (`agentRef`).
+ * 1. Node `id` fields are stripped; node `agentId` UUID → agent name (`agentRef`).
  *    Falls back to the UUID string when no matching agent is found in `agents`.
- * 2. Transition `id` stripped; `from`/`to` step UUIDs → step names.
- *    Falls back to the UUID string when no matching step is found.
- * 3. `startStepId` UUID → step name (`startStep`).
- * 4. Rule `appliesTo` step UUIDs → step names (stable cross-references on re-import).
- *    If a UUID has no matching step (stale data), it is silently dropped from
+ * 2. Channel `id` stripped; `from`/`to` node/agent UUIDs → names.
+ *    Falls back to the UUID string when no matching node is found.
+ * 3. `startNodeId` UUID → node name (`startNode`).
+ * 4. Rule `appliesTo` node UUIDs → node names (stable cross-references on re-import).
+ *    If a UUID has no matching node (stale data), it is silently dropped from
  *    `appliesTo`. If all UUIDs are stale the field is omitted, treating the rule
- *    as global (applies to all steps) rather than discarding it entirely.
+ *    as global (applies to all nodes) rather than discarding it entirely.
  */
 export function exportWorkflow(
 	workflow: SpaceWorkflow,
 	agents: SpaceAgent[]
 ): ExportedSpaceWorkflow {
-	// Build a map from step UUID → step name
-	const stepIdToName = new Map<string, string>();
-	for (const step of workflow.steps) {
-		stepIdToName.set(step.id, step.name);
+	// Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const nodes = workflow.nodes ?? (workflow as any).steps ?? [];
+	// Build a map from node UUID → node name
+	const nodeIdToName = new Map<string, string>();
+	for (const node of nodes) {
+		nodeIdToName.set(node.id, node.name);
 	}
 
 	// Build a map from agent UUID → agent name
@@ -214,86 +229,60 @@ export function exportWorkflow(
 		agentIdToName.set(agent.id, agent.name);
 	}
 
-	// Export steps — strip `id`, remap agentId UUIDs → agent names.
-	// Multi-agent steps (agents[] non-empty) export an `agents` array.
-	// Single-agent steps export a scalar `agentRef` (backward-compatible shorthand).
-	// Channels are exported as-is (they already use role strings, not UUIDs).
-	const exportedSteps: ExportedWorkflowStep[] = workflow.steps.map((step) => {
-		const exported: ExportedWorkflowStep = { name: step.name };
+	// Export nodes — strip `id`, remap agentId UUIDs → agent names.
+	// Channels are exported at the workflow level (not per-node).
+	const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
+		const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
+			const entry: ExportedWorkflowNodeAgent = {
+				agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
+				name: a.name,
+			};
+			if (a.model !== undefined) entry.model = a.model;
+			if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;
+			if (a.disabledSkillIds !== undefined) entry.disabledSkillIds = a.disabledSkillIds;
+			if (a.extraMcpServers !== undefined) entry.extraMcpServers = a.extraMcpServers;
+			return entry;
+		});
 
-		if (step.agents && step.agents.length > 0) {
-			// Multi-agent step: export agents array with agentRef names
-			const exportedAgents: ExportedWorkflowStepAgent[] = step.agents.map((a) => {
-				const entry: ExportedWorkflowStepAgent = {
-					agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
-				};
-				if (a.instructions !== undefined) entry.instructions = a.instructions;
-				return entry;
-			});
-			exported.agents = exportedAgents;
-		} else {
-			// Single-agent step: export as scalar agentRef.
-			// Only set agentRef when agentId is present — a step with neither agentId
-			// nor agents is invalid; leaving agentRef unset produces a clear Zod error
-			// ("step must have either agentRef or agents") rather than a confusing
-			// min-length failure on an empty string.
-			const primaryAgentId = step.agentId;
-			if (primaryAgentId) {
-				exported.agentRef = agentIdToName.get(primaryAgentId) ?? primaryAgentId;
-			}
-		}
-
-		if (step.instructions !== undefined) exported.instructions = step.instructions;
-		if (step.channels && step.channels.length > 0) exported.channels = step.channels;
+		const exported: ExportedWorkflowNode = {
+			name: node.name,
+			agents: exportedAgents,
+		};
 
 		return exported;
 	});
 
-	// Export transitions — strip `id`, remap from/to step UUIDs → step names
-	const exportedTransitions: ExportedWorkflowTransition[] = workflow.transitions.map((t) => {
-		const fromStep = stepIdToName.get(t.from) ?? t.from;
-		const toStep = stepIdToName.get(t.to) ?? t.to;
-		const exported: ExportedWorkflowTransition = { fromStep, toStep };
-		if (t.condition !== undefined) exported.condition = t.condition;
-		if (t.order !== undefined) exported.order = t.order;
-		if (t.isCyclic !== undefined) exported.isCyclic = t.isCyclic;
-		return exported;
-	});
-
-	// Export startStepId UUID → step name
-	const startStep = stepIdToName.get(workflow.startStepId) ?? workflow.startStepId;
-
-	// Export rules — strip `id`, remap appliesTo step UUIDs → step names
-	const exportedRules: ExportedWorkflowRule[] = workflow.rules.map((rule) => {
-		const exported: ExportedWorkflowRule = { name: rule.name, content: rule.content };
-		if (rule.appliesTo !== undefined && rule.appliesTo.length > 0) {
-			const stepNames = rule.appliesTo
-				.map((stepId) => stepIdToName.get(stepId))
-				.filter((n): n is string => n !== undefined);
-			// If all referenced step UUIDs are absent from the workflow (e.g., stale data),
-			// stepNames will be empty and `appliesTo` is omitted. This changes the rule
-			// semantics from "applies to specific steps" to "applies to all steps" — an
-			// intentional graceful degradation: a rule that can't resolve its targets is
-			// treated as global rather than silently dropped.
-			if (stepNames.length > 0) {
-				exported.appliesTo = stepNames;
-			}
-		}
-		return exported;
-	});
+	// Export startNodeId UUID → node name
+	const startId = workflow.startNodeId;
+	const startNode = nodeIdToName.get(startId) ?? startId;
+	const endNode = workflow.endNodeId
+		? (nodeIdToName.get(workflow.endNodeId) ?? workflow.endNodeId)
+		: undefined;
 
 	const result: ExportedSpaceWorkflow = {
 		version: 1,
 		type: 'workflow',
 		name: workflow.name,
-		steps: exportedSteps,
-		transitions: exportedTransitions,
-		startStep,
-		rules: exportedRules,
+		nodes: exportedNodes,
+		startNode,
 		tags: workflow.tags,
 	};
+	if (endNode !== undefined) result.endNode = endNode;
 	if (workflow.description !== undefined) result.description = workflow.description;
-	if (workflow.config !== undefined) result.config = workflow.config;
+	// Export channels — strip `id` (space-specific) and convert to portable ExportedWorkflowChannel format
+	if (workflow.channels && workflow.channels.length > 0) {
+		const exportedChannels: ExportedWorkflowChannel[] = workflow.channels.map((ch) => {
+			const exported: ExportedWorkflowChannel = {
+				from: ch.from,
+				to: ch.to,
+			};
+			if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
+			if (ch.label !== undefined) exported.label = ch.label;
+			if (ch.gateId !== undefined) exported.gateId = ch.gateId;
+			return exported;
+		});
+		result.channels = exportedChannels;
+	}
 	return result;
 }
 
@@ -365,35 +354,64 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
 	}
 
 	// Referential integrity checks — enforce the cross-reference invariants that
-	// the rest of the format depends on (step names as stable cross-reference keys).
-	const stepNameSet = new Set<string>();
-	for (const step of result.data.steps) {
-		if (stepNameSet.has(step.name)) {
-			return { ok: false, error: `invalid: duplicate step name: "${step.name}"` };
+	// the rest of the format depends on (node names as stable cross-reference keys).
+	const nodeNameSet = new Set<string>();
+	for (const node of result.data.nodes) {
+		if (nodeNameSet.has(node.name)) {
+			return { ok: false, error: `invalid: duplicate node name: "${node.name}"` };
 		}
-		stepNameSet.add(step.name);
+		nodeNameSet.add(node.name);
 	}
-	// startStep must reference a known step name (skip check when steps is empty)
-	if (result.data.steps.length > 0 && !stepNameSet.has(result.data.startStep)) {
+	// startNode must reference a known node name (skip check when nodes is empty)
+	if (result.data.nodes.length > 0 && !nodeNameSet.has(result.data.startNode)) {
 		return {
 			ok: false,
-			error: `invalid: startStep "${result.data.startStep}" does not reference a known step name`,
+			error: `invalid: startNode "${result.data.startNode}" does not reference a known node name`,
 		};
 	}
-	// Transition endpoints must reference known step names
-	for (let i = 0; i < result.data.transitions.length; i++) {
-		const t = result.data.transitions[i];
-		if (!stepNameSet.has(t.fromStep)) {
-			return {
-				ok: false,
-				error: `invalid: transitions[${i}].fromStep "${t.fromStep}" does not reference a known step name`,
-			};
+	// endNode must reference a known node name when present (skip check when nodes is empty)
+	if (
+		result.data.endNode !== undefined &&
+		result.data.nodes.length > 0 &&
+		!nodeNameSet.has(result.data.endNode)
+	) {
+		return {
+			ok: false,
+			error: `invalid: endNode "${result.data.endNode}" does not reference a known node name`,
+		};
+	}
+
+	// Channel from/to must reference known node names, agent slot names, or '*' wildcard.
+	// Build valid name set: '*' + all node names + all agent slot names (agents[].name).
+	// Single-agent nodes (agentRef shorthand) use the node name for fan-out targeting.
+	if (result.data.channels && result.data.channels.length > 0) {
+		const validChannelNames = new Set<string>(['*']);
+		for (const node of result.data.nodes) {
+			validChannelNames.add(node.name);
+			if (node.agents) {
+				for (const a of node.agents) {
+					validChannelNames.add(a.name);
+				}
+			}
 		}
-		if (!stepNameSet.has(t.toStep)) {
-			return {
-				ok: false,
-				error: `invalid: transitions[${i}].toStep "${t.toStep}" does not reference a known step name`,
-			};
+		for (let ci = 0; ci < result.data.channels.length; ci++) {
+			const ch = result.data.channels[ci];
+			const loc = `channels[${ci}]`;
+			if (!validChannelNames.has(ch.from)) {
+				return {
+					ok: false,
+					error: `invalid: ${loc}.from "${ch.from}" does not reference a known agent slot name or node name`,
+				};
+			}
+			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+			for (let ti = 0; ti < toList.length; ti++) {
+				if (!validChannelNames.has(toList[ti])) {
+					return {
+						ok: false,
+						error: `invalid: ${loc}.to[${ti}] "${toList[ti]}" does not reference a known agent slot name or node name`,
+					};
+				}
+			}
 		}
 	}
 

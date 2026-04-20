@@ -15,41 +15,14 @@
  */
 
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowStepCard';
-import { isMultiAgentStep } from '../WorkflowStepCard';
+import type { SpaceAgent, WorkflowChannel } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
+import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
-
-// ============================================================================
-// Channel topology visualization helpers
-// ============================================================================
-
-/** Renders a compact text representation of channel topology. */
-function ChannelTopologyBadge({ step }: { step: StepDraft }) {
-	const channels = step.channels;
-	if (!channels || channels.length === 0) return null;
-
-	/** Truncate a role string for compact display. Channels already use role strings as identifiers. */
-	const roleLabel = (role: string) => (role.length > 8 ? role.slice(0, 8) + '…' : role);
-
-	const formatTo = (to: string | string[]) => {
-		if (Array.isArray(to)) return `[${to.map(roleLabel).join(',')}]`;
-		return roleLabel(to);
-	};
-
-	return (
-		<div class="mt-1.5 space-y-0.5" data-testid="channel-topology-badge">
-			{channels.map((ch, i) => (
-				<div key={i} class="flex items-center gap-0.5 text-xs text-gray-500">
-					<span class="font-mono">{roleLabel(ch.from)}</span>
-					<span class="text-gray-600">{ch.direction === 'bidirectional' ? '↔' : '→'}</span>
-					<span class="font-mono">{formatTo(ch.to)}</span>
-					{ch.label && <span class="text-gray-700 ml-0.5">"{ch.label}"</span>}
-				</div>
-			))}
-		</div>
-	);
-}
+import type { AnchorSide } from './semanticWorkflowGraph';
+import { getVisualNodeDimensions } from './nodeMetrics';
+import { useIsMobileCanvas } from '../../../hooks/useIsMobileCanvas';
 
 // ============================================================================
 // Props
@@ -60,14 +33,18 @@ export type PortType = 'input' | 'output';
 export interface WorkflowNodeProps {
 	/** Zero-based index within the steps array; used for step number badge */
 	stepIndex: number;
-	step: StepDraft;
+	step: NodeDraft;
 	/** Absolute position in canvas coordinates */
 	position: Point;
 	/** Full agents list — used to resolve the agent name from step.agentId */
 	agents: SpaceAgent[];
+	/** Workflow-level channels (kept for canvas compatibility; not rendered inside node cards). */
+	workflowChannels?: WorkflowChannel[];
 	isSelected?: boolean;
 	/** First step in the workflow — hides input port, adds green border + START badge */
 	isStartNode?: boolean;
+	/** Last step in the workflow — adds purple END badge */
+	isEndNode?: boolean;
 	/** Current viewport scale — used to convert screen-space drag deltas to canvas-space */
 	scale: number;
 	/** Called continuously while the node is being dragged */
@@ -82,6 +59,90 @@ export interface WorkflowNodeProps {
 	isDropTarget?: boolean;
 	/** Called when the card body is clicked (for selection) */
 	onClick?: (stepId: string) => void;
+	/**
+	 * Runtime agent completion states for this node.
+	 * When provided, per-agent status indicators are shown inside the node card.
+	 */
+	nodeTaskStates?: AgentTaskState[];
+	/** Semantic edge anchor sides currently in use for this node. */
+	activeAnchorSides?: AnchorSide[];
+	/**
+	 * When false, disables drag affordances — no cursor/shadow change on mousedown,
+	 * and drag state is never set. Defaults to true.
+	 */
+	draggable?: boolean;
+}
+
+function renderDock(side: AnchorSide, visible: boolean, highlighted = false) {
+	const commonStyle = {
+		position: 'absolute' as const,
+		width: 14,
+		height: 14,
+		borderRadius: '50%',
+		border: `2px solid ${highlighted ? '#16a34a' : '#374151'}`,
+		background: highlighted ? '#22c55e' : '#6b7280',
+		zIndex: highlighted ? 10 : 5,
+	};
+
+	if (side === 'top') {
+		return (
+			<div
+				data-testid="dock-top"
+				style={{
+					...commonStyle,
+					top: -7,
+					left: '50%',
+					transform: highlighted ? 'translateX(-50%) scale(1.4)' : 'translateX(-50%)',
+					transition: 'transform 0.1s, background 0.1s, opacity 0.15s',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0 transition-opacity group-hover:opacity-100'}
+			/>
+		);
+	}
+
+	if (side === 'bottom') {
+		return (
+			<div
+				data-testid="dock-bottom"
+				style={{
+					...commonStyle,
+					bottom: -7,
+					left: '50%',
+					transform: 'translateX(-50%)',
+					transition: 'opacity 0.15s',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0 transition-opacity group-hover:opacity-100'}
+			/>
+		);
+	}
+
+	if (side === 'left') {
+		return (
+			<div
+				data-testid="dock-left"
+				style={{
+					...commonStyle,
+					left: -7,
+					top: '50%',
+					transform: 'translateY(-50%)',
+				}}
+				class={visible ? 'opacity-100' : 'opacity-0'}
+			/>
+		);
+	}
+
+	return (
+		<div
+			data-testid="dock-right"
+			style={{
+				...commonStyle,
+				right: -7,
+				top: '50%',
+				transform: 'translateY(-50%)',
+			}}
+			class={visible ? 'opacity-100' : 'opacity-0'}
+		/>
+	);
 }
 
 // ============================================================================
@@ -93,8 +154,10 @@ export function WorkflowNode({
 	step,
 	position,
 	agents,
+	workflowChannels: _workflowChannels = [],
 	isSelected = false,
 	isStartNode = false,
+	isEndNode = false,
 	isDropTarget = false,
 	scale,
 	onPositionChange,
@@ -102,11 +165,32 @@ export function WorkflowNode({
 	onPortMouseEnter,
 	onPortMouseLeave,
 	onClick,
+	nodeTaskStates,
+	activeAnchorSides = [],
+	draggable = true,
 }: WorkflowNodeProps) {
 	const stepId = step.localId;
+	const isTaskAgent = stepId === TASK_AGENT_NODE_ID;
+	const isMobileCanvas = useIsMobileCanvas();
+	const baseDimensions = getVisualNodeDimensions(step);
+	// Compact Task Agent on mobile: narrower + shorter to keep the pinned node
+	// from dominating the canvas. Regular nodes keep their normal dimensions so
+	// edge routing / port positions remain stable across breakpoints.
+	const dimensions = isTaskAgent && isMobileCanvas ? { width: 112, height: 36 } : baseDimensions;
 
-	const multi = isMultiAgentStep(step);
-	const agentName = agents.find((a) => a.id === step.agentId)?.name ?? step.agentId;
+	const multi = isMultiAgentNode(step);
+	const singleSlot =
+		!multi && Array.isArray(step.agents) && step.agents.length === 1 ? step.agents[0] : null;
+	const resolvedSingleAgentId = singleSlot?.agentId ?? step.agentId;
+	const agentName =
+		singleSlot?.name ??
+		agents.find((a) => a.id === resolvedSingleAgentId)?.name ??
+		resolvedSingleAgentId;
+
+	// Build a lookup: agentName → AgentTaskState
+	const taskStateByAgent = new Map<string | null, AgentTaskState>(
+		(nodeTaskStates ?? []).map((s) => [s.agentName, s])
+	);
 
 	// ---- Drag state ----
 	const dragState = useRef<{
@@ -131,6 +215,8 @@ export function WorkflowNode({
 
 	// ---- Window-level listeners (always registered, guard on dragState) ----
 	// Mirrors the pattern used by VisualCanvas for its spacebar+drag pan.
+	// For the Task Agent node, dragState.current is never set (handleMouseDown
+	// returns early), so both handlers short-circuit immediately — they are no-ops.
 	useEffect(() => {
 		const onMouseMove = (e: MouseEvent) => {
 			if (!dragState.current) return;
@@ -156,7 +242,12 @@ export function WorkflowNode({
 			if (!dragState.current) return;
 			dragState.current = null;
 			if (nodeRef.current) {
-				nodeRef.current.style.cursor = 'grab';
+				// Only reset to 'grab' for draggable nodes — Task Agent uses 'default'
+				// and dragState.current can never be set for it, so this branch is
+				// unreachable for Task Agent. Guard here for defence-in-depth.
+				if (!isTaskAgent) {
+					nodeRef.current.style.cursor = 'grab';
+				}
 				nodeRef.current.style.boxShadow = '';
 			}
 		};
@@ -169,9 +260,20 @@ export function WorkflowNode({
 		};
 	}, [stepId]);
 
-	// ---- Card body mousedown — starts drag ----
+	// ---- Card body mousedown — starts drag (disabled for Task Agent or when draggable=false) ----
 	const handleMouseDown = useCallback(
 		(e: MouseEvent) => {
+			// Task Agent is pinned — it cannot be dragged
+			if (isTaskAgent) {
+				e.stopPropagation();
+				return;
+			}
+			// Read-only mode: no drag affordances, but still stop propagation so
+			// the canvas pan handler cannot capture the mousedown event.
+			if (!draggable) {
+				e.stopPropagation();
+				return;
+			}
 			// Only primary button
 			if (e.button !== 0) return;
 			e.stopPropagation(); // prevent canvas pan from triggering
@@ -191,7 +293,7 @@ export function WorkflowNode({
 				nodeRef.current.style.boxShadow = '0 8px 24px rgba(0,0,0,0.4)';
 			}
 		},
-		[position.x, position.y]
+		[isTaskAgent, draggable, position.x, position.y]
 	);
 
 	// ---- Card click — for selection (suppressed after drag) ----
@@ -207,6 +309,7 @@ export function WorkflowNode({
 	// ---- Port handlers ----
 	const handleInputPortMouseDown = useCallback(
 		(e: MouseEvent) => {
+			e.preventDefault(); // prevent browser text selection while dragging from the port
 			e.stopPropagation(); // prevent card drag from starting
 			onPortMouseDown?.(stepId, 'input', e, e.currentTarget as Element);
 		},
@@ -215,6 +318,7 @@ export function WorkflowNode({
 
 	const handleOutputPortMouseDown = useCallback(
 		(e: MouseEvent) => {
+			e.preventDefault(); // keep behavior consistent across both ports
 			e.stopPropagation(); // prevent card drag from starting
 			onPortMouseDown?.(stepId, 'output', e, e.currentTarget as Element);
 		},
@@ -235,17 +339,87 @@ export function WorkflowNode({
 	}, [onPortMouseLeave, stepId]);
 
 	// ---- Styles ----
-	const borderClass = isStartNode
-		? 'border-green-500'
-		: isSelected
-			? 'border-blue-500'
-			: 'border-gray-700';
+	const borderClass = isTaskAgent
+		? 'border-amber-400'
+		: isStartNode
+			? 'border-green-500'
+			: isSelected
+				? 'border-blue-500'
+				: 'border-gray-700';
+
+	const bgClass = isTaskAgent ? 'bg-amber-950' : 'bg-gray-800';
 
 	const inputPortBg = isDropTarget ? '#22c55e' : '#6b7280';
 	const inputPortBorder = isDropTarget ? '#16a34a' : '#374151';
 	const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
 	const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+	const hasActiveExecution = nodeTaskStates?.some((s) => s.status === 'in_progress') ?? false;
+	const pulseClass = hasActiveExecution ? 'animate-pulse' : '';
+	const activeAnchorSideSet = new Set(activeAnchorSides);
+
+	// Task Agent: render a visually distinct pinned node with no ports.
+	//
+	// Mobile (< Tailwind md breakpoint): render a compact variant. The visible
+	// "Task Agent" header badge is oversized on small viewports, so we hide it
+	// visually with `sr-only` (keeping it for screen readers) and shrink the
+	// step-name text + padding. The card itself also uses smaller dimensions.
+	// The `aria-label` on the card provides redundant context so focused users
+	// always hear "Task Agent" regardless of the step name.
+	if (isTaskAgent) {
+		const rootPadding = isMobileCanvas ? 'px-2 py-1' : 'px-3 py-2';
+		const badgeClass = isMobileCanvas
+			? 'sr-only'
+			: 'text-xs font-bold text-amber-400 uppercase tracking-wider';
+		const nameClass = isMobileCanvas
+			? 'text-[11px] font-medium text-amber-100 truncate leading-tight'
+			: 'text-sm font-medium text-amber-100 truncate';
+		const nameMaxWidth = isMobileCanvas ? 96 : 180;
+
+		return (
+			<div
+				ref={nodeRef}
+				data-testid={`workflow-node-${stepId}`}
+				data-step-id={stepId}
+				data-task-agent="true"
+				data-task-agent-compact={isMobileCanvas ? 'true' : 'false'}
+				data-pan-canvas="true"
+				aria-label="Task Agent"
+				style={{
+					position: 'absolute',
+					left: position.x,
+					top: position.y,
+					width: dimensions.width,
+					minHeight: dimensions.height,
+					cursor: 'grab',
+					userSelect: 'none',
+					zIndex: 10,
+				}}
+				class={`rounded-lg border-2 ${bgClass} ${borderClass}`}
+				onMouseDown={handleMouseDown}
+			>
+				<div class={rootPadding}>
+					{/* Header row: Task Agent badge — visible on desktop/tablet,
+					    sr-only on mobile so screen readers still announce it. */}
+					{isMobileCanvas ? (
+						<span data-testid="task-agent-badge" class={badgeClass}>
+							Task Agent
+						</span>
+					) : (
+						<div class="flex items-center justify-between mb-1">
+							<span data-testid="task-agent-badge" class={badgeClass}>
+								Task Agent
+							</span>
+						</div>
+					)}
+					{/* Name */}
+					<p data-testid="step-name" class={nameClass} style={{ maxWidth: nameMaxWidth }}>
+						{step.name || 'Task Agent'}
+					</p>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div
@@ -256,16 +430,20 @@ export function WorkflowNode({
 				position: 'absolute',
 				left: position.x,
 				top: position.y,
-				minWidth: multi ? 200 : 160,
-				cursor: 'grab',
+				width: dimensions.width,
+				minHeight: dimensions.height,
+				cursor: draggable ? 'grab' : 'default',
 				userSelect: 'none',
 			}}
-			class={`rounded-lg border-2 bg-gray-800 ${borderClass} ${ringClass}`}
+			class={`group rounded-lg border-2 ${bgClass} ${borderClass} ${ringClass} ${pulseClass}`}
 			onMouseDown={handleMouseDown}
 			onClick={handleClick}
 		>
+			{activeAnchorSideSet.has('left') && renderDock('left', true)}
+			{activeAnchorSideSet.has('right') && renderDock('right', true)}
+
 			{/* Top port */}
-			{!isStartNode && (
+			{(!isStartNode || activeAnchorSideSet.has('top')) && (
 				<div
 					data-testid="port-input"
 					style={{
@@ -279,12 +457,17 @@ export function WorkflowNode({
 						background: inputPortBg,
 						border: `2px solid ${inputPortBorder}`,
 						cursor: 'crosshair',
-						transition: 'transform 0.1s, background 0.1s',
-						zIndex: isDropTarget ? 10 : undefined,
+						transition: 'transform 0.1s, background 0.1s, opacity 0.15s',
+						zIndex: isDropTarget ? 10 : 6,
 					}}
-					onMouseDown={handleInputPortMouseDown}
-					onMouseEnter={handleInputPortMouseEnter}
-					onMouseLeave={handleInputPortMouseLeave}
+					class={
+						isDropTarget || activeAnchorSideSet.has('top')
+							? 'opacity-100'
+							: 'opacity-0 transition-opacity group-hover:opacity-100'
+					}
+					onMouseDown={!isStartNode ? handleInputPortMouseDown : undefined}
+					onMouseEnter={!isStartNode ? handleInputPortMouseEnter : undefined}
+					onMouseLeave={!isStartNode ? handleInputPortMouseLeave : undefined}
 					onClick={stopClickPropagation}
 				/>
 			)}
@@ -307,6 +490,14 @@ export function WorkflowNode({
 							START
 						</span>
 					)}
+					{isEndNode && (
+						<span
+							data-testid="end-badge"
+							class="text-xs font-bold text-purple-400 uppercase tracking-wider"
+						>
+							END
+						</span>
+					)}
 				</div>
 
 				{/* Step name */}
@@ -322,25 +513,35 @@ export function WorkflowNode({
 				{multi ? (
 					<div data-testid="agent-badges" class="flex flex-wrap gap-1 mt-1">
 						{step.agents!.map((sa) => {
-							const name = agents.find((a) => a.id === sa.agentId)?.name ?? sa.agentId;
+							const hasOverrides = !!sa.customPrompt;
+							const taskState = taskStateByAgent.get(sa.name);
 							return (
 								<span
-									key={sa.agentId}
-									class="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"
+									key={sa.name}
+									class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-900/40 text-amber-300' : 'bg-gray-700 text-gray-300'}`}
+									title={hasOverrides ? `${sa.name} (has overrides)` : sa.name}
 								>
-									{name}
+									{sa.name}
+									{hasOverrides && !taskState && (
+										<span
+											data-testid="override-indicator"
+											class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+										/>
+									)}
+									{taskState && <AgentStatusIcon state={taskState} />}
 								</span>
 							);
 						})}
 					</div>
 				) : (
-					<p data-testid="agent-name" class="text-xs text-gray-400 truncate mt-0.5">
-						{agentName}
-					</p>
+					<div
+						data-testid="agent-name"
+						class="flex items-center gap-1 text-xs text-gray-400 truncate mt-0.5"
+					>
+						<span class="truncate">{agentName}</span>
+						{taskStateByAgent.get(null) && <AgentStatusIcon state={taskStateByAgent.get(null)!} />}
+					</div>
 				)}
-
-				{/* Channel topology */}
-				<ChannelTopologyBadge step={step} />
 			</div>
 
 			{/* Bottom port */}
@@ -357,7 +558,13 @@ export function WorkflowNode({
 					background: '#6b7280',
 					border: '2px solid #374151',
 					cursor: 'crosshair',
+					zIndex: 6,
 				}}
+				class={
+					activeAnchorSideSet.has('bottom')
+						? 'opacity-100'
+						: 'opacity-0 transition-opacity group-hover:opacity-100'
+				}
 				onMouseDown={handleOutputPortMouseDown}
 				onClick={stopClickPropagation}
 			/>

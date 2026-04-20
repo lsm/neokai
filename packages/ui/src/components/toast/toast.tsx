@@ -1,5 +1,5 @@
-import { createContext, createElement } from 'preact';
-import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks';
+import { type ComponentChildren, createContext, createElement } from 'preact';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Portal } from '../../internal/portal.ts';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
@@ -8,11 +8,16 @@ import { Transition } from '../transition/transition.tsx';
 
 // --- Toast store (module-level) ---
 
+export type ToastVariant = 'info' | 'success' | 'warning' | 'error';
+
 export interface ToastOptions {
 	id?: string;
 	title?: string;
 	description?: string;
 	duration?: number;
+	variant?: ToastVariant;
+	icon?: ComponentChildren;
+	showProgress?: boolean;
 }
 
 export interface ToastItem extends ToastOptions {
@@ -82,6 +87,8 @@ interface ToastState {
 	setTitleId: (id: string | null) => void;
 	descriptionId: string | null;
 	setDescriptionId: (id: string | null) => void;
+	variant?: ToastVariant;
+	progress?: number;
 }
 
 const ToastContext = createContext<ToastState | null>(null);
@@ -102,6 +109,8 @@ interface ToastProps {
 	duration?: number;
 	afterLeave?: () => void;
 	as?: ElementType;
+	variant?: ToastVariant;
+	showProgress?: boolean;
 	children?: unknown;
 	[key: string]: unknown;
 }
@@ -111,6 +120,8 @@ function ToastFn({
 	duration = 5000,
 	afterLeave,
 	as: Tag = 'div',
+	variant = 'info',
+	showProgress = false,
 	children,
 	...rest
 }: ToastProps) {
@@ -118,7 +129,9 @@ function ToastFn({
 	const [titleId, setTitleId] = useState<string | null>(null);
 	const [descriptionId, setDescriptionId] = useState<string | null>(null);
 	const [open, setOpen] = useState(show);
+	const [progress, setProgress] = useState(100);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const startTimeRef = useRef<number | null>(null);
 
 	// Sync open state with show prop
 	useEffect(() => {
@@ -129,8 +142,23 @@ function ToastFn({
 	useEffect(() => {
 		if (!open || duration === 0) return;
 
+		startTimeRef.current = Date.now();
+		setProgress(100);
+
+		const intervalMs = 50;
+		const updateProgress = () => {
+			if (startTimeRef.current === null) return;
+			const elapsed = Date.now() - startTimeRef.current;
+			const remaining = Math.max(0, 100 - (elapsed / duration) * 100);
+			setProgress(remaining);
+		};
+
+		// Update progress every intervalMs
+		const progressInterval = setInterval(updateProgress, intervalMs);
+
 		timerRef.current = setTimeout(() => {
 			setOpen(false);
+			clearInterval(progressInterval);
 		}, duration);
 
 		return () => {
@@ -138,6 +166,8 @@ function ToastFn({
 				clearTimeout(timerRef.current);
 				timerRef.current = null;
 			}
+			clearInterval(progressInterval);
+			startTimeRef.current = null;
 		};
 	}, [open, duration]);
 
@@ -145,15 +175,31 @@ function ToastFn({
 		setOpen(false);
 	}, []);
 
-	const ctx: ToastState = {
-		id,
-		open,
-		dismiss,
-		titleId,
-		setTitleId,
-		descriptionId,
-		setDescriptionId,
-	};
+	const ctx = useMemo<ToastState>(
+		() => ({
+			id,
+			open,
+			dismiss,
+			titleId,
+			setTitleId,
+			descriptionId,
+			setDescriptionId,
+			variant,
+			progress: showProgress ? progress : undefined,
+		}),
+		[
+			id,
+			open,
+			dismiss,
+			titleId,
+			setTitleId,
+			descriptionId,
+			setDescriptionId,
+			variant,
+			showProgress,
+			progress,
+		]
+	);
 
 	const slot = { open };
 
@@ -163,6 +209,7 @@ function ToastFn({
 		'aria-atomic': 'true',
 		'aria-labelledby': titleId ?? undefined,
 		'aria-describedby': descriptionId ?? undefined,
+		'data-variant': variant,
 	};
 
 	const inner = render({
@@ -253,6 +300,41 @@ function ToastDescriptionFn({ as: Tag = 'p', children, ...rest }: ToastDescripti
 ToastDescriptionFn.displayName = 'ToastDescription';
 export const ToastDescription = ToastDescriptionFn;
 
+// --- ToastProgress ---
+
+interface ToastProgressProps {
+	as?: ElementType;
+	children?: unknown;
+	[key: string]: unknown;
+}
+
+function ToastProgressFn({ as: Tag = 'div', ...rest }: ToastProgressProps) {
+	const { open, progress } = useToastContext('ToastProgress');
+
+	// Don't render if progress is not available (showProgress was false)
+	if (progress === undefined) {
+		return null;
+	}
+
+	const slot = { open };
+
+	const ourProps: Record<string, unknown> = {
+		'data-progress': progress,
+		'aria-hidden': 'true',
+	};
+
+	return render({
+		ourProps,
+		theirProps: { as: Tag, ...rest },
+		slot,
+		defaultTag: 'div',
+		name: 'ToastProgress',
+	});
+}
+
+ToastProgressFn.displayName = 'ToastProgress';
+export const ToastProgress = ToastProgressFn;
+
 // --- ToastAction ---
 
 interface ToastActionProps {
@@ -336,10 +418,14 @@ function ToasterFn({
 					key: item.id,
 					show: true,
 					duration: item.duration,
+					variant: item.variant,
+					showProgress: item.showProgress,
 					afterLeave: () => dismiss(item.id),
 				},
+				item.icon && createElement('span', { 'data-toast-icon': true }, item.icon),
 				item.title && createElement(ToastTitle, null, item.title),
-				item.description && createElement(ToastDescription, null, item.description)
+				item.description && createElement(ToastDescription, null, item.description),
+				item.showProgress && createElement(ToastProgress, { key: `${item.id}-progress` })
 			)
 		);
 

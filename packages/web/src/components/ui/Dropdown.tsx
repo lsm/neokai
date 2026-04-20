@@ -218,7 +218,7 @@ export function Dropdown({
 	return (
 		<div ref={dropdownRef} class={cn('relative', className)}>
 			{/* Trigger */}
-			<div ref={triggerRef} onClick={() => setIsOpen(!isOpen)}>
+			<div ref={triggerRef} class="cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
 				{trigger}
 			</div>
 

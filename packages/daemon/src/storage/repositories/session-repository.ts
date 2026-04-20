@@ -19,8 +19,8 @@ export class SessionRepository {
 	 */
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, type, session_context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -41,6 +41,7 @@ export class SessionRepository {
 			session.worktree?.branch ?? null,
 			session.gitBranch ?? null,
 			session.sdkSessionId ?? null,
+			session.sdkOriginPath ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
 			session.processingState ?? null,
 			session.archivedAt ?? null,
@@ -68,7 +69,10 @@ export class SessionRepository {
 	 * @param options.includeArchived - If true, returns all sessions regardless of status.
 	 */
 	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
-		let sql = `SELECT * FROM sessions WHERE type != 'lobby' AND type != 'spaces_global'`;
+		let sql = `SELECT * FROM sessions
+				WHERE type NOT IN ('lobby', 'spaces_global', 'neo', 'room_chat', 'planner', 'coder', 'leader', 'space_chat', 'space_task_agent')
+				AND json_extract(session_context, '$.roomId') IS NULL
+				AND json_extract(session_context, '$.spaceId') IS NULL`;
 		const params: string[] = [];
 
 		if (options?.status) {
@@ -99,9 +103,9 @@ export class SessionRepository {
 			fields.push('title = ?');
 			values.push(updates.title);
 		}
-		if (updates.workspacePath) {
+		if ('workspacePath' in updates) {
 			fields.push('workspace_path = ?');
-			values.push(updates.workspacePath);
+			values.push(updates.workspacePath ?? null);
 		}
 		if (updates.status) {
 			fields.push('status = ?');
@@ -152,6 +156,10 @@ export class SessionRepository {
 		if ('sdkSessionId' in updates) {
 			fields.push('sdk_session_id = ?');
 			values.push(updates.sdkSessionId ?? null);
+		}
+		if ('sdkOriginPath' in updates) {
+			fields.push('sdk_origin_path = ?');
+			values.push(updates.sdkOriginPath ?? null);
 		}
 		if (updates.availableCommands !== undefined) {
 			fields.push('available_commands = ?');
@@ -257,7 +265,7 @@ export class SessionRepository {
 		return {
 			id: row.id as string,
 			title: row.title as string,
-			workspacePath: row.workspace_path as string,
+			workspacePath: (row.workspace_path as string | null) ?? null,
 			createdAt: row.created_at as string,
 			lastActiveAt: row.last_active_at as string,
 			status: row.status as 'active' | 'paused' | 'ended' | 'archived',
@@ -266,6 +274,7 @@ export class SessionRepository {
 			worktree,
 			gitBranch: (row.git_branch as string | null) ?? undefined,
 			sdkSessionId: (row.sdk_session_id as string | null) ?? undefined,
+			sdkOriginPath: (row.sdk_origin_path as string | null) ?? undefined,
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
 			archivedAt: (row.archived_at as string | null) ?? undefined,
@@ -312,5 +321,33 @@ export class SessionRepository {
 		const rows = stmt.all(type) as Record<string, unknown>[];
 
 		return rows.map((r) => this.rowToSession(r));
+	}
+
+	/**
+	 * Batch-fetch sessions by their IDs.
+	 * Returns a Map<id, Session> for the found sessions.
+	 * Uses a single SQL query with IN clause to avoid N+1 lookups.
+	 * Falls back to individual queries when the list is empty or too large
+	 * for SQLite's variable limit (999).
+	 */
+	getSessionsByIds(ids: string[]): Map<string, Session> {
+		const result = new Map<string, Session>();
+		if (ids.length === 0) return result;
+
+		// SQLite has a default limit of 999 variables per statement.
+		// Batch in chunks to stay within this limit.
+		const CHUNK_SIZE = 900;
+		for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+			const chunk = ids.slice(i, i + CHUNK_SIZE);
+			const placeholders = chunk.map(() => '?').join(', ');
+			const stmt = this.db.prepare(`SELECT * FROM sessions WHERE id IN (${placeholders})`);
+			const rows = stmt.all(...chunk) as Record<string, unknown>[];
+			for (const row of rows) {
+				const session = this.rowToSession(row);
+				result.set(session.id, session);
+			}
+		}
+
+		return result;
 	}
 }

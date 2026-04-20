@@ -4,7 +4,7 @@
  * Verifies that the UI displays "Mission" terminology (not "Goal") after the
  * Task 5 copy rename. Tests cover:
  * - "Missions" tab label in room page
- * - Empty state heading "No missions yet"
+ * - Empty state text "No missions yet"
  * - Empty state call-to-action "Create Mission" button
  * - No residual "Goal" text visible to users
  *
@@ -14,21 +14,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', {
-			name: 'E2E Mission Terminology Test Room',
-		});
-		return (res as { room: { id: string } }).room.id;
-	});
-}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +25,8 @@ test.describe('Mission Terminology', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		roomId = await createRoom(page);
+		await waitForWebSocketConnected(page);
+		roomId = await createRoom(page, 'E2E Mission Terminology Test Room');
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -82,8 +71,8 @@ test.describe('Mission Terminology', () => {
 		await expect(missionsTab).toBeVisible({ timeout: 10000 });
 		await missionsTab.click();
 
-		// Empty state heading should read "No missions yet"
-		await expect(page.locator('h3:has-text("No missions yet")')).toBeVisible({ timeout: 5000 });
+		// Empty state should read "No missions yet"
+		await expect(page.locator('p:has-text("No missions yet")')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('should show "Create Mission" button in empty state', async ({ page }) => {

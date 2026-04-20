@@ -1,3 +1,50 @@
+export const SHORT_ID_PREFIX = {
+	TASK: 't',
+	GOAL: 'g',
+} as const;
+
+export function formatShortId(prefix: string, counter: number): string {
+	return `${prefix}-${counter}`;
+}
+
+export function parseShortId(shortId: string): { prefix: string; counter: number } | null {
+	const match = shortId.match(/^([a-z])-(\d+)$/);
+	if (!match) return null;
+	const counter = parseInt(match[2], 10);
+	if (counter < 1) return null;
+	return { prefix: match[1], counter };
+}
+
+export function isUUID(value: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * Safely parse a JSON string, returning a fallback value on failure.
+ * Use this for reading DB columns that should be JSON but may be corrupted.
+ */
+export function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+	if (raw == null) return fallback;
+	try {
+		return JSON.parse(raw) as T;
+	} catch {
+		return fallback;
+	}
+}
+
+/**
+ * Safely parse a JSON string, returning undefined on failure or null input.
+ * Use this for reading optional DB columns that should be JSON but may be corrupted.
+ */
+export function parseJsonOptional<T>(raw: string | null | undefined): T | undefined {
+	if (raw == null) return undefined;
+	try {
+		return JSON.parse(raw) as T;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Generate a UUID v4 (browser and Node.js compatible)
  * Uses crypto.randomUUID() if available, otherwise falls back to a polyfill

@@ -14,7 +14,8 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { MessageContent, Session, MessageHub } from '@neokai/shared';
+import type { MessageContent, Session, MessageHub, NeokaiActionMessage } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { SDKMessageHandler } from './sdk-message-handler';
@@ -24,7 +25,14 @@ import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
 import { ErrorCategory } from '../error-manager';
 import { Logger } from '../logger';
-import { validateAndRepairSDKSession } from '../sdk-session-file-manager';
+import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+	validateAndRepairSDKSession,
+	findSDKSessionFileGlobally,
+	migrateSDKSessionFile,
+	getSDKSessionFilePath,
+} from '../sdk-session-file-manager';
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
@@ -48,6 +56,12 @@ export interface QueryLifecycleManagerContext {
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
 	firstMessageReceived: boolean;
+	/** Resolves when the SDK subprocess exits. Used by stop() to wait deterministically. */
+	processExitedPromise: Promise<void> | null;
+	/** SDK startup timeout timer — must be cleared during stop() to prevent stale timers. */
+	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
+	/** Abort controller for the current query — must be cleared during stop(). */
+	queryAbortController: AbortController | null;
 
 	// Mutable session state
 	pendingRestartReason: 'settings.local.json' | null;
@@ -78,7 +92,119 @@ export class QueryLifecycleManager {
 	 */
 	private getSDKWorkspacePath(): string {
 		const { session } = this.ctx;
-		return session.worktree ? session.worktree.worktreePath : session.workspacePath;
+		return session.worktree
+			? session.worktree.worktreePath
+			: (session.workspacePath ?? process.cwd());
+	}
+
+	/**
+	 * Ensure the SDK session file is accessible at the current workspace path.
+	 *
+	 * When the effective CWD changes between daemon restarts (e.g. a worktree is
+	 * added or removed), the SDK session file may still live under the OLD project
+	 * directory. This method:
+	 *
+	 * 1. Checks whether the file already exists at the CURRENT workspace path → done.
+	 * 2. Tries sdkOriginPath (persisted CWD at session-init time) if it differs.
+	 * 3. Falls back to a global scan of ~/.claude/projects/ to locate the file.
+	 * 4. When found elsewhere, copies the file to the current workspace's project dir
+	 *    so the SDK subprocess (which starts with cwd=current) can find it, then
+	 *    updates sdkOriginPath in the DB to reflect the new canonical location.
+	 *
+	 * Non-destructive: the original file is never deleted.
+	 *
+	 * @returns true if the file is now present at the current workspace path, false
+	 *          if it cannot be located and the session must start fresh.
+	 */
+	private ensureSDKSessionFileMigrated(): boolean {
+		const { session, db } = this.ctx;
+		if (!session.sdkSessionId) return false;
+
+		const currentWorkspacePath = this.getSDKWorkspacePath();
+
+		// Fast path: file already at the correct location
+		const currentFilePath = getSDKSessionFilePath(currentWorkspacePath, session.sdkSessionId);
+		if (existsSync(currentFilePath)) {
+			// If sdkOriginPath was never recorded (sessions predating this fix), set it now.
+			if (!session.sdkOriginPath) {
+				session.sdkOriginPath = currentWorkspacePath;
+				db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+			}
+			return true;
+		}
+
+		// Try the persisted origin path first (common case after worktree assignment)
+		if (session.sdkOriginPath && session.sdkOriginPath !== currentWorkspacePath) {
+			const migrated = migrateSDKSessionFile(
+				session.sdkOriginPath,
+				currentWorkspacePath,
+				session.sdkSessionId
+			);
+			if (migrated) {
+				this.logger.info(
+					`SDK session file migrated from ${session.sdkOriginPath} → ${currentWorkspacePath} ` +
+						`(sdkSessionId: ${session.sdkSessionId})`
+				);
+				// Update origin to reflect new canonical location
+				session.sdkOriginPath = currentWorkspacePath;
+				db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+				return true;
+			}
+		}
+
+		// Global fallback: scan all ~/.claude/projects/ directories
+		const foundFilePath = findSDKSessionFileGlobally(session.sdkSessionId);
+		if (foundFilePath) {
+			// Copy from wherever it was found to the current workspace's project dir
+			try {
+				const targetDir = dirname(currentFilePath);
+				mkdirSync(targetDir, { recursive: true });
+				copyFileSync(foundFilePath, currentFilePath);
+				this.logger.info(
+					`SDK session file recovered via global scan: ${foundFilePath} → ${currentFilePath} ` +
+						`(sdkSessionId: ${session.sdkSessionId})`
+				);
+				session.sdkOriginPath = currentWorkspacePath;
+				db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+				return true;
+			} catch (err) {
+				this.logger.warn(`Failed to copy SDK session file from global scan result: ${err}`);
+			}
+		}
+
+		// File not found anywhere
+		return false;
+	}
+
+	/**
+	 * Validate and repair the SDK session file, with cross-path migration as a
+	 * pre-step when the effective CWD has changed since the session was created.
+	 *
+	 * Returns true when the session is ready to resume.
+	 */
+	private validateAndRepairWithMigration(): boolean {
+		const { session, db } = this.ctx;
+		if (!session.sdkSessionId) return false;
+
+		// Migrate the file to current workspace if needed
+		const fileFound = this.ensureSDKSessionFileMigrated();
+
+		if (!fileFound) {
+			this.logger.warn(
+				`SDK session file not found anywhere for sdkSessionId=${session.sdkSessionId}. ` +
+					'Will attempt resume anyway — the SDK may produce a "No conversation found" error ' +
+					'and start fresh automatically.'
+			);
+			return false;
+		}
+
+		// File is now at the current workspace — validate/repair as usual
+		return validateAndRepairSDKSession(
+			this.getSDKWorkspacePath(),
+			session.sdkSessionId,
+			session.id,
+			db
+		);
 	}
 
 	/**
@@ -93,6 +219,10 @@ export class QueryLifecycleManager {
 	async stop(options?: { timeoutMs?: number; catchQueryErrors?: boolean }): Promise<void> {
 		const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
 		const { messageQueue } = this.ctx;
+
+		// Snapshot BEFORE awaiting — runQuery()'s finally block clears ctx.processExitedPromise
+		// during queryPromise settlement, so capture it here while it's still set.
+		const processExitedPromise = this.ctx.processExitedPromise;
 
 		// 1. Stop the message queue (no new messages processed)
 		messageQueue.stop();
@@ -145,7 +275,40 @@ export class QueryLifecycleManager {
 			}
 		}
 
-		// 5. Clear references
+		// 5. Wait for the SDK subprocess to fully exit after close().
+		// close() sends SIGTERM but the process may take time to clean up.
+		// Without this, starting a new subprocess immediately can fail because
+		// the old process still holds workspace locks (.claude/ files).
+		// Uses the local snapshot captured at the top — ctx.processExitedPromise may
+		// have already been cleared by runQuery()'s finally block during queryPromise
+		// settlement above (the race condition this snapshot was introduced to fix).
+		if (processExitedPromise) {
+			await Promise.race([
+				processExitedPromise,
+				new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+			]);
+			this.ctx.processExitedPromise = null;
+		}
+
+		// 6. Clear stale startup timer and abort controller.
+		// The old runQuery()'s finally block normally clears these, but if stop()
+		// timed out waiting for queryPromise, finally hasn't run yet. Leaving them
+		// alive is dangerous: the old timer's closure reads this.ctx.firstMessageReceived
+		// and this.ctx.queryAbortController at fire time. When restart() starts a new
+		// query that resets firstMessageReceived=false and creates a new abort controller,
+		// the stale timer fires, sees firstMessageReceived=false, and ABORTS THE NEW
+		// QUERY'S controller — causing immediate startup-timeout errors after model switch.
+		const staleTimer = this.ctx.startupTimeoutTimer;
+		if (staleTimer) {
+			clearTimeout(staleTimer);
+			this.ctx.startupTimeoutTimer = null;
+		}
+		const staleAbort = this.ctx.queryAbortController;
+		if (staleAbort) {
+			this.ctx.queryAbortController = null;
+		}
+
+		// 7. Clear references
 		this.ctx.queryObject = null;
 		this.ctx.queryPromise = null;
 	}
@@ -158,7 +321,7 @@ export class QueryLifecycleManager {
 	 * starts cleanly without stale error artifacts from the interrupted query.
 	 */
 	async restart(): Promise<void> {
-		const { session, db, daemonHub, messageHandler } = this.ctx;
+		const { session, daemonHub, messageHandler } = this.ctx;
 
 		try {
 			// Clear error state and circuit breaker before stopping.
@@ -167,32 +330,37 @@ export class QueryLifecycleManager {
 			messageHandler.resetCircuitBreaker();
 			await daemonHub.emit('session.errorClear', { sessionId: session.id });
 
+			// stop() now awaits processExitedPromise, so the old SDK subprocess is
+			// guaranteed to have exited before we proceed. No arbitrary delay needed.
 			await this.stop();
 
-			// Small delay to ensure the old SDK subprocess has fully exited.
-			// Without this, the new subprocess may conflict with the old one
-			// on shared resources (session file, API connections).
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			// Explicitly reset to idle after stop(). If stop() timed out waiting for
+			// the old queryPromise, the old query's finally block may run AFTER the
+			// new query increments the generation — triggering the stale-query guard
+			// and skipping setIdle(). This explicit call guarantees clean state.
+			await this.ctx.stateManager.setIdle();
 
 			// Validate and repair SDK session file before restarting.
+			// Includes cross-path migration when effective CWD changed since session init.
 			// The interrupted query may have left the session file in an inconsistent state
 			// (e.g., orphaned tool_results from interrupted SDK context compaction).
 			// Also detects stale sdkSessionId when the session file no longer exists.
 			if (session.sdkSessionId) {
-				const isValid = validateAndRepairSDKSession(
-					this.getSDKWorkspacePath(),
-					session.sdkSessionId,
-					session.id,
-					db
-				);
+				const isValid = this.validateAndRepairWithMigration();
 				if (!isValid) {
+					// Session file missing or unrepairably corrupted — log but keep sdkSessionId.
+					// The SDK may recreate the file on resume, or "No conversation found" will
+					// be caught in query-runner and cleared there as a last resort.
 					this.logger.warn(
-						`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+						`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+							'Will attempt resume anyway — SDK may recover.'
 					);
-					session.sdkSessionId = undefined;
-					db.updateSession(session.id, { sdkSessionId: undefined });
 				}
 			}
+
+			// Clear models cache to ensure the new model is fetched fresh from DB
+			// This is critical for model switch to pick up the correct model
+			await this.ctx.clearModelsCache();
 
 			await this.ctx.startStreamingQuery();
 		} catch (error) {
@@ -223,6 +391,8 @@ export class QueryLifecycleManager {
 			this.ctx.pendingRestartReason = null;
 			messageHandler.resetCircuitBreaker();
 			await stateManager.setIdle();
+			// Clear models cache to ensure fresh model info is fetched from DB
+			await this.ctx.clearModelsCache();
 			return { success: true };
 		}
 
@@ -255,28 +425,26 @@ export class QueryLifecycleManager {
 			this.ctx.firstMessageReceived = false;
 			await stateManager.setIdle();
 
+			// Clear models cache to ensure fresh model info is fetched from DB
+			// This is critical for model switch to pick up the new model
+			await this.ctx.clearModelsCache();
+
 			// Optionally restart
 			if (restartAfter) {
-				// Small delay to ensure process cleanup completes
-				await new Promise((resolve) => setTimeout(resolve, 100));
+				// No delay needed — stop() snapshots processExitedPromise before awaiting
+				// queryPromise, so the old SDK subprocess is guaranteed to have exited
+				// before we proceed (even if runQuery()'s finally block already cleared
+				// ctx.processExitedPromise during queryPromise settlement).
 
 				// Validate and repair SDK session file before restarting.
-				// The interrupted query may have left the session file in an inconsistent state
-				// (e.g., orphaned tool_results from interrupted SDK context compaction).
-				// Also detects stale sdkSessionId when the session file no longer exists.
+				// Includes cross-path migration when effective CWD changed since session init.
 				if (session.sdkSessionId) {
-					const isValid = validateAndRepairSDKSession(
-						this.getSDKWorkspacePath(),
-						session.sdkSessionId,
-						session.id,
-						db
-					);
+					const isValid = this.validateAndRepairWithMigration();
 					if (!isValid) {
 						this.logger.warn(
-							`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+							`SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+								'Will attempt resume anyway — SDK may recover.'
 						);
-						session.sdkSessionId = undefined;
-						db.updateSession(session.id, { sdkSessionId: undefined });
 					}
 				}
 
@@ -299,13 +467,47 @@ export class QueryLifecycleManager {
 	}
 
 	/**
+	 * Emit a NeoKai action message asking the user what to do when the SDK
+	 * transcript file cannot be found.
+	 *
+	 * The action message is persisted to the DB and broadcast via the
+	 * state.sdkMessages.delta event so it appears in the chat timeline.
+	 * The query stays blocked; startStreamingQuery() is NOT called here.
+	 */
+	private async emitSdkResumeChoiceMessage(): Promise<void> {
+		const { session, db, messageHub } = this.ctx;
+
+		const actionMessage: NeokaiActionMessage = {
+			type: 'neokai_action',
+			uuid: generateUUID(),
+			session_id: session.id,
+			action: 'sdk_resume_choice',
+			resolved: false,
+			timestamp: Date.now(),
+		};
+
+		db.saveNeokaiActionMessage(session.id, actionMessage);
+
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{ added: [actionMessage], timestamp: Date.now() },
+			{ channel: `session:${session.id}` }
+		);
+	}
+
+	/**
 	 * Ensure query is started
 	 *
 	 * Waits for any pending interrupt, validates SDK session file,
 	 * and starts the streaming query if not already running.
+	 *
+	 * Detects stale running state: if messageQueue.isRunning() is true but
+	 * queryPromise is null, the queue was not properly stopped after the previous
+	 * query ended (race between SDK query completion and finally block cleanup).
+	 * In this case, force-stop the queue and restart.
 	 */
 	async ensureQueryStarted(): Promise<void> {
-		const { session, db, messageQueue, interruptHandler } = this.ctx;
+		const { session, messageQueue, interruptHandler } = this.ctx;
 
 		// Wait for any pending interrupt
 		const interruptPromise = interruptHandler.getInterruptPromise();
@@ -318,25 +520,52 @@ export class QueryLifecycleManager {
 		}
 
 		if (messageQueue.isRunning()) {
-			return;
+			// Defensive stale state detection: if the queue thinks it's running but
+			// there's no active query promise, the session is in an inconsistent state
+			// (e.g., restored session with stale queue flag, or cleanup was interrupted).
+			// The primary race (between for-await loop ending and finally block cleanup)
+			// is handled by the early messageQueue.stop() in QueryRunner.runQuery().
+			// This check catches residual edge cases where queryPromise has already
+			// been nulled but the queue wasn't stopped.
+			if (!this.ctx.queryPromise) {
+				this.logger.warn(
+					`Stale running state detected for session ${session.id}: ` +
+						`messageQueue.isRunning()=true but queryPromise=null. Force-stopping and restarting.`
+				);
+				messageQueue.stop();
+				// Clear stale query reference to prevent concurrent callers from
+				// seeing a dead query object during the restart window.
+				this.ctx.queryObject = null;
+				// Fall through to start a fresh query below
+			} else {
+				this.logger.debug(
+					`ensureQueryStarted: session ${session.id} already running, skipping start`
+				);
+				return;
+			}
+		} else {
+			this.logger.debug(`ensureQueryStarted: session ${session.id} not running, starting query`);
 		}
 
-		// Validate SDK session file
+		// Validate SDK session file, migrating it to the current workspace path if needed.
 		if (session.sdkSessionId) {
-			const isValid = validateAndRepairSDKSession(
-				this.getSDKWorkspacePath(),
-				session.sdkSessionId,
-				session.id,
-				db
-			);
+			const isValid = this.validateAndRepairWithMigration();
 			if (!isValid) {
+				// Transcript file not found — ask the user before proceeding.
+				// Do NOT call startStreamingQuery() here; the query stays blocked until
+				// the user responds via the session.sdkResumeChoice RPC handler.
 				this.logger.warn(
-					`SDK session file missing for ${session.sdkSessionId}, clearing sdkSessionId to start fresh`
+					`SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
+						'Emitting sdk_resume_choice action message for user.'
 				);
-				session.sdkSessionId = undefined;
-				db.updateSession(session.id, { sdkSessionId: undefined });
+				await this.emitSdkResumeChoiceMessage();
+				return;
 			}
 		}
+
+		// Clear models cache to ensure fresh model info is fetched from DB
+		// This handles the edge case where model was changed in DB directly
+		await this.ctx.clearModelsCache();
 
 		await this.ctx.startStreamingQuery();
 	}

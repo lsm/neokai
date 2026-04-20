@@ -21,6 +21,7 @@
 
 import { useMemo } from 'preact/hooks';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@neokai/shared';
 
 export interface ToolResultData {
 	content: unknown;
@@ -44,14 +45,18 @@ export interface UseMessageMapsResult {
  * Hook for computing memoized message lookup maps
  */
 export function useMessageMaps(
-	messages: SDKMessage[],
+	messages: ChatMessage[],
 	sessionId: string,
 	removedOutputs: string[] = []
 ): UseMessageMapsResult {
+	// Cast to SDKMessage[] for duck-typed property access; NeokaiActionMessage will not match
+	// 'user'/'assistant'/'system' checks and will be safely skipped by all maps.
+	const sdkMessages = messages as SDKMessage[];
+
 	// Map of tool use IDs to their results
 	const toolResultsMap = useMemo(() => {
 		const map = new Map<string, ToolResultData>();
-		messages.forEach((msg) => {
+		sdkMessages.forEach((msg) => {
 			if (msg.type === 'user' && Array.isArray(msg.message.content)) {
 				msg.message.content.forEach((block: unknown) => {
 					const blockObj = block as Record<string, unknown>;
@@ -69,12 +74,12 @@ export function useMessageMaps(
 			}
 		});
 		return map;
-	}, [messages, removedOutputs, sessionId]);
+	}, [sdkMessages, removedOutputs, sessionId]);
 
 	// Map of tool use IDs to their input data
 	const toolInputsMap = useMemo(() => {
 		const map = new Map<string, unknown>();
-		messages.forEach((msg) => {
+		sdkMessages.forEach((msg) => {
 			if (msg.type === 'assistant' && Array.isArray(msg.message.content)) {
 				msg.message.content.forEach((block: unknown) => {
 					const blockObj = block as Record<string, unknown>;
@@ -85,26 +90,26 @@ export function useMessageMaps(
 			}
 		});
 		return map;
-	}, [messages]);
+	}, [sdkMessages]);
 
 	// Map of user message UUIDs to their attached session init info
 	const sessionInfoMap = useMemo(() => {
 		const map = new Map<string, SDKSystemMessage>();
-		for (let i = 0; i < messages.length; i++) {
-			const msg = messages[i];
+		for (let i = 0; i < sdkMessages.length; i++) {
+			const msg = sdkMessages[i];
 			if (msg.type === 'system' && msg.subtype === 'init') {
 				// Find the most recent user message before this session init
 				for (let j = i - 1; j >= 0; j--) {
-					if (messages[j].type === 'user' && messages[j].uuid) {
-						map.set(messages[j].uuid!, msg as SDKSystemMessage);
+					if (sdkMessages[j].type === 'user' && sdkMessages[j].uuid) {
+						map.set(sdkMessages[j].uuid!, msg as SDKSystemMessage);
 						break;
 					}
 				}
 				// If no preceding user message, attach to the first user message after
 				if (msg.uuid && !map.has(msg.uuid)) {
-					for (let j = i + 1; j < messages.length; j++) {
-						if (messages[j].type === 'user' && messages[j].uuid) {
-							map.set(messages[j].uuid!, msg as SDKSystemMessage);
+					for (let j = i + 1; j < sdkMessages.length; j++) {
+						if (sdkMessages[j].type === 'user' && sdkMessages[j].uuid) {
+							map.set(sdkMessages[j].uuid!, msg as SDKSystemMessage);
 							break;
 						}
 					}
@@ -112,13 +117,13 @@ export function useMessageMaps(
 			}
 		}
 		return map;
-	}, [messages]);
+	}, [sdkMessages]);
 
 	// Map of parent tool use IDs to their sub-agent messages
 	// Sub-agent messages have parent_tool_use_id set to the Task tool's ID
 	const subagentMessagesMap = useMemo(() => {
 		const map = new Map<string, SDKMessage[]>();
-		messages.forEach((msg) => {
+		sdkMessages.forEach((msg) => {
 			const msgWithParent = msg as SDKMessage & {
 				parent_tool_use_id?: string | null;
 			};
@@ -129,7 +134,7 @@ export function useMessageMaps(
 			}
 		});
 		return map;
-	}, [messages]);
+	}, [sdkMessages]);
 
 	return {
 		toolResultsMap,

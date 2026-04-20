@@ -17,6 +17,10 @@ export const currentRoomSessionIdSignal = signal<string | null>(null);
 // When set, shows the TaskView (Craft + Lead sessions) for the selected task
 export const currentRoomTaskIdSignal = signal<string | null>(null);
 
+// Shared signal for the current room's mission (goal) detail view
+// When set, shows the MissionDetail page for the selected mission
+export const currentRoomGoalIdSignal = signal<string | null>(null);
+
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 
@@ -32,13 +36,29 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'home' | 'chats' | 'rooms' | 'inbox' | 'projects' | 'spaces' | 'settings';
-export const navSectionSignal = signal<NavSection>('home');
+export type NavSection = 'chats' | 'rooms' | 'inbox' | 'projects' | 'spaces' | 'settings';
+export const navSectionSignal = signal<NavSection>('rooms');
 
 // Space navigation signals
 export const currentSpaceIdSignal = signal<string | null>(null);
 export const currentSpaceSessionIdSignal = signal<string | null>(null);
 export const currentSpaceTaskIdSignal = signal<string | null>(null);
+export type SpaceViewMode = 'overview' | 'tasks' | 'sessions' | 'configure';
+export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
+
+// Tasks-view pre-filter, used by callers like the SpaceOverview awaiting-approval
+// summary to deep-link into a filtered tasks list (e.g. "completion-action pauses
+// only"). Set on navigation; SpaceTasks consumes it and reverts to null on the
+// next explicit tab click to avoid sticky filters. Kept as a signal rather than
+// a URL query param to avoid URL churn when the count drops to zero.
+export type SpaceTasksFilter = 'awaiting_completion_action' | null;
+export const currentSpaceTasksFilterSignal = signal<SpaceTasksFilter>(null);
+
+// Overlay signals — session shown in slide-over panel on top of the current view
+// When spaceOverlaySessionIdSignal is set, opens AgentOverlayChat without replacing the task/overview view
+export const spaceOverlaySessionIdSignal = signal<string | null>(null);
+// Human-readable label for the overlay header (e.g. "View Leader Session", "manual-se")
+export const spaceOverlayAgentNameSignal = signal<string | null>(null);
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
@@ -46,16 +66,22 @@ export const contextPanelOpenSignal = signal<boolean>(false);
 // Create Room modal open state - shared between ContextPanel and Lobby
 export const createRoomModalSignal = signal<boolean>(false);
 
-// Room tab navigation signal - set this to navigate to a specific room tab
-// Room.tsx watches this and switches activeTab accordingly, then clears it
-export const currentRoomTabSignal = signal<string | null>(null);
+// Persistent signal tracking the current room's active tab
+export const currentRoomActiveTabSignal = signal<string | null>(null);
+
+// Whether the room agent chat tab is active (driven by /room/:roomId/agent URL)
+// When true, Room.tsx renders the Chat tab instead of session takeover
+export const currentRoomAgentActiveSignal = signal<boolean>(false);
 
 // Settings section signal - which settings section is active
 export type SettingsSection =
 	| 'general'
 	| 'providers'
 	| 'mcp-servers'
+	| 'app-mcp-servers'
+	| 'skills'
 	| 'fallback-models'
+	| 'neo'
 	| 'usage'
 	| 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

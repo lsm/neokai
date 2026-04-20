@@ -677,6 +677,182 @@ describe('InputTextarea', () => {
 		});
 	});
 
+	describe('Reference Autocomplete', () => {
+		it('should render ReferenceAutocomplete when showReferenceAutocomplete is true with results', () => {
+			const results = [
+				{
+					type: 'task' as const,
+					id: 'task-1',
+					shortId: 't-1',
+					displayText: 'Fix the login bug',
+					subtitle: 'open',
+				},
+			];
+			const onReferenceSelect = vi.fn();
+			const onReferenceClose = vi.fn();
+
+			const { container } = render(
+				<InputTextarea
+					content="@fix"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					showReferenceAutocomplete={true}
+					referenceResults={results}
+					selectedReferenceIndex={0}
+					onReferenceSelect={onReferenceSelect}
+					onReferenceClose={onReferenceClose}
+				/>
+			);
+
+			expect(container.textContent).toContain('Fix the login bug');
+		});
+
+		it('should not render ReferenceAutocomplete when callbacks are missing', () => {
+			const results = [{ type: 'task' as const, id: 'task-1', displayText: 'Fix the login bug' }];
+
+			const { container } = render(
+				<InputTextarea
+					content="@fix"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					showReferenceAutocomplete={true}
+					referenceResults={results}
+					selectedReferenceIndex={0}
+				/>
+			);
+
+			expect(container.textContent).not.toContain('Fix the login bug');
+		});
+
+		it('should render CommandAutocomplete when only command autocomplete is active', () => {
+			const { container } = render(
+				<InputTextarea
+					content="/he"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					showCommandAutocomplete={true}
+					filteredCommands={['/help']}
+					selectedCommandIndex={0}
+					onCommandSelect={vi.fn()}
+					onCommandClose={vi.fn()}
+				/>
+			);
+
+			expect(container.textContent).toContain('/help');
+		});
+
+		it('should show only reference autocomplete when both are active (reference takes priority)', () => {
+			const onReferenceSelect = vi.fn();
+			const onReferenceClose = vi.fn();
+			const onCommandSelect = vi.fn();
+			const onCommandClose = vi.fn();
+			const results = [{ type: 'task' as const, id: 'task-1', displayText: 'A Task' }];
+
+			const { container } = render(
+				<InputTextarea
+					content="@task"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+					showReferenceAutocomplete={true}
+					referenceResults={results}
+					selectedReferenceIndex={0}
+					onReferenceSelect={onReferenceSelect}
+					onReferenceClose={onReferenceClose}
+					showCommandAutocomplete={true}
+					filteredCommands={['/help']}
+					selectedCommandIndex={0}
+					onCommandSelect={onCommandSelect}
+					onCommandClose={onCommandClose}
+				/>
+			);
+
+			// Reference should be shown
+			expect(container.textContent).toContain('A Task');
+			// Command should NOT be shown
+			expect(container.textContent).not.toContain('/help');
+		});
+	});
+
+	describe('Reference Badge', () => {
+		it('should not show badge when content has no @ref{} tokens', () => {
+			const { container } = render(
+				<InputTextarea
+					content="hello world"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="reference-badge"]')).toBeNull();
+		});
+
+		it('should show badge with count when content has @ref{} tokens', () => {
+			const { container } = render(
+				<InputTextarea
+					content="check @ref{task:t-1} and @ref{file:src/foo.ts}"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			const badge = container.querySelector('[data-testid="reference-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('2');
+			expect(badge?.textContent).toContain('references');
+		});
+
+		it('should show singular "reference" for a single @ref{} token', () => {
+			const { container } = render(
+				<InputTextarea
+					content="see @ref{goal:g-5} for details"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			const badge = container.querySelector('[data-testid="reference-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('1');
+			expect(badge?.textContent).toContain('reference');
+			expect(badge?.textContent).not.toContain('references');
+		});
+
+		it('should update badge count when content changes', () => {
+			const { container, rerender } = render(
+				<InputTextarea
+					content="@ref{task:t-1}"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="reference-badge"]')?.textContent).toContain(
+				'1'
+			);
+
+			rerender(
+				<InputTextarea
+					content="@ref{task:t-1} and @ref{task:t-2} and @ref{file:src/x.ts}"
+					onContentChange={() => {}}
+					onKeyDown={() => {}}
+					onSubmit={() => {}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="reference-badge"]')?.textContent).toContain(
+				'3'
+			);
+		});
+	});
+
 	describe('Paste Event Forwarding', () => {
 		it('should call onPaste callback when paste event fires on textarea', () => {
 			const onPaste = vi.fn(() => {});

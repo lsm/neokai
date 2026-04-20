@@ -23,6 +23,8 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomAgentActiveSignal,
+	currentRoomActiveTabSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
@@ -64,10 +66,12 @@ describe('Room Agent Router', () => {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 		currentSpaceIdSignal.value = null;
 		currentSpaceSessionIdSignal.value = null;
 		currentSpaceTaskIdSignal.value = null;
-		navSectionSignal.value = 'home';
+		navSectionSignal.value = 'rooms';
 
 		vi.clearAllMocks();
 		cleanupRouter();
@@ -164,7 +168,9 @@ describe('Room Agent Router', () => {
 				'/room/abc-def-123/agent'
 			);
 			expect(currentRoomIdSignal.value).toBe(roomId);
-			expect(currentRoomSessionIdSignal.value).toBe(`room:chat:${roomId}`);
+			expect(currentRoomSessionIdSignal.value).toBeNull();
+			expect(currentRoomAgentActiveSignal.value).toBe(true);
+			expect(currentRoomActiveTabSignal.value).toBe('chat');
 			expect(currentRoomTaskIdSignal.value).toBeNull();
 			expect(currentSessionIdSignal.value).toBeNull();
 			expect(currentSpaceIdSignal.value).toBeNull();
@@ -186,7 +192,9 @@ describe('Room Agent Router', () => {
 
 			expect(mockHistory.pushState).not.toHaveBeenCalled();
 			expect(currentRoomIdSignal.value).toBe(roomId);
-			expect(currentRoomSessionIdSignal.value).toBe(`room:chat:${roomId}`);
+			expect(currentRoomSessionIdSignal.value).toBeNull();
+			expect(currentRoomAgentActiveSignal.value).toBe(true);
+			expect(currentRoomActiveTabSignal.value).toBe('chat');
 			expect(currentRoomTaskIdSignal.value).toBeNull();
 		});
 	});
@@ -199,7 +207,9 @@ describe('Room Agent Router', () => {
 			initializeRouter();
 
 			expect(currentRoomIdSignal.value).toBe(roomId);
-			expect(currentRoomSessionIdSignal.value).toBe(`room:chat:${roomId}`);
+			expect(currentRoomSessionIdSignal.value).toBeNull();
+			expect(currentRoomAgentActiveSignal.value).toBe(true);
+			expect(currentRoomActiveTabSignal.value).toBe('chat');
 			expect(currentRoomTaskIdSignal.value).toBeNull();
 			expect(currentSessionIdSignal.value).toBeNull();
 			expect(currentSpaceIdSignal.value).toBeNull();
@@ -232,7 +242,9 @@ describe('Room Agent Router', () => {
 			window.dispatchEvent(event);
 
 			expect(currentRoomIdSignal.value).toBe(roomId);
-			expect(currentRoomSessionIdSignal.value).toBe(`room:chat:${roomId}`);
+			expect(currentRoomSessionIdSignal.value).toBeNull();
+			expect(currentRoomAgentActiveSignal.value).toBe(true);
+			expect(currentRoomActiveTabSignal.value).toBe('chat');
 			expect(currentRoomTaskIdSignal.value).toBeNull();
 			expect(currentSessionIdSignal.value).toBeNull();
 			expect(navSectionSignal.value).toBe('rooms');

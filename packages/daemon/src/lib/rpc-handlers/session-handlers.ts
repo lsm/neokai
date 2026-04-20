@@ -7,7 +7,13 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageDeliveryMode, MessageHub, MessageImage, Session } from '@neokai/shared';
+import type {
+	MessageDeliveryMode,
+	MessageHub,
+	MessageImage,
+	Session,
+	NeokaiActionMessage,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
@@ -21,6 +27,7 @@ import {
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
 import type { RoomManager } from '../room';
+import type { SpaceManager } from '../space/managers/space-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
@@ -51,7 +58,8 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
-	roomManager: RoomManager
+	roomManager: RoomManager,
+	spaceManager: SpaceManager
 ): void {
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -62,12 +70,25 @@ export function setupSessionHandlers(
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
 			roomId: req.roomId,
+			spaceId: req.spaceId,
 			createdBy: req.createdBy ?? 'human',
 		});
 
 		// Add session to room if roomId is provided
 		if (req.roomId) {
 			roomManager.assignSession(req.roomId, sessionId);
+		}
+
+		// Add session to space if spaceId is provided
+		if (req.spaceId) {
+			const updatedSpace = await spaceManager.addSession(req.spaceId, sessionId);
+			daemonHub
+				.emit('space.updated', {
+					sessionId: 'global',
+					spaceId: req.spaceId,
+					space: updatedSpace,
+				})
+				.catch(() => {});
 		}
 
 		// Return the full session object so client can optimistically update
@@ -107,6 +128,40 @@ export function setupSessionHandlers(
 		return { success: true, session: updatedSession };
 	});
 
+	/**
+	 * Set workspace on an existing session (inline workspace selector flow)
+	 * Called when user selects a workspace via the inline WorkspaceSelector in chat
+	 */
+	messageHub.onRequest('session.setWorkspace', async (data) => {
+		const { sessionId, workspacePath, worktreeMode } = data as {
+			sessionId: string;
+			workspacePath: string;
+			worktreeMode: 'worktree' | 'direct';
+		};
+
+		if (!sessionId || !workspacePath || !worktreeMode) {
+			throw new Error('Missing required fields: sessionId, workspacePath, and worktreeMode');
+		}
+
+		if (worktreeMode !== 'worktree' && worktreeMode !== 'direct') {
+			throw new Error(`Invalid worktreeMode: ${worktreeMode}. Must be 'worktree' or 'direct'`);
+		}
+
+		const sessionLifecycle = sessionManager.getSessionLifecycle();
+		const updatedSession = await sessionLifecycle.setWorkspace(
+			sessionId,
+			workspacePath,
+			worktreeMode
+		);
+
+		// Broadcast update to all clients
+		messageHub.event('session.updated', updatedSession, {
+			channel: `session:${sessionId}`,
+		});
+
+		return { success: true, session: updatedSession };
+	});
+
 	messageHub.onRequest(
 		'session.list',
 		async (data: { status?: string; includeArchived?: boolean } | undefined) => {
@@ -134,7 +189,7 @@ export function setupSessionHandlers(
 			// File/workspace context (for display purposes)
 			context: {
 				files: [],
-				workingDirectory: session.workspacePath,
+				workingDirectory: session.worktree?.worktreePath ?? session.workspacePath ?? null,
 			},
 			// Context info is in session.metadata.lastContextInfo
 		};
@@ -154,6 +209,21 @@ export function setupSessionHandlers(
 				error: error instanceof Error ? error.message : String(error),
 			};
 		}
+	});
+
+	/**
+	 * Return MCP servers injected from enabled skills for the given session.
+	 * Reflects the AppMcpServer.enabled flag: disabled servers are excluded even
+	 * if the wrapping skill is enabled. Useful for testing and debugging injection.
+	 */
+	messageHub.onRequest('session.getSkillMcpServers', async (data) => {
+		const { sessionId: targetSessionId } = data as { sessionId: string };
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${targetSessionId}`);
+		}
+		const servers = agentSession.optionsBuilder.getSkillMcpServers();
+		return { servers };
 	});
 
 	messageHub.onRequest('session.update', async (data, _ctx) => {
@@ -190,11 +260,29 @@ export function setupSessionHandlers(
 	messageHub.onRequest('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
 
-		// Get roomId before deleting so we can include it in the event payload
+		// Get context before deleting so we can include it in the event payload
 		const agentSessionForDelete = sessionManager.getSession(targetSessionId);
-		const roomIdForDelete = agentSessionForDelete?.getSessionData().context?.roomId;
+		const contextForDelete = agentSessionForDelete?.getSessionData().context;
+		const roomIdForDelete = contextForDelete?.roomId;
+		const spaceIdForDelete = contextForDelete?.spaceId;
 
 		await sessionManager.deleteSession(targetSessionId);
+
+		// Remove from space so deleted sessions don't linger in space.sessionIds
+		if (spaceIdForDelete) {
+			try {
+				const updatedSpace = await spaceManager.removeSession(spaceIdForDelete, targetSessionId);
+				daemonHub
+					.emit('space.updated', {
+						sessionId: 'global',
+						spaceId: spaceIdForDelete,
+						space: updatedSpace,
+					})
+					.catch(() => {});
+			} catch {
+				// Space may already be deleted — ignore
+			}
+		}
 
 		// Broadcast on room channel so RoomStore reacts immediately.
 		// Note: the global channel broadcast is handled by session-lifecycle.ts / state-manager.ts
@@ -223,14 +311,31 @@ export function setupSessionHandlers(
 
 		const session = agentSession.getSessionData();
 
+		// Remove from space so archived sessions don't linger in space.sessionIds
+		if (session.context?.spaceId) {
+			try {
+				const updatedSpace = await spaceManager.removeSession(
+					session.context.spaceId,
+					targetSessionId
+				);
+				daemonHub
+					.emit('space.updated', {
+						sessionId: 'global',
+						spaceId: session.context.spaceId,
+						space: updatedSpace,
+					})
+					.catch(() => {});
+			} catch {
+				// Space may already be deleted — ignore
+			}
+		}
+
 		// No worktree - direct archive
 		if (!session.worktree) {
-			// Archive SDK session files
-			const archiveResult = archiveSDKSessionFiles(
-				session.workspacePath,
-				session.sdkSessionId ?? null,
-				targetSessionId
-			);
+			const sdkWorkspacePath = session.workspacePath;
+			const archiveResult = sdkWorkspacePath
+				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
+				: { archivedFiles: [], totalSize: 0, archivePath: null };
 
 			const updatedMetadata = {
 				...session.metadata,
@@ -285,11 +390,10 @@ export function setupSessionHandlers(
 			await worktreeManager.removeWorktree(session.worktree, true);
 
 			// Archive SDK session files
-			const archiveResult = archiveSDKSessionFiles(
-				session.workspacePath,
-				session.sdkSessionId ?? null,
-				targetSessionId
-			);
+			const sdkWorkspacePath = session.worktree?.worktreePath ?? session.workspacePath;
+			const archiveResult = sdkWorkspacePath
+				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
+				: { archivedFiles: [], totalSize: 0, archivePath: null };
 
 			const updatedMetadata = {
 				...session.metadata,
@@ -643,8 +747,11 @@ export function setupSessionHandlers(
 
 	// Handle manual cleanup of orphaned worktrees
 	messageHub.onRequest('worktree.cleanup', async (data) => {
-		const { workspacePath } = data as { workspacePath?: string };
-		const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(workspacePath);
+		const { workspacePath: resolvedPath } = data as { workspacePath?: string };
+		if (!resolvedPath) {
+			throw new Error('workspacePath is required');
+		}
+		const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(resolvedPath);
 
 		return {
 			success: true,
@@ -871,5 +978,84 @@ export function setupSessionHandlers(
 			}));
 
 		return { messages };
+	});
+
+	/**
+	 * Handle the user's response to an sdk_resume_choice action message.
+	 *
+	 * - 'start_fresh': clears sdkSessionId and sdkOriginPath so the next
+	 *   message starts a brand new SDK session.
+	 * - 'leave_as_is': keeps the existing sdkSessionId; the SDK will handle
+	 *   the missing transcript (likely producing a "No conversation found" error
+	 *   and starting fresh on its own, but the user chose not to intervene).
+	 *
+	 * Either way, the action message is marked as resolved and re-broadcast so
+	 * the UI can update the buttons to a "done" state, and the query is started.
+	 */
+	messageHub.onRequest('session.sdkResumeChoice', async (data) => {
+		const {
+			sessionId: targetSessionId,
+			choice,
+			messageUuid,
+		} = data as {
+			sessionId: string;
+			choice: 'start_fresh' | 'leave_as_is';
+			messageUuid: string;
+		};
+
+		if (!targetSessionId || !choice || !messageUuid) {
+			throw new Error('Missing required fields: sessionId, choice, messageUuid');
+		}
+
+		if (choice !== 'start_fresh' && choice !== 'leave_as_is') {
+			throw new Error(`Invalid choice: ${choice}. Must be 'start_fresh' or 'leave_as_is'`);
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+
+		if (choice === 'start_fresh') {
+			// Clear SDK session state so next query starts a fresh SDK conversation.
+			// `undefined` causes the repository to write NULL to the DB column via `?? null`.
+			db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
+			const session = agentSession.getSessionData();
+			session.sdkSessionId = undefined;
+			session.sdkOriginPath = undefined;
+		}
+
+		// Mark the action message as resolved and re-broadcast it so the UI
+		// can update the buttons to their "answered" state.
+		const resolvedMessage: NeokaiActionMessage = {
+			type: 'neokai_action',
+			uuid: messageUuid,
+			session_id: targetSessionId,
+			action: 'sdk_resume_choice',
+			resolved: true,
+			chosenOption: choice,
+			timestamp: Date.now(),
+		};
+
+		// Update the persisted copy (we look up by uuid in sdk_message JSON).
+		// Use updateNeokaiActionMessageByUuid so we don't need to carry the rowId.
+		db.updateNeokaiActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{ added: [resolvedMessage], timestamp: Date.now() },
+			{ channel: `session:${targetSessionId}` }
+		);
+
+		// Now start (or restart) the query so the user's pending message is processed.
+		try {
+			await agentSession.restart();
+		} catch (err) {
+			log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
+		}
+
+		return { success: true };
 	});
 }

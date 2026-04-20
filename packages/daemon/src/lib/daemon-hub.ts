@@ -27,7 +27,7 @@ import type {
 	RewindResult,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Room, NeoTask, TaskSummary } from '@neokai/shared';
+import type { Room, NeoTask } from '@neokai/shared';
 
 /**
  * Compaction trigger type
@@ -51,8 +51,11 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 	'session.deleted': { sessionId: string };
 
-	// SDK events — message may include a neokai-injected `timestamp` field from the DB layer
-	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number } };
+	// SDK events — message may carry a neokai-injected `timestamp` from the DB layer.
+	// The SDK defines timestamp?: string (ISO 8601) on user messages; the daemon overrides it
+	// with a number (epoch ms) when replaying persisted messages. The intersection keeps both
+	// possibilities visible to future subscribers so they know to handle either form.
+	'sdk.message': { sessionId: string; message: SDKMessage & { timestamp?: number | string } };
 
 	// Auth events (global events - use 'global' as sessionId)
 	'auth.changed': {
@@ -66,7 +69,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 
 	// Settings events (global events - use 'global' as sessionId)
 	'settings.updated': { sessionId: string; settings: GlobalSettings };
-	'sessions.filterChanged': { sessionId: string };
 
 	// Commands events
 	'commands.updated': { sessionId: string; commands: string[] };
@@ -204,8 +206,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string; // 'room:${roomId}' for channel routing
 		room: Room;
 		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
-		activeTasks: TaskSummary[];
-		allTasks?: TaskSummary[];
 	};
 	'room.runtime.stateChanged': {
 		sessionId: string; // 'room:${roomId}' for channel routing
@@ -333,6 +333,16 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		inboxItemId: string;
 	};
 
+	// App-level MCP registry events
+	/**
+	 * Emitted by app-mcp-handlers on create/update/delete/setEnabled.
+	 * Used by RoomRuntimeService (Task 3.2) for hot-reload of MCP server lists.
+	 * This is separate from LiveQuery — both are emitted on every write.
+	 */
+	'mcp.registry.changed': {
+		sessionId: string;
+	};
+
 	// Goal events
 	'goal.created': {
 		sessionId: string;
@@ -340,7 +350,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		goalId: string;
 		goal: import('@neokai/shared').RoomGoal;
 	};
-	/** Emitted when a coder/general task completes without human review (semi-autonomous mode) */
+	/** Emitted when a coder/general task completes without human review (semi-autonomous or no-pr mode) */
 	'goal.task.auto_completed': {
 		sessionId: string; // 'room:${roomId}' for channel routing
 		roomId: string;
@@ -348,7 +358,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		taskId: string;
 		taskTitle: string;
 		prUrl: string;
-		approvalSource: 'leader_semi_auto';
+		approvalSource: 'leader_semi_auto' | 'leader_no_pr';
 	};
 	'goal.updated': {
 		sessionId: string;
@@ -438,8 +448,8 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 
 	// Space Task Agent completion events (use 'global' as sessionId)
-	/** Emitted by report_result when a Task Agent marks a task as completed. */
-	'space.task.completed': {
+	/** Emitted by report_result when a Task Agent marks a task as done. */
+	'space.task.done': {
 		sessionId: string;
 		taskId: string;
 		spaceId: string;
@@ -472,6 +482,41 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		runId: string;
 		run?: Partial<import('@neokai/shared').SpaceWorkflowRun>;
 	};
+	/** Emitted when gate data changes (agent write_gate, or human approveGate). */
+	'space.gateData.updated': {
+		sessionId: string;
+		spaceId: string;
+		runId: string;
+		gateId: string;
+		data: Record<string, unknown>;
+	};
+
+	// Pending agent message events (queue-until-active)
+	// See packages/daemon/src/storage/repositories/pending-agent-message-repository.ts
+	/** Emitted when a Task Agent's send_message is queued because the target is not yet active. */
+	'space.pendingMessage.queued': {
+		sessionId: string;
+		spaceId: string;
+		workflowRunId: string;
+		taskId: string | null;
+		targetAgentName: string;
+		targetKind: 'node_agent' | 'space_agent';
+		messageId: string;
+		attempts: number;
+		maxAttempts: number;
+		expiresAt: number;
+		deduped: boolean;
+	};
+	/** Emitted when a queued pending message is flushed to the target session. */
+	'space.pendingMessage.delivered': {
+		sessionId: string;
+		spaceId: string;
+		workflowRunId: string;
+		targetAgentName: string;
+		targetKind: string;
+		messageId: string;
+		deliveredSessionId: string;
+	};
 
 	// Space Agent events (channel: 'space:${spaceId}')
 	'spaceAgent.created': {
@@ -488,34 +533,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		spaceId: string;
 		agentId: string;
-	};
-
-	// Space session group events (channel: 'space:${spaceId}')
-	// sessionId is set to 'space:${spaceId}' for channel routing — only clients subscribed
-	// to that space receive these events.
-	'spaceSessionGroup.created': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		taskId: string;
-		group: import('@neokai/shared').SpaceSessionGroup;
-	};
-	'spaceSessionGroup.memberAdded': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		groupId: string;
-		member: import('@neokai/shared').SpaceSessionGroupMember;
-	};
-	'spaceSessionGroup.memberUpdated': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		groupId: string;
-		memberId: string;
-		member: import('@neokai/shared').SpaceSessionGroupMember;
-	};
-	'spaceSessionGroup.deleted': {
-		sessionId: string; // 'space:${spaceId}'
-		spaceId: string;
-		groupId: string;
 	};
 
 	// Space workflow definition events (global events - use 'global' as sessionId)

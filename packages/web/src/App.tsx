@@ -1,7 +1,9 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
+import { useNeoKeyboardShortcut } from './hooks/useNeoKeyboardShortcut.ts';
+import { useViewportSafety } from './hooks/useViewportSafety.ts';
+
 import { NavRail } from './islands/NavRail.tsx';
-import { BottomTabBar } from './islands/BottomTabBar.tsx';
 import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
@@ -13,9 +15,12 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentRoomGoalIdSignal,
+	currentRoomAgentActiveSignal,
 	currentSpaceIdSignal,
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
+	currentSpaceViewModeSignal,
 	navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
@@ -28,9 +33,14 @@ import {
 	navigateToRoomAgent,
 	navigateToRoomSession,
 	navigateToRoomTask,
+	navigateToRoomMission,
 	navigateToHome,
 	navigateToSpacesPage,
 	navigateToSpace,
+	navigateToSpaceConfigure,
+	navigateToSpaceSessions,
+	navigateToSpaceTasks,
+	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
 	createSessionPath,
@@ -38,12 +48,22 @@ import {
 	createRoomAgentPath,
 	createRoomSessionPath,
 	createRoomTaskPath,
+	createRoomMissionPath,
 	createSpacePath,
+	createSpaceConfigurePath,
+	createSpaceSessionsPath,
+	createSpaceTasksPath,
+	createSpaceAgentPath,
 	createSpaceSessionPath,
 	createSpaceTaskPath,
 } from './lib/router.ts';
 
 export function App() {
+	// Global Cmd+J / Ctrl+J shortcut to toggle the Neo panel
+	useNeoKeyboardShortcut();
+	// Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
+	useViewportSafety();
+
 	useEffect(() => {
 		// STEP 1: Initialize URL-based router BEFORE any state management
 		// This ensures we read the session ID from URL on page load
@@ -69,6 +89,10 @@ export function App() {
 				// This bridges the old signal-based approach with the new store
 				effect(() => {
 					const sessionId = currentSessionIdSignal.value;
+					const spaceSessionId = currentSpaceSessionIdSignal.value;
+					// Don't clobber sessions managed by space routes
+					// (ChatContainer calls sessionStore.select directly in that case)
+					if (spaceSessionId) return;
 					sessionStore.select(sessionId);
 				});
 
@@ -95,34 +119,54 @@ export function App() {
 			const roomId = currentRoomIdSignal.value;
 			const roomSessionId = currentRoomSessionIdSignal.value;
 			const roomTaskId = currentRoomTaskIdSignal.value;
+			const roomGoalId = currentRoomGoalIdSignal.value;
 			const spaceId = currentSpaceIdSignal.value;
 			const spaceSessionId = currentSpaceSessionIdSignal.value;
 			const spaceTaskId = currentSpaceTaskIdSignal.value;
+			const spaceViewMode = currentSpaceViewModeSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
-			// Detect agent route: synthetic session ID follows the pattern room:chat:<roomId>
-			const isAgentRoute = !!(roomSessionId && roomId && roomSessionId === `room:chat:${roomId}`);
+			// Detect agent routes: new signal-based detection, with legacy session ID fallback
+			const isAgentActive = currentRoomAgentActiveSignal.value;
+			const isAgentRoute =
+				!!(roomId && isAgentActive) ||
+				!!(roomSessionId && roomId && roomSessionId === `room:chat:${roomId}`);
+			const isSpaceAgentRoute = !!(
+				spaceSessionId &&
+				spaceId &&
+				spaceSessionId === `space:chat:${spaceId}`
+			);
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
 				: spaceTaskId && spaceId
 					? createSpaceTaskPath(spaceId, spaceTaskId)
-					: spaceSessionId && spaceId
-						? createSpaceSessionPath(spaceId, spaceSessionId)
-						: spaceId
-							? createSpacePath(spaceId)
-							: roomTaskId && roomId
-								? createRoomTaskPath(roomId, roomTaskId)
-								: isAgentRoute
-									? createRoomAgentPath(roomId)
-									: roomSessionId && roomId
-										? createRoomSessionPath(roomId, roomSessionId)
-										: roomId
-											? createRoomPath(roomId)
-											: navSection === 'spaces'
-												? '/spaces'
-												: navSection === 'chats'
-													? '/sessions'
-													: '/';
+					: isSpaceAgentRoute
+						? createSpaceAgentPath(spaceId)
+						: spaceSessionId && spaceId
+							? createSpaceSessionPath(spaceId, spaceSessionId)
+							: spaceId && spaceViewMode === 'sessions'
+								? createSpaceSessionsPath(spaceId)
+								: spaceId && spaceViewMode === 'tasks'
+									? createSpaceTasksPath(spaceId)
+									: spaceId && spaceViewMode === 'configure'
+										? createSpaceConfigurePath(spaceId)
+										: spaceId
+											? createSpacePath(spaceId)
+											: roomTaskId && roomId
+												? createRoomTaskPath(roomId, roomTaskId)
+												: isAgentRoute
+													? createRoomAgentPath(roomId)
+													: roomSessionId && roomId
+														? createRoomSessionPath(roomId, roomSessionId)
+														: roomGoalId && roomId
+															? createRoomMissionPath(roomId, roomGoalId)
+															: roomId
+																? createRoomPath(roomId)
+																: navSection === 'spaces'
+																	? '/spaces'
+																	: navSection === 'chats'
+																		? '/sessions'
+																		: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -131,8 +175,16 @@ export function App() {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
 				} else if (spaceTaskId && spaceId) {
 					navigateToSpaceTask(spaceId, spaceTaskId, true);
+				} else if (isSpaceAgentRoute) {
+					navigateToSpaceAgent(spaceId, true);
 				} else if (spaceSessionId && spaceId) {
 					navigateToSpaceSession(spaceId, spaceSessionId, true);
+				} else if (spaceId && spaceViewMode === 'sessions') {
+					navigateToSpaceSessions(spaceId, true);
+				} else if (spaceId && spaceViewMode === 'tasks') {
+					navigateToSpaceTasks(spaceId, true);
+				} else if (spaceId && spaceViewMode === 'configure') {
+					navigateToSpaceConfigure(spaceId, true);
 				} else if (spaceId) {
 					navigateToSpace(spaceId, true);
 				} else if (roomTaskId && roomId) {
@@ -141,6 +193,8 @@ export function App() {
 					navigateToRoomAgent(roomId, true);
 				} else if (roomSessionId && roomId) {
 					navigateToRoomSession(roomId, roomSessionId, true);
+				} else if (roomGoalId && roomId) {
+					navigateToRoomMission(roomId, roomGoalId, true);
 				} else if (roomId) {
 					navigateToRoom(roomId, true);
 				} else if (navSection === 'spaces') {
@@ -156,27 +210,27 @@ export function App() {
 
 	return (
 		<>
-			<div class="flex h-dvh overflow-hidden bg-dark-950 relative" style={{ height: '100dvh' }}>
+			<div class="flex h-dvh overflow-hidden bg-dark-950 relative pt-safe">
 				{/* Navigation Rail (desktop only) */}
 				<NavRail />
 
 				{/* Context Panel - always visible */}
 				<ContextPanel />
 
-				{/* Main Content — add bottom padding on mobile to avoid tab bar overlap */}
-				<div class="flex-1 flex flex-col overflow-hidden pb-16 md:pb-0 min-w-0">
+				{/* Main Content — BottomTabBar is inline (flex-shrink-0) so no extra padding needed */}
+				<div class="flex-1 flex flex-col overflow-hidden min-w-0">
 					<MainContent />
 				</div>
 			</div>
-
-			{/* Bottom Tab Bar (mobile only) */}
-			<BottomTabBar />
 
 			{/* Global Toast Container */}
 			<ToastContainer />
 
 			{/* Connection Overlay - blocks UI when disconnected */}
 			<ConnectionOverlay />
+
+			{/* Neo AI Assistant Panel — disabled */}
+			{/* <NeoPanel /> */}
 		</>
 	);
 }

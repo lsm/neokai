@@ -1,21 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { getMessagesBottomPaddingPx, MIN_MESSAGES_BOTTOM_PADDING_PX } from '../layout-metrics';
+import {
+	getMessagesBottomPaddingPx,
+	MAX_MESSAGES_BOTTOM_PADDING_PX,
+	MIN_MESSAGES_BOTTOM_PADDING_PX,
+} from '../layout-metrics';
 
 describe('layout-metrics', () => {
-	it('keeps a safe minimum padding for normal footer heights', () => {
+	it('allows the last message to reach the floating composer for normal footer heights', () => {
 		expect(getMessagesBottomPaddingPx(48)).toBe(MIN_MESSAGES_BOTTOM_PADDING_PX);
+		expect(getMessagesBottomPaddingPx(110)).toBe(MIN_MESSAGES_BOTTOM_PADDING_PX);
 	});
 
-	it('grows padding when footer becomes tall', () => {
-		expect(getMessagesBottomPaddingPx(220)).toBe(244);
+	it('grows padding when the composer expands to multiple lines', () => {
+		expect(getMessagesBottomPaddingPx(134)).toBe(118);
+		expect(getMessagesBottomPaddingPx(158)).toBe(142);
 	});
 
 	it('adds queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(220, 3)).toBe(256);
+		expect(getMessagesBottomPaddingPx(158, 3)).toBe(154);
 	});
 
 	it('caps queue-overlay headroom rows', () => {
-		expect(getMessagesBottomPaddingPx(220, 99)).toBe(276);
+		expect(getMessagesBottomPaddingPx(158, 99)).toBe(174);
+	});
+
+	it('caps very tall footer padding at the hard maximum', () => {
+		expect(getMessagesBottomPaddingPx(900, 99)).toBe(MAX_MESSAGES_BOTTOM_PADDING_PX);
 	});
 
 	it('falls back to minimum for invalid heights', () => {

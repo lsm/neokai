@@ -36,12 +36,17 @@ test.describe('Auto Title Generation', () => {
 		expect(sessionId).toBeTruthy();
 
 		// Verify initial title is "New Session"
+		// Add explicit wait for session item visibility to avoid timeout
 		const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
-		await expect(sessionItem).toBeVisible();
-		await expect(sessionItem.locator('h3')).toHaveText('New Session');
+		await expect(sessionItem).toBeVisible({ timeout: 10000 });
+		// Wait for h3 to have text before asserting (avoids race condition)
+		await expect(sessionItem.locator('h3')).toHaveText('New Session', { timeout: 10000 });
 
 		// Send a message that should trigger title generation
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		// Use specific selector to avoid matching Neo panel textbox
+		const messageInput = page
+			.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+			.first();
 		await messageInput.fill('What is the capital of France?');
 		await messageInput.press('Enter');
 
@@ -87,8 +92,15 @@ test.describe('Auto Title Generation', () => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
+		// Wait for session to be visible before interacting
+		const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
+		await expect(sessionItem).toBeVisible({ timeout: 10000 });
+
 		// Send first message
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		// Use specific selector to avoid matching Neo panel textbox
+		const messageInput = page
+			.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+			.first();
 		await messageInput.fill('Tell me about TypeScript');
 		await messageInput.press('Enter');
 
@@ -96,7 +108,6 @@ test.describe('Auto Title Generation', () => {
 		await waitForMessageProcessed(page, 'Tell me about TypeScript');
 
 		// Wait for title to be generated
-		const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
 		await page.waitForFunction(
 			(sid) => {
 				const sessionEl = document.querySelector(`[data-session-id="${sid}"]`);
@@ -137,8 +148,15 @@ test.describe('Auto Title Generation', () => {
 
 		sessionId = await createSessionViaUI(page);
 
+		// Wait for session to be visible before interacting
+		const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
+		await expect(sessionItem).toBeVisible({ timeout: 10000 });
+
 		// Send a message
-		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+		// Use specific selector to avoid matching Neo panel textbox
+		const messageInput = page
+			.locator('textarea[placeholder*="Ask"]:not([placeholder*="Neo"])')
+			.first();
 		await messageInput.fill('Hello');
 		await messageInput.press('Enter');
 
@@ -146,8 +164,7 @@ test.describe('Auto Title Generation', () => {
 		await waitForMessageProcessed(page, 'Hello');
 
 		// Verify session is still functional regardless of title
-		const sessionItem = page.locator(`[data-session-id="${sessionId}"]`);
-		await expect(sessionItem).toBeVisible();
+		await expect(sessionItem).toBeVisible({ timeout: 5000 });
 
 		// Message input should still be enabled
 		await expect(messageInput).toBeEnabled();

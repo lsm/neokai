@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { render, fireEvent } from '@testing-library/preact';
+import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SDKMessageRenderer } from '../SDKMessageRenderer';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -241,12 +241,14 @@ describe('SDKMessageRenderer', () => {
 			expect(container.textContent).toContain('Authenticating');
 		});
 
-		it('should render user replay message (slash command response)', () => {
+		it('should render user replay message (slash command response)', async () => {
 			const message = createUserReplayMessage();
 			const { container } = render(<SDKMessageRenderer message={message} />);
 
 			// SlashCommandOutput should handle this
-			expect(container.textContent).toContain('Command output');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Command output');
+			});
 		});
 	});
 

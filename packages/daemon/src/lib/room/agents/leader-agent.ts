@@ -31,7 +31,7 @@ import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import { createLeaderContextMcpServer } from '../tools/room-agent-tools';
 
-const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-6';
 
 const LEADER_FEATURES: SessionFeatures = {
 	rewind: false,
@@ -44,6 +44,7 @@ const LEADER_FEATURES: SessionFeatures = {
 export type ReviewContext = 'plan_review' | 'code_review';
 
 export interface LeaderToolResult {
+	[key: string]: unknown;
 	content: Array<{ type: 'text'; text: string }>;
 }
 
@@ -61,7 +62,9 @@ export interface LeaderToolCallbacks {
 	completeTask(
 		groupId: string,
 		summary: string,
-		progressSummary?: string
+		progressSummary?: string,
+		no_pr?: boolean,
+		artifacts?: string
 	): Promise<LeaderToolResult>;
 	failTask(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
 	replanGoal(groupId: string, reason: string, progressSummary?: string): Promise<LeaderToolResult>;
@@ -165,11 +168,14 @@ You MUST call tools (no text-only final responses).
   - mode=\`defer\`: enqueue for next-turn processing (default, preferred for review URLs)
   - mode=\`immediate\`: inject for current-turn steering
 - \`complete_task\` — Accept the work if it meets all requirements
+  - \`no_pr\`: set to true when the task produced no PR — use for research, investigation, meta-tasks (e.g., "create more tasks"), any work without code changes, or coding tasks where the worker used the \`NO_CHANGES_NEEDED:\` bypass marker (i.e., verification showed the work was already done). Keep as false (default) for coding tasks that should produce code changes and a PR.
+  - \`artifacts\`: free-form description of what was produced or accomplished (use with \`no_pr=true\`)
 - \`fail_task\` — Mark the task as not achievable
 - \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried
 - \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval
 
 ### Task Management Tools (for managing other tasks in the room)
+- \`create_task\` — Create a new task, optionally linked to a goal. Use to spawn fix tasks, investigation tasks, or sub-tasks discovered during execution
 - \`update_task\` — Edit title, description, priority, or dependencies of any task
 - \`cancel_task\` — Cancel a task and cascade to any pending dependents
 - \`update_task_status\` — Change a task's status (e.g., retry a failed task: needs_attention → pending)
@@ -205,11 +211,15 @@ For planning tasks the planner must run a second phase to create tasks.
 
 1. **Send the planner back** — Call \`send_to_worker\` (mode: "defer") with:
    "The plan is approved. Please:
-   1. Merge the plan PR: \`gh pr merge <PR_NUMBER>\`
+   1. Merge the plan PR: \`gh pr merge <PR_NUMBER>\` (do NOT use --delete-branch)
    2. Read the plan file under docs/plans/
    3. Create all tasks 1:1 from the plan using the \`create_task\` tool
    4. Finish your response after all tasks are created"
-2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N", call \`complete_task\` with a summary.
+2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N":
+   a. Read the plan document under \`docs/plans/\` in the workspace.
+   b. Review each listed task against the plan: verify title, description, dependencies, priority, completeness, and no scope creep.
+   c. Use \`update_task\` to fix any discrepancies found.
+   d. Call \`complete_task\` with a summary after all tasks are verified.
 
 **IMPORTANT**: The planner must use the \`create_task\` tool to register tasks. You cannot call \`complete_task\` until tasks are created — the runtime gate will reject it.`;
 	}
@@ -219,7 +229,7 @@ For planning tasks the planner must run a second phase to create tasks.
 
 When the human message indicates approval (e.g., "approved", "merge it", "looks good"), you must complete the task by:
 
-1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:
+1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR (do NOT use --delete-branch, branch cleanup is handled separately):
    \`\`\`bash
    gh pr merge <PR_NUMBER>
    \`\`\`
@@ -261,6 +271,31 @@ function leaderPlanReviewGuidelinesSection(reviewerNames: string[], helperNames:
 	return leaderPlanReviewSimpleSection(helperNames);
 }
 
+/**
+ * Shared prompt block instructing the leader to verify PR mergeability
+ * before calling `submit_for_review`. Used in all four review sections
+ * (simple/orchestration × code/plan) to ensure consistent behavior.
+ *
+ * Uses a single `gh pr view --json mergeable,mergeStateStatus,statusCheckRollup`
+ * command, matching the runtime gate in checkPrIsMergeable, so the leader's
+ * proactive check and the gate use the same data source.
+ *
+ * @param stepLabel - e.g. "Step 5" (orchestration) or "step 5" (numbered list)
+ * @param asSubList - true to format as an indented sub-list (for numbered-step sections)
+ */
+function prMergeabilityCheckBlock(stepLabel: string, asSubList: boolean): string {
+	const indent = asSubList ? '   ' : '';
+	return `${indent}**Before calling \`submit_for_review\`**, run one command to verify the PR is ready:
+${indent}\`\`\`
+${indent}gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus,statusCheckRollup
+${indent}\`\`\`
+${indent}Then check the output:
+${indent}- If \`mergeStateStatus\` is \`DIRTY\` or \`CONFLICTING\` → send to worker: "PR has merge conflicts. Rebase and force push: \`git fetch && git rebase origin/<base-branch>\`."
+${indent}- If \`mergeStateStatus\` is \`BEHIND\` → send to worker: "PR branch is behind base. Rebase and force push: \`git fetch && git rebase origin/<base-branch>\`."
+${indent}- If any \`statusCheckRollup\` entry has \`conclusion: FAILURE\` or \`conclusion: TIMED_OUT\` → send to worker: "CI checks are failing: <check names>. Fix the failures and push."
+${indent}- Only call \`submit_for_review\` when \`mergeStateStatus\` is \`CLEAN\` (or \`UNKNOWN\`) and no checks have failed.`;
+}
+
 function leaderPlanReviewOrchestrationSection(
 	reviewerNames: string[],
 	helperNames: string[]
@@ -272,7 +307,7 @@ function leaderPlanReviewOrchestrationSection(
 		)
 		.join('\n');
 
-	const allSpecialists =
+	const customSpecialists =
 		helperNames.length > 0
 			? `${reviewerNames.join(', ')}, ${helperNames.join(', ')}`
 			: reviewerNames.join(', ');
@@ -280,7 +315,8 @@ function leaderPlanReviewOrchestrationSection(
 	return `\
 ## Available Specialists (via Task subagent_type)
 
-Custom: ${allSpecialists}
+Built-in: \`leader-explorer\` (codebase exploration), \`leader-fact-checker\` (web-based fact-checking)
+Custom: ${customSpecialists}
 
 ## Plan Review Orchestration Workflow
 
@@ -305,20 +341,32 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 - **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
-- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval
-- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
+- **Only P3 nits or no issues** → verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL for human approval
+- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL (let human decide).
 - **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`
 
-Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`;
+### Step 5: Verify PR Mergeability (before submit_for_review)
+
+${prMergeabilityCheckBlock('Step 5', false)}
+
+Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`:
+1. Read the plan document under \`docs/plans/\` in the workspace.
+2. Review each listed task against the plan for accuracy, completeness, correct dependencies, and no scope creep.
+3. Use \`update_task\` to fix any discrepancies found.
+4. Call \`complete_task\` with a summary after all tasks are verified.`;
 }
 
 function leaderPlanReviewSimpleSection(helperNames: string[]): string {
-	const helperSection =
-		helperNames.length > 0
-			? `\n## Available Helpers (via Task subagent_type)\n\n${helperNames.join(', ')}\n\nHelpers perform read-only analysis tasks. Use them to delegate heavy analysis and keep your context clean.\n`
-			: '';
+	const userHelperSection =
+		helperNames.length > 0 ? `\nAdditional helpers: ${helperNames.join(', ')}\n` : '';
 	return `\
-${helperSection}## Plan Review Guidelines
+## Available Analysis Tools (via Task subagent_type)
+
+Built-in (always available):
+- \`leader-explorer\`: Read-only codebase explorer — explores files, searches patterns, understands code structure
+- \`leader-fact-checker\`: Web-based fact-checker — validates technical decisions against current docs and best practices
+${userHelperSection}
+## Plan Review Guidelines
 
 **Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:
 1. Read the planner output and extract the PR number/URL.
@@ -326,12 +374,23 @@ ${helperSection}## Plan Review Guidelines
 3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
    - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
-   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.
-   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
-5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
-6. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
+   - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL for human approval.
+   - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
+5. ${prMergeabilityCheckBlock('step 5', true)}
+6. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.
+7. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.
 
-**Phase 2 (task creation)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N", call \`complete_task\` with a summary of the tasks created.`;
+**Phase 2 (task review + completion)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N":
+1. Read the plan document under \`docs/plans/\` in the workspace.
+2. Review each listed task against the plan. For each task, verify:
+   - **Title** — accurately reflects the scope and intent from the plan
+   - **Description** — covers all relevant details (root cause, fix approach, files)
+   - **Dependencies** — correctly reflect the dependency order in the plan
+   - **Priority** — matches the priority assigned in the plan
+   - **Completeness** — no plan items were missed or incorrectly merged
+   - **No scope creep** — tasks contain only work from their plan section
+3. Use \`update_task\` to fix any discrepancies found.
+4. Call \`complete_task\` with a summary after all tasks are verified.`;
 }
 
 function leaderCodeReviewGuidelinesSection(reviewerNames: string[], helperNames: string[]): string {
@@ -352,7 +411,7 @@ function leaderCodeReviewOrchestrationSection(
 		)
 		.join('\n');
 
-	const allSpecialists =
+	const customSpecialists =
 		helperNames.length > 0
 			? `${reviewerNames.join(', ')}, ${helperNames.join(', ')}`
 			: reviewerNames.join(', ');
@@ -360,7 +419,8 @@ function leaderCodeReviewOrchestrationSection(
 	return `\
 ## Available Specialists (via Task subagent_type)
 
-Custom: ${allSpecialists}
+Built-in: \`leader-explorer\` (codebase exploration), \`leader-fact-checker\` (web-based fact-checking)
+Custom: ${customSpecialists}
 
 ## Review Orchestration Workflow
 
@@ -385,18 +445,26 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 
 - **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "defer"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
   - You may call \`send_to_worker\` multiple times as reviewer results arrive.
-- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL
-- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
-- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``;
+- **Only P3 nits or no issues** → verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL
+- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, verify PR mergeability (Step 5), then \`submit_for_review\` with the PR URL (let human decide).
+- **Fundamentally broken** → \`fail_task\` or \`replan_goal\`
+
+### Step 5: Verify PR Mergeability (before submit_for_review)
+
+${prMergeabilityCheckBlock('Step 5', false)}`;
 }
 
 function leaderCodeReviewSimpleSection(helperNames: string[]): string {
-	const helperSection =
-		helperNames.length > 0
-			? `\n## Available Helpers (via Task subagent_type)\n\n${helperNames.join(', ')}\n\nHelpers perform read-only analysis tasks (e.g., "summarize changes in these files"). Use them to delegate heavy analysis and keep your context clean.\n`
-			: '';
+	const userHelperSection =
+		helperNames.length > 0 ? `\nAdditional helpers: ${helperNames.join(', ')}\n` : '';
 	return `\
-${helperSection}## Code Review Guidelines
+## Available Analysis Tools (via Task subagent_type)
+
+Built-in (always available):
+- \`leader-explorer\`: Read-only codebase explorer — explores files, searches patterns, understands code structure
+- \`leader-fact-checker\`: Web-based fact-checker — validates technical decisions against current docs and best practices
+${userHelperSection}
+## Code Review Guidelines
 
 **Every iteration follows the same workflow** — including after the worker addresses feedback.
 1. Read the worker output and extract the PR number/URL.
@@ -404,8 +472,9 @@ ${helperSection}## Code Review Guidelines
 3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.
 4. Route strictly by severity from your posted review:
    - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "defer") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message.
-   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.
-   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).
+   - **Only P3 nits or no issues** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL.
+   - **Review post TIMEOUT/ERROR** → verify PR mergeability (step 5), then \`submit_for_review\` with the PR URL (let human decide).
+5. ${prMergeabilityCheckBlock('step 5', true)}
 
 - Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound
 - Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`;
@@ -464,8 +533,16 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 		async complete_task(args: {
 			summary: string;
 			progress_summary?: string;
+			no_pr?: boolean;
+			artifacts?: string;
 		}): Promise<LeaderToolResult> {
-			return callbacks.completeTask(groupId, args.summary, args.progress_summary);
+			return callbacks.completeTask(
+				groupId,
+				args.summary,
+				args.progress_summary,
+				args.no_pr,
+				args.artifacts
+			);
 		},
 		async fail_task(args: {
 			reason: string;
@@ -524,6 +601,18 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 					.string()
 					.describe('Summary of what was accomplished and how it meets requirements'),
 				progress_summary: progressSummaryField,
+				no_pr: z
+					.boolean()
+					.optional()
+					.describe(
+						'Set to true when the task produced no PR (e.g., research, investigation, task creation)'
+					),
+				artifacts: z
+					.string()
+					.optional()
+					.describe(
+						'Free-form description of what was produced or accomplished (use with no_pr=true)'
+					),
 			},
 			(args) => handlers.complete_task(args)
 		),
@@ -683,7 +772,178 @@ export function toAgentModel(modelId: string): AgentDefinition['model'] {
 	return 'sonnet';
 }
 
-/** Restricted tools for reviewer sub-agents (read-only + gh CLI) */
+// ---------------------------------------------------------------------------
+// Built-in sub-agent definitions
+// ---------------------------------------------------------------------------
+
+/**
+ * Built-in explorer sub-agent for leader analysis.
+ * Performs read-only codebase exploration delegated by the leader.
+ * No Task tools — one level max.
+ */
+export function buildLeaderExplorerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Read-only codebase explorer for leader analysis. Explores files, searches patterns, and returns structured findings to keep the main leader context clean.',
+		tools: ['Read', 'Grep', 'Glob', 'Bash'],
+		model: 'inherit',
+		prompt: `You are a Leader Explorer Agent. Your job is to perform read-only codebase analysis tasks delegated by the main Leader Agent.
+
+## Rules
+
+1. **Read-only** — do NOT modify, create, or delete files
+2. **No sub-agents** — do not spawn further sub-agents (no Task tool)
+3. **Return structured findings** — always end with the structured block below
+
+## What You Do
+
+- Explore files, search for patterns, understand code structure
+- Identify relevant code areas, dependencies, callers, callees
+- Summarize findings concisely for the leader to use in decision-making
+
+## Required Output Format
+
+End your response with this structured block:
+
+---ANALYSIS_RESULT---
+status: success | partial | failed
+summary: <1-3 sentence description of findings>
+details: <key findings, file paths, patterns found>
+---END_ANALYSIS_RESULT---
+`,
+	};
+}
+
+/**
+ * Built-in fact-checker sub-agent for leader decisions.
+ * Uses web search to validate technical decisions and check API docs.
+ * No Task tools — one level max.
+ */
+export function buildLeaderFactCheckerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Web-based fact-checker for leader decisions. Validates technical choices against current docs and best practices using WebSearch and WebFetch.',
+		tools: ['WebSearch', 'WebFetch'],
+		model: 'inherit',
+		prompt: `You are a Leader Fact-Checker Agent. Your job is to validate technical decisions by checking current documentation, API references, and best practices.
+
+## Rules
+
+1. **Web-only** — use WebSearch and WebFetch; do NOT read local files (codebase access is the explorer's responsibility)
+2. **No sub-agents** — do not spawn further sub-agents (no Task tool)
+3. **Return structured findings** — always end with the structured block below
+
+## What You Do
+
+- Verify API usage against the latest official documentation
+- Check that libraries and patterns follow current best practices
+- Flag deprecated APIs, breaking changes, or outdated approaches
+- Validate technical assumptions made in the plan or implementation
+
+## Required Output Format
+
+End your response with this structured block:
+
+---ANALYSIS_RESULT---
+status: success | partial | failed
+summary: <1-3 sentence description of findings>
+verified: <what was confirmed as correct>
+concerns: <deprecated patterns, outdated APIs, or best practice violations found>
+---END_ANALYSIS_RESULT---
+`,
+	};
+}
+
+/**
+ * Built-in explorer sub-agent for reviewer agents.
+ * Explores the codebase around changed files to provide full context before review.
+ * No Task tools — one level max.
+ */
+export function buildReviewerExplorerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Read-only codebase explorer for code review context. Explores callers, callees, related tests, and architectural patterns around changed files.',
+		tools: ['Read', 'Grep', 'Glob', 'Bash'],
+		model: 'inherit',
+		prompt: `You are a Reviewer Explorer Agent. Your job is to explore the codebase around changed files to give the reviewer full context before they evaluate the changes.
+
+## Rules
+
+1. **Read-only** — do NOT modify, create, or delete files
+2. **No sub-agents** — do not spawn further sub-agents (no Task tool)
+3. **Return structured findings** — always end with the structured block below
+
+## What You Do
+
+Given a set of changed files or a PR number, explore:
+- **Callers**: Who calls the changed functions/methods?
+- **Callees**: What does the changed code depend on?
+- **Related tests**: What tests cover the changed areas?
+- **Architectural patterns**: How does this change fit the existing patterns?
+- **Integration points**: How do the changes interact with surrounding code?
+
+Use Read, Grep, Glob, and Bash (e.g., \`git diff\`, \`git log\`) to gather this context.
+
+## Required Output Format
+
+End your response with this structured block:
+
+---CONTEXT_FINDINGS---
+changed_files: <list of key changed files>
+callers: <who calls the changed code>
+callees: <what the changed code depends on>
+tests: <related test files and coverage gaps>
+patterns: <architectural patterns observed>
+risks: <potential integration issues or side effects>
+---END_CONTEXT_FINDINGS---
+`,
+	};
+}
+
+/**
+ * Built-in fact-checker sub-agent for reviewer agents.
+ * Validates implementation against current best practices and API documentation.
+ * No Task tools — one level max.
+ */
+export function buildReviewerFactCheckerAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Web-based fact-checker for code review. Verifies implementation follows current best practices and checks API usage against the latest documentation.',
+		tools: ['WebSearch', 'WebFetch'],
+		model: 'inherit',
+		prompt: `You are a Reviewer Fact-Checker Agent. Your job is to validate the implementation by checking current best practices, API documentation, and known pitfalls.
+
+## Rules
+
+1. **Web-only** — use WebSearch and WebFetch; do NOT read local files (codebase exploration is the explorer's responsibility)
+2. **No sub-agents** — do not spawn further sub-agents (no Task tool)
+3. **Return structured findings** — always end with the structured block below
+
+## What You Do
+
+Given a description of what was implemented, validate:
+- **API correctness**: Is the API used as documented? Any deprecated methods?
+- **Best practices**: Does the implementation follow current community standards?
+- **Security**: Are there known security pitfalls for this pattern?
+- **Version compatibility**: Are the APIs compatible with the versions in use?
+- **Known bugs**: Are there reported bugs or gotchas for this library version?
+
+## Required Output Format
+
+End your response with this structured block:
+
+---FACT_CHECK_RESULT---
+status: pass | warn | fail
+summary: <1-3 sentence description of findings>
+verified: <what was confirmed as correct and up-to-date>
+warnings: <deprecated patterns, version mismatches, or best practice deviations>
+blockers: <security issues or API misuse that must be fixed>
+---END_FACT_CHECK_RESULT---
+`,
+	};
+}
+
+/** Restricted tools for reviewer sub-agents (read-only + gh CLI + sub-agent spawning) */
 const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 	'Read',
 	'Grep',
@@ -691,6 +951,9 @@ const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 	'Bash',
 	'WebFetch',
 	'WebSearch',
+	'Task',
+	'TaskOutput',
+	'TaskStop',
 ];
 
 const REVIEWER_OUTPUT_FORMAT = `
@@ -733,16 +996,38 @@ function buildSdkReviewerPrompt(model: string, provider?: string): string {
 - **Provider:** ${displayProvider}
 You MUST include this identity block at the top of every PR comment you post.
 
+## Sub-Agent Support
+
+You have two specialist sub-agents available via the Task tool. Use them when reviewing non-trivial changes — skip them for straightforward, isolated edits.
+
+- **reviewer-explorer**: Explores callers, callees, related tests, and architectural patterns around changed files. Use it to build full context before evaluating the implementation. Invoke with the list of changed files and the PR description.
+- **reviewer-fact-checker**: Validates implementation against current API documentation, best practices, and known pitfalls. Use it when you are unsure whether an API is used correctly, whether a pattern follows current community standards, or whether there are version-compatibility issues.
+
+**When to use sub-agents:**
+- Non-trivial changes touching multiple files or architectural boundaries → use \`reviewer-explorer\` first
+- Implementation uses external APIs, third-party libraries, or patterns you want to verify → use \`reviewer-fact-checker\`
+- Simple, self-contained changes (single function, obvious correctness) → skip sub-agents
+
+**How to invoke:**
+\`\`\`
+Task: Use reviewer-explorer to explore the context around <changed files>
+Task: Use reviewer-fact-checker to validate that <implementation description> follows current best practices
+\`\`\`
+
+Wait for each sub-agent to complete and incorporate its findings into your review.
+
 ## Review Process
 
 1. Read the task prompt carefully — it describes what was requested and what was implemented
 2. Understand the original ask: what was the goal? What should the final result look like?
-3. Explore the codebase thoroughly (use Read, Grep, Glob to understand the full picture):
+3. For non-trivial changes, spawn \`reviewer-explorer\` to understand the full context (callers, callees, tests, integration points) before reading files yourself
+4. Explore the codebase thoroughly (use Read, Grep, Glob to understand the full picture):
    - Read the changed/new files completely, not just diffs
    - Read surrounding code to understand integration points
    - Check imports, exports, and cross-file dependencies
    - Look at test files to verify coverage
-4. Evaluate the implementation holistically:
+5. If unsure about API correctness or best practices, spawn \`reviewer-fact-checker\` to validate against current documentation
+6. Evaluate the implementation holistically:
    - **Correctness**: Does the code actually achieve the original ask?
    - **Completeness**: Are all aspects of the request addressed? Any missing pieces?
    - **Bugs & edge cases**: Logic errors, off-by-one, null handling, race conditions
@@ -753,7 +1038,7 @@ You MUST include this identity block at the top of every PR comment you post.
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
 
    The most critical bugs are often **omissions** — missing error handling, uncovered edge cases, absent validation at system boundaries. Prioritize what's NOT there over what is.
-5. Post your review via the REST API, which returns the review URL directly:
+7. Post your review via the REST API, which returns the review URL directly:
    \`\`\`bash
    # For APPROVE:
    GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
@@ -783,7 +1068,7 @@ You MUST include this identity block at the top of every PR comment you post.
 
    > **Model:** ${model} | **Client:** NeoKai | **Provider:** ${displayProvider}
    \`\`\`
-6. The \`--jq '.html_url'\` output is the review URL — use it in the structured output block below
+8. The \`--jq '.html_url'\` output is the review URL — use it in the structured output block below
 
 ## Guidelines
 
@@ -907,6 +1192,10 @@ You MUST include this identity block at the top of every PR comment you post.
 5. **ALWAYS run the CLI tool synchronously** — set \`timeout: 600000\` (10 minutes) on the Bash call. Do NOT use \`run_in_background\`. The output will be returned when the command completes. Do NOT poll, sleep, or check for output in separate steps.
 6. If the CLI tool times out or errors, do NOT retry. Do NOT post a GitHub review. Instead, output the structured block with \`recommendation: TIMEOUT\` (or \`ERROR\`), \`url: none\`, and a summary describing what happened. The leader will decide how to proceed.
 
+## Sub-Agent Support
+
+Two specialist sub-agents are available in the agent namespace: \`reviewer-explorer\` (codebase context) and \`reviewer-fact-checker\` (API/best-practice validation). As a relay, you should NOT use these to supplement the CLI tool's findings — the CLI tool does ALL reviewing. Do not spawn sub-agents.
+
 ## Review Process
 
 1. Read the task prompt carefully — extract the PR number and task description
@@ -1025,8 +1314,13 @@ export function buildReviewerAgents(
 	reviewers: SubagentConfig[],
 	leaderModel?: string
 ): Record<string, AgentDefinition> {
-	const agents: Record<string, AgentDefinition> = {};
-	const usedNames = new Set<string>();
+	const agents: Record<string, AgentDefinition> = {
+		'reviewer-explorer': buildReviewerExplorerAgentDef(),
+		'reviewer-fact-checker': buildReviewerFactCheckerAgentDef(),
+	};
+	// Pre-populate usedNames with reserved sub-agent names so toReviewerName()
+	// never generates a name that overwrites the built-in definitions.
+	const usedNames = new Set<string>(['reviewer-explorer', 'reviewer-fact-checker']);
 	const runtimeModelLabel = leaderModel ?? 'sonnet';
 
 	for (const reviewer of reviewers) {
@@ -1060,11 +1354,32 @@ export function buildReviewerAgents(
 }
 
 /**
+ * Built-in sub-agent names that are always present in the Leader's agents map.
+ * User-configured agents that collide with these names are prefixed with `custom-`.
+ */
+const BUILTIN_LEADER_SUBAGENT_NAMES = new Set(['leader-explorer', 'leader-fact-checker']);
+
+/**
+ * Resolve name collisions between user-configured agents and built-in sub-agents.
+ * If a user agent name matches a built-in name, it is prefixed with `custom-`.
+ */
+export function resolveAgentNameCollisions(
+	agents: Record<string, AgentDefinition>
+): Record<string, AgentDefinition> {
+	const result: Record<string, AgentDefinition> = {};
+	for (const [name, def] of Object.entries(agents)) {
+		result[BUILTIN_LEADER_SUBAGENT_NAMES.has(name) ? `custom-${name}` : name] = def;
+	}
+	return result;
+}
+
+/**
  * Create an AgentSessionInit for a Leader agent session.
  *
- * Uses the agent/agents pattern: the Leader is defined as a named AgentDefinition
+ * Always uses the agent/agents pattern: the Leader is defined as a named AgentDefinition
  * and the session is configured with `agent: 'Leader'` to designate it as the main thread.
- * Reviewer sub-agents (if configured) are merged into the `agents` map alongside Leader.
+ * Built-in sub-agents (`leader-explorer`, `leader-fact-checker`) are always included.
+ * Reviewer and helper sub-agents from room config are merged in if configured.
  *
  * This is analogous to coordinatorMode but custom: we define the Leader agent explicitly
  * rather than using the SDK's built-in coordinator. This preserves the leader's system
@@ -1075,11 +1390,6 @@ export function buildReviewerAgents(
  * via the mcpServers config and should be available to the main agent thread regardless
  * of the agent's tools list. If this assumption is wrong and MCP tools are NOT available,
  * add 'leader-agent-tools__*' to the Leader agent's tools array.
- *
- * To test: Run the server, create a room with reviewer sub-agents configured,
- * trigger autonomous mode, and verify:
- * 1. Leader can call MCP tools (send_to_worker, complete_task, etc.)
- * 2. Leader can dispatch reviewer sub-agents via Task tool
  */
 export function createLeaderAgentInit(
 	config: LeaderAgentConfig,
@@ -1100,73 +1410,46 @@ export function createLeaderAgentInit(
 				}) as unknown as McpServerConfig)
 			: undefined;
 
-	// Build reviewer agents from room config (if any)
+	// Build reviewer agents from room config (if any), resolving name collisions with built-ins
 	const roomConfig = config.room.config ?? {};
 	const reviewerConfigs = getLeaderSubagents(roomConfig);
 	const leaderModel = config.model ?? DEFAULT_LEADER_MODEL;
 	const reviewerAgents =
 		reviewerConfigs && reviewerConfigs.length > 0
-			? buildReviewerAgents(reviewerConfigs, leaderModel)
-			: undefined;
+			? resolveAgentNameCollisions(buildReviewerAgents(reviewerConfigs, leaderModel))
+			: {};
 
-	// Build helper agents from room config (if any)
+	// Build helper agents from room config (if any), resolving name collisions with built-ins
 	const helperConfigs = getLeaderHelperSubagents(roomConfig);
 	const helperAgents =
-		helperConfigs && helperConfigs.length > 0 ? buildLeaderHelperAgents(helperConfigs) : undefined;
+		helperConfigs && helperConfigs.length > 0
+			? resolveAgentNameCollisions(buildLeaderHelperAgents(helperConfigs))
+			: {};
 
-	// Merge reviewers and helpers into a single sub-agents map.
-	// Use the agent/agents pattern when ANY sub-agents are configured.
-	const allSubAgents: Record<string, AgentDefinition> = {
+	// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
+	const leaderAgentDef: AgentDefinition = {
+		description:
+			'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
+		prompt: buildLeaderSystemPrompt(config),
+		tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob', 'Bash'],
+		model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
+	};
+
+	// Always include built-in sub-agents plus any user-configured reviewers and helpers.
+	const allAgents: Record<string, AgentDefinition> = {
+		Leader: leaderAgentDef,
+		'leader-explorer': buildLeaderExplorerAgentDef(),
+		'leader-fact-checker': buildLeaderFactCheckerAgentDef(),
 		...reviewerAgents,
 		...helperAgents,
 	};
-	const hasSubAgents = Object.keys(allSubAgents).length > 0;
 
-	if (hasSubAgents) {
-		// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
-		const leaderAgentDef: AgentDefinition = {
-			description:
-				'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
-			prompt: buildLeaderSystemPrompt(config),
-			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob'],
-			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
-		};
-
-		const allAgents: Record<string, AgentDefinition> = {
-			Leader: leaderAgentDef,
-			...allSubAgents,
-		};
-
-		return {
-			sessionId: config.sessionId,
-			workspacePath: config.workspacePath,
-			systemPrompt: {
-				type: 'preset',
-				preset: 'claude_code',
-			},
-			mcpServers: {
-				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
-				...(roomAgentTools ? { 'leader-context-tools': roomAgentTools } : {}),
-			},
-			features: LEADER_FEATURES,
-			context: { roomId: config.room.id },
-			type: 'leader' as const,
-			model: config.model ?? DEFAULT_LEADER_MODEL,
-			provider: config.provider,
-			agent: 'Leader',
-			agents: allAgents,
-			contextAutoQueue: false,
-		};
-	}
-
-	// Simple path: no reviewer sub-agents, no agent/agents needed
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildLeaderSystemPrompt(config),
 		},
 		mcpServers: {
 			'leader-agent-tools': mcpServer as unknown as McpServerConfig,
@@ -1174,9 +1457,10 @@ export function createLeaderAgentInit(
 		},
 		features: LEADER_FEATURES,
 		context: { roomId: config.room.id },
-		type: 'leader',
+		type: 'leader' as const,
 		model: config.model ?? DEFAULT_LEADER_MODEL,
 		provider: config.provider,
-		contextAutoQueue: false,
+		agent: 'Leader',
+		agents: allAgents,
 	};
 }

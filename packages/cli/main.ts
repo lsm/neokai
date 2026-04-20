@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
 import { getConfig } from '@neokai/daemon/config';
-import { join } from 'path';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import { parseArgs, getHelpText } from './src/cli-utils';
 
 // Parse CLI arguments
@@ -30,27 +27,13 @@ const nodeEnv = process.env.NODE_ENV || 'development';
 const isDev = nodeEnv === 'development';
 const isTest = nodeEnv === 'test';
 
-// Provide default workspace if not specified via CLI or NEOKAI_WORKSPACE_PATH env var
-if (!cliOptions.workspace && !process.env.NEOKAI_WORKSPACE_PATH) {
-	if (isDev) {
-		// Development: use project_root/tmp/workspace
-		const __filename = fileURLToPath(import.meta.url);
-		const __dirname = dirname(__filename);
-		const projectRoot = join(__dirname, '..', '..');
-		cliOptions.workspace = join(projectRoot, 'tmp', 'workspace');
-	} else {
-		// Production/Test: use current working directory
-		cliOptions.workspace = process.cwd();
-	}
-}
-
 const config = getConfig(cliOptions);
 
 const serverMode = isDev ? 'Development' : isTest ? 'Test' : 'Production';
 console.log(`\n🚀 NeoKai ${serverMode} Server`);
 console.log(`   Mode: ${config.nodeEnv}`);
 console.log(`   Model: ${config.defaultModel}`);
-console.log(`   Workspace: ${config.workspaceRoot}\n`);
+console.log(`   Database: ${config.dbPath}\n`);
 
 if (isDev) {
 	// Development mode: Vite dev server + Daemon (for local development with HMR)

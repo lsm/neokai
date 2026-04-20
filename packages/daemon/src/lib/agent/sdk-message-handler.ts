@@ -12,11 +12,13 @@
  * - Title generation trigger
  * - Automatic phase detection for state tracking
  * - Circuit breaker trip handling (error loop detection)
+ * - Context usage refresh via the SDK's native `query.getContextUsage()`
+ *   (runs every N stream events, at every turn end, and after compaction)
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
-import type { MessageHub, Session } from '@neokai/shared';
+import type { ContextInfo, MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
@@ -24,6 +26,7 @@ import {
 	isSDKAPIRetryMessage,
 	isSDKAssistantMessage,
 	isSDKCompactBoundary,
+	isSDKResultMessage,
 	isSDKResultSuccess,
 	isSDKStatusMessage,
 	isSDKSystemInit,
@@ -42,6 +45,13 @@ import type { MessageQueue } from './message-queue';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 
 /**
+ * Number of SDK stream events between automatic context-usage refreshes.
+ * A refresh also happens at every turn end (result/error) and after
+ * compaction, so short turns still update context at least once.
+ */
+const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
+
+/**
  * Context interface - what SDKMessageHandler needs from AgentSession
  * Using interface instead of importing AgentSession to avoid circular deps
  */
@@ -58,12 +68,9 @@ export interface SDKMessageHandlerContext {
 	readonly errorManager: ErrorManager;
 	readonly lifecycleManager: QueryLifecycleManager;
 
-	// Mutable query state (needed to check if query is running)
+	// Mutable query state (needed to check if query is running and to call getContextUsage())
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
-
-	// Whether to auto-queue /context after each turn (default: true)
-	contextAutoQueueEnabled: boolean;
 
 	// Called when the SDK init message provides the full slash commands list
 	onInitSlashCommands: (commands: string[]) => Promise<void>;
@@ -76,38 +83,13 @@ export class SDKMessageHandler {
 	private circuitBreaker: ApiErrorCircuitBreaker;
 	private acknowledgedPersistedUserThisTurn: boolean = false;
 
-	// Track whether we just processed a context response to prevent infinite loop
-	// When true, we skip queuing /context for the next result message
-	private lastMessageWasContextResponse: boolean = false;
+	// Count of SDK stream events seen since the last context-usage refresh.
+	// Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
+	// or compaction) so that back-to-back triggers don't double-fetch.
+	private eventsSinceContextRefresh: number = 0;
 
-	// Track UUIDs of internal /context commands to skip their result messages
-	private internalContextCommandIds: Set<string> = new Set();
-
-	/**
-	 * Check if this message is the replay response for an internally enqueued /context command.
-	 *
-	 * This is ID-based (not content-based) so loop prevention still works if SDK output format changes.
-	 */
-	private isInternalContextResponse(message: SDKMessage): boolean {
-		if (message.type !== 'user') return false;
-		const userMessage = message as { uuid?: string };
-		return !!userMessage.uuid && this.internalContextCommandIds.has(userMessage.uuid);
-	}
-
-	/**
-	 * Check if a successful result consumed zero tokens.
-	 * Internal slash-command turns (like /context) typically produce this shape.
-	 */
-	private isZeroTokenResult(message: SDKMessage): boolean {
-		if (!isSDKResultSuccess(message)) return false;
-		const usage = message.usage;
-		return (
-			usage.input_tokens === 0 &&
-			usage.output_tokens === 0 &&
-			usage.cache_read_input_tokens === 0 &&
-			usage.cache_creation_input_tokens === 0
-		);
-	}
+	// In-flight context refresh (deduped across event/turn-end/compact triggers)
+	private pendingContextRefresh: Promise<void> | null = null;
 
 	constructor(private ctx: SDKMessageHandlerContext) {
 		const { session } = ctx;
@@ -405,7 +387,8 @@ export class SDKMessageHandler {
 			daemonHub
 				.emit('sdk.message', {
 					sessionId: session.id,
-					message: { ...sdkMessage, timestamp: consumedAt },
+					// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+					message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 				})
 				.catch(() => {});
 			return;
@@ -445,7 +428,8 @@ export class SDKMessageHandler {
 		daemonHub
 			.emit('sdk.message', {
 				sessionId: session.id,
-				message: { ...sdkMessage, timestamp: consumedAt },
+				// Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
+				message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
 			})
 			.catch(() => {});
 	}
@@ -492,89 +476,9 @@ export class SDKMessageHandler {
 		// Automatically update phase based on message type
 		await stateManager.detectPhaseFromMessage(message);
 
-		// First, correlate internal /context replay by message UUID.
-		// This avoids relying on brittle content markers that may change across SDK versions.
-		if (this.isInternalContextResponse(message)) {
-			// UUID matches an internally enqueued /context command.
-			// Try to parse the context data from this message.
-			//
-			// NEW SDK behaviour (claude binary >= ~1.0.53): the user replay message
-			// contains only the original '/context' text (not the output). The actual
-			// context output arrives as a SEPARATE assistant message via sc8(). In that
-			// case parseContextResponse returns null here and the content-based check
-			// below catches the assistant message on the next iteration.
-			//
-			// OLD SDK behaviour: the user replay message itself contains the context
-			// output wrapped in <local-command-stdout> tags.
-			const parsed = await this.handleContextResponseIfParseable(message);
-
-			if (parsed) {
-				// Successfully parsed: this message IS the context output.
-				this.lastMessageWasContextResponse = true;
-				const userMsg = message as { uuid?: string };
-				if (userMsg.uuid) {
-					this.internalContextCommandIds.delete(userMsg.uuid);
-				}
-			}
-			// Whether parsed or not, suppress saving/broadcasting this internal message
-			return;
-		}
-
-		// Check if this is a /context response BEFORE saving/emitting.
-		// Handles both:
-		//   - Old format: user message with isReplay=true + <local-command-stdout>
-		//   - New format: assistant message (from sc8()) with raw markdown content
-		// /context responses should be processed for context tracking but NOT deferred to DB or shown in UI
-		const isContextResponse = this.contextFetcher.isContextResponse(message);
-		if (isContextResponse) {
-			const parsed = await this.handleContextResponseIfParseable(message);
-			if (!parsed) {
-				// Content-based detection said it looks like context data, but parsing
-				// failed — log a warning so the failure is visible.
-				this.logger.warn('Failed to parse /context response');
-			}
-			// Set flag to skip:
-			// 1. Queuing another /context for the next result
-			// 2. Saving the result message that follows this context response
-			this.lastMessageWasContextResponse = true;
-
-			// Clean up the tracked ID if this message carries the same UUID
-			// (only possible in old format where the replay IS the output)
-			const msg = message as { uuid?: string };
-			if (msg.uuid && this.internalContextCommandIds.has(msg.uuid)) {
-				this.internalContextCommandIds.delete(msg.uuid);
-			}
-
-			// IMPORTANT: Return early to skip saving and emitting this message
-			// It's already been processed for context tracking
-			return;
-		}
-
-		// Fallback guard: if an internal /context command is pending and we get a
-		// zero-token result, treat it as the paired internal result even when replay
-		// correlation failed (SDK format/UUID drift). This prevents re-queue loops.
-		if (this.isZeroTokenResult(message) && this.internalContextCommandIds.size > 0) {
-			this.internalContextCommandIds.clear();
-			this.lastMessageWasContextResponse = false;
-			return;
-		}
-
-		// Check if this is a result message immediately following a /context response
-		// Skip saving/broadcasting these result messages
-		if (message.type === 'result' && this.lastMessageWasContextResponse) {
-			// Reset the flag - we've now handled both the context response AND its result
-			this.lastMessageWasContextResponse = false;
-			// Clear any pending internal context command IDs. In the new SDK format the
-			// assistant message that carries context data does NOT match the enqueued UUID,
-			// so the UUID stays in the set after the user-replay is processed. Without this
-			// clear the stale UUID would prevent auto-queuing /context on subsequent turns.
-			this.internalContextCommandIds.clear();
-			// Return early - don't save or broadcast this result
-			return;
-		}
-
 		// For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
 		if (await this.acknowledgePersistedUserMessage(message)) {
+			this.maybeRefreshContextOnEvent(message);
 			return;
 		}
 
@@ -631,6 +535,19 @@ export class SDKMessageHandler {
 		if (isSDKCompactBoundary(message)) {
 			await this.handleCompactBoundary(message);
 		}
+
+		// Turn-end context refresh: any result message (success or error
+		// termination — error_during_execution, error_max_turns, etc.)
+		// triggers a fetch, so short turns still update context once.
+		// The 5-event tick below is deduped via pendingContextRefresh.
+		if (isSDKResultMessage(message)) {
+			void this.refreshContextUsage('turn-end');
+			return;
+		}
+
+		// Stream-event cadence for context refresh: every N events we've seen
+		// in this session (user/assistant/tool-use/tool-result etc.).
+		this.maybeRefreshContextOnEvent(message);
 	}
 
 	/**
@@ -649,9 +566,19 @@ export class SDKMessageHandler {
 			// Update in-memory session
 			session.sdkSessionId = message.session_id;
 
+			// Record the workspace path used as CWD when this SDK session was created.
+			// The SDK stores conversation files at:
+			//   ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl
+			// Persisting this "origin path" allows the daemon to locate and migrate the
+			// session file on resume even when the effective CWD changes (e.g. a worktree
+			// is added or removed between daemon restarts).
+			const sdkOriginPath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
+			session.sdkOriginPath = sdkOriginPath;
+
 			// Persist to database
 			db.updateSession(session.id, {
 				sdkSessionId: message.session_id,
+				sdkOriginPath,
 			});
 
 			// Emit session.updated event so StateManager broadcasts the change
@@ -659,7 +586,7 @@ export class SDKMessageHandler {
 			await daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'sdk-session',
-				session: { sdkSessionId: message.session_id },
+				session: { sdkSessionId: message.session_id, sdkOriginPath },
 			});
 		}
 
@@ -676,13 +603,20 @@ export class SDKMessageHandler {
 	 * Handle result message (end of turn)
 	 */
 	private async handleResultMessage(message: SDKMessage): Promise<void> {
-		const { session, db, daemonHub, stateManager, messageQueue } = this.ctx;
+		const { session, db, daemonHub, stateManager } = this.ctx;
 
 		// Type guard to ensure this is a successful result
 		if (!isSDKResultSuccess(message)) return;
 
 		// Update session metadata with token usage and costs
-		const usage = message.usage;
+		// Guard: SDK may produce result messages without usage (e.g. bridge providers
+		// like anthropic-copilot where the upstream SDK fails to populate usage).
+		const usage = message.usage ?? {
+			input_tokens: 0,
+			output_tokens: 0,
+			cache_creation_input_tokens: 0,
+			cache_read_input_tokens: 0,
+		};
 		const totalTokens = usage.input_tokens + usage.output_tokens;
 
 		// SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
@@ -734,30 +668,9 @@ export class SDKMessageHandler {
 			},
 		});
 
-		// Queue /context command to get detailed breakdown (unless we just got one)
-		// CRITICAL: Check flag to prevent infinite loop!
-		// /context produces its own result message, so we must skip queuing another
-		// Note: flag is reset when we process the result message (see early return above)
-		const isZeroTokenResult = this.isZeroTokenResult(message);
-		if (
-			!this.lastMessageWasContextResponse &&
-			!isZeroTokenResult &&
-			this.internalContextCommandIds.size === 0 &&
-			this.ctx.contextAutoQueueEnabled
-		) {
-			// Fire-and-forget: don't await the enqueue. Awaiting blocks
-			// handleResultMessage (and the for-await SDK output loop) until the
-			// SDK consumes /context from the prompt generator. If other user
-			// messages are ahead in the queue, they must be processed first,
-			// which can exceed the 30s MESSAGE_QUEUE_TIMEOUT and cause those
-			// messages to be dropped + reset.
-			const contextMessageId = generateUUID();
-			this.internalContextCommandIds.add(contextMessageId);
-			messageQueue.enqueueWithId(contextMessageId, '/context', true).catch((error) => {
-				this.internalContextCommandIds.delete(contextMessageId);
-				this.logger.warn('Failed to queue /context:', error);
-			});
-		}
+		// NOTE: Turn-end context refresh is triggered for all `result`
+		// messages (success + error) at the end of handleMessage(), before
+		// this success-only branch runs. No need to re-fetch here.
 
 		// Mark successful API interaction - resets circuit breaker error tracking
 		// Only reset when actual tokens were consumed (indicating a real API call)
@@ -850,36 +763,66 @@ export class SDKMessageHandler {
 
 		// Clear isCompacting flag on processing state (flows through state.session)
 		await stateManager.setCompacting(false);
+
+		// Immediately refresh context usage after compaction so the UI reflects
+		// the new post-compact numbers without waiting for the next turn.
+		void this.refreshContextUsage('compact-boundary');
 	}
 
 	/**
-	 * Attempt to parse and handle a /context response.
-	 *
-	 * Returns true if the message was successfully parsed as context data.
-	 * Returns false if the message did not contain parseable context data
-	 * (e.g. it is a plain user acknowledgment of the /context command rather
-	 * than the actual output — which happens in the new SDK format where a
-	 * user replay carries the original '/context' text, not the output).
+	 * Stream-event cadence: refresh context usage every
+	 * `CONTEXT_REFRESH_EVENT_INTERVAL` SDK stream events. We count every
+	 * processed message (user replays, assistant turns, tool uses, tool results),
+	 * skipping only purely-internal events (api_retry, which returns early
+	 * before this is ever called).
 	 */
-	private async handleContextResponseIfParseable(message: SDKMessage): Promise<boolean> {
-		const { session, daemonHub, contextTracker } = this.ctx;
+	private maybeRefreshContextOnEvent(_message: SDKMessage): void {
+		this.eventsSinceContextRefresh += 1;
+		if (this.eventsSinceContextRefresh >= CONTEXT_REFRESH_EVENT_INTERVAL) {
+			void this.refreshContextUsage('event-tick');
+		}
+	}
 
-		const parsedContext = this.contextFetcher.parseContextResponse(message);
-		if (!parsedContext) {
-			return false;
+	/**
+	 * Refresh context usage via the SDK's `query.getContextUsage()`.
+	 *
+	 * Dedupes via `pendingContextRefresh`, so multiple triggers (5-event tick,
+	 * turn end, compaction) collapse to a single in-flight fetch. Resets the
+	 * event counter so a turn-end refresh also zeroes the stream tick.
+	 */
+	private refreshContextUsage(
+		reason: 'event-tick' | 'turn-end' | 'compact-boundary'
+	): Promise<void> {
+		// Reset the event counter regardless of whether we actually fetch —
+		// a dedup-skipped refresh still represents the same informational
+		// moment for the tick window.
+		this.eventsSinceContextRefresh = 0;
+
+		if (this.pendingContextRefresh) {
+			return this.pendingContextRefresh;
 		}
 
-		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
+		const { session, daemonHub, contextTracker, queryObject } = this.ctx;
+		// If there's no live query yet (or anymore), skip silently — context
+		// info is a best-effort side effect.
+		if (!queryObject) return Promise.resolve();
 
-		// Persist to session metadata
-		contextTracker.updateWithDetailedBreakdown(contextInfo);
-
-		// Emit context update event via DaemonHub
-		// StateManager will broadcast this via state.session channel
-		await daemonHub.emit('context.updated', {
-			sessionId: session.id,
-			contextInfo,
-		});
-		return true;
+		const promise = (async () => {
+			try {
+				const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(queryObject);
+				if (!contextInfo) return;
+				contextTracker.updateWithDetailedBreakdown(contextInfo);
+				await daemonHub.emit('context.updated', {
+					sessionId: session.id,
+					contextInfo,
+				});
+			} catch (error) {
+				this.logger.warn(`context refresh (${reason}) failed:`, error);
+			} finally {
+				this.pendingContextRefresh = null;
+			}
+		})();
+		this.pendingContextRefresh = promise;
+		return promise;
 	}
 }

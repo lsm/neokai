@@ -11,10 +11,15 @@
 
 import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
+import type { AppMcpLifecycleManager } from '../mcp';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export function registerMcpHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
+export function registerMcpHandlers(
+	messageHub: MessageHub,
+	sessionManager: SessionManager,
+	appMcpManager: AppMcpLifecycleManager
+): void {
 	/**
 	 * Save tools configuration for a session
 	 *
@@ -100,7 +105,11 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 		}
 
 		const session = agentSession.getSessionData();
-		const mcpConfigPath = join(session.workspacePath, '.mcp.json');
+		const workspacePath = session.worktree?.worktreePath ?? session.workspacePath;
+		if (!workspacePath) {
+			throw new Error(`Session ${sessionId} has no bound workspace path`);
+		}
+		const mcpConfigPath = join(workspacePath, '.mcp.json');
 
 		try {
 			const content = await readFile(mcpConfigPath, 'utf-8');
@@ -135,5 +144,17 @@ export function registerMcpHandlers(messageHub: MessageHub, sessionManager: Sess
 	 */
 	messageHub.onRequest('globalTools.saveConfig', async (data: { config: GlobalToolsConfig }) => {
 		sessionManager.saveGlobalToolsConfig(data.config);
+	});
+
+	// ============================================================================
+	// Application-level MCP Registry
+	// ============================================================================
+
+	/**
+	 * List registry entries that failed validation (missing required fields, etc.).
+	 * The UI uses this to render a warning badge next to misconfigured entries.
+	 */
+	messageHub.onRequest('mcp.registry.listErrors', async () => {
+		return appMcpManager.getStartupErrors();
 	});
 }

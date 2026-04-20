@@ -53,14 +53,10 @@ if (cliOptions.help) {
 // Production binary always runs in production mode
 process.env.NODE_ENV = 'production';
 
-if (!cliOptions.workspace && !process.env.NEOKAI_WORKSPACE_PATH) {
-	cliOptions.workspace = process.cwd();
-}
-
 const config = getConfig(cliOptions);
 
 console.log(`\nNeoKai Server`);
-console.log(`   Workspace: ${config.workspaceRoot}\n`);
+console.log(`   Database: ${config.dbPath}\n`);
 
 try {
 	await startProdServer(config);

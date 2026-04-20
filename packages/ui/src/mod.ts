@@ -1,6 +1,6 @@
 // Components
 
-export { Button, DataInteractive } from './components/button/button.tsx';
+export { Button, ButtonGroup, DataInteractive } from './components/button/button.tsx';
 export { Checkbox } from './components/checkbox/checkbox.tsx';
 export {
 	Combobox,
@@ -22,8 +22,20 @@ export {
 	DisclosureButton,
 	DisclosurePanel,
 } from './components/disclosure/disclosure.tsx';
-export { Description, Field, Fieldset, Label, Legend } from './components/field/field.tsx';
+export {
+	Description,
+	Field,
+	FieldError,
+	Fieldset,
+	Label,
+	Legend,
+} from './components/field/field.tsx';
 export { Input, Select, Textarea } from './components/input/input.tsx';
+export {
+	InputAddon,
+	InputGroup,
+	useInputGroupContext,
+} from './components/input-group/input-group.tsx';
 export {
 	Listbox,
 	ListboxButton,
@@ -57,18 +69,46 @@ export {
 	TabPanel,
 	TabPanels,
 } from './components/tabs/tabs.tsx';
-export { Transition } from './components/transition/transition.tsx';
+export { Transition, TransitionChild } from './components/transition/transition.tsx';
 export {
 	Toast,
 	ToastAction,
 	ToastDescription,
+	ToastProgress,
 	Toaster,
 	ToastTitle,
 	useToast,
 } from './components/toast/toast.tsx';
+export type { ToastVariant } from './components/toast/toast.tsx';
+export {
+	Avatar,
+	AvatarFallback,
+	AvatarGroup,
+	AvatarGroupOverflow,
+	AvatarImage,
+	AvatarStatus,
+} from './components/avatar/avatar.tsx';
+export {
+	Alert,
+	AlertActions,
+	AlertDescription,
+	AlertIcon,
+	AlertTitle,
+} from './components/alert/alert.tsx';
+export { Badge } from './components/badge/badge.tsx';
+export { ProgressBar } from './components/progress-bar/progress-bar.tsx';
+export {
+	Stepper,
+	StepperDescription,
+	StepperIcon,
+	StepperLabel,
+	StepperSeparator,
+	StepperStep,
+} from './components/stepper/stepper.tsx';
 export { IconButton } from './components/icon-button/icon-button.tsx';
 export { Skeleton } from './components/skeleton/skeleton.tsx';
 export { Spinner } from './components/spinner/spinner.tsx';
+export { TouchTarget } from './components/touch-target/touch-target.tsx';
 
 // Hooks
 export { useClose } from './hooks/use-close.ts';

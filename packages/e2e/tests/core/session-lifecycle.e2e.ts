@@ -1,5 +1,9 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
 
 /**
  * Session Lifecycle E2E Tests
@@ -138,14 +142,22 @@ test.describe('2-Stage Session Creation', () => {
 		// Create a new session via RPC helper
 		sessionId = await createSessionViaUI(page);
 
-		// Navigate to home to see the session in the sidebar
+		// Navigate to home and open the Chats section.
+		// Sessions created in a git workspace start in 'pending_worktree_choice' status,
+		// which means they are excluded from the Lobby's "Recent Sessions" (which only
+		// shows 'active' sessions). The Chats/SessionsPage shows all non-archived sessions
+		// via LiveQuery regardless of worktree-choice state.
 		await page.goto('/');
-		await expect(page.locator('h3:has-text("Recent Sessions")')).toBeVisible({ timeout: 10000 });
+		await waitForWebSocketConnected(page);
+		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
+		if (await chatsButton.isVisible().catch(() => false)) {
+			await chatsButton.click();
+			await page.waitForTimeout(300);
+		}
 
-		// Session should appear in sidebar immediately
-		// Look for the session card using data-session-id attribute
+		// Session card should be visible in the sessions list
 		const sessionCard = page.locator(`[data-session-id="${sessionId}"]`);
-		await expect(sessionCard).toBeVisible({ timeout: 5000 });
+		await expect(sessionCard).toBeVisible({ timeout: 10000 });
 	});
 
 	test('should handle multiple rapid session creations', async ({ page }) => {

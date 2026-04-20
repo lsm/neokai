@@ -21,12 +21,13 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import type { ComponentChildren, JSX, RefObject } from 'preact';
-import type { WorkflowTransition } from '@neokai/shared';
+
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
 import { VisualCanvas } from './VisualCanvas';
 import { WorkflowNode } from './WorkflowNode';
 import type { WorkflowNodeProps, PortType } from './WorkflowNode';
-import { EdgeRenderer } from './EdgeRenderer';
-import type { ViewportState, Point, NodePosition } from './types';
+import { EdgeRenderer, type ResolvedWorkflowChannel } from './EdgeRenderer';
+import type { ViewportState, Point, NodePosition, VisualTransition } from './types';
 import { useConnectionDrag } from './useConnectionDrag';
 
 /** Default node dimensions used when deriving NodePosition from WorkflowNodeData. */
@@ -55,7 +56,9 @@ export interface WorkflowCanvasProps {
 	viewportState: ViewportState;
 	onViewportChange: (state: ViewportState) => void;
 	/** Edges to render between nodes. Also used for duplicate detection during connection drag. */
-	transitions?: WorkflowTransition[];
+	transitions?: VisualTransition[];
+	/** Channel edges to render between nodes (Task Agent channels and regular channels). */
+	channels?: ResolvedWorkflowChannel[];
 	/**
 	 * Explicit node positions including width/height for edge port computation.
 	 * When omitted, positions are derived from nodes with DEFAULT_NODE_WIDTH/HEIGHT.
@@ -67,12 +70,25 @@ export interface WorkflowCanvasProps {
 	onDeleteNode?: (stepId: string) => void;
 	/** Called when a node is dragged to a new position. */
 	onNodePositionChange?: (stepId: string, position: Point) => void;
-	/** Called when a new connection is created by dragging from an output to an input port. */
+	/** Called when a new connection is created by dragging between node ports. */
 	onCreateTransition?: (fromStepId: string, toStepId: string) => void;
 	/** Called when the selected edge changes. Null means nothing is selected. */
 	onEdgeSelect?: (transitionId: string | null) => void;
 	/** Called when Delete/Backspace is pressed with an edge selected. */
 	onDeleteEdge?: (transitionId: string) => void;
+	/** Called when a channel edge is clicked. Receives the channel's id. */
+	onChannelSelect?: (channelId: string | null) => void;
+	/** Called when a gate runtime-status icon is clicked. Receives gateId and mouse event. */
+	onGateClick?: (gateId: string, event: MouseEvent) => void;
+	/** Currently selected channel ID for highlighting. */
+	selectedChannelId?: string | null;
+	/**
+	 * When true, disables all editing affordances:
+	 * - No keyboard Delete/Backspace handler for node deletion
+	 * - No port drag-to-connect handlers
+	 * Node selection (onNodeSelect) still works in read-only mode.
+	 */
+	readOnly?: boolean;
 }
 
 // ---- Ghost edge rendering ----
@@ -121,6 +137,127 @@ function GhostEdge({ from, to }: { from: Point; to: Point }): JSX.Element | null
 	);
 }
 
+// ---- Channel edge computation ----
+
+/**
+ * Compute channel edges from workflow nodes.
+ *
+ * Collects all WorkflowChannel declarations from all nodes and resolves
+ * channel endpoints to node IDs:
+ * - Intra-node channels (agents within the same node) are skipped - they don't
+ *   need cross-node edges since all agents in a node share the same canvas space.
+ * - Inter-node channels (including Task Agent channels) are resolved to
+ *   actual node IDs and returned as ResolvedWorkflowChannel objects.
+ *
+ * Task Agent channels use 'task-agent' as the special source identifier.
+ * Other channels resolve agent roles to their containing node IDs using the
+ * SpaceAgent.agents array which has slot name information.
+ */
+export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflowChannel[] {
+	const result: ResolvedWorkflowChannel[] = [];
+
+	// Track seen (fromStepId, toStepId) pairs to avoid duplicates
+	const seenEdges = new Set<string>();
+
+	// Build a map of agent slot name -> node localId for quick lookup
+	// This is used to resolve channel endpoints that reference agent slot names
+	const agentSlotNameToNodeId = new Map<string, string>();
+	for (const node of nodes) {
+		// node.agents is SpaceAgent[] which has .name
+		if (node.agents) {
+			for (const agent of node.agents) {
+				agentSlotNameToNodeId.set(agent.name, node.step.localId);
+			}
+		}
+	}
+
+	for (const node of nodes) {
+		const channels = node.workflowChannels;
+		if (!channels) continue;
+
+		for (const channel of channels) {
+			// Determine if this is an inter-node channel
+			let fromNodeId: string | null = null;
+
+			// Resolve 'from' endpoint
+			if (channel.from === 'task-agent') {
+				fromNodeId = 'task-agent';
+			} else if (channel.from === '*') {
+				// Wildcard: from the node itself
+				fromNodeId = node.step.localId;
+			} else {
+				// Resolve agent slot name to node ID
+				fromNodeId = agentSlotNameToNodeId.get(channel.from) ?? null;
+			}
+
+			// Resolve 'to' endpoints (can be a string or array of strings)
+			const toTargets: (string | null)[] =
+				typeof channel.to === 'string'
+					? [resolveToTarget(channel.to, node, agentSlotNameToNodeId)]
+					: channel.to.map((t) => resolveToTarget(t, node, agentSlotNameToNodeId));
+
+			// Skip if we couldn't resolve the 'from' endpoint
+			if (!fromNodeId) continue;
+
+			for (const toNodeId of toTargets) {
+				if (!toNodeId) continue;
+
+				// Skip intra-node channels (both endpoints resolve to the same node)
+				if (fromNodeId === toNodeId) continue;
+
+				// Check for duplicate edges
+				const edgeKey = `${fromNodeId}:${toNodeId}`;
+				if (seenEdges.has(edgeKey)) continue;
+				seenEdges.add(edgeKey);
+
+				// For task-agent channels, we always render from task-agent to the other node
+				if (fromNodeId === 'task-agent' && toNodeId !== 'task-agent') {
+					result.push({
+						fromStepId: 'task-agent',
+						toStepId: toNodeId,
+						direction: 'one-way' as const,
+					});
+				} else if (toNodeId === 'task-agent' && fromNodeId !== 'task-agent') {
+					// Also add edge when task-agent is the target (channel is defined on another node)
+					result.push({
+						fromStepId: fromNodeId,
+						toStepId: 'task-agent',
+						direction: 'one-way' as const,
+					});
+				} else if (fromNodeId !== 'task-agent' && toNodeId !== 'task-agent') {
+					// Regular inter-node channel between two non-task-agent nodes
+					result.push({
+						fromStepId: fromNodeId,
+						toStepId: toNodeId,
+						direction: 'one-way' as const,
+					});
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Resolve a 'to' target string to a node ID.
+ */
+function resolveToTarget(
+	toValue: string,
+	node: WorkflowNodeData,
+	agentSlotNameToNodeId: Map<string, string>
+): string | null {
+	if (toValue === 'task-agent') {
+		return 'task-agent';
+	}
+	if (toValue === '*') {
+		// Wildcard: to the node itself
+		return node.step.localId;
+	}
+	// Resolve agent slot name to node ID
+	return agentSlotNameToNodeId.get(toValue) ?? null;
+}
+
 // ============================================================================
 // WorkflowCanvas
 // ============================================================================
@@ -130,6 +267,7 @@ export function WorkflowCanvas({
 	viewportState,
 	onViewportChange,
 	transitions = [],
+	channels = [],
 	nodePositions,
 	onNodeSelect,
 	onDeleteNode,
@@ -137,6 +275,10 @@ export function WorkflowCanvas({
 	onCreateTransition,
 	onEdgeSelect,
 	onDeleteEdge,
+	onChannelSelect,
+	onGateClick,
+	selectedChannelId,
+	readOnly = false,
 }: WorkflowCanvasProps) {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -187,6 +329,15 @@ export function WorkflowCanvas({
 		return result;
 	}, [nodes, nodePositions]);
 
+	// ---- Channel edges ----
+	// Compute channel edges from nodes' channel declarations.
+	// When explicit channels are passed, prefer them because they carry the
+	// semantic routing metadata (id, anchor sides, gate state) used by the
+	// current editor. Fall back to computed node channels only when no explicit
+	// channel graph is provided.
+	const computedChannelEdges = useMemo(() => computeChannelEdges(nodes), [nodes]);
+	const effectiveChannels = channels.length > 0 ? channels : computedChannelEdges;
+
 	// Clear selection if the selected node is removed externally (e.g. parent deletes it
 	// from the nodes array). Without this, a node re-added with the same stepId would
 	// appear pre-selected, which is unexpected.
@@ -200,6 +351,9 @@ export function WorkflowCanvas({
 	// Selecting a node clears the edge selection (mutually exclusive).
 	const handleNodeSelect = useCallback(
 		(stepId: string) => {
+			// Task Agent is a virtual node — skip selection so it never gets a
+			// visual highlight ring or enters the keyboard-Delete path.
+			if (stepId === TASK_AGENT_NODE_ID) return;
 			setSelectedNodeId(stepId);
 			onNodeSelect?.(stepId);
 			// Clear edge selection to prevent dual Delete handlers from both firing
@@ -236,14 +390,13 @@ export function WorkflowCanvas({
 		onNodeSelect?.(null);
 		setSelectedEdgeId(null);
 		onEdgeSelect?.(null);
-	}, [onNodeSelect, onEdgeSelect]);
+		onChannelSelect?.(null);
+	}, [onNodeSelect, onEdgeSelect, onChannelSelect]);
 
 	// ---- Port event handlers ----
 	const handlePortMouseDown = useCallback(
-		(stepId: string, portType: PortType, e: MouseEvent, portEl: Element) => {
-			if (portType === 'output') {
-				startDrag(stepId, portEl, e);
-			}
+		(stepId: string, _portType: PortType, e: MouseEvent, portEl: Element) => {
+			startDrag(stepId, portEl, e);
 		},
 		[startDrag]
 	);
@@ -271,7 +424,10 @@ export function WorkflowCanvas({
 	// ---- Keyboard: Delete / Backspace removes the selected node ----
 	// (Edge deletion is handled by EdgeRenderer's own listener. Selections are mutually
 	// exclusive so at most one handler fires per keystroke.)
+	// Skipped in readOnly mode — no destructive editing affordances.
 	useEffect(() => {
+		if (readOnly) return;
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 			const target = e.target as HTMLElement;
@@ -289,9 +445,9 @@ export function WorkflowCanvas({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []);
+	}, [readOnly]);
 
-	// ---- Edge layer: committed edges (EdgeRenderer) + ghost edge during drag ----
+	// ---- Edge layer: committed edges (EdgeRenderer) + ghost edge during drag + channel edges ----
 	const edgeLayer = useCallback(
 		(_vp: ViewportState): ComponentChildren => (
 			<>
@@ -301,6 +457,11 @@ export function WorkflowCanvas({
 					selectedEdgeId={selectedEdgeId}
 					onEdgeSelect={handleEdgeSelect}
 					onEdgeDelete={handleEdgeDelete}
+					channels={effectiveChannels}
+					selectedChannelId={selectedChannelId}
+					onChannelSelect={onChannelSelect ?? undefined}
+					onGateClick={onGateClick}
+					readOnly={readOnly}
 				/>
 				{dragState.active && dragState.fromPos && dragState.currentPos && (
 					<GhostEdge from={dragState.fromPos} to={dragState.currentPos} />
@@ -309,11 +470,16 @@ export function WorkflowCanvas({
 		),
 		[
 			transitions,
+			effectiveChannels,
 			effectiveNodePositions,
 			selectedEdgeId,
 			handleEdgeSelect,
 			handleEdgeDelete,
 			dragState,
+			selectedChannelId,
+			onChannelSelect,
+			onGateClick,
+			readOnly,
 		]
 	);
 
@@ -341,9 +507,10 @@ export function WorkflowCanvas({
 						isSelected={selectedNodeId === stepId}
 						isDropTarget={isDropTarget}
 						onClick={handleNodeSelect}
-						onPortMouseDown={handlePortMouseDown}
-						onPortMouseEnter={handlePortMouseEnter}
-						onPortMouseLeave={handlePortMouseLeave}
+						onPortMouseDown={readOnly ? undefined : handlePortMouseDown}
+						onPortMouseEnter={readOnly ? undefined : handlePortMouseEnter}
+						onPortMouseLeave={readOnly ? undefined : handlePortMouseLeave}
+						draggable={!readOnly}
 					/>
 				);
 			})}

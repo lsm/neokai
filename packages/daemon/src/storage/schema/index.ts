@@ -15,6 +15,44 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@neokai/sh
 export { runMigrations } from './migrations';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations';
+// knip-ignore-next-line
+export { runMigration47 } from './migrations';
+// knip-ignore-next-line
+export { runMigration48 } from './migrations';
+// knip-ignore-next-line
+export { runMigration49 } from './migrations';
+// knip-ignore-next-line
+export { runMigration50 } from './migrations';
+// knip-ignore-next-line
+export { runMigration51 } from './migrations';
+// knip-ignore-next-line
+export { runMigration55 } from './migrations';
+// knip-ignore-next-line
+export { runMigration56 } from './migrations';
+// knip-ignore-next-line
+export { runMigration57 } from './migrations';
+// knip-ignore-next-line
+export { runMigration58 } from './migrations';
+// knip-ignore-next-line
+export { runMigration66 } from './migrations';
+// knip-ignore-next-line
+export { runMigration68 } from './migrations';
+// knip-ignore-next-line
+export { runMigration72 } from './migrations';
+// knip-ignore-next-line
+export { runMigration74 } from './migrations';
+// knip-ignore-next-line
+export { runMigration78 } from './migrations';
+// knip-ignore-next-line
+export { runMigration93 } from './migrations';
+// knip-ignore-next-line
+export { runMigration94 } from './migrations';
+// knip-ignore-next-line
+export { runMigration95 } from './migrations';
+// knip-ignore-next-line
+export { runMigration96 } from './migrations';
+// knip-ignore-next-line
+export { runMigration97 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -25,7 +63,7 @@ export function createTables(db: BunDatabase): void {
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
-        workspace_path TEXT NOT NULL,
+	        workspace_path TEXT,
         created_at TEXT NOT NULL,
         last_active_at TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
@@ -37,11 +75,12 @@ export function createTables(db: BunDatabase): void {
         worktree_branch TEXT,
         git_branch TEXT,
         sdk_session_id TEXT,
+        sdk_origin_path TEXT,
         available_commands TEXT,
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat', 'neo')),
         session_context TEXT
       )
     `);
@@ -74,6 +113,7 @@ export function createTables(db: BunDatabase): void {
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+        origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'neo', 'system')),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
@@ -142,7 +182,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -153,7 +193,7 @@ export function createTables(db: BunDatabase): void {
         started_at INTEGER,
         completed_at INTEGER,
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
-        assigned_agent TEXT DEFAULT 'coder',
+        assigned_agent TEXT DEFAULT 'coder' CHECK(assigned_agent IN ('coder', 'general', 'planner')),
         created_by_task_id TEXT,
         archived_at INTEGER,
         active_session TEXT,
@@ -162,6 +202,8 @@ export function createTables(db: BunDatabase): void {
         pr_created_at INTEGER,
         input_draft TEXT,
         updated_at INTEGER,
+        short_id TEXT,
+        restrictions TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -197,9 +239,29 @@ export function createTables(db: BunDatabase): void {
         max_planning_attempts INTEGER NOT NULL DEFAULT 0,
         consecutive_failures INTEGER NOT NULL DEFAULT 0,
         replan_count INTEGER NOT NULL DEFAULT 0,
+        short_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
+
+	// Short ID counters — per-(entity_type, scope_id) monotonic counter for short ID allocation
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS short_id_counters (
+        entity_type TEXT NOT NULL,
+        scope_id    TEXT NOT NULL,
+        counter     INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (entity_type, scope_id)
+      )
+    `);
+
+	// Partial unique indexes for short_id on tasks and goals — scoped to room so that
+	// different rooms can each have their own t-1, t-2, ... sequence without collision.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_room_short_id ON tasks(room_id, short_id) WHERE short_id IS NOT NULL`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_room_short_id ON goals(room_id, short_id) WHERE short_id IS NOT NULL`
+	);
 
 	// Mission metric history table
 	db.exec(`
@@ -304,6 +366,76 @@ export function createTables(db: BunDatabase): void {
     `);
 
 	db.exec(`
+      CREATE TABLE IF NOT EXISTS app_mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        source_type TEXT NOT NULL CHECK(source_type IN ('stdio', 'sse', 'http')),
+        command TEXT,
+        args TEXT,
+        env TEXT,
+        url TEXT,
+        headers TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    `);
+
+	// Per-room MCP enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_mcp_enablement (
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        server_id TEXT NOT NULL REFERENCES app_mcp_servers(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (room_id, server_id)
+      )
+    `);
+
+	// Application-level Skills registry
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        config TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        built_in INTEGER NOT NULL DEFAULT 0,
+        validation_status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL
+      )
+    `);
+
+	// Per-room skill enablement overrides
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_skill_overrides (
+        skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (skill_id, room_id)
+      )
+    `);
+
+	// Neo activity log — audit log of all Neo agent tool invocations
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS neo_activity_log (
+        id          TEXT PRIMARY KEY,
+        tool_name   TEXT NOT NULL,
+        input       TEXT,
+        output      TEXT,
+        status      TEXT NOT NULL DEFAULT 'success' CHECK(status IN ('success', 'error', 'cancelled')),
+        error       TEXT,
+        target_type TEXT,
+        target_id   TEXT,
+        undoable    INTEGER DEFAULT 0,
+        undo_data   TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
+	db.exec(`
       CREATE TABLE IF NOT EXISTS job_queue (
         id TEXT PRIMARY KEY,
         queue TEXT NOT NULL,
@@ -319,6 +451,16 @@ export function createTables(db: BunDatabase): void {
         created_at INTEGER NOT NULL,
         started_at INTEGER,
         completed_at INTEGER
+      )
+    `);
+
+	// Workspace history — persists recently-used workspace paths
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL UNIQUE,
+        last_used_at INTEGER NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1
       )
     `);
 
@@ -377,4 +519,11 @@ function createIndexes(db: BunDatabase): void {
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
 	);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_neo_activity_log_created_at ON neo_activity_log(created_at)`
+	);
+	// Workspace history index — supports ORDER BY last_used_at DESC in list()
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`
+	);
 }

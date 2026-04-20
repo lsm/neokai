@@ -36,6 +36,7 @@ import {
 } from './codex-anthropic-bridge/server.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
+import { existsSync } from 'node:fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
@@ -169,20 +170,65 @@ interface CodexAuthFile {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: locate the `codex` binary on PATH
+// Helper: locate the `codex` binary (bundled dep first, then PATH)
 // ---------------------------------------------------------------------------
 
 function findCodexCli(codexPath = 'codex'): string | null {
+	// 1. Resolve from bundled @openai/codex dependency.
+	//    The package ships bin/codex.js which auto-selects the platform binary.
+	//    Bun installs workspace deps into node_modules/.bun — walk up from this
+	//    file to find the root node_modules, then look for the package.
+	try {
+		const rootDir = path.resolve(import.meta.dir, '..', '..', '..', '..', '..');
+		const candidates = [
+			// Bun's hoisted layout
+			path.join(
+				rootDir,
+				'node_modules',
+				'.bun',
+				'node_modules',
+				'@openai',
+				'codex',
+				'bin',
+				'codex.js'
+			),
+			// Standard node_modules layout
+			path.join(rootDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
+			// Workspace package node_modules
+			path.join(
+				import.meta.dir,
+				'..',
+				'..',
+				'..',
+				'node_modules',
+				'@openai',
+				'codex',
+				'bin',
+				'codex.js'
+			),
+		];
+		for (const candidate of candidates) {
+			if (existsSync(candidate)) return candidate;
+		}
+	} catch {}
+
+	// 2. Resolve via .bin/codex symlink (workspace hoist).
+	try {
+		const rootDir = path.resolve(import.meta.dir, '..', '..', '..', '..', '..');
+		const binLink = path.join(rootDir, 'node_modules', '.bin', 'codex');
+		if (existsSync(binLink)) return binLink;
+	} catch {}
+
+	// 3. Fall back to system PATH.
 	try {
 		const result = Bun.spawnSync(['which', codexPath], { stderr: 'pipe' });
 		if (result.exitCode === 0) {
 			const found = result.stdout.toString().trim();
 			return found.length > 0 ? found : codexPath;
 		}
-		return null;
-	} catch {
-		return null;
-	}
+	} catch {}
+
+	return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -496,12 +542,18 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		};
 	}
 
-	/** Stop all bridge servers. Called at provider shutdown (e.g. tests). */
+	/** Stop all bridge servers and reset cached auth state. Called at provider shutdown (e.g. tests). */
 	stopAllBridgeServers(): void {
 		for (const server of this.bridgeServers.values()) {
 			server.stop();
 		}
 		this.bridgeServers.clear();
+		// Reset cached auth so a new provider instance starts with a clean slate.
+		// Without this, cachedBridgeAuth=null from a previous run would cause
+		// isAvailable() to return false even when valid credentials are present.
+		this.cachedCredentials = null;
+		this.cachedBridgeAuth = undefined;
+		this.cachedApiKey = undefined;
 	}
 
 	/** @deprecated Use stopAllBridgeServers(). */

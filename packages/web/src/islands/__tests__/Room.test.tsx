@@ -3,14 +3,21 @@
  * Tests for the Room Island component.
  *
  * Focuses on the rendering priority logic:
- * - taskViewId present → TaskView
+ * - taskViewId present → TaskViewToggle overlay (tabs still visible behind it)
  * - sessionViewId present (including synthetic room:chat:<roomId>) → ChatContainer
  * - neither → tabbed dashboard
+ *
+ * Tab state is driven by currentRoomActiveTabSignal (single source of truth).
+ * Tab clicks delegate to navigateToRoomTab which updates both the URL and the signal.
+ *
+ * GoalsEditor, RoomAgents, and RoomSettings are lazy-loaded via preact/compat lazy().
+ * Tests mock the individual module paths (not the barrel) so that lazy() resolves correctly.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, fireEvent, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
+import { currentRoomAgentActiveSignal, currentRoomActiveTabSignal } from '../../lib/signals';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -19,13 +26,15 @@ import { signal } from '@preact/signals';
 const {
 	mockNavigateToHome,
 	mockNavigateToRoomTask,
-	mockNavigateToRoom,
+	mockNavigateToRoomTab,
+	mockNavigateToRoomMission,
 	mockToastSuccess,
 	mockRoomStoreSelect,
 } = vi.hoisted(() => ({
 	mockNavigateToHome: vi.fn(),
 	mockNavigateToRoomTask: vi.fn(),
-	mockNavigateToRoom: vi.fn(),
+	mockNavigateToRoomTab: vi.fn(),
+	mockNavigateToRoomMission: vi.fn(),
 	mockToastSuccess: vi.fn(),
 	// Hoisted so it stays the same reference across all mock accesses
 	mockRoomStoreSelect: vi.fn().mockResolvedValue(undefined),
@@ -34,7 +43,8 @@ const {
 vi.mock('../../lib/router', () => ({
 	navigateToHome: mockNavigateToHome,
 	navigateToRoomTask: mockNavigateToRoomTask,
-	navigateToRoom: mockNavigateToRoom,
+	navigateToRoomTab: mockNavigateToRoomTab,
+	navigateToRoomMission: mockNavigateToRoomMission,
 }));
 
 vi.mock('../../lib/toast', () => ({
@@ -52,6 +62,11 @@ let mockGoalsSignal: ReturnType<typeof signal<any[]>>;
 let mockTasksSignal: ReturnType<typeof signal<any[]>>;
 let mockGoalsLoadingSignal: ReturnType<typeof signal<boolean>>;
 let mockAutoCompletedNotificationsSignal: ReturnType<typeof signal<any[]>>;
+let mockReviewTaskCountSignal: ReturnType<typeof signal<number>>;
+let mockGoalByTaskIdSignal: ReturnType<typeof signal<Record<string, any>>>;
+let mockRuntimeStateSignal: ReturnType<typeof signal<string | null>>;
+let mockActiveTasksSignal: ReturnType<typeof signal<any[]>>;
+let mockReviewTasksSignal: ReturnType<typeof signal<any[]>>;
 
 function initRoomStoreSignals(roomOverride?: object) {
 	mockLoadingSignal = signal(false);
@@ -65,6 +80,11 @@ function initRoomStoreSignals(roomOverride?: object) {
 	mockTasksSignal = signal([]);
 	mockGoalsLoadingSignal = signal(false);
 	mockAutoCompletedNotificationsSignal = signal([]);
+	mockReviewTaskCountSignal = signal(0);
+	mockGoalByTaskIdSignal = signal({});
+	mockRuntimeStateSignal = signal(null);
+	mockActiveTasksSignal = signal([]);
+	mockReviewTasksSignal = signal([]);
 }
 
 vi.mock('../../lib/room-store', () => ({
@@ -91,6 +111,21 @@ vi.mock('../../lib/room-store', () => ({
 			get autoCompletedNotifications() {
 				return mockAutoCompletedNotificationsSignal;
 			},
+			get reviewTaskCount() {
+				return mockReviewTaskCountSignal;
+			},
+			get goalByTaskId() {
+				return mockGoalByTaskIdSignal;
+			},
+			get runtimeState() {
+				return mockRuntimeStateSignal;
+			},
+			get activeTasks() {
+				return mockActiveTasksSignal;
+			},
+			get reviewTasks() {
+				return mockReviewTasksSignal;
+			},
 			select: mockRoomStoreSelect,
 			subscribeRoom: vi.fn().mockResolvedValue(undefined),
 			unsubscribeRoom: vi.fn(),
@@ -103,6 +138,9 @@ vi.mock('../../lib/room-store', () => ({
 			updateSettings: vi.fn(),
 			listExecutions: vi.fn(),
 			dismissAutoCompleted: vi.fn(),
+			setTaskStatus: vi.fn().mockResolvedValue(undefined),
+			triggerNow: vi.fn().mockResolvedValue(undefined),
+			scheduleNext: vi.fn().mockResolvedValue(undefined),
 		};
 	},
 }));
@@ -119,23 +157,41 @@ vi.mock('../ChatContainer', () => ({
 	),
 }));
 
-vi.mock('../../components/room/TaskView', () => ({
-	TaskView: ({ taskId }: { taskId: string }) => (
-		<div data-testid="task-view" data-task-id={taskId}>
-			TaskView
+vi.mock('../../components/room/TaskViewToggle', () => ({
+	TaskViewToggle: ({ taskId }: { taskId: string }) => (
+		<div data-testid="task-view-toggle" data-task-id={taskId}>
+			TaskViewToggle
 		</div>
 	),
+}));
+
+vi.mock('../../hooks/useRoomLiveQuery', () => ({
+	useRoomLiveQuery: vi.fn(),
 }));
 
 vi.mock('../../components/room/RoomDashboard', () => ({
 	RoomDashboard: () => <div data-testid="room-dashboard">RoomDashboard</div>,
 }));
 
-vi.mock('../../components/room', () => ({
+// Mock individual component paths (not the barrel) so lazy() resolves correctly
+vi.mock('../../components/room/GoalsEditor', () => ({
 	GoalsEditor: () => <div data-testid="goals-editor">GoalsEditor</div>,
-	RoomContext: () => <div data-testid="room-context">RoomContext</div>,
+}));
+
+vi.mock('../../components/room/RoomSettings', () => ({
 	RoomSettings: () => <div data-testid="room-settings">RoomSettings</div>,
+}));
+
+vi.mock('../../components/room/RoomAgents', () => ({
 	RoomAgents: () => <div data-testid="room-agents">RoomAgents</div>,
+}));
+
+vi.mock('../../components/room/RoomAgentContextStrip', () => ({
+	RoomAgentContextStrip: () => <div data-testid="room-agent-context-strip" />,
+}));
+
+vi.mock('../../components/room/RoomTasks', () => ({
+	RoomTasks: () => <div data-testid="room-tasks">RoomTasks</div>,
 }));
 
 vi.mock('../../components/ui/Skeleton', () => ({
@@ -175,6 +231,8 @@ describe('Room', () => {
 		// Re-apply the resolved value since clearAllMocks resets mockImplementation
 		mockRoomStoreSelect.mockResolvedValue(undefined);
 		initRoomStoreSignals();
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
 	});
 
 	afterEach(() => {
@@ -182,65 +240,67 @@ describe('Room', () => {
 	});
 
 	describe('View rendering priority', () => {
-		it('renders ChatContainer when sessionViewId is provided (session route)', () => {
+		it('renders ChatContainer when sessionViewId is provided (session route)', async () => {
 			render(<Room roomId={roomId} sessionViewId="session-abc" />);
 
 			expect(screen.getByTestId('chat-container')).toBeTruthy();
 			expect(screen.getByTestId('chat-container').getAttribute('data-session-id')).toBe(
 				'session-abc'
 			);
-			expect(screen.queryByTestId('task-view')).toBeNull();
+			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders ChatContainer when sessionViewId is the synthetic room:chat:<roomId> value (agent route)', () => {
-			const syntheticId = `room:chat:${roomId}`;
-			render(<Room roomId={roomId} sessionViewId={syntheticId} />);
-
-			const container = screen.getByTestId('chat-container');
-			expect(container).toBeTruthy();
-			expect(container.getAttribute('data-session-id')).toBe(syntheticId);
-			expect(screen.queryByTestId('task-view')).toBeNull();
-			expect(screen.queryByTestId('room-dashboard')).toBeNull();
-		});
-
-		it('renders TaskView when taskViewId is provided (task route)', () => {
-			render(<Room roomId={roomId} taskViewId="task-xyz" />);
-
-			const taskView = screen.getByTestId('task-view');
-			expect(taskView).toBeTruthy();
-			expect(taskView.getAttribute('data-task-id')).toBe('task-xyz');
-			expect(screen.queryByTestId('chat-container')).toBeNull();
-			expect(screen.queryByTestId('room-dashboard')).toBeNull();
-		});
-
-		it('taskViewId takes priority over sessionViewId when both are set', () => {
-			render(<Room roomId={roomId} taskViewId="task-xyz" sessionViewId={`room:chat:${roomId}`} />);
-
-			expect(screen.getByTestId('task-view')).toBeTruthy();
-			expect(screen.queryByTestId('chat-container')).toBeNull();
-		});
-
-		it('renders tabbed dashboard when neither sessionViewId nor taskViewId is set', () => {
+		it('renders Chat tab with ChatContainer when currentRoomActiveTabSignal is "chat"', async () => {
+			currentRoomActiveTabSignal.value = 'chat';
 			render(<Room roomId={roomId} />);
 
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-			expect(screen.queryByTestId('chat-container')).toBeNull();
-			expect(screen.queryByTestId('task-view')).toBeNull();
+			// Chat tab is rendered (always mounted), and dashboard is not visible
+			const containers = screen.getAllByTestId('chat-container');
+			expect(containers.length).toBeGreaterThan(0);
+			// Overview dashboard should not be visible since chat tab is active
+			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders tabbed dashboard when sessionViewId is null', () => {
+		it('renders TaskViewToggle overlay when taskViewId is provided (task route)', async () => {
+			render(<Room roomId={roomId} taskViewId="task-xyz" />);
+
+			const taskViewToggle = await screen.findByTestId('task-view-toggle');
+			expect(taskViewToggle).toBeTruthy();
+			expect(taskViewToggle.getAttribute('data-task-id')).toBe('task-xyz');
+			// tabs and tab content are still in the DOM behind the overlay
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
+		});
+
+		it('non-agent sessionViewId takes over the full area', async () => {
+			render(<Room roomId={roomId} taskViewId="task-xyz" sessionViewId="some-worker-session" />);
+
+			// Non-agent sessionViewId replaces the whole content area
+			const container = await screen.findByTestId('chat-container');
+			expect(container).toBeTruthy();
+			expect(container.getAttribute('data-session-id')).toBe('some-worker-session');
+			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
+			expect(screen.queryByTestId('room-dashboard')).toBeNull();
+		});
+
+		it('renders tabbed dashboard when neither sessionViewId nor taskViewId is set', async () => {
+			render(<Room roomId={roomId} />);
+
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
+			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
+		});
+
+		it('renders tabbed dashboard when sessionViewId is null', async () => {
 			render(<Room roomId={roomId} sessionViewId={null} />);
 
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-			expect(screen.queryByTestId('chat-container')).toBeNull();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
 		});
 
-		it('renders tabbed dashboard when taskViewId is null', () => {
+		it('renders tabbed dashboard when taskViewId is null', async () => {
 			render(<Room roomId={roomId} taskViewId={null} />);
 
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-			expect(screen.queryByTestId('task-view')).toBeNull();
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
+			expect(screen.queryByTestId('task-view-toggle')).toBeNull();
 		});
 	});
 
@@ -264,41 +324,97 @@ describe('Room', () => {
 	});
 
 	describe('Tab navigation', () => {
-		it('renders Context tab content when Context tab is clicked', () => {
+		it('renders Tasks tab content when currentRoomActiveTabSignal is "tasks"', async () => {
+			currentRoomActiveTabSignal.value = 'tasks';
 			render(<Room roomId={roomId} />);
 
-			// Default is overview (dashboard)
-			expect(screen.getByTestId('room-dashboard')).toBeTruthy();
-
-			fireEvent.click(screen.getByText('Context'));
-			expect(screen.getByTestId('room-context')).toBeTruthy();
+			expect(await screen.findByTestId('room-tasks')).toBeTruthy();
 			expect(screen.queryByTestId('room-dashboard')).toBeNull();
 		});
 
-		it('renders Agents tab content when Agents tab is clicked', () => {
-			render(<Room roomId={roomId} />);
+		it('renders Missions tab content when currentRoomActiveTabSignal is "goals"', async () => {
+			currentRoomActiveTabSignal.value = 'goals';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
 
-			fireEvent.click(screen.getByText('Agents'));
-			expect(screen.getByTestId('room-agents')).toBeTruthy();
+			// GoalsEditor is lazy-loaded — wait for the dynamic import to resolve
+			expect(await screen.findByTestId('goals-editor')).toBeTruthy();
 		});
 
-		it('renders Missions tab content when Missions tab is clicked', () => {
+		it('renders Settings tab content when currentRoomActiveTabSignal is "settings"', async () => {
+			currentRoomActiveTabSignal.value = 'settings';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+
+			// RoomSettings is lazy-loaded — wait for the dynamic import to resolve
+			expect(await screen.findByTestId('room-settings')).toBeTruthy();
+		});
+
+		it('renders Agents tab content when currentRoomActiveTabSignal is "agents"', async () => {
+			currentRoomActiveTabSignal.value = 'agents';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+
+			// RoomAgents is lazy-loaded — wait for the dynamic import to resolve
+			expect(await screen.findByTestId('room-agents')).toBeTruthy();
+		});
+
+		it('calls navigateToRoomTab when a tab is clicked', async () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Tasks'));
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'tasks');
+		});
+
+		it('calls navigateToRoomTab with "chat" when Coordinator tab is clicked', async () => {
+			render(<Room roomId={roomId} />);
+
+			fireEvent.click(screen.getByText('Coordinator'));
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'chat');
+		});
+
+		it('calls navigateToRoomTab with "goals" when Missions tab is clicked', async () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Missions'));
-			expect(screen.getByTestId('goals-editor')).toBeTruthy();
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'goals');
 		});
 
-		it('renders Settings tab content when Settings tab is clicked', () => {
+		it('calls navigateToRoomTab with "settings" when Settings tab is clicked', async () => {
 			render(<Room roomId={roomId} />);
 
 			fireEvent.click(screen.getByText('Settings'));
-			expect(screen.getByTestId('room-settings')).toBeTruthy();
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith(roomId, 'settings');
+		});
+
+		it('defaults to overview tab when currentRoomActiveTabSignal is null', async () => {
+			currentRoomActiveTabSignal.value = null;
+			render(<Room roomId={roomId} />);
+
+			// Overview is the default tab
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
+		});
+
+		it('clears currentRoomActiveTabSignal on unmount', async () => {
+			currentRoomActiveTabSignal.value = 'tasks';
+			const { unmount } = render(<Room roomId={roomId} />);
+			await act(async () => {
+				unmount();
+			});
+
+			expect(currentRoomActiveTabSignal.value).toBeNull();
 		});
 	});
 
 	describe('Error and loading states', () => {
-		it('renders loading skeleton during initial load', () => {
+		it('renders loading skeleton during initial load', async () => {
 			// initialLoad state starts as true and only flips after roomStore.select() resolves
 			// (async microtask). render() is synchronous so initialLoad is still true here,
 			// making the skeleton assertion safe without needing act().
@@ -309,7 +425,7 @@ describe('Room', () => {
 			expect(screen.getAllByTestId('skeleton').length).toBeGreaterThan(0);
 		});
 
-		it('renders error state when room fails to load', () => {
+		it('renders error state when room fails to load', async () => {
 			mockErrorSignal.value = 'Room not found';
 			mockRoomSignal.value = null;
 			render(<Room roomId={roomId} />);
@@ -318,11 +434,50 @@ describe('Room', () => {
 			expect(screen.getByText('Room not found')).toBeTruthy();
 		});
 
-		it('renders "Room not found" when room is null with no error', () => {
+		it('renders "Room not found" when room is null with no error', async () => {
 			mockRoomSignal.value = null;
 			render(<Room roomId={roomId} />);
 
 			expect(screen.getByText('Room not found')).toBeTruthy();
+		});
+	});
+
+	describe('Lazy loading', () => {
+		it('lazy-loaded tab components resolve after dynamic import', async () => {
+			// Verify that navigating to each lazy tab resolves the component
+			// via dynamic import (the mock ensures it resolves synchronously within act)
+			currentRoomActiveTabSignal.value = 'goals';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+			expect(await screen.findByTestId('goals-editor')).toBeTruthy();
+
+			cleanup();
+			currentRoomActiveTabSignal.value = 'agents';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+			expect(await screen.findByTestId('room-agents')).toBeTruthy();
+
+			cleanup();
+			currentRoomActiveTabSignal.value = 'settings';
+			await act(async () => {
+				render(<Room roomId={roomId} />);
+			});
+			expect(await screen.findByTestId('room-settings')).toBeTruthy();
+		});
+
+		it('RoomDashboard and RoomTasks render via lazy loading with Suspense', async () => {
+			// Overview tab — RoomDashboard is eagerly loaded
+			currentRoomActiveTabSignal.value = 'overview';
+			render(<Room roomId={roomId} />);
+			expect(await screen.findByTestId('room-dashboard')).toBeTruthy();
+
+			cleanup();
+			// Tasks tab — RoomTasks is eagerly loaded
+			currentRoomActiveTabSignal.value = 'tasks';
+			render(<Room roomId={roomId} />);
+			expect(await screen.findByTestId('room-tasks')).toBeTruthy();
 		});
 	});
 });

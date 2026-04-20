@@ -4,8 +4,7 @@
  * Creates the minimal set of tables needed for Space system tests
  * without requiring a full migration run.
  *
- * Keep in sync with runMigration40 in packages/daemon/src/storage/schema/migrations.ts
- * and space-agent-schema.ts.
+ * Keep in sync with the fully-migrated production schema (after M86).
  *
  * IMPORTANT: The schema defined here must exactly match the fully-migrated production
  * schema (i.e. after all migrations have run). Never add columns or constraints here
@@ -20,6 +19,7 @@ export function createSpaceTables(db: BunDatabase): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
 			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
 			workspace_path TEXT NOT NULL UNIQUE,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -30,12 +30,16 @@ export function createSpaceTables(db: BunDatabase): void {
 			session_ids TEXT NOT NULL DEFAULT '[]',
 			status TEXT NOT NULL DEFAULT 'active'
 				CHECK(status IN ('active', 'archived')),
-			autonomy_level TEXT NOT NULL DEFAULT 'supervised',
+			paused INTEGER NOT NULL DEFAULT 0,
+			autonomy_level INTEGER NOT NULL DEFAULT 1
+				CHECK(autonomy_level BETWEEN 1 AND 5),
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
 	`);
+
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agents (
@@ -46,12 +50,10 @@ export function createSpaceTables(db: BunDatabase): void {
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
-			config TEXT,
+			instructions TEXT,
+			provider TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			role TEXT NOT NULL,
-			provider TEXT,
-			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -62,10 +64,15 @@ export function createSpaceTables(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			start_step_id TEXT,
-			config TEXT,
+			start_node_id TEXT,
+			end_node_id TEXT,
+			tags TEXT NOT NULL DEFAULT '[]',
+			channels TEXT,
+			gates TEXT,
 			layout TEXT,
-			max_iterations INTEGER,
+			template_name TEXT DEFAULT NULL,
+			template_hash TEXT DEFAULT NULL,
+			instructions TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -73,13 +80,11 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_workflow_steps (
+		CREATE TABLE IF NOT EXISTS space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			agent_id TEXT,
-			order_index INTEGER NOT NULL,
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
@@ -91,16 +96,16 @@ export function createSpaceTables(db: BunDatabase): void {
 		CREATE TABLE IF NOT EXISTS space_workflow_transitions (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
-			from_step_id TEXT NOT NULL,
-			to_step_id TEXT NOT NULL,
+			from_node_id TEXT NOT NULL,
+			to_node_id TEXT NOT NULL,
 			condition TEXT,
 			order_index INTEGER NOT NULL DEFAULT 0,
 			is_cyclic INTEGER,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE,
-			FOREIGN KEY (from_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE,
-			FOREIGN KEY (to_step_id) REFERENCES space_workflow_steps(id) ON DELETE CASCADE
+			FOREIGN KEY (from_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE,
+			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
 
@@ -110,16 +115,12 @@ export function createSpaceTables(db: BunDatabase): void {
 			space_id TEXT NOT NULL,
 			workflow_id TEXT NOT NULL,
 			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			current_step_index INTEGER NOT NULL DEFAULT 0,
-			current_step_id TEXT,
+			description TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
-			config TEXT,
-			iteration_count INTEGER NOT NULL DEFAULT 0,
-			max_iterations INTEGER NOT NULL DEFAULT 5,
-			goal_id TEXT,
+				CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+			failure_reason TEXT,
 			created_at INTEGER NOT NULL,
+			started_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
@@ -127,92 +128,150 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
+	);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS gate_data (
+			run_id TEXT NOT NULL,
+			gate_id TEXT NOT NULL,
+			data TEXT NOT NULL DEFAULT '{}',
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, gate_id),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
+
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS node_executions (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			workflow_node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			agent_id TEXT,
+			agent_session_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'in_progress', 'idle', 'done', 'blocked', 'cancelled')),
+			result TEXT,
+			data TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_node_executions_node ON node_executions(workflow_run_id, workflow_node_id)`
+	);
+
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived')),
+			status TEXT NOT NULL DEFAULT 'open'
+				CHECK(status IN ('open', 'in_progress', 'review', 'done', 'blocked', 'cancelled', 'archived')),
 			priority TEXT NOT NULL DEFAULT 'normal'
 				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-			task_type TEXT
-				CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
-			assigned_agent TEXT
-				CHECK(assigned_agent IN ('coder', 'general')),
-			custom_agent_id TEXT,
+			labels TEXT NOT NULL DEFAULT '[]',
 			workflow_run_id TEXT,
-			workflow_step_id TEXT,
+			preferred_workflow_id TEXT,
 			created_by_task_id TEXT,
-			goal_id TEXT,
-			progress INTEGER,
-			current_step TEXT,
 			result TEXT,
-			error TEXT,
 			depends_on TEXT NOT NULL DEFAULT '[]',
-			input_draft TEXT,
 			active_session TEXT
 				CHECK(active_session IN ('worker', 'leader')),
 			task_agent_session_id TEXT,
-			pr_url TEXT,
-			pr_number INTEGER,
-			pr_created_at INTEGER,
+			block_reason TEXT,
+			approval_source TEXT,
+			approval_reason TEXT,
+			approved_at INTEGER,
+			pending_action_index INTEGER DEFAULT NULL,
+			pending_checkpoint_type TEXT DEFAULT NULL
+				CHECK(pending_checkpoint_type IN ('completion_action', 'gate')),
 			archived_at INTEGER,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
-			FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
 		)
 	`);
 
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+	);
+
+	// Workflow run artifacts
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_session_groups (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT,
-			workflow_run_id TEXT,
-			current_step_id TEXT,
-			task_id TEXT,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'completed', 'failed')),
+		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
+			id TEXT PRIMARY KEY NOT NULL,
+			run_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			artifact_type TEXT NOT NULL,
+			artifact_key TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			UNIQUE(run_id, node_id, artifact_type, artifact_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
 		)
 	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
 
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
-	);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_task_id ON space_session_groups(task_id)`
-	);
-
+	// Pending agent messages (Task Agent → peer agent persistent queue).
+	// See migration 90.
 	db.exec(`
-		CREATE TABLE IF NOT EXISTS space_session_group_members (
+		CREATE TABLE IF NOT EXISTS pending_agent_messages (
 			id TEXT PRIMARY KEY,
-			group_id TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			role TEXT NOT NULL,
-			agent_id TEXT,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'completed', 'failed')),
-			order_index INTEGER NOT NULL DEFAULT 0,
+			workflow_run_id TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
+			target_kind TEXT NOT NULL
+				CHECK(target_kind IN ('node_agent', 'space_agent')),
+			target_agent_name TEXT NOT NULL,
+			message TEXT NOT NULL,
+			idempotency_key TEXT,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 5,
+			last_attempt_at INTEGER,
+			last_error TEXT,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
+			delivered_at INTEGER,
+			delivered_session_id TEXT,
+			expires_at INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
-			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
-			UNIQUE(group_id, session_id)
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
 		)
 	`);
-
 	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_group_id ON space_session_group_members(group_id)`
+		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_status ` +
+			`ON pending_agent_messages(workflow_run_id, status, created_at)`
 	);
 	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
+		`CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_target ` +
+			`ON pending_agent_messages(workflow_run_id, target_agent_name, status, created_at)`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem ` +
+			`ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
+			`WHERE idempotency_key IS NOT NULL`
 	);
 }

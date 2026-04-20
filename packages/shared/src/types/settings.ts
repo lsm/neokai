@@ -150,6 +150,30 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
 	/** Ordered fallback model chain for automatic model switching on rate/usage limits */
 	fallbackModels?: FallbackModelEntry[];
+
+	/**
+	 * Model-specific fallback mappings. When a model hits a rate/usage limit,
+	 * its entry here takes priority over the default `fallbackModels` list.
+	 * Keys are `"provider/model"` strings (e.g. `"anthropic/claude-sonnet-4-20250514"`).
+	 * Values are ordered fallback chains, same format as `fallbackModels`.
+	 */
+	modelFallbackMap?: Record<string, FallbackModelEntry[]>;
+
+	// Neo global agent settings
+	/**
+	 * Security mode for Neo's action confirmation behavior.
+	 * - conservative: Confirm every write action.
+	 * - balanced: Auto-execute low-risk, confirm medium-risk, require explicit for irreversible.
+	 * - autonomous: Execute all actions immediately without confirmation.
+	 * Defaults to 'balanced'.
+	 */
+	neoSecurityMode?: 'conservative' | 'balanced' | 'autonomous';
+
+	/**
+	 * Model override for the Neo agent session.
+	 * If unset, Neo inherits the global default model.
+	 */
+	neoModel?: string;
 }
 
 /**

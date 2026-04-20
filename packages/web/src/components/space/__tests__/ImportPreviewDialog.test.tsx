@@ -124,7 +124,7 @@ describe('ImportPreviewDialog', () => {
 			/>
 		);
 		const select = screen.getByLabelText(/Conflict resolution for Agent Two/i) as HTMLSelectElement;
-		fireEvent.change(select, { target: { value: 'rename' } });
+		fireEvent.input(select, { target: { value: 'rename' } });
 
 		const importBtn = screen.getByRole('button', { name: /^Import$/ }) as HTMLButtonElement;
 		expect(importBtn.disabled).toBe(false);
@@ -146,7 +146,7 @@ describe('ImportPreviewDialog', () => {
 			/>
 		);
 		const select = screen.getByLabelText(/Conflict resolution for Agent Two/i) as HTMLSelectElement;
-		fireEvent.change(select, { target: { value: 'replace' } });
+		fireEvent.input(select, { target: { value: 'replace' } });
 
 		const importBtn = screen.getByRole('button', { name: /^Import$/ });
 		fireEvent.click(importBtn);

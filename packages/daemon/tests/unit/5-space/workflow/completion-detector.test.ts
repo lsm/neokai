@@ -1,0 +1,207 @@
+/**
+ * Unit tests for CompletionDetector
+ *
+ * The detector inspects the canonical `SpaceTask` linked to a workflow run.
+ * Node-execution statuses (idle/cancelled/etc.) are NOT completion signals —
+ * they are per-execution lifecycle. Workflow completion is signalled by:
+ *   1. `task.status` being terminal (`done` | `cancelled`), OR
+ *   2. `task.reportedStatus` being non-null (agent called `report_result` —
+ *      runtime will resolve final status on next tick via completion-actions).
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { CompletionDetector } from '../../../../src/lib/space/runtime/completion-detector.ts';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeDb(): { db: BunDatabase; dir: string } {
+	const dir = join(
+		process.cwd(),
+		'tmp',
+		'test-completion-detector',
+		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+	);
+	mkdirSync(dir, { recursive: true });
+	const db = new BunDatabase(join(dir, 'test.db'));
+	runMigrations(db, () => {});
+	// Disable FK so we can insert tasks with synthetic workflow_run_id values
+	// without seeding a parent row.
+	db.exec('PRAGMA foreign_keys = OFF');
+	return { db, dir };
+}
+
+let db: BunDatabase;
+let dir: string;
+let taskRepo: SpaceTaskRepository;
+let detector: CompletionDetector;
+
+beforeEach(() => {
+	({ db, dir } = makeDb());
+	taskRepo = new SpaceTaskRepository(db);
+	detector = new CompletionDetector(taskRepo);
+});
+
+afterEach(() => {
+	db.close();
+	rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('CompletionDetector', () => {
+	const RUN = 'run-1';
+	const SPACE = 'space-1';
+
+	test('returns false when no task is linked to the run (workflow not started)', () => {
+		expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+	});
+
+	describe('terminal task.status short-circuit', () => {
+		test('task.status === "done" → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { status: 'done' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('task.status === "cancelled" → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { status: 'cancelled' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('task.status === "in_progress" without reportedStatus → false', () => {
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
+
+		test('task.status === "blocked" alone → false (blocked is needs-attention, not complete)', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { status: 'blocked' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
+
+		test('task.status === "review" alone → false (paused awaiting human approval)', () => {
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'review',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
+	});
+
+	describe('reportedStatus signal', () => {
+		test('reportedStatus = "done" + task in_progress → true (runtime should resolve)', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { reportedStatus: 'done', reportedSummary: 'ok' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('reportedStatus = "blocked" + task in_progress → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { reportedStatus: 'blocked', reportedSummary: 'stuck' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('reportedStatus = "cancelled" + task in_progress → true', () => {
+			const task = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.updateTask(task.id, { reportedStatus: 'cancelled', reportedSummary: 'cancelled' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+
+		test('reportedStatus = null + task in_progress → false', () => {
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'task',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+		});
+	});
+
+	describe('multiple workflow runs', () => {
+		test('runs are evaluated independently', () => {
+			const RUN_A = 'run-a';
+			const RUN_B = 'run-b';
+
+			const taskA = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'a',
+				workflowRunId: RUN_A,
+			});
+			taskRepo.updateTask(taskA.id, { status: 'done' });
+
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'b',
+				status: 'in_progress',
+				workflowRunId: RUN_B,
+			});
+
+			expect(detector.isComplete({ workflowRunId: RUN_A })).toBe(true);
+			expect(detector.isComplete({ workflowRunId: RUN_B })).toBe(false);
+		});
+
+		test('multi-task run: any single terminal/reported task signals completion', () => {
+			const taskA = taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'a',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			taskRepo.createTask({
+				spaceId: SPACE,
+				title: 'b',
+				status: 'in_progress',
+				workflowRunId: RUN,
+			});
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(false);
+
+			taskRepo.updateTask(taskA.id, { reportedStatus: 'done', reportedSummary: 'ok' });
+			expect(detector.isComplete({ workflowRunId: RUN })).toBe(true);
+		});
+	});
+});

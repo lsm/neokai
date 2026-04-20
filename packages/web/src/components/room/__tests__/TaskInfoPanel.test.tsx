@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { TaskInfoPanel } from '../TaskInfoPanel';
+import type { TaskViewVersionContext } from '../TaskViewToggle';
 
 // Mock TaskViewModelSelector to avoid connectionManager dependency in tests
 vi.mock('../TaskViewModelSelector.tsx', () => ({
@@ -447,7 +448,8 @@ describe('TaskInfoPanel', () => {
 				/>
 			);
 
-			expect(container.textContent).toContain('Model:');
+			// Should show Worker: label with Model: for worker session
+			expect(container.textContent).toMatch(/Worker:.*Model:/);
 			// Mock shows the model id
 			expect(container.querySelector('[data-testid="model-selector-mock"]')).toBeTruthy();
 		});
@@ -471,6 +473,38 @@ describe('TaskInfoPanel', () => {
 			expect(container.textContent).toContain('Model:');
 			const modelEl = container.querySelector('[data-testid="model-selector-mock"]');
 			expect(modelEl?.textContent).toBe('claude-opus-4-6');
+		});
+
+		it('should show separate model selectors for worker and leader when both have model config', () => {
+			const workerSession = {
+				id: 'worker-session-id-1234',
+				status: 'active',
+				config: { model: 'claude-sonnet-4-6' },
+			} as never;
+			const leaderSession = {
+				id: 'leader-session-id-5678',
+				status: 'active',
+				config: { model: 'claude-opus-4-6' },
+			} as never;
+
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					workerSession={workerSession}
+					leaderSession={leaderSession}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			// Both Worker and Leader labels should be shown with Model:
+			expect(container.textContent).toMatch(/Worker:.*Model:/);
+			expect(container.textContent).toMatch(/Leader:.*Model:/);
+			// Both model selectors should be rendered
+			const modelSelectors = container.querySelectorAll('[data-testid="model-selector-mock"]');
+			expect(modelSelectors).toHaveLength(2);
+			expect(modelSelectors[0]?.textContent).toBe('claude-sonnet-4-6');
+			expect(modelSelectors[1]?.textContent).toBe('claude-opus-4-6');
 		});
 
 		it('should show empty state when no info and no actions', () => {
@@ -575,6 +609,63 @@ describe('TaskInfoPanel', () => {
 	});
 
 	describe('Actions Section', () => {
+		it('should show Interrupt (Stop) action when visible', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).toBeTruthy();
+			expect(container.textContent).toContain('Stop');
+		});
+
+		it('should call onInterrupt when Stop button is clicked', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+				/>
+			);
+
+			fireEvent.click(container.querySelector('[data-testid="task-info-panel-interrupt"]')!);
+			expect(onInterrupt).toHaveBeenCalledOnce();
+		});
+
+		it('should disable Interrupt button when disabledActions.interrupt is true', () => {
+			const onInterrupt = vi.fn();
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt }}
+					visibleActions={{ interrupt: true }}
+					disabledActions={{ interrupt: true }}
+				/>
+			);
+
+			const btn = container.querySelector(
+				'[data-testid="task-info-panel-interrupt"]'
+			) as HTMLButtonElement;
+			expect(btn?.disabled).toBe(true);
+		});
+
+		it('should not show Interrupt action when not visible', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					actions={{ onInterrupt: vi.fn() }}
+					visibleActions={{ interrupt: false }}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="task-info-panel-interrupt"]')).toBeNull();
+		});
+
 		it('should show Complete action when visible', () => {
 			const onComplete = vi.fn();
 			const { container } = render(
@@ -713,6 +804,108 @@ describe('TaskInfoPanel', () => {
 			);
 
 			expect(container.textContent).toContain('short/path');
+		});
+	});
+
+	describe('viaNeo indicator', () => {
+		it('should render ViaNeoIndicator when viaNeo=true and taskId is provided', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					taskId="task-123"
+					viaNeo={true}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeTruthy();
+		});
+
+		it('should not render ViaNeoIndicator when viaNeo=false', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={true}
+					taskId="task-123"
+					viaNeo={false}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+
+		it('should not render ViaNeoIndicator when viaNeo is omitted', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} taskId="task-123" actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+
+		it('should not render ViaNeoIndicator when panel is closed even if viaNeo=true', () => {
+			const { container } = render(
+				<TaskInfoPanel
+					isOpen={false}
+					taskId="task-123"
+					viaNeo={true}
+					actions={{}}
+					visibleActions={{}}
+				/>
+			);
+
+			expect(container.querySelector('[data-testid="via-neo-indicator"]')).toBeNull();
+		});
+	});
+
+	describe('View version toggle', () => {
+		it('should show sub-label "V1 Timeline \u2192 V2 Turn-based" when version is v1', () => {
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v1',
+				onToggleVersion: vi.fn(),
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('V1 Timeline \u2192 V2 Turn-based');
+		});
+
+		it('should show sub-label "V2 Turn-based \u2192 V1 Timeline" when version is v2', () => {
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v2',
+				onToggleVersion: vi.fn(),
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).toContain('V2 Turn-based \u2192 V1 Timeline');
+		});
+
+		it('should not show view toggle section when viewVersion is omitted', () => {
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} actions={{}} visibleActions={{}} />
+			);
+
+			expect(container.textContent).not.toContain('Timeline');
+			expect(container.textContent).not.toContain('Turn-based');
+			expect(container.querySelector('[data-testid="task-view-toggle"]')).toBeNull();
+		});
+
+		it('should call onToggleVersion when toggle button is clicked', () => {
+			const onToggleVersion = vi.fn();
+			const viewVersion: TaskViewVersionContext = {
+				version: 'v1',
+				onToggleVersion,
+			};
+			const { container } = render(
+				<TaskInfoPanel isOpen={true} viewVersion={viewVersion} actions={{}} visibleActions={{}} />
+			);
+
+			fireEvent.click(container.querySelector('[data-testid="task-view-toggle"]')!);
+			expect(onToggleVersion).toHaveBeenCalledOnce();
 		});
 	});
 });

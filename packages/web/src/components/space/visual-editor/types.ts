@@ -2,6 +2,33 @@
  * Shared types for the visual editor canvas and nodes.
  */
 
+/**
+ * Legacy workflow condition types kept locally for the visual editor's
+ * edge transition system (edges between nodes, not channels).
+ */
+export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
+
+export interface WorkflowCondition {
+	type: WorkflowConditionType;
+	expression?: string;
+	description?: string;
+	maxRetries?: number;
+	timeoutMs?: number;
+}
+
+/**
+ * A directed edge used internally by the visual editor canvas.
+ * This replaces the removed backend `WorkflowTransition` type for UI-only use.
+ */
+export interface VisualTransition {
+	id: string;
+	from: string;
+	to: string;
+	condition?: WorkflowCondition;
+	order?: number;
+	isCyclic?: boolean;
+}
+
 export interface Point {
 	x: number;
 	y: number;

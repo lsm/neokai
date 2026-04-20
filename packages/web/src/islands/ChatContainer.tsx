@@ -19,7 +19,6 @@
 import type {
 	MessageDeliveryMode,
 	MessageImage,
-	ModelInfo,
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
@@ -28,47 +27,42 @@ import {
 	DEFAULT_ROOM_CHAT_FEATURES,
 	DEFAULT_LOBBY_FEATURES,
 } from '@neokai/shared';
-import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@neokai/shared';
 import { useSignalEffect } from '@preact/signals';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog.tsx';
 import { ChatHeader } from '../components/ChatHeader.tsx';
 import { ErrorBanner } from '../components/ErrorBanner.tsx';
 import { ErrorDialog } from '../components/ErrorDialog.tsx';
 // Components
-import MessageInput from '../components/MessageInput.tsx';
+import { ChatComposer } from '../components/ChatComposer.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SessionInfoModal } from '../components/SessionInfoModal.tsx';
-import SessionStatusBar from '../components/SessionStatusBar.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
-import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
+
 import { Spinner } from '../components/ui/Spinner.tsx';
 import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
+import { WorkspaceSelector } from '../components/WorkspaceSelector.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
 // Hooks
 import { useModal } from '../hooks/useModal.ts';
-import { useModelSwitcher } from '../hooks/useModelSwitcher.ts';
+import { useChatComposerController } from '../hooks/useChatComposerController.ts';
 import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
-import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
+import { updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
-import { borderColors } from '../lib/design-tokens.ts';
-import {
-	getMessagesBottomPaddingPx,
-	MIN_MESSAGES_BOTTOM_PADDING_PX,
-} from '../lib/layout-metrics.ts';
+import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
-import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
-import { cn } from '../lib/utils.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
-import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+
 import type { RoomContext } from '../components/ChatHeader.tsx';
 import { navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
 import { ErrorCategory } from '../types/error.ts';
@@ -79,16 +73,28 @@ import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 interface ChatContainerProps {
 	sessionId: string;
 	readonly?: boolean;
+	/** When true, suppress the room breadcrumb in ChatHeader (used when embedded in Room tab) */
+	hideRoomBreadcrumb?: boolean;
+	/**
+	 * When provided, the header's left slot renders a back-arrow button that
+	 * invokes this callback instead of the default mobile-menu button. Used
+	 * by `AgentOverlayChat` (the agent slide-over) to collapse the wrapper
+	 * header into a single `ChatHeader` with a back affordance.
+	 */
+	onBack?: () => void;
 }
 
-export default function ChatContainer({ sessionId, readonly = false }: ChatContainerProps) {
+export default function ChatContainer({
+	sessionId,
+	readonly = false,
+	hideRoomBreadcrumb = false,
+	onBack,
+}: ChatContainerProps) {
 	// ========================================
 	// Refs
 	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	const footerContainerRef = useRef<HTMLDivElement>(null);
-	const previousMessagesBottomPaddingRef = useRef<number>(MIN_MESSAGES_BOTTOM_PADDING_PX);
 	// Store scroll position info to restore after older messages are loaded
 	const scrollPositionRestoreRef = useRef<{
 		oldScrollHeight: number;
@@ -98,6 +104,9 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Ref for tracking resolving questions (sync updates, prevents form disappearance during transition)
 	const resolvingQuestionsRef = useRef<Map<string, ResolvedQuestion>>(new Map());
+	const pendingMessageVisibilityChecksRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+		new Map()
+	);
 
 	// ========================================
 	// Local State (pagination, autoScroll)
@@ -107,15 +116,11 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	// This avoids an expensive COUNT query on every session load
 	const [hasMoreMessages, setHasMoreMessages] = useState(sessionStore.hasMoreMessages.value);
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
+	const [loadTimedOut, setLoadTimedOut] = useState(false);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
-	const [messagesBottomPadding, setMessagesBottomPadding] = useState(
-		MIN_MESSAGES_BOTTOM_PADDING_PX
-	);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
-	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
-	const [sandboxSwitching, setSandboxSwitching] = useState(false);
 
 	// Track resolved questions to keep showing them in disabled state
 	// Map of toolUseId -> resolved question data
@@ -139,9 +144,12 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	const [showWorktreeChoice, setShowWorktreeChoice] = useState(false);
 	const [pendingWorktreeMode, setPendingWorktreeMode] = useState<'worktree' | 'direct'>('worktree');
 
+	// Inline workspace selector state (for sessions created without a workspace)
+	const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false);
+
 	// Reactive State from sessionStore (via useSignalEffect for re-renders)
 	// Moved here before callbacks that depend on it
-	const [messages, setMessages] = useState<SDKMessage[]>([]);
+	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [session, setSession] = useState(sessionStore.sessionInfo.value);
 
 	// ========================================
@@ -282,7 +290,18 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Sync messages from sessionStore
 	useSignalEffect(() => {
-		setMessages(sessionStore.sdkMessages.value);
+		const nextMessages = sessionStore.sdkMessages.value;
+		const pendingChecks = pendingMessageVisibilityChecksRef.current;
+		if (pendingChecks.size > 0) {
+			for (const [messageId, timer] of pendingChecks) {
+				const isVisible = nextMessages.some((msg) => msg.uuid === messageId);
+				if (isVisible) {
+					clearTimeout(timer);
+					pendingChecks.delete(messageId);
+				}
+			}
+		}
+		setMessages(nextMessages);
 	});
 
 	// Sync session info from sessionStore
@@ -310,6 +329,10 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		if (sessionId.startsWith('room:chat:')) {
 			return DEFAULT_ROOM_CHAT_FEATURES;
 		}
+		if (sessionId.startsWith('space:chat:')) {
+			// Space agent sessions — no archive/delete (managed by space lifecycle)
+			return { ...DEFAULT_WORKER_FEATURES, archive: false };
+		}
 		if (sessionId.startsWith('lobby:')) {
 			return DEFAULT_LOBBY_FEATURES;
 		}
@@ -317,13 +340,15 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	}, [session?.config?.features, sessionId]);
 
 	// Compute room context breadcrumb for sessions inside a room
+	// Suppressed when embedded in Room Chat tab (hideRoomBreadcrumb=true)
 	const roomContext: RoomContext | undefined = useMemo(() => {
+		if (hideRoomBreadcrumb) return undefined;
 		const roomId = session?.context?.roomId;
 		if (!roomId) return undefined;
 		const room = lobbyStore.rooms.value.find((r) => r.id === roomId);
 		if (!room) return undefined;
 		return { roomName: room.name, roomId: room.id };
-	}, [session?.context?.roomId]);
+	}, [session?.context?.roomId, hideRoomBreadcrumb]);
 
 	// Sync context from sessionStore
 	useSignalEffect(() => {
@@ -352,8 +377,18 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		const sessionStateLoaded = sessionStore.sessionState.value !== null;
 		if (hasMessages || sessionStateLoaded) {
 			setIsInitialLoad(false);
+			setLoadTimedOut(false);
 		}
 	});
+
+	// Timeout: if session state doesn't load within 30s, show error instead of infinite spinner
+	useEffect(() => {
+		if (!isInitialLoad) return;
+		const timer = setTimeout(() => {
+			setLoadTimedOut(true);
+		}, 30_000);
+		return () => clearTimeout(timer);
+	}, [isInitialLoad]);
 
 	// Sync resolved questions from session metadata when session loads/updates
 	// Also clears resolvingQuestionsRef for items now confirmed by server
@@ -385,6 +420,20 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		}
 	}, [session]);
 
+	// Show workspace selector for active worker sessions without a workspace
+	useEffect(() => {
+		if (
+			session?.type === 'worker' &&
+			session?.status === 'active' &&
+			session?.workspacePath === null &&
+			!readonly
+		) {
+			setShowWorkspaceSelector(true);
+		} else {
+			setShowWorkspaceSelector(false);
+		}
+	}, [session?.type, session?.status, session?.workspacePath, readonly]);
+
 	// Handler for worktree mode change
 	const handleWorktreeModeChange = (mode: 'worktree' | 'direct') => {
 		setPendingWorktreeMode(mode);
@@ -395,31 +444,30 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	const isWaitingForInput = agentState.status === 'waiting_for_input';
 	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
-	// ========================================
-	// Model Switcher
-	// ========================================
 	const {
 		currentModel,
 		currentModelInfo,
 		availableModels,
-		switching: modelSwitching,
-		loading: modelLoading,
+		modelSwitching,
+		modelLoading,
 		switchModel,
-	} = useModelSwitcher(sessionId);
-
-	// Model switch with processing confirmation
-	const handleModelSwitchWithConfirmation = useCallback(
-		async (model: ModelInfo) => {
-			if (isProcessing) {
-				const confirmed = confirm(
-					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
-				);
-				if (!confirmed) return;
-			}
-			await switchModel(model);
-		},
-		[switchModel, isProcessing]
-	);
+		currentAction,
+		streamingPhase,
+		coordinatorSwitching,
+		sandboxSwitching,
+		handleModelSwitchWithConfirmation,
+		handleCoordinatorModeChange,
+		handleSandboxModeChange,
+	} = useChatComposerController({
+		sessionId,
+		agentState,
+		messages,
+		isProcessing,
+		coordinatorMode,
+		setCoordinatorMode,
+		sandboxEnabled,
+		setSandboxEnabled,
+	});
 
 	// ========================================
 	// Session Actions
@@ -452,7 +500,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			const oldScrollHeight = container.scrollHeight;
 			const oldScrollTop = container.scrollTop;
 
-			const oldestMessage = messages[0] as SDKMessage & { timestamp?: number };
+			const oldestMessage = messages[0] as ChatMessage & { timestamp?: number };
 			const beforeTimestamp = oldestMessage?.timestamp;
 			if (!beforeTimestamp) {
 				setHasMoreMessages(false);
@@ -487,6 +535,26 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	// ========================================
 	// Send Message
 	// ========================================
+	const handleMessageAccepted = useCallback(
+		(messageId: string) => {
+			const pendingChecks = pendingMessageVisibilityChecksRef.current;
+			const existingTimer = pendingChecks.get(messageId);
+			if (existingTimer) {
+				clearTimeout(existingTimer);
+			}
+			const timer = setTimeout(() => {
+				pendingChecks.delete(messageId);
+				const isVisible = sessionStore.sdkMessages.value.some(
+					(message) => message.uuid === messageId
+				);
+				if (!isVisible && sessionStore.activeSessionId.value === sessionId) {
+					sessionStore.refresh().catch(() => {});
+				}
+			}, 1200);
+			pendingChecks.set(messageId, timer);
+		},
+		[sessionId]
+	);
 	const { sendMessage } = useSendMessage({
 		sessionId,
 		session,
@@ -502,6 +570,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		onError: useCallback((error: string) => {
 			setLocalError(error);
 		}, []),
+		onMessageAccepted: handleMessageAccepted,
 	});
 
 	// ========================================
@@ -518,6 +587,11 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		}
 		// Cleanup: deselect session when component unmounts
 		return () => {
+			const pendingChecks = pendingMessageVisibilityChecksRef.current;
+			for (const timer of pendingChecks.values()) {
+				clearTimeout(timer);
+			}
+			pendingChecks.clear();
 			// Defer cleanup so a newly-mounted ChatContainer can claim selection first.
 			setTimeout(() => {
 				if (sessionStore.activeSessionId.value === sessionId) {
@@ -527,8 +601,10 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		};
 	}, [sessionId]);
 
-	// Restore scroll position after older messages are loaded and DOM has updated
-	useEffect(() => {
+	// Restore scroll position after older messages are loaded and DOM has updated.
+	// Uses useLayoutEffect (synchronous, before paint) to restore scroll before any
+	// useEffect-based auto-scroll can race and override the position.
+	useLayoutEffect(() => {
 		if (!scrollPositionRestoreRef.current?.shouldRestore) return;
 
 		const { oldScrollHeight, oldScrollTop } = scrollPositionRestoreRef.current;
@@ -536,53 +612,19 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 		if (!container) return;
 
-		// Use multiple requestAnimationFrame calls to ensure DOM has fully updated
-		// This is necessary because Preact's signal updates and DOM reflows are asynchronous
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				if (container) {
-					// Calculate the new scroll position to maintain visual position
-					// The scrollHeight has increased by the height of prepended messages
-					const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
-					container.scrollTop = newScrollTop;
-				}
-				// Clear the restore flag
-				scrollPositionRestoreRef.current = null;
-			});
-		});
+		// Calculate the new scroll position to maintain visual position.
+		// The scrollHeight has increased by the height of prepended messages.
+		const newScrollTop = oldScrollTop + (container.scrollHeight - oldScrollHeight);
+		container.scrollTop = newScrollTop;
+
+		// Clear the restore flag
+		scrollPositionRestoreRef.current = null;
 	}, [messages.length, loadingOlder]);
-
-	useEffect(() => {
-		const footer = footerContainerRef.current;
-		if (!footer) return;
-
-		const updatePadding = () => {
-			const queueOverlay = footer.querySelector('[data-testid="queue-overlay"]');
-			const queueOverlayRows =
-				queueOverlay instanceof HTMLElement ? queueOverlay.children.length : 0;
-			setMessagesBottomPadding(
-				getMessagesBottomPaddingPx(footer.getBoundingClientRect().height, queueOverlayRows)
-			);
-		};
-
-		updatePadding();
-
-		if (typeof ResizeObserver !== 'undefined') {
-			const observer = new ResizeObserver(() => {
-				updatePadding();
-			});
-			observer.observe(footer);
-			return () => observer.disconnect();
-		}
-
-		window.addEventListener('resize', updatePadding);
-		return () => window.removeEventListener('resize', updatePadding);
-	}, []);
 
 	// ========================================
 	// Auto-scroll
 	// ========================================
-	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
+	const { showScrollButton, scrollToBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
 		enabled: autoScroll,
@@ -590,28 +632,6 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		isInitialLoad,
 		loadingOlder,
 	});
-
-	useEffect(() => {
-		const previousPadding = previousMessagesBottomPaddingRef.current;
-		if (
-			messagesBottomPadding > previousPadding &&
-			autoScroll &&
-			!loadingOlder &&
-			(isNearBottom || !showScrollButton)
-		) {
-			requestAnimationFrame(() => {
-				scrollToBottom();
-			});
-		}
-		previousMessagesBottomPaddingRef.current = messagesBottomPadding;
-	}, [
-		messagesBottomPadding,
-		autoScroll,
-		loadingOlder,
-		isNearBottom,
-		showScrollButton,
-		scrollToBottom,
-	]);
 
 	// ========================================
 	// Message Maps (for tool results/inputs)
@@ -682,50 +702,6 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		[sessionId]
 	);
 
-	const handleCoordinatorModeChange = useCallback(
-		async (newMode: boolean) => {
-			if (isProcessing) {
-				const confirmed = confirm(
-					'The agent is currently processing. Changing coordinator mode will interrupt the current operation. Continue?'
-				);
-				if (!confirmed) return;
-			}
-			setCoordinatorSwitching(true);
-			setCoordinatorMode(newMode);
-			try {
-				await switchCoordinatorMode(sessionId, newMode);
-			} catch {
-				setCoordinatorMode(!newMode);
-				toast.error('Failed to toggle coordinator mode');
-			} finally {
-				setCoordinatorSwitching(false);
-			}
-		},
-		[sessionId, isProcessing]
-	);
-
-	const handleSandboxModeChange = useCallback(
-		async (newMode: boolean) => {
-			if (isProcessing) {
-				const confirmed = confirm(
-					'The agent is currently processing. Changing sandbox mode will interrupt the current operation. Continue?'
-				);
-				if (!confirmed) return;
-			}
-			setSandboxSwitching(true);
-			setSandboxEnabled(newMode);
-			try {
-				await switchSandboxMode(sessionId, newMode);
-			} catch {
-				setSandboxEnabled(!newMode);
-				toast.error('Failed to toggle sandbox mode');
-			} finally {
-				setSandboxSwitching(false);
-			}
-		},
-		[sessionId, isProcessing]
-	);
-
 	// ========================================
 	// Display Stats
 	// ========================================
@@ -738,41 +714,6 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			totalCost: session?.metadata?.totalCost ?? 0,
 		};
 	}, [session?.metadata?.totalTokens, session?.metadata?.totalCost]);
-
-	// ========================================
-	// Derive currentAction and streamingPhase from agentState
-	// Uses status-actions.ts for intelligent action detection
-	// ========================================
-	const { currentAction, streamingPhase } = useMemo(() => {
-		// Handle queued state
-		if (agentState.status === 'queued') {
-			return { currentAction: 'Message queued...', streamingPhase: null };
-		}
-
-		// Handle interrupted state
-		if (agentState.status === 'interrupted') {
-			return { currentAction: 'Interrupted', streamingPhase: null };
-		}
-
-		// Handle processing state
-		if (agentState.status === 'processing') {
-			const phase = agentState.phase;
-			const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-
-			// Use status-actions.ts to get intelligent action
-			// Priority: compaction > tool-specific actions > phase-based actions > fallback
-			const action = getCurrentAction(latestMessage, true, {
-				isCompacting: agentState.isCompacting,
-				streamingPhase: phase,
-				streamingStartedAt: agentState.streamingStartedAt,
-			});
-
-			return { currentAction: action, streamingPhase: phase };
-		}
-
-		// Idle state
-		return { currentAction: undefined, streamingPhase: null };
-	}, [agentState, messages]);
 
 	// Get retry attempts from session store
 	const retryAttempts = sessionStore.retryAttempts.value;
@@ -828,28 +769,46 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Render loading state
 	if (loading) {
-		return (
-			<div class="flex-1 flex flex-col bg-dark-900">
-				<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
-					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
-						<MobileMenuButton />
-						<div class="flex-1 min-w-0">
-							<Skeleton width="200px" height={24} class="mb-2" />
-							<Skeleton width="150px" height={16} />
-						</div>
+		if (loadTimedOut) {
+			return (
+				<div class="flex-1 flex items-center justify-center bg-dark-900">
+					<div class="text-center">
+						<div class="text-5xl mb-4">⚠️</div>
+						<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
+						<p class="text-sm text-gray-400 mb-4">
+							Session may not exist or the connection timed out.
+						</p>
+						<Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
 					</div>
 				</div>
-				<div class="flex-1 overflow-y-auto">
-					{Array.from({ length: 3 }).map((_, i) => (
-						<SkeletonMessage key={i} />
-					))}
+			);
+		}
+		return (
+			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
+				{/* Skeleton header to prevent CLS */}
+				<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700">
+					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
+					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
+				</div>
+				{/* Skeleton messages area */}
+				<div class="flex-1 flex items-center justify-center">
+					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+				</div>
+				{/* Skeleton footer to prevent CLS */}
+				<div class="px-4 pb-4 pt-4">
+					<div class="h-10 rounded-2xl bg-dark-800 animate-pulse" />
 				</div>
 			</div>
 		);
 	}
 
-	// Render error state (with retry via sessionStore re-selection)
-	if (error && !session) {
+	// Render error state (with retry via sessionStore re-selection).
+	// Also catches the case where session state was cleared (sessionInfo null in the store)
+	// but the local `session` copy is still stale from a previous successful load.
+	const storeHasNoSessionInfo =
+		sessionStore.sessionState.value !== null &&
+		sessionStore.sessionState.value?.sessionInfo === null;
+	if (error && (!session || storeHasNoSessionInfo)) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
@@ -863,7 +822,10 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	}
 
 	return (
-		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
+		<div
+			class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative"
+			data-testid="chat-container"
+		>
 			{/* Loading overlay for archive/delete operations */}
 			{(sessionActions.archiving || sessionActions.deleting) && (
 				<div class="absolute inset-0 z-20 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
@@ -874,6 +836,20 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 						</p>
 					</div>
 				</div>
+			)}
+
+			{/* Error Banner */}
+			{error && (
+				<ErrorBanner
+					error={error}
+					hasDetails={!!storeError?.details}
+					onViewDetails={errorDialog.open}
+					onDismiss={() => {
+						setLocalError(null);
+						sessionStore.clearError();
+					}}
+					actions={errorActions.length > 0 ? errorActions : undefined}
+				/>
 			)}
 
 			{/* Header */}
@@ -891,6 +867,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
 				readonly={readonly}
+				onBack={onBack}
 			/>
 
 			{/* Messages */}
@@ -947,11 +924,11 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
 					style={{
 						WebkitOverflowScrolling: 'touch',
-						paddingBottom: `${messagesBottomPadding}px`,
+						paddingBottom: `var(--messages-bottom-padding, ${MIN_MESSAGES_BOTTOM_PADDING_PX}px)`,
 					}}
 				>
 					{/* Worktree Choice Inline */}
-					{showWorktreeChoice && session && (
+					{showWorktreeChoice && session?.workspacePath && (
 						<WorktreeChoiceInline
 							sessionId={sessionId}
 							workspacePath={session.workspacePath}
@@ -1062,94 +1039,51 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
 			</div>
 
-			{/* Error Banner */}
-			{error && (
-				<ErrorBanner
-					error={error}
-					hasDetails={!!storeError?.details}
-					onViewDetails={errorDialog.open}
-					onDismiss={() => {
-						setLocalError(null);
-						sessionStore.clearError();
+			{/* Inline Workspace Selector - shown for sessions without workspace */}
+			{showWorkspaceSelector && session && (
+				<WorkspaceSelector
+					sessionId={sessionId}
+					onConfirm={() => {
+						setShowWorkspaceSelector(false);
 					}}
-					actions={errorActions.length > 0 ? errorActions : undefined}
+					onSkip={() => setShowWorkspaceSelector(false)}
 				/>
 			)}
 
 			{/* Footer - Floating Status Bar */}
-			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
-				<div
-					ref={footerContainerRef}
-					class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"
-					style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-				>
-					<SessionStatusBar
-						sessionId={sessionId}
-						isProcessing={isProcessing}
-						currentAction={currentAction}
-						streamingPhase={streamingPhase}
-						contextUsage={contextUsage ?? undefined}
-						maxContextTokens={200000}
-						features={features}
-						currentModel={currentModel}
-						currentModelInfo={currentModelInfo}
-						availableModels={availableModels}
-						modelSwitching={modelSwitching}
-						modelLoading={modelLoading}
-						onModelSwitch={handleModelSwitchWithConfirmation}
-						autoScroll={autoScroll}
-						onAutoScrollChange={handleAutoScrollChange}
-						coordinatorMode={coordinatorMode}
-						coordinatorSwitching={coordinatorSwitching}
-						onCoordinatorModeChange={handleCoordinatorModeChange}
-						sandboxEnabled={sandboxEnabled}
-						sandboxSwitching={sandboxSwitching}
-						onSandboxModeChange={handleSandboxModeChange}
-						thinkingLevel={session?.config?.thinkingLevel}
-					/>
-
-					{session?.status === 'archived' ? (
-						<div class="p-4">
-							<div class="max-w-4xl mx-auto">
-								<div
-									class={cn(
-										'rounded-3xl border px-5 py-3 text-center',
-										'bg-dark-800/60 backdrop-blur-sm',
-										borderColors.ui.default
-									)}
-								>
-									<span class="text-gray-400 text-sm flex items-center justify-center gap-2">
-										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path
-												strokeLinecap="round"
-												strokeLinejoin="round"
-												strokeWidth={2}
-												d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-											/>
-										</svg>
-										Session archived
-									</span>
-								</div>
-							</div>
-						</div>
-					) : (
-						!readonly && (
-							<MessageInput
-								sessionId={sessionId}
-								sessionType={session?.type}
-								onSend={handleSendMessage}
-								disabled={isWaitingForInput || !isConnected}
-								autoScroll={autoScroll}
-								onAutoScrollChange={handleAutoScrollChange}
-								onOpenTools={toolsModal.open}
-								onEnterRewindMode={handleEnterRewindMode}
-								rewindMode={rewindMode}
-								onExitRewindMode={handleExitRewindMode}
-							/>
-						)
-					)}
-				</div>
-			</div>
+			<ChatComposer
+				sessionId={sessionId}
+				readonly={readonly}
+				sessionStatus={session?.status}
+				sessionType={session?.type}
+				thinkingLevel={session?.config?.thinkingLevel}
+				isProcessing={isProcessing}
+				currentAction={currentAction}
+				streamingPhase={streamingPhase}
+				contextUsage={contextUsage ?? undefined}
+				features={features}
+				currentModel={currentModel}
+				currentModelInfo={currentModelInfo}
+				availableModels={availableModels}
+				modelSwitching={modelSwitching}
+				modelLoading={modelLoading}
+				autoScroll={autoScroll}
+				coordinatorMode={coordinatorMode}
+				coordinatorSwitching={coordinatorSwitching}
+				sandboxEnabled={sandboxEnabled}
+				sandboxSwitching={sandboxSwitching}
+				isWaitingForInput={isWaitingForInput}
+				isConnected={isConnected}
+				rewindMode={rewindMode}
+				onModelSwitch={handleModelSwitchWithConfirmation}
+				onAutoScrollChange={handleAutoScrollChange}
+				onCoordinatorModeChange={handleCoordinatorModeChange}
+				onSandboxModeChange={handleSandboxModeChange}
+				onSend={handleSendMessage}
+				onOpenTools={toolsModal.open}
+				onEnterRewindMode={handleEnterRewindMode}
+				onExitRewindMode={handleExitRewindMode}
+			/>
 
 			{/* Delete Modal */}
 			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">

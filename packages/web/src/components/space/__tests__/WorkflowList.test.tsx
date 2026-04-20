@@ -17,7 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow, DuplicateDriftReport } from '@neokai/shared';
 
 // ---- Mocks ----
 // Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
@@ -35,8 +35,12 @@ vi.mock('../../../lib/space-store', () => ({
 	},
 }));
 
+const mockHubRequest = vi.fn();
+
 vi.mock('../../../lib/connection-manager.ts', () => ({
-	connectionManager: { getHubIfConnected: vi.fn() },
+	connectionManager: {
+		getHubIfConnected: () => ({ request: mockHubRequest }),
+	},
 }));
 vi.mock('../../../lib/toast.ts', () => ({
 	toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -57,13 +61,11 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'My Workflow',
 		description: 'Does stuff',
-		steps: [
-			{ id: s1, name: 'Plan', agentId: 'a1' },
-			{ id: s2, name: 'Code', agentId: 'a2' },
+		nodes: [
+			{ id: s1, name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] },
+			{ id: s2, name: 'Code', agents: [{ agentId: 'a2', name: 'coder' }] },
 		],
-		transitions: [{ id: 'tr-1', from: s1, to: s2, order: 0 }],
-		startStepId: s1,
-		rules: [],
+		startNodeId: s1,
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -87,6 +89,13 @@ describe('WorkflowList', () => {
 		defaultProps.workflows = [];
 		defaultProps.onCreateWorkflow.mockClear();
 		defaultProps.onEditWorkflow.mockClear();
+		// Default: no duplicates, no per-workflow drift.
+		mockHubRequest.mockReset();
+		mockHubRequest.mockImplementation(async (method: string) => {
+			if (method === 'spaceWorkflow.detectDuplicateDrift') return { reports: [] };
+			if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+			return undefined;
+		});
 	});
 
 	afterEach(() => {
@@ -154,9 +163,8 @@ describe('WorkflowList', () => {
 			...defaultProps,
 			workflows: [
 				makeWorkflow({
-					steps: [{ id: s1, name: 'Plan', agentId: 'a1' }],
-					transitions: [],
-					startStepId: s1,
+					nodes: [{ id: s1, name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] }],
+					startNodeId: s1,
 				}),
 			],
 		};
@@ -201,32 +209,10 @@ describe('WorkflowList', () => {
 	it('handles workflow with no steps in mini viz', () => {
 		const props = {
 			...defaultProps,
-			workflows: [makeWorkflow({ steps: [], transitions: [], startStepId: '' })],
+			workflows: [makeWorkflow({ nodes: [], startNodeId: '' })],
 		};
 		const { getByText } = render(<WorkflowList {...props} />);
 		expect(getByText('No steps')).toBeTruthy();
-	});
-
-	it('renders human gate connector for human condition transition', () => {
-		const s1 = 'step-1';
-		const s2 = 'step-2';
-		const props = {
-			...defaultProps,
-			workflows: [
-				makeWorkflow({
-					steps: [
-						{ id: s1, name: 'Plan', agentId: 'a1' },
-						{ id: s2, name: 'Code', agentId: 'a2' },
-					],
-					transitions: [
-						{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' as const }, order: 0 },
-					],
-					startStepId: s1,
-				}),
-			],
-		};
-		const { container } = render(<WorkflowList {...props} />);
-		expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
 	});
 
 	describe('delete workflow', () => {
@@ -280,6 +266,163 @@ describe('WorkflowList', () => {
 			await waitFor(() => {
 				expect(getByText('Delete failed')).toBeTruthy();
 			});
+		});
+	});
+
+	describe('duplicate-drift badge + resync', () => {
+		function driftReport(
+			templateName: string,
+			rows: Array<{ id: string; templateHash: string | null; createdAt: number }>
+		): DuplicateDriftReport {
+			return { templateName, rows };
+		}
+
+		it('renders a Duplicate badge on each workflow in a drift group', async () => {
+			mockHubRequest.mockImplementation(async (method: string) => {
+				if (method === 'spaceWorkflow.detectDuplicateDrift') {
+					return {
+						reports: [
+							driftReport('Coding Workflow', [
+								{ id: 'wf-newer', templateHash: 'new', createdAt: 200 },
+								{ id: 'wf-older', templateHash: 'old', createdAt: 100 },
+							]),
+						],
+					};
+				}
+				if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+				return undefined;
+			});
+
+			const props = {
+				...defaultProps,
+				workflows: [
+					makeWorkflow({ id: 'wf-newer', name: 'Newer', templateName: 'Coding Workflow' }),
+					makeWorkflow({ id: 'wf-older', name: 'Older', templateName: 'Coding Workflow' }),
+				],
+			};
+			const { findAllByText } = render(<WorkflowList {...props} />);
+			const badges = await findAllByText(/Duplicate ×2/);
+			expect(badges.length).toBe(2);
+		});
+
+		it('shows "Resync duplicates" button only on the newest row', async () => {
+			mockHubRequest.mockImplementation(async (method: string) => {
+				if (method === 'spaceWorkflow.detectDuplicateDrift') {
+					return {
+						reports: [
+							driftReport('Coding Workflow', [
+								{ id: 'wf-newer', templateHash: 'new', createdAt: 200 },
+								{ id: 'wf-older', templateHash: 'old', createdAt: 100 },
+							]),
+						],
+					};
+				}
+				if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+				return undefined;
+			});
+
+			const props = {
+				...defaultProps,
+				workflows: [
+					makeWorkflow({ id: 'wf-newer', name: 'Newer', templateName: 'Coding Workflow' }),
+					makeWorkflow({ id: 'wf-older', name: 'Older', templateName: 'Coding Workflow' }),
+				],
+			};
+			const { findAllByText } = render(<WorkflowList {...props} />);
+			const buttons = await findAllByText('Resync duplicates');
+			expect(buttons.length).toBe(1);
+		});
+
+		it('opens the resync confirmation dialog when button clicked', async () => {
+			mockHubRequest.mockImplementation(async (method: string) => {
+				if (method === 'spaceWorkflow.detectDuplicateDrift') {
+					return {
+						reports: [
+							driftReport('Coding Workflow', [
+								{ id: 'wf-newer', templateHash: 'new', createdAt: 200 },
+								{ id: 'wf-older', templateHash: 'old', createdAt: 100 },
+							]),
+						],
+					};
+				}
+				if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+				return undefined;
+			});
+
+			const props = {
+				...defaultProps,
+				workflows: [
+					makeWorkflow({ id: 'wf-newer', name: 'Newer', templateName: 'Coding Workflow' }),
+					makeWorkflow({ id: 'wf-older', name: 'Older', templateName: 'Coding Workflow' }),
+				],
+			};
+			const { findByText, getByText } = render(<WorkflowList {...props} />);
+			const btn = await findByText('Resync duplicates');
+			fireEvent.click(btn);
+			expect(getByText('Resync duplicate workflows?')).toBeTruthy();
+			expect(getByText('Delete older rows & resync')).toBeTruthy();
+		});
+
+		it('calls resyncDuplicates RPC when confirmed', async () => {
+			mockHubRequest.mockImplementation(async (method: string, params: unknown) => {
+				if (method === 'spaceWorkflow.detectDuplicateDrift') {
+					return {
+						reports: [
+							driftReport('Coding Workflow', [
+								{ id: 'wf-newer', templateHash: 'new', createdAt: 200 },
+								{ id: 'wf-older', templateHash: 'old', createdAt: 100 },
+							]),
+						],
+					};
+				}
+				if (method === 'spaceWorkflow.detectDrift') return { drifted: false };
+				if (method === 'spaceWorkflow.resyncDuplicates') {
+					expect(params).toMatchObject({
+						spaceId: 'space-1',
+						templateName: 'Coding Workflow',
+					});
+					return { deletedIds: ['wf-older'] };
+				}
+				return undefined;
+			});
+
+			const props = {
+				...defaultProps,
+				workflows: [
+					makeWorkflow({ id: 'wf-newer', name: 'Newer', templateName: 'Coding Workflow' }),
+					makeWorkflow({ id: 'wf-older', name: 'Older', templateName: 'Coding Workflow' }),
+				],
+			};
+			const { findByText, getByText } = render(<WorkflowList {...props} />);
+			const btn = await findByText('Resync duplicates');
+			fireEvent.click(btn);
+			fireEvent.click(getByText('Delete older rows & resync'));
+			await waitFor(() => {
+				expect(mockHubRequest).toHaveBeenCalledWith(
+					'spaceWorkflow.resyncDuplicates',
+					expect.objectContaining({
+						spaceId: 'space-1',
+						templateName: 'Coding Workflow',
+					})
+				);
+			});
+		});
+
+		it('renders no Duplicate badge when the RPC returns no reports', async () => {
+			// Default mockHubRequest returns { reports: [] }
+			const props = {
+				...defaultProps,
+				workflows: [makeWorkflow({ id: 'wf-a', name: 'Only', templateName: 'Coding Workflow' })],
+			};
+			const { queryByText } = render(<WorkflowList {...props} />);
+			await waitFor(() => {
+				expect(mockHubRequest).toHaveBeenCalledWith(
+					'spaceWorkflow.detectDuplicateDrift',
+					expect.objectContaining({ spaceId: 'space-1' })
+				);
+			});
+			expect(queryByText(/Duplicate ×/)).toBeNull();
+			expect(queryByText('Resync duplicates')).toBeNull();
 		});
 	});
 });

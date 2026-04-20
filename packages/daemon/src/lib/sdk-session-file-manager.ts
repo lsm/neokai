@@ -14,6 +14,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	renameSync,
 	statSync,
 	unlinkSync,
@@ -31,7 +32,11 @@ import type { Database } from '../storage/database';
  * @returns Absolute path to the SDK project directory
  */
 function getSDKProjectDir(workspacePath: string): string {
-	const projectKey = workspacePath.replace(/[/.]/g, '-');
+	// Resolve symlinks so our path matches the SDK subprocess, which uses realpath
+	// for its CWD. Without this, macOS symlinks (e.g., /var → /private/var) cause
+	// path mismatches that break session file lookup and resume.
+	const resolved = existsSync(workspacePath) ? realpathSync(workspacePath) : workspacePath;
+	const projectKey = resolved.replace(/[/.]/g, '-');
 	// Support TEST_SDK_SESSION_DIR for isolated testing
 	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
 	return join(baseDir, 'projects', projectKey);
@@ -46,6 +51,79 @@ function getSDKProjectDir(workspacePath: string): string {
  */
 export function getSDKSessionFilePath(workspacePath: string, sdkSessionId: string): string {
 	return join(getSDKProjectDir(workspacePath), `${sdkSessionId}.jsonl`);
+}
+
+/**
+ * Search all SDK project directories for a session file.
+ *
+ * The SDK stores session files under ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl.
+ * When the session's effective CWD changes between daemon restarts (e.g. worktree added),
+ * the file won't be found at the new CWD. This function scans all known project directories
+ * so we can locate and migrate the file before attempting resume.
+ *
+ * @param sdkSessionId - The SDK session ID to search for
+ * @returns Absolute path to the .jsonl file if found, null otherwise
+ */
+export function findSDKSessionFileGlobally(sdkSessionId: string): string | null {
+	const baseDir = process.env.TEST_SDK_SESSION_DIR || join(homedir(), '.claude');
+	const projectsDir = join(baseDir, 'projects');
+
+	if (!existsSync(projectsDir)) return null;
+
+	try {
+		const projectDirs = readdirSync(projectsDir);
+		for (const projectDir of projectDirs) {
+			const filePath = join(projectsDir, projectDir, `${sdkSessionId}.jsonl`);
+			if (existsSync(filePath)) {
+				return filePath;
+			}
+		}
+	} catch {
+		// Treat any scan error as "not found"
+	}
+
+	return null;
+}
+
+/**
+ * Migrate an SDK session file from one workspace path's project dir to another's.
+ *
+ * Called before session resume when the effective CWD has changed since the session
+ * was first created (e.g. a worktree was added/removed). Copies the .jsonl file to
+ * the target workspace's project dir so the SDK subprocess (which runs with cwd=target)
+ * can find it. Non-destructive: the source file is preserved.
+ *
+ * @param fromWorkspacePath - Workspace path where the file currently lives
+ * @param toWorkspacePath - Workspace path where the SDK subprocess will run
+ * @param sdkSessionId - The SDK session ID
+ * @returns true if the file was copied successfully (or already exists at target)
+ */
+export function migrateSDKSessionFile(
+	fromWorkspacePath: string,
+	toWorkspacePath: string,
+	sdkSessionId: string
+): boolean {
+	try {
+		const sourcePath = getSDKSessionFilePath(fromWorkspacePath, sdkSessionId);
+		if (!existsSync(sourcePath)) return false;
+
+		const targetPath = getSDKSessionFilePath(toWorkspacePath, sdkSessionId);
+
+		// Already at the right place — nothing to do
+		if (sourcePath === targetPath) return true;
+
+		// File already exists at target — treat as success (may have been migrated earlier)
+		if (existsSync(targetPath)) return true;
+
+		// Ensure the target project directory exists
+		const targetDir = dirname(targetPath);
+		mkdirSync(targetDir, { recursive: true });
+
+		copyFileSync(sourcePath, targetPath);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -896,6 +974,91 @@ export function identifyOrphanedSDKFiles(
 	}
 
 	return orphaned;
+}
+
+/**
+ * Result of thinking block stripping
+ */
+export interface StripThinkingBlocksResult {
+	stripped: boolean;
+	thinkingBlocksRemoved: number;
+	backupPath: string | null;
+}
+
+/**
+ * Strip thinking blocks from the SDK session JSONL file
+ *
+ * Thinking block signatures are provider-specific and cannot be validated across
+ * providers. Anthropic rejects GLM/MiniMax signatures; GLM/MiniMax reject Anthropic
+ * signatures. Both directions fail with "400: Invalid signature in thinking block".
+ * Removing these blocks before resume preserves conversation context (text + tool
+ * usage) while avoiding the signature validation error.
+ *
+ * Without this, the SDK recovers by starting a fresh conversation — sdkSessionId
+ * is preserved but all conversation context is lost.
+ *
+ * @param workspacePath - The session's workspace path
+ * @param sdkSessionId - The SDK session ID
+ * @returns Result with count of removed thinking blocks
+ */
+export function stripThinkingBlocksFromSessionFile(
+	workspacePath: string,
+	sdkSessionId: string
+): StripThinkingBlocksResult {
+	const result: StripThinkingBlocksResult = {
+		stripped: false,
+		thinkingBlocksRemoved: 0,
+		backupPath: null,
+	};
+
+	try {
+		const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+
+		if (!existsSync(sessionFile)) {
+			return result;
+		}
+
+		const content = readFileSync(sessionFile, 'utf-8');
+		const lines = content.split('\n').filter((line) => line.trim());
+
+		let modified = false;
+		const updatedLines = lines.map((line) => {
+			try {
+				const message = JSON.parse(line) as SDKFileMessage;
+
+				if (
+					message.type === 'assistant' &&
+					message.message?.content &&
+					Array.isArray(message.message.content)
+				) {
+					const original = message.message.content;
+					const filtered = original.filter((block: { type: string }) => block.type !== 'thinking');
+
+					if (filtered.length < original.length) {
+						result.thinkingBlocksRemoved += original.length - filtered.length;
+						message.message.content = filtered;
+						modified = true;
+						return JSON.stringify(message);
+					}
+				}
+			} catch {
+				// Skip unparseable lines — preserve them as-is
+			}
+			return line;
+		});
+
+		if (modified) {
+			// Backup before modifying
+			result.backupPath = backupSDKSessionFile(sessionFile);
+
+			writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
+			result.stripped = true;
+		}
+	} catch {
+		// Best-effort — if stripping fails, the SDK will recover by starting fresh
+	}
+
+	return result;
 }
 
 /**

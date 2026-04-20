@@ -5,7 +5,7 @@
  * Tests:
  * - Loading state
  * - Empty state: "No custom agents yet. Create one to get started."
- * - Agent cards render name, role badge, model, description preview
+ * - Agent cards render name, model, description preview
  * - Tool tags shown (up to 4, then +N more)
  * - Create Agent button opens editor
  * - Edit button opens editor for that agent
@@ -169,7 +169,6 @@ function makeAgent(overrides: Partial<SpaceAgent> = {}): SpaceAgent {
 		id: 'agent-1',
 		spaceId: 'space-1',
 		name: 'My Coder',
-		role: 'worker',
 		description: 'A worker agent',
 		model: 'claude-sonnet-4-6',
 		tools: ['Read', 'Write', 'Edit', 'Bash'],
@@ -184,10 +183,8 @@ function makeWorkflow(agentId: string): SpaceWorkflow {
 		id: 'wf-1',
 		spaceId: 'space-1',
 		name: 'Coding Workflow',
-		steps: [{ id: 'step-1', name: 'Step 1', agentId }],
-		transitions: [],
-		startStepId: 'step-1',
-		rules: [],
+		nodes: [{ id: 'node-1', name: 'Node 1', agents: [{ agentId, name: 'coder' }] }],
+		startNodeId: 'node-1',
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -242,12 +239,6 @@ describe('SpaceAgentList', () => {
 		mockAgents.value = [makeAgent({ name: 'My Coder' })];
 		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
 		expect(getByText('My Coder')).toBeTruthy();
-	});
-
-	it('renders role badge', () => {
-		mockAgents.value = [makeAgent({ role: 'worker' })];
-		const { getByText } = render(<SpaceAgentList {...DEFAULT_PROPS} />);
-		expect(getByText('worker')).toBeTruthy();
 	});
 
 	it('renders model when set', () => {

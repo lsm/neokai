@@ -27,7 +27,6 @@ import { NewSessionModal } from '../components/lobby/NewSessionModal';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { useModal } from '../hooks/useModal';
-import { getRecentPaths, addRecentPath } from '../lib/recent-paths';
 import { formatRelativeTime } from '../lib/utils';
 import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
@@ -56,20 +55,11 @@ export default function Lobby() {
 	const error = lobbyStore.error.value;
 	// Only show user-created sessions (not internal Room Runtime agents)
 	const recentSessions = globalStore.activeSessions.value.filter(isUserSession).slice(0, 5);
-	const recentPaths = getRecentPaths().map((p) => ({
-		path: p.path,
-		relativeTime: formatRelativeTime(p.usedAt),
-		absoluteTime: p.usedAt,
-	}));
 
-	async function handleCreateSession(params: {
-		workspacePath: string;
-		roomId?: string;
-		model?: ModelInfo;
-	}) {
+	async function handleCreateSession(params: { roomId?: string; model?: ModelInfo }) {
 		try {
 			const { sessionId } = await createSession({
-				workspacePath: params.workspacePath,
+				workspacePath: null,
 				roomId: params.roomId,
 				createdBy: 'human',
 				...(params.model && {
@@ -79,9 +69,6 @@ export default function Lobby() {
 					},
 				}),
 			});
-
-			// Add to recent paths
-			addRecentPath(params.workspacePath);
 
 			// Navigate to session
 			navigateToSession(sessionId);
@@ -266,7 +253,11 @@ export default function Lobby() {
 				isOpen={isCreateRoomModalOpen}
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					const room = await lobbyStore.createRoom({
+						name: params.name,
+						defaultPath: params.defaultPath,
+						...(params.background ? { background: params.background } : {}),
+					});
 					if (room) {
 						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
@@ -279,10 +270,14 @@ export default function Lobby() {
 				isOpen={newSessionModal.isOpen}
 				onClose={newSessionModal.close}
 				onSubmit={handleCreateSession}
-				recentPaths={recentPaths}
 				rooms={rooms}
 				onCreateRoom={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					const room = await lobbyStore.createRoom({
+						name: params.name,
+						defaultPath: params.defaultPath ?? '',
+						...(params.background ? { background: params.background } : {}),
+						...(params.allowedPaths ? { allowedPaths: params.allowedPaths } : {}),
+					});
 					return room;
 				}}
 			/>

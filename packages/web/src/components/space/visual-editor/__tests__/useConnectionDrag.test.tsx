@@ -17,7 +17,7 @@
  * - ghost edge element renders during drag
  * - ghost edge disappears after mouseup
  * - isDropTarget applied to non-source nodes during drag
- * - output port mousedown starts drag
+ * - port mousedown starts drag (input or output)
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
@@ -30,7 +30,7 @@ import type { ViewportState } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
 import type { SpaceAgent } from '@neokai/shared';
-import type { StepDraft } from '../../WorkflowStepCard';
+import type { NodeDraft } from '../../WorkflowNodeCard';
 
 vi.mock('../../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
@@ -45,11 +45,11 @@ afterEach(() => cleanup());
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
 function makeAgent(id: string, name = 'Agent'): SpaceAgent {
-	return { id, spaceId: 'space-1', name, role: 'coder', createdAt: 0, updatedAt: 0 };
+	return { id, spaceId: 'space-1', name, customPrompt: null, createdAt: 0, updatedAt: 0 };
 }
 
-function makeStep(localId: string, name = 'Step'): StepDraft {
-	return { localId, name, agentId: 'agent-1', instructions: '' };
+function makeStep(localId: string, name = 'Step'): NodeDraft {
+	return { localId, name, agentId: 'agent-1' };
 }
 
 const AGENTS = [makeAgent('agent-1')];
@@ -64,6 +64,7 @@ function makeNode(
 		stepIndex: 0,
 		position: { x: 0, y: 0 },
 		agents: AGENTS,
+		workflowChannels: [],
 		isStartNode: false,
 		...opts,
 	};
@@ -385,6 +386,22 @@ describe('WorkflowCanvas — connection drag ghost edge', () => {
 		expect(getByTestId('ghost-edge')).toBeTruthy();
 	});
 
+	it('ghost edge appears when input port is pressed and mouse moves', () => {
+		const { getByTestId } = renderCanvas();
+		const inputPort = getByTestId('workflow-node-step-2').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+
+		fireEvent.mouseDown(inputPort, { button: 0, clientX: 50, clientY: 50 });
+		act(() => {
+			window.dispatchEvent(
+				new MouseEvent('mousemove', { bubbles: true, clientX: 150, clientY: 200 })
+			);
+		});
+
+		expect(getByTestId('ghost-edge')).toBeTruthy();
+	});
+
 	it('ghost edge disappears after mouseup (cancel)', () => {
 		const { getByTestId, queryByTestId } = renderCanvas();
 		const outputPort = getByTestId('workflow-node-step-1').querySelector(
@@ -508,6 +525,29 @@ describe('WorkflowCanvas — end-to-end connection creation', () => {
 		});
 
 		expect(onCreateTransition).toHaveBeenCalledWith('step-1', 'step-2');
+	});
+
+	it('calls onCreateTransition when drag starts from an input port', () => {
+		const { getByTestId, onCreateTransition } = renderCanvas();
+
+		// 1. Start drag from step-2 input port
+		const inputPort2 = getByTestId('workflow-node-step-2').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+		fireEvent.mouseDown(inputPort2, { button: 0, clientX: 50, clientY: 50 });
+
+		// 2. Simulate hovering over step-3 input port
+		const inputPort3 = getByTestId('workflow-node-step-3').querySelector(
+			'[data-testid="port-input"]'
+		)!;
+		fireEvent.mouseEnter(inputPort3);
+
+		// 3. Release mouse — should create transition from source step to hovered step
+		act(() => {
+			window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+		});
+
+		expect(onCreateTransition).toHaveBeenCalledWith('step-2', 'step-3');
 	});
 
 	it('does not call onCreateTransition when releasing over empty space', () => {

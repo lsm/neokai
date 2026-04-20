@@ -4,8 +4,8 @@
  * Business logic layer for SpaceWorkflow operations within a Space.
  *
  * Responsibilities:
- * - Validate workflow integrity (unique name, step agent refs, transition graph validity)
- * - Protect custom agents that are referenced by steps
+ * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
+ * - Protect custom agents that are referenced by nodes
  *
  * Workflow selection: either explicit workflowId provided by the caller, or
  * AI auto-select at runtime via list_workflows + start_workflow_run. There is
@@ -14,12 +14,12 @@
 
 import type {
 	SpaceWorkflow,
-	WorkflowCondition,
-	WorkflowStepInput,
-	WorkflowTransitionInput,
+	WorkflowNodeInput,
 	CreateSpaceWorkflowParams,
 	UpdateSpaceWorkflowParams,
+	WorkflowChannel,
 } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 
 // ---------------------------------------------------------------------------
@@ -28,11 +28,11 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 
 /**
  * Minimal interface the manager needs from SpaceAgentManager to validate
- * custom agent references in workflow steps.
+ * custom agent references in workflow nodes.
  */
 export interface SpaceAgentLookup {
 	/** Returns the SpaceAgent with the given UUID in the given space, or null if not found. */
-	getAgentById(spaceId: string, id: string): { id: string; name: string; role: string } | null;
+	getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,10 +63,31 @@ export class SpaceWorkflowManager {
 	createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
 		const trimmedName = params.name.trim();
 		this.validateName(params.spaceId, trimmedName, null);
-		const steps = params.steps ?? [];
-		this.validateSteps(params.spaceId, steps);
-		this.validateTransitions(steps, params.transitions ?? [], params.startStepId);
-		return this.repo.createWorkflow({ ...params, name: trimmedName });
+		const nodes = (params.nodes ?? []).map((node) => ({
+			...node,
+			id: node.id ?? generateUUID(),
+		}));
+		this.validateNodes(params.spaceId, nodes);
+
+		const fallbackStartNodeId = nodes[0]?.id ?? '';
+		const fallbackEndNodeId = nodes[nodes.length - 1]?.id ?? '';
+		const startNodeId =
+			params.startNodeId == null ? fallbackStartNodeId : params.startNodeId.trim();
+		const endNodeId = params.endNodeId == null ? fallbackEndNodeId : params.endNodeId.trim();
+
+		this.validateStartNodeId(startNodeId, nodes);
+		this.validateEndNodeId(endNodeId, nodes);
+
+		if (params.channels && params.channels.length > 0) {
+			this.validateChannels(params.channels);
+		}
+		return this.repo.createWorkflow({
+			...params,
+			name: trimmedName,
+			nodes,
+			startNodeId,
+			endNodeId,
+		});
 	}
 
 	// -------------------------------------------------------------------------
@@ -94,36 +115,57 @@ export class SpaceWorkflowManager {
 			this.validateName(existing.spaceId, trimmedName, id);
 			params = { ...params, name: trimmedName };
 		}
-		if (params.steps !== undefined) {
-			const inputs: WorkflowStepInput[] = (params.steps ?? []).map(
-				(s): WorkflowStepInput => ({
-					id: s.id,
-					name: s.name,
-					agentId: s.agentId,
-					agents: s.agents,
-					channels: s.channels,
-					instructions: s.instructions,
-				})
-			);
-			this.validateSteps(existing.spaceId, inputs);
-			if (params.transitions !== undefined) {
-				this.validateTransitions(inputs, params.transitions ?? [], params.startStepId ?? null);
-			}
-		} else if (params.transitions !== undefined) {
-			// Validate transitions against existing steps
-			const existingStepInputs: WorkflowStepInput[] = existing.steps.map((s) => ({
-				id: s.id,
-				name: s.name,
-				agentId: s.agentId,
-				agents: s.agents,
-				channels: s.channels,
-				instructions: s.instructions,
-			}));
-			this.validateTransitions(
-				existingStepInputs,
-				params.transitions ?? [],
-				params.startStepId ?? null
-			);
+		// IMPORTANT: thread `completionActions` through both branches. The
+		// second branch (existing.nodes rehydration) runs on EVERY update call —
+		// including updates that don't touch nodes — so dropping the field here
+		// silently deletes completionActions from any workflow that had them.
+		const effectiveNodes: WorkflowNodeInput[] =
+			params.nodes !== undefined
+				? (params.nodes ?? []).map(
+						(n): WorkflowNodeInput => ({
+							id: n.id,
+							name: n.name,
+							agents: n.agents,
+							...(n.completionActions ? { completionActions: n.completionActions } : {}),
+						})
+					)
+				: existing.nodes.map(
+						(n): WorkflowNodeInput => ({
+							id: n.id,
+							name: n.name,
+							agents: n.agents,
+							...(n.completionActions ? { completionActions: n.completionActions } : {}),
+						})
+					);
+
+		this.validateNodes(existing.spaceId, effectiveNodes);
+
+		const fallbackStartNodeId = effectiveNodes[0]?.id ?? '';
+		const fallbackEndNodeId = effectiveNodes[effectiveNodes.length - 1]?.id ?? '';
+		const nodeIds = new Set(effectiveNodes.map((n) => n.id));
+		const startNodeIdInput =
+			params.startNodeId === undefined ? existing.startNodeId : params.startNodeId;
+		const endNodeIdInput = params.endNodeId === undefined ? existing.endNodeId : params.endNodeId;
+		const explicitStartNodeId = params.startNodeId !== undefined;
+		const explicitEndNodeId = params.endNodeId !== undefined;
+		const normalizedStartNodeId =
+			startNodeIdInput == null ? fallbackStartNodeId : startNodeIdInput.trim();
+		const normalizedEndNodeId = endNodeIdInput == null ? fallbackEndNodeId : endNodeIdInput.trim();
+		const resolvedStartNodeId =
+			!explicitStartNodeId && !nodeIds.has(normalizedStartNodeId)
+				? fallbackStartNodeId
+				: normalizedStartNodeId;
+		const resolvedEndNodeId =
+			!explicitEndNodeId && !nodeIds.has(normalizedEndNodeId)
+				? fallbackEndNodeId
+				: normalizedEndNodeId;
+
+		this.validateStartNodeId(resolvedStartNodeId, effectiveNodes);
+		this.validateEndNodeId(resolvedEndNodeId, effectiveNodes);
+		params = { ...params, startNodeId: resolvedStartNodeId, endNodeId: resolvedEndNodeId };
+
+		if (params.channels && params.channels.length > 0) {
+			this.validateChannels(params.channels);
 		}
 
 		return this.repo.updateWorkflow(id, params);
@@ -144,7 +186,7 @@ export class SpaceWorkflowManager {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Returns all workflows whose steps reference the given custom agent.
+	 * Returns all workflows whose nodes reference the given custom agent.
 	 * Used by SpaceAgentManager to block deletion of in-use agents.
 	 */
 	getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
@@ -169,200 +211,133 @@ export class SpaceWorkflowManager {
 		}
 	}
 
-	private validateSteps(spaceId: string, steps: WorkflowStepInput[]): void {
-		if (steps.length === 0) {
-			throw new WorkflowValidationError('A workflow must have at least one step');
+	private validateNodes(spaceId: string, nodes: WorkflowNodeInput[]): void {
+		if (nodes.length === 0) {
+			throw new WorkflowValidationError('A workflow must have at least one node');
 		}
 
-		for (let i = 0; i < steps.length; i++) {
-			this.validateStepAgentRef(spaceId, steps[i], i);
+		for (let i = 0; i < nodes.length; i++) {
+			const node = nodes[i];
+			this.validateNodeAgentRef(spaceId, node, i);
 		}
 	}
 
-	private validateStepAgentRef(spaceId: string, step: WorkflowStepInput, index: number): void {
-		const hasAgentId = step.agentId && step.agentId.trim().length > 0;
-		const hasAgents = step.agents && step.agents.length > 0;
+	private validateNodeAgentRef(spaceId: string, node: WorkflowNodeInput, index: number): void {
+		// Backward compat: if `agents` is absent/empty but legacy `agentId` is set on the object,
+		// synthesize a single-agent array from it before validating.
+		const legacyAgentId = (node as unknown as Record<string, unknown>)['agentId'] as
+			| string
+			| undefined;
+		if ((!node.agents || node.agents.length === 0) && legacyAgentId) {
+			node.agents = [{ agentId: legacyAgentId, name: node.name }];
+		}
 
-		if (!hasAgentId && !hasAgents) {
-			throw new WorkflowValidationError(
-				`step[${index}]: at least one of agentId or agents must be provided`
-			);
+		const hasAgents = node.agents && node.agents.length > 0;
+
+		if (!hasAgents) {
+			throw new WorkflowValidationError(`node[${index}]: agents must be a non-empty array`);
 		}
 
 		// Format-level validation: always run regardless of agentLookup
-		if (hasAgents) {
-			for (let j = 0; j < step.agents!.length; j++) {
-				const entry = step.agents![j];
-				if (!entry.agentId || !entry.agentId.trim()) {
-					throw new WorkflowValidationError(
-						`step[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
-					);
-				}
+		const seenNames = new Set<string>();
+		for (let j = 0; j < node.agents.length; j++) {
+			const entry = node.agents[j];
+			if (!entry.agentId || !entry.agentId.trim()) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: agentId must be a non-empty SpaceAgent UUID`
+				);
 			}
+			if (!entry.name || !entry.name.trim()) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: name must be a non-empty string`
+				);
+			}
+			if (seenNames.has(entry.name)) {
+				throw new WorkflowValidationError(
+					`node[${index}].agents[${j}]: duplicate name "${entry.name}" — each agent slot must have a unique name within the node`
+				);
+			}
+			seenNames.add(entry.name);
 		}
 
 		// Existence validation: only when agentLookup is available.
-		// Also collect agent roles here to avoid a second traversal in channel validation.
-		let knownRoles: Set<string> | null = null;
 		if (this.agentLookup) {
-			if (hasAgentId) {
-				const agent = this.agentLookup.getAgentById(spaceId, step.agentId!);
+			for (let j = 0; j < node.agents.length; j++) {
+				const entry = node.agents[j];
+				const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
 				if (!agent) {
 					throw new WorkflowValidationError(
-						`step[${index}]: agentId "${step.agentId}" does not match any SpaceAgent in this space`
+						`node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
 					);
 				}
 			}
-			if (hasAgents) {
-				knownRoles = new Set<string>();
-				for (let j = 0; j < step.agents!.length; j++) {
-					const entry = step.agents![j];
-					const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
-					if (!agent) {
-						throw new WorkflowValidationError(
-							`step[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceAgent in this space`
-						);
-					}
-					knownRoles.add(agent.role);
-				}
-			}
-		}
-
-		// Channel validation (after agent validation so roles are already collected)
-		if (step.channels && step.channels.length > 0) {
-			this.validateStepChannels(step, index, knownRoles);
 		}
 	}
 
-	private validateStepChannels(
-		step: WorkflowStepInput,
-		stepIndex: number,
-		/**
-		 * Roles collected from agentLookup during agent existence validation.
-		 * Null when agentLookup is not configured — role-reference checks are skipped.
-		 */
-		knownRoles: Set<string> | null
-	): void {
-		const channels = step.channels!;
-
-		// Channels require the multi-agent agents[] format — single-agent steps have no peers
-		if (!step.agents || step.agents.length === 0) {
-			throw new WorkflowValidationError(
-				`step[${stepIndex}]: channels require a multi-agent step (agents[] must be provided)`
-			);
-		}
-
-		const validDirections = new Set(['one-way', 'bidirectional']);
-
+	private validateChannels(channels: WorkflowChannel[]): void {
 		for (let ci = 0; ci < channels.length; ci++) {
 			const ch = channels[ci];
-			const loc = `step[${stepIndex}].channels[${ci}]`;
-
-			// Validate direction
-			if (!validDirections.has(ch.direction)) {
-				throw new WorkflowValidationError(
-					`${loc}: direction must be 'one-way' or 'bidirectional', got "${ch.direction}"`
-				);
-			}
+			const loc = `channels[${ci}]`;
 
 			// Validate from
 			if (!ch.from || !ch.from.trim()) {
-				throw new WorkflowValidationError(`${loc}: 'from' must be a non-empty role string`);
+				throw new WorkflowValidationError(`${loc}: 'from' must be a non-empty node name string`);
 			}
 
 			// Validate to
 			if (Array.isArray(ch.to)) {
 				if (ch.to.length === 0) {
 					throw new WorkflowValidationError(
-						`${loc}: 'to' array must contain at least one role string`
+						`${loc}: 'to' array must contain at least one agent name string`
 					);
 				}
 				for (let ti = 0; ti < ch.to.length; ti++) {
 					if (!ch.to[ti] || !ch.to[ti].trim()) {
-						throw new WorkflowValidationError(`${loc}.to[${ti}]: must be a non-empty role string`);
+						throw new WorkflowValidationError(
+							`${loc}.to[${ti}]: must be a non-empty agent name string`
+						);
 					}
 				}
 			} else {
 				if (!ch.to || !(ch.to as string).trim()) {
-					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty role string`);
-				}
-			}
-
-			// Role reference validation: only when agentLookup resolved roles
-			if (knownRoles !== null) {
-				this.validateChannelRoleRef(ch.from, knownRoles, `${loc}.from`);
-				const toRoles = Array.isArray(ch.to) ? ch.to : [ch.to as string];
-				for (const toRole of toRoles) {
-					this.validateChannelRoleRef(toRole, knownRoles, `${loc}.to`);
+					throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
 				}
 			}
 		}
 	}
 
-	private validateChannelRoleRef(role: string, knownRoles: Set<string>, location: string): void {
-		if (role === '*') return; // wildcard matches all agents
-		if (!knownRoles.has(role)) {
-			const known = [...knownRoles].join(', ') || 'none';
+	private validateStartNodeId(startNodeId: string, nodes: WorkflowNodeInput[]): void {
+		if (!startNodeId.trim()) {
+			throw new WorkflowValidationError('startNodeId must be a non-empty string');
+		}
+		const nodeIds = new Set(nodes.map((n) => n.id));
+		if (!nodeIds.has(startNodeId)) {
 			throw new WorkflowValidationError(
-				`${location}: role "${role}" does not match any agent role in this step (known roles: ${known})`
+				`startNodeId "${startNodeId}" does not match any node in this workflow`
 			);
 		}
 	}
 
-	private validateTransitions(
-		steps: WorkflowStepInput[],
-		transitions: WorkflowTransitionInput[],
-		startStepId: string | null | undefined
-	): void {
-		const knownStepIds = new Set<string>(steps.filter((s) => s.id).map((s) => s.id as string));
-
-		// When transitions reference step IDs but some steps have no explicit id, we cannot
-		// validate the references at all — an invalid transition would only surface at runtime.
-		// Require all steps to have explicit IDs when transitions are provided.
-		if (transitions.length > 0 && knownStepIds.size < steps.length) {
+	private validateEndNodeId(endNodeId: string, nodes: WorkflowNodeInput[]): void {
+		if (!endNodeId.trim()) {
+			throw new WorkflowValidationError('endNodeId must be a non-empty string');
+		}
+		const endNode = nodes.find((n) => n.id === endNodeId);
+		if (!endNode) {
 			throw new WorkflowValidationError(
-				'All steps must have explicit id values when transitions are specified'
+				`endNodeId "${endNodeId}" does not match any node in this workflow`
 			);
 		}
-
-		for (let i = 0; i < transitions.length; i++) {
-			const t = transitions[i];
-			if (!t.from || !t.from.trim()) {
-				throw new WorkflowValidationError(`transition[${i}]: 'from' step ID must not be empty`);
-			}
-			if (!t.to || !t.to.trim()) {
-				throw new WorkflowValidationError(`transition[${i}]: 'to' step ID must not be empty`);
-			}
-			if (!knownStepIds.has(t.from)) {
-				throw new WorkflowValidationError(
-					`transition[${i}]: 'from' step ID "${t.from}" does not match any step in this workflow`
-				);
-			}
-			if (!knownStepIds.has(t.to)) {
-				throw new WorkflowValidationError(
-					`transition[${i}]: 'to' step ID "${t.to}" does not match any step in this workflow`
-				);
-			}
-			if (t.condition) {
-				this.validateCondition(t.condition, `transition[${i}].condition`);
-			}
-		}
-
-		// Validate startStepId if provided
-		if (startStepId && knownStepIds.size > 0 && !knownStepIds.has(startStepId)) {
+		// End nodes own the workflow's completion signal via `report_result`.
+		// Multi-agent end nodes create ambiguity: who declares the workflow done?
+		// Restrict to exactly one agent so there's a single unambiguous owner of
+		// the workflow's commitment.
+		const agentCount = endNode.agents?.length ?? 0;
+		if (agentCount !== 1) {
 			throw new WorkflowValidationError(
-				`startStepId "${startStepId}" does not match any step in this workflow`
+				`endNode "${endNode.name}" must have exactly 1 agent (has ${agentCount}); ` +
+					`end nodes own the workflow completion signal via report_result`
 			);
-		}
-	}
-
-	private validateCondition(condition: WorkflowCondition, location: string): void {
-		if (condition.type === 'condition') {
-			if (!condition.expression || !condition.expression.trim()) {
-				throw new WorkflowValidationError(
-					`${location}: 'condition' type requires a non-empty expression`
-				);
-			}
 		}
 	}
 }

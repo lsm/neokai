@@ -1,0 +1,512 @@
+/**
+ * Space Agent RPC Handlers Unit Tests
+ *
+ * Tests for CRUD RPC handlers:
+ * - spaceAgent.create
+ * - spaceAgent.list
+ * - spaceAgent.get
+ * - spaceAgent.update
+ * - spaceAgent.delete
+ *
+ * Uses in-memory SQLite to exercise the real SpaceAgentManager and
+ * SpaceAgentRepository, so the full business-logic path is covered.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import type { MessageHub } from '@neokai/shared';
+import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import type { DaemonHub } from '../../../../src/lib/daemon-hub';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { setModelsCache } from '../../../../src/lib/model-service';
+import {
+	createSpaceAgentSchema,
+	insertSpace,
+	insertWorkflow,
+	insertWorkflowNode,
+} from '../../helpers/space-agent-schema';
+
+// ─── minimal mock types ────────────────────────────────────────────────────
+
+type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
+
+function createMockMessageHub(): { hub: MessageHub; handlers: Map<string, RequestHandler> } {
+	const handlers = new Map<string, RequestHandler>();
+	const hub = {
+		onRequest: mock((method: string, handler: RequestHandler) => {
+			handlers.set(method, handler);
+			return () => handlers.delete(method);
+		}),
+		onEvent: mock(() => () => {}),
+		request: mock(async () => {}),
+		event: mock(() => {}),
+		joinChannel: mock(async () => {}),
+		leaveChannel: mock(async () => {}),
+		isConnected: mock(() => true),
+		getState: mock(() => 'connected' as const),
+		onConnection: mock(() => () => {}),
+		onMessage: mock(() => () => {}),
+		cleanup: mock(() => {}),
+		registerTransport: mock(() => () => {}),
+		registerRouter: mock(() => {}),
+		getRouter: mock(() => null),
+		getPendingCallCount: mock(() => 0),
+	} as unknown as MessageHub;
+	return { hub, handlers };
+}
+
+function createMockDaemonHub(): { daemonHub: DaemonHub; emitMock: ReturnType<typeof mock> } {
+	const emitMock = mock(async () => {});
+	const daemonHub = {
+		emit: emitMock,
+		on: mock(() => () => {}),
+		off: mock(() => {}),
+		once: mock(async () => {}),
+	} as unknown as DaemonHub;
+	return { daemonHub, emitMock };
+}
+
+function createMockSpaceManager(): {
+	spaceManager: SpaceManager;
+	getSpaceMock: ReturnType<typeof mock>;
+} {
+	type GetSpaceResult = Awaited<ReturnType<SpaceManager['getSpace']>>;
+	const existingSpace = { id: 'space-1' } as unknown as Exclude<GetSpaceResult, null>;
+	const getSpaceMock = mock(async (spaceId: string): Promise<GetSpaceResult> => {
+		return spaceId === 'space-1' ? existingSpace : null;
+	});
+	const spaceManager = {
+		getSpace: getSpaceMock,
+	} as unknown as SpaceManager;
+	return { spaceManager, getSpaceMock };
+}
+
+// ─── helpers ───────────────────────────────────────────────────────────────
+
+/** Call a registered handler and cast the result */
+async function call<T>(
+	handlers: Map<string, RequestHandler>,
+	method: string,
+	params: unknown
+): Promise<T> {
+	const handler = handlers.get(method);
+	if (!handler) throw new Error(`Handler not registered: ${method}`);
+	return (await handler(params, {})) as T;
+}
+
+// ─── tests ─────────────────────────────────────────────────────────────────
+
+describe('Space Agent RPC Handlers', () => {
+	let db: Database;
+	let manager: SpaceAgentManager;
+	let hubData: ReturnType<typeof createMockMessageHub>;
+	let daemonData: ReturnType<typeof createMockDaemonHub>;
+	let spaceManagerData: ReturnType<typeof createMockSpaceManager>;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSpaceAgentSchema(db);
+		insertSpace(db, 'space-1');
+
+		const repo = new SpaceAgentRepository(db as any);
+		manager = new SpaceAgentManager(repo);
+		hubData = createMockMessageHub();
+		daemonData = createMockDaemonHub();
+		spaceManagerData = createMockSpaceManager();
+
+		// Disable model validation (no models in cache)
+		setModelsCache(new Map());
+
+		setupSpaceAgentHandlers(
+			hubData.hub,
+			daemonData.daemonHub,
+			manager,
+			spaceManagerData.spaceManager
+		);
+	});
+
+	afterEach(() => {
+		db.close();
+		setModelsCache(new Map());
+		mock.restore();
+	});
+
+	// ── spaceAgent.create ────────────────────────────────────────────────────
+
+	describe('spaceAgent.listBuiltInTemplates', () => {
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.listBuiltInTemplates')).toBe(true);
+		});
+
+		it('returns built-in agent templates from seeding source', async () => {
+			const result = await call<{
+				templates: Array<{ name: string; tools: string[]; systemPrompt: string }>;
+			}>(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {
+				spaceId: 'space-1',
+			});
+
+			expect(Array.isArray(result.templates)).toBe(true);
+			expect(result.templates).toHaveLength(6);
+			expect(result.templates.map((template) => template.name).sort()).toEqual([
+				'Coder',
+				'General',
+				'Planner',
+				'QA',
+				'Research',
+				'Reviewer',
+			]);
+			for (const template of result.templates) {
+				expect(template.tools.length).toBeGreaterThan(0);
+				expect(template.customPrompt.length).toBeGreaterThan(0);
+			}
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {})).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when space does not exist', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', { spaceId: 'missing-space' })
+			).rejects.toThrow('Space not found: missing-space');
+		});
+	});
+
+	describe('spaceAgent.create', () => {
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.create')).toBe(true);
+		});
+
+		it('creates an agent with required params', async () => {
+			const result = await call<{ agent: { id: string; name: string } }>(
+				hubData.handlers,
+				'spaceAgent.create',
+				{ spaceId: 'space-1', name: 'MyAgent' }
+			);
+
+			expect(result.agent).toBeDefined();
+			expect(result.agent.name).toBe('MyAgent');
+		});
+
+		it('creates an agent with all optional params', async () => {
+			const result = await call<{
+				agent: {
+					name: string;
+					description: string;
+					model: string | undefined;
+					customPrompt: string | null;
+				};
+			}>(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'FullAgent',
+				description: 'A detailed agent',
+				model: 'claude-opus-4-5',
+				provider: 'anthropic',
+				customPrompt: 'You are helpful.',
+			});
+
+			expect(result.agent.name).toBe('FullAgent');
+			expect(result.agent.description).toBe('A detailed agent');
+			expect(result.agent.customPrompt).toBe('You are helpful.');
+		});
+
+		it('emits spaceAgent.created event after creation', async () => {
+			await call(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'EventAgent',
+			});
+
+			// Allow microtask queue to flush
+			await new Promise((r) => setTimeout(r, 0));
+
+			expect(daemonData.emitMock).toHaveBeenCalled();
+			const [eventName, payload] = daemonData.emitMock.mock.calls[0] as [
+				string,
+				{ spaceId: string; agent: { name: string } },
+			];
+			expect(eventName).toBe('spaceAgent.created');
+			expect(payload.spaceId).toBe('space-1');
+			expect(payload.agent.name).toBe('EventAgent');
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.create', { name: 'A' })).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+
+		it('throws when name is missing', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.create', { spaceId: 'space-1' })
+			).rejects.toThrow('name is required');
+		});
+
+		it('creates an agent without a role (role field removed from schema)', async () => {
+			const result = await call<{ agent: { id: string; name: string } }>(
+				hubData.handlers,
+				'spaceAgent.create',
+				{ spaceId: 'space-1', name: 'SimpleAgent' }
+			);
+			expect(result.agent.name).toBe('SimpleAgent');
+		});
+
+		it('throws on duplicate name within the same space', async () => {
+			await call(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'Duplicate',
+			});
+
+			await expect(
+				call(hubData.handlers, 'spaceAgent.create', {
+					spaceId: 'space-1',
+					name: 'Duplicate',
+				})
+			).rejects.toThrow('"Duplicate" already exists');
+		});
+	});
+
+	// ── spaceAgent.list ──────────────────────────────────────────────────────
+
+	describe('spaceAgent.list', () => {
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.list')).toBe(true);
+		});
+
+		it('returns empty array for a space with no agents', async () => {
+			const result = await call<{ agents: unknown[] }>(hubData.handlers, 'spaceAgent.list', {
+				spaceId: 'space-1',
+			});
+			expect(result.agents).toEqual([]);
+		});
+
+		it('returns all agents for a space', async () => {
+			await call(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'Alpha',
+			});
+			await call(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'Beta',
+			});
+
+			const result = await call<{ agents: { name: string }[] }>(
+				hubData.handlers,
+				'spaceAgent.list',
+				{ spaceId: 'space-1' }
+			);
+			expect(result.agents).toHaveLength(2);
+			const names = result.agents.map((a) => a.name).sort();
+			expect(names).toEqual(['Alpha', 'Beta']);
+		});
+
+		it('throws when spaceId is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.list', {})).rejects.toThrow(
+				'spaceId is required'
+			);
+		});
+	});
+
+	// ── spaceAgent.get ───────────────────────────────────────────────────────
+
+	describe('spaceAgent.get', () => {
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.get')).toBe(true);
+		});
+
+		it('returns the agent by id', async () => {
+			const created = await call<{ agent: { id: string; name: string } }>(
+				hubData.handlers,
+				'spaceAgent.create',
+				{ spaceId: 'space-1', name: 'GetMe' }
+			);
+
+			const result = await call<{ agent: { id: string; name: string } }>(
+				hubData.handlers,
+				'spaceAgent.get',
+				{ id: created.agent.id }
+			);
+			expect(result.agent.id).toBe(created.agent.id);
+			expect(result.agent.name).toBe('GetMe');
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.get', {})).rejects.toThrow('id is required');
+		});
+
+		it('throws when agent does not exist', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.get', { id: 'nonexistent-id' })
+			).rejects.toThrow('Agent not found');
+		});
+	});
+
+	// ── spaceAgent.update ────────────────────────────────────────────────────
+
+	describe('spaceAgent.update', () => {
+		let agentId: string;
+
+		beforeEach(async () => {
+			const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'Original',
+			});
+			agentId = created.agent.id;
+			daemonData.emitMock.mockClear();
+		});
+
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.update')).toBe(true);
+		});
+
+		it('updates the agent name', async () => {
+			const result = await call<{ agent: { name: string } }>(
+				hubData.handlers,
+				'spaceAgent.update',
+				{ id: agentId, name: 'Renamed' }
+			);
+			expect(result.agent.name).toBe('Renamed');
+		});
+
+		it('updates description and customPrompt', async () => {
+			const result = await call<{
+				agent: { description: string; customPrompt: string | null };
+			}>(hubData.handlers, 'spaceAgent.update', {
+				id: agentId,
+				description: 'New desc',
+				customPrompt: 'New prompt',
+			});
+			expect(result.agent.description).toBe('New desc');
+			expect(result.agent.customPrompt).toBe('New prompt');
+		});
+
+		it('emits spaceAgent.updated event', async () => {
+			await call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'Updated' });
+			await new Promise((r) => setTimeout(r, 0));
+
+			expect(daemonData.emitMock).toHaveBeenCalled();
+			const [eventName] = daemonData.emitMock.mock.calls[0] as [string, unknown];
+			expect(eventName).toBe('spaceAgent.updated');
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.update', { name: 'X' })).rejects.toThrow(
+				'id is required'
+			);
+		});
+
+		it('throws when agent does not exist', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.update', { id: 'bad-id', name: 'X' })
+			).rejects.toThrow('Agent not found');
+		});
+
+		it('throws on duplicate name conflict', async () => {
+			await call(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'OtherAgent',
+			});
+
+			await expect(
+				call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'OtherAgent' })
+			).rejects.toThrow('already exists');
+		});
+
+		it('updates agent name successfully', async () => {
+			const result = await call<{ agent: { name: string } }>(
+				hubData.handlers,
+				'spaceAgent.update',
+				{
+					id: agentId,
+					name: 'UpdatedName',
+				}
+			);
+			expect(result.agent.name).toBe('UpdatedName');
+		});
+	});
+
+	// ── spaceAgent.delete ────────────────────────────────────────────────────
+
+	describe('spaceAgent.delete', () => {
+		let agentId: string;
+
+		beforeEach(async () => {
+			const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+				spaceId: 'space-1',
+				name: 'ToDelete',
+			});
+			agentId = created.agent.id;
+			daemonData.emitMock.mockClear();
+		});
+
+		it('registers the handler', () => {
+			expect(hubData.handlers.has('spaceAgent.delete')).toBe(true);
+		});
+
+		it('deletes the agent and returns success', async () => {
+			const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+				id: agentId,
+			});
+			expect(result.success).toBe(true);
+		});
+
+		it('emits spaceAgent.deleted event', async () => {
+			// delete handler awaits the emit, so the mock is called before call() returns
+			await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
+
+			expect(daemonData.emitMock).toHaveBeenCalled();
+			const [eventName, payload] = daemonData.emitMock.mock.calls[0] as [
+				string,
+				{ agentId: string },
+			];
+			expect(eventName).toBe('spaceAgent.deleted');
+			expect(payload.agentId).toBe(agentId);
+		});
+
+		it('throws when id is missing', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.delete', {})).rejects.toThrow(
+				'id is required'
+			);
+		});
+
+		it('throws when agent does not exist', async () => {
+			await expect(call(hubData.handlers, 'spaceAgent.delete', { id: 'ghost-id' })).rejects.toThrow(
+				'Agent not found'
+			);
+		});
+
+		it('throws clear error when agent is referenced by a workflow node', async () => {
+			insertWorkflow(db, 'wf-1', 'space-1', 'My Workflow');
+			insertWorkflowNode(db, 'node-1', 'wf-1', agentId);
+
+			await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
+				/Cannot delete agent.*referenced by workflow nodes/
+			);
+		});
+
+		it('throws and includes workflow names in error when referenced', async () => {
+			insertWorkflow(db, 'wf-2', 'space-1', 'Important Workflow');
+			insertWorkflowNode(db, 'node-2', 'wf-2', agentId);
+
+			await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
+				'Important Workflow'
+			);
+		});
+
+		it('allows deletion after the node reference is removed', async () => {
+			insertWorkflow(db, 'wf-3', 'space-1', 'Temp Workflow');
+			insertWorkflowNode(db, 'node-3', 'wf-3', agentId);
+
+			// Remove the node reference by clearing the agents in the config JSON
+			db.prepare(`UPDATE space_workflow_nodes SET config = '{}' WHERE id = 'node-3'`).run();
+
+			const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+				id: agentId,
+			});
+			expect(result.success).toBe(true);
+		});
+	});
+});

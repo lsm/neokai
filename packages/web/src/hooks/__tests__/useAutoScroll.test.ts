@@ -269,6 +269,37 @@ describe('useAutoScroll', () => {
 
 			expect(scrollIntoViewMock).not.toHaveBeenCalled();
 		});
+
+		it('should not auto-scroll when loadingOlder transitions from true to false', () => {
+			const { containerRef, endRef, scrollIntoViewMock } = createMockRefs();
+
+			const { rerender } = renderHook(
+				({ messageCount, loadingOlder }) =>
+					useAutoScroll({
+						containerRef,
+						endRef,
+						enabled: true,
+						messageCount,
+						isInitialLoad: false,
+						loadingOlder,
+					}),
+				{
+					initialProps: { messageCount: 50, loadingOlder: false },
+				}
+			);
+
+			scrollIntoViewMock.mockClear();
+
+			// Start loading older — message count increases as hidden messages are revealed
+			rerender({ messageCount: 55, loadingOlder: true });
+			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+			// Finish loading older — message count stays at 55, loadingOlder flips to false.
+			// This should NOT trigger auto-scroll because the count increase came from
+			// revealing older messages, not from genuinely new messages.
+			rerender({ messageCount: 55, loadingOlder: false });
+			expect(scrollIntoViewMock).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('scroll position detection', () => {
@@ -482,10 +513,14 @@ describe('useAutoScroll', () => {
 			containerRef.current!.scrollTop = 400;
 			// scrollHeight(1000) - scrollTop(400) - clientHeight(500) = 100 < 200 threshold
 
-			// Trigger ResizeObserver callback
+			// Trigger ResizeObserver callback (uses rAF internally for batching)
+			vi.useFakeTimers();
 			act(() => {
 				resizeObserverInstances[0]?.triggerResize();
+				// Flush the requestAnimationFrame scheduled by the ResizeObserver callback
+				vi.advanceTimersByTime(16);
 			});
+			vi.useRealTimers();
 
 			// Should now be near bottom
 			expect(result.current.isNearBottom).toBe(true);

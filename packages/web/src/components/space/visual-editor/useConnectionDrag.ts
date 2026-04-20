@@ -1,10 +1,10 @@
 /**
  * useConnectionDrag
  *
- * Hook that manages the "drag from output port → input port to create a transition" workflow.
+ * Hook that manages port-drag interactions used to create transitions.
  *
  * Usage:
- *  1. Call `startDrag(fromStepId, portScreenCenter, e)` from a node's output port mousedown.
+ *  1. Call `startDrag(fromStepId, portScreenCenter, e)` from a node port mousedown.
  *  2. Call `setHoverTarget(stepId | null)` from input port mouseenter/mouseleave.
  *  3. The hook tracks the ghost-edge endpoint via window mousemove.
  *  4. On window mouseup it either commits or cancels the connection.
@@ -63,7 +63,7 @@ export interface UseConnectionDragReturn {
 	/** Current drag state — read by the canvas to render the ghost edge and highlights */
 	dragState: ConnectionDragState;
 	/**
-	 * Call this from a node's **output** port onMouseDown handler.
+	 * Call this from a node port onMouseDown handler.
 	 * @param fromStepId  The step the connection originates from
 	 * @param portEl      The port DOM element (used to compute screen-space center)
 	 * @param e           The originating mouse event (used for initial cursor position)

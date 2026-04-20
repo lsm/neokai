@@ -11,7 +11,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import { spawn as nodeSpawn } from 'node:child_process';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
@@ -23,8 +24,45 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
+import type { OriginalEnvVars } from '../provider-service';
+// Re-exported for callers that import OriginalEnvVars from this module — canonical definition lives in provider-service.ts.
+export type { OriginalEnvVars } from '../provider-service';
+
+/**
+ * Default spawn implementation matching the SDK's internal spawnLocalProcess().
+ * Used when no custom spawnClaudeCodeProcess is configured, so we can
+ * still intercept the subprocess and track its exit.
+ *
+ * Mirrors the SDK's spawn behavior (verified in sdk.mjs):
+ * - stdio: ['pipe', 'pipe', stderr] where stderr is 'pipe' when
+ *   DEBUG_CLAUDE_AGENT_SDK is set, otherwise 'ignore'
+ * - windowsHide: true
+ * - Same cwd, env, signal passthrough
+ *
+ * Node's ChildProcess structurally satisfies the SDK's SpawnedProcess
+ * interface (stdin, stdout, killed, exitCode, kill, on/once/off for
+ * 'exit' and 'error' events).
+ *
+ * SDK coupling: This mirrors the internal spawnLocalProcess() in the SDK (sdk.mjs).
+ * Re-verify this implementation matches the SDK's spawn behavior on SDK upgrades —
+ * mismatches in stdio/env/signal can cause subtle subprocess communication failures.
+ */
+function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
+	const debugSdk = opts.env?.DEBUG_CLAUDE_AGENT_SDK;
+	const stderr = debugSdk && debugSdk !== '0' && debugSdk !== 'false' ? 'pipe' : 'ignore';
+	const proc = nodeSpawn(opts.command, opts.args, {
+		cwd: opts.cwd,
+		env: opts.env as NodeJS.ProcessEnv,
+		stdio: ['pipe', 'pipe', stderr],
+		signal: opts.signal,
+		windowsHide: true,
+	});
+	return proc as unknown as SpawnedProcess;
+}
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+/** Max time to wait for subprocess exit before retrying after startup timeout. */
+const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 function getStartupTimeoutMs(): number {
 	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
@@ -33,22 +71,10 @@ function getStartupTimeoutMs(): number {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
 }
 
+// Read once at module load — consistent with the original STARTUP_TIMEOUT_MS pattern.
+// Env vars set after the process starts will not be picked up; the values displayed
+// in user-facing error messages reflect these module-load-time snapshots.
 const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
-
-/**
- * Original environment variables for restoration after SDK query
- */
-export interface OriginalEnvVars {
-	ANTHROPIC_API_KEY?: string;
-	ANTHROPIC_AUTH_TOKEN?: string;
-	ANTHROPIC_BASE_URL?: string;
-	API_TIMEOUT_MS?: string;
-	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC?: string;
-	ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
-	ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
-	ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
-	CLAUDE_AGENT_SDK_CLIENT_APP?: string;
-}
 
 /**
  * Context interface - what QueryRunner needs from AgentSession
@@ -72,11 +98,9 @@ export interface QueryRunnerContext {
 	queryAbortController: AbortController | null;
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
-	// Tracks consecutive auto-recovery attempts for the current query.
-	// Reset to 0 when a query receives its first message (successful startup).
-	// Prevents infinite retry loops when the SDK is permanently broken.
-	startupTimeoutAutoRecoverAttempts: number;
 	originalEnvVars: OriginalEnvVars;
+	/** Resolves when the SDK subprocess exits. Set by QueryRunner via spawnClaudeCodeProcess wrapper. */
+	processExitedPromise: Promise<void> | null;
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;
@@ -87,12 +111,6 @@ export interface QueryRunnerContext {
 	onSlashCommandsFetched(): Promise<void>;
 	onModelsFetched(): Promise<void>;
 	onMarkApiSuccess(): Promise<void>;
-
-	// Optional auto-recovery callback invoked when the SDK startup timer fires.
-	// If set, the catch block skips messageQueue.clear() (preserving queued messages
-	// for transparent retry) and schedules a fresh startStreamingQuery() call
-	// instead of surfacing an error to the user.
-	onStartupTimeoutAutoRecover?(): Promise<void>;
 }
 
 /**
@@ -105,12 +123,21 @@ export class QueryRunner {
 	 * Start the streaming query (called from AgentSession.startStreamingQuery)
 	 */
 	async start(): Promise<void> {
-		const { messageQueue } = this.ctx;
+		const { messageQueue, logger } = this.ctx;
 
 		if (messageQueue.isRunning()) {
+			logger.warn(
+				`QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
+					`skipping start (generation=${messageQueue.getGeneration()}, ` +
+					`queryPromise=${this.ctx.queryPromise ? 'active' : 'null'})`
+			);
 			return;
 		}
 
+		logger.debug(
+			`QueryRunner.start(): starting query for session ${this.ctx.session.id} ` +
+				`(generation=${messageQueue.getGeneration()})`
+		);
 		messageQueue.start();
 
 		// Increment query generation for this new query
@@ -125,8 +152,11 @@ export class QueryRunner {
 
 	/**
 	 * Run the query (main execution loop)
+	 *
+	 * @param queryGeneration - Generation counter to detect stale queries
+	 * @param isRetry - Whether this is an automatic retry after startup timeout
 	 */
-	private async runQuery(queryGeneration: number): Promise<void> {
+	private async runQuery(queryGeneration: number, isRetry = false): Promise<void> {
 		const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
 		try {
@@ -198,14 +228,40 @@ export class QueryRunner {
 				}
 			}
 
-			// Ensure workspace exists
-			const fs = await import('fs/promises');
-			await fs.mkdir(session.workspacePath, { recursive: true });
+			// Ensure workspace exists when the session is bound to a concrete workspace path.
+			if (session.workspacePath) {
+				const fs = await import('fs/promises');
+				await fs.mkdir(session.workspacePath, { recursive: true });
+			}
 
 			// Build query options
 			optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
 			let queryOptions = await optionsBuilder.build();
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
+
+			// Structured log of MCP servers visible to this query. Critical for diagnosing
+			// "No such tool available" issues where an expected MCP server (e.g. node-agent
+			// for workflow sub-sessions) is missing from session config at first turn.
+			// Always logged at info level so production logs preserve the evidence trail.
+			const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+			const isWorkflowSubSession = !!(
+				session.context?.spaceId &&
+				session.id.includes(':task:') &&
+				session.id.includes(':exec:')
+			);
+			logger.info(
+				`QueryRunner.start(): session ${session.id} mcp servers visible at first turn: ` +
+					`[${mcpServerNames.join(', ')}]` +
+					(isWorkflowSubSession ? ' (workflow sub-session)' : '')
+			);
+			if (isWorkflowSubSession && !mcpServerNames.includes('node-agent')) {
+				logger.error(
+					`QueryRunner.start(): workflow sub-session ${session.id} is MISSING the 'node-agent' MCP server. ` +
+						`Visible servers: [${mcpServerNames.join(', ')}]. ` +
+						`The agent will not be able to call mcp__node-agent__* tools (send_message, save, list_peers, etc). ` +
+						`This is a runtime injection failure — see TaskAgentManager.spawnWorkflowNodeAgentForExecution and createSubSession.`
+				);
+			}
 
 			// Apply provider env vars
 			{
@@ -221,6 +277,19 @@ export class QueryRunner {
 			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
+			// Note: PORT and NEOKAI_PORT are cleared inside applyEnvVarsToProcess() above,
+			// so SDK subprocesses cannot inherit the daemon's listening port.
+
+			// Wrap spawnClaudeCodeProcess to track subprocess exit deterministically.
+			// This lets stop() await the actual process exit instead of using arbitrary delays.
+			const originalSpawn = queryOptions.spawnClaudeCodeProcess;
+			queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
+				const proc = originalSpawn ? originalSpawn(opts) : defaultSpawn(opts);
+				this.ctx.processExitedPromise = new Promise<void>((resolve) => {
+					proc.once('exit', () => resolve());
+				});
+				return proc;
+			};
 
 			// Create query with AsyncGenerator
 			const queryObject = query({
@@ -237,10 +306,17 @@ export class QueryRunner {
 				if (!this.ctx.firstMessageReceived) {
 					startupTimeoutReached = true;
 					const elapsed = Date.now() - queryStartTime;
+					const isRootWorkspace = !session.worktree;
+					const workspaceDesc = isRootWorkspace
+						? `root workspace: ${session.workspacePath ?? 'unbound'}`
+						: `worktree: ${session.worktree!.worktreePath}`;
 					logger.error(
 						`SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
-							`Model: ${queryOptions.model}, Workspace: ${session.workspacePath}` +
-							(session.worktree ? ` (worktree: ${session.worktree.worktreePath})` : '')
+							`Model: ${queryOptions.model}, ${workspaceDesc}` +
+							(isRootWorkspace
+								? ' — running on root workspace (not a worktree); check for other Claude Code sessions using this path'
+								: '') +
+							` (Hint: set NEOKAI_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
 					);
 
 					// Actively abort a stuck startup so finally{} cleanup runs and the
@@ -283,8 +359,6 @@ export class QueryRunner {
 				if (timer && messageCount === 1) {
 					clearTimeout(timer);
 					this.ctx.startupTimeoutTimer = null;
-					// Reset auto-recovery counter: query started successfully.
-					this.ctx.startupTimeoutAutoRecoverAttempts = 0;
 				}
 
 				this.ctx.firstMessageReceived = true;
@@ -295,18 +369,31 @@ export class QueryRunner {
 					logger.error('Error handling SDK message:', error);
 					logger.error('Message type:', (message as SDKMessage).type);
 
-					const processingState = stateManager.getState();
-					await stateManager.setIdle();
+					// During cleanup the database may already be closed — skip
+					// state persistence to avoid cascading "closed database" errors.
+					if (!this.ctx.isCleaningUp()) {
+						const processingState = stateManager.getState();
+						await stateManager.setIdle();
 
-					await errorManager.handleError(
-						session.id,
-						error as Error,
-						ErrorCategory.MESSAGE,
-						'Error processing SDK message. The session has been reset.',
-						processingState,
-						{ messageType: (message as SDKMessage).type }
-					);
+						await errorManager.handleError(
+							session.id,
+							error as Error,
+							ErrorCategory.MESSAGE,
+							'Error processing SDK message. The session has been reset.',
+							processingState,
+							{ messageType: (message as SDKMessage).type }
+						);
+					}
 				}
+			}
+
+			// Stop the queue immediately after the query ends to close the race window
+			// between the for-await loop ending and the finally block calling stop().
+			// Without this, ensureQueryStarted() can see isRunning()=true while no
+			// generator is consuming messages, causing enqueued messages to be orphaned.
+			// Guard: only stop if this is still the current query (not stale from a restart).
+			if (this.ctx.getQueryGeneration() === queryGeneration) {
+				messageQueue.stop();
 			}
 
 			// If startup timed out before first message, surface as timeout error
@@ -317,148 +404,209 @@ export class QueryRunner {
 		} catch (error) {
 			logger.error('Streaming query error:', error);
 
+			// During cleanup the database may already be closed. Skip all
+			// error-recovery DB writes to avoid cascading "closed database"
+			// errors that escape as unhandled rejections.
+			if (this.ctx.isCleaningUp()) {
+				return;
+			}
+
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 			const isStartupTimeout = errorMessage.includes('SDK startup timeout');
 			const isConversationNotFound = errorMessage.includes('No conversation found');
 
-			// Preserve queued messages for transparent retry when auto-recovery is
-			// registered (startup timeout / conversation not found + provider switch).
-			// In all other cases, clear the queue so stale messages don't bleed
-			// into the next session.
-			if (
-				!(isStartupTimeout || isConversationNotFound) ||
-				isAbortError ||
-				!this.ctx.onStartupTimeoutAutoRecover
-			) {
-				messageQueue.clear();
-			}
-
-			// If startup timed out or conversation not found while trying to resume a session,
-			// clear sdkSessionId so the next attempt starts a fresh SDK session instead of
-			// repeatedly failing on the same problematic session file.
-			if ((isStartupTimeout || isConversationNotFound) && session.sdkSessionId) {
+			// Startup timeout is transient — always keep sdkSessionId so resume works.
+			// Never clear sdkSessionId on timeout: the session file is valid and the
+			// conversation can be resumed once the workspace lock conflict resolves.
+			// Clearing it would lose the ability to resume the conversation history.
+			// "No conversation found" is permanent — clear sdkSessionId so the next
+			// attempt starts fresh instead of looping on a dead conversation.
+			if (isStartupTimeout && session.sdkSessionId) {
 				logger.error(
-					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
-						'Next query will start fresh without resume.'
+					`Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
+						'Keeping sdkSessionId for resume on retry.'
+				);
+			}
+			if (isConversationNotFound && session.sdkSessionId) {
+				// Clear sdkSessionId and sdkOriginPath — the conversation transcript is
+				// irrecoverably gone (file not found even after cross-path migration attempts
+				// in QueryLifecycleManager). Common causes: provider switch, manual deletion,
+				// or workspace completely removed. Keeping it would cause every subsequent
+				// attempt to fail with the same error. Clearing it lets the next message
+				// start a fresh conversation automatically.
+				logger.error(
+					`No conversation found for sdkSessionId (${session.sdkSessionId}). ` +
+						'All fallback path lookups were exhausted. ' +
+						'Clearing sdkSessionId — next message will start a fresh conversation.'
 				);
 				session.sdkSessionId = undefined;
-				this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
+				session.sdkOriginPath = undefined;
+				this.ctx.db.updateSession(session.id, {
+					sdkSessionId: undefined,
+					sdkOriginPath: undefined,
+				});
+
+				// Emit a visible system message so the user knows a new session was started.
+				// This is the deterministic rotation path required by the task spec.
+				try {
+					await this.displayErrorAsAssistantMessage(
+						'⚠️ **Conversation history could not be resumed.**\n\n' +
+							'The previous session transcript was not found — this can happen after a ' +
+							'provider switch, workspace path change, or external cleanup of ' +
+							'`~/.claude/projects/`. Your conversation history in NeoKai is preserved; ' +
+							'only the AI context window has been reset.\n\n' +
+							'**Please resend your message** — a fresh AI session will start automatically.',
+						{ markAsError: false }
+					);
+				} catch {
+					// Best-effort — don't let message emission block cleanup
+				}
 			}
 
-			if (!isAbortError) {
-				// On startup timeout or conversation not found, attempt transparent auto-recovery
-				// (up to 1 retry): restart the query without the old resume handle
-				// (sdkSessionId already cleared above). Queued messages are preserved so
-				// the user's pending send is retried automatically without any visible error.
-				// The retry limit (attempts <= 1) prevents infinite loops when the SDK is
-				// permanently broken: after 1 failed recovery, the error surfaces normally.
-				const startupRecoverAttempts = this.ctx.startupTimeoutAutoRecoverAttempts + 1;
-				const canAutoRecover =
-					(isStartupTimeout || isConversationNotFound) &&
-					!this.ctx.isCleaningUp() &&
-					!!this.ctx.onStartupTimeoutAutoRecover &&
-					startupRecoverAttempts <= 1;
+			// Auto-retry once on startup timeout — the user shouldn't have to resend.
+			// This handles transient SDK startup failures (e.g., after a model switch)
+			// where the second attempt succeeds reliably.
+			// Skip messageQueue.clear() so the user's pending message is preserved for the retry.
+			if (isStartupTimeout && !isRetry && !this.ctx.isCleaningUp()) {
+				logger.warn('Auto-retrying query after startup timeout (1 retry).');
+				await stateManager.setIdle();
 
-				if (canAutoRecover) {
-					this.ctx.startupTimeoutAutoRecoverAttempts = startupRecoverAttempts;
-					logger.warn(
-						`SDK ${isConversationNotFound ? 'conversation not found' : 'startup timeout'} — scheduling auto-recovery attempt ${startupRecoverAttempts} (fresh query without resume)`
-					);
-					// Defer until after finally{} completes so shared state is reset first.
-					setTimeout(() => {
-						this.ctx.onStartupTimeoutAutoRecover!().catch((err: unknown) => {
-							logger.error('Auto-recovery after SDK startup timeout failed:', err);
-						});
-					}, 300);
-					// setIdle is handled by the finally block; skipping here avoids a double call.
-				} else {
-					// Reset counter so a future successfully-started session can recover again.
-					if (isStartupTimeout || isConversationNotFound) {
-						this.ctx.startupTimeoutAutoRecoverAttempts = 0;
+				// Close the current queryObject BEFORE retrying to prevent the
+				// "Already connected to a transport" crash. The finally{} block has not
+				// yet run (we are still in the catch block), so MCP transports are still
+				// open. Explicitly closing here ensures a clean slate for the retry.
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors — transport may already be in a broken state
 					}
-					const apiErrorHandled = await this.handleApiValidationError(error);
-
-					if (!apiErrorHandled) {
-						let category = ErrorCategory.SYSTEM;
-						const providerId = session.config.provider as string | undefined;
-
-						// Detect provider-specific errors before general categorization
-						const isProviderSession =
-							providerId && providerId !== 'anthropic' && providerId !== 'glm';
-
-						if (
-							isProviderSession &&
-							(errorMessage.includes('401') ||
-								errorMessage.includes('403') ||
-								errorMessage.includes('unauthorized') ||
-								errorMessage.includes('Unauthorized') ||
-								errorMessage.includes('token expired') ||
-								errorMessage.includes('token_expired') ||
-								errorMessage.includes('not authenticated') ||
-								errorMessage.includes('invalid_api_key'))
-						) {
-							category = ErrorCategory.PROVIDER_AUTH_ERROR;
-						} else if (
-							isProviderSession &&
-							(errorMessage.includes('ECONNREFUSED') ||
-								errorMessage.includes('ENOTFOUND') ||
-								errorMessage.includes('EHOSTUNREACH') ||
-								errorMessage.includes('service unavailable') ||
-								errorMessage.includes('503') ||
-								errorMessage.includes('502'))
-						) {
-							category = ErrorCategory.PROVIDER_UNAVAILABLE;
-						} else if (
-							errorMessage.includes('401') ||
-							errorMessage.includes('unauthorized') ||
-							errorMessage.includes('invalid_api_key')
-						) {
-							category = ErrorCategory.AUTHENTICATION;
-						} else if (
-							errorMessage.includes('ECONNREFUSED') ||
-							errorMessage.includes('ENOTFOUND')
-						) {
-							category = ErrorCategory.CONNECTION;
-						} else if (
-							errorMessage.includes('429') ||
-							errorMessage.includes('rate limit') ||
-							errorMessage.includes('402') ||
-							errorMessage.toLowerCase().includes('no quota') ||
-							errorMessage.toLowerCase().includes('quota exceeded') ||
-							errorMessage.toLowerCase().includes('insufficient_quota')
-						) {
-							category = ErrorCategory.RATE_LIMIT;
-						} else if (errorMessage.includes('timeout')) {
-							category = ErrorCategory.TIMEOUT;
-						} else if (errorMessage.includes('model_not_found')) {
-							category = ErrorCategory.MODEL;
-						} else if (
-							errorMessage.includes('cannot be run as root') ||
-							errorMessage.includes('dangerously-skip-permissions') ||
-							errorMessage.includes('permission') ||
-							errorMessage.includes('Exit code: 1')
-						) {
-							category = ErrorCategory.PERMISSION;
-						}
-
-						const processingState = stateManager.getState();
-
-						await errorManager.handleError(
-							session.id,
-							error as Error,
-							category,
-							undefined,
-							processingState,
-							{
-								errorMessage,
-								queueSize: messageQueue.size(),
-								providerId: providerId ?? 'anthropic',
-							}
-						);
-					}
-					await stateManager.setIdle();
+					this.ctx.queryObject = null;
 				}
+
+				// Wait for the old subprocess to fully exit before retrying.
+				// close() above terminates the process, but we must wait for it to
+				// release workspace locks before spawning a replacement.
+				const exitPromise = this.ctx.processExitedPromise;
+				if (exitPromise) {
+					await Promise.race([
+						exitPromise,
+						new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+					]);
+					this.ctx.processExitedPromise = null;
+				}
+
+				// Use `return await` so this call's finally{} runs only after the retry
+				// completes. Otherwise finally{} would race the retry and can tear down
+				// shared state (queue/controller/queryObject) while it is still running.
+				return await this.runQuery(queryGeneration, true);
+			}
+
+			// Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
+			messageQueue.clear();
+
+			if (!isAbortError) {
+				const apiErrorHandled = await this.handleApiValidationError(error);
+
+				if (!apiErrorHandled) {
+					let category = ErrorCategory.SYSTEM;
+					const providerId = session.config.provider as string | undefined;
+
+					// Detect provider-specific errors before general categorization
+					const isProviderSession =
+						providerId && providerId !== 'anthropic' && providerId !== 'glm';
+
+					if (
+						isProviderSession &&
+						(errorMessage.includes('401') ||
+							errorMessage.includes('403') ||
+							errorMessage.includes('unauthorized') ||
+							errorMessage.includes('Unauthorized') ||
+							errorMessage.includes('token expired') ||
+							errorMessage.includes('token_expired') ||
+							errorMessage.includes('not authenticated') ||
+							errorMessage.includes('invalid_api_key'))
+					) {
+						category = ErrorCategory.PROVIDER_AUTH_ERROR;
+					} else if (
+						isProviderSession &&
+						(errorMessage.includes('ECONNREFUSED') ||
+							errorMessage.includes('ENOTFOUND') ||
+							errorMessage.includes('EHOSTUNREACH') ||
+							errorMessage.includes('service unavailable') ||
+							errorMessage.includes('503') ||
+							errorMessage.includes('502'))
+					) {
+						category = ErrorCategory.PROVIDER_UNAVAILABLE;
+					} else if (
+						errorMessage.includes('401') ||
+						errorMessage.includes('unauthorized') ||
+						errorMessage.includes('invalid_api_key')
+					) {
+						category = ErrorCategory.AUTHENTICATION;
+					} else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+						category = ErrorCategory.CONNECTION;
+					} else if (
+						errorMessage.includes('429') ||
+						errorMessage.includes('rate limit') ||
+						errorMessage.includes('402') ||
+						errorMessage.toLowerCase().includes('no quota') ||
+						errorMessage.toLowerCase().includes('quota exceeded') ||
+						errorMessage.toLowerCase().includes('insufficient_quota')
+					) {
+						category = ErrorCategory.RATE_LIMIT;
+					} else if (errorMessage.includes('timeout')) {
+						category = ErrorCategory.TIMEOUT;
+					} else if (errorMessage.includes('model_not_found')) {
+						category = ErrorCategory.MODEL;
+					} else if (
+						errorMessage.includes('cannot be run as root') ||
+						errorMessage.includes('dangerously-skip-permissions') ||
+						errorMessage.includes('permission') ||
+						errorMessage.includes('Exit code: 1')
+					) {
+						category = ErrorCategory.PERMISSION;
+					}
+
+					const processingState = stateManager.getState();
+
+					// For startup timeouts / conversation-not-found, provide actionable recovery hints.
+					// Keep the hints distinct: NEOKAI_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
+					// missing/corrupt session file — the session ID was already cleared above,
+					// so the next message will automatically start a fresh session.
+					const startupTimeoutUserMessage = isStartupTimeout
+						? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+							`Common causes: another Claude Code session is using the same workspace, ` +
+							`a stale lock file in .claude/, or the workspace is under heavy load. ` +
+							`Try: closing other Claude sessions on this workspace, ` +
+							`then resend your message. ` +
+							`You can also increase the timeout with NEOKAI_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+						: isConversationNotFound
+							? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+								`The previous session transcript was not found — this can happen after a provider switch, ` +
+								`workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
+								`Your message history in NeoKai is preserved; only the AI context window is reset. ` +
+								`Please resend your message — a fresh session starts automatically.`
+							: undefined;
+
+					await errorManager.handleError(
+						session.id,
+						error as Error,
+						category,
+						startupTimeoutUserMessage,
+						processingState,
+						{
+							errorMessage,
+							queueSize: messageQueue.size(),
+							providerId: providerId ?? 'anthropic',
+							workspacePath: session.workspacePath ?? undefined,
+							isRootWorkspace: !session.worktree,
+							startupTimeoutMs: STARTUP_TIMEOUT_MS,
+						}
+					);
+				}
+				await stateManager.setIdle();
 			}
 		} finally {
 			// Check for stale query FIRST to avoid race conditions.
@@ -482,6 +630,13 @@ export class QueryRunner {
 					abortController.abort();
 					this.ctx.queryAbortController = null;
 				}
+
+				// Clear process exit tracking — the subprocess has exited (or will be
+				// cleaned up by close() below). Prevents a resolved promise from a
+				// previous generation being observed by stop() after a restart: without
+				// this clear, a future stop() call on a new query could snapshot a stale
+				// resolved promise and skip the real wait for the new subprocess's exit.
+				this.ctx.processExitedPromise = null;
 
 				messageQueue.stop();
 

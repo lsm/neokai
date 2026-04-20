@@ -1,9 +1,9 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import type { WorktreeMetadata, CommitInfo, WorktreeCommitStatus } from '@neokai/shared';
 import { Logger } from './logger';
+import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
 
 export interface WorktreeInfo {
 	path: string;
@@ -143,44 +143,23 @@ export class WorktreeManager {
 	}
 
 	/**
-	 * Encode an absolute path to a filesystem-safe directory name
-	 * Uses the same approach as Claude Code (~/.claude/projects/)
+	 * Produce a short, deterministic, human-readable directory name for a repo path.
 	 *
-	 * Examples:
-	 * - /Users/alice/project → -Users-alice-project
-	 * - /home/john_doe/my_project → -home-john_doe-my_project
-	 * - C:\Users\alice\project → -C--Users-alice-project
+	 * Delegates to the standalone {@link getProjectShortKey} utility.
+	 * Kept as a public instance method for backward compatibility.
 	 */
-	private encodeRepoPath(repoPath: string): string {
-		// Normalize path separators (handle both Unix and Windows)
-		const normalizedPath = repoPath.replace(/\\/g, '/');
-
-		// Strip leading slash (if any) and replace remaining slashes with dashes
-		// Then prepend a dash to indicate it was an absolute path
-		const encoded = normalizedPath.startsWith('/')
-			? '-' + normalizedPath.slice(1).replace(/\//g, '-')
-			: '-' + normalizedPath.replace(/\//g, '-');
-
-		return encoded;
+	public getProjectShortKey(repoPath: string): string {
+		return getProjectShortKey(repoPath);
 	}
 
 	/**
-	 * Get the worktree base directory for a repository
-	 * Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
-	 * Example: ~/.neokai/projects/-Users-alice-project/worktrees/
+	 * Get the worktree base directory for a repository.
 	 *
-	 * For testing, set TEST_WORKTREE_BASE_DIR to override the base directory
+	 * Delegates to the standalone {@link getWorktreeBaseDir} utility.
+	 * Kept as a private instance method to avoid cascading async changes.
 	 */
 	private getWorktreeBaseDir(gitRoot: string): string {
-		const encodedPath = this.encodeRepoPath(gitRoot);
-
-		// Check for test environment variable
-		const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
-		if (testBaseDir) {
-			return join(testBaseDir, encodedPath, 'worktrees');
-		}
-
-		return join(homedir(), '.neokai', 'projects', encodedPath, 'worktrees');
+		return getWorktreeBaseDir(gitRoot, (msg) => this.logger.warn(msg));
 	}
 
 	/**
@@ -200,7 +179,7 @@ export class WorktreeManager {
 		const git = this.getGit(gitRoot);
 
 		// Create worktree base directory if it doesn't exist
-		// Format: ~/.neokai/projects/{encoded-repo-path}/worktrees/
+		// Format: ~/.neokai/projects/{shortKey}/worktrees/
 		const worktreesDir = this.getWorktreeBaseDir(gitRoot);
 		if (!existsSync(worktreesDir)) {
 			mkdirSync(worktreesDir, { recursive: true });
@@ -220,11 +199,23 @@ export class WorktreeManager {
 				throw new Error(`Worktree directory already exists: ${worktreePath}`);
 			}
 
-			// Check if branch already exists (and fallback to UUID if it does)
-			if (customBranchName) {
-				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
-				if (branchExists) {
-					branchName = `session/${safeSessionId}`; // Fallback to UUID-based branch
+			// Check if branch already exists — this can happen when a prior task/session
+			// crashed mid-run and left behind a stale branch whose worktree was already
+			// removed. Delete the stale branch so we can recreate it fresh with the
+			// same (intended) name instead of falling back to an opaque UUID-based name.
+			const branchExists = await this.checkBranchExists(gitRoot, branchName);
+			if (branchExists) {
+				this.logger.warn(`Stale branch detected: ${branchName} — deleting and recreating`);
+				try {
+					await git.branch(['-D', branchName]);
+				} catch {
+					// git refuses -D when the branch is currently checked out in another
+					// living worktree.  Fall back to a unique session-scoped name so the
+					// task can still proceed rather than blocking entirely.
+					this.logger.warn(
+						`Could not delete branch ${branchName} (may be checked out in another worktree) — falling back to session/${safeSessionId}`
+					);
+					branchName = `session/${safeSessionId}`;
 				}
 			}
 
@@ -404,8 +395,8 @@ export class WorktreeManager {
 						await git.raw(['worktree', 'remove', worktree.path, '--force']);
 						cleaned.push(worktree.path);
 
-						// Also try to delete the branch if it's a session branch
-						if (worktree.branch.startsWith('session/')) {
+						// Also try to delete the branch if it's a managed branch (session/ or task/)
+						if (worktree.branch.startsWith('session/') || worktree.branch.startsWith('task/')) {
 							try {
 								await git.branch(['-D', worktree.branch]);
 							} catch {

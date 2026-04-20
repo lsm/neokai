@@ -40,8 +40,8 @@ describe('computeFitToView', () => {
 		const vh = 600;
 		const result = computeFitToView(nodes, vw, vh, 0);
 
-		// With no padding: scale = min(800/100, 600/100) = 6 → clamped to MAX_SCALE=2
-		expect(result.scale).toBe(MAX_SCALE);
+		// Fit-to-view never zooms above 100%.
+		expect(result.scale).toBe(1);
 
 		// Node should be centered
 		const scaledW = 100 * result.scale;
@@ -64,7 +64,7 @@ describe('computeFitToView', () => {
 
 		const availW = vw - 2 * FIT_PADDING;
 		const availH = vh - 2 * FIT_PADDING;
-		const expectedScale = Math.min(availW / 300, availH / 180, MAX_SCALE);
+		const expectedScale = Math.min(availW / 300, availH / 180, 1, MAX_SCALE);
 		expect(result.scale).toBeCloseTo(expectedScale);
 
 		// Check centering: scaled nodes midpoint should be at viewport center
@@ -85,27 +85,27 @@ describe('computeFitToView', () => {
 		expect(result.scale).toBe(MIN_SCALE);
 	});
 
-	it('clamps scale to MAX_SCALE for tiny nodes in large viewport', () => {
+	it('does not scale above 100% for tiny nodes in large viewport', () => {
 		// Very small nodes in large viewport
 		const nodes: NodePosition = { a: { x: 0, y: 0, width: 1, height: 1 } };
 		const result = computeFitToView(nodes, 1000, 1000, 0);
-		expect(result.scale).toBe(MAX_SCALE);
+		expect(result.scale).toBe(1);
 	});
 
 	it('fits wide content (limited by width)', () => {
-		// 400x50 nodes in 800x600 viewport with no padding
-		// scaleX = 800/400 = 2, scaleY = 600/50 = 12 → min is 2 → clamped to MAX_SCALE=2
+		// 400x50 nodes in 800x600 viewport with no padding.
+		// Fit-to-view must not exceed 100%.
 		const nodes: NodePosition = { a: { x: 0, y: 0, width: 400, height: 50 } };
 		const result = computeFitToView(nodes, 800, 600, 0);
-		expect(result.scale).toBe(MAX_SCALE);
+		expect(result.scale).toBe(1);
 	});
 
 	it('fits tall content (limited by height)', () => {
-		// 50x400 nodes in 800x600 viewport with no padding
-		// scaleX = 800/50 = 16, scaleY = 600/400 = 1.5 → min is 1.5
+		// 50x400 nodes in 800x600 viewport with no padding.
+		// Fit-to-view must not exceed 100%.
 		const nodes: NodePosition = { a: { x: 0, y: 0, width: 50, height: 400 } };
 		const result = computeFitToView(nodes, 800, 600, 0);
-		expect(result.scale).toBeCloseTo(1.5);
+		expect(result.scale).toBe(1);
 	});
 
 	it('handles nodes not starting at origin', () => {
@@ -115,7 +115,7 @@ describe('computeFitToView', () => {
 		const vh = 600;
 		const result = computeFitToView(nodes, vw, vh, 0);
 
-		expect(result.scale).toBe(MAX_SCALE);
+		expect(result.scale).toBe(1);
 		// offsetX: (800 - 100*2)/2 - 500*2 = 300 - 1000 = -700
 		expect(result.offsetX).toBeCloseTo((vw - 100 * result.scale) / 2 - 500 * result.scale);
 		expect(result.offsetY).toBeCloseTo((vh - 100 * result.scale) / 2 - 500 * result.scale);

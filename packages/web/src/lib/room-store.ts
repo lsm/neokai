@@ -16,9 +16,9 @@
  */
 
 import { signal, computed } from '@preact/signals';
+import { EntityStore } from './entity-store';
 import type {
 	Room,
-	TaskSummary,
 	NeoTask,
 	TaskStatus,
 	SessionSummary,
@@ -34,7 +34,13 @@ import type {
 	MissionExecution,
 	LiveQuerySnapshotEvent,
 	LiveQueryDeltaEvent,
+	AppSkill,
 } from '@neokai/shared';
+
+/** AppSkill extended with the per-room effective enabled state from skills.byRoom LiveQuery. */
+export interface EffectiveRoomSkill extends AppSkill {
+	overriddenByRoom: boolean;
+}
 
 /**
  * Parameters for creating a new goal
@@ -71,8 +77,11 @@ class RoomStore {
 	/** Room metadata */
 	readonly room = signal<Room | null>(null);
 
-	/** Tasks for this room */
-	readonly tasks = signal<TaskSummary[]>([]);
+	/** Entity store for tasks — Map-backed for O(1) lookups and delta application */
+	readonly taskStore = new EntityStore<NeoTask>();
+
+	/** Tasks for this room — computed pass-through from taskStore (excludes archived — filtered server-side by LiveQuery) */
+	readonly tasks = computed(() => this.taskStore.toArray());
 
 	/** Sessions in this room */
 	readonly sessions = signal<SessionSummary[]>([]);
@@ -87,11 +96,26 @@ class RoomStore {
 	// Goals Signals
 	// ========================================
 
-	/** Goals for this room */
-	readonly goals = signal<RoomGoal[]>([]);
+	/** Entity store for goals — Map-backed for O(1) lookups and delta application */
+	readonly goalStore = new EntityStore<RoomGoal>();
 
-	/** Goals loading state */
-	readonly goalsLoading = signal<boolean>(false);
+	/** Goals for this room — computed pass-through from goalStore */
+	readonly goals = computed(() => this.goalStore.toArray());
+
+	/** Goals loading state — delegates to goalStore.loading */
+	get goalsLoading() {
+		return this.goalStore.loading;
+	}
+
+	// ========================================
+	// Room Skills Signals
+	// ========================================
+
+	/** Effective per-room skills (global enabled state merged with room overrides via skills.byRoom). */
+	readonly skillStore = new EntityStore<EffectiveRoomSkill>();
+
+	/** Pass-through computed for backward-compatible access to skill array. */
+	readonly roomSkills = computed(() => this.skillStore.toArray());
 
 	/** Auto-completed task notifications (from semi-autonomous mode) */
 	readonly autoCompletedNotifications = signal<
@@ -135,13 +159,18 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
-	/** Archived tasks */
-	readonly archivedTasks = computed(() => this.tasks.value.filter((t) => t.status === 'archived'));
+	/** Tasks requiring human attention (review, needs_attention, rate/usage limited) */
+	readonly reviewTasks = computed(() =>
+		this.tasks.value.filter(
+			(t) =>
+				t.status === 'review' ||
+				t.status === 'needs_attention' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
+		)
+	);
 
-	/** Tasks in review status */
-	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
-
-	/** Count of tasks awaiting review */
+	/** Count of tasks awaiting review/attention */
 	readonly reviewTaskCount = computed(() => this.reviewTasks.value.length);
 
 	/** Session count */
@@ -150,17 +179,17 @@ class RoomStore {
 	/** Active goals */
 	readonly activeGoals = computed(() => this.goals.value.filter((g) => g.status === 'active'));
 
-	/** Tasks grouped by goal ID (Map<goalId, TaskSummary[]>) */
+	/** Tasks grouped by goal ID (Map<goalId, NeoTask[]>) */
 	readonly tasksByGoalId = computed(() => {
 		const goals = this.goals.value;
 		const tasks = this.tasks.value;
-		const taskMap = new Map<string, TaskSummary>();
+		const taskMap = new Map<string, NeoTask>();
 		for (const t of tasks) {
 			taskMap.set(t.id, t);
 		}
-		const result = new Map<string, TaskSummary[]>();
+		const result = new Map<string, NeoTask[]>();
 		for (const goal of goals) {
-			const linked: TaskSummary[] = [];
+			const linked: NeoTask[] = [];
 			for (const taskId of goal.linkedTaskIds) {
 				const task = taskMap.get(taskId);
 				if (task) linked.push(task);
@@ -199,9 +228,15 @@ class RoomStore {
 		)
 	);
 
-	/** Orphan tasks in review (review or needs_attention) */
+	/** Orphan tasks in review (review, needs_attention, rate_limited, or usage_limited) */
 	readonly orphanTasksReview = computed(() =>
-		this.orphanTasks.value.filter((t) => t.status === 'review' || t.status === 'needs_attention')
+		this.orphanTasks.value.filter(
+			(t) =>
+				t.status === 'review' ||
+				t.status === 'needs_attention' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
+		)
 	);
 
 	/** Orphan tasks that are done (completed or cancelled) */
@@ -209,10 +244,9 @@ class RoomStore {
 		this.orphanTasks.value.filter((t) => t.status === 'completed' || t.status === 'cancelled')
 	);
 
-	/** Orphan tasks that are archived */
-	readonly orphanTasksArchived = computed(() =>
-		this.orphanTasks.value.filter((t) => t.status === 'archived')
-	);
+	// NOTE: orphanTasksArchived was removed — archived tasks are now excluded
+	// server-side by the tasks.byRoom LiveQuery.  Use tasks.byRoom.all if
+	// archived tasks are needed.
 
 	// ========================================
 	// Private State
@@ -224,15 +258,15 @@ class RoomStore {
 	/** Subscription cleanup functions */
 	private cleanupFunctions: Array<() => void> = [];
 
-	/** Per-room LiveQuery cleanup functions — owned by subscribeRoom/unsubscribeRoom */
+	/** Per-query LiveQuery cleanup functions — keyed by queryKey (e.g., 'tasks-roomId') */
 	private liveQueryCleanups = new Map<string, Array<() => void>>();
 
-	/** Set of room IDs that currently have an active LiveQuery subscription intent */
+	/** Set of per-query keys that currently have an active LiveQuery subscription intent */
 	private liveQueryActive = new Set<string>();
 
 	/**
 	 * Stale-event guard: set of currently active subscriptionIds.
-	 * Cleared immediately in unsubscribeRoom before handler teardown so that
+	 * Cleared immediately in unsubscribeQuery before handler teardown so that
 	 * any in-flight events (queued in the JS event loop between room switch and
 	 * handler removal) are discarded rather than applied to the wrong room's state.
 	 */
@@ -277,11 +311,11 @@ class RoomStore {
 
 		// 2. Clear state
 		this.room.value = null;
-		this.tasks.value = [];
+		this.taskStore.clear();
 		this.sessions.value = [];
 		this.error.value = null;
-		this.goals.value = [];
-		this.goalsLoading.value = false;
+		this.goalStore.clear();
+		this.skillStore.clear();
 		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
@@ -310,87 +344,94 @@ class RoomStore {
 	// LiveQuery Subscription Lifecycle (managed by useRoomLiveQuery hook)
 	// ========================================
 
+	// ========================================
+	// Per-Query Subscription Helpers
+	// ========================================
+
 	/**
-	 * Subscribe this room's tasks and goals via LiveQuery.
-	 *
-	 * Called by the `useRoomLiveQuery` hook on mount / room change.
-	 * Registers snapshot/delta handlers then sends liveQuery.subscribe for
-	 * both tasks.byRoom and goals.byRoom named queries.
-	 *
-	 * Guards against races: if `unsubscribeRoom(roomId)` is called before
-	 * the async hub is available, the subscription is aborted cleanly.
+	 * Build a per-query key used for liveQueryActive and liveQueryCleanups.
+	 * @example queryKey('tasks', 'room-123') → 'tasks-room-123'
 	 */
-	async subscribeRoom(roomId: string): Promise<void> {
-		// Guard: prevent double-subscription for the same roomId
-		if (this.liveQueryActive.has(roomId)) return;
-		this.liveQueryActive.add(roomId);
+	private static queryKey(queryType: string, roomId: string): string {
+		return `${queryType}-${roomId}`;
+	}
+
+	/**
+	 * Build a subscriptionId for a LiveQuery.
+	 * @example subId('tasks', 'room-123') → 'tasks-byRoom-room-123'
+	 */
+	private static subId(queryType: string, roomId: string): string {
+		return `${queryType}-byRoom-${roomId}`;
+	}
+
+	/**
+	 * Core subscribe logic shared by all per-query methods.
+	 *
+	 * @param queryType - 'tasks', 'goals', or 'skills'
+	 * @param roomId - The room to subscribe to
+	 * @param queryName - The named query (e.g., 'tasks.byRoom')
+	 * @param onSubscribe - Called after hub is obtained, before subscribe request.
+	 *                       Used to set loading state (e.g., goalStore.loading).
+	 * @param onError - Called when subscription fails or is race-cancelled.
+	 *                   Used to reset loading state (e.g., goalStore.loading).
+	 * @param setupHandlers - Registers snapshot/delta event handlers on the hub.
+	 *                         Must return an array of cleanup functions.
+	 */
+	private async subscribeQuery(
+		queryType: string,
+		roomId: string,
+		queryName: string,
+		onSubscribe: () => void,
+		onError: () => void,
+		setupHandlers: (
+			hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+			subId: string
+		) => Array<() => void>
+	): Promise<void> {
+		const key = RoomStore.queryKey(queryType, roomId);
+		const subscriptionId = RoomStore.subId(queryType, roomId);
+
+		// Guard: prevent double-subscription
+		if (this.liveQueryActive.has(key)) return;
+		this.liveQueryActive.add(key);
 
 		try {
 			const hub = await connectionManager.getHub();
 
-			// Guard: unsubscribeRoom was called before hub became available
-			if (!this.liveQueryActive.has(roomId)) return;
+			// Guard: unsubscribe was called before hub became available
+			if (!this.liveQueryActive.has(key)) return;
 
 			const cleanups: Array<() => void> = [];
-			this.liveQueryCleanups.set(roomId, cleanups);
+			this.liveQueryCleanups.set(key, cleanups);
 
-			// --- Tasks via LiveQuery ---
-			const tasksSubId = `tasks-byRoom-${roomId}`;
+			// Stale-event guard
+			this.activeSubscriptionIds.add(subscriptionId);
+			cleanups.push(() => this.activeSubscriptionIds.delete(subscriptionId));
 
-			// Stale-event guard: mark this subscriptionId as active before registering
-			// handlers. unsubscribeRoom clears it immediately so any event queued in the
-			// JS event loop after the room switch is discarded.
-			this.activeSubscriptionIds.add(tasksSubId);
-			cleanups.push(() => this.activeSubscriptionIds.delete(tasksSubId));
+			// Register handlers
+			const handlerCleanups = setupHandlers(hub, subscriptionId);
+			cleanups.push(...handlerCleanups);
 
-			const unsubTaskSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
-				'liveQuery.snapshot',
-				(event) => {
-					if (event.subscriptionId !== tasksSubId) return;
-					if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
-					this.tasks.value = event.rows as TaskSummary[];
+			// Set loading state before subscribe
+			onSubscribe();
+
+			// Fire subscribe request
+			try {
+				await hub.request('liveQuery.subscribe', {
+					queryName,
+					params: [roomId],
+					subscriptionId,
+				});
+			} catch (subErr) {
+				logger.warn(`${queryName} LiveQuery subscribe failed:`, subErr);
+				// Fire-and-forget unsubscribe in case the server partially registered
+				const h = connectionManager.getHubIfConnected();
+				if (h) {
+					h.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
 				}
-			);
-			cleanups.push(unsubTaskSnapshot);
-
-			const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-				if (event.subscriptionId !== tasksSubId) return;
-				if (!this.activeSubscriptionIds.has(tasksSubId)) return; // stale-event guard
-				let current = this.tasks.value;
-				if (event.removed?.length) {
-					const removedIds = new Set((event.removed as TaskSummary[]).map((r) => r.id));
-					current = current.filter((t) => !removedIds.has(t.id));
-				}
-				if (event.updated?.length) {
-					const updatedTasks = event.updated as TaskSummary[];
-					// Show toast when a known task transitions into review status.
-					// Skip when prevTask is absent to avoid spurious toasts during hydration.
-					for (const updatedTask of updatedTasks) {
-						if (updatedTask.status === 'review') {
-							const prevTask = current.find((t) => t.id === updatedTask.id);
-							if (prevTask && prevTask.status !== 'review') {
-								toast.info(`Task ready for review: ${updatedTask.title}`);
-							}
-						}
-					}
-					const updatedMap = new Map(updatedTasks.map((u) => [u.id, u]));
-					current = current.map((t) => updatedMap.get(t.id) ?? t);
-				}
-				if (event.added?.length) {
-					current = [...current, ...(event.added as TaskSummary[])];
-				}
-				this.tasks.value = current;
-			});
-			cleanups.push(unsubTaskDelta);
-
-			await hub.request('liveQuery.subscribe', {
-				queryName: 'tasks.byRoom',
-				params: [roomId],
-				subscriptionId: tasksSubId,
-			});
-
-			// Guard: abort if unsubscribed while awaiting the subscribe request
-			if (!this.liveQueryActive.has(roomId)) {
+				// Clean up on failure
+				this.liveQueryActive.delete(key);
+				onError();
 				for (const fn of cleanups) {
 					try {
 						fn();
@@ -398,83 +439,13 @@ class RoomStore {
 						/* ignore */
 					}
 				}
-				this.liveQueryCleanups.delete(roomId);
+				this.liveQueryCleanups.delete(key);
 				return;
 			}
 
-			// Re-subscribe on reconnect: the server-side subscription is per-connection.
-			const unsubTaskReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
-				hub
-					.request('liveQuery.subscribe', {
-						queryName: 'tasks.byRoom',
-						params: [roomId],
-						subscriptionId: tasksSubId,
-					})
-					.catch((err) => {
-						logger.warn('Tasks LiveQuery re-subscribe failed:', err);
-					});
-			});
-			cleanups.push(unsubTaskReconnect);
-
-			// Cleanup: tell the server to dispose the subscription when leaving the room.
-			cleanups.push(() => {
-				const h = connectionManager.getHubIfConnected();
-				if (h) {
-					h.request('liveQuery.unsubscribe', { subscriptionId: tasksSubId }).catch(() => {});
-				}
-			});
-
-			// --- Goals via LiveQuery ---
-			// Register snapshot/delta handlers BEFORE subscribing so we never miss the
-			// initial snapshot that the server pushes synchronously before replying.
-			const goalsSubId = `goals-byRoom-${roomId}`;
-
-			// Stale-event guard for goals (same semantics as tasks above).
-			this.activeSubscriptionIds.add(goalsSubId);
-			cleanups.push(() => this.activeSubscriptionIds.delete(goalsSubId));
-
-			const unsubGoalSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
-				'liveQuery.snapshot',
-				(event) => {
-					if (event.subscriptionId !== goalsSubId) return;
-					if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
-					this.goals.value = event.rows as RoomGoal[];
-					this.goalsLoading.value = false;
-				}
-			);
-			cleanups.push(unsubGoalSnapshot);
-
-			const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-				if (event.subscriptionId !== goalsSubId) return;
-				if (!this.activeSubscriptionIds.has(goalsSubId)) return; // stale-event guard
-				let current = this.goals.value;
-				if (event.removed?.length) {
-					const removedIds = new Set((event.removed as RoomGoal[]).map((r) => r.id));
-					current = current.filter((g) => !removedIds.has(g.id));
-				}
-				if (event.updated?.length) {
-					const updatedMap = new Map((event.updated as RoomGoal[]).map((u) => [u.id, u]));
-					current = current.map((g) => updatedMap.get(g.id) ?? g);
-				}
-				if (event.added?.length) {
-					current = [...current, ...(event.added as RoomGoal[])];
-				}
-				this.goals.value = current;
-			});
-			cleanups.push(unsubGoalDelta);
-
-			// Subscribe to the goals.byRoom named query.
-			// Mark loading before subscribing; the snapshot handler clears it.
-			this.goalsLoading.value = true;
-			await hub.request('liveQuery.subscribe', {
-				queryName: 'goals.byRoom',
-				params: [roomId],
-				subscriptionId: goalsSubId,
-			});
-
 			// Guard: abort if unsubscribed while awaiting the subscribe request
-			if (!this.liveQueryActive.has(roomId)) {
+			if (!this.liveQueryActive.has(key)) {
+				onError();
 				for (const fn of cleanups) {
 					try {
 						fn();
@@ -482,46 +453,38 @@ class RoomStore {
 						/* ignore */
 					}
 				}
-				this.liveQueryCleanups.delete(roomId);
-				// Reset goalsLoading: it was set to true above but the snapshot
-				// handler (which normally clears it) will never fire.
-				this.goalsLoading.value = false;
+				this.liveQueryCleanups.delete(key);
 				return;
 			}
 
-			// Re-subscribe on reconnect: the server-side subscription is per-connection
-			// and is gone after a disconnect. Requesting liveQuery.subscribe again with
-			// the same subscriptionId delivers a fresh snapshot to the already-registered
-			// snapshot handler above.
-			const unsubGoalReconnect = hub.onConnection((state) => {
-				if (state !== 'connected' || !this.liveQueryActive.has(roomId)) return;
-				this.goalsLoading.value = true;
+			// Successful subscription — add reconnect handler
+			const unsubReconnect = hub.onConnection((state) => {
+				if (state !== 'connected' || !this.liveQueryActive.has(key)) return;
+				onSubscribe();
 				hub
 					.request('liveQuery.subscribe', {
-						queryName: 'goals.byRoom',
+						queryName,
 						params: [roomId],
-						subscriptionId: goalsSubId,
+						subscriptionId,
 					})
 					.catch((err) => {
-						logger.warn('Goals LiveQuery re-subscribe failed:', err);
-						this.goalsLoading.value = false;
+						logger.warn(`${queryName} LiveQuery re-subscribe failed:`, err);
+						onError();
 					});
 			});
-			cleanups.push(unsubGoalReconnect);
+			cleanups.push(unsubReconnect);
 
-			// Cleanup: tell the server to dispose the subscription when leaving the room.
+			// Add cleanup for unsubscribe
 			cleanups.push(() => {
 				const h = connectionManager.getHubIfConnected();
 				if (h) {
-					h.request('liveQuery.unsubscribe', { subscriptionId: goalsSubId }).catch(() => {});
+					h.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
 				}
 			});
 		} catch (err) {
-			this.liveQueryActive.delete(roomId);
-			// Run any cleanups that were registered before the error, so that
-			// event handlers registered up to the point of failure are removed
-			// and activeSubscriptionIds entries are cleared.
-			const failedCleanups = this.liveQueryCleanups.get(roomId);
+			this.liveQueryActive.delete(key);
+			onError();
+			const failedCleanups = this.liveQueryCleanups.get(key);
 			if (failedCleanups) {
 				for (const fn of failedCleanups) {
 					try {
@@ -531,11 +494,221 @@ class RoomStore {
 					}
 				}
 			}
-			this.liveQueryCleanups.delete(roomId);
-			// Reset goalsLoading in case the error occurred after it was set to true.
-			this.goalsLoading.value = false;
-			logger.error('Failed to subscribe room LiveQuery:', err);
+			this.liveQueryCleanups.delete(key);
+			logger.error(`Failed to subscribe ${queryName} LiveQuery:`, err);
 		}
+	}
+
+	/**
+	 * Core unsubscribe logic shared by all per-query methods.
+	 */
+	private unsubscribeQuery(queryType: string, roomId: string): void {
+		const key = RoomStore.queryKey(queryType, roomId);
+		const subscriptionId = RoomStore.subId(queryType, roomId);
+
+		this.liveQueryActive.delete(key);
+		// Stale-event guard: clear immediately
+		this.activeSubscriptionIds.delete(subscriptionId);
+
+		const cleanups = this.liveQueryCleanups.get(key);
+		if (cleanups) {
+			for (const fn of cleanups) {
+				try {
+					fn();
+				} catch {
+					/* ignore */
+				}
+			}
+			this.liveQueryCleanups.delete(key);
+		}
+	}
+
+	// ========================================
+	// Per-Query Public Subscribe Methods
+	// ========================================
+
+	/**
+	 * Subscribe to tasks.byRoom LiveQuery only.
+	 *
+	 * Can be called independently of subscribeRoomGoals and subscribeRoomSkills.
+	 */
+	async subscribeRoomTasks(roomId: string): Promise<void> {
+		await this.subscribeQuery(
+			'tasks',
+			roomId,
+			'tasks.byRoom',
+			() => {}, // no loading state for tasks
+			() => {}, // no loading state to reset on error
+			(hub, tasksSubId) => {
+				const cleanups: Array<() => void> = [];
+
+				const unsubTaskSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+					'liveQuery.snapshot',
+					(event) => {
+						if (event.subscriptionId !== tasksSubId) return;
+						if (!this.activeSubscriptionIds.has(tasksSubId)) return;
+						this.taskStore.applySnapshot(event.rows as NeoTask[]);
+					}
+				);
+				cleanups.push(unsubTaskSnapshot);
+
+				const unsubTaskDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+					if (event.subscriptionId !== tasksSubId) return;
+					if (!this.activeSubscriptionIds.has(tasksSubId)) return;
+					if (event.updated?.length) {
+						for (const updatedTask of event.updated as NeoTask[]) {
+							const prevTask = this.taskStore.getById(updatedTask.id);
+							if (prevTask) {
+								if (updatedTask.status === 'review' && prevTask.status !== 'review') {
+									toast.info(`Task ready for review: ${updatedTask.title}`);
+								} else if (
+									(updatedTask.status === 'rate_limited' ||
+										updatedTask.status === 'usage_limited') &&
+									prevTask.status !== updatedTask.status
+								) {
+									const limitType = updatedTask.status === 'rate_limited' ? 'rate' : 'usage';
+									toast.warning(`Task paused (${limitType} limit): ${updatedTask.title}`);
+								}
+							}
+						}
+					}
+					this.taskStore.applyDelta(
+						event as { added?: NeoTask[]; removed?: NeoTask[]; updated?: NeoTask[] }
+					);
+				});
+				cleanups.push(unsubTaskDelta);
+
+				return cleanups;
+			}
+		);
+	}
+
+	/**
+	 * Subscribe to goals.byRoom LiveQuery only.
+	 *
+	 * Can be called independently of subscribeRoomTasks and subscribeRoomSkills.
+	 * Sets goalStore.loading = true at start; snapshot/error clears it.
+	 */
+	async subscribeRoomGoals(roomId: string): Promise<void> {
+		await this.subscribeQuery(
+			'goals',
+			roomId,
+			'goals.byRoom',
+			() => {
+				this.goalStore.loading.value = true;
+			},
+			() => {
+				this.goalStore.loading.value = false;
+			},
+			(hub, goalsSubId) => {
+				const cleanups: Array<() => void> = [];
+
+				const unsubGoalSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+					'liveQuery.snapshot',
+					(event) => {
+						if (event.subscriptionId !== goalsSubId) return;
+						if (!this.activeSubscriptionIds.has(goalsSubId)) return;
+						this.goalStore.applySnapshot(event.rows as RoomGoal[]);
+					}
+				);
+				cleanups.push(unsubGoalSnapshot);
+
+				const unsubGoalDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+					if (event.subscriptionId !== goalsSubId) return;
+					if (!this.activeSubscriptionIds.has(goalsSubId)) return;
+					this.goalStore.applyDelta(
+						event as { added?: RoomGoal[]; removed?: RoomGoal[]; updated?: RoomGoal[] }
+					);
+				});
+				cleanups.push(unsubGoalDelta);
+
+				return cleanups;
+			}
+		);
+	}
+
+	/**
+	 * Subscribe to skills.byRoom LiveQuery only.
+	 *
+	 * Can be called independently of subscribeRoomTasks and subscribeRoomGoals.
+	 */
+	async subscribeRoomSkills(roomId: string): Promise<void> {
+		await this.subscribeQuery(
+			'skills',
+			roomId,
+			'skills.byRoom',
+			() => {}, // no loading state for skills
+			() => {}, // no loading state to reset on error
+			(hub, skillsSubId) => {
+				const cleanups: Array<() => void> = [];
+
+				const unsubSkillSnapshot = hub.onEvent<LiveQuerySnapshotEvent>(
+					'liveQuery.snapshot',
+					(event) => {
+						if (event.subscriptionId !== skillsSubId) return;
+						if (!this.activeSubscriptionIds.has(skillsSubId)) return;
+						this.skillStore.applySnapshot(event.rows as EffectiveRoomSkill[]);
+					}
+				);
+				cleanups.push(unsubSkillSnapshot);
+
+				const unsubSkillDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+					if (event.subscriptionId !== skillsSubId) return;
+					if (!this.activeSubscriptionIds.has(skillsSubId)) return;
+					this.skillStore.applyDelta(
+						event as {
+							added?: EffectiveRoomSkill[];
+							removed?: EffectiveRoomSkill[];
+							updated?: EffectiveRoomSkill[];
+						}
+					);
+				});
+				cleanups.push(unsubSkillDelta);
+
+				return cleanups;
+			}
+		);
+	}
+
+	// ========================================
+	// Per-Query Public Unsubscribe Methods
+	// ========================================
+
+	/** Unsubscribe from tasks.byRoom LiveQuery only. */
+	unsubscribeRoomTasks(roomId: string): void {
+		this.unsubscribeQuery('tasks', roomId);
+	}
+
+	/** Unsubscribe from goals.byRoom LiveQuery only. */
+	unsubscribeRoomGoals(roomId: string): void {
+		this.unsubscribeQuery('goals', roomId);
+		this.goalStore.loading.value = false;
+	}
+
+	/** Unsubscribe from skills.byRoom LiveQuery only. */
+	unsubscribeRoomSkills(roomId: string): void {
+		this.unsubscribeQuery('skills', roomId);
+	}
+
+	// ========================================
+	// Composite Subscribe/Unsubscribe (backward-compatible)
+	// ========================================
+
+	/**
+	 * Subscribe this room's tasks, goals, and skills via LiveQuery.
+	 *
+	 * Called by the `useRoomLiveQuery` hook on mount / room change.
+	 * Delegates to the per-query subscribe methods.
+	 *
+	 * Guards against races: if `unsubscribeRoom(roomId)` is called before
+	 * the async hub is available, the subscription is aborted cleanly.
+	 */
+	async subscribeRoom(roomId: string): Promise<void> {
+		await Promise.all([
+			this.subscribeRoomTasks(roomId),
+			this.subscribeRoomGoals(roomId),
+			this.subscribeRoomSkills(roomId),
+		]);
 	}
 
 	/**
@@ -545,22 +718,9 @@ class RoomStore {
 	 * Idempotent: safe to call even if subscribeRoom was never called.
 	 */
 	unsubscribeRoom(roomId: string): void {
-		this.liveQueryActive.delete(roomId);
-		// Stale-event guard: clear subscriptionIds immediately so any events already
-		// queued in the JS event loop are discarded before the handlers are removed.
-		this.activeSubscriptionIds.delete(`tasks-byRoom-${roomId}`);
-		this.activeSubscriptionIds.delete(`goals-byRoom-${roomId}`);
-		const cleanups = this.liveQueryCleanups.get(roomId);
-		if (cleanups) {
-			for (const fn of cleanups) {
-				try {
-					fn();
-				} catch {
-					/* ignore */
-				}
-			}
-			this.liveQueryCleanups.delete(roomId);
-		}
+		this.unsubscribeRoomTasks(roomId);
+		this.unsubscribeRoomGoals(roomId);
+		this.unsubscribeRoomSkills(roomId);
 	}
 
 	// ========================================
@@ -672,36 +832,39 @@ class RoomStore {
 
 	/**
 	 * Fetch initial state via RPC calls (pure WebSocket)
+	 *
+	 * All three RPCs (room.get, room.runtime.state, room.runtime.models) are
+	 * independent and run in parallel via Promise.allSettled so that a failure
+	 * in one does not block the others.
 	 */
 	private async fetchInitialState(
 		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
 		roomId: string
 	): Promise<void> {
 		try {
-			const overview = await hub.request<RoomOverview>('room.get', { roomId });
+			// Fire all three RPCs in parallel — none depend on each other
+			const [overviewResult, runtimeStateResult] = await Promise.allSettled([
+				hub.request<RoomOverview>('room.get', { roomId }),
+				hub.request<{ state: RuntimeState }>('room.runtime.state', { roomId }),
+				this.fetchRuntimeModels(),
+			]);
 
-			if (overview) {
-				this.room.value = overview.room;
-				this.sessions.value = overview.sessions;
-			} else {
+			// Process room.get result
+			if (overviewResult.status === 'fulfilled' && overviewResult.value) {
+				this.room.value = overviewResult.value.room;
+				this.sessions.value = overviewResult.value.sessions;
+			} else if (overviewResult.status === 'fulfilled' && !overviewResult.value) {
 				this.error.value = 'Room not found';
+			} else if (overviewResult.status === 'rejected') {
+				logger.error('Failed to fetch room overview:', overviewResult.reason);
+				this.error.value = 'Failed to load room';
 			}
 
-			// Tasks and goals are delivered via LiveQuery snapshot pushed
-			// synchronously during liveQuery.subscribe in startSubscriptions.
-
-			// Fetch runtime state
-			try {
-				const { state } = await hub.request<{ state: RuntimeState }>('room.runtime.state', {
-					roomId,
-				});
-				this.runtimeState.value = state;
-			} catch {
-				// Runtime may not exist yet
+			// Process runtime state result
+			if (runtimeStateResult.status === 'fulfilled' && runtimeStateResult.value?.state) {
+				this.runtimeState.value = runtimeStateResult.value.state;
 			}
-
-			// Fetch runtime models (leader/worker)
-			await this.fetchRuntimeModels();
+			// Runtime may not exist yet — silently ignore rejection
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -983,6 +1146,39 @@ class RoomStore {
 			limit,
 		});
 		return result.executions;
+	}
+
+	/**
+	 * Manually trigger a recurring mission execution immediately.
+	 */
+	async triggerNow(goalId: string): Promise<RoomGoal> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		const result = await hub.request<{ goal: RoomGoal }>('goal.triggerNow', {
+			roomId,
+			goalId,
+		});
+		return result.goal;
+	}
+
+	/**
+	 * Set nextRunAt to a specific datetime for a recurring mission.
+	 * @param goalId The goal to update
+	 * @param nextRunAt Unix timestamp in seconds
+	 */
+	async scheduleNext(goalId: string, nextRunAt: number): Promise<RoomGoal> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		const result = await hub.request<{ goal: RoomGoal }>('goal.scheduleNext', {
+			roomId,
+			goalId,
+			nextRunAt,
+		});
+		return result.goal;
 	}
 
 	/**

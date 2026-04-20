@@ -4,18 +4,22 @@
 
 export { SpaceAgentEditor } from './SpaceAgentEditor';
 export { SpaceAgentList } from './SpaceAgentList';
-export { SpaceContextPanel } from './SpaceContextPanel';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
-export { SpaceDashboard } from './SpaceDashboard';
-export { SpaceNavPanel } from './SpaceNavPanel';
+export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
+export { SpaceOverview } from './SpaceOverview';
 export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
 export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';
 export { WorkflowList } from './WorkflowList';
-export { WorkflowRulesEditor, makeEmptyRule, rulesToDrafts } from './WorkflowRulesEditor';
-export { WorkflowStepCard } from './WorkflowStepCard';
+
+export { GateArtifactsView } from './GateArtifactsView';
+export type { GateArtifactsViewProps } from './GateArtifactsView';
+export { FileDiffView, parseDiff } from './FileDiffView';
+export type { FileDiffViewProps } from './FileDiffView';
+export { TaskArtifactsPanel } from './TaskArtifactsPanel';
+export type { TaskArtifactsPanelProps } from './TaskArtifactsPanel';
+export { WorkflowNodeCard } from './WorkflowNodeCard';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
 export { downloadBundle, pickImportFile } from './export-import-utils';
 
-export type { RuleDraft } from './WorkflowRulesEditor';
-export type { StepDraft, ConditionDraft } from './WorkflowStepCard';
+export type { NodeDraft, ConditionDraft } from './WorkflowNodeCard';

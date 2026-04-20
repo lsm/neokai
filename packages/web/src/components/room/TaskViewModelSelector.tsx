@@ -17,6 +17,7 @@ import {
 	mapRawModelsToModelInfos,
 	PROVIDER_LABELS,
 } from '../../hooks/useModelSwitcher.ts';
+import { ConfirmModal } from '../ui/ConfirmModal.tsx';
 import { Spinner } from '../ui/Spinner';
 import { listProviderAuthStatus } from '../../lib/api-helpers.ts';
 
@@ -30,6 +31,8 @@ interface RawModelEntry {
 
 export interface TaskViewModelSelectorProps {
 	sessionId: string;
+	/** Room ID for routing task session model switches through RoomRuntimeService */
+	roomId?: string;
 	currentModel: string;
 	currentProvider?: string;
 	disabled?: boolean;
@@ -39,6 +42,7 @@ export interface TaskViewModelSelectorProps {
 
 export function TaskViewModelSelector({
 	sessionId,
+	roomId,
 	currentModel,
 	currentProvider,
 	disabled = false,
@@ -51,6 +55,7 @@ export function TaskViewModelSelector({
 	const [loading, setLoading] = useState(true);
 	const [switching, setSwitching] = useState(false);
 	const [dropdownOpen, setDropdownOpen] = useState(false);
+	const [crossProviderConfirm, setCrossProviderConfirm] = useState<ModelInfo | null>(null);
 
 	// Fetch available models and provider auth statuses
 	useEffect(() => {
@@ -102,15 +107,28 @@ export function TaskViewModelSelector({
 					return;
 				}
 
-				const result = (await hub.request('session.model.switch', {
-					sessionId,
-					model: model.id,
-					provider: model.provider,
-				})) as {
-					success: boolean;
-					model: string;
-					error?: string;
-				};
+				// Use room.runtime.model.switch for task sessions when roomId is available.
+				// This routes through RoomRuntimeService which owns the AgentSession instances
+				// for worker/leader sessions, avoiding duplicate session creation via SessionManager.
+				const result = roomId
+					? ((await hub.request('room.runtime.model.switch', {
+							sessionId,
+							model: model.id,
+							provider: model.provider,
+						})) as {
+							success: boolean;
+							model: string;
+							error?: string;
+						})
+					: ((await hub.request('session.model.switch', {
+							sessionId,
+							model: model.id,
+							provider: model.provider,
+						})) as {
+							success: boolean;
+							model: string;
+							error?: string;
+						});
 
 				if (result.success) {
 					toast.success(`Switched to ${model.name}`);
@@ -125,7 +143,7 @@ export function TaskViewModelSelector({
 				setSwitching(false);
 			}
 		},
-		[sessionId]
+		[sessionId, roomId]
 	);
 
 	// Get current model info
@@ -208,6 +226,19 @@ export function TaskViewModelSelector({
 											model.id === currentModelInfo?.id &&
 											model.provider === currentModelInfo?.provider;
 
+										const handleModelClick = (m: ModelInfo) => {
+											const targetProvider = m.provider ?? '';
+											const isCrossProviderToAnthropic =
+												targetProvider.startsWith('anthropic') &&
+												!currentProvider?.startsWith('anthropic');
+											if (isCrossProviderToAnthropic) {
+												setDropdownOpen(false);
+												setCrossProviderConfirm(m);
+											} else {
+												switchModel(m);
+											}
+										};
+
 										return (
 											<button
 												key={`${model.provider}:${model.id}`}
@@ -216,7 +247,7 @@ export function TaskViewModelSelector({
 														? 'text-blue-400 bg-dark-700/50'
 														: 'text-gray-200 hover:bg-dark-700'
 												}`}
-												onClick={() => switchModel(model)}
+												onClick={() => handleModelClick(model)}
 												disabled={switching}
 											>
 												<span class="text-base">{getModelFamilyIcon(model.family)}</span>
@@ -237,7 +268,26 @@ export function TaskViewModelSelector({
 			)}
 
 			{/* Click outside handler */}
-			{dropdownOpen && <div class="fixed inset-0 z-40" onClick={() => setDropdownOpen(false)} />}
+			{dropdownOpen && (
+				<div class="fixed inset-0 z-40 cursor-pointer" onClick={() => setDropdownOpen(false)} />
+			)}
+
+			{/* Cross-provider switch confirmation modal */}
+			<ConfirmModal
+				isOpen={crossProviderConfirm !== null}
+				onClose={() => setCrossProviderConfirm(null)}
+				onConfirm={() => {
+					if (crossProviderConfirm) {
+						switchModel(crossProviderConfirm);
+						setCrossProviderConfirm(null);
+					}
+				}}
+				title="Cross-Provider Model Switch"
+				message="Switching to an Anthropic model will remove thinking blocks from the conversation history to ensure API compatibility. Your messages and tool outputs will be preserved."
+				confirmText="Switch Model"
+				confirmButtonVariant="warning"
+				isLoading={switching}
+			/>
 		</div>
 	);
 }

@@ -30,7 +30,12 @@ import type {
 import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
+import type { McpServerConfig } from '@neokai/shared/types/sdk-config';
+import type { AppMcpServerSourceType } from '@neokai/shared';
 import type { SettingsManager } from '../settings-manager';
+import type { SkillsManager } from '../skills-manager';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
+import type { RoomSkillOverride } from '@neokai/shared';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
@@ -43,6 +48,15 @@ import { join } from 'path';
 export interface QueryOptionsBuilderContext {
 	readonly session: Session;
 	readonly settingsManager: SettingsManager;
+	/** Skills manager for injecting plugin/MCP server skills into SDK options. Optional for backwards compatibility. */
+	readonly skillsManager?: SkillsManager;
+	/** App MCP server repo for resolving mcp_server skill configs. Optional for backwards compatibility. */
+	readonly appMcpServerRepo?: AppMcpServerRepository;
+	/**
+	 * Room-level skill overrides. When provided, a skill with `enabled: false` in this list
+	 * is excluded from injection even if it is globally enabled in the skills registry.
+	 */
+	readonly roomSkillOverrides?: RoomSkillOverride[];
 }
 
 export class QueryOptionsBuilder {
@@ -56,6 +70,15 @@ export class QueryOptionsBuilder {
 	 */
 	setCanUseTool(callback: CanUseTool): void {
 		this.canUseTool = callback;
+	}
+
+	/**
+	 * Return MCP servers contributed by enabled skills for this session.
+	 * Skips skills that are room-disabled and AppMcpServer entries that are disabled.
+	 * Useful for inspecting effective skill injection without running a full build.
+	 */
+	getSkillMcpServers(): Record<string, McpServerConfig> {
+		return this.getMcpServersFromSkills();
 	}
 
 	/**
@@ -98,8 +121,24 @@ export class QueryOptionsBuilder {
 		const hooks = this.buildHooks();
 		const permissionMode = this.getPermissionMode();
 		const mcpServers = this.getMcpServers();
+		const pluginsFromSkills = [
+			...this.buildPluginsFromSkills(),
+			...this.buildPluginsFromBuiltinSkills(),
+		];
+		const mcpServersFromSkills = this.getMcpServersFromSkills();
 		const mergedEnv = this.getMergedEnvironmentVars();
 		const sdkCliPath = this.getSDKCliPath();
+
+		// Disabled MCP server names from tools config.
+		// These are filtered from the mcpServers map directly so the exclusion
+		// applies to ALL session types — including room_chat which sets settingSources: []
+		// and therefore never reads disabledMcpjsonServers from settings.local.json.
+		const toolsConfig = config.tools;
+		const disabledMcpServers = toolsConfig?.disabledMcpServers ?? [];
+		const mergedMcpServers = this.filterDisabledMcpServers(
+			this.mergeMcpServers(mcpServers, mcpServersFromSkills),
+			disabledMcpServers
+		);
 
 		// Build final query options
 		// Settings-derived options first, then session-specific overrides
@@ -141,15 +180,20 @@ export class QueryOptionsBuilder {
 			sandbox: config.sandbox as Options['sandbox'],
 
 			// ============ MCP Servers ============
-			// Cast to SDK type - mcpServers uses compatible structure
-			mcpServers: mcpServers as Options['mcpServers'],
+			// Skill-injected MCP servers: must appear in mcpServers map for
+			// strictMcpConfig sessions to accept them. When strictMcpConfig is true
+			// (e.g. room_chat sessions), the SDK only allows servers present in this
+			// map — user settings are ignored. By merging skill servers here, they
+			// are always available regardless of strictMcpConfig setting.
+			// Disabled servers are already filtered out by filterDisabledMcpServers above.
+			mcpServers: mergedMcpServers as Options['mcpServers'],
 			strictMcpConfig: config.strictMcpConfig,
 
 			// ============ Output Format ============
 			outputFormat: config.outputFormat,
 
 			// ============ Plugins ============
-			plugins: config.plugins,
+			plugins: this.mergePlugins(config.plugins, pluginsFromSkills),
 
 			// ============ Beta Features ============
 			betas: config.betas,
@@ -344,10 +388,11 @@ export class QueryOptionsBuilder {
 	/**
 	 * Get the current working directory for the SDK
 	 */
-	getCwd(): string {
-		return this.ctx.session.worktree
-			? this.ctx.session.worktree.worktreePath
-			: this.ctx.session.workspacePath;
+	getCwd(): string | undefined {
+		if (this.ctx.session.worktree) {
+			return this.ctx.session.worktree.worktreePath;
+		}
+		return this.ctx.session.workspacePath ?? undefined;
 	}
 
 	/**
@@ -497,9 +542,7 @@ CRITICAL RULES:
 	/**
 	 * Get list of disallowed tools based on session config
 	 *
-	 * Combines:
-	 * 1. SDKConfig disallowedTools (explicit tools to disable)
-	 * 2. Legacy kaiTools config (memory tool control)
+	 * Returns SDKConfig disallowedTools (explicit tools to disable)
 	 */
 	private getDisallowedTools(): string[] {
 		const config = this.ctx.session.config;
@@ -508,12 +551,6 @@ CRITICAL RULES:
 		// Add SDKConfig disallowedTools
 		if (config.disallowedTools && config.disallowedTools.length > 0) {
 			disallowedTools.push(...config.disallowedTools);
-		}
-
-		// Legacy: Disable NeoKai memory tool if not enabled
-		const legacyToolsConfig = config.tools;
-		if (!legacyToolsConfig?.kaiTools?.memory) {
-			disallowedTools.push('kai__memory__*');
 		}
 
 		// Deduplicate
@@ -554,6 +591,31 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Merge config MCP servers with skill-injected MCP servers.
+	 * Returns undefined when neither source has servers (preserves auto-load behavior).
+	 */
+	private mergeMcpServers(
+		configServers: Record<string, unknown> | undefined,
+		skillServers: Record<string, McpServerConfig>
+	): Record<string, unknown> | undefined {
+		const hasSkillServers = Object.keys(skillServers).length > 0;
+		if (!configServers && !hasSkillServers) return undefined;
+		return { ...skillServers, ...configServers };
+	}
+
+	/**
+	 * Merge config plugins with skill-injected plugins.
+	 * Returns undefined when neither source has plugins.
+	 */
+	private mergePlugins(
+		configPlugins: Options['plugins'],
+		skillPlugins: Array<{ type: 'local'; path: string }>
+	): Options['plugins'] {
+		if (!configPlugins && skillPlugins.length === 0) return undefined;
+		return [...(configPlugins ?? []), ...skillPlugins];
+	}
+
+	/**
 	 * Get setting sources configuration
 	 *
 	 * Controls CLAUDE.md and .claude/settings.json loading
@@ -572,6 +634,7 @@ CRITICAL RULES:
 	 * - ~/.neokai/: For NeoKai-specific configuration and state
 	 *
 	 * For worktree sessions, also includes:
+	 * - /tmp: System temp for tools that write directly here (e.g. git hook tee, bun test)
 	 * - /tmp/claude: SDK sets TMPDIR=/tmp/claude, most shells (bash, fish, etc.) respect this
 	 * - /tmp/zsh-${uid}: Zsh's default behavior creates /tmp/zsh-UID paths
 	 *
@@ -588,7 +651,7 @@ CRITICAL RULES:
 		// For worktree sessions, also allow temp directories for shell operations
 		if (this.ctx.session.worktree) {
 			const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
-			directories.push('/tmp/claude', `/tmp/zsh-${uid}`);
+			directories.push('/tmp', '/tmp/claude', `/tmp/zsh-${uid}`);
 		}
 
 		return directories;
@@ -717,6 +780,25 @@ CRITICAL RULES:
 	}
 
 	/**
+	 * Filter disabled MCP servers from the merged servers map.
+	 *
+	 * This ensures disabledMcpServers takes effect for ALL session types,
+	 * including room_chat sessions that set settingSources: [] and therefore
+	 * never read disabledMcpjsonServers from .claude/settings.local.json.
+	 */
+	private filterDisabledMcpServers(
+		servers: Record<string, unknown> | undefined,
+		disabledList: string[]
+	): Record<string, unknown> | undefined {
+		if (!servers || disabledList.length === 0) return servers;
+		const filtered = { ...servers };
+		for (const name of disabledList) {
+			delete filtered[name];
+		}
+		return Object.keys(filtered).length > 0 ? filtered : undefined;
+	}
+
+	/**
 	 * Build hooks configuration
 	 */
 	private buildHooks(): Options['hooks'] {
@@ -749,5 +831,132 @@ CRITICAL RULES:
 
 		// Priority 3: Let SDK use its default resolution
 		return undefined;
+	}
+
+	/**
+	 * Returns the set of skill IDs disabled by room-level overrides.
+	 * A skill in this set must be excluded even if globally enabled.
+	 */
+	private getRoomDisabledSkillIds(): Set<string> {
+		if (!this.ctx.roomSkillOverrides?.length) return new Set();
+		return new Set(this.ctx.roomSkillOverrides.filter((o) => !o.enabled).map((o) => o.skillId));
+	}
+
+	/**
+	 * Build plugin entries from enabled skills with sourceType === 'plugin'.
+	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 * Returns an array of SdkPluginConfig objects for injection into options.plugins.
+	 */
+	private buildPluginsFromSkills(): Array<{ type: 'local'; path: string }> {
+		if (!this.ctx.skillsManager) return [];
+
+		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const roomDisabled = this.getRoomDisabledSkillIds();
+		const plugins: Array<{ type: 'local'; path: string }> = [];
+
+		for (const skill of skills) {
+			if (roomDisabled.has(skill.id)) continue;
+			if (skill.sourceType === 'plugin' && skill.config.type === 'plugin') {
+				plugins.push({ type: 'local', path: skill.config.pluginPath });
+			}
+		}
+
+		return plugins;
+	}
+
+	/**
+	 * Build plugin entries from enabled skills with sourceType === 'builtin'.
+	 * Each builtin skill's commandName resolves to ~/.neokai/skills/{commandName}/
+	 * which is populated at startup (by the prod binary extraction step or the dev
+	 * server sync step). These directories are registered as local SDK plugins so
+	 * the SDK discovers their SKILL.md content as slash commands.
+	 *
+	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 */
+	private buildPluginsFromBuiltinSkills(): Array<{ type: 'local'; path: string }> {
+		if (!this.ctx.skillsManager) return [];
+
+		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const roomDisabled = this.getRoomDisabledSkillIds();
+		const plugins: Array<{ type: 'local'; path: string }> = [];
+
+		for (const skill of skills) {
+			if (roomDisabled.has(skill.id)) continue;
+			if (skill.sourceType === 'builtin' && skill.config.type === 'builtin') {
+				const skillDir = join(homedir(), '.neokai', 'skills', skill.config.commandName);
+				plugins.push({ type: 'local', path: skillDir });
+			}
+		}
+
+		return plugins;
+	}
+
+	/**
+	 * Build MCP server entries from enabled skills with sourceType === 'mcp_server'.
+	 * Room overrides with enabled=false exclude the skill even if globally enabled.
+	 * Resolves each skill's appMcpServerId to an AppMcpServer entry and maps it
+	 * to an McpServerConfig keyed by skill.name.
+	 *
+	 * Skill-injected MCP servers: must appear in mcpServers map for
+	 * strictMcpConfig sessions to accept them.
+	 */
+	private getMcpServersFromSkills(): Record<string, McpServerConfig> {
+		if (!this.ctx.skillsManager || !this.ctx.appMcpServerRepo) return {};
+
+		const skills = this.ctx.skillsManager.getEnabledSkills();
+		const roomDisabled = this.getRoomDisabledSkillIds();
+		const servers: Record<string, McpServerConfig> = {};
+
+		for (const skill of skills) {
+			if (roomDisabled.has(skill.id)) continue;
+			if (skill.sourceType !== 'mcp_server' || skill.config.type !== 'mcp_server') continue;
+
+			const appServer = this.ctx.appMcpServerRepo.get(skill.config.appMcpServerId);
+			// Skip silently if the referenced app_mcp_servers entry was deleted or no longer exists
+			if (!appServer) continue;
+			// Skip if the AppMcpServer itself is disabled, even if the wrapping skill is enabled
+			if (!appServer.enabled) continue;
+
+			servers[skill.name] = this.appMcpServerToSdkConfig(appServer);
+		}
+
+		return servers;
+	}
+
+	/**
+	 * Convert an AppMcpServer to the SDK's McpServerConfig format.
+	 */
+	private appMcpServerToSdkConfig(server: {
+		sourceType: AppMcpServerSourceType;
+		command?: string;
+		args?: string[];
+		env?: Record<string, string>;
+		url?: string;
+		headers?: Record<string, string>;
+	}): McpServerConfig {
+		switch (server.sourceType) {
+			case 'stdio':
+				return {
+					command: server.command!,
+					...(server.args ? { args: server.args } : {}),
+					...(server.env ? { env: server.env } : {}),
+				};
+			case 'sse':
+				return {
+					type: 'sse',
+					url: server.url!,
+					...(server.headers ? { headers: server.headers } : {}),
+				};
+			case 'http':
+				return {
+					type: 'http',
+					url: server.url!,
+					...(server.headers ? { headers: server.headers } : {}),
+				};
+			default: {
+				const _exhaustive: never = server.sourceType;
+				throw new Error(`Unknown MCP server source type: ${_exhaustive}`);
+			}
+		}
 	}
 }

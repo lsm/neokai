@@ -19,8 +19,10 @@
 
 import type { SessionInfo } from '@neokai/shared';
 import { borderColors } from '../../lib/design-tokens.ts';
+import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { TaskViewModelSelector } from './TaskViewModelSelector.tsx';
+import type { TaskViewVersionContext } from './TaskViewToggle.tsx';
 
 /**
  * Map session status to a CSS color class.
@@ -59,6 +61,10 @@ function formatTimestamp(ms: number): string {
 
 export interface TaskInfoPanelProps {
 	isOpen: boolean;
+	/** View version toggle context (optional — enables V1/V2 toggle in the panel) */
+	viewVersion?: TaskViewVersionContext;
+	/** Room ID for routing task session model switches through RoomRuntimeService */
+	roomId?: string;
 	/** Full task ID */
 	taskId?: string;
 	/** Full session group ID */
@@ -71,6 +77,8 @@ export interface TaskInfoPanelProps {
 	prUrl?: string | null;
 	/** Pull request number */
 	prNumber?: number | null;
+	/** Whether this task was created or last status-changed by Neo */
+	viaNeo?: boolean;
 	/** Worktree path to display (full path shown on hover) */
 	worktreePath?: string;
 	/** Worker session info */
@@ -79,29 +87,40 @@ export interface TaskInfoPanelProps {
 	leaderSession?: SessionInfo | null;
 	/** Available action handlers */
 	actions: {
+		onInterrupt?: () => void;
 		onComplete?: () => void;
 		onCancel?: () => void;
 		onArchive?: () => void;
 		onSetStatus?: () => void;
+		onResetWorkerAgent?: () => void;
+		onResetLeaderAgent?: () => void;
 	};
 	/** Whether each action should be shown (context-aware) */
 	visibleActions: {
+		interrupt?: boolean;
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
 		setStatus?: boolean;
+		resetWorkerAgent?: boolean;
+		resetLeaderAgent?: boolean;
 	};
 	/** Whether each action is disabled */
 	disabledActions?: {
+		interrupt?: boolean;
 		complete?: boolean;
 		cancel?: boolean;
 		archive?: boolean;
 		setStatus?: boolean;
+		resetWorkerAgent?: boolean;
+		resetLeaderAgent?: boolean;
 	};
 }
 
 export function TaskInfoPanel({
 	isOpen,
+	viewVersion,
+	roomId,
 	taskId,
 	groupId,
 	feedbackIteration,
@@ -111,6 +130,7 @@ export function TaskInfoPanel({
 	worktreePath,
 	workerSession,
 	leaderSession,
+	viaNeo,
 	actions,
 	visibleActions,
 	disabledActions,
@@ -136,13 +156,17 @@ export function TaskInfoPanel({
 		null;
 
 	const hasVisibleActions =
+		visibleActions.interrupt ||
 		visibleActions.complete ||
 		visibleActions.cancel ||
 		visibleActions.archive ||
-		visibleActions.setStatus;
+		visibleActions.setStatus ||
+		visibleActions.resetWorkerAgent ||
+		visibleActions.resetLeaderAgent;
 
-	// Model switcher: use worker session as primary, fall back to leader
-	const modelSession = workerSession ?? leaderSession;
+	// Model switchers: show separate selectors for worker and leader
+	const hasWorkerModel = workerSession?.config.model != null;
+	const hasLeaderModel = leaderSession?.config.model != null;
 
 	return (
 		<div
@@ -150,10 +174,45 @@ export function TaskInfoPanel({
 			data-testid="task-info-panel"
 		>
 			<div class="px-4 py-3 flex flex-col gap-3">
+				{/* View toggle section */}
+				{viewVersion && (
+					<div class="flex items-center justify-between">
+						<div class="flex flex-col gap-0.5">
+							<span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">View</span>
+							<span class="text-[10px] text-gray-600">
+								{viewVersion.version === 'v1'
+									? 'V1 Timeline → V2 Turn-based'
+									: 'V2 Turn-based → V1 Timeline'}
+							</span>
+						</div>
+						<button
+							data-testid="task-view-toggle"
+							onClick={viewVersion.onToggleVersion}
+							class="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors bg-dark-700 hover:bg-dark-600 text-gray-300 hover:text-gray-100"
+							aria-label={`Switch to ${viewVersion.version === 'v1' ? 'V2 turn-based' : 'V1 timeline'} view`}
+						>
+							{viewVersion.version === 'v1' ? (
+								<>
+									<span>V1</span>
+									<span class="text-gray-500">→ V2</span>
+								</>
+							) : (
+								<>
+									<span class="text-gray-500">V1 ←</span>
+									<span>V2</span>
+								</>
+							)}
+						</button>
+					</div>
+				)}
+
 				{/* Info section */}
 				{hasWorktreeInfo && (
 					<div>
-						<h3 class="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Info</h3>
+						<div class="flex items-center gap-2 mb-2">
+							<h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Info</h3>
+							{viaNeo && <ViaNeoIndicator size="xs" />}
+						</div>
 						<div class="space-y-1.5 text-xs">
 							{/* Task ID */}
 							{taskId && (
@@ -249,14 +308,30 @@ export function TaskInfoPanel({
 								</div>
 							)}
 
-							{/* Model switcher */}
-							{modelSession?.config.model && (
+							{/* Worker model switcher */}
+							{hasWorkerModel && workerSession && (
 								<div class="flex items-center gap-2">
-									<span class="text-gray-500 flex-shrink-0 w-14">Model:</span>
+									<span class="text-gray-500 flex-shrink-0 w-14">Worker:</span>
+									<span class="text-xs text-gray-400">Model:</span>
 									<TaskViewModelSelector
-										sessionId={modelSession.id}
-										currentModel={modelSession.config.model}
-										currentProvider={modelSession.config.provider}
+										sessionId={workerSession.id}
+										roomId={roomId}
+										currentModel={workerSession.config.model ?? ''}
+										currentProvider={workerSession.config.provider}
+									/>
+								</div>
+							)}
+
+							{/* Leader model switcher */}
+							{hasLeaderModel && leaderSession && (
+								<div class="flex items-center gap-2">
+									<span class="text-gray-500 flex-shrink-0 w-14">Leader:</span>
+									<span class="text-xs text-gray-400">Model:</span>
+									<TaskViewModelSelector
+										sessionId={leaderSession.id}
+										roomId={roomId}
+										currentModel={leaderSession.config.model ?? ''}
+										currentProvider={leaderSession.config.provider}
 									/>
 								</div>
 							)}
@@ -312,6 +387,22 @@ export function TaskInfoPanel({
 							Actions
 						</h3>
 						<div class="flex items-center gap-2 flex-wrap">
+							{visibleActions.interrupt && actions.onInterrupt && (
+								<button
+									type="button"
+									onClick={actions.onInterrupt}
+									disabled={disabledActions?.interrupt}
+									data-testid="task-info-panel-interrupt"
+									class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-amber-400 hover:text-amber-300 hover:bg-amber-900/20 border border-amber-700/40 hover:border-amber-600/60"
+									title="Interrupt generation"
+								>
+									<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+										<rect x="6" y="6" width="12" height="12" rx="1" />
+									</svg>
+									Stop
+								</button>
+							)}
+
 							{visibleActions.complete && actions.onComplete && (
 								<button
 									type="button"
@@ -389,6 +480,48 @@ export function TaskInfoPanel({
 										/>
 									</svg>
 									Set Status
+								</button>
+							)}
+
+							{visibleActions.resetWorkerAgent && actions.onResetWorkerAgent && (
+								<button
+									type="button"
+									onClick={actions.onResetWorkerAgent}
+									disabled={disabledActions?.resetWorkerAgent}
+									data-testid="task-info-panel-reset-worker"
+									class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 text-gray-400 hover:text-orange-400 hover:border-orange-700/60"
+									title="Reset worker agent to fix stuck state or apply changes"
+								>
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+										/>
+									</svg>
+									Reset Worker
+								</button>
+							)}
+
+							{visibleActions.resetLeaderAgent && actions.onResetLeaderAgent && (
+								<button
+									type="button"
+									onClick={actions.onResetLeaderAgent}
+									disabled={disabledActions?.resetLeaderAgent}
+									data-testid="task-info-panel-reset-leader"
+									class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-dark-600 text-gray-400 hover:text-orange-400 hover:border-orange-700/60"
+									title="Reset leader agent to fix stuck state or apply changes"
+								>
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+										/>
+									</svg>
+									Reset Leader
 								</button>
 							)}
 						</div>

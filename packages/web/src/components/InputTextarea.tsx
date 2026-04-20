@@ -25,10 +25,14 @@
  */
 
 import type { ComponentChildren } from 'preact';
+import type { MutableRef } from 'preact/hooks';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
+import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
+import type { ReferenceSearchResult } from '@neokai/shared';
+import { REFERENCE_PATTERN } from '@neokai/shared';
 
 export interface InputTextareaProps {
 	content: string;
@@ -44,6 +48,12 @@ export interface InputTextareaProps {
 	selectedCommandIndex?: number;
 	onCommandSelect?: (command: string) => void;
 	onCommandClose?: () => void;
+	// Reference autocomplete
+	showReferenceAutocomplete?: boolean;
+	referenceResults?: ReferenceSearchResult[];
+	selectedReferenceIndex?: number;
+	onReferenceSelect?: (result: ReferenceSearchResult) => void;
+	onReferenceClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
 	onStop?: () => void;
@@ -52,6 +62,10 @@ export interface InputTextareaProps {
 	leadingElement?: ComponentChildren;
 	/** Left padding class used when leadingElement is present */
 	leadingPaddingClass?: string;
+	/** Optional ref forwarded to the underlying textarea element */
+	textareaRef?: MutableRef<HTMLTextAreaElement | null>;
+	transparent?: boolean;
+	onHeightChange?: (heightPx: number) => void;
 }
 
 /**
@@ -70,13 +84,22 @@ export function InputTextarea({
 	selectedCommandIndex = 0,
 	onCommandSelect,
 	onCommandClose,
+	showReferenceAutocomplete = false,
+	referenceResults,
+	selectedReferenceIndex,
+	onReferenceSelect,
+	onReferenceClose,
 	isAgentWorking = false,
 	onStop,
 	onPaste,
 	leadingElement,
 	leadingPaddingClass,
+	textareaRef: externalTextareaRef,
+	transparent = false,
+	onHeightChange,
 }: InputTextareaProps) {
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
+	const textareaRef = externalTextareaRef ?? internalTextareaRef;
 	const [isMultiline, setIsMultiline] = useState(false);
 
 	// Detect if device is mobile (touch-based)
@@ -119,15 +142,27 @@ export function InputTextarea({
 	}, [content]);
 
 	// Auto-resize textarea
+	// Uses requestAnimationFrame to avoid forced synchronous reflow:
+	// the height reset and scrollHeight read happen in separate frames,
+	// allowing the browser to batch layout calculations naturally.
 	useEffect(() => {
 		const textarea = textareaRef.current;
-		if (textarea) {
-			textarea.style.height = '40px';
+		if (!textarea) return;
+
+		// Frame 1: Reset height so scrollHeight reflects actual content
+		textarea.style.height = 'auto';
+		textarea.style.minHeight = '40px';
+
+		// Frame 2: Read natural height and apply clamped value
+		const rafId = requestAnimationFrame(() => {
 			const newHeight = Math.min(Math.max(40, textarea.scrollHeight), 200);
 			textarea.style.height = `${newHeight}px`;
 			setIsMultiline(newHeight > 45);
-		}
-	}, [content]);
+			onHeightChange?.(newHeight);
+		});
+
+		return () => cancelAnimationFrame(rafId);
+	}, [content, onHeightChange]);
 
 	// Focus on mount
 	useEffect(() => {
@@ -140,25 +175,42 @@ export function InputTextarea({
 	const showStop = isAgentWorking && !hasContent && !!onStop;
 	const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
 
+	// Count @ref{} tokens in content — use REFERENCE_PATTERN.source to get a fresh regex
+	// instance each render, avoiding stale lastIndex from the shared global-flag regex.
+	const refCount = [...content.matchAll(new RegExp(REFERENCE_PATTERN.source, 'g'))].length;
+
 	return (
 		<div class="relative flex-1">
-			{/* Command Autocomplete */}
-			{showCommandAutocomplete && onCommandSelect && onCommandClose && (
-				<CommandAutocomplete
-					commands={filteredCommands}
-					selectedIndex={selectedCommandIndex}
-					onSelect={onCommandSelect}
-					onClose={onCommandClose}
+			{/* Autocomplete menus — only one shown at a time; reference takes priority */}
+			{showReferenceAutocomplete && onReferenceSelect && onReferenceClose ? (
+				<ReferenceAutocomplete
+					results={referenceResults ?? []}
+					selectedIndex={selectedReferenceIndex ?? 0}
+					onSelect={onReferenceSelect}
+					onClose={onReferenceClose}
 				/>
+			) : (
+				showCommandAutocomplete &&
+				onCommandSelect &&
+				onCommandClose && (
+					<CommandAutocomplete
+						commands={filteredCommands}
+						selectedIndex={selectedCommandIndex}
+						onSelect={onCommandSelect}
+						onClose={onCommandClose}
+					/>
+				)
 			)}
 
 			<div
 				class={cn(
 					'relative rounded-3xl border transition-all',
-					'bg-dark-800/60 backdrop-blur-sm',
+					transparent ? 'bg-transparent backdrop-blur-sm' : 'bg-dark-800/60 backdrop-blur-sm',
 					disabled
 						? borderColors.ui.disabled
-						: `${borderColors.ui.input} focus-within:bg-dark-800/80`
+						: transparent
+							? 'border-dark-600/80 focus-within:bg-dark-800/30'
+							: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>
 				{leadingElement && (
@@ -205,6 +257,31 @@ export function InputTextarea({
 						)}
 					>
 						{charCount}/{maxChars}
+					</div>
+				)}
+
+				{/* Reference Badge — shows count of @ref{} tokens in content */}
+				{refCount > 0 && (
+					<div
+						class="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-gray-400"
+						data-testid="reference-badge"
+					>
+						<svg
+							class="w-3 h-3"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width={2}
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+							/>
+						</svg>
+						<span>
+							{refCount} {refCount === 1 ? 'reference' : 'references'}
+						</span>
 					</div>
 				)}
 

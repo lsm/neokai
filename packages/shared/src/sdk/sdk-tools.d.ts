@@ -23,10 +23,6 @@ export type ToolInputSchemas =
   | McpInput
   | NotebookEditInput
   | ReadMcpResourceInput
-  | SubscribeMcpResourceInput
-  | UnsubscribeMcpResourceInput
-  | SubscribePollingInput
-  | UnsubscribePollingInput
   | TodoWriteInput
   | WebFetchInput
   | WebSearchInput
@@ -49,10 +45,6 @@ export type ToolOutputSchemas =
   | McpOutput
   | NotebookEditOutput
   | ReadMcpResourceOutput
-  | SubscribeMcpResourceOutput
-  | UnsubscribeMcpResourceOutput
-  | SubscribePollingOutput
-  | UnsubscribePollingOutput
   | TodoWriteOutput
   | WebFetchOutput
   | WebSearchOutput
@@ -63,6 +55,7 @@ export type ToolOutputSchemas =
 export type AgentOutput =
   | {
       agentId: string;
+      agentType?: string;
       content: {
         type: "text";
         text: string;
@@ -84,6 +77,15 @@ export type AgentOutput =
           ephemeral_1h_input_tokens: number;
           ephemeral_5m_input_tokens: number;
         } | null;
+      };
+      toolStats?: {
+        readCount: number;
+        searchCount: number;
+        bashCount: number;
+        editFileCount: number;
+        linesAdded: number;
+        linesRemoved: number;
+        otherToolCount: number;
       };
       status: "completed";
       prompt: string;
@@ -110,17 +112,6 @@ export type AgentOutput =
        * Whether the calling agent has Read/Bash tools to check progress
        */
       canReadOutputFile?: boolean;
-    }
-  | {
-      status: "queued_to_running";
-      /**
-       * The ID of the running agent
-       */
-      agentId: string;
-      /**
-       * The prompt that was queued
-       */
-      prompt: string;
     };
 export type FileReadOutput =
   | {
@@ -146,10 +137,6 @@ export type FileReadOutput =
          * Total number of lines in the file
          */
         totalLines: number;
-        /**
-         * True when output was clipped to the byte cap (partial content)
-         */
-        resultWasTruncated?: boolean;
       };
     }
   | {
@@ -240,6 +227,15 @@ export type FileReadOutput =
          */
         outputDir: string;
       };
+    }
+  | {
+      type: "file_unchanged";
+      file: {
+        /**
+         * The path to the file
+         */
+        filePath: string;
+      };
     };
 export type ListMcpResourcesOutput = {
   /**
@@ -286,10 +282,6 @@ export interface AgentInput {
    */
   model?: "sonnet" | "opus" | "haiku";
   /**
-   * Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.
-   */
-  resume?: string;
-  /**
    * Set to true to run this agent in the background. You will be notified when it completes.
    */
   run_in_background?: boolean;
@@ -304,7 +296,7 @@ export interface AgentInput {
   /**
    * Permission mode for spawned teammate (e.g., "plan" to require plan approval).
    */
-  mode?: "acceptEdits" | "bypassPermissions" | "default" | "dontAsk" | "plan";
+  mode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan";
   /**
    * Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.
    */
@@ -334,7 +326,7 @@ export interface BashInput {
    */
   description?: string;
   /**
-   * Set to true to run this command in the background. Use TaskOutput to read the output later.
+   * Set to true to run this command in the background. Use Read to read the output later.
    */
   run_in_background?: boolean;
   /**
@@ -474,7 +466,7 @@ export interface GrepInput {
    */
   type?: string;
   /**
-   * Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 0 (unlimited).
+   * Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). Defaults to 250 when unspecified. Pass 0 for unlimited (use sparingly — large result sets waste context).
    */
   head_limit?: number;
   /**
@@ -536,80 +528,6 @@ export interface ReadMcpResourceInput {
    * The resource URI to read
    */
   uri: string;
-}
-export interface SubscribeMcpResourceInput {
-  /**
-   * The MCP server name
-   */
-  server: string;
-  /**
-   * The resource URI to subscribe to
-   */
-  uri: string;
-  /**
-   * Optional reason for subscribing (included in update notifications)
-   */
-  reason?: string;
-}
-export interface UnsubscribeMcpResourceInput {
-  /**
-   * The MCP server name
-   */
-  server?: string;
-  /**
-   * The resource URI to unsubscribe from
-   */
-  uri?: string;
-  /**
-   * The subscription ID to unsubscribe
-   */
-  subscriptionId?: string;
-}
-export interface SubscribePollingInput {
-  /**
-   * The type of subscription: "tool" to poll a tool, "resource" to poll a resource URI
-   */
-  type: "tool" | "resource";
-  /**
-   * The MCP server name
-   */
-  server: string;
-  /**
-   * The tool to call periodically (required when type is "tool")
-   */
-  toolName?: string;
-  /**
-   * Arguments to pass to the tool on each call
-   */
-  arguments?: {
-    [k: string]: unknown;
-  };
-  /**
-   * The resource URI to poll (required when type is "resource")
-   */
-  uri?: string;
-  /**
-   * Polling interval in milliseconds (minimum 1000ms, default 5000ms)
-   */
-  intervalMs: number;
-  /**
-   * Optional reason for subscribing (included in change notifications)
-   */
-  reason?: string;
-}
-export interface UnsubscribePollingInput {
-  /**
-   * The subscription ID to unsubscribe
-   */
-  subscriptionId?: string;
-  /**
-   * The MCP server name
-   */
-  server?: string;
-  /**
-   * The target to unsubscribe (tool name for tool subscriptions, URI for resource subscriptions)
-   */
-  target?: string;
 }
 export interface TodoWriteInput {
   /**
@@ -2234,9 +2152,13 @@ export interface ConfigInput {
 }
 export interface EnterWorktreeInput {
   /**
-   * Optional name for the worktree. A random name is generated if not provided.
+   * Optional name for a new worktree. Each "/"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. A random name is generated if not provided. Mutually exclusive with `path`.
    */
   name?: string;
+  /**
+   * Path to an existing worktree of the current repository to switch into instead of creating a new one. Must appear in `git worktree list` for the current repo. Mutually exclusive with `name`.
+   */
+  path?: string;
 }
 export interface ExitWorktreeInput {
   /**
@@ -2306,9 +2228,9 @@ export interface BashOutput {
    */
   persistedOutputSize?: number;
   /**
-   * Compressed output sent to model when token-saver is active (UI still uses stdout)
+   * Model-facing note listing readFileState entries whose mtime bumped during this command (set when WRITE_COMMAND_MARKERS matches)
    */
-  tokenSaverOutput?: string;
+  staleReadFileStateHint?: string;
 }
 export interface ExitPlanModeOutput {
   /**
@@ -2325,6 +2247,10 @@ export interface ExitPlanModeOutput {
    */
   hasTaskTool?: boolean;
   /**
+   * True when the user edited the plan (CCR web UI or Ctrl+G); determines whether the plan is echoed back in tool_result
+   */
+  planWasEdited?: boolean;
+  /**
    * When true, the teammate has sent a plan approval request to the team leader
    */
   awaitingLeaderApproval?: boolean;
@@ -2332,10 +2258,6 @@ export interface ExitPlanModeOutput {
    * Unique identifier for the plan approval request
    */
   requestId?: string;
-  /**
-   * Whether this plan was generated by an ultraplan remote session
-   */
-  isUltraplan?: boolean;
 }
 export interface FileEditOutput {
   /**
@@ -2353,7 +2275,7 @@ export interface FileEditOutput {
   /**
    * The original file contents before editing
    */
-  originalFile: string;
+  originalFile: string | null;
   /**
    * Diff patch showing the changes
    */
@@ -2424,6 +2346,10 @@ export interface FileWriteOutput {
      */
     repository?: string | null;
   };
+  /**
+   * True when the user edited the proposed content in the permission dialog before accepting
+   */
+  userModified?: boolean;
 }
 export interface GlobOutput {
   /**
@@ -2528,38 +2454,6 @@ export interface ReadMcpResourceOutput {
      */
     blobSavedTo?: string;
   }[];
-}
-export interface SubscribeMcpResourceOutput {
-  /**
-   * Whether the subscription was successful
-   */
-  subscribed: boolean;
-  /**
-   * Unique identifier for this subscription
-   */
-  subscriptionId: string;
-}
-export interface UnsubscribeMcpResourceOutput {
-  /**
-   * Whether the unsubscription was successful
-   */
-  unsubscribed: boolean;
-}
-export interface SubscribePollingOutput {
-  /**
-   * Whether the subscription was successful
-   */
-  subscribed: boolean;
-  /**
-   * Unique identifier for this subscription
-   */
-  subscriptionId: string;
-}
-export interface UnsubscribePollingOutput {
-  /**
-   * Whether the unsubscription was successful
-   */
-  unsubscribed: boolean;
 }
 export interface TodoWriteOutput {
   /**

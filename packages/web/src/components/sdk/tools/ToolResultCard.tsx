@@ -17,6 +17,7 @@ import {
 	shouldExpandByDefault,
 } from './tool-utils.ts';
 import { cn } from '../../../lib/utils.ts';
+import { RunningBorder } from '../RunningBorder.tsx';
 import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
@@ -50,7 +51,9 @@ export function ToolResultCard({
 	messageUuid,
 	sessionId,
 	isOutputRemoved = false,
+	disableExpand = false,
 	className,
+	isRunning = false,
 }: ToolResultCardProps) {
 	// Type-safe access to input/output properties
 	const inputRecord = input as Record<string, unknown>;
@@ -215,11 +218,15 @@ export function ToolResultCard({
 	const lineCountDisplay = getLineCountDisplay();
 
 	// Default & detailed variants - full display with expand/collapse
-	return (
+	// Note: the running-state arc is rendered by <RunningBorder> as an absolutely
+	// positioned SVG sibling (applied via a wrapper below). It cannot live on this
+	// div because overflow:hidden would clip the SVG that extends slightly past
+	// the card's outer edge.
+	const card = (
 		<div class={cn('border rounded-lg overflow-hidden', colors.bg, colors.border, className)}>
 			{/* Header - clickable to expand/collapse */}
 			<button
-				onClick={() => setIsExpanded(!isExpanded)}
+				onClick={() => !disableExpand && setIsExpanded(!isExpanded)}
 				class={cn(
 					'w-full flex items-center justify-between p-3 transition-colors',
 					'hover:bg-opacity-80 dark:hover:bg-opacity-80'
@@ -250,18 +257,25 @@ export function ToolResultCard({
 							/>
 						</svg>
 					)}
-					<svg
-						class={cn(
-							'w-5 h-5 transition-transform',
-							colors.iconColor,
-							isExpanded ? 'rotate-180' : ''
-						)}
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-					</svg>
+					{!disableExpand && (
+						<svg
+							class={cn(
+								'w-5 h-5 transition-transform',
+								colors.iconColor,
+								isExpanded ? 'rotate-180' : ''
+							)}
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M19 9l-7 7-7-7"
+							/>
+						</svg>
+					)}
 				</div>
 			</button>
 
@@ -455,4 +469,8 @@ export function ToolResultCard({
 			/>
 		</div>
 	);
+	if (isRunning) {
+		return <RunningBorder borderRadius={8}>{card}</RunningBorder>;
+	}
+	return card;
 }

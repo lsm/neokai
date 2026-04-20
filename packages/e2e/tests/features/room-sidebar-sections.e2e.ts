@@ -2,10 +2,10 @@
  * Room Sidebar Sections E2E Tests
  *
  * Verifies interactive sidebar features in the RoomContextPanel:
- * - Goals section: expand/collapse individual goals to show/hide linked tasks
- * - Tasks section: tab filtering (Active / Review / Done) for orphan tasks
+ * - Task stats strip: shows active/review counts, navigates to Tasks tab
+ * - Pinned items: Overview and Coordinator navigation buttons
+ * - Missions section: CollapsibleSection with active goals list and count badge
  * - Sessions section: collapsed by default, expands on click, shows [+] button
- * - Goals section header shows correct active goal count
  *
  * Setup: creates a room, stops the auto-started runtime (prevents agent processing),
  * then creates goals/tasks/sessions via RPC (accepted infrastructure pattern —
@@ -100,8 +100,14 @@ async function setupRoomWithData(page: Page): Promise<SetupResult> {
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
 		// Create room
-		const roomRes = await hub.request('room.create', { name: 'E2E Sidebar Test Room' });
+		const roomRes = await hub.request('room.create', {
+			name: 'E2E Sidebar Test Room',
+			defaultPath: workspaceRoot,
+		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
 		// Stop the runtime and wait until it is actually stopped before creating goals.
@@ -193,17 +199,16 @@ async function setupRoomWithData(page: Page): Promise<SetupResult> {
 
 /**
  * Navigate to the room and wait for the sidebar to be fully ready:
- * Goals section and Tasks section both visible, indicating the panel is mounted
+ * Missions section visible, indicating the panel is mounted
  * and the collapsible sections have rendered.
  */
 async function navigateToRoomAndWaitForSidebar(page: Page, roomId: string): Promise<void> {
 	await page.goto(`/room/${roomId}`);
 	await waitForWebSocketConnected(page);
-	// Wait for both Goals and Tasks section headers to be visible
+	// Wait for Missions section header to be visible (sidebar is mounted)
 	await expect(page.locator('button[aria-label="Missions section"]')).toBeVisible({
 		timeout: 10000,
 	});
-	await expect(page.locator('button[aria-label="Tasks section"]')).toBeVisible({ timeout: 5000 });
 }
 
 /**
@@ -214,6 +219,32 @@ function getSidebarSection(page: Page, sectionTitle: string) {
 	return page.locator('.collapsible-section').filter({
 		has: page.locator(`button[aria-label="${sectionTitle} section"]`),
 	});
+}
+
+/**
+ * Get a locator for the top tab bar button with the given label.
+ * Scopes to the Room component's root div (bg-dark-900) to exclude sidebar
+ * buttons (ContextPanel w-70), which render before Room in DOM order.
+ * Uses substring matching so it works even when a badge (e.g. "Tasks1") is appended.
+ */
+function getTopTabButton(page: Page, label: string) {
+	return page
+		.locator('.flex-1.flex.bg-dark-900.overflow-hidden')
+		.locator('button')
+		.filter({ hasText: label });
+}
+
+/**
+ * Assert that the top tab bar button with the given label has the full active styling:
+ * text-blue-400 (text color) + border-b-2 border-blue-400 (bottom border indicator).
+ * Uses separate assertions for each class to avoid false positives from partial matches.
+ * Each assertion auto-retries on failure, handling Preact signal propagation timing.
+ */
+async function expectTopTabActive(page: Page, label: string) {
+	const tab = getTopTabButton(page, label);
+	await expect(tab).toHaveClass(/text-blue-400/, { timeout: 5000 });
+	await expect(tab).toHaveClass(/border-b-2/, { timeout: 5000 });
+	await expect(tab).toHaveClass(/border-blue-400/, { timeout: 5000 });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -248,156 +279,136 @@ test.describe('Room Sidebar Sections', () => {
 		};
 	});
 
-	// ── Goals: expand / collapse ────────────────────────────────────────────
+	// ── Task stats strip ───────────────────────────────────────────────────
 
-	test('Goals section: expand a goal shows linked tasks, collapse hides them', async ({ page }) => {
+	test('Task stats strip: shows active and review counts', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const goalsSection = getSidebarSection(page, 'Missions');
+		// The task stats strip should show "X active · Y review"
+		// We have several active tasks (pending + in_progress) and 1 review task
+		await expect(page.locator('text=/\\d+ active/').first()).toBeVisible({ timeout: 10000 });
+		await expect(page.locator('text=/\\d+ review/').first()).toBeVisible({ timeout: 5000 });
+	});
+
+	test('Task stats strip: navigates to Tasks tab on click', async ({ page }) => {
+		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
+
+		// Click the task stats strip button (scope to sidebar to avoid matching tab bar)
+		const sidebar = page.locator('.w-70');
+		const statsButton = sidebar
+			.locator('button')
+			.filter({ hasText: /active/ })
+			.first();
+		await expect(statsButton).toBeVisible({ timeout: 10000 });
+		await statsButton.click();
+
+		// The Tasks tab should become active — expectTopTabActive checks both the
+		// text color (text-blue-400) and the bottom border indicator (border-b-2
+		// border-blue-400). Each assertion auto-retries to handle Preact signal
+		// propagation timing (client-side only, no network request).
+		await expectTopTabActive(page, 'Tasks');
+	});
+
+	// ── Pinned items ──────────────────────────────────────────────────────
+
+	test('Pinned items: Overview button is visible', async ({ page }) => {
+		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
+
+		// Scope to the sidebar panel (.w-70) to avoid matching the top tab bar button
+		const sidebar = page.locator('.w-70');
+		const overviewBtn = sidebar.locator('button').filter({ hasText: 'Overview' });
+		await expect(overviewBtn).toBeVisible({ timeout: 5000 });
+	});
+
+	test('Pinned items: Coordinator button is visible', async ({ page }) => {
+		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
+
+		// Scope to the sidebar panel (.w-70) to avoid matching the top tab bar button
+		const sidebar = page.locator('.w-70');
+		const coordinatorBtn = sidebar.locator('button').filter({ hasText: 'Coordinator' });
+		await expect(coordinatorBtn).toBeVisible({ timeout: 5000 });
+	});
+
+	test('Pinned items: Coordinator button navigates to Coordinator tab', async ({ page }) => {
+		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
+
+		// Click Coordinator in the sidebar — triggers navigateToRoomAgent which
+		// changes the URL and sets currentRoomAgentActiveSignal → active tab = 'chat'
+		const sidebar = page.locator('.w-70');
+		const coordinatorBtn = sidebar.locator('button').filter({ hasText: 'Coordinator' });
+		await coordinatorBtn.click();
+
+		// The Coordinator tab should become active in the top tab bar
+		await expectTopTabActive(page, 'Coordinator');
+	});
+
+	// ── Missions section ──────────────────────────────────────────────────
+
+	test('Missions section: shows active goals as navigation items', async ({ page }) => {
+		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
+
+		const missionsSection = getSidebarSection(page, 'Missions');
 
 		// Wait for goals to load (fetchGoals is called asynchronously on room init)
-		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
+		await expect(missionsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
 
-		// "Ship Auth Feature" goal button is visible in the Goals section
-		const goalButton = goalsSection.locator('button').filter({ hasText: 'Ship Auth Feature' });
-		await expect(goalButton).toBeVisible({ timeout: 5000 });
-
-		// Linked task should NOT be visible yet (goal starts collapsed)
-		await expect(goalsSection.getByText('Add Login Page')).not.toBeVisible();
-
-		// Click the goal to expand it — linked task should now appear
-		await goalButton.click();
-		await expect(goalsSection.getByText('Add Login Page')).toBeVisible({ timeout: 5000 });
-
-		// Click the goal again to collapse it — linked task should hide
-		await goalButton.click();
-		await expect(goalsSection.getByText('Add Login Page')).not.toBeVisible();
+		// Both goals should be visible in the sidebar
+		await expect(missionsSection.getByText('Fix CI Pipeline')).toBeVisible({ timeout: 5000 });
 	});
 
-	test('Goals section: expanded goal shows linked task as clickable button', async ({ page }) => {
+	test('Missions section: header shows correct active goal count', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const goalsSection = getSidebarSection(page, 'Missions');
+		const missionsSection = getSidebarSection(page, 'Missions');
 
 		// Wait for goals to load
-		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
-
-		// Expand the goal
-		await goalsSection.locator('button').filter({ hasText: 'Ship Auth Feature' }).click();
-
-		// The linked task should be visible as a button inside the goals section
-		const linkedTaskBtn = goalsSection.locator('button').filter({ hasText: 'Add Login Page' });
-		await expect(linkedTaskBtn).toBeVisible({ timeout: 5000 });
-	});
-
-	// ── Goals: header count ────────────────────────────────────────────────
-
-	test('Goals section: header shows correct active goal count', async ({ page }) => {
-		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
-
-		const goalsSection = getSidebarSection(page, 'Missions');
-
-		// Wait for goals to load — title text should appear
-		await expect(goalsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
+		await expect(missionsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
 
 		// We created 2 active goals: "Ship Auth Feature" and "Fix CI Pipeline"
 		// The count badge in CollapsibleSection renders as "(2)"
-		await expect(goalsSection.getByText('(2)')).toBeVisible({ timeout: 5000 });
+		await expect(missionsSection.getByText('(2)')).toBeVisible({ timeout: 5000 });
 	});
 
-	// ── Tasks: tab filtering ────────────────────────────────────────────────
-
-	test('Tasks section: Active tab is selected by default', async ({ page }) => {
+	test('Missions section: clicking a goal navigates to Missions tab', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const tasksSection = getSidebarSection(page, 'Tasks');
+		const missionsSection = getSidebarSection(page, 'Missions');
+		await expect(missionsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
 
-		// "Orphan Active Task" (in_progress) should be visible in the default active tab
-		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
+		// Click a goal in the sidebar
+		await missionsSection.locator('button').filter({ hasText: 'Ship Auth Feature' }).click();
 
-		// Review and done orphan tasks should NOT be visible under active tab
-		await expect(tasksSection.getByText('Orphan Review Task')).not.toBeVisible();
-		await expect(tasksSection.getByText('Orphan Done Task')).not.toBeVisible();
+		// The Missions tab should become active in the top tab bar
+		await expectTopTabActive(page, 'Missions');
 	});
 
-	test('Tasks section: Review tab shows only review-status tasks', async ({ page }) => {
+	test('Missions section: expand and collapse', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const tasksSection = getSidebarSection(page, 'Tasks');
+		const missionsToggle = page.locator('button[aria-label="Missions section"]');
+		await expect(missionsToggle).toBeVisible({ timeout: 10000 });
 
-		// Verify active tab shows the active task first
-		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
+		// Missions section is expanded by default
+		await expect(missionsToggle).toHaveAttribute('aria-expanded', 'true');
 
-		// Click the Review tab — sidebar renders lowercase tab labels ("active"/"review"/"done")
-		await tasksSection
-			.locator('button')
-			.filter({ hasText: /^review$/ })
-			.click();
+		// Goal items should be visible when expanded
+		const missionsSection = getSidebarSection(page, 'Missions');
+		await expect(missionsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 15000 });
 
-		// Only "Orphan Review Task" (review status) should be visible
-		await expect(tasksSection.getByText('Orphan Review Task')).toBeVisible({ timeout: 5000 });
+		// Click to collapse
+		await missionsToggle.click();
+		await expect(missionsToggle).toHaveAttribute('aria-expanded', 'false');
 
-		// Active and Done orphan tasks should not be visible
-		await expect(tasksSection.getByText('Orphan Active Task')).not.toBeVisible();
-		await expect(tasksSection.getByText('Orphan Done Task')).not.toBeVisible();
+		// Goal items should no longer be visible when collapsed
+		await expect(missionsSection.getByText('Ship Auth Feature')).not.toBeVisible();
+
+		// Click to expand again
+		await missionsToggle.click();
+		await expect(missionsToggle).toHaveAttribute('aria-expanded', 'true');
+		await expect(missionsSection.getByText('Ship Auth Feature')).toBeVisible({ timeout: 5000 });
 	});
 
-	test('Tasks section: Done tab shows only completed/cancelled tasks', async ({ page }) => {
-		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
-
-		const tasksSection = getSidebarSection(page, 'Tasks');
-
-		// Verify active tab first
-		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
-
-		// Click the Done tab — sidebar renders lowercase tab labels
-		await tasksSection
-			.locator('button')
-			.filter({ hasText: /^done$/ })
-			.click();
-
-		// Only "Orphan Done Task" (completed) should be visible
-		await expect(tasksSection.getByText('Orphan Done Task')).toBeVisible({ timeout: 5000 });
-
-		// Active and Review orphan tasks should not be visible
-		await expect(tasksSection.getByText('Orphan Active Task')).not.toBeVisible();
-		await expect(tasksSection.getByText('Orphan Review Task')).not.toBeVisible();
-	});
-
-	test('Tasks section: switching tabs updates visible tasks', async ({ page }) => {
-		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
-
-		const tasksSection = getSidebarSection(page, 'Tasks');
-
-		// Start on Active tab: see in_progress orphan
-		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 8000 });
-
-		// Switch to Review — sidebar uses lowercase tab labels
-		await tasksSection
-			.locator('button')
-			.filter({ hasText: /^review$/ })
-			.click();
-		await expect(tasksSection.getByText('Orphan Review Task')).toBeVisible({ timeout: 5000 });
-		await expect(tasksSection.getByText('Orphan Active Task')).not.toBeVisible();
-
-		// Switch to Done
-		await tasksSection
-			.locator('button')
-			.filter({ hasText: /^done$/ })
-			.click();
-		await expect(tasksSection.getByText('Orphan Done Task')).toBeVisible({ timeout: 5000 });
-		await expect(tasksSection.getByText('Orphan Review Task')).not.toBeVisible();
-
-		// Switch back to Active
-		await tasksSection
-			.locator('button')
-			.filter({ hasText: /^active$/ })
-			.click();
-		await expect(tasksSection.getByText('Orphan Active Task')).toBeVisible({ timeout: 5000 });
-		await expect(tasksSection.getByText('Orphan Done Task')).not.toBeVisible();
-	});
-
-	// ── Sessions: collapsible ───────────────────────────────────────────────
+	// ── Sessions: collapsible ─────────────────────────────────────────────
 
 	test('Sessions section: collapsed by default, expands on click', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
@@ -459,218 +470,15 @@ test.describe('Room Sidebar Sections', () => {
 	test('Sessions section: [+] button navigates to a new session', async ({ page }) => {
 		await navigateToRoomAndWaitForSidebar(page, setup.roomId);
 
-		const initialUrl = page.url();
-
 		// Click [+] to create a session (UI action — no RPC)
 		await page.locator('button[aria-label="Create session"]').click();
 
-		// The page should navigate to the new session (URL changes from room dashboard)
-		await expect(page).not.toHaveURL(initialUrl, { timeout: 10000 });
+		// The page should navigate to the new session URL (/room/{id}/session/{id})
+		await page.waitForURL(/\/session\//, { timeout: 10000 });
 
 		// The main content should show the new session chat interface (empty state)
 		await expect(page.getByText('No messages yet', { exact: true })).toBeVisible({
 			timeout: 10000,
 		});
-	});
-
-	// ── Goals: completed tasks toggle ─────────────────────────────────────────
-
-	test('Goals section: completed tasks are hidden by default under expanded goals', async ({
-		page,
-	}) => {
-		// Create an additional goal with a completed linked task
-		const completedTaskRoomId = await page.evaluate(async () => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-
-			const roomRes = await hub.request('room.create', {
-				name: 'E2E Completed Tasks Toggle Room',
-			});
-			const roomId = (roomRes as { room: { id: string } }).room.id;
-
-			// Stop runtime
-			for (let i = 0; i < 20; i++) {
-				try {
-					await hub.request('room.runtime.stop', { roomId });
-				} catch {}
-				const stateRes = await hub
-					.request('room.runtime.state', { roomId })
-					.catch(() => null as unknown);
-				const state = (stateRes as { state?: string } | null)?.state;
-				if (!state || state === 'stopped') break;
-				await new Promise((r) => setTimeout(r, 100));
-			}
-
-			// Create a goal
-			const goalRes = await hub.request('goal.create', {
-				roomId,
-				title: 'Completed Tasks Test Goal',
-			});
-			const goalId = (goalRes as { goal: { id: string } }).goal.id;
-
-			// Create a completed task and link it to the goal
-			const taskRes = await hub.request('task.create', {
-				roomId,
-				title: 'Completed Linked Task',
-			});
-			const taskId = (taskRes as { task: { id: string } }).task.id;
-
-			await hub.request('goal.linkTask', { roomId, goalId, taskId });
-
-			// Transition task to completed
-			await hub.request('task.setStatus', {
-				roomId,
-				taskId,
-				status: 'in_progress',
-			});
-			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
-
-			return roomId;
-		});
-
-		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
-
-		const goalsSection = getSidebarSection(page, 'Missions');
-		await expect(goalsSection.getByText('Completed Tasks Test Goal')).toBeVisible({
-			timeout: 15000,
-		});
-
-		// Expand the goal
-		await goalsSection.locator('button').filter({ hasText: 'Completed Tasks Test Goal' }).click();
-
-		// Completed task should NOT be visible by default
-		await expect(goalsSection.getByText('Completed Linked Task')).not.toBeVisible();
-
-		// Clean up
-		await deleteRoom(page, completedTaskRoomId);
-	});
-
-	test('Goals section: toggle button shows completed tasks when clicked', async ({ page }) => {
-		// Create a goal with completed task
-		const completedTaskRoomId = await page.evaluate(async () => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-
-			const roomRes = await hub.request('room.create', {
-				name: 'E2E Show Completed Toggle Room',
-			});
-			const roomId = (roomRes as { room: { id: string } }).room.id;
-
-			// Stop runtime
-			for (let i = 0; i < 20; i++) {
-				try {
-					await hub.request('room.runtime.stop', { roomId });
-				} catch {}
-				const stateRes = await hub
-					.request('room.runtime.state', { roomId })
-					.catch(() => null as unknown);
-				const state = (stateRes as { state?: string } | null)?.state;
-				if (!state || state === 'stopped') break;
-				await new Promise((r) => setTimeout(r, 100));
-			}
-
-			const goalRes = await hub.request('goal.create', {
-				roomId,
-				title: 'Toggle Show Goal',
-			});
-			const goalId = (goalRes as { goal: { id: string } }).goal.id;
-
-			const taskRes = await hub.request('task.create', {
-				roomId,
-				title: 'Done Task',
-			});
-			const taskId = (taskRes as { task: { id: string } }).task.id;
-
-			await hub.request('goal.linkTask', { roomId, goalId, taskId });
-
-			await hub.request('task.setStatus', { roomId, taskId, status: 'in_progress' });
-			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
-
-			return roomId;
-		});
-
-		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
-
-		const goalsSection = getSidebarSection(page, 'Missions');
-		await expect(goalsSection.getByText('Toggle Show Goal')).toBeVisible({ timeout: 15000 });
-
-		// Expand the goal
-		await goalsSection.locator('button').filter({ hasText: 'Toggle Show Goal' }).click();
-
-		// Task should not be visible initially
-		await expect(goalsSection.getByText('Done Task')).not.toBeVisible();
-
-		// Click the show completed tasks toggle button
-		await goalsSection.locator('button[aria-label="Show completed tasks"]').click();
-
-		// Now completed task should be visible
-		await expect(goalsSection.getByText('Done Task')).toBeVisible({ timeout: 5000 });
-
-		// Clean up
-		await deleteRoom(page, completedTaskRoomId);
-	});
-
-	test('Goals section: completed tasks toggle is persisted in localStorage', async ({ page }) => {
-		// Create a goal with completed task
-		const completedTaskRoomId = await page.evaluate(async () => {
-			const hub = window.__messageHub || window.appState?.messageHub;
-			if (!hub?.request) throw new Error('MessageHub not available');
-
-			const roomRes = await hub.request('room.create', {
-				name: 'E2E Persistence Room',
-			});
-			const roomId = (roomRes as { room: { id: string } }).room.id;
-
-			for (let i = 0; i < 20; i++) {
-				try {
-					await hub.request('room.runtime.stop', { roomId });
-				} catch {}
-				const stateRes = await hub
-					.request('room.runtime.state', { roomId })
-					.catch(() => null as unknown);
-				const state = (stateRes as { state?: string } | null)?.state;
-				if (!state || state === 'stopped') break;
-				await new Promise((r) => setTimeout(r, 100));
-			}
-
-			const goalRes = await hub.request('goal.create', { roomId, title: 'Persist Toggle Goal' });
-			const goalId = (goalRes as { goal: { id: string } }).goal.id;
-
-			const taskRes = await hub.request('task.create', {
-				roomId,
-				title: 'Finished Task',
-			});
-			const taskId = (taskRes as { task: { id: string } }).task.id;
-
-			await hub.request('goal.linkTask', { roomId, goalId, taskId });
-			await hub.request('task.setStatus', { roomId, taskId, status: 'in_progress' });
-			await hub.request('task.setStatus', { roomId, taskId, status: 'completed' });
-
-			return roomId;
-		});
-
-		await navigateToRoomAndWaitForSidebar(page, completedTaskRoomId);
-
-		const goalsSection = getSidebarSection(page, 'Missions');
-		await expect(goalsSection.getByText('Persist Toggle Goal')).toBeVisible({ timeout: 15000 });
-
-		// Expand goal and toggle to show completed
-		await goalsSection.locator('button').filter({ hasText: 'Persist Toggle Goal' }).click();
-		await goalsSection.locator('button[aria-label="Show completed tasks"]').click();
-		await expect(goalsSection.getByText('Finished Task')).toBeVisible({ timeout: 5000 });
-
-		// Reload the page to verify persistence
-		await page.reload();
-		await waitForWebSocketConnected(page);
-		await expect(goalsSection.getByText('Persist Toggle Goal')).toBeVisible({ timeout: 15000 });
-
-		// Expand the goal again - the toggle state should be remembered
-		await goalsSection.locator('button').filter({ hasText: 'Persist Toggle Goal' }).click();
-
-		// Task should still be visible (persisted)
-		await expect(goalsSection.getByText('Finished Task')).toBeVisible({ timeout: 5000 });
-
-		// Clean up
-		await deleteRoom(page, completedTaskRoomId);
 	});
 });

@@ -1,26 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import type { CoverageReportOptions } from 'monocart-reporter';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { mkdirSync } from 'fs';
-import { randomUUID } from 'crypto';
-
-// Create isolated temp directories for this test run
-// This ensures e2e tests NEVER affect production databases or workspaces
-const testRunId = `e2e-${Date.now()}-${randomUUID().slice(0, 8)}`;
-const e2eTempDir = join(tmpdir(), 'neokai-e2e', testRunId);
-const e2eWorkspaceDir = join(e2eTempDir, 'workspace');
-const e2eDatabaseDir = join(e2eTempDir, 'database');
-
-// Ensure directories exist
-mkdirSync(e2eWorkspaceDir, { recursive: true });
-mkdirSync(e2eDatabaseDir, { recursive: true });
-
-console.log(`\n📁 E2E Test Isolation:
-   Temp Dir: ${e2eTempDir}
-   Workspace: ${e2eWorkspaceDir}
-   Database: ${e2eDatabaseDir}/daemon.db
-\n`);
+import { e2eTempDir, e2eWorkspaceDir, e2eDatabaseDir, e2eDatabasePath } from './test-env';
 
 // E2E_PORT: when set, tests start their own server on this specific port (random port mode).
 // PLAYWRIGHT_BASE_URL: when set, reuse an external already-running server.
@@ -29,6 +9,12 @@ const e2ePort = process.env.E2E_PORT;
 const baseURL = e2ePort
 	? `http://localhost:${e2ePort}`
 	: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283';
+
+console.log(`\n📁 E2E Test Isolation:
+   Temp Dir: ${e2eTempDir}
+   Workspace: ${e2eWorkspaceDir}
+   Database: ${e2eDatabasePath}
+\n`);
 
 /**
  * Monocart Coverage Reporter Configuration
@@ -252,7 +238,14 @@ export default defineConfig({
 			DEFAULT_MODEL: 'sonnet', // Maps to GLM-4.7 for E2E tests
 			// Isolated paths for this test run
 			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
-			DB_PATH: join(e2eDatabaseDir, 'daemon.db'),
+			NEOKAI_WORKSPACE_ROOT: e2eWorkspaceDir,
+			DB_PATH: e2eDatabasePath,
+			// Enable Neo agent for E2E tests (bypasses test-mode guard in app.ts)
+			NEOKAI_ENABLE_NEO_AGENT: '1',
+			// Disable automatic goal processing to prevent worktree creation spam in E2E tests
+			// Goals can still be created/manually triggered via UI or RPC, but the daemon
+			// won't automatically try to spawn planning groups that require worktrees.
+			NEOKAI_DISABLE_GOAL_PROCESSING: '1',
 			// Pass random port to CLI when in E2E_PORT mode
 			...(e2ePort ? { NEOKAI_PORT: e2ePort } : {}),
 		},

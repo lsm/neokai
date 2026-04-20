@@ -2,7 +2,7 @@
 # Validates that all daemon online test files are covered by the CI matrix.
 #
 # The CI matrix in .github/workflows/main.yml splits some modules (rpc, room,
-# features) into shards with explicit file lists. This script catches new test
+# features, rewind, space) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
 # NOTE: providers-anthropic-to-codex-bridge shard is disabled (requires OPENAI_API_KEY).
@@ -47,15 +47,22 @@ RPC_FILES=(
 # due to resource usage. ROOM_FILES below tracks files that exist on disk; CI does not
 # automatically run them. Run them locally or enable per-task in the CI matrix.
 ROOM_FILES=(
+  coder-agent-subagents.test.ts
   mission-lifecycle.test.ts
   room-advanced-scenarios.test.ts
   room-chat-agent-tools.test.ts
   room-chat-constraints.test.ts
+  room-mcp-enablement.test.ts
   room-multi-agent-flow.test.ts
+  planner-three-phase.test.ts
+  planner-websearch.test.ts
   room-planner-two-phase.test.ts
   room-replan-recovery.test.ts
   room-reviewer-flow.test.ts
   room-tick-job.test.ts
+  short-id-flow.test.ts
+  reviewer-leader-subagents.test.ts
+  goal-lifecycle-reset.test.ts
 )
 
 FEATURES_FILES=(
@@ -69,6 +76,28 @@ FEATURES_FILES=(
 PROVIDERS_FILES=(
   anthropic-to-copilot-bridge-provider.test.ts
   anthropic-to-codex-bridge-provider.test.ts  # CI shard disabled — kept here so validator doesn't flag it
+)
+
+CROSS_PROVIDER_FILES=(
+  cross-provider-model-switch.test.ts
+  glm-to-anthropic-resume.test.ts
+  thinking-block-signatures.test.ts
+)
+
+REWIND_FILES=(
+  rewind-feature.test.ts
+  selective-rewind.test.ts
+)
+
+SPACE_FILES=(
+  space-chat-session.test.ts
+  space-edge-cases.test.ts
+  space-happy-path-code-review.test.ts
+  space-happy-path-full-pipeline.test.ts
+  space-happy-path-plan-to-approve.test.ts
+  space-happy-path-qa-completion.test.ts
+  task-agent-lifecycle.test.ts
+  task-agent-skills.test.ts
 )
 
 check_split_module() {
@@ -113,10 +142,13 @@ check_split_module "rpc" "${RPC_FILES[@]}"
 check_split_module "room" "${ROOM_FILES[@]}"
 check_split_module "features" "${FEATURES_FILES[@]}"
 check_split_module "providers" "${PROVIDERS_FILES[@]}"
+check_split_module "cross-provider" "${CROSS_PROVIDER_FILES[@]}"
+check_split_module "rewind" "${REWIND_FILES[@]}"
+check_split_module "space" "${SPACE_FILES[@]}"
 
 # --- 2. Check for new module directories not in the CI matrix ---
 # These are directories covered by directory-level test_path (auto-discover).
-KNOWN_DIRS="agent components convo coordinator features git glm lifecycle mcp providers rewind room rpc sandbox sdk space websocket"
+KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp neo providers rewind room rpc sandbox sdk space websocket"
 
 for dir in "$ONLINE_DIR"/*/; do
   [ -d "$dir" ] || continue

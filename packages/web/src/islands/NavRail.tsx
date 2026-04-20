@@ -2,7 +2,6 @@ import { navSectionSignal, type NavSection } from '../lib/signals.ts';
 import {
 	navigateToSessions,
 	navigateToSettings,
-	navigateToHome,
 	navigateToRooms,
 	navigateToInbox,
 	navigateToSpaces,
@@ -13,6 +12,7 @@ import { borderColors } from '../lib/design-tokens.ts';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
 import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { inboxStore } from '../lib/inbox-store.ts';
+import { NeoNavButton } from '../components/neo/NeoNavButton.tsx';
 
 export function NavRail() {
 	const navSection = navSectionSignal.value;
@@ -20,10 +20,6 @@ export function NavRail() {
 
 	const handleNavClick = (section: NavSection) => {
 		switch (section) {
-			case 'home':
-				navSectionSignal.value = 'home';
-				navigateToHome();
-				break;
 			case 'chats':
 				navigateToSessions();
 				break;
@@ -46,7 +42,7 @@ export function NavRail() {
 		<div
 			class={`
 				hidden md:relative md:flex
-				w-16 h-screen
+				w-16 h-full
 				bg-dark-950 border-r ${borderColors.ui.default}
 				flex-col items-center py-4
 			`}
@@ -87,8 +83,10 @@ export function NavRail() {
 				})}
 			</nav>
 
-			{/* Bottom - Daemon Status & Settings */}
+			{/* Bottom - Neo, Daemon Status & Settings */}
 			<div class="mt-auto flex flex-col gap-1">
+				<NeoNavButton />
+
 				<DaemonStatusIndicator />
 
 				<NavIconButton

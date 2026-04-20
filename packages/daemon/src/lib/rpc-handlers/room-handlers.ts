@@ -13,43 +13,68 @@
  * - agents.cli.list - List detected CLI agents
  */
 
-import type { MessageHub, WorkspacePath } from '@neokai/shared';
+import type { MessageHub, WorkspacePath, CreateRoomParams } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { Database } from '../../storage/database';
+import { existsSync } from 'node:fs';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
 import { inferProviderForModel } from '../providers/registry';
 import { Logger } from '../logger';
 import { cancelPendingTickJobs, enqueueRoomTick } from '../job-handlers/room-tick.handler';
+import { validateWorkspacePath } from '@neokai/shared';
 
 const log = new Logger('room-handlers');
+
+export interface RoomHandlerOpts {
+	/**
+	 * Callback that returns true if the given room has active (non-completed) task groups.
+	 * Used to guard defaultPath changes — if tasks are running, the change is rejected.
+	 * Implementations MUST query the DB, not only in-memory state, to handle daemon restarts.
+	 */
+	hasActiveTaskGroups?: (roomId: string) => boolean;
+}
 
 export function setupRoomHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
-	workspaceRoot?: string,
 	sessionManager?: SessionManager,
-	jobQueue?: JobQueueRepository
+	jobQueue?: JobQueueRepository,
+	db?: Database,
+	opts?: RoomHandlerOpts
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
-		const params = data as {
-			name: string;
-			background?: string;
-			allowedPaths?: WorkspacePath[];
-			defaultPath?: string;
-		};
+		const params = data as CreateRoomParams;
 
 		if (!params.name) {
 			throw new Error('Room name is required');
 		}
 
-		// Auto-populate workspace paths from workspaceRoot if not provided
-		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
-		const defaultPath = params.defaultPath ?? (workspaceRoot ? workspaceRoot : undefined);
+		// Require defaultPath from the client (Milestone 2, task 2.1)
+		if (!params.defaultPath) {
+			throw new Error('defaultPath is required when creating a room');
+		}
+
+		// Validate path format (non-empty, absolute POSIX path)
+		const pathValidation = validateWorkspacePath(params.defaultPath);
+		if (!pathValidation.valid) {
+			throw new Error(`Invalid defaultPath: ${pathValidation.error}`);
+		}
+
+		// Validate path exists on filesystem
+		if (!existsSync(params.defaultPath)) {
+			throw new Error(`defaultPath does not exist: ${params.defaultPath}`);
+		}
+
+		const defaultPath = params.defaultPath;
+
+		// Derive allowedPaths from defaultPath if not explicitly provided
+		const allowedPaths = params.allowedPaths ?? [{ path: defaultPath }];
 
 		const room = roomManager.createRoom({
 			name: params.name,
@@ -66,7 +91,7 @@ export function setupRoomHandlers(
 				await sessionManager.createSession({
 					sessionId: roomChatSessionId,
 					title: room.name,
-					workspacePath: defaultPath ?? allowedPaths[0]?.path,
+					workspacePath: defaultPath,
 					config: {
 						model: room.defaultModel,
 						provider: room.defaultModel ? inferProviderForModel(room.defaultModel) : undefined,
@@ -137,9 +162,45 @@ export function setupRoomHandlers(
 			throw new Error('Room ID is required');
 		}
 
+		// Guard: validate new defaultPath and check for active task groups
+		let updatedAllowedPaths = params.allowedPaths;
+		let defaultPathChanged = false;
+		if (params.defaultPath !== undefined) {
+			const currentRoom = roomManager.getRoom(params.roomId);
+			if (!currentRoom) {
+				throw new Error(`Room not found: ${params.roomId}`);
+			}
+
+			if (params.defaultPath !== currentRoom.defaultPath) {
+				defaultPathChanged = true;
+				// Validate the new path (only the incoming path — current path may be a sentinel value)
+				const pathValidation = validateWorkspacePath(params.defaultPath);
+				if (!pathValidation.valid) {
+					throw new Error(`Invalid defaultPath: ${pathValidation.error}`);
+				}
+				if (!existsSync(params.defaultPath)) {
+					throw new Error(`defaultPath does not exist: ${params.defaultPath}`);
+				}
+
+				// Reject if tasks are still running — workers hold worktrees based on the old path
+				if (opts?.hasActiveTaskGroups?.(params.roomId)) {
+					throw new Error(
+						'Cannot change defaultPath while tasks are active. Stop or complete all tasks first.'
+					);
+				}
+
+				// Auto-add the new defaultPath to allowedPaths if it is not already present
+				const existingAllowedPaths = updatedAllowedPaths ?? currentRoom.allowedPaths ?? [];
+				const alreadyAllowed = existingAllowedPaths.some((wp) => wp.path === params.defaultPath);
+				if (!alreadyAllowed) {
+					updatedAllowedPaths = [...existingAllowedPaths, { path: params.defaultPath }];
+				}
+			}
+		}
+
 		const room = roomManager.updateRoom(params.roomId, {
 			name: params.name,
-			allowedPaths: params.allowedPaths,
+			allowedPaths: updatedAllowedPaths,
 			defaultPath: params.defaultPath,
 			defaultModel: params.defaultModel,
 			allowedModels: params.allowedModels,
@@ -171,6 +232,25 @@ export function setupRoomHandlers(
 				}
 			} catch (err) {
 				log.warn(`Could not sync room chat session model for room ${room.id}:`, err);
+			}
+		}
+
+		// When defaultPath changes, sync the room chat session's workspacePath so the
+		// next SDK invocation uses the updated path. The session record is updated in
+		// both the DB and the in-memory AgentSession metadata via updateSession(), so
+		// resolveSessionContext (which re-fetches from DB on cache miss) is always
+		// consistent — no additional cache invalidation is needed.
+		if (defaultPathChanged && room.defaultPath && sessionManager) {
+			const roomChatSessionId = `room:chat:${room.id}`;
+			try {
+				const existingSession = sessionManager.getSessionFromDB(roomChatSessionId);
+				if (existingSession) {
+					await sessionManager.updateSession(roomChatSessionId, {
+						workspacePath: room.defaultPath,
+					});
+				}
+			} catch (err) {
+				log.warn(`Could not sync room chat session workspacePath for room ${room.id}:`, err);
 			}
 		}
 
@@ -281,6 +361,38 @@ export function setupRoomHandlers(
 		}
 		return { agents: getCliAgents() };
 	});
+
+	// --- Per-Room Skill Override Handlers ---
+	if (db) {
+		// room.getSkillOverrides - Get all skill overrides for a room
+		messageHub.onRequest('room.getSkillOverrides', (data) => {
+			const params = data as { roomId: string };
+			if (!params.roomId) throw new Error('Room ID is required');
+			const overrides = db.roomSkillOverrides.getOverrides(params.roomId);
+			return { overrides } satisfies {
+				overrides: Array<{ skillId: string; roomId: string; enabled: boolean }>;
+			};
+		});
+
+		// room.setSkillOverride - Set (upsert) a skill override for a room
+		messageHub.onRequest('room.setSkillOverride', (data) => {
+			const params = data as { roomId: string; skillId: string; enabled: boolean };
+			if (!params.roomId) throw new Error('Room ID is required');
+			if (!params.skillId) throw new Error('Skill ID is required');
+			if (typeof params.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+			db.roomSkillOverrides.upsertOverride(params.roomId, params.skillId, params.enabled);
+			return { success: true } satisfies { success: boolean };
+		});
+
+		// room.clearSkillOverride - Remove a skill override for a room (revert to global)
+		messageHub.onRequest('room.clearSkillOverride', (data) => {
+			const params = data as { roomId: string; skillId: string };
+			if (!params.roomId) throw new Error('Room ID is required');
+			if (!params.skillId) throw new Error('Skill ID is required');
+			db.roomSkillOverrides.deleteOverride(params.roomId, params.skillId);
+			return { success: true } satisfies { success: boolean };
+		});
+	}
 }
 
 export function setupRoomRuntimeHandlers(
@@ -304,6 +416,39 @@ export function setupRoomRuntimeHandlers(
 		const leaderModel = roomRuntimeService.getLeaderModel(params.roomId);
 		const workerModel = roomRuntimeService.getWorkerModel(params.roomId);
 		return { leaderModel, workerModel };
+	});
+
+	// room.runtime.model.get - Get current model for a task session
+	messageHub.onRequest('room.runtime.model.get', async (data) => {
+		const params = data as { sessionId: string };
+		if (!params.sessionId) throw new Error('Session ID is required');
+		const result = await roomRuntimeService.modelGet(params.sessionId);
+		if (!result) throw new Error('Session not found in runtime');
+		return result;
+	});
+
+	// room.runtime.model.switch - Switch model for a task session
+	messageHub.onRequest('room.runtime.model.switch', async (data) => {
+		const params = data as { sessionId: string; model: string; provider: string };
+		if (!params.sessionId) throw new Error('Session ID is required');
+		if (!params.model) throw new Error('Model is required');
+		if (!params.provider) throw new Error('Provider is required');
+		const result = await roomRuntimeService.modelSwitch(
+			params.sessionId,
+			params.model,
+			params.provider
+		);
+		if (!result.success) {
+			throw new Error(result.error ?? 'Model switch failed');
+		}
+		// Emit session.updated event for parity with session.model.switch handler.
+		// This allows listeners to react to model changes on task sessions.
+		messageHub.event(
+			'session.updated',
+			{ sessionId: params.sessionId, model: result.model },
+			{ channel: `session:${params.sessionId}` }
+		);
+		return result;
 	});
 
 	// room.runtime.pause - Pause runtime

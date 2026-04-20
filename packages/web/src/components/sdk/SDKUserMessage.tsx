@@ -5,6 +5,7 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type { ChatMessage } from '@neokai/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
@@ -13,12 +14,64 @@ import { Dropdown } from '../ui/Dropdown.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
+import { ViaNeoIndicator } from '../neo/ViaNeoIndicator.tsx';
 import { ErrorOutput, hasErrorOutput } from './ErrorOutput.tsx';
+import { MentionToken, parseTextWithReferences } from './MentionToken.tsx';
 import { MessageInfoButton } from './MessageInfoButton.tsx';
 import { MessageInfoDropdown } from './MessageInfoDropdown.tsx';
 import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
+import type { JSX } from 'preact';
+import { Fragment } from 'preact';
+import type { ReferenceMetadata } from '@neokai/shared';
+
+/**
+ * Render text content, replacing @ref{type:id} tokens with styled MentionToken
+ * components and leaving all other text (including plain @) unchanged.
+ */
+function renderMessageText(
+	text: string,
+	metadata: ReferenceMetadata,
+	sessionId?: string
+): JSX.Element {
+	// Fast path: skip parsing when there are no @ref tokens
+	if (!text.includes('@ref{')) {
+		return <>{text}</>;
+	}
+
+	const segments = parseTextWithReferences(text, metadata);
+
+	return (
+		<>
+			{segments.map((seg, idx) => {
+				if (seg.kind === 'text') {
+					// Use Fragment to emit text nodes without a DOM wrapper, preserving
+					// the original text-node structure for selection and layout.
+					return <Fragment key={idx}>{seg.content}</Fragment>;
+				}
+				if (seg.kind === 'mention') {
+					return (
+						<MentionToken
+							key={idx}
+							refType={seg.refType}
+							id={seg.id}
+							displayText={seg.displayText}
+							status={seg.status}
+							sessionId={sessionId}
+						/>
+					);
+				}
+				// unknown-mention: render the raw token string with warning styling
+				return (
+					<span key={idx} class="text-yellow-500/70 italic" title="Unknown reference type">
+						{seg.content}
+					</span>
+				);
+			})}
+		</>
+	);
+}
 
 type UserMessage = Extract<SDKMessage, { type: 'user' }> & { sendStatus?: string };
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
@@ -36,7 +89,9 @@ interface Props {
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: SDKMessage[];
+	allMessages?: ChatMessage[];
+	/** Render user rows whose content is tool_result blocks. */
+	showToolResultMessages?: boolean;
 }
 
 export function SDKUserMessage({
@@ -52,6 +107,7 @@ export function SDKUserMessage({
 	selectedMessages,
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
+	showToolResultMessages = false,
 }: Props) {
 	const { message: apiMessage } = message;
 	const [copied, setCopied] = useState(false);
@@ -67,7 +123,7 @@ export function SDKUserMessage({
 	};
 
 	// Don't render tool result messages - they'll be shown with their tool use blocks
-	if (isToolResultMessage()) {
+	if (isToolResultMessage() && !showToolResultMessages) {
 		return null;
 	}
 
@@ -90,6 +146,28 @@ export function SDKUserMessage({
 						return b.text as string;
 					}
 					// Image blocks or other types - skip or show type
+					if (b.type === 'tool_result') {
+						const rawContent = b.content;
+						if (typeof rawContent === 'string') return rawContent;
+						if (Array.isArray(rawContent)) {
+							return rawContent
+								.map((c: unknown) => {
+									const obj = c as Record<string, unknown>;
+									if (typeof obj.text === 'string') return obj.text;
+									return '';
+								})
+								.filter(Boolean)
+								.join('\n');
+						}
+						if (rawContent && typeof rawContent === 'object') {
+							try {
+								return JSON.stringify(rawContent, null, 2);
+							} catch {
+								return String(rawContent);
+							}
+						}
+						return '';
+					}
 					return '';
 				})
 				.filter(Boolean)
@@ -113,6 +191,10 @@ export function SDKUserMessage({
 
 	const textContent = getTextContent();
 	const imageBlocks = getImageBlocks();
+
+	// Extract reference metadata from the message blob for rendering @ref tokens
+	const referenceMetadata: ReferenceMetadata =
+		(message as typeof message & { referenceMetadata?: ReferenceMetadata }).referenceMetadata ?? {};
 
 	// For synthetic messages, extract all content blocks for detailed display
 	const getSyntheticContentBlocks = (): Array<Record<string, unknown>> | string | null => {
@@ -205,7 +287,11 @@ export function SDKUserMessage({
 		);
 	}
 
-	// If this is a synthetic message (compaction summary, interrupt, etc.), use the reusable component
+	// If this is a synthetic message (compaction summary, interrupt, agent→agent
+	// handoff, etc.), use the reusable purple card component. Synthetic messages
+	// are always visually distinct from human input — the purple chrome marks
+	// that the message was system-generated, not typed by a human, regardless
+	// of whether we're in a normal chat or a task thread.
 	if (syntheticContentBlocks) {
 		const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
 		return (
@@ -216,6 +302,9 @@ export function SDKUserMessage({
 			/>
 		);
 	}
+
+	// Check if this message was originated by Neo (stored in DB, injected when loading history)
+	const isNeoOrigin = (message as SDKMessage & { origin?: string }).origin === 'neo';
 
 	// Get message metadata for E2E tests
 	const messageWithTimestamp = message as SDKMessage & { timestamp?: number };
@@ -240,7 +329,7 @@ export function SDKUserMessage({
 		>
 			{/* Main Content */}
 			<div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
-				{textContent}
+				{renderMessageText(textContent, referenceMetadata, sessionId)}
 			</div>
 
 			{/* Attached images */}
@@ -283,6 +372,7 @@ export function SDKUserMessage({
 				messageSpacing.actions.padding
 			)}
 		>
+			{isNeoOrigin && <ViaNeoIndicator />}
 			<Tooltip content={getFullTimestamp()} position="left">
 				<span class="text-xs text-gray-500">{getTimestamp()}</span>
 			</Tooltip>

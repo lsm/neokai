@@ -119,16 +119,16 @@ export class MinimaxProvider implements Provider {
 
 	/**
 	 * Get model for a specific tier
-	 * All tiers use MiniMax-M2.5 (flagship model)
+	 * All tiers use MiniMax-M2.7 (flagship model)
 	 */
 	getModelForTier(_tier: ModelTier): string | undefined {
-		return 'MiniMax-M2.5';
+		return 'MiniMax-M2.7';
 	}
 
 	/**
 	 * Build SDK configuration for MiniMax
 	 * Routes ANTHROPIC_DEFAULT_*_MODEL to the selected model so the SDK uses
-	 * the model the user actually picked. Falls back to MiniMax-M2.5 for
+	 * the model the user actually picked. Falls back to MiniMax-M2.7 for
 	 * unrecognised model IDs.
 	 */
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
@@ -138,7 +138,7 @@ export class MinimaxProvider implements Provider {
 		}
 
 		const baseUrl = sessionConfig?.baseUrl || MinimaxProvider.BASE_URL;
-		const routingModelId = this.ownsModel(modelId) ? modelId : 'MiniMax-M2.5';
+		const routingModelId = this.ownsModel(modelId) ? modelId : 'MiniMax-M2.7';
 
 		const envVars: Record<string, string> = {
 			ANTHROPIC_BASE_URL: baseUrl,
@@ -168,6 +168,6 @@ export class MinimaxProvider implements Provider {
 	 * Get the title generation model for MiniMax
 	 */
 	getTitleGenerationModel(): string {
-		return 'MiniMax-M2.5';
+		return 'MiniMax-M2.7';
 	}
 }

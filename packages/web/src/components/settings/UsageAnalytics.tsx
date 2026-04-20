@@ -1,6 +1,5 @@
-import { useMemo } from 'preact/hooks';
-import type { Session } from '@neokai/shared';
-import { sessions } from '../../lib/state.ts';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { connectionManager } from '../../lib/connection-manager.ts';
 import { formatTokens } from '../../lib/utils.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 
@@ -17,52 +16,13 @@ interface DailyCost {
 	cost: number;
 }
 
-function aggregateUsageData(allSessions: Session[]) {
-	let totalCost = 0;
-	let totalTokens = 0;
-	let totalMessages = 0;
-
-	const sessionCosts: SessionCostEntry[] = [];
-	const dailyCostMap = new Map<string, number>();
-
-	for (const session of allSessions) {
-		const cost = session.metadata.totalCost || 0;
-		const tokens = session.metadata.totalTokens || 0;
-		const messages = session.metadata.messageCount || 0;
-
-		totalCost += cost;
-		totalTokens += tokens;
-		totalMessages += messages;
-
-		if (cost > 0) {
-			sessionCosts.push({
-				id: session.id,
-				title: session.title || 'Untitled',
-				cost,
-				tokens,
-				messages,
-			});
-		}
-
-		// Aggregate by date (guard against invalid dates)
-		const created = new Date(session.createdAt);
-		if (!Number.isNaN(created.getTime())) {
-			const date = created.toISOString().split('T')[0];
-			dailyCostMap.set(date, (dailyCostMap.get(date) || 0) + cost);
-		}
-	}
-
-	// Sort sessions by cost descending, take top 10
-	sessionCosts.sort((a, b) => b.cost - a.cost);
-	const topSessions = sessionCosts.slice(0, 10);
-
-	// Sort daily costs by date
-	const dailyCosts: DailyCost[] = Array.from(dailyCostMap.entries())
-		.map(([date, cost]) => ({ date, cost }))
-		.sort((a, b) => a.date.localeCompare(b.date))
-		.slice(-14); // Last 14 days
-
-	return { totalCost, totalTokens, totalMessages, topSessions, dailyCosts };
+interface UsageData {
+	totalCost: number;
+	totalTokens: number;
+	totalMessages: number;
+	sessionCount: number;
+	topSessions: SessionCostEntry[];
+	dailyCosts: DailyCost[];
 }
 
 function StatCard({ label, value, subtext }: { label: string; value: string; subtext?: string }) {
@@ -125,46 +85,103 @@ function DailyChart({ dailyCosts }: { dailyCosts: DailyCost[] }) {
 }
 
 export function UsageAnalytics() {
-	const allSessions = sessions.value;
+	const [data, setData] = useState<UsageData | null>(null);
+	const [loading, setLoading] = useState(false);
 
-	const data = useMemo(() => aggregateUsageData(allSessions), [allSessions]);
+	const fetchUsage = useCallback(async () => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		setLoading(true);
+		try {
+			const result = await hub.request<UsageData>('usage.calculate', {});
+			setData(result);
+		} catch {
+			// Fetch failed silently
+		} finally {
+			setLoading(false);
+		}
+	}, []);
+
+	// Fetch on mount
+	useEffect(() => {
+		fetchUsage();
+	}, [fetchUsage]);
 
 	return (
 		<div class="space-y-6">
-			<SettingsSection title="Overview">
-				<div class="grid grid-cols-3 gap-3">
-					<StatCard
-						label="Total Cost"
-						value={`$${data.totalCost.toFixed(2)}`}
-						subtext={`${allSessions.length} sessions`}
-					/>
-					<StatCard
-						label="Total Tokens"
-						value={formatTokens(data.totalTokens)}
-						subtext={`${data.totalMessages} messages`}
-					/>
-					<StatCard
-						label="Avg Cost / Session"
-						value={`$${allSessions.length > 0 ? (data.totalCost / allSessions.length).toFixed(4) : '0.00'}`}
-					/>
+			<div class="flex items-center justify-between">
+				<div>
+					<h3 class="text-sm font-medium text-gray-200">Usage Analytics</h3>
+					<p class="text-xs text-gray-500">Pre-calculated from session data</p>
 				</div>
-			</SettingsSection>
+				<button
+					type="button"
+					onClick={fetchUsage}
+					disabled={loading}
+					class="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1.5 px-2 py-1 rounded border border-dark-700 hover:border-dark-600 disabled:opacity-50"
+				>
+					<svg
+						class={`w-3 h-3 ${loading ? 'animate-spin' : ''}`}
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+						/>
+					</svg>
+					Recalculate
+				</button>
+			</div>
 
-			<SettingsSection title="Daily Cost (Last 14 Days)">
-				<DailyChart dailyCosts={data.dailyCosts} />
-			</SettingsSection>
+			{!data && loading && <div class="text-xs text-gray-500 text-center py-8">Calculating...</div>}
 
-			<SettingsSection title="Top Sessions by Cost">
-				{data.topSessions.length === 0 ? (
-					<div class="text-xs text-gray-500 text-center py-4">No session cost data yet</div>
-				) : (
-					<div class="space-y-1">
-						{data.topSessions.map((entry) => (
-							<CostBar key={entry.id} entry={entry} maxCost={data.topSessions[0].cost} />
-						))}
-					</div>
-				)}
-			</SettingsSection>
+			{!data && !loading && (
+				<div class="text-xs text-gray-500 text-center py-8">No data available</div>
+			)}
+
+			{data && (
+				<>
+					<SettingsSection title="Overview">
+						<div class="grid grid-cols-3 gap-3">
+							<StatCard
+								label="Total Cost"
+								value={`$${data.totalCost.toFixed(2)}`}
+								subtext={`${data.sessionCount} sessions`}
+							/>
+							<StatCard
+								label="Total Tokens"
+								value={formatTokens(data.totalTokens)}
+								subtext={`${data.totalMessages} messages`}
+							/>
+							<StatCard
+								label="Avg Cost / Session"
+								value={`$${data.sessionCount > 0 ? (data.totalCost / data.sessionCount).toFixed(4) : '0.00'}`}
+							/>
+						</div>
+					</SettingsSection>
+
+					<SettingsSection title="Daily Cost (Last 14 Days)">
+						<DailyChart dailyCosts={data.dailyCosts} />
+					</SettingsSection>
+
+					<SettingsSection title="Top Sessions by Cost">
+						{data.topSessions.length === 0 ? (
+							<div class="text-xs text-gray-500 text-center py-4">No session cost data yet</div>
+						) : (
+							<div class="space-y-1">
+								{data.topSessions.map((entry) => (
+									<CostBar key={entry.id} entry={entry} maxCost={data.topSessions[0].cost} />
+								))}
+							</div>
+						)}
+					</SettingsSection>
+				</>
+			)}
 		</div>
 	);
 }

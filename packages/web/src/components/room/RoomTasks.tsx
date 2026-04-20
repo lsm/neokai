@@ -5,24 +5,26 @@
  * - Active: draft + pending + in_progress
  * - Review: review + needs_attention (awaiting human action)
  * - Done: completed + cancelled
- * - Archived: archived (hidden by default, expandable)
+ *
+ * Note: Archived tasks are excluded server-side by the tasks.byRoom LiveQuery
+ * and are not displayed in this component.
  */
 
-import { useState } from 'preact/hooks';
-import { signal, effect } from '@preact/signals';
+import { signal, effect, useSignal } from '@preact/signals';
 import type { TaskSummary, TaskStatus, RoomGoal } from '@neokai/shared';
-import { toast } from '../../lib/toast.ts';
+import { CircularProgressIndicator } from '../ui/CircularProgressIndicator';
 
 /** Tab filter types */
-export type TaskFilterTab = 'active' | 'review' | 'done' | 'archived';
+export type TaskFilterTab = 'active' | 'review' | 'done';
 
 /** Get initial tab from localStorage - exported for testing */
 export function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
-	// Migrate old tab values: 'failed' and 'needs_attention' now live under 'review'
+	// Migrate old tab values: 'failed', 'needs_attention', and 'archived' map to other tabs
 	if (stored === 'failed' || stored === 'needs_attention') return 'review';
-	if (stored === 'active' || stored === 'review' || stored === 'done' || stored === 'archived') {
+	if (stored === 'archived') return 'active';
+	if (stored === 'active' || stored === 'review' || stored === 'done') {
 		return stored;
 	}
 	return 'active';
@@ -44,10 +46,7 @@ interface RoomTasksProps {
 	/** Pre-built reverse lookup from roomStore.goalByTaskId.value */
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
-	onReject?: (taskId: string, feedback: string) => void;
-	onApprove?: (taskId: string) => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }
 
@@ -57,9 +56,14 @@ function getTabCounts(tasks: TaskSummary[]) {
 		active: tasks.filter(
 			(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
 		).length,
-		review: tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention').length,
+		review: tasks.filter(
+			(t) =>
+				t.status === 'review' ||
+				t.status === 'needs_attention' ||
+				t.status === 'rate_limited' ||
+				t.status === 'usage_limited'
+		).length,
 		done: tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled').length,
-		archived: tasks.filter((t) => t.status === 'archived').length,
 	};
 }
 
@@ -71,11 +75,15 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 				(t) => t.status === 'draft' || t.status === 'pending' || t.status === 'in_progress'
 			);
 		case 'review':
-			return tasks.filter((t) => t.status === 'review' || t.status === 'needs_attention');
+			return tasks.filter(
+				(t) =>
+					t.status === 'review' ||
+					t.status === 'needs_attention' ||
+					t.status === 'rate_limited' ||
+					t.status === 'usage_limited'
+			);
 		case 'done':
 			return tasks.filter((t) => t.status === 'completed' || t.status === 'cancelled');
-		case 'archived':
-			return tasks.filter((t) => t.status === 'archived');
 	}
 }
 
@@ -98,6 +106,10 @@ function getStatusBorderColor(status: TaskStatus): string {
 			return 'border-l-gray-700';
 		case 'archived':
 			return 'border-l-gray-800';
+		case 'rate_limited':
+			return 'border-l-orange-500';
+		case 'usage_limited':
+			return 'border-l-orange-600';
 		default:
 			return 'border-l-transparent';
 	}
@@ -108,20 +120,10 @@ export function RoomTasks({
 	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
-	onView,
-	onReject,
-	onApprove,
 	onReactivate,
 }: RoomTasksProps) {
-	let selectedTab = selectedTabSignal.value;
+	const selectedTab = selectedTabSignal.value;
 	const tabCounts = getTabCounts(tasks);
-
-	// Auto-reset to 'active' when archived tab is selected but no archived tasks exist
-	if (selectedTab === 'archived' && tabCounts.archived === 0) {
-		selectedTab = 'active';
-		selectedTabSignal.value = 'active';
-	}
-
 	const filteredTasks = getFilteredTasks(tasks, selectedTab);
 
 	const handleTabClick = (tab: TaskFilterTab) => {
@@ -130,15 +132,28 @@ export function RoomTasks({
 
 	if (tasks.length === 0) {
 		return (
-			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
-				<p class="text-gray-400">No tasks yet</p>
-				<p class="text-sm text-gray-500 mt-1">Create a task to get started</p>
+			<div class="max-w-3xl mx-auto px-5 flex flex-col items-center justify-center py-16 text-center">
+				<svg
+					class="w-10 h-10 text-gray-700 mb-3"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke="currentColor"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={1.5}
+						d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+					/>
+				</svg>
+				<p class="text-sm text-gray-400 font-medium">No tasks yet</p>
+				<p class="text-xs text-gray-600 mt-1">Create a mission to get started</p>
 			</div>
 		);
 	}
 
 	return (
-		<div class="space-y-4">
+		<div class="max-w-3xl mx-auto px-5 py-6 space-y-6">
 			{/* Tab Bar */}
 			<div class="flex border-b border-dark-700">
 				<TabButton
@@ -161,15 +176,6 @@ export function RoomTasks({
 					onClick={() => handleTabClick('done')}
 					variant="green"
 				/>
-				{tabCounts.archived > 0 && (
-					<TabButton
-						label="Archived"
-						count={tabCounts.archived}
-						isActive={selectedTab === 'archived'}
-						onClick={() => handleTabClick('archived')}
-						variant="gray"
-					/>
-				)}
 			</div>
 
 			{/* Task List */}
@@ -183,9 +189,6 @@ export function RoomTasks({
 					goalByTaskId={goalByTaskId}
 					onTaskClick={onTaskClick}
 					onGoalClick={onGoalClick}
-					onView={onView}
-					onReject={onReject}
-					onApprove={onApprove}
 					onReactivate={onReactivate}
 				/>
 			)}
@@ -267,18 +270,14 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 			title: 'No completed tasks',
 			description: 'Completed and cancelled tasks will appear here',
 		},
-		archived: {
-			title: 'No archived tasks',
-			description: 'Archived tasks will appear here',
-		},
 	};
 
 	const { title, description } = messages[tab];
 
 	return (
-		<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
-			<p class="text-gray-400">{title}</p>
-			<p class="text-sm text-gray-500 mt-1">{description}</p>
+		<div class="flex flex-col items-center justify-center py-12 text-center">
+			<p class="text-sm text-gray-400 font-medium">{title}</p>
+			<p class="text-xs text-gray-500 mt-1">{description}</p>
 		</div>
 	);
 }
@@ -291,9 +290,6 @@ function TaskList({
 	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
-	onView,
-	onReject,
-	onApprove,
 	onReactivate,
 }: {
 	tasks: TaskSummary[];
@@ -301,19 +297,9 @@ function TaskList({
 	tab: TaskFilterTab;
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
-	onReject?: (taskId: string, feedback: string) => void;
-	onApprove?: (taskId: string) => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 }) {
-	const [rejectingTaskId, setRejectingTaskId] = useState<string | null>(null);
-
-	// Active tab: group by in_progress, pending, draft
-	// Review tab: group by review and needs_attention
-	// Done tab: group by completed and cancelled
-	// Archived tab: all archived tasks
-
 	if (tab === 'active') {
 		const inProgress = tasks.filter((t) => t.status === 'in_progress');
 		const pending = tasks.filter((t) => t.status === 'pending');
@@ -331,8 +317,6 @@ function TaskList({
 						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
 					/>
 				)}
 				{pending.length > 0 && (
@@ -345,8 +329,6 @@ function TaskList({
 						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
 					/>
 				)}
 				{draft.length > 0 && (
@@ -359,8 +341,6 @@ function TaskList({
 						goalByTaskId={goalByTaskId}
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
 					/>
 				)}
 			</div>
@@ -368,28 +348,14 @@ function TaskList({
 	}
 
 	if (tab === 'review') {
-		const reviewTasks = tasks.filter((t) => t.status === 'review');
 		const needsAttention = tasks.filter((t) => t.status === 'needs_attention');
+		const rateLimited = tasks.filter(
+			(t) => t.status === 'rate_limited' || t.status === 'usage_limited'
+		);
+		const reviewTasks = tasks.filter((t) => t.status === 'review');
 
 		return (
 			<div class="space-y-4">
-				{reviewTasks.length > 0 && (
-					<TaskGroup
-						title="Awaiting Review"
-						count={reviewTasks.length}
-						variant="purple"
-						tasks={reviewTasks}
-						allTasks={allTasks}
-						goalByTaskId={goalByTaskId}
-						onTaskClick={onTaskClick}
-						onGoalClick={onGoalClick}
-						onView={onView}
-						onReject={onReject}
-						onApprove={onApprove}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
-					/>
-				)}
 				{needsAttention.length > 0 && (
 					<TaskGroup
 						title="Needs Attention"
@@ -401,69 +367,69 @@ function TaskList({
 						onTaskClick={onTaskClick}
 						onGoalClick={onGoalClick}
 						showAlert
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
+					/>
+				)}
+				{rateLimited.length > 0 && (
+					<TaskGroup
+						title="Rate / Usage Limited"
+						count={rateLimited.length}
+						variant="orange"
+						tasks={rateLimited}
+						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
+						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
+						showClock
+					/>
+				)}
+				{reviewTasks.length > 0 && (
+					<TaskGroup
+						title="Awaiting Review"
+						count={reviewTasks.length}
+						variant="purple"
+						tasks={reviewTasks}
+						allTasks={allTasks}
+						goalByTaskId={goalByTaskId}
+						onTaskClick={onTaskClick}
+						onGoalClick={onGoalClick}
 					/>
 				)}
 			</div>
 		);
 	}
 
-	if (tab === 'done') {
-		const completed = tasks.filter((t) => t.status === 'completed');
-		const cancelled = tasks.filter((t) => t.status === 'cancelled');
+	// Done tab (default)
+	const completed = tasks.filter((t) => t.status === 'completed');
+	const cancelled = tasks.filter((t) => t.status === 'cancelled');
 
-		return (
-			<div class="space-y-4">
-				{completed.length > 0 && (
-					<TaskGroup
-						title="Completed"
-						count={completed.length}
-						variant="green"
-						tasks={completed}
-						allTasks={allTasks}
-						goalByTaskId={goalByTaskId}
-						onTaskClick={onTaskClick}
-						onGoalClick={onGoalClick}
-						onReactivate={onReactivate}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
-					/>
-				)}
-				{cancelled.length > 0 && (
-					<TaskGroup
-						title="Cancelled"
-						count={cancelled.length}
-						variant="gray"
-						tasks={cancelled}
-						allTasks={allTasks}
-						goalByTaskId={goalByTaskId}
-						onTaskClick={onTaskClick}
-						onGoalClick={onGoalClick}
-						onReactivate={onReactivate}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={setRejectingTaskId}
-					/>
-				)}
-			</div>
-		);
-	}
-
-	// Archived tab
 	return (
 		<div class="space-y-4">
-			<TaskGroup
-				title="Archived"
-				count={tasks.length}
-				variant="gray"
-				tasks={tasks}
-				allTasks={allTasks}
-				goalByTaskId={goalByTaskId}
-				onTaskClick={onTaskClick}
-				onGoalClick={onGoalClick}
-				rejectingTaskId={rejectingTaskId}
-				onSetRejectingTaskId={setRejectingTaskId}
-			/>
+			{completed.length > 0 && (
+				<TaskGroup
+					title="Completed"
+					count={completed.length}
+					variant="green"
+					tasks={completed}
+					allTasks={allTasks}
+					goalByTaskId={goalByTaskId}
+					onTaskClick={onTaskClick}
+					onGoalClick={onGoalClick}
+					onReactivate={onReactivate}
+				/>
+			)}
+			{cancelled.length > 0 && (
+				<TaskGroup
+					title="Cancelled"
+					count={cancelled.length}
+					variant="gray"
+					tasks={cancelled}
+					allTasks={allTasks}
+					goalByTaskId={goalByTaskId}
+					onTaskClick={onTaskClick}
+					onGoalClick={onGoalClick}
+					onReactivate={onReactivate}
+				/>
+			)}
 		</div>
 	);
 }
@@ -478,29 +444,21 @@ function TaskGroup({
 	goalByTaskId,
 	onTaskClick,
 	onGoalClick,
-	onView,
-	onReject,
-	onApprove,
 	onReactivate,
 	showAlert = false,
-	rejectingTaskId,
-	onSetRejectingTaskId,
+	showClock = false,
 }: {
 	title: string;
 	count: number;
-	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
+	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'orange' | 'gray';
 	tasks: TaskSummary[];
 	allTasks: TaskSummary[];
 	goalByTaskId?: Map<string, RoomGoal>;
 	onTaskClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
-	onReject?: (taskId: string, feedback: string) => void;
-	onApprove?: (taskId: string) => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
 	showAlert?: boolean;
-	rejectingTaskId?: string | null;
-	onSetRejectingTaskId?: (id: string | null) => void;
+	showClock?: boolean;
 }) {
 	const headerStyles: Record<string, string> = {
 		default: '',
@@ -508,6 +466,7 @@ function TaskGroup({
 		purple: 'bg-purple-900/20',
 		green: 'bg-green-900/20',
 		red: 'bg-red-900/20',
+		orange: 'bg-orange-900/20',
 		gray: 'bg-dark-800',
 	};
 
@@ -517,6 +476,7 @@ function TaskGroup({
 		purple: 'text-purple-400',
 		green: 'text-green-400',
 		red: 'text-red-400',
+		orange: 'text-orange-400',
 		gray: 'text-gray-500',
 	};
 
@@ -526,11 +486,12 @@ function TaskGroup({
 		purple: 'border-dark-700',
 		green: 'border-dark-700',
 		red: 'border-red-800/60',
+		orange: 'border-orange-800/60',
 		gray: 'border-dark-700',
 	};
 
 	return (
-		<div class={`bg-dark-850 border rounded-lg overflow-hidden ${borderStyles[variant]}`}>
+		<div class={`bg-dark-850 border rounded-xl overflow-hidden ${borderStyles[variant]}`}>
 			<div
 				class={`px-4 py-3 border-b ${borderStyles[variant]} ${headerStyles[variant]} flex items-center gap-1`}
 			>
@@ -549,6 +510,21 @@ function TaskGroup({
 						/>
 					</svg>
 				)}
+				{showClock && (
+					<svg
+						class="w-4 h-4 text-orange-400 flex-shrink-0"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={1.5}
+							d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+						/>
+					</svg>
+				)}
 				<h3 class={`font-semibold ${titleStyles[variant]}`}>
 					{title} ({count})
 				</h3>
@@ -562,12 +538,7 @@ function TaskGroup({
 						goal={goalByTaskId?.get(task.id)}
 						onClick={onTaskClick}
 						onGoalClick={onGoalClick}
-						onView={onView}
-						onReject={onReject}
-						onApprove={onApprove}
 						onReactivate={onReactivate}
-						rejectingTaskId={rejectingTaskId}
-						onSetRejectingTaskId={onSetRejectingTaskId}
 					/>
 				))}
 			</div>
@@ -583,60 +554,72 @@ function isBlocked(task: TaskSummary, allTasks: TaskSummary[]): boolean {
 	});
 }
 
+/** Short ID badge with click-to-copy behaviour */
+function ShortIdBadge({ shortId }: { shortId: string }) {
+	const copied = useSignal(false);
+
+	const handleCopy = (e: MouseEvent) => {
+		e.stopPropagation();
+		navigator.clipboard
+			.writeText(shortId)
+			.then(() => {
+				copied.value = true;
+				setTimeout(() => {
+					copied.value = false;
+				}, 1500);
+			})
+			.catch(() => {});
+	};
+
+	return (
+		<button
+			data-testid={`short-id-badge-${shortId}`}
+			onClick={handleCopy}
+			title="Click to copy short ID"
+			class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0 transition-colors"
+		>
+			{copied.value ? '\u2713 copied' : `#${shortId}`}
+		</button>
+	);
+}
+
 function TaskItem({
 	task,
 	allTasks,
 	goal,
 	onClick,
 	onGoalClick,
-	onView,
-	onReject,
-	onApprove,
 	onReactivate,
-	rejectingTaskId,
-	onSetRejectingTaskId,
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
 	goal?: RoomGoal;
 	onClick?: (taskId: string) => void;
-	onGoalClick?: () => void;
-	onView?: (taskId: string) => void;
-	onReject?: (taskId: string, feedback: string) => void;
-	onApprove?: (taskId: string) => void;
+	onGoalClick?: (goalId: string) => void;
 	onReactivate?: (taskId: string) => void;
-	rejectingTaskId?: string | null;
-	onSetRejectingTaskId?: (id: string | null) => void;
 }) {
-	const [feedback, setFeedback] = useState('');
-	// Approve animation: button shows "✓ Approved" for 300ms, card fades to opacity-40
-	const [buttonApproved, setButtonApproved] = useState(false);
-	const [cardFading, setCardFading] = useState(false);
-
 	const isClickable = !!onClick;
 	const isReview = task.status === 'review';
-	const showView = isReview && !!onView;
-	const showReject = isReview && !!onReject;
-	const showApprove = isReview && !!onApprove;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 	const isWorking = isReview && !!task.activeSession;
-	const isRejecting = rejectingTaskId === task.id;
 	const showReactivate =
 		(task.status === 'completed' || task.status === 'cancelled') && !!onReactivate;
 
-	// Compute border color: when approve animation active, switch to green
-	const borderColor = cardFading ? 'border-l-green-500' : getStatusBorderColor(task.status);
+	const borderColor = getStatusBorderColor(task.status);
+	/** Prefer short ID for navigation so URLs are human-readable */
+	const navId = task.shortId ?? task.id;
 
 	return (
 		<div
-			class={`px-4 py-3 border-l-2 ${borderColor} transition-[opacity,border-color] duration-500 ${cardFading ? 'opacity-40' : ''} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
-			onClick={isClickable ? () => onClick(task.id) : undefined}
+			class={`px-4 py-3 border-l-2 ${borderColor} ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+			onClick={isClickable ? () => onClick(navId) : undefined}
 		>
 			<div class="flex items-start justify-between">
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2 flex-wrap">
 						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
+						{task.shortId && <ShortIdBadge shortId={task.shortId} />}
 						{isWorking && (
 							<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/20 border border-blue-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0">
 								<span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
@@ -648,105 +631,58 @@ function TaskItem({
 								Blocked
 							</span>
 						)}
-						{goal && (
+						{task.prUrl && (
+							<a
+								href={task.prUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								onClick={(e) => e.stopPropagation()}
+								class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded transition-colors flex-shrink-0"
+								title="View Pull Request"
+							>
+								<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 16 16">
+									<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+								</svg>
+								<span>PR #{task.prNumber ?? '?'}</span>
+							</a>
+						)}
+					</div>
+					{goal && (
+						<div class="mt-1">
 							<button
 								data-testid={`task-goal-badge-${task.id}`}
 								onClick={(e) => {
 									e.stopPropagation();
-									onGoalClick?.();
+									onGoalClick?.(goal.id);
 								}}
-								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0 hover:bg-emerald-900/40 transition-colors"
+								class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-900/20 border border-emerald-700/40 px-1.5 py-0.5 rounded-full hover:bg-emerald-900/40 transition-colors"
 								title={`Mission: ${goal.title}`}
 							>
 								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M13 10V3L4 14h7v7l9-11h-7z"
-									/>
+									<circle cx="12" cy="12" r="10" stroke-width="2" />
+									<circle cx="12" cy="12" r="6" stroke-width="2" />
+									<circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
 								</svg>
-								<span class="max-w-[120px] truncate">{goal.title}</span>
+								<span class="flex-1 truncate">{goal.title}</span>
 							</button>
-						)}
-					</div>
+						</div>
+					)}
 				</div>
 				<div class="ml-4 flex items-center gap-2 flex-shrink-0">
-					{task.progress !== undefined && (
-						<span class="text-xs text-gray-400">{task.progress}%</span>
-					)}
-					{task.prUrl && (
-						<a
-							href={task.prUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-							onClick={(e) => e.stopPropagation()}
-							class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded transition-colors"
-							title="View Pull Request"
-						>
-							<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
-								<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-							</svg>
-							<span>PR #{task.prNumber ?? '?'}</span>
-						</a>
+					{task.progress != null && task.progress > 0 && (
+						<CircularProgressIndicator
+							progress={task.progress}
+							size={24}
+							title={`Task progress: ${task.progress}%`}
+						/>
 					)}
 					{isClickable && !isReview && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
-			{/* Review: auto-expanded action section */}
-			{isReview && (
-				<div class="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
-					{task.currentStep && (
-						<p class="text-xs text-gray-400 italic line-clamp-2">{task.currentStep}</p>
-					)}
-					{(showApprove || showReject || showView) && (
-						<div class="flex items-center gap-2">
-							{showApprove && (
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										// Start approve animation: button text + card fade
-										setButtonApproved(true);
-										setCardFading(true);
-										onApprove(task.id);
-										// Reset button text after 300ms
-										setTimeout(() => setButtonApproved(false), 300);
-									}}
-									disabled={buttonApproved}
-									class="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors disabled:cursor-default"
-								>
-									{buttonApproved ? '✓ Approved' : 'Approve'}
-								</button>
-							)}
-							{showReject && (
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										if (isRejecting) {
-											setFeedback('');
-											onSetRejectingTaskId?.(null);
-										} else {
-											onSetRejectingTaskId?.(task.id);
-										}
-									}}
-									class="px-3 py-1.5 text-xs font-medium text-red-400 border border-red-700/50 hover:bg-red-900/20 rounded-lg transition-colors"
-								>
-									Reject
-								</button>
-							)}
-							{showView && (
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										onView(task.id);
-									}}
-									class="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors"
-								>
-									View details →
-								</button>
-							)}
-						</div>
-					)}
+			{/* Review: show currentStep */}
+			{isReview && task.currentStep && (
+				<div class="mt-2" onClick={(e) => e.stopPropagation()}>
+					<p class="text-xs text-gray-400 italic line-clamp-2">{task.currentStep}</p>
 				</div>
 			)}
 			{/* Done/Cancelled: reactivate action */}
@@ -755,7 +691,7 @@ function TaskItem({
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
-							onReactivate(task.id);
+							onReactivate(navId);
 						}}
 						class="px-3 py-1.5 text-xs font-medium text-blue-400 border border-blue-700/50 hover:bg-blue-900/20 rounded-lg transition-colors"
 						data-testid={`task-reactivate-${task.id}`}
@@ -766,6 +702,11 @@ function TaskItem({
 			)}
 			{task.status === 'needs_attention' && task.error && (
 				<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={task.error}>
+					{task.error}
+				</p>
+			)}
+			{(task.status === 'rate_limited' || task.status === 'usage_limited') && task.error && (
+				<p class="text-xs text-orange-400 mt-1.5 line-clamp-2" title={task.error}>
 					{task.error}
 				</p>
 			)}
@@ -790,54 +731,6 @@ function TaskItem({
 					})}
 				</div>
 			)}
-			{task.progress !== undefined && (
-				<div class="mt-2 h-1 bg-dark-700 rounded-full overflow-hidden">
-					<div
-						class="h-full bg-blue-500 transition-all duration-300"
-						style={{ width: `${task.progress}%` }}
-					/>
-				</div>
-			)}
-			{/* Reject form — always rendered; max-height controls collapse with transition-all duration-200 */}
-			<div
-				class={`overflow-hidden transition-all duration-200 ${isRejecting ? 'max-h-48' : 'max-h-0 pointer-events-none'}`}
-				onClick={(e) => e.stopPropagation()}
-			>
-				<div class="mt-3 pt-3 border-t border-dark-700">
-					<textarea
-						rows={2}
-						placeholder="Please provide feedback..."
-						value={feedback}
-						onInput={(e) => setFeedback((e.target as HTMLTextAreaElement).value)}
-						class="w-full text-sm bg-dark-900 border border-dark-600 rounded px-3 py-2 text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-red-500/60"
-					/>
-					<div class="flex justify-end gap-2 mt-2">
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								setFeedback('');
-								onSetRejectingTaskId?.(null);
-							}}
-							class="px-3 py-1.5 text-xs font-medium text-gray-400 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
-						>
-							Cancel
-						</button>
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onReject?.(task.id, feedback);
-								toast.rejected();
-								setFeedback('');
-								onSetRejectingTaskId?.(null);
-							}}
-							disabled={!feedback.trim()}
-							class="px-3 py-1.5 text-xs font-medium text-red-400 bg-red-900/20 hover:bg-red-900/30 border border-red-700/50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-						>
-							Confirm Reject
-						</button>
-					</div>
-				</div>
-			</div>
 		</div>
 	);
 }

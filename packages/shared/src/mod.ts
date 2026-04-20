@@ -18,8 +18,14 @@ export * from './types/neo.ts';
 export * from './types/github.ts';
 export * from './types/space.ts';
 export * from './types/space-utils.ts';
+export * from './space/workflow-autonomy.ts';
 export * from './types/tools.ts';
+export * from './types/app-mcp-server.ts';
+export * from './types/skills.ts';
+export * from './types/reference.ts';
 export * from './live-query-types.ts';
+export * from './validation/workspace-path.ts';
+export * from './lib/workflow-graph.ts';
 export * from './prompts/index.ts';
 
 // Unified logger

@@ -1,4 +1,3 @@
-import { createElement } from 'preact';
 import { useContext, useRef, useState } from 'preact/hooks';
 import { CloseContext } from '../../hooks/use-close.ts';
 import { render } from '../../internal/render.ts';
@@ -191,8 +190,38 @@ function DataInteractiveFn({ as: Tag = 'div', children, ...rest }: DataInteracti
 	});
 }
 
-// Prevent unused import warning — createElement is needed by JSX transform in this file
-void createElement;
-
 DataInteractiveFn.displayName = 'DataInteractive';
 export const DataInteractive = DataInteractiveFn;
+
+// --- ButtonGroup ---
+
+interface ButtonGroupProps {
+	as?: ElementType;
+	children?: unknown;
+	'aria-label'?: string;
+	[key: string]: unknown;
+}
+
+function ButtonGroupFn({
+	as: Tag = 'div',
+	children,
+	'aria-label': ariaLabel,
+	...rest
+}: ButtonGroupProps) {
+	const ourProps: Record<string, unknown> = {
+		role: 'group',
+		'data-slot': 'button-group',
+		...(ariaLabel !== undefined ? { 'aria-label': ariaLabel } : {}),
+	};
+
+	return render({
+		ourProps,
+		theirProps: { as: Tag, children, ...rest },
+		slot: {},
+		defaultTag: 'div',
+		name: 'ButtonGroup',
+	});
+}
+
+ButtonGroupFn.displayName = 'ButtonGroup';
+export const ButtonGroup = ButtonGroupFn;

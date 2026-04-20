@@ -2,54 +2,120 @@
  * NodeConfigPanel
  *
  * A right-anchored slide-in panel that appears when a workflow node is selected
- * in the visual editor. Provides inline editing of all step properties using
- * the same field layout as the WorkflowStepCard expanded view.
+ * in the visual editor. Provides inline editing of all node properties using
+ * the same field layout as the WorkflowNodeCard expanded view.
  *
  * Features:
- * - Step Name input
- * - "Set as Start" button (disabled when node is already the start node)
+ * - Node Name input
+ * - "Set as Start" button (disabled when the node is already the start node)
+ * - "Set as End" button (toggle to designate/end node designation)
  * - Agent dropdown
- * - Entry Gate selector (GateConfig)
- * - Exit Gate selector (GateConfig)
- * - Instructions textarea
- * - Delete Step button with confirmation (disabled for start node)
+ * - Model dropdown for single-agent and multi-agent nodes
+ * - System prompt inline editor (node-level override)
+ * - Instructions inline textarea
+ * - Delete Node button with confirmation (disabled for start node)
  */
 
-import { useState, useEffect } from 'preact/hooks';
-import type { SpaceAgent, WorkflowStepAgent, WorkflowChannel } from '@neokai/shared';
-import type { StepDraft } from '../WorkflowStepCard';
-import { isMultiAgentStep } from '../WorkflowStepCard';
-import { GateConfig } from './GateConfig';
-import type { ConditionDraft } from './GateConfig';
+import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useComputed } from '@preact/signals';
+import type { Gate, SpaceAgent, WorkflowChannel, WorkflowNodeAgent } from '@neokai/shared';
+import type { NodeDraft } from '../WorkflowNodeCard';
+import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
+import { WorkflowModelSelect } from './WorkflowModelSelect';
+import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
+import { GateEditorPanel } from './GateEditorPanel';
+import { skillsStore } from '../../../lib/skills-store';
 
 // ============================================================================
 // Props
 // ============================================================================
 
+export interface NodeChannelLink {
+	id: string;
+	label: string;
+	channelCount: number;
+	hasGate: boolean;
+}
+
 export interface NodeConfigPanelProps {
-	step: StepDraft;
+	step: NodeDraft;
 	agents: SpaceAgent[];
-	entryCondition: ConditionDraft | null;
-	exitCondition: ConditionDraft | null;
 	isStartNode: boolean;
-	/**
-	 * When true, the entry gate shows "Workflow starts here" (no selector).
-	 * Mirrors the WorkflowStepCard terminal message for the first step.
-	 */
-	isFirstStep?: boolean;
-	/**
-	 * When true, the exit gate shows "Workflow ends here" (no selector).
-	 * Mirrors the WorkflowStepCard terminal message for the last step.
-	 */
-	isLastStep?: boolean;
-	onUpdate: (step: StepDraft) => void;
-	onUpdateEntryCondition: (cond: ConditionDraft) => void;
-	onUpdateExitCondition: (cond: ConditionDraft) => void;
+	isEndNode: boolean;
+	onUpdate: (step: NodeDraft) => void;
 	/** Designates this step as the workflow start node */
 	onSetAsStart: (stepId: string) => void;
+	/** Designates this step as the workflow end node */
+	onSetAsEnd: (stepId: string) => void;
+	channelLinks?: NodeChannelLink[];
+	onOpenChannelLink?: (channelLinkId: string) => void;
+	selectedChannelRelation?: {
+		title: string;
+		description: string;
+		forwardLinks: Array<{ index: number; channel: WorkflowChannel }>;
+		reverseLinks?: Array<{ index: number; channel: WorkflowChannel }>;
+		canConvertToBidirectional?: boolean;
+	};
+	channelRelationGates?: Gate[];
+	onUpdateChannelLink?: (index: number, channel: WorkflowChannel) => void;
+	onDeleteChannelLink?: (index: number) => void;
+	onUpdateChannelGates?: (gates: Gate[]) => void;
+	onConvertChannelRelationToBidirectional?: () => void;
+	onCloseChannelLink?: () => void;
 	onClose: () => void;
 	/** Called when the user confirms deletion of this step */
 	onDelete: (stepId: string) => void;
+}
+
+// ============================================================================
+// SlotSkillsToggle — per-slot skill enable/disable toggles
+// ============================================================================
+
+interface SlotSkillsToggleProps {
+	disabledSkillIds?: string[];
+	onChange: (disabledSkillIds: string[]) => void;
+}
+
+function SlotSkillsToggle({ disabledSkillIds, onChange }: SlotSkillsToggleProps) {
+	// Use useComputed so the list stays reactive to global skill changes
+	const allSkills = useComputed(() => skillsStore.skills.value.filter((s) => s.enabled));
+	if (allSkills.value.length === 0) return null;
+
+	const disabledSet = new Set(disabledSkillIds ?? []);
+
+	return (
+		<div class="space-y-1">
+			<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+				Skills
+			</label>
+			<div class="space-y-0.5">
+				{allSkills.value.map((skill) => {
+					const isEnabled = !disabledSet.has(skill.id);
+					return (
+						<label key={skill.id} class="flex items-center gap-1.5 cursor-pointer group">
+							<input
+								type="checkbox"
+								checked={isEnabled}
+								onChange={() => {
+									const next = new Set(disabledSet);
+									if (isEnabled) {
+										next.add(skill.id);
+									} else {
+										next.delete(skill.id);
+									}
+									onChange(next.size > 0 ? Array.from(next) : []);
+								}}
+								class="w-3 h-3 rounded accent-blue-500 flex-shrink-0"
+							/>
+							<span class="text-[11px] text-gray-400 group-hover:text-gray-200 transition-colors truncate">
+								{skill.displayName}
+							</span>
+						</label>
+					);
+				})}
+			</div>
+		</div>
+	);
 }
 
 // ============================================================================
@@ -57,46 +123,101 @@ export interface NodeConfigPanelProps {
 // ============================================================================
 
 interface AgentsSectionProps {
-	step: StepDraft;
+	step: NodeDraft;
 	agents: SpaceAgent[];
-	onUpdate: (step: StepDraft) => void;
+	onUpdate: (step: NodeDraft) => void;
+	onEditSlotPrompts?: (role: string) => void;
+	onEditSinglePrompts?: () => void;
 }
 
-function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
-	const multi = isMultiAgentStep(step);
-	const stepAgents = step.agents ?? [];
+function AgentsSection({
+	step,
+	agents,
+	onUpdate,
+	onEditSlotPrompts,
+	onEditSinglePrompts,
+}: AgentsSectionProps) {
+	const multi = isMultiAgentNode(step);
+	const nodeAgents = step.agents ?? [];
+	const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
+	const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
+	const selectedSingleModel = singleSlot?.model ?? step.model;
+	const selectedSingleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
 
-	function updateAgents(next: WorkflowStepAgent[]) {
+	function updateAgents(next: WorkflowNodeAgent[]) {
 		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
 	function addAgent(agentId: string) {
 		if (!agentId) return;
-		if (stepAgents.some((a) => a.agentId === agentId)) return;
-		updateAgents([...stepAgents, { agentId }]);
+		const agentInfo = agents.find((a) => a.id === agentId);
+		// Use agent name as the base role name for the slot
+		const baseRole = agentInfo?.name?.trim() || agentId;
+		// Ensure the slot role is unique within this node. When the same agent is added
+		// multiple times, append a numeric suffix to distinguish the slots.
+		const usedRoles = new Set(nodeAgents.map((a) => a.name));
+		let role = baseRole;
+		for (let i = 2; usedRoles.has(role); i++) {
+			role = `${baseRole}-${i}`;
+		}
+		const next = [...nodeAgents, { agentId, name: role }];
+		onUpdate({ ...step, agents: next, agentId: '' });
 	}
 
-	function removeAgent(agentId: string) {
-		const next = stepAgents.filter((a) => a.agentId !== agentId);
-		if (next.length === 0) {
-			// Switch back to single-agent mode: restore agentId from the removed agent and
-			// clear channels (orphaned channels on a single-agent step are semantically invalid)
-			onUpdate({ ...step, agents: undefined, agentId, channels: undefined });
+	function removeAgent(role: string) {
+		const removed = nodeAgents.find((a) => a.name === role);
+		const next = nodeAgents.filter((a) => a.name !== role);
+		if (next.length <= 1) {
+			// Switch back to single-agent mode when <=1 slots remain.
+			// Preserve model/customPrompt from the surviving slot when present.
+			const survivor = next[0] ?? removed;
+			onUpdate({
+				...step,
+				agents: undefined,
+				agentId: survivor?.agentId ?? '',
+				model: survivor?.model,
+				customPrompt: survivor?.customPrompt,
+				channels: undefined,
+			});
 		} else {
 			updateAgents(next);
 		}
 	}
 
-	function updateAgentInstructions(agentId: string, instructions: string) {
+	function updateAgentId(role: string, agentId: string) {
+		updateAgents(nodeAgents.map((a) => (a.name === role ? { ...a, agentId } : a)));
+	}
+
+	function updateAgentModel(role: string, model: string | undefined) {
 		updateAgents(
-			stepAgents.map((a) =>
-				a.agentId === agentId ? { ...a, instructions: instructions || undefined } : a
-			)
+			nodeAgents.map((a) => (a.name === role ? { ...a, model: model || undefined } : a))
 		);
 	}
 
-	const usedIds = new Set(stepAgents.map((a) => a.agentId));
-	const availableAgents = agents.filter((a) => !usedIds.has(a.id));
+	const updateSingleAgentId = useCallback(
+		(newAgentId: string) => {
+			if (singleSlot) {
+				updateAgentId(singleSlot.name, newAgentId);
+				return;
+			}
+			onUpdate({ ...step, agentId: newAgentId });
+		},
+		[singleSlot, step, onUpdate]
+	);
+
+	const updateSingleModel = useCallback(
+		(model: string | undefined) => {
+			if (singleSlot) {
+				updateAgentModel(singleSlot.name, model);
+				return;
+			}
+			onUpdate({ ...step, model });
+		},
+		[singleSlot, step, onUpdate]
+	);
+
+	// All agents are available; same agent may be added multiple times with different roles.
+	const availableAgents = agents;
 
 	if (!multi) {
 		// Single-agent mode
@@ -108,9 +229,44 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 						type="button"
 						data-testid="add-agent-button"
 						onClick={() => {
-							const firstId = step.agentId;
-							const existing: WorkflowStepAgent[] = firstId ? [{ agentId: firstId }] : [];
-							onUpdate({ ...step, agents: existing, agentId: '' });
+							const usedRoles = new Set<string>();
+							const buildUniqueRole = (base: string): string => {
+								const sanitizedBase = base.trim() || 'agent';
+								let role = sanitizedBase;
+								for (let i = 2; usedRoles.has(role); i++) {
+									role = `${sanitizedBase}-${i}`;
+								}
+								usedRoles.add(role);
+								return role;
+							};
+
+							const primaryAgentId = selectedSingleAgentId || '';
+							const primaryBaseRole =
+								singleSlot?.name ||
+								agents.find((a) => a.id === primaryAgentId)?.name ||
+								primaryAgentId ||
+								'agent';
+							const primarySlot: WorkflowNodeAgent = {
+								agentId: primaryAgentId,
+								name: buildUniqueRole(primaryBaseRole),
+								model: selectedSingleModel,
+								customPrompt: selectedSingleCustomPrompt,
+							};
+
+							const secondaryAgent = agents.find((a) => a.id !== primaryAgentId) ?? agents[0];
+							const secondarySlot: WorkflowNodeAgent = {
+								agentId: secondaryAgent?.id ?? '',
+								name: buildUniqueRole(secondaryAgent?.name ?? 'agent'),
+							};
+
+							onUpdate({
+								...step,
+								agents: [primarySlot, secondarySlot],
+								agentId: '',
+								model: undefined,
+								customPrompt: undefined,
+								channels: undefined,
+							});
 						}}
 						class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
 					>
@@ -119,20 +275,69 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 				</div>
 				<select
 					data-testid="agent-select"
-					value={step.agentId}
-					onChange={(e) =>
-						onUpdate({ ...step, agentId: (e.currentTarget as HTMLSelectElement).value })
-					}
+					value={selectedSingleAgentId}
+					onChange={(e) => updateSingleAgentId((e.currentTarget as HTMLSelectElement).value)}
 					class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
 				>
 					<option value="">— Select agent —</option>
 					{agents.map((a) => (
 						<option key={a.id} value={a.id}>
 							{a.name}
-							{` (${a.role})`}
 						</option>
 					))}
 				</select>
+				<div class="space-y-1">
+					<label class="text-xs font-medium text-gray-400">
+						LLM Model <span class="font-normal text-gray-600">(optional override)</span>
+					</label>
+					<WorkflowModelSelect
+						testId="single-agent-model-input"
+						value={selectedSingleModel}
+						onChange={updateSingleModel}
+					/>
+				</div>
+				<SlotSkillsToggle
+					disabledSkillIds={singleSlot?.disabledSkillIds}
+					onChange={(disabledSkillIds) => {
+						if (singleSlot) {
+							updateAgents(
+								nodeAgents.map((a) =>
+									a.name === singleSlot.name
+										? {
+												...a,
+												disabledSkillIds:
+													disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+											}
+										: a
+								)
+							);
+						} else {
+							// No slot yet — store on step level via a synthetic slot
+							// We just update the step; actual agent slot will pick this up
+							onUpdate({
+								...step,
+								agents: [
+									{
+										agentId: selectedSingleAgentId || '',
+										name: step.name || 'agent',
+										model: selectedSingleModel,
+										customPrompt: selectedSingleCustomPrompt,
+										disabledSkillIds: disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+									},
+								],
+								agentId: '',
+							});
+						}
+					}}
+				/>
+				<button
+					type="button"
+					data-testid="edit-single-prompts-button"
+					onClick={() => onEditSinglePrompts?.()}
+					class="w-full text-xs border border-dark-700 rounded px-2 py-1.5 text-gray-300 hover:border-dark-500 hover:bg-dark-700/40 transition-colors"
+				>
+					Edit Prompts
+				</button>
 			</div>
 		);
 	}
@@ -142,46 +347,39 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 		<div class="space-y-2">
 			<div class="flex items-center justify-between">
 				<label class="text-xs font-medium text-gray-400">
-					Agents <span class="text-gray-600">({stepAgents.length})</span>
+					Agents <span class="text-gray-600">({nodeAgents.length})</span>
 				</label>
-				{stepAgents.length === 1 && (
-					<button
-						type="button"
-						data-testid="switch-to-single-button"
-						onClick={() =>
-							onUpdate({
-								...step,
-								agents: undefined,
-								agentId: stepAgents[0]?.agentId ?? '',
-								channels: undefined,
-							})
-						}
-						class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-					>
-						Switch to single
-					</button>
-				)}
 			</div>
 
 			<div class="space-y-1.5" data-testid="agents-list">
-				{stepAgents.map((sa) => {
+				{nodeAgents.map((sa) => {
 					const agentInfo = agents.find((a) => a.id === sa.agentId);
 					return (
 						<div
-							key={sa.agentId}
-							class="bg-dark-800 border border-dark-600 rounded p-2 space-y-1"
+							key={sa.name}
+							class="rounded p-2 space-y-1 border bg-dark-800 border-dark-600"
 							data-testid="agent-entry"
 						>
-							<div class="flex items-center justify-between">
-								<span class="text-xs font-medium text-gray-200">
-									{agentInfo?.name ?? sa.agentId}
-									{agentInfo && <span class="text-gray-500 ml-1">({agentInfo.role})</span>}
-								</span>
+							{/* Header: role input + remove button */}
+							<div class="flex items-center gap-1">
+								<input
+									type="text"
+									data-testid="agent-role-input"
+									value={sa.name}
+									onInput={(e) => {
+										const newRole = (e.currentTarget as HTMLInputElement).value;
+										updateAgents(
+											nodeAgents.map((a) => (a.name === sa.name ? { ...a, name: newRole } : a))
+										);
+									}}
+									placeholder="node role"
+									class="flex-1 text-xs font-mono bg-dark-900 border border-dark-700 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-600 min-w-0"
+								/>
 								<button
 									type="button"
 									data-testid="remove-agent-button"
-									onClick={() => removeAgent(sa.agentId)}
-									class="text-gray-600 hover:text-red-400 transition-colors"
+									onClick={() => removeAgent(sa.name)}
+									class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
 									title="Remove agent"
 								>
 									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -194,15 +392,60 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 									</svg>
 								</button>
 							</div>
-							<input
-								type="text"
-								data-testid="agent-instructions-input"
-								value={sa.instructions ?? ''}
-								onInput={(e) =>
-									updateAgentInstructions(sa.agentId, (e.currentTarget as HTMLInputElement).value)
-								}
-								placeholder="Per-agent instructions (optional)…"
-								class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
+							<div class="space-y-1">
+								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+									Agent
+								</label>
+								<select
+									data-testid="agent-slot-select"
+									value={sa.agentId}
+									onChange={(e) =>
+										updateAgentId(sa.name, (e.currentTarget as HTMLSelectElement).value)
+									}
+									class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+								>
+									<option value="">— Select agent —</option>
+									{agents.map((agent) => (
+										<option key={agent.id} value={agent.id}>
+											{agent.name}
+										</option>
+									))}
+								</select>
+								<p class="text-[11px] text-gray-600">{agentInfo?.name ?? sa.agentId}</p>
+							</div>
+							<div class="space-y-1">
+								<label class="text-[11px] font-medium uppercase tracking-[0.16em] text-gray-500">
+									Model
+								</label>
+								<WorkflowModelSelect
+									testId="agent-slot-model-input"
+									value={sa.model}
+									onChange={(model) => updateAgentModel(sa.name, model)}
+								/>
+							</div>
+							<button
+								type="button"
+								data-testid="edit-slot-prompts-button"
+								onClick={() => onEditSlotPrompts?.(sa.name)}
+								class="w-full text-xs border border-dark-700 rounded px-2 py-1.5 text-gray-300 hover:border-dark-500 hover:bg-dark-700/40 transition-colors"
+							>
+								Edit Prompts
+							</button>
+							<SlotSkillsToggle
+								disabledSkillIds={sa.disabledSkillIds}
+								onChange={(disabledSkillIds) => {
+									updateAgents(
+										nodeAgents.map((a) =>
+											a.name === sa.name
+												? {
+														...a,
+														disabledSkillIds:
+															disabledSkillIds.length > 0 ? disabledSkillIds : undefined,
+													}
+												: a
+										)
+									);
+								}}
 							/>
 						</div>
 					);
@@ -222,7 +465,7 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 					<option value="">+ Add agent…</option>
 					{availableAgents.map((a) => (
 						<option key={a.id} value={a.id}>
-							{a.name} ({a.role})
+							{a.name}
 						</option>
 					))}
 				</select>
@@ -232,170 +475,35 @@ function AgentsSection({ step, agents, onUpdate }: AgentsSectionProps) {
 }
 
 // ============================================================================
-// ChannelsPanelSection — manages messaging channels in the config panel
+// CustomPromptEditor — single custom prompt textarea
 // ============================================================================
 
-interface ChannelsPanelSectionProps {
-	step: StepDraft;
-	agents: SpaceAgent[];
-	onUpdate: (step: StepDraft) => void;
+interface CustomPromptEditorProps {
+	customPrompt?: NodeDraft['customPrompt'];
+	onChange: (value: string) => void;
+	testId: string;
+	placeholder: string;
+	rows?: number;
 }
 
-function ChannelsPanelSection({ step, agents, onUpdate }: ChannelsPanelSectionProps) {
-	const channels = step.channels ?? [];
-	const stepAgents = step.agents ?? [];
-
-	// Collect known roles from step agents (+ wildcard)
-	const knownRoles = [
-		'*',
-		...stepAgents.map((sa) => agents.find((a) => a.id === sa.agentId)?.role ?? sa.agentId),
-	];
-
-	const [newFrom, setNewFrom] = useState('');
-	const [newTo, setNewTo] = useState('');
-	const [newDirection, setNewDirection] = useState<'one-way' | 'bidirectional'>('one-way');
-	const [newLabel, setNewLabel] = useState('');
-
-	// Reset add-channel form fields when the selected node changes, so stale values
-	// from one node don't bleed into the form for the next selected node.
-	useEffect(() => {
-		setNewFrom('');
-		setNewTo('');
-		setNewDirection('one-way');
-		setNewLabel('');
-	}, [step.localId]);
-
-	function updateChannels(next: WorkflowChannel[]) {
-		onUpdate({ ...step, channels: next.length > 0 ? next : undefined });
-	}
-
-	function removeChannel(index: number) {
-		updateChannels(channels.filter((_, i) => i !== index));
-	}
-
-	function addChannel() {
-		if (!newFrom || !newTo) return;
-		const toValue: string | string[] = newTo.includes(',')
-			? newTo
-					.split(',')
-					.map((s) => s.trim())
-					.filter(Boolean)
-			: newTo.trim();
-		const ch: WorkflowChannel = {
-			from: newFrom,
-			to: toValue,
-			direction: newDirection,
-			label: newLabel.trim() || undefined,
-		};
-		updateChannels([...channels, ch]);
-		setNewFrom('');
-		setNewTo('');
-		setNewDirection('one-way');
-		setNewLabel('');
-	}
-
-	const formatTo = (to: string | string[]) => (Array.isArray(to) ? `[${to.join(', ')}]` : to);
-
+function CustomPromptEditor({
+	customPrompt,
+	onChange,
+	testId,
+	placeholder,
+	rows = 6,
+}: CustomPromptEditorProps) {
 	return (
-		<div class="space-y-2 pt-3 border-t border-dark-700" data-testid="channels-section">
-			<label class="text-xs font-medium text-gray-400">
-				Channels <span class="text-gray-600 font-normal">(messaging topology)</span>
-			</label>
-
-			{channels.length === 0 && (
-				<p class="text-xs text-gray-600">No channels — agents are isolated.</p>
-			)}
-
-			<div class="space-y-1" data-testid="channels-list">
-				{channels.map((ch, i) => (
-					<div
-						key={i}
-						class="flex items-center gap-2 bg-dark-800 border border-dark-600 rounded px-2 py-1.5"
-						data-testid="channel-entry"
-					>
-						<span class="text-xs text-gray-300 font-mono flex-1">
-							{ch.from} {ch.direction === 'bidirectional' ? '↔' : '→'} {formatTo(ch.to)}
-							{ch.label && <span class="text-gray-500 ml-1">"{ch.label}"</span>}
-						</span>
-						<button
-							type="button"
-							data-testid="remove-channel-button"
-							onClick={() => removeChannel(i)}
-							class="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0"
-							title="Remove channel"
-						>
-							<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M6 18L18 6M6 6l12 12"
-								/>
-							</svg>
-						</button>
-					</div>
-				))}
-			</div>
-
-			{/* Add channel form */}
-			<div
-				class="space-y-2 bg-dark-800 border border-dark-600 rounded p-2"
-				data-testid="add-channel-form"
-			>
-				<div class="flex gap-2">
-					<select
-						data-testid="channel-from-select"
-						value={newFrom}
-						onChange={(e) => setNewFrom((e.currentTarget as HTMLSelectElement).value)}
-						class="flex-1 text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
-					>
-						<option value="">From…</option>
-						{knownRoles.map((r) => (
-							<option key={r} value={r}>
-								{r}
-							</option>
-						))}
-					</select>
-					<select
-						data-testid="channel-direction-select"
-						value={newDirection}
-						onChange={(e) =>
-							setNewDirection(
-								(e.currentTarget as HTMLSelectElement).value as 'one-way' | 'bidirectional'
-							)
-						}
-						class="text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500"
-					>
-						<option value="one-way">→ one-way</option>
-						<option value="bidirectional">↔ bidirectional</option>
-					</select>
-				</div>
-				<input
-					data-testid="channel-to-input"
-					type="text"
-					value={newTo}
-					onInput={(e) => setNewTo((e.currentTarget as HTMLInputElement).value)}
-					placeholder="To role(s) — comma-separated, * for all"
-					class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-				/>
-				<input
-					data-testid="channel-label-input"
-					type="text"
-					value={newLabel}
-					onInput={(e) => setNewLabel((e.currentTarget as HTMLInputElement).value)}
-					placeholder="Label (optional)"
-					class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-600"
-				/>
-				<button
-					type="button"
-					data-testid="add-channel-button"
-					onClick={addChannel}
-					disabled={!newFrom || !newTo}
-					class="w-full text-xs py-1 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 transition-colors"
-				>
-					Add channel
-				</button>
-			</div>
+		<div class="space-y-1">
+			<label class="text-xs font-medium text-gray-400">Custom Prompt</label>
+			<textarea
+				data-testid={testId}
+				value={extractOverrideValue(customPrompt)}
+				onInput={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
+				rows={rows}
+				placeholder={placeholder}
+				class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
+			/>
 		</div>
 	);
 }
@@ -404,28 +512,56 @@ function ChannelsPanelSection({ step, agents, onUpdate }: ChannelsPanelSectionPr
 // Component
 // ============================================================================
 
+type PanelView =
+	| { kind: 'main' }
+	| { kind: 'channel-links' }
+	| { kind: 'gate-editor'; gateId: string }
+	| { kind: 'single-prompts' }
+	| { kind: 'slot-prompts'; role: string };
+
 export function NodeConfigPanel({
 	step,
 	agents,
-	entryCondition,
-	exitCondition,
 	isStartNode,
-	isFirstStep = false,
-	isLastStep = false,
+	isEndNode,
 	onUpdate,
-	onUpdateEntryCondition,
-	onUpdateExitCondition,
 	onSetAsStart,
+	onSetAsEnd,
+	channelLinks = [],
+	onOpenChannelLink,
+	selectedChannelRelation,
+	channelRelationGates = [],
+	onUpdateChannelLink,
+	onDeleteChannelLink,
+	onUpdateChannelGates,
+	onConvertChannelRelationToBidirectional,
+	onCloseChannelLink,
 	onClose,
 	onDelete,
 }: NodeConfigPanelProps) {
 	const [confirmingDelete, setConfirmingDelete] = useState(false);
+	const [panelView, setPanelView] = useState<PanelView>({ kind: 'main' });
 
 	// Reset confirmation dialog when the selected step changes so a previously
 	// open confirmation on one node doesn't bleed through to the next node.
 	useEffect(() => {
 		setConfirmingDelete(false);
+		setPanelView({ kind: 'main' });
 	}, [step.localId]);
+
+	useEffect(() => {
+		if (selectedChannelRelation) {
+			// Only navigate to channel-links from main view — don't override
+			// gate-editor view which is a deeper navigation (main → channel-links → gate-editor).
+			// Gate updates cause selectedChannelRelation to change reference,
+			// which would otherwise snap the panel back to channel-links.
+			setPanelView((prev) => (prev.kind === 'gate-editor' ? prev : { kind: 'channel-links' }));
+			return;
+		}
+		setPanelView((prev) =>
+			prev.kind === 'channel-links' || prev.kind === 'gate-editor' ? { kind: 'main' } : prev
+		);
+	}, [selectedChannelRelation]);
 
 	const handleDeleteClick = () => {
 		if (isStartNode) return; // defence-in-depth: button is also disabled
@@ -441,35 +577,98 @@ export function NodeConfigPanel({
 		setConfirmingDelete(false);
 	};
 
-	return (
-		<div
-			data-testid="node-config-panel"
-			style={{
-				position: 'absolute',
-				top: 0,
-				right: 0,
-				bottom: 0,
-				width: 320,
-				display: 'flex',
-				flexDirection: 'column',
-				zIndex: 20,
-			}}
-			class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
-		>
-			{/* Header */}
+	const renderHeader = () => {
+		if (panelView.kind === 'main') {
+			return (
+				<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
+					<div class="flex items-center gap-2 min-w-0">
+						{isStartNode && (
+							<span
+								data-testid="start-node-badge"
+								class="text-xs font-bold text-green-400 uppercase tracking-wider flex-shrink-0"
+							>
+								START
+							</span>
+						)}
+						{isEndNode && (
+							<span
+								data-testid="end-node-badge"
+								class="text-xs font-bold text-purple-400 uppercase tracking-wider flex-shrink-0"
+							>
+								END
+							</span>
+						)}
+						<h3 class="text-sm font-semibold text-gray-100 truncate">
+							{step.name || 'Unnamed Node'}
+						</h3>
+					</div>
+					<button
+						data-testid="close-button"
+						onClick={onClose}
+						class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+						title="Close panel"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+				</div>
+			);
+		}
+
+		const title =
+			panelView.kind === 'channel-links'
+				? 'Channel Links'
+				: panelView.kind === 'gate-editor'
+					? 'Gate Editor'
+					: panelView.kind === 'single-prompts'
+						? 'Prompts'
+						: panelView.kind === 'slot-prompts'
+							? 'Slot Prompts'
+							: step.name || 'Unnamed Node';
+
+		return (
 			<div class="flex items-center justify-between px-4 py-3 border-b border-dark-700 flex-shrink-0">
 				<div class="flex items-center gap-2 min-w-0">
-					{isStartNode && (
-						<span
-							data-testid="start-node-badge"
-							class="text-xs font-bold text-green-400 uppercase tracking-wider flex-shrink-0"
-						>
-							START
-						</span>
-					)}
-					<h3 class="text-sm font-semibold text-gray-100 truncate">
-						{step.name || 'Unnamed Step'}
-					</h3>
+					<button
+						type="button"
+						data-testid="node-panel-back-button"
+						onClick={() => {
+							if (panelView.kind === 'gate-editor') {
+								setPanelView({ kind: 'channel-links' });
+								return;
+							}
+							if (panelView.kind === 'slot-prompts') {
+								setPanelView({ kind: 'main' });
+								return;
+							}
+							if (panelView.kind === 'single-prompts') {
+								setPanelView({ kind: 'main' });
+								return;
+							}
+							if (panelView.kind === 'channel-links') {
+								onCloseChannelLink?.();
+							}
+							setPanelView({ kind: 'main' });
+						}}
+						class="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+						title="Back"
+					>
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M15 19l-7-7 7-7"
+							/>
+						</svg>
+					</button>
+					<h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
 				</div>
 				<button
 					data-testid="close-button"
@@ -487,12 +686,143 @@ export function NodeConfigPanel({
 					</svg>
 				</button>
 			</div>
+		);
+	};
 
-			{/* Scrollable body */}
+	const renderPanelBody = () => {
+		if (panelView.kind === 'gate-editor') {
+			const editingGate = channelRelationGates.find((g) => g.id === panelView.gateId);
+			if (!editingGate) return null;
+			return (
+				<GateEditorPanel
+					gate={editingGate}
+					onChange={(updated) => {
+						onUpdateChannelGates?.(
+							channelRelationGates.map((g) => (g.id === updated.id ? updated : g))
+						);
+					}}
+					onBack={() => setPanelView({ kind: 'channel-links' })}
+					embedded
+				/>
+			);
+		}
+
+		if (panelView.kind === 'single-prompts') {
+			const nodeAgents = step.agents ?? [];
+			const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
+			const singleAgentId = singleSlot?.agentId ?? step.agentId;
+			const singleAgent = agents.find((agent) => agent.id === singleAgentId);
+			const singleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
+
+			const updateSingleCustomPrompt = (value: string) => {
+				if (singleSlot) {
+					onUpdate({
+						...step,
+						agents: nodeAgents.map((agent) =>
+							agent.name === singleSlot.name
+								? { ...agent, customPrompt: buildOverride(value) }
+								: agent
+						),
+						agentId: '',
+					});
+					return;
+				}
+
+				onUpdate({
+					...step,
+					customPrompt: buildOverride(value),
+				});
+			};
+
+			return (
+				<div class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+					<div class="rounded border border-dark-700 bg-dark-850 px-3 py-2 text-xs text-gray-400 space-y-1">
+						<p>
+							<span class="text-gray-500">Agent:</span>{' '}
+							{(singleAgent?.name ?? singleAgentId) || '—'}
+						</p>
+					</div>
+					<CustomPromptEditor
+						customPrompt={singleCustomPrompt}
+						onChange={updateSingleCustomPrompt}
+						testId="single-prompts-system-prompt"
+						placeholder="Custom prompt appended to the agent's base prompt…"
+						rows={8}
+					/>
+				</div>
+			);
+		}
+
+		if (panelView.kind === 'slot-prompts') {
+			const slot = (step.agents ?? []).find((agent) => agent.name === panelView.role);
+			if (!slot) return null;
+			const slotAgent = agents.find((agent) => agent.id === slot.agentId);
+
+			const updateSlot = (nextSlot: WorkflowNodeAgent) => {
+				onUpdate({
+					...step,
+					agents: (step.agents ?? []).map((agent) =>
+						agent.name === panelView.role ? nextSlot : agent
+					),
+					agentId: '',
+				});
+			};
+
+			return (
+				<div class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+					<div class="rounded border border-dark-700 bg-dark-850 px-3 py-2 text-xs text-gray-400 space-y-1">
+						<p>
+							<span class="text-gray-500">Role:</span> {slot.name}
+						</p>
+						<p>
+							<span class="text-gray-500">Agent:</span> {slotAgent?.name ?? slot.agentId}
+						</p>
+					</div>
+					<div class="space-y-1">
+						<label class="text-xs font-medium text-gray-400">
+							LLM Model <span class="font-normal text-gray-600">(optional override)</span>
+						</label>
+						<WorkflowModelSelect
+							testId="slot-prompts-model-input"
+							value={slot.model}
+							onChange={(model) => updateSlot({ ...slot, model: model || undefined })}
+						/>
+					</div>
+					<CustomPromptEditor
+						customPrompt={slot.customPrompt}
+						onChange={(value) => updateSlot({ ...slot, customPrompt: buildOverride(value) })}
+						testId="slot-prompts-system-prompt"
+						placeholder="Custom prompt appended to the agent's base prompt (optional)…"
+						rows={8}
+					/>
+				</div>
+			);
+		}
+
+		if (panelView.kind === 'channel-links' && selectedChannelRelation) {
+			return (
+				<ChannelRelationConfigPanel
+					title={selectedChannelRelation.title}
+					description={selectedChannelRelation.description}
+					forwardLinks={selectedChannelRelation.forwardLinks}
+					reverseLinks={selectedChannelRelation.reverseLinks}
+					canConvertToBidirectional={selectedChannelRelation.canConvertToBidirectional}
+					onConvertToBidirectional={onConvertChannelRelationToBidirectional}
+					gates={channelRelationGates}
+					onGatesChange={(nextGates) => onUpdateChannelGates?.(nextGates)}
+					onEditGate={(gateId) => setPanelView({ kind: 'gate-editor', gateId })}
+					onChange={(index, channel) => onUpdateChannelLink?.(index, channel)}
+					onDelete={(index) => onDeleteChannelLink?.(index)}
+					onClose={onClose}
+					embedded
+				/>
+			);
+		}
+
+		return (
 			<div class="flex-1 overflow-y-auto px-4 py-4 space-y-5">
-				{/* Step Name */}
 				<div class="space-y-1.5">
-					<label class="text-xs font-medium text-gray-400">Step Name</label>
+					<label class="text-xs font-medium text-gray-400">Node Name</label>
 					<input
 						data-testid="step-name-input"
 						type="text"
@@ -505,7 +835,6 @@ export function NodeConfigPanel({
 					/>
 				</div>
 
-				{/* Set as Start button */}
 				{!isStartNode && (
 					<button
 						data-testid="set-as-start-button"
@@ -515,57 +844,109 @@ export function NodeConfigPanel({
 						Set as Start Node
 					</button>
 				)}
-
-				{/* Agent(s) */}
-				<AgentsSection step={step} agents={agents} onUpdate={onUpdate} />
-
-				{/* Channels (shown only in multi-agent mode) */}
-				{isMultiAgentStep(step) && (
-					<ChannelsPanelSection step={step} agents={agents} onUpdate={onUpdate} />
+				{!isEndNode && (
+					<button
+						data-testid="set-as-end-button"
+						onClick={() => onSetAsEnd(step.localId)}
+						class="w-full text-xs font-medium py-1.5 px-3 rounded border border-purple-700 text-purple-400 hover:bg-purple-900/30 transition-colors"
+					>
+						Set as End Node
+					</button>
+				)}
+				{isEndNode && (
+					<button
+						data-testid="unset-as-end-button"
+						onClick={() => onSetAsEnd(step.localId)}
+						class="w-full text-xs font-medium py-1.5 px-3 rounded border border-purple-700/50 text-purple-500/60 hover:bg-purple-900/20 transition-colors"
+					>
+						Unset End Node
+					</button>
 				)}
 
-				{/* Entry Gate */}
-				<GateConfig
-					label="Entry Gate"
-					condition={entryCondition ?? { type: 'always' }}
-					onChange={onUpdateEntryCondition}
-					terminalMessage={isFirstStep ? 'Workflow starts here' : undefined}
+				<AgentsSection
+					step={step}
+					agents={agents}
+					onUpdate={onUpdate}
+					onEditSinglePrompts={() => setPanelView({ kind: 'single-prompts' })}
+					onEditSlotPrompts={(role) => setPanelView({ kind: 'slot-prompts', role })}
 				/>
 
-				{/* Exit Gate */}
-				<GateConfig
-					label="Exit Gate"
-					condition={exitCondition ?? { type: 'always' }}
-					onChange={onUpdateExitCondition}
-					terminalMessage={isLastStep ? 'Workflow ends here' : undefined}
-				/>
-
-				{/* Instructions */}
 				<div class="space-y-1.5">
-					<label class="text-xs font-medium text-gray-400">
-						Instructions <span class="font-normal text-gray-600">(optional)</span>
-					</label>
-					<textarea
-						data-testid="instructions-textarea"
-						value={step.instructions}
-						onInput={(e) =>
-							onUpdate({
-								...step,
-								instructions: (e.currentTarget as HTMLTextAreaElement).value,
-							})
-						}
-						placeholder="Step-specific instructions appended to the agent's system prompt…"
-						rows={5}
-						class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 placeholder-gray-700 resize-y"
-					/>
+					<div class="flex items-center justify-between">
+						<label class="text-xs font-medium text-gray-400">Channel Links</label>
+						<span class="text-xs text-gray-600">{channelLinks.length}</span>
+					</div>
+					{channelLinks.length > 0 ? (
+						<div class="space-y-1.5">
+							{channelLinks.map((link) => (
+								<button
+									key={link.id}
+									type="button"
+									data-testid="node-channel-link-button"
+									onClick={() => {
+										setPanelView({ kind: 'channel-links' });
+										onOpenChannelLink?.(link.id);
+									}}
+									class="w-full rounded border border-dark-700 bg-dark-800 px-2.5 py-2 text-left hover:border-teal-600/60 hover:bg-dark-750 transition-colors"
+								>
+									<div class="flex items-center justify-between gap-2">
+										<div class="min-w-0">
+											<div class="text-xs font-mono text-gray-200 truncate">{link.label}</div>
+											<div class="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
+												<span>
+													{link.channelCount} link{link.channelCount === 1 ? '' : 's'}
+												</span>
+												{link.hasGate && <span class="text-teal-400">has gate</span>}
+											</div>
+										</div>
+										<svg
+											class="w-4 h-4 text-gray-500 flex-shrink-0"
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M9 5l7 7-7 7"
+											/>
+										</svg>
+									</div>
+								</button>
+							))}
+						</div>
+					) : (
+						<p class="text-xs text-gray-600">Create links by dragging from one node to another.</p>
+					)}
 				</div>
 			</div>
+		);
+	};
+
+	return (
+		<div
+			data-testid="node-config-panel"
+			style={{
+				position: 'absolute',
+				top: 0,
+				right: 0,
+				bottom: 0,
+				width: 320,
+				display: 'flex',
+				flexDirection: 'column',
+				zIndex: 20,
+			}}
+			class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
+		>
+			{renderHeader()}
+			{renderPanelBody()}
 
 			{/* Footer — Delete button */}
 			<div class="px-4 py-3 border-t border-dark-700 flex-shrink-0">
 				{confirmingDelete ? (
 					<div class="space-y-2">
-						<p class="text-xs text-gray-400">Delete this step? This cannot be undone.</p>
+						<p class="text-xs text-gray-400">Delete this node? This cannot be undone.</p>
 						<div class="flex gap-2">
 							<button
 								data-testid="delete-confirm-button"
@@ -588,10 +969,10 @@ export function NodeConfigPanel({
 						data-testid="delete-step-button"
 						onClick={handleDeleteClick}
 						disabled={isStartNode}
-						title={isStartNode ? 'Designate another node as start before deleting' : 'Delete step'}
+						title={isStartNode ? 'Designate another node as start before deleting' : 'Delete node'}
 						class="w-full text-xs py-1.5 px-3 rounded border border-red-900 text-red-500 hover:bg-red-900/30 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
 					>
-						Delete Step
+						Delete Node
 					</button>
 				)}
 				{isStartNode && !confirmingDelete && (

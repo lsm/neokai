@@ -1,87 +1,52 @@
 /**
  * ChannelResolver — validates messaging permissions based on declared channel topology.
  *
- * Reads `ResolvedChannel[]` from a workflow run's config (`run.config._resolvedChannels`)
- * and exposes a simple validation API for checking whether a given agent role is
- * permitted to send messages to another role.
+ * Accepts a `WorkflowChannel[]` and exposes a simple validation API for checking
+ * whether a given node is permitted to send messages to another node.
  *
- * Resolved channels are stored by `SpaceRuntime.storeResolvedChannels()` at step-start
- * (see `space-runtime.ts`). Each entry is a concrete directional routing rule already
- * expanded from the declarative `WorkflowChannel` declarations:
- *   - Bidirectional channels are split into two one-way entries
- *   - Wildcard (`*`) and array `to` declarations are expanded per pair
+ * Channels are node-to-node (WorkflowChannel.from/to = WorkflowNode.name) and are
+ * always one-way. A bidirectional relationship is represented as two separate channels.
  *
- * When no channels are declared for a step (empty array), all `canSend()` calls
- * return `false` (open/unrestricted mode is not assumed — Task Agent override handles
- * cross-member messaging outside the topology).
+ * When no channels are declared (empty array), all `canSend()` calls return `false`.
  */
 
-import type { ResolvedChannel } from '@neokai/shared';
-
-/**
- * Returns true when `entry` is a structurally valid `ResolvedChannel`.
- * Filters out malformed DB values (partial serialization, migration bugs, manual edits)
- * rather than casting them blindly, which would produce undefined behaviour in
- * `canSend()` / `getPermittedTargets()` (e.g. `ch.fromRole === undefined` always false).
- */
-function isValidResolvedChannel(entry: unknown): entry is ResolvedChannel {
-	if (!entry || typeof entry !== 'object') return false;
-	const e = entry as Record<string, unknown>;
-	return (
-		typeof e.fromRole === 'string' &&
-		e.fromRole.length > 0 &&
-		typeof e.toRole === 'string' &&
-		e.toRole.length > 0 &&
-		typeof e.fromAgentId === 'string' &&
-		typeof e.toAgentId === 'string' &&
-		e.direction === 'one-way' &&
-		typeof e.isHubSpoke === 'boolean'
-	);
-}
+import type { WorkflowChannel } from '@neokai/shared';
 
 export class ChannelResolver {
-	constructor(private readonly channels: ResolvedChannel[]) {}
+	constructor(private readonly channels: WorkflowChannel[]) {}
 
 	/**
-	 * Build a ChannelResolver from a workflow run's config object.
-	 * Reads `config._resolvedChannels` — stored by `storeResolvedChannels()` in SpaceRuntime.
-	 * Returns an empty resolver if the field is absent, not an array, or contains only
-	 * invalid entries. Invalid entries are silently filtered rather than casting blindly.
-	 */
-	static fromRunConfig(config: Record<string, unknown> | undefined): ChannelResolver {
-		const raw = config?._resolvedChannels;
-		if (!Array.isArray(raw)) return new ChannelResolver([]);
-		const channels = raw.filter(isValidResolvedChannel);
-		return new ChannelResolver(channels);
-	}
-
-	/**
-	 * Returns true if the declared channel topology permits the sender to message the target.
+	 * Returns true if the declared channel topology permits the sender node to message
+	 * the target node. `from` and `to` are node names (WorkflowNode.name).
 	 *
-	 * Matches by role string. When no channels are declared, always returns false —
-	 * the Task Agent can override this using `relay_message` (unrestricted).
+	 * When no channels are declared, always returns false.
 	 */
-	canSend(fromRole: string, toRole: string): boolean {
-		return this.channels.some((ch) => ch.fromRole === fromRole && ch.toRole === toRole);
+	canSend(fromNode: string, toNode: string): boolean {
+		return this.channels.some((ch) => {
+			if (ch.from !== fromNode && ch.from !== '*') return false;
+			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+			return toList.includes(toNode) || toList.includes('*');
+		});
 	}
 
 	/**
-	 * Returns all target roles that the given sender role is permitted to message
-	 * according to the declared channel topology. Duplicate role names are deduplicated
-	 * (can occur when multiple agent IDs share the same role and both appear as targets).
+	 * Returns all target node names that the given sender node is permitted to message.
 	 * Returns an empty array when no channels are declared or none match.
 	 */
-	getPermittedTargets(fromRole: string): string[] {
-		const targets = this.channels.filter((ch) => ch.fromRole === fromRole).map((ch) => ch.toRole);
+	getPermittedTargets(fromNode: string): string[] {
+		const targets: string[] = [];
+		for (const ch of this.channels) {
+			if (ch.from !== fromNode && ch.from !== '*') continue;
+			const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
+			targets.push(...toList);
+		}
 		return [...new Set(targets)];
 	}
 
 	/**
-	 * Returns a shallow copy of the full resolved channel topology.
-	 * Returns a copy so callers cannot mutate the internal array.
-	 * Each entry is a concrete one-way routing rule (bidirectional already split).
+	 * Returns a shallow copy of the channel definitions.
 	 */
-	getResolvedChannels(): ResolvedChannel[] {
+	getChannels(): WorkflowChannel[] {
 		return [...this.channels];
 	}
 

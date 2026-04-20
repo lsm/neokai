@@ -79,6 +79,20 @@ export function formatRelativeTime(date: Date): string {
 }
 
 /**
+ * Format relative time from a timestamp (ms since epoch)
+ */
+export function getRelativeTime(ts: number): string {
+	const diff = Date.now() - ts;
+	const minutes = Math.floor(diff / 60_000);
+	if (minutes < 1) return 'just now';
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	return `${days}d ago`;
+}
+
+/**
  * Format token count in k format (e.g., 16500 -> "16.5k")
  */
 export function formatTokens(tokens: number): string {

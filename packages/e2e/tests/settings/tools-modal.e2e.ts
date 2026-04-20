@@ -1,25 +1,28 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	getModal,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
 
 /**
- * Tools Modal Complete E2E Tests
+ * Tools Modal E2E Tests (Redesigned)
  *
- * Comprehensive tests for ToolsModal features beyond MCP toggle:
- * - System prompt preset toggle (Claude Code Preset)
- * - Setting sources selection (User/Project/Local)
- * - NeoKai Tools section (Memory tool)
- * - SDK built-in tools section
- * - Save/Cancel functionality
- *
- * Note: mcp-toggle.e2e.ts covers MCP server toggling specifically
+ * Tests the redesigned ToolsModal with:
+ * - Unified MCP server list grouped by scope
+ * - Collapsible groups with group-level toggles
+ * - Advanced section (collapsed by default) for Claude Code Preset + Setting Sources
+ * - Scope badges ("All sessions" vs "This session")
  */
-test.describe('Tools Modal - Complete', () => {
+
+test.describe('Tools Modal - Redesigned', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(500);
 		sessionId = null;
 	});
 
@@ -27,177 +30,213 @@ test.describe('Tools Modal - Complete', () => {
 		if (sessionId) {
 			try {
 				await cleanupTestSession(page, sessionId);
-			} catch (error) {
-				console.warn(`Failed to cleanup session ${sessionId}:`, error);
+			} catch {
+				// ignore cleanup errors
 			}
 			sessionId = null;
 		}
 	});
 
-	test.skip('should show System Prompt section with Claude Code Preset', async ({ page }) => {
-		// Create a new session
+	/** Open the Tools modal for the current session and return the dialog locator */
+	async function openToolsModal(page: import('@playwright/test').Page) {
+		// Ensure WebSocket is connected before clicking — the button title changes to
+		// "Not connected" when disconnected, so we must wait for the connected state first.
+		await waitForWebSocketConnected(page);
+		const optionsButton = page.getByTitle('Session options');
+		await optionsButton.click();
+		// Scope the menu to the session options menu container to avoid matching stray "Tools" buttons
+		await page
+			.locator(
+				'[role="menu"] [role="menuitem"]:has-text("Tools"), [role="menuitem"]:has-text("Tools")'
+			)
+			.first()
+			.click();
+		await expect(getModal(page)).toBeVisible({ timeout: 5000 });
+		return getModal(page);
+	}
+
+	test('should open tools modal and show group sections', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		// Open session options menu
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
+		const dialog = await openToolsModal(page);
 
-		// Click Tools option
-		await page.locator('text=Tools').first().click();
-
-		// Wait for Tools modal to open
-		await expect(page.locator('text=System Prompt').first()).toBeVisible({
-			timeout: 5000,
-		});
-
-		// Should show Claude Code Preset option
-		await expect(page.locator('text=Claude Code Preset')).toBeVisible();
-		await expect(page.locator('text=Use official Claude Code system prompt')).toBeVisible();
+		// Should show the group section headers — scoped to dialog to avoid page-level duplicates.
+		// "App Skills & MCP Servers" renders as a <button> (GroupHeader) when skills exist, or a
+		// plain <span> when no app skills are configured. In both cases the text is always present.
+		await expect(dialog.getByText('App Skills & MCP Servers', { exact: true })).toBeVisible();
+		// "Project MCP Servers" always renders as a GroupHeader button.
+		await expect(dialog.locator('button:has-text("Project MCP Servers")')).toBeVisible();
 	});
 
-	test.skip('should show Setting Sources section with checkboxes', async ({ page }) => {
-		// Create a new session
+	test('should show Advanced section collapsed by default', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		// Open Tools modal
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
-		await page.locator('text=Tools').first().click();
+		const dialog = await openToolsModal(page);
 
-		// Wait for modal
-		await expect(page.locator('h2:has-text("Tools"), h3:has-text("Tools")').first()).toBeVisible({
-			timeout: 5000,
-		});
+		// Advanced section should be visible but collapsed
+		await expect(dialog.getByRole('button', { name: /Advanced/i })).toBeVisible();
 
-		// Should show Setting Sources section
-		await expect(page.locator('text=Setting Sources')).toBeVisible();
-
-		// Should show User, Project, and Local options
-		await expect(page.locator('text=User').first()).toBeVisible();
-		await expect(page.locator('text=Project').first()).toBeVisible();
-		await expect(page.locator('text=Local').first()).toBeVisible();
+		// Claude Code Preset should NOT be visible initially (hidden in Advanced)
+		// Scoping to dialog ensures this assertion targets the modal state, not a stray page node
+		await expect(dialog.getByText('Claude Code Preset')).not.toBeVisible();
 	});
 
-	test.skip('should show NeoKai Tools section with Memory tool', async ({ page }) => {
-		// Create a new session
+	test('should expand Advanced section and show Claude Code Preset', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		// Open Tools modal
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
-		await page.locator('text=Tools').first().click();
+		const dialog = await openToolsModal(page);
 
-		// Wait for modal
-		await expect(page.locator('h2:has-text("Tools"), h3:has-text("Tools")').first()).toBeVisible({
-			timeout: 5000,
-		});
+		// Click Advanced to expand
+		await dialog.getByRole('button', { name: /Advanced/i }).click();
 
-		// Should show NeoKai Tools section
-		await expect(page.locator('text=NeoKai Tools')).toBeVisible();
+		// Claude Code Preset should now be visible
+		await expect(dialog.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
-		// Should show Memory tool option
-		await expect(page.locator('text=Memory')).toBeVisible();
+		// Setting Sources should also be visible — scoped to dialog to avoid page-level duplicates.
+		// .first() is still required within the dialog: getByText matches both the <h4> element
+		// and its parent <div> (whose text content is a superset), causing a strict-mode violation.
+		await expect(dialog.getByText('Setting Sources').first()).toBeVisible();
 	});
 
-	test.skip('should show SDK Built-in section', async ({ page }) => {
-		// Create a new session
+	test('should show scope badges for groups', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		// Open Tools modal
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
-		await page.locator('text=Tools').first().click();
+		const dialog = await openToolsModal(page);
 
-		// Wait for modal
-		await expect(page.locator('h2:has-text("Tools"), h3:has-text("Tools")').first()).toBeVisible({
-			timeout: 5000,
-		});
+		// App MCP group should show "All sessions" scope badge
+		await expect(dialog.getByText('All sessions').first()).toBeVisible();
 
-		// Should show SDK Built-in section
-		await expect(page.locator('text=SDK Built-in')).toBeVisible();
-
-		// SDK tools are always enabled (informational only)
-		await expect(page.locator('text=Always enabled')).toBeVisible();
+		// Project MCP group should show "This session" scope badge
+		await expect(dialog.getByText('This session').first()).toBeVisible();
 	});
 
-	test.skip('should enable Save button when settings change', async ({ page }) => {
-		// Create a new session
+	test('should collapse Advanced group and hide Claude Code Preset', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
+		const dialog = await openToolsModal(page);
 
-		// Open Tools modal
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
-		await page.locator('text=Tools').first().click();
+		const advancedHeader = dialog.getByRole('button', { name: /Advanced/i });
+		await expect(advancedHeader).toBeVisible();
 
-		// Wait for modal
-		await expect(page.locator('h2:has-text("Tools"), h3:has-text("Tools")').first()).toBeVisible({
-			timeout: 5000,
-		});
+		// Initially collapsed — Claude Code Preset should NOT be visible
+		await expect(dialog.getByText('Claude Code Preset')).not.toBeVisible();
 
-		// Save button should initially be disabled (no changes)
-		const saveButton = page.locator('button:has-text("Save")');
-		await expect(saveButton).toBeVisible();
+		// Expand
+		await advancedHeader.click();
+		await expect(dialog.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
 
-		// Click a toggle to make a change (e.g., Claude Code Preset)
-		const claudePresetToggle = page
-			.locator('label:has-text("Claude Code Preset")')
-			.locator('..')
-			.locator('button[role="switch"], input[type="checkbox"]');
-		if ((await claudePresetToggle.count()) > 0) {
-			await claudePresetToggle.first().click();
-			// Save button should now be enabled
-			await expect(saveButton).toBeEnabled({ timeout: 2000 });
-		}
+		// Collapse again
+		await advancedHeader.click();
+		await expect(dialog.getByText('Claude Code Preset')).not.toBeVisible({ timeout: 2000 });
 	});
 
-	test.skip('should close modal with Cancel button without saving', async ({ page }) => {
-		// Create a new session
+	test('should collapse Project MCP Servers group and hide content', async ({ page }) => {
+		sessionId = await createSessionViaUI(page);
+		const dialog = await openToolsModal(page);
+
+		// Wait for MCP loading to finish before checking collapse
+		await expect(getModal(page).getByText('Loading servers...')).not.toBeVisible({
+			timeout: 10000,
+		});
+
+		const fileMcpHeader = dialog.locator('button:has-text("Project MCP Servers")');
+		await expect(fileMcpHeader).toBeVisible();
+
+		// Initially expanded
+		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'true');
+
+		// The content div (div.mt-1.ml-5) is a sibling of the GroupHeader div — it should be attached
+		// XPath: from button → parent (GroupHeader div) → parent (section div) → child div.ml-5
+		const fileMcpContent = fileMcpHeader.locator('xpath=../../div[contains(@class,"ml-5")]');
+		await expect(fileMcpContent.first()).toBeAttached();
+
+		// Collapse
+		await fileMcpHeader.click();
+		await expect(fileMcpHeader).toHaveAttribute('aria-expanded', 'false');
+
+		// Content div is removed from DOM
+		await expect(fileMcpContent.first()).not.toBeAttached({ timeout: 2000 });
+	});
+
+	test('should show Claude Code Preset toggle in Advanced section', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		// Open Tools modal
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
-		await page.locator('text=Tools').first().click();
+		const dialog = await openToolsModal(page);
 
-		// Wait for modal
-		const modalTitle = page.locator('h2:has-text("Tools"), h3:has-text("Tools")').first();
-		await expect(modalTitle).toBeVisible({ timeout: 5000 });
+		// Expand Advanced section
+		await dialog.getByRole('button', { name: /Advanced/i }).click();
 
-		// Click Cancel button
-		await page.locator('button:has-text("Cancel")').click();
+		// Claude Code Preset and Setting Sources should be visible
+		await expect(dialog.getByText('Claude Code Preset')).toBeVisible({ timeout: 2000 });
+		await expect(dialog.getByText('Use official Claude Code system prompt')).toBeVisible();
+	});
+
+	test('should enable Save button when session-local setting is toggled', async ({ page }) => {
+		sessionId = await createSessionViaUI(page);
+
+		const dialog = await openToolsModal(page);
+
+		// Save should be disabled initially (no changes)
+		const saveBtn = dialog.getByRole('button', { name: 'Save' });
+		await expect(saveBtn).toBeDisabled();
+
+		// Toggle Claude Code Preset (in Advanced section) to mark modal as changed
+		await dialog.getByRole('button', { name: /Advanced/i }).click();
+		const claudeCodeLabel = dialog.locator('label:has-text("Claude Code Preset")');
+		await expect(claudeCodeLabel).toBeVisible({ timeout: 2000 });
+		await claudeCodeLabel.locator('input[type="checkbox"]').click();
+
+		// Save button must now be enabled
+		await expect(saveBtn).toBeEnabled({ timeout: 2000 });
+	});
+
+	test('should close modal with Cancel without saving', async ({ page }) => {
+		sessionId = await createSessionViaUI(page);
+
+		await openToolsModal(page);
+
+		const dialog = getModal(page);
+		await expect(dialog).toBeVisible();
+
+		// Click Cancel
+		await dialog.getByRole('button', { name: 'Cancel' }).click();
 
 		// Modal should close
-		await expect(modalTitle).not.toBeVisible({ timeout: 2000 });
+		await expect(dialog).not.toBeVisible({ timeout: 3000 });
 	});
 
-	test.skip('should toggle Claude Code Preset', async ({ page }) => {
-		// Create a new session
+	test('should persist state: save and reopen modal shows same config', async ({ page }) => {
 		sessionId = await createSessionViaUI(page);
 
-		// Open Tools modal
-		const optionsButton = page.locator('button[aria-label="Session options"]');
-		await optionsButton.click();
-		await page.locator('text=Tools').first().click();
+		let dialog = await openToolsModal(page);
 
-		// Wait for modal
-		await expect(page.locator('text=Claude Code Preset')).toBeVisible({
-			timeout: 5000,
-		});
+		// Toggle memory on
+		const memoryLabel = dialog.locator('label:has-text("Memory")').first();
+		if ((await memoryLabel.count()) > 0) {
+			const memoryCheckbox = memoryLabel.locator('input[type="checkbox"]');
+			const isChecked = await memoryCheckbox.isChecked();
 
-		// Find the toggle for Claude Code Preset
-		const presetRow = page.locator('div:has-text("Claude Code Preset")').first();
-		const toggle = presetRow.locator('button[role="switch"], input[type="checkbox"]').first();
+			// Toggle memory state
+			await memoryLabel.click();
+			await expect(memoryCheckbox).toHaveJSProperty('checked', !isChecked, { timeout: 2000 });
 
-		if ((await toggle.count()) > 0) {
-			// Get initial state
-			const initialState = await toggle.getAttribute('aria-checked');
+			// Save
+			const saveBtn = dialog.getByRole('button', { name: 'Save' });
+			if (await saveBtn.isEnabled()) {
+				await saveBtn.click();
+				await expect(getModal(page)).not.toBeVisible({ timeout: 5000 });
 
-			// Toggle it
-			await toggle.click();
+				// Reopen modal
+				dialog = await openToolsModal(page);
 
-			// State should change
-			const newState = await toggle.getAttribute('aria-checked');
-			expect(newState).not.toBe(initialState);
+				// Memory should reflect saved state
+				const memoryCheckboxAfter = dialog
+					.locator('label:has-text("Memory")')
+					.first()
+					.locator('input[type="checkbox"]');
+				await expect(memoryCheckboxAfter).toHaveJSProperty('checked', !isChecked, {
+					timeout: 2000,
+				});
+			}
 		}
 	});
 });

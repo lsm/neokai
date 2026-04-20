@@ -450,8 +450,7 @@ describe('GLM Provider Integration', () => {
 			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
 			if (!glmApiKey) {
-				console.log('Skipping GLM-5-Turbo API call test - no GLM_API_KEY set');
-				return;
+				throw new Error('GLM_API_KEY (or ZHIPU_API_KEY) must be set to run GLM online tests');
 			}
 
 			const baseUrl = 'https://open.bigmodel.cn/api/anthropic';
@@ -498,10 +497,8 @@ describe('GLM Provider Integration', () => {
 		it('should make actual API call to GLM', async () => {
 			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
-			// Skip test if no API key is available
 			if (!glmApiKey) {
-				console.log('Skipping GLM API call test - no GLM_API_KEY set');
-				return;
+				throw new Error('GLM_API_KEY (or ZHIPU_API_KEY) must be set to run GLM online tests');
 			}
 
 			// This test makes an actual API call to GLM using fetch

@@ -16,22 +16,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── Infrastructure Helpers ───────────────────────────────────────────────────
-
-async function createRoom(
-	page: Parameters<typeof waitForWebSocketConnected>[0],
-	name: string
-): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async (roomName) => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', { name: roomName });
-		return (res as { room: { id: string } }).room.id;
-	}, name);
-}
 
 async function createTask(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
@@ -47,6 +34,9 @@ async function createTask(
 				roomId: rId,
 				title: t,
 				description: 'LiveQuery E2E test task',
+				// Use 'draft' to prevent the scheduler from spawning a worktree
+				// (the E2E workspace is not a git repo, so worktree creation fails).
+				status: 'draft',
 			});
 			return (res as { task: { id: string } }).task.id;
 		},
@@ -99,6 +89,7 @@ test.describe('LiveQuery — task created via RPC appears in room UI without pag
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
+		await waitForWebSocketConnected(page);
 		// Clear persisted tab selection so tasks (pending status → Active tab) are always visible
 		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
 		await page

@@ -2,6 +2,7 @@
  * Space Agent RPC Handlers
  *
  * RPC handlers for Space agent CRUD operations:
+ * - spaceAgent.listBuiltInTemplates - List built-in agent templates from seeding source
  * - spaceAgent.create  - Create an agent in a Space
  * - spaceAgent.list    - List all agents in a Space
  * - spaceAgent.get     - Get a single agent by ID
@@ -12,6 +13,8 @@
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
+import type { SpaceManager } from '../space/managers/space-manager';
+import { getPresetAgentTemplates } from '../space/agents/seed-agents';
 import { Logger } from '../logger';
 
 const log = new Logger('space-agent-handlers');
@@ -19,34 +22,42 @@ const log = new Logger('space-agent-handlers');
 export function setupSpaceAgentHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
-	spaceAgentManager: SpaceAgentManager
+	spaceAgentManager: SpaceAgentManager,
+	spaceManager: SpaceManager
 ): void {
+	// spaceAgent.listBuiltInTemplates — return built-in templates from seeding source
+	messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
+		const params = data as { spaceId: string };
+		if (!params.spaceId) throw new Error('spaceId is required');
+
+		// Keep validation consistent with spaceWorkflow.listBuiltInTemplates.
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+
+		return { templates: getPresetAgentTemplates() };
+	});
+
 	// spaceAgent.create — create a new agent within a Space
 	messageHub.onRequest('spaceAgent.create', async (data) => {
 		const params = data as {
 			spaceId: string;
 			name: string;
-			role: string;
 			description?: string;
 			model?: string;
 			provider?: string;
-			toolConfig?: Record<string, unknown>;
-			systemPrompt?: string;
+			customPrompt?: string | null;
 		};
 
 		if (!params.spaceId) throw new Error('spaceId is required');
 		if (!params.name) throw new Error('name is required');
-		if (!params.role) throw new Error('role is required');
 
 		const result = await spaceAgentManager.create({
 			spaceId: params.spaceId,
 			name: params.name,
-			role: params.role,
 			description: params.description,
 			model: params.model,
 			provider: params.provider,
-			toolConfig: params.toolConfig,
-			systemPrompt: params.systemPrompt,
+			customPrompt: params.customPrompt,
 		});
 
 		if (!result.ok) throw new Error(result.error);
@@ -90,11 +101,9 @@ export function setupSpaceAgentHandlers(
 			id: string;
 			name?: string;
 			description?: string | null;
-			role?: string;
 			model?: string | null;
 			provider?: string | null;
-			toolConfig?: Record<string, unknown> | null;
-			systemPrompt?: string | null;
+			customPrompt?: string | null;
 		};
 
 		if (!params.id) throw new Error('id is required');
@@ -103,11 +112,9 @@ export function setupSpaceAgentHandlers(
 		const result = await spaceAgentManager.update(id, {
 			name: updateFields.name,
 			description: updateFields.description,
-			role: updateFields.role,
 			model: updateFields.model,
 			provider: updateFields.provider,
-			toolConfig: updateFields.toolConfig,
-			systemPrompt: updateFields.systemPrompt,
+			customPrompt: updateFields.customPrompt,
 		});
 
 		if (!result.ok) throw new Error(result.error);

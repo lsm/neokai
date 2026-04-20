@@ -84,8 +84,9 @@ import type {
 	SystemPromptConfig,
 	McpServerConfig,
 	Provider,
+	RoomSkillOverride,
 } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { ChatMessage, MessageOrigin } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { Database } from '../../storage/database';
 import { ErrorManager } from '../error-manager';
@@ -136,8 +137,12 @@ export interface AgentSessionInit {
 	/** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
 	agents?: Record<string, import('@neokai/shared').AgentDefinition>;
 
-	/** Disable automatic /context queuing after each turn (default: true) */
-	contextAutoQueue?: boolean;
+	/**
+	 * Room-level skill overrides applied on top of the global skills registry.
+	 * Skills with enabled=false in this list are excluded from injection even if
+	 * globally enabled. Populated by the room runtime when spawning sessions.
+	 */
+	roomSkillOverrides?: RoomSkillOverride[];
 }
 
 // Extracted components
@@ -221,11 +226,8 @@ export class AgentSession
 	queryAbortController: AbortController | null = null;
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-	startupTimeoutAutoRecoverAttempts = 0;
 	originalEnvVars: OriginalEnvVars = {};
-	// Whether to auto-queue /context after each turn (default: true)
-	// Disabled for room-managed agents to prevent interleaved messages after terminal state
-	contextAutoQueueEnabled = true;
+	processExitedPromise: Promise<void> | null = null;
 
 	// Session state
 	private _isCleaningUp = false;
@@ -241,11 +243,17 @@ export class AgentSession
 		readonly db: Database,
 		readonly messageHub: MessageHub,
 		readonly daemonHub: DaemonHub,
-		private getApiKey: () => Promise<string | null>
+		private getApiKey: () => Promise<string | null>,
+		readonly skillsManager?: import('../skills-manager').SkillsManager,
+		readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+		readonly roomSkillOverrides?: RoomSkillOverride[]
 	) {
 		this.errorManager = new ErrorManager(this.messageHub, this.daemonHub);
 		this.logger = new Logger(`AgentSession ${session.id}`);
-		this.settingsManager = new SettingsManager(this.db, this.session.workspacePath);
+		this.settingsManager = new SettingsManager(
+			this.db,
+			this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined
+		);
 
 		// Initialize core components (order matters - some handlers depend on earlier ones)
 		this.messageQueue = new MessageQueue();
@@ -350,7 +358,9 @@ export class AgentSession
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
 		getApiKey: () => Promise<string | null>,
-		defaultModel: string
+		defaultModel: string,
+		skillsManager?: import('../skills-manager').SkillsManager,
+		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
 	): AgentSession {
 		// Check if session already exists in DB
 		let session = db.getSession(init.sessionId);
@@ -430,10 +440,16 @@ export class AgentSession
 			};
 		}
 
-		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
-		if (init.contextAutoQueue === false) {
-			agentSession.contextAutoQueueEnabled = false;
-		}
+		const agentSession = new AgentSession(
+			session,
+			db,
+			messageHub,
+			daemonHub,
+			getApiKey,
+			skillsManager,
+			appMcpServerRepo,
+			init.roomSkillOverrides
+		);
 		return agentSession;
 	}
 
@@ -450,14 +466,22 @@ export class AgentSession
 		db: Database,
 		messageHub: MessageHub,
 		daemonHub: DaemonHub,
-		getApiKey: () => Promise<string | null>
+		getApiKey: () => Promise<string | null>,
+		skillsManager?: import('../skills-manager').SkillsManager,
+		appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
 	): AgentSession | null {
 		const session = db.getSession(sessionId);
 		if (!session) return null;
 
-		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
-		// Worker/leader sessions managed by room runtime should not auto-queue /context
-		agentSession.contextAutoQueueEnabled = false;
+		const agentSession = new AgentSession(
+			session,
+			db,
+			messageHub,
+			daemonHub,
+			getApiKey,
+			skillsManager,
+			appMcpServerRepo
+		);
 		return agentSession;
 	}
 
@@ -651,6 +675,27 @@ export class AgentSession
 	}
 
 	/**
+	 * Merge additional runtime MCP servers into the in-memory session config.
+	 *
+	 * Unlike `setRuntimeMcpServers`, this preserves existing entries and only
+	 * overwrites the keys present in `additional`. Used when a cross-cutting
+	 * subsystem (e.g., `SpaceRuntimeService`) wants to attach a shared MCP
+	 * server (like `space-agent-tools`) to a session without disturbing other
+	 * runtime-attached servers (e.g., `task-agent`, `db-query`, `room-tools`)
+	 * that may have been added by other owners.
+	 */
+	mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): void {
+		const existing = this.session.config?.mcpServers ?? {};
+		this.session.config = {
+			...this.session.config,
+			mcpServers: {
+				...existing,
+				...additional,
+			},
+		};
+	}
+
+	/**
 	 * Apply a runtime system prompt to in-memory session config only.
 	 * Used to inject context-specific instructions (e.g. room workflow guidance)
 	 * without persisting them to the database.
@@ -659,6 +704,18 @@ export class AgentSession
 		this.session.config = {
 			...this.session.config,
 			systemPrompt,
+		};
+	}
+
+	/**
+	 * Apply a runtime model override to in-memory session config only.
+	 * Used by singleton sessions (e.g. Neo) that have a model setting independent
+	 * of the global default. Not persisted to the database.
+	 */
+	setRuntimeModel(model: string): void {
+		this.session.config = {
+			...this.session.config,
+			model,
 		};
 	}
 
@@ -694,7 +751,12 @@ export class AgentSession
 		limit?: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		return this.db.getSDKMessages(this.session.id, limit, before, since);
 	}
 
@@ -801,12 +863,6 @@ export class AgentSession
 
 	async onMarkApiSuccess(): Promise<void> {
 		this.errorManager.markApiSuccess();
-	}
-
-	async onStartupTimeoutAutoRecover(): Promise<void> {
-		if (this.isCleaningUp()) return;
-		this.logger.warn('Auto-recovering after SDK startup timeout — starting fresh without resume.');
-		await this.startStreamingQuery();
 	}
 
 	// ============================================================================

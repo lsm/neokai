@@ -8,7 +8,7 @@
 import { useState, useCallback } from 'preact/hooks';
 import type { Session, ArchiveSessionResponse } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
-import { deleteSession, listSessions, archiveSession } from '../lib/api-helpers';
+import { deleteSession, listSessions, archiveSession, resetSessionQuery } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 import { currentSessionIdSignal, sessionsSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
@@ -127,16 +127,7 @@ export function useSessionActions({
 
 		try {
 			setResettingAgent(true);
-			const hub = connectionManager.getHubIfConnected();
-			if (!hub) {
-				toast.error('Not connected to server');
-				return;
-			}
-
-			const result = await hub.request<{ success: boolean; error?: string }>('session.resetQuery', {
-				sessionId,
-				restartQuery: true,
-			});
+			const result = await resetSessionQuery(sessionId);
 
 			if (result.success) {
 				toast.success('Agent reset successfully.');

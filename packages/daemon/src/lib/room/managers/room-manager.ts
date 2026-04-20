@@ -16,14 +16,8 @@ import { RoomRepository } from '../../../storage/repositories/room-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type {
-	Room,
-	CreateRoomParams,
-	UpdateRoomParams,
-	RoomOverview,
-	TaskSummary,
-	NeoTask,
-} from '@neokai/shared';
+import { isWorkerSessionId } from '../session-utils';
+import type { Room, CreateRoomParams, UpdateRoomParams, RoomOverview } from '@neokai/shared';
 
 export class RoomManager {
 	private db: BunDatabase;
@@ -103,6 +97,17 @@ export class RoomManager {
 				this.sessionRepo.deleteSession(sessionId);
 			}
 
+			// Clean up orphaned session_groups that reference tasks in this room.
+			// session_groups.ref_id has no FK to tasks, so CASCADE won't clean them up.
+			// Deleting them before the room prevents FK errors if the runtime
+			// concurrently tries to join session_groups with tasks.
+			this.db
+				.prepare(
+					`DELETE FROM session_groups
+					 WHERE ref_id IN (SELECT id FROM tasks WHERE room_id = ?)`
+				)
+				.run(id);
+
 			// Delete the room — CASCADE handles tasks, goals, etc.
 			return this.roomRepo.deleteRoom(id);
 		});
@@ -124,64 +129,39 @@ export class RoomManager {
 		const room = this.roomRepo.getRoom(roomId);
 		if (!room) return null;
 
-		// Get non-archived tasks for activeTasks
-		const tasks = this.taskRepo.listTasks(roomId);
-		// Get all tasks including archived for allTasks field
-		const allTasks = this.taskRepo.listTasks(roomId, { includeArchived: true });
-
-		const toSummary = (task: NeoTask): TaskSummary => ({
-			id: task.id,
-			title: task.title,
-			status: task.status,
-			priority: task.priority,
-			progress: task.progress,
-			currentStep: task.currentStep,
-			dependsOn: task.dependsOn,
-			error: task.error,
-			activeSession: task.activeSession,
-			prUrl: task.prUrl,
-			prNumber: task.prNumber,
-			updatedAt: task.updatedAt,
-		});
-		const nonTerminal = tasks.filter(
-			(t) => t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
-		);
-		const taskSummaries = nonTerminal.map(toSummary);
-		const allTaskSummaries = allTasks.map(toSummary);
-
-		// Build session summaries from actual session data
-		// Filter out room-specific sessions (chat, craft, lead)
-		const sessions = room.sessionIds
-			.filter(
-				(id) =>
-					!id.startsWith('room:chat:') &&
-					!id.startsWith('room:self:') &&
-					!id.startsWith('room:craft:') &&
-					!id.startsWith('room:lead:')
-			)
-			.map((id) => {
-				const session = this.sessionRepo.getSession(id);
-				if (!session) {
-					return {
+		// Build session summaries from actual session data (batch query to avoid N+1)
+		// Filter out room-specific sessions (chat, craft, lead) and archived (deleted) sessions
+		const workerIds = room.sessionIds.filter(isWorkerSessionId);
+		const sessionsMap =
+			workerIds.length > 0 ? this.sessionRepo.getSessionsByIds(workerIds) : new Map();
+		const sessions = workerIds.flatMap((id) => {
+			const session = sessionsMap.get(id);
+			if (!session) {
+				return [
+					{
 						id,
 						title: `Session ${id.slice(0, 8)}`,
 						status: 'ended' as const,
 						lastActiveAt: 0,
-					};
-				}
-				return {
+					},
+				];
+			}
+			if (session.status === 'archived') {
+				return [];
+			}
+			return [
+				{
 					id: session.id,
 					title: session.title,
 					status: session.status,
 					lastActiveAt: new Date(session.lastActiveAt).getTime(),
-				};
-			});
+				},
+			];
+		});
 
 		return {
 			room,
 			sessions,
-			activeTasks: taskSummaries,
-			allTasks: allTaskSummaries,
 		};
 	}
 
@@ -206,11 +186,11 @@ export class RoomManager {
 	getGlobalStatus() {
 		const rooms = this.roomRepo.listRooms(false); // Only active rooms
 
-		const roomStatuses = rooms.map((room) => this.getRoomStatus(room.id)).filter(Boolean);
+		const roomStatuses = this.roomRepo.getRoomStatusesBatch(rooms.map((r) => r.id));
 
 		return {
 			rooms: roomStatuses,
-			totalActiveTasks: roomStatuses.reduce((sum, r) => sum + (r?.activeTaskCount ?? 0), 0),
+			totalActiveTasks: roomStatuses.reduce((sum, r) => sum + r.activeTaskCount, 0),
 		};
 	}
 }

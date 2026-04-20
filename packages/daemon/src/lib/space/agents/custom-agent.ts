@@ -1,372 +1,368 @@
 /**
- * Custom Agent Factory — Creates AgentSessionInit from a SpaceAgent definition
+ * Custom Agent Factory
  *
- * Handles user-defined Space agents with configurable system prompts, tools, and models.
- * Custom agents follow the same execution model as built-in coder/general agents but
- * allow per-agent customization within the Space system.
+ * Creates `AgentSessionInit` from a visible `SpaceAgent` + workflow slot configuration.
+ * Runtime behavior must be WYSIWYG: code provides structure and context, while agent
+ * behavior comes only from visible prompt fields on the agent or workflow node.
  */
 
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type {
+	AgentDefinition,
+	McpServerConfig,
+	RoomSkillOverride,
+	Space,
 	SpaceAgent,
 	SpaceTask,
 	SpaceWorkflow,
 	SpaceWorkflowRun,
-	Space,
-	SessionFeatures,
-	AgentDefinition,
+	WorkflowChannel,
+	WorkflowNode,
 } from '@neokai/shared';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import { inferProviderForModel } from '../../providers/registry';
+import { Logger } from '../../logger';
+import { SUB_SESSION_FEATURES } from './seed-agents';
 
-const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
-const CUSTOM_AGENT_FEATURES: SessionFeatures = {
-	rewind: false,
-	worktree: false,
-	coordinator: false,
-	archive: false,
-	sessionInfo: false,
-};
+/**
+ * Soft size budget for the initial user message. When exceeded, a warning is
+ * logged so future prompt bloat is caught during development. Never fails.
+ */
+const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
 
-// ============================================================================
-// Config
-// ============================================================================
+const log = new Logger('custom-agent');
+
+/**
+ * Per-slot overrides from a `WorkflowNodeAgent` entry.
+ * Applied on top of the base `SpaceAgent` config when spawning a specific slot.
+ *
+ * Semantics:
+ * - `customPrompt` is always appended (expanded) after the agent's `customPrompt`.
+ *   It cannot replace the base prompt — the NeoKai contract sections remain intact.
+ * - absent (undefined) — uses the agent's base value unchanged.
+ */
+export interface SlotOverrides {
+	/** Override the agent's default model for this slot */
+	model?: string;
+	/** Expansion text appended to the agent's customPrompt for this slot */
+	customPrompt?: string;
+	/** IDs of globally-enabled skills to disable for this slot */
+	disabledSkillIds?: string[];
+	/** Extra MCP servers to add for this slot */
+	extraMcpServers?: Record<string, McpServerConfig>;
+}
+
+/**
+ * Append-only prompt composition: returns `base` + `\n\n` + `expansion`.
+ *
+ * - If `expansion` is absent/empty, returns `base` unchanged.
+ * - If `base` is absent/empty, returns `expansion`.
+ * - Both present: joined with a double newline.
+ */
+export function expandPrompt(
+	base: string | null | undefined,
+	expansion: string | null | undefined
+): string {
+	const trimmedBase = base?.trim() ?? '';
+	const trimmedExpansion = expansion?.trim() ?? '';
+	if (!trimmedExpansion) return trimmedBase;
+	if (!trimmedBase) return trimmedExpansion;
+	return `${trimmedBase}\n\n${trimmedExpansion}`;
+}
+
+/**
+ * A snapshot of gate runtime data passed into `buildCustomAgentTaskMessage`.
+ * The builder uses these records to derive runtime state such as the current
+ * PR URL (any gate record with a `pr_url` string field is considered).
+ */
+export interface GateDataSnapshot {
+	gateId: string;
+	data: Record<string, unknown>;
+}
 
 export interface CustomAgentConfig {
-	/** The custom Space agent definition */
+	/** The Space agent definition */
 	customAgent: SpaceAgent;
 	/** The task being executed */
 	task: SpaceTask;
 	/** The workflow run context (null when running outside a workflow) */
 	workflowRun: SpaceWorkflowRun | null;
-	/**
-	 * Full workflow definition — used to inject workflow structure into the task message.
-	 * Relevant when `agent.injectWorkflowContext` is true and a workflow run is active.
-	 */
+	/** Full workflow definition for factual runtime context */
 	workflow?: SpaceWorkflow | null;
 	/** The Space this agent belongs to */
 	space: Space;
 	/** Session ID for the new session */
 	sessionId: string;
-	/** Workspace path (typically space.workspacePath) */
+	/** Workspace path (typically `space.workspacePath`) */
 	workspacePath: string;
 	/** Summaries of previously completed tasks for context */
 	previousTaskSummaries?: string[];
+	/** Optional per-slot workflow overrides */
+	slotOverrides?: SlotOverrides;
+	/**
+	 * ID of the workflow node this session belongs to (required to scope the
+	 * "Your Role in This Workflow" section to the current node's peers,
+	 * channels, and gates). Omit when running outside a workflow.
+	 */
+	nodeId?: string;
+	/**
+	 * Agent slot name for the current node execution (`WorkflowNodeAgent.name`).
+	 * Used together with the node name to compute the set of gates the agent
+	 * can write to.
+	 */
+	agentSlotName?: string;
+	/**
+	 * Snapshot of gate data for the current workflow run. Used to derive
+	 * runtime state such as the current PR URL ("Runtime Location" section).
+	 * Absent when running outside a workflow or when no data has been written.
+	 */
+	gateData?: GateDataSnapshot[];
 }
-
-// ============================================================================
-// System prompt builder
-// ============================================================================
 
 /**
- * Build the behavioral system prompt for a custom agent.
+ * Build the runtime system prompt text for a custom agent.
  *
- * Structure:
- *   1. Role identification (agent name + role label)
- *   2. Custom system prompt from SpaceAgent.systemPrompt (if provided)
- *   3. Mandatory git workflow instructions
- *   4. Bypass markers for research-only tasks
- *   5. Review feedback handling section
+ * The NeoKai system contract (tool rules, completion semantics) is applied first by the
+ * SDK preset; then the agent's `customPrompt` is appended, followed by any slot expansion.
+ * User content always comes after the contract and cannot override it.
  */
-export function buildCustomAgentSystemPrompt(customAgent: SpaceAgent): string {
-	const sections: string[] = [];
-
-	const roleLabel = getRoleLabel(customAgent.role);
-
-	sections.push(
-		`You are ${customAgent.name}, a ${roleLabel} Agent working on a specific task within a workflow.`
-	);
-	sections.push(`Your job is to complete the task described below to the best of your ability.`);
-	sections.push(`Work carefully and thoroughly. When you are done, simply finish your response.`);
-
-	// Custom instructions from the agent definition
-	if (customAgent.systemPrompt) {
-		sections.push(`\n## Agent Instructions\n`);
-		sections.push(customAgent.systemPrompt);
-	}
-
-	// Mandatory Git workflow
-	sections.push(`\n## Git Workflow (MANDATORY)\n`);
-	sections.push(
-		`You are working in an isolated git worktree on a feature branch. ` +
-			`The branch has already been created for you. Follow this workflow:`
-	);
-	sections.push(
-		`1. **Sync with the default branch first** — run all three lines as a **single bash invocation** (variables persist within one call):\n` +
-			`   \`\`\`bash\n` +
-			`   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
-			`   [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
-			`   git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
-			`   \`\`\`\n` +
-			`   **If the rebase fails with conflicts, stop immediately and report the error** — do NOT continue on a stale base`
-	);
-	sections.push(`2. Implement the task, making logical commits along the way`);
-	sections.push(`3. Add or update tests to cover the new/changed behavior — tests are mandatory`);
-	sections.push(`4. Push your branch: \`git push -u origin HEAD\``);
-	sections.push(
-		`5. Ensure a pull request exists — check first to avoid creating a duplicate:\n` +
-			`   \`\`\`bash\n` +
-			`   EXISTING_PR=$(gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json url --jq '.[0].url // empty' 2>/dev/null)\n` +
-			`   if [ -z "$EXISTING_PR" ]; then\n` +
-			`     gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
-			`   else\n` +
-			`     echo "PR already exists: $EXISTING_PR (updated with latest push)"\n` +
-			`   fi\n` +
-			`   \`\`\``
-	);
-	sections.push(`6. Finish your response`);
-	sections.push(``);
-	sections.push(
-		`**IMPORTANT**: Do NOT commit directly to the main/dev/master branch. ` +
-			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
-	);
-
-	// Bypass markers for research/verification tasks
-	sections.push(`\n## Bypassing Git/PR Gates for Research-Only Tasks\n`);
-	sections.push(
-		`For **research-only**, **verification-only**, or **investigation-only** tasks that do NOT modify any files, ` +
-			`you can bypass the git/PR requirements by starting your final output with one of these markers:`
-	);
-	sections.push(
-		`- \`RESEARCH_ONLY:\` — For pure research tasks (e.g., "Analyze and document X")\n` +
-			`- \`VERIFICATION_COMPLETE:\` — For verification tasks (e.g., "Verify Y is correct")\n` +
-			`- \`INVESTIGATION_RESULT:\` — For investigation tasks (e.g., "Investigate why Z fails")\n` +
-			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")`
-	);
-	sections.push(
-		`**Example**:\n` +
-			`\`\`\`\n` +
-			`VERIFICATION_COMPLETE:\n\n` +
-			`I have verified that the authentication system is correctly implemented:\n` +
-			`1. JWT tokens are properly generated with correct expiry\n` +
-			`2. Refresh token flow works as expected\n\n` +
-			`No code changes are needed.\n` +
-			`\`\`\``
-	);
-	sections.push(
-		`**Important**: Only use bypass markers when the task genuinely requires NO code changes. ` +
-			`If you need to modify any files, follow the normal git/PR workflow instead.`
-	);
-
-	// Peer communication model
-	sections.push(`\n## Peer Communication\n`);
-	sections.push(
-		`You are part of a multi-agent team within this workflow step. ` +
-			`You have MCP tools for communicating with peer agents in the same group.`
-	);
-	sections.push(`\n### Primary: \`send_feedback\` (channel-validated direct messaging)\n`);
-	sections.push(
-		`Use \`send_feedback\` to send messages directly to permitted peers based on the declared channel topology.`
-	);
-	sections.push(
-		`- \`target: 'role'\` — point-to-point to a specific role (e.g., \`'coder'\`)\n` +
-			`- \`target: '*'\` — broadcast to all permitted targets\n` +
-			`- \`target: ['role1', 'role2']\` — multicast to multiple roles`
-	);
-	sections.push(
-		`This tool validates against declared channels. ` +
-			`If the channel is not declared, it returns an error with available channels and suggests \`request_peer_input\`.`
-	);
-	sections.push(`\n### Fallback: \`request_peer_input\` (Task Agent mediated)\n`);
-	sections.push(
-		`Use \`request_peer_input\` when no direct channel is declared or as a fallback when \`send_feedback\` fails validation.`
-	);
-	sections.push(
-		`This is **async and non-blocking** — the tool returns immediately with an acknowledgment. ` +
-			`The peer's answer will arrive as a separate user turn prefixed with: \`[Peer response from {role}]: ...\``
-	);
-	sections.push(
-		`**Do NOT wait for an immediate reply.** Continue your work and handle peer responses when they arrive.`
-	);
-	sections.push(`\n### Discovering peers: \`list_peers\`\n`);
-	sections.push(
-		`Use \`list_peers\` to see all other agents in this step's group, their roles, statuses, ` +
-			`and permitted outgoing channels for \`send_feedback\`.`
-	);
-	sections.push(`\n### Communication model rules\n`);
-	sections.push(
-		`- If this step has declared channels: use \`send_feedback\` for permitted directions, ` +
-			`\`request_peer_input\` for undeclared directions\n` +
-			`- If this step has no declared channels: all communication goes through \`request_peer_input\`\n` +
-			`- All communication is scoped to this group — you cannot message agents in other tasks`
-	);
-
-	// Review feedback handling
-	sections.push(`\n## Addressing Review Feedback\n`);
-	sections.push(
-		`When you receive feedback containing GitHub review URLs, fetch each review by its ID:`
-	);
-	sections.push(
-		`1. Extract the review ID from the URL (e.g. \`#pullrequestreview-3900806436\` → ID is \`3900806436\`)`
-	);
-	sections.push(
-		`2. Fetch each review: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id} --jq '.body'\``
-	);
-	sections.push(`3. Read the review body to understand what changes are requested`);
-	sections.push(`4. Verify the feedback item by item — address the ones that are true or helpful`);
-	sections.push(`5. Add or update tests if the review calls for it`);
-	sections.push(`6. Push your changes: \`git push\``);
-	sections.push(
-		`7. Finish your response — the leader will re-dispatch reviewers for the next round`
-	);
-
-	return sections.join('\n');
+export function buildCustomAgentSystemPrompt(
+	customAgent: SpaceAgent,
+	slotOverrides?: SlotOverrides
+): string {
+	return expandPrompt(customAgent.customPrompt, slotOverrides?.customPrompt);
 }
-
-// ============================================================================
-// Task message builder
-// ============================================================================
 
 /**
  * Build the initial user message for a custom agent session.
  *
- * Contains task-specific context: task title/description, workflow run context,
- * space background/instructions, review-specific guidance (if applicable),
- * and previous task summaries.
+ * Contains factual task/workflow/space context only.
+ * Behavioral prompt (persona, operating procedure) lives in the system prompt.
  *
- * Planner agents receive additional workflow structure when a workflow run is
- * active, so they can create tasks aligned with the current workflow step.
+ * Section order (top → bottom), action-first:
+ *   1. `## Your Task` — title, description, priority
+ *   2. `## Runtime Location` — worktree path, derived PR URL
+ *   3. `## Your Role in This Workflow` — current node, peers, outbound channels,
+ *      writable gates (omitted outside a workflow)
+ *   4. `## Previous Work on This Goal` — bulleted summaries
+ *   5. `## Project Context` — space.backgroundContext
+ *   6. `## Standing Instructions` — space.instructions + workflow.instructions
+ *
+ * Node UUIDs are intentionally dropped — they are not useful to the LLM and add
+ * noise. The previous "Workflow Context" + "Workflow Structure" sections are
+ * replaced by the scoped "Your Role" section.
  */
 export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
-	const { customAgent, task, workflowRun, workflow, space, previousTaskSummaries } = config;
+	const {
+		task,
+		workflowRun,
+		workflow,
+		space,
+		workspacePath,
+		previousTaskSummaries,
+		nodeId,
+		agentSlotName,
+		gateData,
+	} = config;
 
 	const sections: string[] = [];
 
-	// Task context
-	sections.push(`## Task\n`);
+	// 1. Task — actionable content first, so it lands in the first 500 chars.
+	sections.push(`## Your Task #${task.taskNumber}`);
+	sections.push('');
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
-	if (task.priority) {
-		sections.push(`**Priority:** ${task.priority}`);
-	}
-	if (task.taskType) {
-		sections.push(`**Type:** ${task.taskType}`);
-	}
+	if (task.priority) sections.push(`**Priority:** ${task.priority}`);
 
-	// Workflow run context
-	if (workflowRun) {
-		sections.push(`\n## Workflow Context\n`);
-		sections.push(`**Workflow Run:** ${workflowRun.title}`);
-		if (workflowRun.description) {
-			sections.push(`**Description:** ${workflowRun.description}`);
-		}
-		if (workflowRun.currentStepId) {
-			sections.push(`**Current Step ID:** ${workflowRun.currentStepId}`);
-		}
-	}
+	// 2. Runtime Location — worktree is always known, PR URL derived from gate data.
+	const prUrl = derivePrUrlFromGateData(gateData);
+	sections.push('');
+	sections.push('## Runtime Location');
+	sections.push('');
+	sections.push(`- Worktree: ${workspacePath}`);
+	sections.push(`- PR: ${prUrl ?? 'none yet'}`);
 
-	// Inject full workflow structure when the agent has opted in via injectWorkflowContext.
-	// This is data-driven — any agent can receive workflow context, not just 'planner' roles.
-	// The Planner preset has injectWorkflowContext: true set in seed-agents.ts.
-	if (customAgent.injectWorkflowContext && workflow && workflowRun) {
-		sections.push(`\n## Workflow Structure\n`);
-		sections.push(
-			`You are planning work within the **${workflow.name}** workflow. ` +
-				`Your plan should produce tasks that align with the workflow's steps.`
-		);
-		if (workflow.description) {
-			sections.push(`\n**Workflow description:** ${workflow.description}`);
-		}
-
-		if (workflow.steps.length > 0) {
-			sections.push(`\n**Steps:**`);
-			for (const step of workflow.steps) {
-				const isCurrent = step.id === workflowRun.currentStepId;
-				const marker = isCurrent ? ' ← current step' : '';
-				sections.push(`- **${step.name}** (id: \`${step.id}\`)${marker}`);
-				if (step.instructions) {
-					sections.push(`  Instructions: ${step.instructions}`);
-				}
-			}
-		}
-
-		if (workflow.rules.length > 0) {
-			sections.push(`\n**Workflow rules:**`);
-			for (const rule of workflow.rules) {
-				sections.push(`- **${rule.name}:** ${rule.content}`);
-			}
-		}
-
-		sections.push(
-			`\nCreate tasks that correspond to the steps above. ` +
-				`Focus on the current step first; subsequent steps will be handled after the current one completes.`
-		);
+	// 3. Your Role in This Workflow — scoped to the current node when known.
+	const roleLines = buildRoleSection(workflow, nodeId, agentSlotName);
+	if (roleLines.length > 0) {
+		sections.push('');
+		sections.push('## Your Role in This Workflow');
+		sections.push('');
+		sections.push(...roleLines);
 	}
 
-	// Space context
-	if (space.backgroundContext) {
-		sections.push(`\n## Project Context\n`);
-		sections.push(space.backgroundContext);
-	}
-	if (space.instructions) {
-		sections.push(`\n## Instructions\n`);
-		sections.push(space.instructions);
-	}
-
-	// Existing PR context
-	if (task.prUrl) {
-		sections.push(`\n## Existing Pull Request\n`);
-		sections.push(`This task already has an existing pull request: ${task.prUrl}`);
-		sections.push(`Push your changes to update this PR — do NOT create a new one.`);
-	}
-
-	// Previous task summaries
+	// 4. Previous work summaries.
 	if (previousTaskSummaries && previousTaskSummaries.length > 0) {
-		sections.push(`\n## Previous Work on This Goal\n`);
-		sections.push(`The following tasks have already been completed:`);
+		sections.push('');
+		sections.push('## Previous Work on This Goal');
+		sections.push('');
 		for (const summary of previousTaskSummaries) {
 			sections.push(`- ${summary}`);
 		}
 	}
 
-	sections.push(`\nBegin working on this task.`);
+	// 5. Project context from the Space.
+	if (space.backgroundContext) {
+		sections.push('');
+		sections.push('## Project Context');
+		sections.push('');
+		sections.push(space.backgroundContext);
+	}
 
-	return sections.join('\n');
+	// 6. Standing instructions — space + workflow combined under one heading.
+	const standingLines: string[] = [];
+	if (space.instructions?.trim()) standingLines.push(space.instructions.trim());
+	if (workflow?.instructions?.trim()) standingLines.push(workflow.instructions.trim());
+	if (standingLines.length > 0) {
+		sections.push('');
+		sections.push('## Standing Instructions');
+		sections.push('');
+		sections.push(standingLines.join('\n\n'));
+	}
+
+	const message = sections.join('\n');
+
+	// Soft budget: warn but never fail when the message exceeds the threshold.
+	// `workflowRun` is used to scope the warning to workflow sessions (avoids
+	// noise during short standalone tasks where large backgroundContext is
+	// typically the cause and not a regression).
+	const byteLength = Buffer.byteLength(message, 'utf8');
+	if (workflowRun && byteLength > USER_MESSAGE_SOFT_LIMIT_BYTES) {
+		log.warn(
+			`buildCustomAgentTaskMessage: user message is ${byteLength} bytes ` +
+				`(soft limit ${USER_MESSAGE_SOFT_LIMIT_BYTES}). ` +
+				`taskId=${task.id} workflowRunId=${workflowRun.id}${nodeId ? ` nodeId=${nodeId}` : ''}. ` +
+				`Consider trimming space.backgroundContext or workflow.instructions.`
+		);
+	}
+
+	return message;
 }
 
-// ============================================================================
-// Session init factory
-// ============================================================================
+/**
+ * Resolve a PR URL from a snapshot of gate data. The first gate record whose
+ * data contains a non-empty `pr_url` string wins. Returns `undefined` when no
+ * such field is present.
+ */
+function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): string | undefined {
+	if (!gateData || gateData.length === 0) return undefined;
+	for (const record of gateData) {
+		const value = record.data?.pr_url;
+		if (typeof value === 'string' && value.trim().length > 0) {
+			return value.trim();
+		}
+	}
+	return undefined;
+}
 
 /**
- * Create an AgentSessionInit for a custom Space agent session.
+ * Build the bulleted "Your Role in This Workflow" lines scoped to the current
+ * node. Returns `[]` when the workflow or current node cannot be resolved so
+ * the caller can cleanly omit the section.
+ */
+function buildRoleSection(
+	workflow: SpaceWorkflow | null | undefined,
+	nodeId: string | undefined,
+	agentSlotName: string | undefined
+): string[] {
+	if (!workflow) return [];
+	if (!workflow.nodes || workflow.nodes.length === 0) return [];
+
+	const currentNode: WorkflowNode | undefined = nodeId
+		? workflow.nodes.find((n) => n.id === nodeId)
+		: undefined;
+	if (!currentNode) return [];
+
+	const lines: string[] = [`- Node: ${currentNode.name}`];
+
+	const peers = workflow.nodes.filter((n) => n.id !== currentNode.id).map((n) => n.name);
+	if (peers.length > 0) {
+		lines.push(`- Peers: ${peers.join(', ')}`);
+	}
+
+	const outboundChannels = (workflow.channels ?? []).filter((ch) =>
+		isChannelFromNode(ch, currentNode.name)
+	);
+	if (outboundChannels.length > 0) {
+		lines.push(`- Channels from this node: ${outboundChannels.map(describeChannel).join('; ')}`);
+	}
+
+	const writableGates = (workflow.gates ?? []).filter((gate) =>
+		isGateWritableFromNode(gate.fields, currentNode.name, agentSlotName)
+	);
+	if (writableGates.length > 0) {
+		lines.push(
+			`- Gates you can write: ${writableGates
+				.map((g) => (g.label ? `${g.id} (${g.label})` : g.id))
+				.join(', ')}`
+		);
+	}
+
+	return lines;
+}
+
+function isChannelFromNode(channel: WorkflowChannel, nodeName: string): boolean {
+	if (channel.from === '*') return true;
+	return channel.from === nodeName;
+}
+
+function describeChannel(channel: WorkflowChannel): string {
+	const target = Array.isArray(channel.to) ? channel.to.join(', ') : channel.to;
+	return channel.label ? `${target} (${channel.label})` : target;
+}
+
+function isGateWritableFromNode(
+	fields: Array<{ writers: string[] }> | undefined,
+	nodeName: string,
+	agentSlotName: string | undefined
+): boolean {
+	if (!fields || fields.length === 0) return false;
+	const candidates = [nodeName.toLowerCase()];
+	if (agentSlotName) candidates.push(agentSlotName.toLowerCase());
+	return fields.some((field) => {
+		return field.writers.some((writer) => {
+			const w = writer.toLowerCase();
+			return w === '*' || candidates.includes(w);
+		});
+	});
+}
+
+/**
+ * Create an `AgentSessionInit` for a Space agent session.
  *
- * Tool handling:
- *   - When SpaceAgent.tools is set (non-empty): uses the `agent`/`agents` pattern
- *     so the SDK enforces the agent's tool allowlist.
- *   - When SpaceAgent.tools is unset: uses the simple `claude_code` preset path,
- *     giving the agent access to all standard Claude Code tools.
+ * Workflow execution is WYSIWYG:
+ * - inside a workflow run, the workflow slot customPrompt is expanded on top of the agent's
+ * - outside a workflow run, the agent's own `customPrompt` is used unchanged
  *
- * Model resolution: SpaceAgent.model → Space.defaultModel → hardcoded default.
- *
- * NOTE: The task message (context delivered as the first user turn) is NOT embedded
- * here. SpaceRuntime (M4) must call `buildCustomAgentTaskMessage(config)` separately
- * and inject it via `injectMessage()` after the session is created — this mirrors the
- * room-runtime pattern where the initial user message is sent after session start.
+ * The NeoKai system contract (preset) is always applied first; user content follows.
  */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
-	const { customAgent, space, sessionId, workspacePath } = config;
+	const { customAgent, space, sessionId, workspacePath, slotOverrides } = config;
 
 	const customTools =
 		customAgent.tools && customAgent.tools.length > 0 ? customAgent.tools : undefined;
-
-	const model = customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+	const model =
+		slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
 	const provider = inferProviderForModel(model);
 
-	const behavioralPrompt = buildCustomAgentSystemPrompt(customAgent);
+	const visiblePrompt = buildCustomAgentSystemPrompt(customAgent, slotOverrides);
 
-	// When custom tools are configured, use the agent/agents pattern so the SDK
-	// enforces the allowlist. Otherwise, fall back to the simple preset path.
+	const roomSkillOverrides: RoomSkillOverride[] | undefined = slotOverrides?.disabledSkillIds
+		?.length
+		? slotOverrides.disabledSkillIds.map((id) => ({ skillId: id, roomId: '', enabled: false }))
+		: undefined;
+
+	const extraMcpServers = slotOverrides?.extraMcpServers;
+
 	if (customTools) {
 		const agentKey = sanitizeAgentKey(customAgent.name);
 		const agentDef: AgentDefinition = {
-			description:
-				customAgent.description ??
-				`Custom ${getRoleLabel(customAgent.role)} agent: ${customAgent.name}`,
+			description: customAgent.description ?? `Custom agent: ${customAgent.name}`,
 			tools: customTools,
 			model: 'inherit',
-			prompt: behavioralPrompt,
+			prompt: visiblePrompt,
 		};
 
 		return {
@@ -376,45 +372,42 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 				type: 'preset',
 				preset: 'claude_code',
 			},
-			features: CUSTOM_AGENT_FEATURES,
+			features: SUB_SESSION_FEATURES,
 			context: { spaceId: space.id },
 			type: 'worker',
 			model,
 			provider,
 			agent: agentKey,
 			agents: { [agentKey]: agentDef },
-			contextAutoQueue: false,
+			roomSkillOverrides,
+			mcpServers: extraMcpServers,
 		};
 	}
 
-	// Simple path: all claude_code tools available, prompt appended to preset
 	return {
 		sessionId,
 		workspacePath,
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: behavioralPrompt,
+			append: visiblePrompt,
 		},
-		features: CUSTOM_AGENT_FEATURES,
+		features: SUB_SESSION_FEATURES,
 		context: { spaceId: space.id },
 		type: 'worker',
 		model,
 		provider,
-		contextAutoQueue: false,
+		roomSkillOverrides,
+		mcpServers: extraMcpServers,
 	};
 }
-
-// ============================================================================
-// Resolution helper (for SpaceRuntime — M4)
-// ============================================================================
 
 export interface ResolveAgentInitConfig {
 	/** The task to execute */
 	task: SpaceTask;
 	/** The Space this task belongs to */
 	space: Space;
-	/** Agent manager for resolving custom agents */
+	/** Agent manager for resolving agents */
 	agentManager: SpaceAgentManager;
 	/** Session ID for the new session */
 	sessionId: string;
@@ -422,27 +415,21 @@ export interface ResolveAgentInitConfig {
 	workspacePath: string;
 	/** Workflow run context (null when outside a workflow) */
 	workflowRun?: SpaceWorkflowRun | null;
-	/**
-	 * Full workflow definition — forwarded to `buildCustomAgentTaskMessage` so agents
-	 * with `injectWorkflowContext: true` receive the "Workflow Structure" context section.
-	 * Relevant when the agent's `injectWorkflowContext` flag is set and a workflow run is active.
-	 */
+	/** Full workflow definition for factual runtime context */
 	workflow?: SpaceWorkflow | null;
 	/** Summaries of previously completed tasks */
 	previousTaskSummaries?: string[];
+	/** Optional per-slot workflow overrides */
+	slotOverrides?: SlotOverrides;
+	/**
+	 * Explicit agent ID to use for this session.
+	 * Required since SpaceTask no longer stores customAgentId directly.
+	 */
+	agentId: string;
 }
 
 /**
- * Resolve the AgentSessionInit for a Space task by loading the assigned SpaceAgent.
- *
- * All agents — including the seeded preset agents (coder, general, planner, reviewer)
- * — are regular `SpaceAgent` records resolved by ID. There is no separate builtin
- * code path: every task must have a `customAgentId` that points to an agent row in
- * the Space's agent table. SpaceRuntime is responsible for ensuring this is set
- * (e.g. by seeding preset agents at Space creation and assigning one to each task).
- *
- * @throws {Error} When `task.customAgentId` is unset — the task must have an agent.
- * @throws {Error} When `task.customAgentId` references a non-existent agent.
+ * Resolve the session init for a Space task by loading its assigned `SpaceAgent`.
  */
 export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionInit {
 	const {
@@ -454,17 +441,13 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		workflowRun,
 		workflow,
 		previousTaskSummaries,
+		slotOverrides,
+		agentId,
 	} = config;
 
-	if (!task.customAgentId) {
-		throw new Error(
-			`Task "${task.id}" has no agentId — assign a SpaceAgent to the task before calling resolveAgentInit()`
-		);
-	}
-
-	const agent = agentManager.getById(task.customAgentId);
+	const agent = agentManager.getById(agentId);
 	if (!agent) {
-		throw new Error(`Agent not found: ${task.customAgentId} (task: ${task.id})`);
+		throw new Error(`Agent not found: ${agentId} (task: ${task.id})`);
 	}
 
 	return createCustomAgentInit({
@@ -476,24 +459,10 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		sessionId,
 		workspacePath,
 		previousTaskSummaries,
+		slotOverrides,
 	});
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Sanitize an agent name into a valid SDK agent key.
- * Keys must be alphanumeric + hyphens, max 40 chars.
- *
- * Collision note: two different agent names that normalize to the same key (e.g.
- * "My Agent" and "my-agent") would conflict here. In practice this cannot happen
- * because `SpaceAgentManager` enforces case-insensitive name uniqueness within a
- * Space at the DB level — any two agents in the same Space have distinct names, and
- * the normalized keys derived from those names are therefore distinct within a single
- * `createCustomAgentInit` call (which is always for one agent at a time).
- */
 function sanitizeAgentKey(name: string): string {
 	return (
 		name
@@ -502,9 +471,4 @@ function sanitizeAgentKey(name: string): string {
 			.replace(/^-+|-+$/g, '')
 			.slice(0, 40) || 'custom-agent'
 	);
-}
-
-function getRoleLabel(role: string): string {
-	if (!role) return 'Custom';
-	return role.charAt(0).toUpperCase() + role.slice(1);
 }

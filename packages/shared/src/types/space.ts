@@ -6,6 +6,8 @@
  * contexts for orchestrating custom agents and automated pipelines.
  */
 
+import type { McpServerConfig } from './sdk-config';
+
 // ============================================================================
 // Space Types
 // ============================================================================
@@ -16,14 +18,24 @@
 export type SpaceStatus = 'active' | 'archived';
 
 /**
- * Space autonomy level — controls how much the Space Agent can act without human approval.
+ * Space autonomy level — a numeric risk-tolerance threshold (1–5).
  *
- * - `supervised` (default): Space Agent notifies human of all judgment-required events
- *   and waits for approval before acting.
- * - `semi_autonomous`: Space Agent can retry failed tasks and reassign them autonomously;
- *   escalates to human after one failed retry or when uncertain.
+ * Every checkpoint (gate or completion action) declares a `requiredLevel`.
+ * The space's autonomy level is compared: `space.autonomyLevel >= checkpoint.requiredLevel`
+ * means auto-approved; otherwise, execution pauses for human sign-off.
+ *
+ * Levels have no prescribed names — workflow authors assign meaning per their domain.
  */
-export type SpaceAutonomyLevel = 'supervised' | 'semi_autonomous';
+export type SpaceAutonomyLevel = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * Who approved a task or gate — used for audit trail tracking.
+ *
+ * - `human`       — User approved via UI / RPC
+ * - `auto_policy` — Runtime auto-approved because space autonomy level >= required level
+ * - `agent`       — An agent approved via tool call (specific agent identity tracked in session metadata)
+ */
+export type SpaceApprovalSource = 'human' | 'auto_policy' | 'agent';
 
 /**
  * Typed runtime configuration for a Space.
@@ -43,6 +55,8 @@ export interface SpaceConfig {
 export interface Space {
 	/** Unique identifier */
 	id: string;
+	/** URL-safe, human-readable identifier (unique, auto-generated from name) */
+	slug: string;
 	/** Absolute path to the workspace this Space operates on (required, unique) */
 	workspacePath: string;
 	/** Human-readable name */
@@ -61,6 +75,13 @@ export interface Space {
 	sessionIds: string[];
 	/** Current status of the Space */
 	status: SpaceStatus;
+	/** Whether the space runtime is paused (no new tasks scheduled; running work continues) */
+	paused: boolean;
+	/**
+	 * Whether the space runtime is stopped (all active work killed; no auto-start on daemon restart).
+	 * A stopped space must be explicitly started again to resume. Takes precedence over `paused`.
+	 */
+	stopped: boolean;
 	/** Autonomy level — controls how much the Space Agent can act without human approval */
 	autonomyLevel?: SpaceAutonomyLevel;
 	/** Runtime configuration (maxConcurrentTasks, taskTimeoutMs, etc.) */
@@ -69,6 +90,20 @@ export interface Space {
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
+}
+
+/**
+ * Result of `space.create` RPC.
+ *
+ * Extends `Space` with an optional `seedWarnings` array that is present when
+ * preset agents or built-in workflows failed to seed (partial or total).
+ * The space is still usable — warnings are informational only.
+ *
+ * TODO: The frontend should display these warnings (e.g. toast notification
+ * after space creation) so the user knows if seeding was incomplete.
+ */
+export interface SpaceCreateResult extends Space {
+	seedWarnings?: string[];
 }
 
 /**
@@ -114,38 +149,78 @@ export interface UpdateSpaceParams {
 // ============================================================================
 
 /**
- * Space task status — matches NeoTask status set plus space-specific values
+ * Space task status
+ *
+ * - `open`       — task is queued and waiting to be picked up
+ * - `in_progress` — a Task Agent session is actively working on this task
+ * - `review`     — workflow agents completed; awaiting human review/approval (supervised mode)
+ * - `done`       — task completed successfully
+ * - `blocked`    — task requires human attention or intervention
+ * - `cancelled`  — task was cancelled and will not be completed
+ * - `archived`   — task is archived (soft-delete, `archivedAt` is stamped)
  */
 export type SpaceTaskStatus =
-	| 'draft'
-	| 'pending'
+	| 'open'
 	| 'in_progress'
 	| 'review'
-	| 'completed'
-	| 'needs_attention'
+	| 'done'
+	| 'blocked'
 	| 'cancelled'
 	| 'archived';
 
 /**
+ * Outcome an end-node agent reports via `report_result`.
+ *
+ * This is the agent's claimed terminal state for the workflow — distinct from
+ * `SpaceTask.status`, which is the runtime's final decision after the report
+ * passes through completion-actions review (in supervised autonomy modes).
+ */
+export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
+
+/**
+ * Why a task is blocked — set when status transitions to `blocked`,
+ * cleared when the task leaves `blocked`.
+ */
+export type SpaceBlockReason =
+	| 'agent_crashed'
+	| 'workflow_invalid'
+	| 'execution_failed'
+	| 'human_input_requested'
+	| 'gate_rejected'
+	| 'dependency_failed';
+
+/**
  * Space task priority
+ *
+ * Numeric priority values P0–P3 where lower number = higher priority.
  */
 export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 /**
- * Space task type — determines default execution approach
+ * Runtime activity state for a live task-agent member.
+ * This is more user-facing than raw session processing states.
  */
-export type SpaceTaskType = 'planning' | 'coding' | 'research' | 'design' | 'review';
+export type SpaceTaskActivityState =
+	| 'active'
+	| 'queued'
+	| 'idle'
+	| 'waiting_for_input'
+	| 'completed'
+	| 'failed'
+	| 'interrupted';
 
 /**
  * A task managed within a Space.
- * Mirrors NeoTask but is tied to a Space (not a Room) and includes
- * workflow/agent routing fields built in from the start.
+ * User-facing orchestration unit — one task = one deliverable that may involve
+ * multiple workflow node executions internally.
  */
 export interface SpaceTask {
 	/** Unique identifier */
 	id: string;
 	/** Space this task belongs to */
 	spaceId: string;
+	/** Human-friendly numeric ID, unique per space (auto-incremented, like GitHub issue numbers) */
+	taskNumber: number;
 	/** Task title */
 	title: string;
 	/** Detailed description */
@@ -154,59 +229,149 @@ export interface SpaceTask {
 	status: SpaceTaskStatus;
 	/** Priority level */
 	priority: SpaceTaskPriority;
-	/** Task type — determines default execution approach */
-	taskType?: SpaceTaskType;
-	/** Which agent type should execute this task (default: 'coder') */
-	assignedAgent?: 'coder' | 'general';
-	/** ID of a custom Space agent assigned to execute this task */
-	customAgentId?: string;
-	/** ID of the workflow run that spawned this task (if any) */
-	workflowRunId?: string;
-	/** ID of the workflow step that spawned this task (if any) */
-	workflowStepId?: string;
-	/** ID of the planning task that created this task */
-	createdByTaskId?: string;
-	/** ID of the goal/mission this task is associated with */
-	goalId?: string;
-	/** Progress percentage (0-100) */
-	progress?: number | null;
-	/** Description of current step */
-	currentStep?: string | null;
-	/** Result of completed task */
-	result?: string | null;
-	/** Error message for failed task */
-	error?: string | null;
-	/** IDs of tasks this task depends on */
+	/** Free-form labels for filtering and categorisation */
+	labels: string[];
+	/** IDs of tasks this task depends on (prerequisites in the same space) */
 	dependsOn: string[];
-	/** Draft input text for the human input area */
-	inputDraft?: string | null;
+	/** Final output from the agent when the task reaches a terminal state; null until set */
+	result: string | null;
+	/** ID of the workflow run that orchestrates this task (links task to its workflow execution) */
+	workflowRunId?: string | null;
+	/**
+	 * Preferred workflow template ID for this task.
+	 * When set by the caller via `create_standalone_task({ workflow_id })`, the runtime
+	 * uses this workflow instead of the heuristic fallback when attaching a workflow run.
+	 */
+	preferredWorkflowId?: string | null;
+	/** ID of the planning task that created this task */
+	createdByTaskId?: string | null;
 	/**
 	 * Which agent session is currently active (generating output).
 	 * Cleared when the session reaches a terminal state.
 	 */
 	activeSession?: 'worker' | 'leader' | null;
-	/** Pull request URL (when task has associated PR) */
-	prUrl?: string | null;
-	/** Pull request number (extracted from URL for display) */
-	prNumber?: number | null;
-	/** When PR was created/submitted (milliseconds since epoch) */
-	prCreatedAt?: number | null;
-	/** Archive timestamp (milliseconds since epoch) — derived from status='archived' */
-	archivedAt?: number | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
-	 * Set when the task transitions from 'pending' to 'in_progress' and a Task Agent
+	 * Set when the task transitions from `open` to `in_progress` and a Task Agent
 	 * session is created. Null when no Task Agent has been spawned yet.
+	 * Node-level tasks use `node_executions.agentSessionId` instead.
 	 */
 	taskAgentSessionId?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
-	/** Start timestamp (milliseconds since epoch) */
-	startedAt?: number;
-	/** Completion timestamp (milliseconds since epoch) */
-	completedAt?: number;
+	/** Timestamp when task transitioned to `in_progress` (milliseconds since epoch); null until started */
+	startedAt: number | null;
+	/** Timestamp when task reached a terminal state (milliseconds since epoch); null until completed */
+	completedAt: number | null;
+	/** Timestamp when task was archived (milliseconds since epoch); null until archived */
+	archivedAt: number | null;
+	/** Why this task is blocked; null when status is not `blocked` */
+	blockReason: SpaceBlockReason | null;
+	/** Who approved this task (set when transitioning from review → done or via auto_policy) */
+	approvalSource: SpaceApprovalSource | null;
+	/** Optional reason/comment for the approval or rejection */
+	approvalReason: string | null;
+	/** Timestamp when approval occurred (milliseconds since epoch); null until approved */
+	approvedAt: number | null;
+	/**
+	 * Index into the workflow node's `completionActions[]` for the action currently awaiting
+	 * human approval. Null when not paused at a completion action.
+	 */
+	pendingActionIndex: number | null;
+	/**
+	 * Type of checkpoint the task is currently paused at. Null when not paused.
+	 * - `completion_action`: paused at a node completion action
+	 * - `gate`: paused at a gate requiring human approval
+	 */
+	pendingCheckpointType: 'completion_action' | 'gate' | null;
+	/**
+	 * Metadata for the completion action the task is currently paused at, derived from
+	 * `workflow.endNode.completionActions[pendingActionIndex]` at read time.
+	 *
+	 * Populated by read-path enrichers (e.g. `get_task_detail`, `list_tasks`) so UIs can
+	 * render a review/approval banner without fetching workflow detail. Null when the
+	 * task is not paused at a completion action, or when the workflow can't be resolved.
+	 *
+	 * NOT persisted in the database. NOT included in every `SpaceTask` instance —
+	 * callers that load tasks straight from the repo will see `undefined` here.
+	 * Script bodies, instruction prompts, and MCP tool args are intentionally omitted;
+	 * consumers fetch the workflow definition directly if they need those.
+	 */
+	pendingAction?: {
+		/** Unique identifier within the node's completion actions */
+		id: string;
+		/** Human-readable name (shown in approval UI) */
+		name: string;
+		/** Human-readable description if defined on the action */
+		description?: string;
+		/** Discriminator for the action's execution type */
+		type: 'script' | 'instruction' | 'mcp_call';
+		/** Minimum space autonomy level required to auto-execute this action */
+		requiredLevel: SpaceAutonomyLevel;
+	} | null;
+	/**
+	 * Status the end-node agent reported via `report_result`. Null until the agent
+	 * reports. Recorded separately from `status` so the runtime can resolve the
+	 * final task status through completion-actions review (supervised modes) without
+	 * the agent bypassing the gate. Once recorded, this field is preserved for audit
+	 * even after `status` reaches a terminal value.
+	 */
+	reportedStatus: SpaceReportedStatus | null;
+	/**
+	 * Summary the end-node agent provided alongside `reportedStatus`. Null until reported.
+	 */
+	reportedSummary: string | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
+}
+
+/**
+ * One live participant in a task's execution.
+ * This can be the orchestration Task Agent or a spawned node agent sub-session.
+ */
+export interface SpaceTaskActivityMember {
+	/** Stable ID for rendering — usually the session ID */
+	id: string;
+	/** Session backing this activity row */
+	sessionId: string;
+	/** Whether this row represents the orchestration task agent or a node agent */
+	kind: 'task_agent' | 'node_agent';
+	/** Human-readable label for the activity row */
+	label: string;
+	/** Agent name or slot name (e.g. task-agent, reviewer, strict-reviewer). DB column: `role`. */
+	role: string;
+	/** Derived user-facing activity state */
+	state: SpaceTaskActivityState;
+	/** Raw session processing status when the session is live in memory */
+	processingStatus?: 'idle' | 'queued' | 'processing' | 'waiting_for_input' | 'interrupted' | null;
+	/** Raw processing phase when the session is actively processing */
+	processingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
+	/** Number of persisted SDK messages seen in the backing session */
+	messageCount: number;
+	/** Linked SpaceTask when this member corresponds to a persisted step task */
+	taskId?: string | null;
+	/** Human-readable task title associated with this member */
+	taskTitle?: string | null;
+	/** Status of the linked SpaceTask, if any (uses new 6-value SpaceTaskStatus) */
+	taskStatus?: SpaceTaskStatus | null;
+	/**
+	 * Node execution context for node-agent members.
+	 * Provides workflow-internal state (node, agent slot, result) without polluting SpaceTask.
+	 */
+	nodeExecution?: {
+		/** Workflow node ID */
+		nodeId: string;
+		/** Human-readable node / agent slot name */
+		agentName: string;
+		/** Execution status */
+		status: NodeExecutionStatus;
+		/** Result output from `report_result`, if set */
+		result?: string | null;
+	} | null;
+	/** Last update timestamp from the linked SpaceTask or backing session metadata */
+	updatedAt?: number | null;
+	/** Timestamp of the last persisted SDK message for this session */
+	lastMessageAt?: number | null;
 }
 
 /**
@@ -215,26 +380,27 @@ export interface SpaceTask {
 export interface CreateSpaceTaskParams {
 	spaceId: string;
 	title: string;
-	description: string;
+	description?: string;
 	priority?: SpaceTaskPriority;
-	taskType?: SpaceTaskType;
-	assignedAgent?: 'coder' | 'general';
-	/** Custom Space agent to execute this task */
-	customAgentId?: string;
-	/** Workflow run that spawned this task */
-	workflowRunId?: string;
-	/** Workflow step that spawned this task */
-	workflowStepId?: string;
+	/** Free-form labels for filtering and categorisation */
+	labels?: string[];
+	/** IDs of prerequisite tasks in the same space */
 	dependsOn?: string[];
-	/** Initial status — defaults to 'pending' */
+	/** Initial status — defaults to 'open' */
 	status?: SpaceTaskStatus;
+	/** Workflow run that spawned this task */
+	workflowRunId?: string | null;
+	/**
+	 * Preferred workflow template ID.
+	 * When provided, the runtime uses this workflow for standalone task attachment
+	 * instead of the heuristic auto-selection.
+	 */
+	preferredWorkflowId?: string | null;
 	/** ID of planning task that created this task */
-	createdByTaskId?: string;
-	/** Goal/mission this task is associated with */
-	goalId?: string;
+	createdByTaskId?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
-	 * Set when the task transitions from 'pending' to 'in_progress'.
+	 * Set when the task transitions from 'open' to 'in_progress'.
 	 */
 	taskAgentSessionId?: string | null;
 }
@@ -247,28 +413,123 @@ export interface UpdateSpaceTaskParams {
 	description?: string;
 	status?: SpaceTaskStatus;
 	priority?: SpaceTaskPriority;
-	taskType?: SpaceTaskType;
-	assignedAgent?: 'coder' | 'general';
-	customAgentId?: string | null;
-	workflowRunId?: string | null;
-	workflowStepId?: string | null;
-	progress?: number | null;
-	currentStep?: string | null;
-	result?: string | null;
-	error?: string | null;
+	labels?: string[];
 	dependsOn?: string[];
+	result?: string | null;
+	workflowRunId?: string | null;
+	preferredWorkflowId?: string | null;
+	createdByTaskId?: string | null;
 	activeSession?: 'worker' | 'leader' | null;
-	prUrl?: string | null;
-	prNumber?: number | null;
-	prCreatedAt?: number | null;
-	inputDraft?: string | null;
-	/** Goal/mission this task is associated with; null to clear */
-	goalId?: string | null;
 	/**
 	 * ID of the Task Agent session that orchestrates this task's workflow execution.
 	 * Set when spawning a Task Agent; null to clear the reference.
 	 */
 	taskAgentSessionId?: string | null;
+	/** Timestamp when task transitioned to `in_progress`; null to clear */
+	startedAt?: number | null;
+	/** Timestamp when task reached a terminal state; null to clear */
+	completedAt?: number | null;
+	/** Timestamp when task was archived; null to clear */
+	archivedAt?: number | null;
+	/** Why this task is blocked; null to clear */
+	blockReason?: SpaceBlockReason | null;
+	/** Who approved this task */
+	approvalSource?: SpaceApprovalSource | null;
+	/** Optional approval reason/comment */
+	approvalReason?: string | null;
+	/**
+	 * Optional cancellation/rejection reason. Stored into the same underlying
+	 * `approval_reason` column as `approvalReason`, but semantically paired with
+	 * transitions that abort work (e.g. review → cancelled, or rejecting a
+	 * paused completion action). When both are provided, the runtime picks the
+	 * one that matches the transition direction.
+	 */
+	cancelReason?: string | null;
+	/** Timestamp when approval occurred; null to clear */
+	approvedAt?: number | null;
+	/** Index of the completion action awaiting approval; null to clear */
+	pendingActionIndex?: number | null;
+	/** Type of checkpoint the task is paused at; null to clear */
+	pendingCheckpointType?: 'completion_action' | 'gate' | null;
+	/** Agent-reported terminal status from `report_result`; null to clear */
+	reportedStatus?: SpaceReportedStatus | null;
+	/** Agent-reported summary from `report_result`; null to clear */
+	reportedSummary?: string | null;
+}
+
+// ============================================================================
+// Node Execution Types
+// ============================================================================
+
+/**
+ * Status of a node execution slot within a workflow run.
+ *
+ * - `pending`     — slot has been created but the agent has not started yet
+ * - `in_progress` — agent session is actively running
+ * - `idle`        — agent session finished naturally (detected via session idle event)
+ * - `blocked`     — execution requires human intervention or a gate has not passed
+ * - `cancelled`   — execution was cancelled (workflow run cancelled or error path)
+ */
+export type NodeExecutionStatus = 'pending' | 'in_progress' | 'idle' | 'blocked' | 'cancelled';
+
+/**
+ * Records the execution of a single agent slot within a workflow run's node.
+ * One row is created per `(workflowRunId, workflowNodeId, agentName)` triple.
+ * This separates workflow-internal state from the user-facing `SpaceTask`.
+ */
+export interface NodeExecution {
+	/** Unique identifier */
+	id: string;
+	/** Workflow run this execution belongs to */
+	workflowRunId: string;
+	/** ID of the workflow node in the workflow definition */
+	workflowNodeId: string;
+	/** Agent slot name (`WorkflowNodeAgent.name`) — channel routing address */
+	agentName: string;
+	/** ID of the SpaceAgent assigned to this slot; null when the agent has been deleted */
+	agentId: string | null;
+	/** Agent sub-session ID for liveness tracking; null until session is created */
+	agentSessionId: string | null;
+	/** Current execution status */
+	status: NodeExecutionStatus;
+	/** Human-readable summary from `save(summary)`; null until the agent saves output */
+	result: string | null;
+	/** Structured output from `save(data)`; null until the agent saves structured data */
+	data: Record<string, unknown> | null;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Timestamp when execution transitioned to `in_progress`; null until started */
+	startedAt: number | null;
+	/** Timestamp when execution reached a terminal state; null until completed */
+	completedAt: number | null;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+}
+
+/**
+ * Parameters for creating a new NodeExecution record
+ */
+export interface CreateNodeExecutionParams {
+	workflowRunId: string;
+	workflowNodeId: string;
+	agentName: string;
+	agentId?: string | null;
+	/** Initial status — defaults to 'pending' */
+	status?: NodeExecutionStatus;
+	/** Agent sub-session ID when the session is already known at creation time */
+	agentSessionId?: string | null;
+}
+
+/**
+ * Parameters for updating a NodeExecution record
+ */
+export interface UpdateNodeExecutionParams {
+	status?: NodeExecutionStatus;
+	agentSessionId?: string | null;
+	result?: string | null;
+	data?: Record<string, unknown> | null;
+	startedAt?: number | null;
+	completedAt?: number | null;
 }
 
 // ============================================================================
@@ -276,19 +537,20 @@ export interface UpdateSpaceTaskParams {
 // ============================================================================
 
 /**
- * Status of a workflow run
+ * Status of a workflow run.
+ *
+ * - `pending`     — run created, awaiting Task Agent to start nodes
+ * - `in_progress` — at least one node execution is active
+ * - `done`        — end node called `report_result` or all nodes completed
+ * - `blocked`     — run requires human intervention (gate rejection, crash, etc.)
+ * - `cancelled`   — run was cancelled before completion
  */
-export type WorkflowRunStatus =
-	| 'pending'
-	| 'in_progress'
-	| 'completed'
-	| 'cancelled'
-	| 'needs_attention';
+export type WorkflowRunStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
 
 /**
  * Tracks a single execution of a Space workflow.
  * A workflow run is created each time a workflow is triggered and tracks
- * the progress through each step of the workflow definition.
+ * the progress through each node of the workflow definition.
  */
 export interface SpaceWorkflowRun {
 	/** Unique identifier */
@@ -301,24 +563,30 @@ export interface SpaceWorkflowRun {
 	title: string;
 	/** Optional description or goal for this run */
 	description?: string;
-	/** ID of the step currently being executed; undefined when the run has not yet been assigned a step */
-	currentStepId?: string;
 	/** Current execution status */
 	status: WorkflowRunStatus;
-	/** Optional runtime configuration for this run */
-	config?: Record<string, unknown>;
-	/** Number of times the run has looped back to a previously visited step */
-	iterationCount: number;
-	/** Maximum iterations before escalating to needs_attention */
-	maxIterations: number;
-	/** Optional goal/mission ID this run is associated with */
-	goalId?: string;
+	/**
+	 * Reason for workflow run failure. Only set when the run reaches a terminal
+	 * failure state (`blocked` or `cancelled`).
+	 */
+	failureReason?: WorkflowRunFailureReason;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
+	/** Timestamp when the first node execution started; null until the run begins executing */
+	startedAt: number | null;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
-	/** Completion timestamp (milliseconds since epoch) */
-	completedAt?: number;
+	/** Completion timestamp (milliseconds since epoch); null until the run reaches a terminal state */
+	completedAt: number | null;
+	/**
+	 * Timestamp (milliseconds since epoch) at which the run's end-node
+	 * `completionActions` have been successfully fired. Used as an idempotency
+	 * marker so that a run which is reopened (done → in_progress) and later
+	 * completes again does not re-fire its completion actions.
+	 *
+	 * Null until the first successful completion. Never cleared on reopen.
+	 */
+	completionActionsFiredAt: number | null;
 }
 
 /**
@@ -329,75 +597,6 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
-	/**
-	 * ID of the step to start execution from — should be set to workflow.startStepId.
-	 * Omit to leave the run without an initial step; the executor must call
-	 * updateCurrentStep() before calling advance().
-	 */
-	currentStepId?: string;
-	/** Maximum iterations before escalating to needs_attention (overrides workflow default) */
-	maxIterations?: number;
-	/** Optional goal/mission ID to associate with this run */
-	goalId?: string;
-}
-
-// ============================================================================
-// Space Session Group Types
-// ============================================================================
-
-/**
- * A member of a SpaceSessionGroup
- */
-export interface SpaceSessionGroupMember {
-	/** Unique identifier of this membership record */
-	id: string;
-	/** Session group this member belongs to */
-	groupId: string;
-	/** ID of the session */
-	sessionId: string;
-	/**
-	 * Role of this session within the group — freeform string matching SpaceAgent.role
-	 * (e.g. 'coder', 'reviewer', 'security-auditor', or any user-defined role).
-	 */
-	role: string;
-	/** ID of the SpaceAgent config this session uses (nullable for system agents) */
-	agentId?: string;
-	/** Current state of this member's session */
-	status: 'active' | 'completed' | 'failed';
-	/** Display order within the group */
-	orderIndex: number;
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-}
-
-/**
- * A named group of sessions within a Space.
- * Session groups allow organizing related sessions (e.g., a workflow run's
- * agents) under a single logical unit for display and management.
- */
-export interface SpaceSessionGroup {
-	/** Unique identifier */
-	id: string;
-	/** Space this group belongs to */
-	spaceId: string;
-	/** Human-readable label for the group */
-	name: string;
-	/** Optional description of the group's purpose */
-	description?: string;
-	/** ID of the workflow run (SpaceWorkflowRun) this group is associated with (for UI display) */
-	workflowRunId?: string;
-	/** ID of the current workflow step being executed by this group */
-	currentStepId?: string;
-	/** ID of the SpaceTask this group serves */
-	taskId?: string;
-	/** Lifecycle status of this group */
-	status: 'active' | 'completed' | 'failed';
-	/** Members of this group */
-	members: SpaceSessionGroupMember[];
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-	/** Last update timestamp (milliseconds since epoch) */
-	updatedAt: number;
 }
 
 // ============================================================================
@@ -406,7 +605,7 @@ export interface SpaceSessionGroup {
 
 /**
  * A named agent configuration within a Space.
- * SpaceAgents can be referenced by name in SpaceWorkflow steps.
+ * SpaceAgents can be referenced by name in SpaceWorkflow nodes.
  */
 export interface SpaceAgent {
 	/** Unique identifier */
@@ -417,34 +616,22 @@ export interface SpaceAgent {
 	name: string;
 	/** Optional description of this agent's specialization */
 	description?: string;
-	/**
-	 * Role label — a free-form string describing the agent's purpose (e.g. 'coder', 'general').
-	 * Used only for display and default system prompt labeling; has no runtime routing effect.
-	 */
-	role: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
 	model?: string;
 	/** Provider name override (e.g., 'anthropic', 'openai') */
 	provider?: string;
-	/** Custom system prompt appended to the role preset */
-	systemPrompt?: string;
+	/**
+	 * Custom prompt — operator-supplied persona, context, and operating procedure for this agent.
+	 * Appended AFTER the NeoKai system contract in the prompt so the contract cannot be overridden.
+	 * Null when not set.
+	 */
+	customPrompt: string | null;
 	/**
 	 * Tool list override — which tools this agent may use.
 	 * Any entry must be a name from KNOWN_TOOLS.
 	 * When unset, role-based defaults apply.
 	 */
 	tools?: string[];
-	/** Tool configuration overrides */
-	toolConfig?: Record<string, unknown>;
-	/**
-	 * When true, the agent's task message includes the full workflow structure
-	 * (steps, current step marker, and rules) when the agent runs inside an active
-	 * workflow run. Set this on agents whose role involves planning or orchestration
-	 * so they can create tasks aligned with the current workflow step.
-	 *
-	 * Driven by data, not by hardcoded role checks — any agent can have this set.
-	 */
-	injectWorkflowContext?: boolean;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -457,16 +644,13 @@ export interface SpaceAgent {
 export interface CreateSpaceAgentParams {
 	spaceId: string;
 	name: string;
-	role: string;
 	description?: string;
 	model?: string;
 	provider?: string;
-	systemPrompt?: string;
+	/** Operator-supplied custom prompt appended after the NeoKai contract; null when not set */
+	customPrompt?: string | null;
 	/** Tool list override — any entry must be a name from KNOWN_TOOLS */
 	tools?: string[];
-	toolConfig?: Record<string, unknown>;
-	/** When true, the agent receives workflow structure context in its task message. */
-	injectWorkflowContext?: boolean;
 }
 
 /**
@@ -475,242 +659,348 @@ export interface CreateSpaceAgentParams {
 export interface UpdateSpaceAgentParams {
 	name?: string;
 	description?: string | null;
-	role?: string;
 	model?: string | null;
 	provider?: string | null;
-	systemPrompt?: string | null;
+	/** Operator-supplied custom prompt; null clears */
+	customPrompt?: string | null;
 	/** Tool list override — null clears (reverts to role defaults) */
 	tools?: string[] | null;
-	toolConfig?: Record<string, unknown> | null;
-	/** When true, the agent receives workflow structure context in its task message. */
-	injectWorkflowContext?: boolean | null;
 }
 
 // ============================================================================
 // Workflow Types (M3)
 // ============================================================================
 
-/**
- * Primitive condition type for workflow transitions.
- *
- * - `always`: The transition fires unconditionally.
- * - `human`: Blocks until a human explicitly approves (via a signal / run config update).
- * - `condition`: A user-supplied shell expression; the transition fires when it exits with code 0.
- *   NeoKai is a framework — no allowlist is applied. Users are responsible for what they run.
- * - `task_result`: Matches against the `result` field of the most recently completed task on the
- *   current step. The transition fires when the task result starts with or equals the condition's
- *   `expression` value (e.g., `'passed'`, `'failed'`).
- */
-export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
+// ============================================================================
+// Gate System — field-based schema
+// ============================================================================
+
+/** Field type determines what values are valid and what check ops are available. */
+export type GateFieldType = 'boolean' | 'string' | 'number' | 'map';
 
 /**
- * A condition that guards a workflow transition.
- * Conditions determine whether a transition may fire when advance() is called.
+ * Check operation for scalar fields (boolean, string, number).
+ *
+ *   - `'=='`     — passes when `data[field] === value`
+ *   - `'!='`     — passes when `data[field] !== value`
+ *   - `'exists'` — passes when the field is present in data (not `undefined`)
  */
-export interface WorkflowCondition {
-	/** Condition type. */
-	type: WorkflowConditionType;
-	/**
-	 * Expression to evaluate for the `condition` and `task_result` types.
-	 *
-	 * - For `condition`: a shell expression; the transition fires when it exits with code 0.
-	 *   No allowlist is applied — users are responsible for the expression content.
-	 * - For `task_result`: the match value to compare against the completed task's `result`
-	 *   field (e.g., `'passed'`, `'failed'`). The transition fires when the task result
-	 *   starts with or equals this value.
-	 */
-	expression?: string;
-	/** Human-readable description of what this condition checks */
-	description?: string;
-	/**
-	 * Maximum number of times to retry condition evaluation on failure.
-	 * Defaults to 0 (no retries — fail immediately on first failure).
-	 */
-	maxRetries?: number;
-	/** Timeout for condition evaluation in milliseconds (0 = use default) */
+export interface GateFieldScalarCheck {
+	op: '==' | '!=' | 'exists';
+	value?: unknown;
+}
+
+/**
+ * Check operation for map fields (counts matching entries).
+ *
+ *   - `op: 'count'` — counts entries whose value equals `match`, passes when count >= `min`
+ *
+ * Example: require 3 "approved" reviews in a votes map:
+ *   `{ op: 'count', match: 'approved', min: 3 }`
+ */
+export interface GateFieldMapCheck {
+	op: 'count';
+	/** Value to match in map entries. */
+	match: unknown;
+	/** Minimum count required for this field to be satisfied. */
+	min: number;
+}
+
+/** Union of check operations — scalar or map. */
+export type GateFieldCheck = GateFieldScalarCheck | GateFieldMapCheck;
+
+/**
+ * A single declared field in the gate schema.
+ *
+ * Fields define what data the gate stores, who can write it, and what check
+ * must pass for the field to be satisfied. A gate opens when ALL fields pass.
+ */
+export interface GateField {
+	/** Field name (key in the gate data store). */
+	name: string;
+	/** Field type. */
+	type: GateFieldType;
+	/** Who can write this field — node names, '*' (any agent), or [] (external-only: human via RPC or auto-approval). */
+	writers: string[];
+	/** Check that must pass for this field to be satisfied. */
+	check: GateFieldCheck;
+}
+
+/**
+ * A Gate — a declared data store with typed fields. Opens when ALL fields pass.
+ *
+ * Gates are referenced by channels via `gateId`. A gate has no back-reference
+ * to any channel — the same gate can guard multiple channels.
+ *
+ * Gate runtime data is a key-value store persisted per `(run_id, gate_id)` in
+ * the `gate_data` SQLite table. Default data is computed from the field
+ * declarations (empty map `{}` for 'map' type, nothing for others). Agents
+ * write to gate data via `write_gate`; the runtime evaluates field checks
+ * against current data to decide passage.
+ */
+export interface GateScript {
+	/** Script interpreter: 'bash', 'node', or 'python3' */
+	interpreter: 'bash' | 'node' | 'python3';
+	/** Script source code to execute */
+	source: string;
+	/** Timeout in milliseconds (default: 30000) */
 	timeoutMs?: number;
 }
 
-/**
- * A directed edge in the workflow graph.
- * Transitions connect steps and carry optional conditions that determine
- * whether the edge may be followed during advance().
- *
- * advance() evaluates transitions from the current step in ascending `order`
- * and follows the first one whose condition passes.
- * A step with no outgoing transitions is a terminal step — advance() marks the
- * run as 'completed' when reached.
- */
-export interface WorkflowTransition {
+export interface Gate {
 	/** Unique identifier */
 	id: string;
-	/** Source step ID */
-	from: string;
-	/** Target step ID */
-	to: string;
-	/** Optional condition guarding this transition. Absent = 'always' (unconditional). */
-	condition?: WorkflowCondition;
-	/** Sort order among transitions with the same `from` step. Lower = evaluated first. */
-	order?: number;
+	/** Human-readable description of what this gate checks. */
+	description?: string;
+	/** Custom label displayed on the gate badge in the workflow editor. */
+	label?: string;
+	/** Custom badge color (hex format `#rrggbb`). */
+	color?: string;
+	/** Declared fields with schema, permissions, and checks. */
+	fields?: GateField[];
+	/** Optional script-based pre-check executed before field evaluation. */
+	script?: GateScript;
 	/**
-	 * When `true`, following this transition increments `iterationCount` on the run.
-	 * Used for cycle detection in iterative workflows — avoids heuristic-based detection
-	 * that would misfire on DAG merge paths.
+	 * When true, gate data is reset to defaults on cyclic channel traversal.
+	 * Used for cyclic workflows where gate state should be cleared each loop.
 	 */
-	isCyclic?: boolean;
+	resetOnCycle: boolean;
+	/**
+	 * Minimum space autonomy level required to auto-approve this gate.
+	 * When `space.autonomyLevel >= requiredLevel`, the gate is auto-approved after
+	 * validation (script + fields) passes. When below, the gate blocks for human sign-off.
+	 * Undefined = no approval needed beyond validation.
+	 */
+	requiredLevel?: SpaceAutonomyLevel;
 }
 
 /**
- * Input shape for a transition at creation time.
- * `id` is backend-assigned.
+ * Compute default data for a gate from its field declarations.
+ * Map fields get `{}`, others get nothing (no key in defaults).
  */
-export type WorkflowTransitionInput = Omit<WorkflowTransition, 'id'>;
+export function computeGateDefaults(fields?: GateField[]): Record<string, unknown> {
+	const defaults: Record<string, unknown> = {};
+	for (const field of fields ?? []) {
+		if (field.type === 'map') {
+			defaults[field.name] = {};
+		}
+	}
+	return defaults;
+}
 
 /**
- * A single agent entry within a multi-agent workflow step.
- * References a SpaceAgent by ID and optionally overrides instructions for that agent.
+ * A Channel — a simple unidirectional pipe between agents in a workflow.
+ *
+ * Channels define messaging topology. A channel without a `gateId` is always open.
+ * When `gateId` is set, the channel is gated — messages are held until the
+ * referenced Gate's condition passes.
+ *
+ * This is the separated Channel type (M1.1). Uses `gateId` to reference Gate
+ * entities rather than inlining gate conditions.
  */
-export interface WorkflowStepAgent {
-	/** ID of the SpaceAgent assigned to execute this step slot */
+export interface Channel {
+	/** Unique identifier */
+	id: string;
+	/**
+	 * Source agent name string (`WorkflowNodeAgent.name`), node name,
+	 * or `'*'` for all agents. Cross-node format: `"nodeId/agentName"`.
+	 */
+	from: string;
+	/**
+	 * Target agent name string, array of name strings, or `'*'` for all agents.
+	 * An array enables fan-out or hub-spoke topologies.
+	 */
+	to: string | string[];
+	/**
+	 * Optional reference to a Gate entity. When absent, the channel is always open.
+	 * When present, message delivery is blocked until the gate's condition passes.
+	 */
+	gateId?: string;
+	/**
+	 * Maximum number of times this channel may be traversed in a single workflow run
+	 * before delivery is blocked. Only meaningful for backward (cyclic) channels —
+	 * cyclicity is inferred from graph topology, not stored.
+	 * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
+	 */
+	maxCycles?: number;
+	/** Optional human-readable label for display in the visual editor. */
+	label?: string;
+}
+
+/**
+ * Failure reason for a workflow run that entered a terminal failure state.
+ */
+export type WorkflowRunFailureReason =
+	| 'humanRejected'
+	| 'maxIterationsReached'
+	| 'nodeTimeout'
+	| 'agentCrash';
+
+/**
+ * Expansion value for `customPrompt` in a workflow node agent slot.
+ *
+ * Always appended (expanded) to the agent's `customPrompt` — never replaces it.
+ * This ensures the agent's base prompt is preserved when node-level context is added.
+ */
+export interface WorkflowNodeAgentOverride {
+	value: string;
+}
+
+/**
+ * A single agent entry within a multi-agent workflow node.
+ * References a SpaceAgent by ID with an optional per-slot configuration override.
+ */
+export interface WorkflowNodeAgent {
+	/** ID of the SpaceAgent assigned to this slot */
 	agentId: string;
-	/** Per-agent instructions override — appended to the agent's system prompt */
-	instructions?: string;
+	/**
+	 * Agent slot label — must be unique within the node.
+	 * Derived from the SpaceAgent name. When the same agent is added to a node
+	 * multiple times, a numeric suffix is appended (e.g. `"Reviewer"` → `"Reviewer-2"`).
+	 * Used for gate `writers` lists and `node_executions.agent_name`.
+	 */
+	name: string;
+	/**
+	 * Optional model override for this agent slot.
+	 * When absent, the assigned SpaceAgent model is used.
+	 */
+	model?: string;
+	/**
+	 * Optional custom-prompt expansion for this agent slot.
+	 * Always appended to the agent's `customPrompt` (never replaces it).
+	 * Use this to add node-specific context or role focus on top of the agent's base prompt.
+	 */
+	customPrompt?: WorkflowNodeAgentOverride;
+	/**
+	 * IDs of globally-enabled skills to disable for this agent slot.
+	 * Allows per-slot skill customization on top of the global skills registry.
+	 */
+	disabledSkillIds?: string[];
+	/**
+	 * Extra MCP servers to add for this agent slot (per-node config).
+	 * Merged with app-level MCP servers when building session options.
+	 */
+	extraMcpServers?: Record<string, McpServerConfig>;
 }
 
 /**
- * A directed messaging channel between agents in a workflow step.
- * Channels define which agents may send messages to which other agents.
- * `from` and `to` reference agent roles (matching `SpaceAgent.role`) or the
- * wildcard `'*'` which matches all agents in the step.
+ * The stable ID used for the Task Agent virtual node in the visual editor.
+ *
+ * The Task Agent is a **virtual node** — it is never persisted in the DB's
+ * `space_workflow_nodes` table. Instead it is:
+ *   - Injected at runtime by the frontend (during deserialization)
+ *   - Injected at runtime by the backend (during channel resolution at workflow run start)
+ *   - Stripped from the persisted node list during serialization
+ *
+ * Task Agent **channels** ARE persisted as regular `WorkflowChannel` entries
+ * (with `from: 'task-agent'` or `to: 'task-agent'` roles). These replace the
+ * backend-only auto-generation introduced in Milestone 3 with persisted,
+ * user-manageable channel entries visible in the frontend.
+ */
+export const TASK_AGENT_NODE_ID = '__task_agent__';
+
+/**
+ * A directed (one-way) messaging channel between two nodes in a workflow.
+ *
+ * Channels are always one-way. A relationship in both directions is represented as
+ * two separate channels — each with its own independent gate and maxCycles.
+ *
+ * `from` and `to` reference node names (`WorkflowNode.name`). Node names must be
+ * unique within a workflow. `to` may be an array to fan-out to multiple nodes.
  *
  * No channels = no messaging constraints (agents are fully isolated).
  */
 export interface WorkflowChannel {
 	/**
-	 * Source role string (matches SpaceAgent.role) or `'*'` for all agents in the step.
+	 * Stable identifier for this channel.
+	 * Should be present on all persisted channels. When absent the runtime
+	 * generates one at seed/migration time.
+	 */
+	id?: string;
+	/**
+	 * Source node name (`WorkflowNode.name`). Must match a node in this workflow.
+	 * Use `'*'` to match any node (rare).
 	 */
 	from: string;
 	/**
-	 * Target role string, array of role strings, or `'*'` for all agents in the step.
-	 * An array with multiple entries enables fan-out (A→[B,C,D]) and
-	 * hub-spoke bidirectional (A↔[B,C,D]) topologies.
+	 * Target node name(s). `'*'` targets all nodes.
+	 * An array enables fan-out delivery to multiple nodes simultaneously.
 	 */
 	to: string | string[];
 	/**
-	 * Messaging direction.
-	 * - `one-way`: messages flow only from `from` to `to`.
-	 * - `bidirectional` with single `to`: point-to-point, expanded to A→B + B→A.
-	 * - `bidirectional` with array `to`: hub-spoke — hub sends to all spokes, each
-	 *   spoke may reply to hub only (no spoke-to-spoke messaging).
+	 * Maximum number of times this channel may be traversed in a single workflow run
+	 * before delivery is blocked. Only meaningful for back-channels (cyclic edges).
+	 * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
 	 */
-	direction: 'one-way' | 'bidirectional';
+	maxCycles?: number;
 	/** Optional human-readable label for display in the visual editor */
 	label?: string;
+	/**
+	 * Optional reference to a Gate entity in `SpaceWorkflow.gates`.
+	 * When set, delivery is blocked until the gate's condition passes.
+	 * Each gate belongs to exactly one channel.
+	 */
+	gateId?: string;
 }
 
 /**
  * A single node in the workflow graph.
- * Steps run one or more agents (in parallel when multiple are specified).
- * Steps are connected by WorkflowTransitions.
+ * Nodes run one or more agents (in parallel when multiple are specified).
+ * Nodes are connected by WorkflowChannels.
  *
- * All agents are referenced by ID — there is no separate builtin/custom distinction.
- * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
- * are regular SpaceAgent records that happen to have a well-known role label.
- *
- * At least one of `agentId` or `agents` must be provided.
+ * All agents are specified via `agents: WorkflowNodeAgent[]` — there is no
+ * single-agent `agentId` shorthand. `agents` must be non-empty.
  */
-export interface WorkflowStep {
-	/** Unique identifier for this step (stable across renames) */
+/**
+ * A single node in the workflow graph.
+ * Nodes are the unit of workflow topology — they group one or more agents that
+ * execute in parallel. Nodes are connected by WorkflowChannels.
+ *
+ * Node names must be unique within a workflow (used as channel addressing keys).
+ * All agents are specified via `agents: WorkflowNodeAgent[]` — `agents` must be non-empty.
+ */
+export interface WorkflowNode {
+	/** Unique identifier for this node (stable across renames) */
 	id: string;
-	/** Human-readable name for display */
+	/**
+	 * Human-readable name — must be unique within the workflow.
+	 * Used as the addressing key in `WorkflowChannel.from`/`to`.
+	 */
 	name: string;
 	/**
-	 * ID of the SpaceAgent assigned to execute this step.
-	 * Shorthand for single-agent steps. When `agents` is also provided, `agents` takes
-	 * precedence and this field is ignored.
-	 * At least one of `agentId` or `agents` must be provided.
+	 * Agents for parallel execution within this node.
+	 * Must be non-empty. Each agent runs concurrently; the node completes when all agents complete.
 	 */
-	agentId?: string;
+	agents: WorkflowNodeAgent[];
 	/**
-	 * Multiple agents for parallel execution within this step.
-	 * When provided (non-empty), takes precedence over `agentId`.
-	 * Each agent runs concurrently; the step completes when all agents complete.
-	 * At least one of `agentId` or `agents` must be provided.
+	 * Actions to execute after this node's task is approved (or auto-approved).
+	 * Executed in definition order. Each action has a `requiredLevel` that determines
+	 * whether it auto-executes or pauses for human approval.
 	 */
-	agents?: WorkflowStepAgent[];
-	/** Step-specific instructions shared by all agents in this step */
-	instructions?: string;
-	/**
-	 * Directed messaging topology between agents in this step.
-	 * No channels = no messaging constraints (agents are fully isolated).
-	 * Roles referenced in `from`/`to` must match `SpaceAgent.role` values for agents
-	 * in this step, or the wildcard `'*'`.
-	 */
-	channels?: WorkflowChannel[];
+	completionActions?: CompletionAction[];
 }
 
 /**
- * A rule that applies to workflow execution, similar to room-level rules.
- * Rules express constraints, standards, or guidelines the agent must follow.
- */
-export interface WorkflowRule {
-	/** Unique identifier (stable across renames) */
-	id: string;
-	/** Human-readable name for display */
-	name: string;
-	/** Rule content — markdown prose describing the constraint or guideline */
-	content: string;
-	/**
-	 * List of step IDs this rule applies to.
-	 *
-	 * Uses step **IDs** (not names) so that rules survive step renames.
-	 * Empty array or omitted means the rule applies to ALL steps in the workflow.
-	 */
-	appliesTo?: string[];
-}
-
-/**
- * Input shape for a workflow step at creation time.
+ * Input shape for a workflow node at creation time.
  * `id` is optional — if provided the backend uses it, otherwise a UUID is generated.
- * Providing an explicit `id` allows transitions in the same CreateSpaceWorkflowParams
- * call to reference the step before it has been persisted.
- *
- * At least one of `agentId` or `agents` must be provided.
+ * Providing an explicit `id` allows channels in the same CreateSpaceWorkflowParams
+ * call to reference the node before it has been persisted.
  */
-export interface WorkflowStepInput {
-	/** Optional pre-assigned step ID. Generated by backend when omitted. */
+export interface WorkflowNodeInput {
+	/** Optional pre-assigned node ID. Generated by backend when omitted. */
 	id?: string;
 	name: string;
 	/**
-	 * ID of the SpaceAgent assigned to execute this step.
-	 * Shorthand for single-agent steps. When `agents` is also provided, `agents` takes
-	 * precedence. At least one of `agentId` or `agents` must be provided.
+	 * Agents for parallel execution within this node. Must be non-empty.
 	 */
-	agentId?: string;
-	/**
-	 * Multiple agents for parallel execution within this step.
-	 * When provided (non-empty), takes precedence over `agentId`.
-	 * At least one of `agentId` or `agents` must be provided.
-	 */
-	agents?: WorkflowStepAgent[];
-	instructions?: string;
-	/**
-	 * Directed messaging topology between agents in this step.
-	 * Roles referenced in `from`/`to` must match `SpaceAgent.role` values for agents
-	 * in this step, or the wildcard `'*'`.
-	 */
-	channels?: WorkflowChannel[];
+	agents: WorkflowNodeAgent[];
+	/** Completion actions to execute after this node's task is approved. */
+	completionActions?: CompletionAction[];
 }
 
 /**
- * Input shape for a workflow rule at creation time.
- * `id` is backend-assigned and must not be provided by callers.
- */
-export type WorkflowRuleInput = Omit<WorkflowRule, 'id'>;
-
-/**
  * A named, reusable workflow definition within a Space.
- * Workflows are directed graphs: steps are nodes, transitions are edges.
+ * Workflows are collaboration graphs: nodes are agent groups, channels are communication paths.
  * The SpaceRuntime executes workflows by creating SpaceWorkflowRun instances.
  */
 export interface SpaceWorkflow {
@@ -722,32 +1012,67 @@ export interface SpaceWorkflow {
 	name: string;
 	/** Optional description of what this workflow accomplishes */
 	description?: string;
-	/** Nodes in the workflow graph */
-	steps: WorkflowStep[];
-	/** Directed edges in the workflow graph */
-	transitions: WorkflowTransition[];
-	/** ID of the step where execution begins */
-	startStepId: string;
-	/** Rules that govern agent behavior during this workflow */
-	rules: WorkflowRule[];
 	/**
-	 * @deprecated isDefault is no longer used for workflow selection.
-	 * Workflow selection uses only two modes: explicit workflowId or AI auto-select.
-	 * This field is retained for backward compatibility but has no runtime effect.
+	 * Workflow-level instructions injected into every agent session in this workflow.
+	 * Use this for context all agents need: project conventions, repo structure,
+	 * PR/branch naming rules, testing requirements, etc.
+	 *
+	 * Injection order: Space.instructions → Workflow.instructions → Agent.systemPrompt
 	 */
-	isDefault?: boolean;
-	/** Tags for organizational categorization. Not used for automatic workflow selection. */
+	instructions?: string;
+	/** Nodes in the workflow graph */
+	nodes: WorkflowNode[];
+	/** ID of the node where execution begins */
+	startNodeId: string;
+	/**
+	 * ID of the node where execution ends.
+	 * When the end node's execution calls `report_result`, the workflow run is
+	 * automatically marked `done`. If absent, completion relies on the
+	 * `CompletionDetector` all-agents-done check as a safety net.
+	 */
+	endNodeId?: string;
+	/**
+	 * Directed messaging channels between nodes in this workflow.
+	 * `from`/`to` reference node names (`WorkflowNode.name`).
+	 * Empty or absent means no messaging constraints (agents are fully isolated).
+	 */
+	channels?: WorkflowChannel[];
+	/**
+	 * Gate definitions for this workflow.
+	 * Gates are independent entities referenced by channels via `gateId`.
+	 * Persisted as JSON in the `gates` column of `space_workflows`.
+	 */
+	gates?: Gate[];
+	/**
+	 * Tags for organizational categorization.
+	 *
+	 * Primary workflow selection for standalone tasks is LLM-driven; tags are
+	 * exposed to the selector as context alongside the workflow name and
+	 * description. Two tag values are also recognized by the deterministic
+	 * fallback (used when the LLM selector is absent or declines to answer):
+	 *   - `default` — preferred fallback over any other workflow
+	 *   - `v2`      — preferred fallback over non-v2 workflows
+	 * Other tag values have no runtime meaning.
+	 */
 	tags: string[];
-	/** Additional runtime configuration (opaque bag for future extensibility) */
-	config?: Record<string, unknown>;
-	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
-	maxIterations?: number;
-	/** Visual editor node positions: maps step ID to {x, y} canvas coordinates */
+	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
 	updatedAt: number;
+	/**
+	 * Name of the built-in template this workflow was created from or last synced to.
+	 * `undefined` for user-created workflows not based on any template.
+	 */
+	templateName?: string;
+	/**
+	 * Canonical content hash of the template at the time of last sync.
+	 * Used to detect drift: if the current template's hash differs from this value,
+	 * the template has been updated (or the workflow has been modified) since last sync.
+	 * `undefined` when no template tracking is active.
+	 */
+	templateHash?: string;
 }
 
 /**
@@ -757,43 +1082,47 @@ export interface CreateSpaceWorkflowParams {
 	spaceId: string;
 	name: string;
 	description?: string;
+	instructions?: string;
 	/**
-	 * Step nodes. Steps may include an optional `id` field — if provided, the backend
-	 * uses it as the step's UUID so that `transitions` in the same call can reference it.
+	 * Workflow nodes. Nodes may include an optional `id` field — if provided, the backend
+	 * uses it as the node's UUID so that `channels` in the same call can reference it.
 	 */
-	steps?: WorkflowStepInput[];
+	nodes?: WorkflowNodeInput[];
 	/**
-	 * Directed edges connecting steps. `from` and `to` must reference step IDs
-	 * (either pre-assigned via `WorkflowStepInput.id` or backend-generated UUIDs).
+	 * ID of the node where execution begins.
+	 * Defaults to the first node in the `nodes` array when omitted.
 	 */
-	transitions?: WorkflowTransitionInput[];
+	startNodeId?: string;
 	/**
-	 * ID of the step where execution begins.
-	 * Defaults to the first step in the `steps` array when omitted.
+	 * ID of the node where execution ends.
+	 * When the end node's execution calls `report_result`, the workflow run auto-completes.
 	 */
-	startStepId?: string;
-	/**
-	 * Rules governing agent behavior. `id` is backend-assigned.
-	 */
-	rules?: WorkflowRuleInput[];
-	/**
-	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
-	 */
-	isDefault?: boolean;
-	/** Tags for organizational categorization (default: []). Not used for automatic workflow selection. */
+	endNodeId?: string;
+	/** Workflow-level messaging channels. */
+	channels?: WorkflowChannel[];
+	/** Gate definitions for this workflow. */
+	gates?: Gate[];
+	/** Tags for organizational categorization (default: []). See `SpaceWorkflow.tags` for runtime semantics. */
 	tags?: string[];
-	config?: Record<string, unknown>;
-	/** Maximum iterations for cyclic workflows before escalating to needs_attention */
-	maxIterations?: number;
-	/** Visual editor node positions: maps step ID to {x, y} canvas coordinates */
+	/** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
 	layout?: Record<string, { x: number; y: number }>;
+	/**
+	 * Name of the built-in template this workflow is being created from.
+	 * When set, `templateHash` must also be provided.
+	 */
+	templateName?: string;
+	/**
+	 * Canonical content hash of the built-in template at creation time.
+	 * Stored for future drift detection.
+	 */
+	templateHash?: string;
 }
 
 /**
  * Parameters for updating an existing SpaceWorkflow.
  * All fields are optional — only provided fields are updated.
  *
- * For array fields (`steps`, `transitions`, `rules`, `tags`):
+ * For array fields (`nodes`, `channels`, `tags`):
  * - Pass a new array to replace the entire collection.
  * - Pass `null` to explicitly clear the field to an empty collection.
  * - Pass `[]` to clear all entries (equivalent to null for arrays).
@@ -801,36 +1130,66 @@ export interface CreateSpaceWorkflowParams {
 export interface UpdateSpaceWorkflowParams {
 	name?: string;
 	description?: string | null;
+	instructions?: string | null;
 	/**
-	 * Replaces the entire step list. Pass `[]` or `null` to clear all steps.
+	 * Replaces the entire node list. Pass `[]` or `null` to clear all nodes.
 	 */
-	steps?: WorkflowStep[] | null;
+	nodes?: WorkflowNode[] | null;
 	/**
-	 * Replaces the entire transition list. Pass `[]` or `null` to clear all transitions.
+	 * Updates the workflow entry point. Pass `null` to reset to first node.
 	 */
-	transitions?: WorkflowTransitionInput[] | null;
+	startNodeId?: string | null;
 	/**
-	 * Updates the workflow entry point. Pass `null` to reset to first step.
+	 * Updates the workflow end node. Pass `null` to reset to the last node.
 	 */
-	startStepId?: string | null;
+	endNodeId?: string | null;
 	/**
-	 * Replaces the entire rule list. Pass `[]` or `null` to clear all rules.
+	 * Replaces the channel list. Pass `[]` or `null` to clear all channels.
 	 */
-	rules?: WorkflowRule[] | null;
+	channels?: WorkflowChannel[] | null;
 	/**
-	 * @deprecated isDefault has no runtime effect. Workflow selection uses only explicit workflowId or AI auto-select.
+	 * Replaces the gate list. Pass `[]` or `null` to clear all gates.
 	 */
-	isDefault?: boolean;
+	gates?: Gate[] | null;
 	/**
 	 * Replaces the tag list. Pass `[]` or `null` to clear all tags.
-	 * Tags are for organizational categorization only — not used for automatic workflow selection.
+	 * See `SpaceWorkflow.tags` for runtime semantics (used by the deterministic fallback selector).
 	 */
 	tags?: string[] | null;
-	config?: Record<string, unknown> | null;
-	/** Maximum iterations for cyclic workflows. Pass `null` to clear. */
-	maxIterations?: number | null;
 	/** Visual editor node positions. Pass `null` to clear. */
 	layout?: Record<string, { x: number; y: number }> | null;
+	/** Update template tracking (used when syncing from a template). */
+	templateName?: string | null;
+	templateHash?: string | null;
+}
+
+/**
+ * A single workflow row that participates in a duplicate-drift group.
+ * Part of {@link DuplicateDriftReport}.
+ */
+export interface DuplicateDriftRow {
+	/** Workflow UUID. */
+	id: string;
+	/** Canonical content hash at last sync. May be null for legacy rows. */
+	templateHash: string | null;
+	/** Creation timestamp (ms since epoch). Newest-first ordering is used for resync. */
+	createdAt: number;
+}
+
+/**
+ * One drift group surfaced by `spaceWorkflow.detectDuplicateDrift`.
+ *
+ * A drift group is formed by multiple workflow rows in the same space that
+ * share a `templateName` but carry differing `templateHash` values. These
+ * rows represent template drift — either duplicate seed passes left stale
+ * versions behind, or the source built-in template changed after some rows
+ * were seeded but before others were re-synced.
+ */
+export interface DuplicateDriftReport {
+	/** Shared `templateName` for the group. Always non-empty. */
+	templateName: string;
+	/** Workflow rows in the group, newest-first. Always >= 2 entries. */
+	rows: DuplicateDriftRow[];
 }
 
 // ============================================================================
@@ -838,103 +1197,83 @@ export interface UpdateSpaceWorkflowParams {
 // ============================================================================
 
 /**
- * A single agent entry within a multi-agent exported workflow step.
- * Mirrors `WorkflowStepAgent` but uses a portable `agentRef` name instead of a UUID.
+ * A directed messaging channel in the portable export format.
+ *
+ * Differences from `WorkflowChannel`:
+ * - `id` is stripped (regenerated on import)
+ * - `from`/`to` use node names (portable across Space instances)
  */
-export interface ExportedWorkflowStepAgent {
+export interface ExportedWorkflowChannel {
+	/** Source node name */
+	from: string;
+	/** Target node name(s) */
+	to: string | string[];
+	maxCycles?: number;
+	label?: string;
+	gateId?: string;
+}
+
+/**
+ * A single agent entry within a multi-agent exported workflow node.
+ * Mirrors `WorkflowNodeAgent` but uses a portable `agentRef` name instead of a UUID.
+ */
+export interface ExportedWorkflowNodeAgent {
 	/** Name of the SpaceAgent (portable, not a UUID) */
 	agentRef: string;
-	/** Per-agent instructions override */
-	instructions?: string;
+	/**
+	 * Unique identifier for this agent slot within the node.
+	 * Must be unique across all agents in the same exported node.
+	 * Mirrors `WorkflowNodeAgent.name`.
+	 */
+	name: string;
+	/** Optional model override for this agent slot. */
+	model?: string;
+	/**
+	 * Optional system-prompt override for this agent slot.
+	 * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.
+	 * Plain strings are normalized to `{ mode: 'override', value }` during import.
+	 */
+	systemPrompt?: WorkflowNodeAgentOverride | string;
+	/**
+	 * Optional instructions override for this agent slot.
+	 * Accepts both plain strings (legacy export format) and `{ mode, value }` objects.
+	 * Plain strings are normalized to `{ mode: 'override', value }` during import.
+	 */
+	instructions?: WorkflowNodeAgentOverride | string;
+	/**
+	 * IDs of globally-enabled skills to disable for this agent slot.
+	 * Preserved through export/import round-trip.
+	 */
+	disabledSkillIds?: string[];
+	/**
+	 * Extra MCP servers to add for this agent slot.
+	 * Typed loosely as `Record<string, unknown>` because this is an export/import
+	 * format — the Zod schema validates the shape at parse time for forward-compatibility,
+	 * and the data is cast to `McpServerConfig` only at runtime use.
+	 */
+	extraMcpServers?: Record<string, unknown>;
 }
 
 /**
- * A single workflow step (graph node) in the exported format.
+ * A single workflow node (graph node) in the exported format.
  *
- * Differences from `WorkflowStep`:
+ * Differences from `WorkflowNode`:
  * - `id` is stripped (space-specific, regenerated on import)
- * - `agentId` UUID is replaced by `agentRef` (the agent's **name**), making the
- *   reference portable across Space instances that may have different UUIDs.
  * - `agents[]` entries have their `agentId` UUIDs replaced by `agentRef` names.
- * - `channels[]` are exported as-is — they already use role strings, not UUIDs.
+ * - `channels[]` have moved to `ExportedSpaceWorkflow.channels` (workflow-level).
  *
- * Step names are used as cross-references throughout the exported format
- * (in `ExportedWorkflowTransition.fromStep`/`toStep`,
- * `ExportedSpaceWorkflow.startStep`, and `ExportedWorkflowRule.appliesTo`).
- * Step names must therefore be unique within an exported workflow.
- *
- * At least one of `agentRef` or `agents` (non-empty) must be present:
- * - Single-agent steps use `agentRef` (shorthand, backward-compatible).
- * - Multi-agent steps use `agents` (array of `ExportedWorkflowStepAgent` entries).
- * - The export function never sets both simultaneously, but the type and Zod schema
- *   do not enforce mutual exclusivity — if both are present, `agents` takes precedence
- *   on import (consistent with `WorkflowStep` resolution semantics).
+ * Node names are used as cross-references throughout the exported format
+ * (in `ExportedSpaceWorkflow.startNode` / `endNode`).
+ * Node names must therefore be unique within an exported workflow.
  */
-export interface ExportedWorkflowStep {
-	/**
-	 * Name of the SpaceAgent assigned to this step (portable, not a UUID).
-	 * Used for single-agent steps. Mutually exclusive with `agents`.
-	 */
-	agentRef?: string;
+export interface ExportedWorkflowNode {
 	/**
 	 * Multiple agents for parallel execution.
-	 * Used for multi-agent steps. Mutually exclusive with `agentRef`.
-	 * When present (non-empty), `agentRef` must be absent.
+	 * `agentId` UUIDs are replaced with portable `agentRef` names.
 	 */
-	agents?: ExportedWorkflowStepAgent[];
-	/**
-	 * Directed messaging topology between agents in this step.
-	 * Uses role strings (portable — not UUIDs). Exported and imported as-is.
-	 * Absent or empty means agents are fully isolated (no messaging).
-	 */
-	channels?: WorkflowChannel[];
-	/** Human-readable step name — used as the stable cross-reference key in the export */
+	agents: ExportedWorkflowNodeAgent[];
+	/** Human-readable node name — used as the stable cross-reference key in the export */
 	name: string;
-	/** Step-specific instructions appended to the agent's system prompt */
-	instructions?: string;
-}
-
-/**
- * A directed edge in the exported workflow graph.
- *
- * Differences from `WorkflowTransition`:
- * - `id` is stripped (space-specific, regenerated on import)
- * - `from`/`to` step UUIDs are replaced by step **names** for portability
- */
-export interface ExportedWorkflowTransition {
-	/** Name of the source step */
-	fromStep: string;
-	/** Name of the target step */
-	toStep: string;
-	/** Optional condition guarding this transition. Absent = unconditional. */
-	condition?: WorkflowCondition;
-	/** Sort order among transitions with the same source step. Lower = evaluated first. */
-	order?: number;
-	/**
-	 * When `true`, following this transition increments `iterationCount` on the run.
-	 * Used for cycle detection in iterative workflows.
-	 */
-	isCyclic?: boolean;
-}
-
-/**
- * A workflow rule in the exported format.
- *
- * Differences from `WorkflowRule`:
- * - `id` is stripped (space-specific, regenerated on import)
- * - `appliesTo` contains step **names** instead of step UUIDs (strings),
- *   so the reference survives re-import with freshly generated step IDs.
- */
-export interface ExportedWorkflowRule {
-	/** Human-readable name for display */
-	name: string;
-	/** Rule content — markdown prose describing the constraint or guideline */
-	content: string;
-	/**
-	 * Names of the steps this rule applies to.
-	 * Empty array or omitted means the rule applies to ALL steps.
-	 */
-	appliesTo?: string[];
 }
 
 /**
@@ -954,41 +1293,26 @@ export interface ExportedSpaceAgent {
 	model?: string;
 	/** Provider name override */
 	provider?: string;
-	/**
-	 * Role label — free-form string describing the agent's purpose (e.g. 'coder', 'reviewer').
-	 * Used for display and default system prompt labeling; has no runtime routing effect.
-	 * Mirrors `SpaceAgent.role`.
-	 */
-	role: string;
-	/** Custom system prompt */
+	/** System prompt — persona and constraints for this agent */
 	systemPrompt?: string;
 	/**
+	 * Default operating procedure — describes HOW the agent performs its work.
+	 * Mirrors `SpaceAgent.instructions`.
+	 */
+	instructions?: string;
+	/**
 	 * Tool name overrides — list of tool names from KNOWN_TOOLS this agent may use.
-	 * When absent, role-based defaults apply on import.
+	 * When absent, defaults apply on import.
 	 * Mirrors `SpaceAgent.tools`.
 	 */
 	tools?: string[];
-	/**
-	 * When true, the agent receives full workflow structure in its task message when
-	 * running inside an active workflow run. Mirrors `SpaceAgent.injectWorkflowContext`.
-	 */
-	injectWorkflowContext?: boolean;
-	/**
-	 * Additional agent configuration.
-	 *
-	 * Forward-compatibility stub: `SpaceAgent` does not currently expose a `config`
-	 * field, so `exportAgent()` never populates this. It is reserved here for future
-	 * agent-level configuration that cannot be expressed through the named fields above,
-	 * and for hand-crafted export payloads that need to carry extra metadata.
-	 */
-	config?: Record<string, unknown>;
 }
 
 /**
  * A Space workflow in the portable export format.
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
- * Step IDs are stripped; cross-references use step names.
- * Transition IDs are stripped; `from`/`to` use step names.
+ * Node IDs are stripped; cross-references use node names.
+ * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
 	/** Format version — always 1 for this revision */
@@ -999,18 +1323,23 @@ export interface ExportedSpaceWorkflow {
 	name: string;
 	/** Optional description */
 	description?: string;
-	/** Graph nodes — step order in this array is not significant */
-	steps: ExportedWorkflowStep[];
-	/** Graph edges — directed transitions between steps */
-	transitions: ExportedWorkflowTransition[];
-	/** Name of the step where execution begins */
-	startStep: string;
-	/** Rules governing agent behavior; `appliesTo` uses step names */
-	rules: ExportedWorkflowRule[];
+	/** Graph nodes — node order in this array is not significant */
+	nodes: ExportedWorkflowNode[];
+	/** Name of the node where execution begins */
+	startNode: string;
+	/**
+	 * Name of the node where execution ends (optional — mirrors `SpaceWorkflow.endNodeId`).
+	 * When present, the end node's `report_result` call auto-completes the workflow run.
+	 */
+	endNode?: string;
 	/** Tags for categorization */
 	tags: string[];
-	/** Additional runtime configuration */
-	config?: Record<string, unknown>;
+	/** Workflow-level instructions injected into every agent session */
+	instructions?: string;
+	/**
+	 * Directed messaging channels. `from`/`to` use node names. Channel `id` is stripped.
+	 */
+	channels?: ExportedWorkflowChannel[];
 }
 
 /**
@@ -1034,4 +1363,124 @@ export interface SpaceExportBundle {
 	exportedAt: number;
 	/** Source Space identifier (name or workspace path) for informational purposes */
 	exportedFrom?: string;
+}
+
+// ── Workflow Run Artifacts ──────────────────────────────────────────────────
+
+/** Artifact types that node agents can produce. Extensible union. */
+export type ArtifactType = 'pr' | 'commit_set' | 'test_result' | 'deployment';
+
+/** A typed artifact produced by a workflow node execution. */
+export interface WorkflowRunArtifact {
+	id: string;
+	runId: string;
+	nodeId: string;
+	artifactType: ArtifactType;
+	artifactKey: string;
+	data: Record<string, unknown>;
+	createdAt: number;
+	updatedAt: number;
+}
+
+// ── Completion Actions ────────────────────────────────────────────────────
+
+/**
+ * A completion action runs after a workflow node's task is approved.
+ * Actions execute in definition order. Each has a `requiredLevel` —
+ * if `space.autonomyLevel >= requiredLevel`, it auto-executes;
+ * otherwise, the pipeline pauses for human sign-off.
+ */
+export type CompletionAction =
+	| ScriptCompletionAction
+	| InstructionCompletionAction
+	| McpCallCompletionAction;
+
+interface CompletionActionBase {
+	/** Unique identifier within the node's completion actions */
+	id: string;
+	/** Human-readable name (shown in approval UI) */
+	name: string;
+	/** Human-readable description of what the action does (shown alongside the name in approval UI) */
+	description?: string;
+	/** Minimum space autonomy level required to auto-execute this action */
+	requiredLevel: SpaceAutonomyLevel;
+	/** Which artifact type to resolve as context for this action */
+	artifactType?: ArtifactType;
+	/** Specific artifact key, or undefined to use all artifacts of the type */
+	artifactKey?: string;
+}
+
+/** Deterministic bash script — artifact data injected as environment variables */
+export interface ScriptCompletionAction extends CompletionActionBase {
+	type: 'script';
+	/** Shell script to execute */
+	script: string;
+}
+
+/** Agent instruction — spawns a short-lived SpaceAgent session to verify an outcome */
+export interface InstructionCompletionAction extends CompletionActionBase {
+	type: 'instruction';
+	/**
+	 * Name of the SpaceAgent that should execute the instruction. The runtime
+	 * spawns an ephemeral session bound to this agent, injects a
+	 * `report_verification` tool, and awaits its response.
+	 */
+	agentName: string;
+	/** Prompt text — supports `{{artifact.field}}` template interpolation */
+	instruction: string;
+	/**
+	 * Maximum time to wait for the spawned agent to call
+	 * `report_verification`. Defaults to 120000ms (2 minutes).
+	 */
+	timeoutMs?: number;
+}
+
+/** Direct MCP tool invocation — no agent reasoning needed */
+export interface McpCallCompletionAction extends CompletionActionBase {
+	type: 'mcp_call';
+	/** MCP server id (must be enabled in the space's skills config) */
+	server: string;
+	/** Tool name on the MCP server */
+	tool: string;
+	/** Tool arguments — values support `{{artifact.field}}` template interpolation */
+	args: Record<string, string>;
+	/**
+	 * Optional assertion applied to the tool result. The runtime extracts the
+	 * value at `path` from the result object and compares it via `op` to
+	 * `value`. If the assertion fails, the action fails.
+	 */
+	expect?: McpCallExpectation;
+}
+
+/**
+ * Assertion applied to the JSON result of an `mcp_call` completion action.
+ *
+ * `path` uses a dot/bracket accessor syntax (e.g. `data.items[0].status`).
+ * Empty path matches the whole result.
+ */
+export interface McpCallExpectation {
+	/** Dot/bracket accessor path into the tool result (e.g. `status`, `data.items[0].ok`). */
+	path: string;
+	/** Comparison operator. */
+	op: 'eq' | 'neq' | 'contains' | 'exists' | 'truthy';
+	/** Right-hand side. Required for `eq`/`neq`/`contains`, ignored for `exists`/`truthy`. */
+	value?: unknown;
+}
+
+// ── Approval Records ──────────────────────────────────────────────────────
+
+/** Structured record of a checkpoint approval decision. */
+export interface ApprovalRecord {
+	/** Who/what approved */
+	source: SpaceApprovalSource;
+	/** The autonomy level the checkpoint required */
+	requiredLevel: SpaceAutonomyLevel;
+	/** The space's autonomy level at the time of the decision */
+	spaceLevel: SpaceAutonomyLevel;
+	/** When the decision was made (milliseconds since epoch) */
+	timestamp: number;
+	/** Optional reason provided by the approver */
+	reason?: string;
+	/** True if the human chose to skip this action instead of approving */
+	skipped?: boolean;
 }

@@ -122,21 +122,18 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 		beforeEach(() => {
 			mockHub = {
-				request: vi.fn(async (channel: string) => {
-					if (channel === 'state.global.snapshot') {
+				request: vi.fn(async (method: string) => {
+					if (method === 'state.global.snapshot') {
 						return {
-							sessions: {
-								sessions: [{ id: 'session-1', title: 'Test Session', status: 'active' }],
-								hasArchivedSessions: false,
-							},
-							system: { version: '1.0.0', auth: { authenticated: true } },
+							system: { auth: { authenticated: true } },
 							settings: { settings: { showArchived: false } },
 						};
 					}
-					return {};
+					return { acknowledged: true };
 				}),
 				subscribeOptimistic: vi.fn(() => vi.fn(() => {})),
 				onEvent: vi.fn(() => vi.fn(() => {})),
+				onConnection: vi.fn(() => vi.fn(() => {})),
 				joinRoom: vi.fn(() => {}),
 				leaveRoom: vi.fn(() => {}),
 			} as unknown as MessageHub;
@@ -155,31 +152,37 @@ describe('Safari Background Tab - Integration Tests', () => {
 			}
 		});
 
-		it('should fetch fresh snapshot on refresh', async () => {
+		it('should re-subscribe to LiveQuery and fetch snapshot on refresh', async () => {
 			// Initialize first
 			await globalStore.initialize();
 
-			// Clear sessions to simulate stale state
-			const globalStoreInternal = globalStore as unknown as {
-				sessions: { value: Array<unknown> };
-			};
-			globalStoreInternal.sessions.value = [];
+			// Set sessions directly to simulate stale state
+			globalStore.sessions.value = [];
 
 			// Refresh
 			await globalStore.refresh();
 
-			// Verify sessions were updated
-			expect(globalStore.sessions.value.length).toBe(1);
-			expect(globalStore.sessions.value[0].title).toBe('Test Session');
+			// Verify LiveQuery re-subscribe was called
+			expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+				queryName: 'sessions.list',
+				params: [0],
+				subscriptionId: 'sessions-list',
+			});
+
+			// Verify GLOBAL_SNAPSHOT was fetched
+			expect(mockHub.request).toHaveBeenCalledWith('state.global.snapshot', {});
 		});
 
-		it('should update all global state properties', async () => {
+		it('should update system and settings state from snapshot', async () => {
 			await globalStore.initialize();
 			await globalStore.refresh();
 
-			expect(globalStore.sessions.value.length).toBe(1);
-			expect(globalStore.systemState.value?.version).toBe('1.0.0');
+			// Sessions come via LiveQuery events, not from snapshot
+			// System and settings are fetched from GLOBAL_SNAPSHOT
+			expect(globalStore.systemState.value?.auth?.authenticated).toBe(true);
 			expect(globalStore.settings.value?.showArchived).toBe(false);
+
+			// hasArchivedSessions is computed from sessions
 			expect(globalStore.hasArchivedSessions.value).toBe(false);
 		});
 

@@ -2,12 +2,13 @@
  * NewSessionModal Component
  *
  * Modal for creating a new session with:
- * - Recent paths dropdown (top 5-10 recent paths with timestamps)
+ * - Optional model selector (provider-grouped)
  * - Optional room assignment dropdown (shows room name + allowedPaths count)
  * - "Create new room" option that opens inline form
- * - "Browse for folder" button
- * - Optional model selector (provider-grouped)
  * - Form validation and error handling
+ *
+ * Note: Workspace selection has been moved out of this modal into the inline
+ * WorkspaceSelector component shown in the chat container after session creation.
  */
 
 import { useState, useEffect } from 'preact/hooks';
@@ -23,12 +24,6 @@ import {
 	filterModelsForPicker,
 } from '../../hooks/useModelSwitcher';
 import type { RawModelEntry } from '../../hooks/useModelSwitcher';
-
-interface RecentPath {
-	path: string;
-	relativeTime: string;
-	absoluteTime: Date;
-}
 
 /** Fetch available models from the server, mapped and sorted via shared utility */
 async function fetchAvailableModels(): Promise<import('@neokai/shared').ModelInfo[]> {
@@ -57,12 +52,7 @@ async function fetchProviderAuthStatuses(): Promise<Map<string, ProviderAuthStat
 interface NewSessionModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onSubmit: (params: {
-		workspacePath: string;
-		roomId?: string;
-		model?: ModelInfo;
-	}) => Promise<void>;
-	recentPaths: RecentPath[];
+	onSubmit: (params: { roomId?: string; model?: ModelInfo }) => Promise<void>;
 	rooms: Room[];
 	onCreateRoom?: (params: {
 		name: string;
@@ -76,11 +66,9 @@ export function NewSessionModal({
 	isOpen,
 	onClose,
 	onSubmit,
-	recentPaths,
 	rooms,
 	onCreateRoom,
 }: NewSessionModalProps) {
-	const [selectedPath, setSelectedPath] = useState<string>('');
 	const [selectedRoomId, setSelectedRoomId] = useState<string | undefined>();
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -134,24 +122,16 @@ export function NewSessionModal({
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
 
-		const workspacePath = selectedPath.trim();
-		if (!workspacePath) {
-			setError('Workspace path is required');
-			return;
-		}
-
 		try {
 			setSubmitting(true);
 			setError(null);
 
 			await onSubmit({
-				workspacePath,
 				roomId: selectedRoomId || undefined,
 				model: resolveSelectedModel(),
 			});
 
 			// Reset form on success
-			setSelectedPath('');
 			setSelectedRoomId(undefined);
 			setSelectedModelKey('');
 			setShowCreateRoom(false);
@@ -182,8 +162,6 @@ export function NewSessionModal({
 			const room = await onCreateRoom({
 				name: newRoomName.trim(),
 				background: newRoomDescription.trim() || undefined,
-				allowedPaths: [{ path: selectedPath }],
-				defaultPath: selectedPath,
 			});
 
 			if (room) {
@@ -200,7 +178,6 @@ export function NewSessionModal({
 	};
 
 	const handleClose = () => {
-		setSelectedPath('');
 		setSelectedRoomId(undefined);
 		setSelectedModelKey('');
 		setAvailableModels([]);
@@ -217,13 +194,6 @@ export function NewSessionModal({
 		filterModelsForPicker(availableModels, providerAuthStatuses)
 	);
 
-	const handleBrowseFolder = () => {
-		// Trigger file browser dialog
-		// This will need to be implemented via an RPC call or file input
-		// For now, just focus the path input
-		setError('Browse functionality coming soon');
-	};
-
 	return (
 		<Modal isOpen={isOpen} onClose={handleClose} title="New Session" size="md">
 			<form onSubmit={handleSubmit} class="space-y-5">
@@ -232,60 +202,6 @@ export function NewSessionModal({
 						{error}
 					</div>
 				)}
-
-				{/* Workspace Path Section */}
-				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1.5">
-						Where do you want to work?
-					</label>
-
-					{/* Recent Paths Dropdown */}
-					{recentPaths.length > 0 && (
-						<div class="mb-3">
-							<select
-								value={selectedPath}
-								onChange={(e) => setSelectedPath((e.target as HTMLSelectElement).value)}
-								class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
-							>
-								<option value="">Select a recent path...</option>
-								{recentPaths.map((item) => (
-									<option key={item.path} value={item.path}>
-										{item.path} ({item.relativeTime})
-									</option>
-								))}
-							</select>
-						</div>
-					)}
-
-					<div class="text-center text-sm text-gray-500 py-1">or</div>
-
-					{/* Path Input */}
-					<input
-						type="text"
-						data-testid="new-session-workspace-input"
-						value={selectedPath}
-						onInput={(e) => setSelectedPath((e.target as HTMLInputElement).value)}
-						placeholder="Enter workspace path..."
-						class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
-					/>
-
-					{/* Browse Button */}
-					<button
-						type="button"
-						onClick={handleBrowseFolder}
-						class="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-gray-300 bg-dark-800 hover:bg-dark-700 border border-dark-700 rounded-lg transition-colors"
-					>
-						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-							/>
-						</svg>
-						Browse for folder...
-					</button>
-				</div>
 
 				{/* Model Selection Section */}
 				{availableModels.length > 0 && (
@@ -414,7 +330,7 @@ export function NewSessionModal({
 					<Button type="button" variant="secondary" onClick={handleClose} fullWidth>
 						Cancel
 					</Button>
-					<Button type="submit" loading={submitting} disabled={!selectedPath.trim()} fullWidth>
+					<Button type="submit" loading={submitting} disabled={submitting} fullWidth>
 						Create Session
 					</Button>
 				</div>

@@ -15,7 +15,6 @@
  *   All tools are provided by createSpaceAgentMcpServer in space-agent-tools.ts:
  *     Workflow tools:
  *       - list_workflows
- *       - start_workflow_run
  *       - get_workflow_run
  *       - change_plan
  *       - get_workflow_detail
@@ -27,7 +26,9 @@
  *       - retry_task
  *       - cancel_task
  *       - reassign_task
+ *     Task agent communication tools:
  *       - send_message_to_task
+ *       - list_task_members
  *
  * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
  */
@@ -38,21 +39,20 @@
 
 import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 
-/** Minimal workflow summary for prompt embedding (avoids exposing full step graph). */
+/** Minimal workflow summary for prompt embedding (avoids exposing full node graph). */
 export interface WorkflowSummary {
 	id: string;
 	name: string;
 	description?: string;
 	tags: string[];
-	/** Number of steps in the workflow — gives the agent a complexity signal. */
-	stepCount: number;
+	/** Number of nodes in the workflow — gives the agent a complexity signal. */
+	nodeCount: number;
 }
 
 /** Minimal agent summary for prompt embedding. */
 export interface AgentSummary {
 	id: string;
 	name: string;
-	role: string;
 	description?: string;
 }
 
@@ -78,9 +78,9 @@ export interface SpaceChatAgentContext {
  *
  * The prompt includes:
  *   1. Role and purpose statement
- *   2. Available workflows (names, descriptions, tags, step count)
- *   3. Available agents (names, roles, descriptions)
- *   4. Guidance on when to use `start_workflow_run` vs `create_task`
+ *   2. Available workflows (names, descriptions, tags, node count)
+ *   3. Available agents (names, descriptions)
+ *   4. Task-first guidance for workflow-aware execution
  *   5. Operator-supplied background and instructions
  *
  * Background and instructions are interpolated directly — they are
@@ -95,28 +95,18 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`work by selecting the right workflow or creating standalone tasks.`
 	);
 
-	// Operator-supplied background
-	if (context.background) {
-		sections.push(`\n## Space Background\n\n${context.background}`);
-	}
-
-	// Operator-supplied instructions
-	if (context.instructions) {
-		sections.push(`\n## Space Instructions\n\n${context.instructions}`);
-	}
-
 	// Available workflows
 	if (context.workflows && context.workflows.length > 0) {
 		sections.push(`\n## Available Workflows\n`);
 		sections.push(
 			`These workflows are configured in this Space. Each workflow defines a ` +
-				`multi-step process with one or more agents working in sequence.`
+				`multi-node process with one or more agents working in sequence.`
 		);
 		sections.push('');
 		for (const wf of context.workflows) {
 			const tagStr = wf.tags.length > 0 ? ` [${wf.tags.join(', ')}]` : '';
 			const desc = wf.description ? ` — ${wf.description}` : '';
-			sections.push(`- **${wf.name}** (id: \`${wf.id}\`, ${wf.stepCount} step(s))${tagStr}${desc}`);
+			sections.push(`- **${wf.name}** (id: \`${wf.id}\`, ${wf.nodeCount} node(s))${tagStr}${desc}`);
 		}
 	} else {
 		sections.push(
@@ -129,43 +119,74 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 		sections.push(`\n## Available Agents\n`);
 		for (const agent of context.agents) {
 			const desc = agent.description ? ` — ${agent.description}` : '';
-			sections.push(`- **${agent.name}** (role: ${agent.role})${desc}`);
+			sections.push(`- **${agent.name}**${desc}`);
 		}
 	}
 
 	// Workflow vs task guidance — the core decision rule
 	sections.push(`\n## Creating Work — Decision Guide\n`);
+	sections.push(`When the user asks you to create work, follow this task-first flow:`);
+	sections.push('');
 	sections.push(
-		`When the user asks you to create work, decide between a workflow run and a standalone task:`
+		`**Always create work with \`create_standalone_task\`.**\n` +
+			`  - Workflow runs are runtime-managed and should begin from task execution.\n` +
+			`  - Do not attempt to start workflow runs directly.\n` +
+			`  - For multi-step work, use workflow discovery tools first, then create a well-scoped task.`
 	);
 	sections.push('');
 	sections.push(
-		`**Use \`start_workflow_run\`** for multi-step processes that benefit from structured agent handoffs:\n` +
-			`  - The work spans multiple phases (plan → code → review)\n` +
-			`  - Different agents are better suited to different parts\n` +
-			`  - You want human gates between steps\n` +
-			`  - The work matches one of the available workflows above`
-	);
-	sections.push('');
-	sections.push(
-		`**Use \`create_standalone_task\`** for standalone work that needs no multi-step orchestration:\n` +
-			`  - A single, self-contained task (e.g. "fix this bug", "answer this question")\n` +
-			`  - No workflow structure is needed\n` +
-			`  - The work does not match any available workflow`
-	);
-	sections.push('');
-	sections.push(
-		`**How to pick a workflow:**\n` +
+		`**Workflow discovery before task creation:**\n` +
 			`  1. Call \`list_workflows\` to see the full list with steps and descriptions.\n` +
 			`  2. Call \`suggest_workflow\` with a description of the work to get ranked matches.\n` +
 			`  3. Call \`get_workflow_detail\` to inspect a specific workflow's steps and rules in full.\n` +
-			`  4. Once decided, call \`start_workflow_run\` with the explicit \`workflow_id\`.`
+			`  4. Create a task with \`create_standalone_task\` using a clear title/description aligned with the selected workflow.`
+	);
+	sections.push('');
+
+	// Workflow shape guidance — what each built-in workflow is good at and when
+	// to pick it. Kept short so the LLM can skim it before calling the discovery
+	// tools above. Descriptions mirror the tags declared in built-in-workflows.ts.
+	sections.push(
+		`**Picking the right workflow:**\n` +
+			`  - **Coding Workflow** — the default for a single, well-scoped implementation change. ` +
+			`One engineer + one reviewer iterating on one PR. Pick this when the user describes ` +
+			`one concrete change (bug fix, single feature, refactor in a defined area).\n` +
+			`  - **Coding with QA Workflow** — same coder/reviewer loop plus an explicit QA node ` +
+			`that runs backend, frontend, and browser-based checks before merge. Pick this when ` +
+			`the change spans multiple services or needs heavier verification than unit tests.\n` +
+			`  - **Plan & Decompose Workflow** — NOT a coding workflow. Produces a plan PR, has ` +
+			`four reviewers (architecture, security, correctness, UX) approve it, then fans the ` +
+			`plan out into individual follow-up tasks via \`create_standalone_task\`. Pick this when ` +
+			`the user goal is too broad for one PR — e.g. "build feature X", "migrate system Y", ` +
+			`"overhaul area Z" — and needs to be broken into smaller tasks before any coding starts. ` +
+			`The output is a set of tasks, not a merged change.\n` +
+			`  - **Research Workflow** — read-only investigation that produces a research document PR. ` +
+			`Pick this when the user wants findings or a recommendation, not a code change.\n` +
+			`  - **Review-Only Workflow** — single reviewer against an existing PR or codebase. ` +
+			`Pick this when the work is already implemented and the user just wants a review.`
+	);
+	sections.push('');
+	sections.push(
+		`**Ask for clarification** before creating any work when:\n` +
+			`  - The request is too vague to determine what needs to be built (e.g. "improve the app", "make it better", "help me")\n` +
+			`  - The scope or success criteria are unclear\n` +
+			`  - Multiple interpretations are possible and choosing the wrong one would waste significant effort\n` +
+			`  Never start work until the request is specific enough to act on.`
+	);
+	sections.push('');
+	sections.push(
+		`**Clear requests** (ready to act on without clarification):\n` +
+			`  - "Implement user authentication with JWT tokens"\n` +
+			`  - "Fix the bug in the payment service where charges fail for international cards"\n` +
+			`  - "Add pagination to the user list endpoint"\n` +
+			`  For clear multi-step coding work, still create a task with \`create_standalone_task\`; ` +
+			`runtime will attach and execute the best matching workflow.`
 	);
 	sections.push('');
 	sections.push(
 		`**IMPORTANT**: Never create tasks immediately when a goal or plan is mentioned. ` +
-			`If the request involves a workflow, start the workflow run and let the workflow ` +
-			`orchestrate task creation. Only use \`create_standalone_task\` for explicitly standalone work.`
+			`If the request is vague, ask clarifying questions first. When the request is clear, ` +
+			`create the task and let runtime-managed workflow execution handle orchestration.`
 	);
 
 	// Event handling section — always included
@@ -185,7 +206,7 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(`**Event kinds and how to handle them:**`);
 	sections.push('');
 	sections.push(
-		`- **\`task_needs_attention\`** — A task has entered the \`needs_attention\` state and cannot proceed automatically.\n` +
+		`- **\`task_blocked\`** — A task is blocked and cannot proceed automatically.\n` +
 			`  Payload fields: \`taskId\`, \`reason\`, \`autonomyLevel\`\n` +
 			`  Action: Investigate with \`get_task_detail\`, then retry, reassign, or escalate per your autonomy level.`
 	);
@@ -204,27 +225,33 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push('');
 	sections.push(
 		`- **\`workflow_run_completed\`** — A workflow run has finished (success or failure summary).\n` +
-			`  Payload fields: \`runId\`, \`reason\`, \`autonomyLevel\`\n` +
-			`  Action: Summarize the outcome to the user and suggest next steps if relevant.`
+			`  Payload fields: \`runId\`, \`summary\` (full Markdown summary from Done node), \`autonomyLevel\`\n` +
+			`  Action: Present the \`summary\` field verbatim to the user (it contains PR link, review outcome, ` +
+			`QA status, and next steps). If \`summary\` is empty, retrieve the run details via \`get_task_detail\` ` +
+			`and compose a brief status update.`
 	);
 
 	// Autonomy level section
-	const level = context.autonomyLevel ?? 'supervised';
+	const level = context.autonomyLevel ?? 1;
 	sections.push(`\n## Autonomy Level\n`);
-	sections.push(`This Space is configured in **\`${level}\`** mode.`);
+	sections.push(`This Space is configured at autonomy level **${level}** (scale 1–5).`);
 	sections.push('');
 
-	if (level === 'semi_autonomous') {
+	// Note: The runtime auto-completes task outputs at level >= 2 (routine approval).
+	// The agent's autonomous *corrective actions* (retry, reassign) require level >= 3.
+	// This is intentional: level 2 trusts task output quality but still defers
+	// recovery decisions (retries, reassignment) to the human.
+	if (level >= 3) {
 		sections.push(
-			`In \`semi_autonomous\` mode you may act without human approval in these cases:\n` +
+			`At autonomy level ${level} you may act without human approval in these cases:\n` +
 				`  - **Retry a failed task once**: Call \`retry_task\` immediately when a task enters \`needs_attention\` for the first time.\n` +
 				`  - **Reassign a task**: If retrying fails or a different agent would be better suited, call \`reassign_task\`.\n` +
 				`  - After one failed retry or when genuinely uncertain, **escalate to the human** (see Escalation section below).\n` +
-				`  - Human-gated workflow steps always require human approval — never bypass them.`
+				`  - Workflow gates with \`requiredLevel\` above ${level} still require human approval — never bypass them.`
 		);
 	} else {
 		sections.push(
-			`In \`supervised\` mode you must not take autonomous action on judgment-required events:\n` +
+			`At autonomy level ${level} you must not take autonomous action on judgment-required events:\n` +
 				`  - **Notify the human** of every \`[TASK_EVENT]\` that requires a decision.\n` +
 				`  - **Provide a recommendation** (what you would do and why) but **wait for human approval** before acting.\n` +
 				`  - Do not call \`retry_task\`, \`reassign_task\`, or \`cancel_task\` without explicit human instruction.`
@@ -255,8 +282,8 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 	sections.push(`Use these tools to manage tasks and respond to events:`);
 	sections.push('');
 	sections.push(
-		`- **\`create_standalone_task\`** — Create a task outside any workflow. Use for self-contained work ` +
-			`that doesn't require multi-step orchestration. Provide a title, description, and optionally an agent ID.`
+		`- **\`create_standalone_task\`** — Create a task request. Runtime may attach and execute a workflow ` +
+			`for the task during orchestration. Provide a clear title and description.`
 	);
 	sections.push('');
 	sections.push(
@@ -279,13 +306,47 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 		`- **\`reassign_task\`** — Change the assigned agent for a task. Valid for tasks in \`pending\`, ` +
 			`\`needs_attention\`, or \`cancelled\` status. Use when a different agent would be better suited.`
 	);
+
+	// Task agent communication tools section
+	sections.push(`\n## Task Agent Communication\n`);
+	sections.push(
+		`Use these tools to directly interact with running task agents and inspect their workflow execution state:\n`
+	);
+	sections.push(
+		`- **\`send_message_to_task\`** — Inject a message into a running task agent session. ` +
+			`Use this to provide real-time guidance, corrections, or new context to a task agent ` +
+			`that is currently executing. Call \`get_task_detail\` first to confirm the task is \`in_progress\`. ` +
+			`The message is delivered asynchronously to the agent's session.`
+	);
 	sections.push('');
 	sections.push(
-		`- **\`send_message_to_task\`** — Send a message directly to the Task Agent session managing a ` +
-			`specific task. Use this to check on progress, provide feedback, or redirect work mid-execution. ` +
-			`The message is delivered to the Task Agent which may relay relevant parts to its active sub-session. ` +
-			`Only works for tasks that have an active Task Agent session (i.e., tasks in \`in_progress\` or \`review\` status).`
+		`- **\`list_task_members\`** — List all node executions (workflow member agents) for a task. ` +
+			`Returns each node's name, execution status (\`pending\`, \`in_progress\`, \`idle\`, \`blocked\`, ` +
+			`\`cancelled\`), result summary, and saved data. Use this when you need more granular insight ` +
+			`into a running workflow than \`get_task_detail\` provides — for example, to see which specific ` +
+			`node is stuck or to read intermediate outputs from individual agents.`
 	);
+
+	// Multi-session coordination note
+	sections.push(`\n## Multi-Session Coordination\n`);
+	sections.push(
+		`Other sessions in this Space — task agents, worker/coder sessions, and any ad-hoc sessions created ` +
+			`with this Space as their context — now share the same \`space-agent-tools\` MCP surface you use. ` +
+			`That means:\n` +
+			`  - Task agents can send messages back to you directly via \`send_message_to_agent\`/\`send_message_to_task\`.\n` +
+			`  - Coordination is bidirectional: you are not the only agent that can inspect tasks, approve gates, or message peers.\n` +
+			`  - When you receive a message from another session, verify the sender context (task id, workflow run id) before acting.`
+	);
+
+	// Operator-supplied context appended last — after all contract sections —
+	// so the NeoKai system contract cannot be overridden by user content.
+	if (context.background) {
+		sections.push(`\n## Space Background\n\n${context.background}`);
+	}
+
+	if (context.instructions) {
+		sections.push(`\n## Space Instructions\n\n${context.instructions}`);
+	}
 
 	return sections.join('\n');
 }

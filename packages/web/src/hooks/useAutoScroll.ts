@@ -107,13 +107,17 @@ export function useAutoScroll({
 			container.addEventListener('scroll', handleScroll, { passive: true });
 
 			// Use ResizeObserver to update when content size changes
+			// Batch layout reads via rAF to avoid forced reflow on dirty layout
+			let rafId: number;
 			const resizeObserver = new ResizeObserver(() => {
-				handleScroll();
+				cancelAnimationFrame(rafId);
+				rafId = requestAnimationFrame(() => handleScroll());
 			});
 			resizeObserver.observe(container);
 
 			// Return cleanup function
 			return () => {
+				cancelAnimationFrame(rafId);
 				container.removeEventListener('scroll', handleScroll);
 				resizeObserver.disconnect();
 			};
@@ -121,6 +125,16 @@ export function useAutoScroll({
 
 		return setupScrollDetection(container);
 	}, [nearBottomThreshold, messageCount]);
+
+	// When loadingOlder transitions from true to false, skip the message-count delta
+	// that was introduced by revealing older messages so that auto-scroll doesn't fire.
+	const prevLoadingOlderRef = useRef(loadingOlder);
+	useEffect(() => {
+		if (prevLoadingOlderRef.current && !loadingOlder) {
+			prevMessageCountRef.current = messageCount;
+		}
+		prevLoadingOlderRef.current = loadingOlder;
+	}, [loadingOlder, messageCount]);
 
 	// Auto-scroll on new messages
 	useEffect(() => {

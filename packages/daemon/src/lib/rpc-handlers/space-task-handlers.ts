@@ -13,6 +13,7 @@ import type { CreateSpaceTaskParams, UpdateSpaceTaskParams } from '@neokai/share
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { Logger } from '../logger';
 
 const log = new Logger('space-task-handlers');
@@ -27,7 +28,8 @@ export function setupSpaceTaskHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,
 	taskManagerFactory: SpaceTaskManagerFactory,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	// ─── spaceTask.create ───────────────────────────────────────────────────────
 	messageHub.onRequest('spaceTask.create', async (data) => {
@@ -149,11 +151,105 @@ export function setupSpaceTaskHandlers(
 			}
 
 			if (updateParams.status !== currentTask.status) {
-				// Status is changing — validate via setTaskStatus (enforces transitions)
+				// Intercept review → done when the task is paused at a completion action.
+				// Instead of directly transitioning to done, resume the completion action
+				// loop from pendingActionIndex — the loop determines the final status.
+				if (
+					spaceRuntimeService &&
+					currentTask.status === 'review' &&
+					updateParams.status === 'done' &&
+					currentTask.pendingCheckpointType === 'completion_action'
+				) {
+					const resumed = await spaceRuntimeService.resumeCompletionActions(spaceId, taskId, {
+						approvalReason: updateParams.approvalReason ?? null,
+					});
+					if (resumed) {
+						task = resumed;
+						// Status is excluded — the resume path already set the final status
+						// (done / blocked / review). approvalReason has already been
+						// persisted by the runtime on the terminal `done` transition, so
+						// drop it here to avoid a redundant write. Forward any OTHER
+						// caller-supplied fields (e.g. `result`, a corrected title) so
+						// they land alongside the resumed task. The resume path emits
+						// internally, so we only emit again when extra fields merged.
+						const {
+							status: _s,
+							approvalReason: _ar,
+							cancelReason: _cr,
+							...otherFields
+						} = updateParams;
+						if (Object.keys(otherFields).length > 0) {
+							task = await taskManager.updateTask(taskId, otherFields);
+							daemonHub
+								.emit('space.task.updated', {
+									sessionId: 'global',
+									spaceId,
+									taskId,
+									task,
+								})
+								.catch((err) => {
+									log.warn('Failed to emit space.task.updated:', err);
+								});
+						}
+
+						return task;
+					}
+					// null = state inconsistency (task deleted, workflow edited, race).
+					// Throw rather than silently falling through to a raw setTaskStatus
+					// that would bypass completion actions.
+					throw new Error(
+						`Cannot resume completion actions for task ${taskId} — ` +
+							'task state is inconsistent (see daemon logs for details)'
+					);
+				}
+
+				// Status is changing — validate via setTaskStatus (enforces transitions).
+				// `approvalReason` is stamped on review→done; `cancelReason` is
+				// persisted into the same underlying column for review→cancelled
+				// transitions (and other terminal rejections). We map both onto the
+				// manager's `approvalReason` option because the DB schema keeps a
+				// single `approval_reason` column doubling as audit trail for
+				// approvals *and* rejections.
+				const mappedReason =
+					updateParams.status === 'cancelled'
+						? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
+						: (updateParams.approvalReason ?? undefined);
+
 				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
 					result: updateParams.result ?? undefined,
-					error: updateParams.error ?? undefined,
+					// Human-initiated approval when transitioning from review → done
+					approvalSource:
+						currentTask.status === 'review' && updateParams.status === 'done' ? 'human' : undefined,
+					approvalReason: mappedReason,
 				});
+
+				// When the transition alone cannot carry the rejection reason (e.g.
+				// review → cancelled — setTaskStatus only stamps approvalReason on
+				// review→done), apply it in a follow-up write. Keeps the audit trail
+				// complete regardless of direction.
+				if (
+					updateParams.status === 'cancelled' &&
+					(updateParams.cancelReason ?? updateParams.approvalReason)
+				) {
+					task = await taskManager.updateTask(taskId, {
+						approvalReason: updateParams.cancelReason ?? updateParams.approvalReason ?? null,
+					});
+				}
+
+				// When a status transition is combined with other field updates
+				// (e.g. taskAgentSessionId), those fields are silently dropped by
+				// setTaskStatus. Apply them in a follow-up updateTask call so
+				// callers can atomically set status + metadata in one RPC.
+				const {
+					status: _s,
+					result: _r,
+					approvalReason: _ar,
+					cancelReason: _cr,
+					...otherFields
+				} = updateParams;
+				if (Object.keys(otherFields).length > 0) {
+					task = await taskManager.updateTask(taskId, otherFields);
+				}
 			} else {
 				// Status is the same — treat as a regular field update.
 				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask

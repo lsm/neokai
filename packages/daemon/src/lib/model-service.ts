@@ -25,6 +25,7 @@ const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
 	// Old alias mappings
 	default: 'sonnet', // Legacy: 'default' maps to 'sonnet'
 	// Full model IDs (any sonnet variant maps to sonnet)
+	'claude-sonnet-4-6': 'sonnet',
 	'claude-sonnet-4-5-20250929': 'sonnet',
 	'claude-sonnet-4-20241022': 'sonnet',
 	'claude-3-5-sonnet-20241022': 'sonnet',

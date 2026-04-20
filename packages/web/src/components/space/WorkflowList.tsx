@@ -10,9 +10,11 @@
  * - Real-time updates via SpaceStore
  */
 
-import { useState } from 'preact/hooks';
-import type { SpaceWorkflow, SpaceExportBundle, WorkflowConditionType } from '@neokai/shared';
+import { useState, useEffect } from 'preact/hooks';
+import type { SpaceWorkflow, SpaceExportBundle, DuplicateDriftReport } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
+
+type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { toast } from '../../lib/toast.ts';
 import { ImportPreviewDialog } from './ImportPreviewDialog.tsx';
@@ -55,27 +57,22 @@ function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionTyp
 const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
-	if (workflow.steps.length === 0) {
+	if (workflow.nodes.length === 0) {
 		return <span class="text-xs text-gray-700 italic">No steps</span>;
 	}
 
-	// Build ordered step list following startStepId
-	const stepMap = new Map(workflow.steps.map((s) => [s.id, s]));
+	// Build ordered step list: startNode first, then remaining nodes in order
+	const stepMap = new Map(workflow.nodes.map((s) => [s.id, s]));
 	const ordered: string[] = [];
 	const visited = new Set<string>();
-	let currentId: string | undefined = workflow.startStepId;
 
-	while (currentId && !visited.has(currentId)) {
-		visited.add(currentId);
-		ordered.push(currentId);
-		const outgoing = workflow.transitions
-			.filter((t) => t.from === currentId)
-			.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-		currentId = outgoing[0]?.to;
+	const startNode = stepMap.get(workflow.startNodeId);
+	if (startNode) {
+		visited.add(startNode.id);
+		ordered.push(startNode.id);
 	}
 
-	// Append orphaned steps (not reachable from startStepId)
-	for (const s of workflow.steps) {
+	for (const s of workflow.nodes) {
 		if (!visited.has(s.id)) {
 			ordered.push(s.id);
 		}
@@ -90,14 +87,11 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 			{display.map((id, i) => {
 				const step = stepMap.get(id);
 				const nextId = i + 1 < display.length ? display[i + 1] : undefined;
-				const transition = nextId
-					? workflow.transitions.find((t) => t.from === id && t.to === nextId)
-					: undefined;
 
 				return (
 					<div key={id} class="flex items-center" title={step?.name ?? id}>
 						<MiniStepDot isStart={i === 0} />
-						{nextId && <MiniConnector conditionType={transition?.condition?.type} />}
+						{nextId && <MiniConnector conditionType={undefined} />}
 					</div>
 				);
 			})}
@@ -110,17 +104,78 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflow }) {
 // Workflow Card
 // ============================================================================
 
+/**
+ * Duplicate-drift info for a single workflow card.
+ *
+ * Computed at the list level (one RPC call per space) and passed down so each
+ * card can render a "Duplicate" badge + a "Resync duplicates" action on the
+ * newest row in a drift group.
+ */
+interface DuplicateDriftInfo {
+	/** Shared `templateName` that formed the drift group. */
+	templateName: string;
+	/** Total rows in the drift group (always >= 2). */
+	groupSize: number;
+	/** True if this workflow is the newest row in the group (becomes the kept row on resync). */
+	isNewest: boolean;
+}
+
 interface WorkflowCardProps {
 	workflow: SpaceWorkflow;
 	spaceId: string;
 	spaceName: string;
 	onEdit: () => void;
+	duplicateDrift?: DuplicateDriftInfo;
+	onResyncDuplicates?: (templateName: string) => Promise<void>;
 }
 
-function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProps) {
+function WorkflowCard({
+	workflow,
+	spaceId,
+	spaceName,
+	onEdit,
+	duplicateDrift,
+	onResyncDuplicates,
+}: WorkflowCardProps) {
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const [deleting, setDeleting] = useState(false);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
+
+	// Drift detection state: null = unknown/checking, true = drifted, false = in sync
+	const [driftDrifted, setDriftDrifted] = useState<boolean | null>(null);
+	const [syncing, setSyncing] = useState(false);
+	const [syncError, setSyncError] = useState<string | null>(null);
+	const [confirmSync, setConfirmSync] = useState(false);
+
+	// Duplicate-drift resync state
+	const [confirmDupResync, setConfirmDupResync] = useState(false);
+	const [dupResyncing, setDupResyncing] = useState(false);
+	const [dupResyncError, setDupResyncError] = useState<string | null>(null);
+
+	// Check for template drift whenever workflow changes (if it came from a template)
+	useEffect(() => {
+		if (!workflow.templateName) return;
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		let cancelled = false;
+		hub
+			.request<{ drifted: boolean }>('spaceWorkflow.detectDrift', {
+				id: workflow.id,
+				spaceId,
+			})
+			.then((result) => {
+				if (!cancelled) setDriftDrifted(result.drifted);
+			})
+			.catch(() => {
+				// Ignore drift detection errors silently
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [workflow.id, workflow.updatedAt, workflow.templateName, spaceId]);
 
 	async function handleDelete() {
 		setDeleting(true);
@@ -152,6 +207,40 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 		}
 	}
 
+	async function handleSyncFromTemplate() {
+		setSyncing(true);
+		setSyncError(null);
+		try {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) throw new Error('Not connected');
+			await hub.request('spaceWorkflow.syncFromTemplate', {
+				id: workflow.id,
+				spaceId,
+			});
+			setConfirmSync(false);
+			setDriftDrifted(false); // no longer drifted after sync
+			toast.success(`"${workflow.name}" synced from template`);
+		} catch (err) {
+			setSyncError(err instanceof Error ? err.message : 'Sync failed');
+		} finally {
+			setSyncing(false);
+		}
+	}
+
+	async function handleResyncDuplicates() {
+		if (!duplicateDrift || !onResyncDuplicates) return;
+		setDupResyncing(true);
+		setDupResyncError(null);
+		try {
+			await onResyncDuplicates(duplicateDrift.templateName);
+			setConfirmDupResync(false);
+		} catch (err) {
+			setDupResyncError(err instanceof Error ? err.message : 'Resync failed');
+		} finally {
+			setDupResyncing(false);
+		}
+	}
+
 	return (
 		<div class="bg-dark-850 border border-dark-700 rounded-lg p-4 hover:border-dark-600 transition-colors group">
 			{deleteError && (
@@ -166,12 +255,57 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 					{workflow.description && (
 						<p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{workflow.description}</p>
 					)}
+					{/* Template badge + drift indicator */}
+					{workflow.templateName && (
+						<div class="flex items-center gap-1.5 mt-1">
+							<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-dark-800 border border-dark-600 rounded text-gray-500">
+								<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+									/>
+								</svg>
+								{workflow.templateName}
+							</span>
+							{driftDrifted === true && (
+								<span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-yellow-900/30 border border-yellow-700/50 rounded text-yellow-400">
+									<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+										/>
+									</svg>
+									Outdated
+								</span>
+							)}
+							{duplicateDrift && (
+								<span
+									class="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-orange-900/30 border border-orange-700/50 rounded text-orange-400"
+									title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template with diverging content. Resync keeps the newest row and removes the rest.`}
+								>
+									<svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
+										/>
+									</svg>
+									Duplicate ×{duplicateDrift.groupSize}
+								</span>
+							)}
+						</div>
+					)}
 				</div>
 
 				{/* Action buttons */}
 				<div
 					data-testid="workflow-card-actions"
-					class="flex items-center gap-1.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+					class="flex items-center gap-1.5 flex-shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
 				>
 					{confirmDelete ? (
 						<>
@@ -192,6 +326,24 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 						</>
 					) : (
 						<>
+							{workflow.templateName && driftDrifted === true && (
+								<button
+									onClick={() => setConfirmSync(true)}
+									class="px-2.5 py-1 text-xs text-yellow-400 hover:text-yellow-200 bg-dark-800 hover:bg-dark-700 rounded border border-yellow-700/50 hover:border-yellow-600/70 transition-colors"
+									title="Sync from template (overwrites local changes)"
+								>
+									Sync
+								</button>
+							)}
+							{duplicateDrift?.isNewest && (
+								<button
+									onClick={() => setConfirmDupResync(true)}
+									class="px-2.5 py-1 text-xs text-orange-400 hover:text-orange-200 bg-dark-800 hover:bg-dark-700 rounded border border-orange-700/50 hover:border-orange-600/70 transition-colors"
+									title={`Remove ${duplicateDrift.groupSize - 1} older duplicate${duplicateDrift.groupSize - 1 === 1 ? '' : 's'} and resync this workflow from the built-in template`}
+								>
+									Resync duplicates
+								</button>
+							)}
 							<button
 								onClick={onEdit}
 								class="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-200 bg-dark-800 hover:bg-dark-700 rounded border border-dark-600 hover:border-dark-500 transition-colors"
@@ -239,7 +391,7 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 			{/* Step count + tags footer */}
 			<div class="mt-2.5 flex items-center gap-2 flex-wrap">
 				<span class="text-xs text-gray-600">
-					{workflow.steps.length} {workflow.steps.length === 1 ? 'step' : 'steps'}
+					{workflow.nodes.length} {workflow.nodes.length === 1 ? 'step' : 'steps'}
 				</span>
 				{workflow.tags.length > 0 && (
 					<>
@@ -255,6 +407,100 @@ function WorkflowCard({ workflow, spaceId, spaceName, onEdit }: WorkflowCardProp
 					</>
 				)}
 			</div>
+
+			{/* Resync duplicates confirmation modal */}
+			{confirmDupResync && duplicateDrift && (
+				<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+					<div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
+						<h3 class="text-sm font-semibold text-gray-100 mb-2">Resync duplicate workflows?</h3>
+						<p class="text-xs text-gray-400 mb-1">
+							This space has{' '}
+							<span class="font-medium text-gray-200">{duplicateDrift.groupSize} rows</span> sharing
+							the <span class="font-medium text-gray-200">"{duplicateDrift.templateName}"</span>{' '}
+							template with diverging content.
+						</p>
+						<p class="text-xs text-gray-400 mb-1">
+							The newest row <span class="font-medium text-gray-200">"{workflow.name}"</span> will
+							be kept and resynced from the built-in template. The remaining{' '}
+							<span class="font-medium text-gray-200">
+								{duplicateDrift.groupSize - 1} older{' '}
+								{duplicateDrift.groupSize - 1 === 1 ? 'row' : 'rows'}
+							</span>{' '}
+							will be deleted.
+						</p>
+						<p class="text-xs text-red-400 mb-4">
+							Local edits to the older rows and any workflow runs attached to them will be
+							permanently lost.
+						</p>
+						{dupResyncError && (
+							<div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+								{dupResyncError}
+							</div>
+						)}
+						<div class="flex items-center gap-2 justify-end">
+							<button
+								onClick={() => {
+									setConfirmDupResync(false);
+									setDupResyncError(null);
+								}}
+								disabled={dupResyncing}
+								class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={handleResyncDuplicates}
+								disabled={dupResyncing}
+								class="px-3 py-1.5 text-xs font-medium text-white bg-orange-700 hover:bg-orange-600 rounded transition-colors disabled:opacity-50"
+							>
+								{dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Sync from template confirmation modal */}
+			{confirmSync && (
+				<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+					<div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
+						<h3 class="text-sm font-semibold text-gray-100 mb-2">Sync from template?</h3>
+						<p class="text-xs text-gray-400 mb-1">
+							This will overwrite <span class="font-medium text-gray-200">"{workflow.name}"</span>{' '}
+							with the latest version of the{' '}
+							<span class="font-medium text-gray-200">"{workflow.templateName}"</span> template.
+						</p>
+						<p class="text-xs text-red-400 mb-4">
+							All local edits to this workflow (nodes, channels, gates, instructions) will be
+							permanently lost.
+						</p>
+						{syncError && (
+							<div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+								{syncError}
+							</div>
+						)}
+						<div class="flex items-center gap-2 justify-end">
+							<button
+								onClick={() => {
+									setConfirmSync(false);
+									setSyncError(null);
+								}}
+								disabled={syncing}
+								class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+							>
+								Cancel
+							</button>
+							<button
+								onClick={handleSyncFromTemplate}
+								disabled={syncing}
+								class="px-3 py-1.5 text-xs font-medium text-white bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
+							>
+								{syncing ? 'Syncing…' : 'Sync from template'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -282,6 +528,68 @@ export function WorkflowList({
 	const [importBundle, setImportBundle] = useState<SpaceExportBundle | null>(null);
 	const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
 	const [isExecuting, setIsExecuting] = useState(false);
+
+	// Map of workflow id → duplicate-drift info (only present for workflows in a drift group).
+	const [duplicateDriftMap, setDuplicateDriftMap] = useState<Map<string, DuplicateDriftInfo>>(
+		new Map()
+	);
+
+	// Fetch duplicate-drift reports whenever the set of workflows changes. We
+	// watch the list of (id, updatedAt) tuples so the effect re-runs when a
+	// workflow is added, removed, or edited.
+	const driftKey = workflows
+		.map((w) => `${w.id}:${w.updatedAt}`)
+		.sort()
+		.join('|');
+	useEffect(() => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		let cancelled = false;
+		hub
+			.request<{ reports: DuplicateDriftReport[] }>('spaceWorkflow.detectDuplicateDrift', {
+				spaceId,
+			})
+			.then((result) => {
+				if (cancelled) return;
+				const map = new Map<string, DuplicateDriftInfo>();
+				for (const report of result.reports) {
+					// Rows are newest-first; the first entry becomes the kept row on resync.
+					for (const [i, row] of report.rows.entries()) {
+						map.set(row.id, {
+							templateName: report.templateName,
+							groupSize: report.rows.length,
+							isNewest: i === 0,
+						});
+					}
+				}
+				setDuplicateDriftMap(map);
+			})
+			.catch(() => {
+				// Non-fatal — drift reporting is best-effort.
+			});
+
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- driftKey captures the list identity
+	}, [spaceId, driftKey]);
+
+	async function handleResyncDuplicates(templateName: string) {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			toast.error('Connection lost.');
+			throw new Error('Not connected');
+		}
+		const result = await hub.request<{ deletedIds: string[] }>('spaceWorkflow.resyncDuplicates', {
+			spaceId,
+			templateName,
+		});
+		const removed = result.deletedIds.length;
+		toast.success(
+			`Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}`
+		);
+	}
 
 	// ─── Import/Export helpers ──────────────────────────────────────────────
 
@@ -358,8 +666,10 @@ export function WorkflowList({
 
 	if (loading) {
 		return (
-			<div class="flex items-center justify-center h-32">
-				<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+			<div class="h-full overflow-y-auto">
+				<div class="min-h-[calc(100%+1px)] flex items-center justify-center">
+					<div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+				</div>
 			</div>
 		);
 	}
@@ -423,47 +733,51 @@ export function WorkflowList({
 
 			{/* List */}
 			<div class="flex-1 overflow-y-auto p-6">
-				{workflows.length === 0 ? (
-					<div class="text-center py-12">
-						<div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
-							<svg
-								class="w-5 h-5 text-gray-600"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
+				<div class="min-h-[calc(100%+1px)]">
+					{workflows.length === 0 ? (
+						<div class="text-center py-12">
+							<div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
+								<svg
+									class="w-5 h-5 text-gray-600"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width={2}
+										d="M4 6h16M4 10h16M4 14h16M4 18h16"
+									/>
+								</svg>
+							</div>
+							<p class="text-sm text-gray-500">No workflows yet</p>
+							<p class="text-xs text-gray-600 mt-1">
+								Create a workflow to define multi-agent pipelines.
+							</p>
+							<button
+								onClick={onCreateWorkflow}
+								class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
 							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M4 6h16M4 10h16M4 14h16M4 18h16"
-								/>
-							</svg>
+								Create your first workflow
+							</button>
 						</div>
-						<p class="text-sm text-gray-500">No workflows yet</p>
-						<p class="text-xs text-gray-600 mt-1">
-							Create a workflow to define multi-agent pipelines.
-						</p>
-						<button
-							onClick={onCreateWorkflow}
-							class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
-						>
-							Create your first workflow
-						</button>
-					</div>
-				) : (
-					<div class="space-y-3">
-						{workflows.map((wf) => (
-							<WorkflowCard
-								key={wf.id}
-								workflow={wf}
-								spaceId={spaceId}
-								spaceName={spaceName}
-								onEdit={() => onEditWorkflow(wf.id)}
-							/>
-						))}
-					</div>
-				)}
+					) : (
+						<div class="space-y-3">
+							{workflows.map((wf) => (
+								<WorkflowCard
+									key={wf.id}
+									workflow={wf}
+									spaceId={spaceId}
+									spaceName={spaceName}
+									onEdit={() => onEditWorkflow(wf.id)}
+									duplicateDrift={duplicateDriftMap.get(wf.id)}
+									onResyncDuplicates={handleResyncDuplicates}
+								/>
+							))}
+						</div>
+					)}
+				</div>
 			</div>
 
 			{/* Import Preview Dialog */}

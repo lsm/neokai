@@ -9,18 +9,61 @@
  */
 
 import { expect, type Page, type Locator } from '@playwright/test';
+import { CHAT_INPUT_SELECTOR } from './selectors';
 
 /**
  * Wait for WebSocket connection to be established
+ * @param page - Playwright page
+ * @param timeout - Optional timeout in ms (default 60000 for CI, 10000 for local)
  */
-export async function waitForWebSocketConnected(page: Page): Promise<void> {
-	await page.waitForFunction(
-		() => {
+export async function waitForWebSocketConnected(page: Page, timeout?: number): Promise<void> {
+	// Use longer timeout in CI (60s) vs local (10s) since CI environments
+	// can be slower to establish WebSocket connections
+	const isCI = process.env.CI === 'true';
+	const effectiveTimeout = timeout ?? (isCI ? 60000 : 10000);
+
+	try {
+		await page.waitForFunction(
+			() => {
+				const hub = window.__messageHub || window.appState?.messageHub;
+				return hub?.getState && hub.getState() === 'connected';
+			},
+			{ timeout: effectiveTimeout }
+		);
+	} catch (error) {
+		// Log diagnostic information to help debug connection failures
+		const diagnostic = await page.evaluate(() => {
 			const hub = window.__messageHub || window.appState?.messageHub;
-			return hub?.getState && hub.getState() === 'connected';
-		},
-		{ timeout: 10000 }
-	);
+			return {
+				hasHub: !!hub,
+				hubType: hub?.constructor?.name,
+				state: hub?.getState?.(),
+				hasWindowMessageHub: !!window.__messageHub,
+				windowMessageHubReady: window.__messageHubReady,
+				hasConnectionManager: !!(window as any).connectionManager,
+				connectionManagerState: (window as any).connectionManager?.getConnectionState?.(),
+				hasAppState: !!window.appState,
+				connectionState: (window as any).connectionState?.value,
+				locationHref: window.location.href,
+			};
+		});
+		console.error('WebSocket connection failed. Diagnostic info:', diagnostic);
+		throw error;
+	}
+}
+
+/**
+ * Wait for WebSocket connection with a longer timeout for mobile CI environments.
+ *
+ * Mobile viewports may take longer to initialize due to:
+ * - Different rendering behavior on mobile browsers
+ * - Additional hydration/rendering steps for responsive layouts
+ * - Potential CSS/JS loading differences
+ *
+ * Uses 30s timeout for better reliability in CI.
+ */
+export async function waitForWebSocketConnectedMobile(page: Page): Promise<void> {
+	await waitForWebSocketConnected(page, 30000);
 }
 
 /**
@@ -94,8 +137,9 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 		{ timeout: 10000 }
 	);
 
-	// Verify we're in a chat view (message input should be visible)
-	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	// Verify we're in a chat view (message input should be visible).
+	// Uses CHAT_INPUT_SELECTOR to match room coordinator or standalone session textareas.
+	const messageInput = page.locator(CHAT_INPUT_SELECTOR).first();
 	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
@@ -187,7 +231,8 @@ export async function waitForAssistantResponse(
 	}
 
 	// Wait for input to be enabled again (processing complete)
-	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
+	// Uses CHAT_INPUT_SELECTOR to match room coordinator or standalone session textareas.
+	const messageInput = page.locator(CHAT_INPUT_SELECTOR).first();
 	await expect(messageInput).toBeEnabled({ timeout: 20000 });
 }
 
@@ -218,6 +263,21 @@ export async function waitForSDKSystemInitMessage(
 	// Use locator.waitFor() for better retry logic with async signal-based rendering
 	// Use .last() to wait for the most recent button (handles multiple messages)
 	await page.locator('button[title="Session info"]').last().waitFor({ state: 'visible', timeout });
+}
+
+/**
+ * Returns a Locator for modal dialogs, excluding the NeoPanel which is always
+ * in the DOM (just off-screen when closed via CSS transform -translate-x-full).
+ *
+ * Playwright considers CSS-transformed elements "visible" because transforms do
+ * not affect layout geometry — using a bare `[role="dialog"]` selector will match
+ * both the NeoPanel and any real modal, causing strict-mode violations.
+ *
+ * Use this instead of `page.locator('[role="dialog"]')` whenever you need to
+ * target an application modal dialog.
+ */
+export function getModal(page: Page): Locator {
+	return page.locator('[role="dialog"]:not([data-testid="neo-panel"])');
 }
 
 /**

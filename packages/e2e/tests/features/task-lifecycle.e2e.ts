@@ -4,7 +4,8 @@
  * Tests the reactivate and archive UI actions for tasks:
  * - Reactivate: completed/cancelled → in_progress via button in TaskView
  * - Archive: completed/cancelled/needs_attention → archived via button + confirmation dialog
- * - Archived tab: archived tasks appear in Archived tab, not Done tab
+ * - Archived tasks are excluded server-side by the tasks.byRoom LiveQuery and not
+ *   displayed in the room dashboard. Direct navigation to archived task URL shows "Task not found".
  * - Archive dialog content: mentions permanent worktree cleanup
  * - Message input enabled for completed/cancelled tasks (send-to-reactivate hint)
  *
@@ -17,7 +18,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForWebSocketConnected } from '../helpers/wait-helpers';
+import { waitForWebSocketConnected, getModal } from '../helpers/wait-helpers';
 import { deleteRoom } from '../helpers/room-helpers';
 
 // ─── RPC Setup Helper ─────────────────────────────────────────────────────────
@@ -32,9 +33,13 @@ async function createRoomAndTaskInStatus(
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
 		// Create room
 		const roomRes = await hub.request('room.create', {
 			name: 'E2E Lifecycle Test Room',
+			defaultPath: workspaceRoot,
 		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
@@ -127,13 +132,27 @@ test.describe('Task Lifecycle — Reactivate', () => {
 	test('reactivates completed task via Reactivate button in Done tab list', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
+		// Clear persisted task filter tab so RoomTasks defaults to "Active"
+		await page.evaluate(() => localStorage.removeItem('neokai:room:taskFilterTab'));
+
 		// Navigate to the room dashboard (not individual task)
 		await page.goto(`/room/${roomId}`);
 		await expect(page.locator('text=E2E Lifecycle Test Room').first()).toBeVisible({
 			timeout: 10000,
 		});
 
-		// Click the Done tab to see completed tasks
+		// Click the Done stat card to switch from overview to the Tasks room-level tab.
+		// Note: the stat card only switches the room tab — it does NOT set the internal
+		// Done sub-filter within RoomTasks, so we must click the Done sub-tab separately.
+		// Scope the locator to the stats grid (grid-cols-3) which only exists in the
+		// overview dashboard, so waitFor('detached') doesn't match the RoomTasks sub-tab.
+		const doneStatCard = page.locator('.grid-cols-3').getByRole('button', { name: /Done/ });
+		await doneStatCard.click();
+
+		// Wait for the overview to unmount (stat card detaches) before clicking the
+		// Done sub-tab within RoomTasks, to avoid a race where both buttons exist
+		// momentarily and the second click hits the stat card again (a no-op).
+		await doneStatCard.waitFor({ state: 'detached', timeout: 5000 });
 		await page.getByRole('button', { name: /Done/ }).click();
 
 		// Wait for the task to appear in the list
@@ -148,7 +167,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		await expect(reactivateBtn).toBeVisible({ timeout: 5000 });
 		await reactivateBtn.click();
 
-		// Task should move from Done tab — click Active tab to confirm it's there
+		// Task should move from Done tab — click Active sub-tab to confirm it's there
 		await page.getByRole('button', { name: /Active/ }).click();
 		await expect(
 			page.getByRole('heading', { name: 'E2E Lifecycle Test Task' }).first()
@@ -171,7 +190,7 @@ test.describe('Task Lifecycle — Reactivate', () => {
 		});
 
 		// The message input should be enabled — completed tasks can send messages to reactivate
-		const textarea = page.locator('textarea').first();
+		const textarea = page.locator('textarea:visible').first();
 		await expect(textarea).toBeEnabled({ timeout: 5000 });
 
 		// Placeholder should mention reactivation
@@ -213,8 +232,10 @@ test.describe('Task Lifecycle — Archive', () => {
 		await expect(archiveBtn).toBeVisible({ timeout: 5000 });
 		await archiveBtn.click();
 
-		// Dialog should appear
-		const dialog = page.locator('[role="dialog"]');
+		// Dialog should appear — use getModal() to exclude the NeoPanel which is
+		// always in the DOM with role="dialog" (just off-screen via CSS transform)
+		// and would cause a strict-mode violation with a bare [role="dialog"] selector.
+		const dialog = getModal(page);
 		await expect(dialog).toBeVisible({ timeout: 5000 });
 
 		// Dialog must mention permanent nature and worktree cleanup
@@ -227,7 +248,7 @@ test.describe('Task Lifecycle — Archive', () => {
 		await expect(dialog).not.toBeVisible({ timeout: 3000 });
 	});
 
-	test('archives completed task and it disappears from Done tab', async ({ page }) => {
+	test('archives completed task and it disappears from room', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
@@ -249,17 +270,13 @@ test.describe('Task Lifecycle — Archive', () => {
 		// Should navigate away from the task page after archiving
 		await expect(page).not.toHaveURL(new RegExp(`/task/${taskId}`), { timeout: 10000 });
 
-		// Navigate to room dashboard and check Done tab
+		// Navigate to room dashboard — archived tasks are excluded server-side,
+		// so the room should show "No tasks yet" (no tab bar rendered)
 		await page.goto(`/room/${roomId}`);
-		await page.getByRole('button', { name: /Done/ }).click();
-
-		// Task should NOT appear in Done tab
-		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).not.toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 	});
 
-	test('archived task appears in Archived tab, not Done tab', async ({ page }) => {
+	test('archived task is excluded from room dashboard', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		await page.goto(`/room/${roomId}/task/${taskId}`);
@@ -279,24 +296,15 @@ test.describe('Task Lifecycle — Archive', () => {
 		// Wait for navigation away from task view
 		await expect(page).not.toHaveURL(new RegExp(`/task/${taskId}`), { timeout: 10000 });
 
-		// Navigate to room dashboard
+		// Navigate to room dashboard — archived tasks are excluded server-side,
+		// so the room should show "No tasks yet" with no tab bar
 		await page.goto(`/room/${roomId}`);
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 
-		// Archived tab should now be visible (count > 0)
-		const archivedTab = page.getByRole('button', { name: /Archived/ });
-		await expect(archivedTab).toBeVisible({ timeout: 5000 });
-
-		// Done tab should NOT show the task
-		await page.getByRole('button', { name: /Done/ }).click();
-		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).not.toBeVisible({
-			timeout: 5000,
-		});
-
-		// Archived tab SHOULD show the task
-		await archivedTab.click();
-		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
-			timeout: 5000,
-		});
+		// Navigating directly to the archived task URL should show "Task not found"
+		// since archived tasks are excluded from the client-side store
+		await page.goto(`/room/${roomId}/task/${taskId}`);
+		await expect(page.locator('text=Task not found')).toBeVisible({ timeout: 10000 });
 	});
 
 	test('can archive a cancelled task', async ({ page }) => {
@@ -322,14 +330,9 @@ test.describe('Task Lifecycle — Archive', () => {
 		// Should navigate away
 		await expect(page).not.toHaveURL(new RegExp(`/task/${taskId}`), { timeout: 10000 });
 
-		// Archived tab should show the task
+		// Archived tasks are excluded server-side, so room shows "No tasks yet"
 		await page.goto(`/room/${roomId}`);
-		const archivedTab = page.getByRole('button', { name: /Archived/ });
-		await expect(archivedTab).toBeVisible({ timeout: 5000 });
-		await archivedTab.click();
-		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 	});
 
 	test('can archive a needs_attention task', async ({ page }) => {
@@ -354,9 +357,13 @@ test.describe('Task Lifecycle — Archive', () => {
 
 		// Should navigate away after archiving
 		await expect(page).not.toHaveURL(new RegExp(`/task/${taskId}`), { timeout: 10000 });
+
+		// Archived tasks are excluded server-side, so room shows "No tasks yet"
+		await page.goto(`/room/${roomId}`);
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 	});
 
-	test('archived task has no Reactivate or Archive buttons', async ({ page }) => {
+	test('archived task URL shows Task not found', async ({ page }) => {
 		({ roomId, taskId } = await createRoomAndTaskInStatus(page, 'completed'));
 
 		// Archive the task via RPC (infrastructure setup — the UI archive flow is tested above)
@@ -369,27 +376,13 @@ test.describe('Task Lifecycle — Archive', () => {
 			{ rId: roomId, tId: taskId }
 		);
 
-		// Navigate to the archived task
+		// Archived tasks are excluded from the client-side store by the server-side LiveQuery.
+		// Navigating directly to the archived task URL should show "Task not found"
 		await page.goto(`/room/${roomId}/task/${taskId}`);
-		await expect(page.getByRole('heading', { name: 'E2E Lifecycle Test Task' })).toBeVisible({
-			timeout: 10000,
-		});
+		await expect(page.locator('text=Task not found')).toBeVisible({ timeout: 10000 });
 
-		// Status badge should show "archived"
-		await expect(page.locator('[data-testid="task-status-badge"]')).toHaveText('archived', {
-			timeout: 5000,
-		});
-
-		// Neither Reactivate nor Archive buttons should be present
-		await expect(page.locator('[data-testid="task-reactivate-button"]')).not.toBeAttached();
-		// Archive is in dropdown - open to verify it's not there
-		const dropdownTrigger = page.locator('[data-testid="task-info-panel-trigger"]');
-		await dropdownTrigger.click();
-		await expect(page.locator('[data-testid="task-info-panel-archive"]')).not.toBeAttached();
-
-		// Message input should show archived notice
-		await expect(page.locator('text=Archived tasks cannot receive messages.').first()).toBeVisible({
-			timeout: 5000,
-		});
+		// The room dashboard should also show "No tasks yet"
+		await page.goto(`/room/${roomId}`);
+		await expect(page.locator('text=No tasks yet')).toBeVisible({ timeout: 5000 });
 	});
 });

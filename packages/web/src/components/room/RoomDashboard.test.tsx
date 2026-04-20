@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { TaskSummary, RuntimeState } from '@neokai/shared';
+import { currentRoomIdSignal } from '../../lib/signals';
 
 // Define signals for store mock
 let mockTasks: ReturnType<typeof signal<TaskSummary[]>>;
@@ -45,15 +46,15 @@ vi.mock('../../lib/room-store.ts', () => ({
 	},
 }));
 
-vi.mock('../../lib/signals.ts', () => ({
-	currentRoomTabSignal: { value: null },
-}));
-
 const mockNavigateToRoomTask = vi.fn();
+const mockNavigateToRoomTab = vi.fn();
 
 vi.mock('../../lib/router.ts', () => ({
 	get navigateToRoomTask() {
 		return mockNavigateToRoomTask;
+	},
+	get navigateToRoomTab() {
+		return mockNavigateToRoomTab;
 	},
 }));
 
@@ -81,6 +82,7 @@ describe('RoomDashboard', () => {
 		mockGoalByTaskId.value = new Map();
 		mockSessions.value = [];
 		mockRoomId.value = 'room-1';
+		currentRoomIdSignal.value = 'room-1';
 		mockRuntimeState.value = null;
 		mockRuntimeModels.value = { leaderModel: null, workerModel: null };
 		mockPauseRuntime.mockClear();
@@ -88,6 +90,7 @@ describe('RoomDashboard', () => {
 		mockStopRuntime.mockClear();
 		mockStartRuntime.mockClear();
 		mockNavigateToRoomTask.mockClear();
+		mockNavigateToRoomTab.mockClear();
 	});
 
 	afterEach(() => {
@@ -104,17 +107,48 @@ describe('RoomDashboard', () => {
 		status: status as TaskSummary['status'],
 		priority: 'normal',
 		progress: 0,
+		dependsOn: [],
+		updatedAt: Date.now(),
 		...overrides,
 	});
 
-	const selectReviewTab = async (container: Element) => {
-		const reviewTab = Array.from(container.querySelectorAll('button')).find((b) =>
-			b.textContent?.includes('Review')
-		);
-		if (reviewTab) {
-			await fireEvent.click(reviewTab);
-		}
-	};
+	describe('Stat Card Navigation', () => {
+		it('should call navigateToRoomTab with tasks when Active stat is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'in_progress')];
+			const { container } = render(<RoomDashboard />);
+
+			const activeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Active')
+			);
+			await fireEvent.click(activeBtn!);
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
+		});
+
+		it('should call navigateToRoomTab with tasks when Review stat is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'in_review')];
+			const { container } = render(<RoomDashboard />);
+
+			const reviewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Review')
+			);
+			await fireEvent.click(reviewBtn!);
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
+		});
+
+		it('should call navigateToRoomTab with tasks when Done stat is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'completed')];
+			const { container } = render(<RoomDashboard />);
+
+			const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Done')
+			);
+			await fireEvent.click(doneBtn!);
+
+			expect(mockNavigateToRoomTab).toHaveBeenCalledWith('room-1', 'tasks');
+		});
+	});
 
 	describe('Runtime State Indicator', () => {
 		it('should not show runtime controls when state is null', () => {
@@ -122,9 +156,9 @@ describe('RoomDashboard', () => {
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).not.toContain('running');
-			expect(container.textContent).not.toContain('paused');
-			expect(container.textContent).not.toContain('stopped');
+			expect(container.textContent).not.toContain('Running');
+			expect(container.textContent).not.toContain('Paused');
+			expect(container.textContent).not.toContain('Stopped');
 		});
 
 		it('should show running state with green indicator', () => {
@@ -132,18 +166,18 @@ describe('RoomDashboard', () => {
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('running');
-			const greenDot = container.querySelector('.bg-green-500');
+			expect(container.textContent).toContain('Running');
+			const greenDot = container.querySelector('.bg-green-400');
 			expect(greenDot).toBeTruthy();
 		});
 
-		it('should show pulse animation for running state', () => {
+		it('should show ping animation for running state', () => {
 			mockRuntimeState.value = 'running';
 
 			const { container } = render(<RoomDashboard />);
 
-			const pulseDot = container.querySelector('.animate-pulse');
-			expect(pulseDot).toBeTruthy();
+			const pingDot = container.querySelector('.animate-ping');
+			expect(pingDot).toBeTruthy();
 		});
 
 		it('should show paused state with yellow indicator', () => {
@@ -151,28 +185,28 @@ describe('RoomDashboard', () => {
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('paused');
-			const yellowDot = container.querySelector('.bg-yellow-500');
+			expect(container.textContent).toContain('Paused');
+			const yellowDot = container.querySelector('.bg-yellow-400');
 			expect(yellowDot).toBeTruthy();
 		});
 
-		it('should not pulse when paused', () => {
+		it('should not ping when paused', () => {
 			mockRuntimeState.value = 'paused';
 
 			const { container } = render(<RoomDashboard />);
 
-			const indicator = container.querySelector('.bg-yellow-500');
-			expect(indicator?.className).not.toContain('animate-pulse');
+			const pingDot = container.querySelector('.animate-ping');
+			expect(pingDot).toBeFalsy();
 		});
 
-		it('should show stopped state with red indicator', () => {
+		it('should show stopped state with gray indicator', () => {
 			mockRuntimeState.value = 'stopped';
 
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('stopped');
-			const redDot = container.querySelector('.bg-red-500');
-			expect(redDot).toBeTruthy();
+			expect(container.textContent).toContain('Stopped');
+			const grayDot = container.querySelector('.bg-gray-500');
+			expect(grayDot).toBeTruthy();
 		});
 	});
 
@@ -407,42 +441,11 @@ describe('RoomDashboard', () => {
 		});
 	});
 
-	describe('Tasks Section', () => {
-		it('should show Tasks heading', () => {
+	describe('Recent Activity Section', () => {
+		it('should show Recent Activity heading', () => {
 			const { container } = render(<RoomDashboard />);
 
-			expect(container.textContent).toContain('Tasks');
-		});
-
-		it('should call navigateToRoomTask when View button is clicked on a review task', async () => {
-			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			)!;
-			expect(viewBtn).toBeTruthy();
-
-			await fireEvent.click(viewBtn);
-
-			expect(mockNavigateToRoomTask).toHaveBeenCalledWith('room-1', 'task-99');
-		});
-
-		it('should NOT call onTaskClick row handler when View button is clicked', async () => {
-			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
-
-			const { container } = render(<RoomDashboard />);
-			await selectReviewTab(container);
-
-			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-				b.textContent?.includes('View details')
-			)!;
-			await fireEvent.click(viewBtn);
-
-			// navigateToRoomTask should be called exactly once (from onView), not twice
-			expect(mockNavigateToRoomTask).toHaveBeenCalledTimes(1);
+			expect(container.textContent).toContain('Recent Activity');
 		});
 	});
 });

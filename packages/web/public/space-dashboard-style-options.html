@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Space Dashboard Style Options</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				--bg: #08090c;
+				--panel: #101217;
+				--panel-2: #151923;
+				--line: #232734;
+				--muted: #9098ab;
+				--text: #f3f5fb;
+				--blue: #5aa2ff;
+				--cyan: #54d2ff;
+				--green: #4fd39a;
+				--amber: #f6b64e;
+				--rose: #ff7d91;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				font-family: "SF Pro Display", "Segoe UI", sans-serif;
+				background:
+					radial-gradient(circle at top, rgba(90, 162, 255, 0.14), transparent 28rem),
+					linear-gradient(180deg, #07080b 0%, #0c0e13 100%);
+				color: var(--text);
+			}
+
+			main {
+				max-width: 1680px;
+				margin: 0 auto;
+				padding: 40px 24px 96px;
+			}
+
+			.page-header {
+				margin-bottom: 36px;
+			}
+
+			.eyebrow {
+				font-size: 12px;
+				letter-spacing: 0.22em;
+				text-transform: uppercase;
+				color: #7f8799;
+				margin: 0 0 12px;
+			}
+
+			h1 {
+				margin: 0;
+				font-size: clamp(32px, 5vw, 56px);
+				line-height: 0.98;
+				letter-spacing: -0.04em;
+			}
+
+			.page-copy {
+				max-width: 780px;
+				margin: 16px 0 0;
+				font-size: 18px;
+				line-height: 1.6;
+				color: var(--muted);
+			}
+
+			.catalog {
+				display: grid;
+				gap: 28px;
+			}
+
+			.option {
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				border-radius: 28px;
+				background: rgba(16, 18, 23, 0.88);
+				overflow: hidden;
+				box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28);
+			}
+
+			.option-meta {
+				display: grid;
+				grid-template-columns: 220px minmax(0, 1fr) 280px;
+				gap: 24px;
+				padding: 22px 24px;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+				background: rgba(255, 255, 255, 0.02);
+			}
+
+			.option-number {
+				font-size: 13px;
+				letter-spacing: 0.18em;
+				text-transform: uppercase;
+				color: #8990a3;
+			}
+
+			.option-title {
+				margin: 8px 0 0;
+				font-size: 30px;
+				letter-spacing: -0.04em;
+			}
+
+			.option-summary {
+				margin: 6px 0 0;
+				color: var(--muted);
+				line-height: 1.55;
+			}
+
+			.option-fit {
+				margin: 0;
+				padding: 0;
+				list-style: none;
+				display: grid;
+				gap: 8px;
+				align-content: start;
+			}
+
+			.option-fit li {
+				color: #c9cfdb;
+				font-size: 14px;
+				line-height: 1.45;
+			}
+
+			.mock {
+				padding: 22px;
+				background: #090b10;
+			}
+
+			.surface {
+				min-height: 470px;
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				border-radius: 24px;
+				overflow: hidden;
+				background: #0b0d12;
+			}
+
+			.tab-row {
+				display: flex;
+				gap: 28px;
+				padding: 0 24px;
+				border-bottom: 1px solid var(--line);
+			}
+
+			.tab-row span {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				padding: 18px 0 16px;
+				font-size: 16px;
+				color: #8c93a5;
+				border-bottom: 2px solid transparent;
+			}
+
+			.tab-row .active {
+				color: #f3f5fb;
+				border-bottom-color: var(--blue);
+			}
+
+			.count {
+				min-width: 28px;
+				padding: 2px 8px;
+				border-radius: 999px;
+				font-size: 12px;
+				text-align: center;
+				background: rgba(255, 255, 255, 0.08);
+				color: #d7dcea;
+			}
+
+			.cards-3 {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: 16px;
+				padding: 20px;
+			}
+
+			.card {
+				border-radius: 20px;
+				border: 1px solid rgba(255, 255, 255, 0.07);
+				background: #11141d;
+				padding: 18px;
+			}
+
+			.card h4,
+			.list-card h4,
+			.section-title {
+				margin: 0;
+				font-size: 16px;
+			}
+
+			.muted {
+				color: var(--muted);
+			}
+
+			.pill-row {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+				margin-top: 12px;
+			}
+
+			.pill {
+				padding: 6px 10px;
+				border-radius: 999px;
+				font-size: 12px;
+				background: rgba(255, 255, 255, 0.05);
+				color: #cfd5e0;
+			}
+
+			.grid-2 {
+				display: grid;
+				grid-template-columns: 320px minmax(0, 1fr);
+				min-height: 420px;
+			}
+
+			.sidebar {
+				border-right: 1px solid var(--line);
+				padding: 20px;
+				background: #0d1017;
+			}
+
+			.sidebar h4 {
+				margin: 0 0 14px;
+				font-size: 13px;
+				letter-spacing: 0.14em;
+				text-transform: uppercase;
+				color: #7f8799;
+			}
+
+			.sidebar-list,
+			.timeline,
+			.rank-list {
+				display: grid;
+				gap: 10px;
+			}
+
+			.sidebar-item,
+			.timeline-item,
+			.rank-item,
+			.list-card {
+				border-radius: 16px;
+				border: 1px solid rgba(255, 255, 255, 0.06);
+				background: #121621;
+				padding: 14px 16px;
+			}
+
+			.workspace {
+				padding: 20px;
+				display: grid;
+				gap: 14px;
+			}
+
+			.workspace-header {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				gap: 16px;
+			}
+
+			.button {
+				padding: 10px 14px;
+				border-radius: 14px;
+				background: linear-gradient(135deg, #2b75ff 0%, #2b5cff 100%);
+				color: white;
+				font-weight: 600;
+				font-size: 14px;
+			}
+
+			.metrics-row {
+				display: grid;
+				grid-template-columns: repeat(4, minmax(0, 1fr));
+				gap: 14px;
+			}
+
+			.metric {
+				border-radius: 18px;
+				padding: 16px;
+				background: #10141d;
+				border: 1px solid rgba(255, 255, 255, 0.06);
+			}
+
+			.metric-label {
+				font-size: 12px;
+				letter-spacing: 0.14em;
+				text-transform: uppercase;
+				color: #7f8799;
+			}
+
+			.metric-value {
+				margin-top: 8px;
+				font-size: 28px;
+				font-weight: 700;
+			}
+
+			.option-1 .surface {
+				background:
+					radial-gradient(circle at top right, rgba(84, 210, 255, 0.12), transparent 22rem),
+					#0b0d12;
+			}
+
+			.option-2 .surface {
+				background: #0b0c10;
+			}
+
+			.option-2 .lanes {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: 16px;
+				padding: 18px;
+			}
+
+			.option-2 .lane {
+				border-radius: 20px;
+				background: #11131a;
+				border: 1px solid rgba(255, 255, 255, 0.06);
+				padding: 14px;
+			}
+
+			.option-2 .lane .section-title {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-bottom: 12px;
+			}
+
+			.option-3 .surface {
+				background: #0d1015;
+			}
+
+			.option-3 .table {
+				padding: 12px 18px 18px;
+			}
+
+			.option-3 table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 14px;
+			}
+
+			.option-3 th,
+			.option-3 td {
+				padding: 12px 10px;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+				text-align: left;
+			}
+
+			.option-3 th {
+				color: #7f8799;
+				font-size: 12px;
+				text-transform: uppercase;
+				letter-spacing: 0.14em;
+			}
+
+			.option-4 .surface {
+				background:
+					linear-gradient(180deg, rgba(90, 162, 255, 0.08), transparent 9rem),
+					#090c11;
+			}
+
+			.option-4 .radar {
+				display: grid;
+				grid-template-columns: 1.1fr 0.9fr;
+				gap: 16px;
+				padding: 18px;
+			}
+
+			.option-4 .hero-panel,
+			.option-4 .signal-panel {
+				border-radius: 22px;
+				border: 1px solid rgba(255, 255, 255, 0.06);
+				background: rgba(17, 22, 31, 0.92);
+				padding: 20px;
+			}
+
+			.option-4 .hero-panel h3 {
+				margin: 0 0 10px;
+				font-size: 38px;
+				letter-spacing: -0.05em;
+			}
+
+			.option-5 .surface {
+				background: #0d0f14;
+			}
+
+			.option-5 .split {
+				display: grid;
+				grid-template-columns: 1.1fr 0.9fr;
+				min-height: 420px;
+			}
+
+			.option-5 .review-column {
+				border-right: 1px solid var(--line);
+				padding: 20px;
+				background: linear-gradient(180deg, rgba(246, 182, 78, 0.08), transparent 9rem);
+			}
+
+			.option-6 .surface {
+				background: #090b10;
+			}
+
+			.option-6 .stream {
+				display: grid;
+				grid-template-columns: 1fr 360px;
+				min-height: 420px;
+			}
+
+			.option-6 .feed {
+				padding: 18px;
+				display: grid;
+				gap: 12px;
+			}
+
+			.timeline-item {
+				display: grid;
+				grid-template-columns: 110px minmax(0, 1fr);
+				gap: 16px;
+				align-items: start;
+			}
+
+			.timeline-time {
+				font-size: 12px;
+				color: #7f8799;
+				letter-spacing: 0.12em;
+				text-transform: uppercase;
+			}
+
+			.rank-item {
+				display: grid;
+				grid-template-columns: 36px minmax(0, 1fr) 48px;
+				gap: 12px;
+				align-items: center;
+			}
+
+			.rank {
+				width: 36px;
+				height: 36px;
+				display: grid;
+				place-items: center;
+				border-radius: 12px;
+				background: rgba(255, 255, 255, 0.06);
+				color: #aeb5c6;
+				font-weight: 700;
+			}
+
+			.note {
+				margin-top: 14px;
+				font-size: 13px;
+				line-height: 1.55;
+				color: #a6adbd;
+			}
+
+			@media (max-width: 1100px) {
+				.option-meta,
+				.grid-2,
+				.option-4 .radar,
+				.option-5 .split,
+				.option-6 .stream {
+					grid-template-columns: 1fr;
+				}
+
+				.cards-3,
+				.option-2 .lanes,
+				.metrics-row {
+					grid-template-columns: 1fr;
+				}
+			}
+
+			@media (max-width: 720px) {
+				main {
+					padding: 24px 14px 72px;
+				}
+
+				.option-meta,
+				.mock {
+					padding: 18px;
+				}
+
+				.tab-row {
+					gap: 18px;
+					padding: 0 16px;
+					overflow-x: auto;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<header class="page-header">
+				<p class="eyebrow">Space Dashboard Exploration</p>
+				<h1>Six directions. Pick a visual model before we touch the app again.</h1>
+				<p class="page-copy">
+					Each option is intentionally different. The point is to choose a dashboard philosophy, not
+					to bikeshed details on the current screen. All six assume spaces are for managing many tasks
+					in parallel.
+				</p>
+			</header>
+
+			<section class="catalog">
+				<article class="option option-1">
+					<div class="option-meta">
+						<div>
+							<div class="option-number">Option 1</div>
+							<h2 class="option-title">Operator Console</h2>
+						</div>
+						<div>
+							<p class="option-summary">
+								A balanced command surface: clear tabs at the top, compact metrics, grouped task lanes
+								below. Feels controlled and productized.
+							</p>
+						</div>
+						<ul class="option-fit">
+							<li>Choose this if you want the safest modern direction.</li>
+							<li>Strong fit for daily operational use and onboarding.</li>
+							<li>Low risk to implement incrementally.</li>
+						</ul>
+					</div>
+					<div class="mock">
+						<div class="surface">
+							<div class="tab-row">
+								<span class="active">Active <b class="count">14</b></span>
+								<span>Review <b class="count">5</b></span>
+								<span>Done <b class="count">38</b></span>
+							</div>
+							<div class="metrics-row" style="padding: 20px 20px 0">
+								<div class="metric"><div class="metric-label">In Progress</div><div class="metric-value">9</div></div>
+								<div class="metric"><div class="metric-label">Queued</div><div class="metric-value">5</div></div>
+								<div class="metric"><div class="metric-label">Needs Review</div><div class="metric-value">5</div></div>
+								<div class="metric"><div class="metric-label">Done Today</div><div class="metric-value">12</div></div>
+							</div>
+							<div class="cards-3">
+								<div class="card">
+									<h4>In Progress</h4>
+									<p class="note">3 active threads, 2 workflow runs, 4 standalone tasks.</p>
+									<div class="pill-row">
+										<span class="pill">Spec cleanup</span>
+										<span class="pill">UI pass</span>
+										<span class="pill">Eval tuning</span>
+									</div>
+								</div>
+								<div class="card">
+									<h4>Review Queue</h4>
+									<p class="note">Pull the highest-friction items up first. Human waiting time is the main signal.</p>
+									<div class="pill-row">
+										<span class="pill">Blocked on design</span>
+										<span class="pill">Needs approval</span>
+									</div>
+								</div>
+								<div class="card">
+									<h4>Recently Finished</h4>
+									<p class="note">Keep the execution trail visible without letting done work dominate the canvas.</p>
+									<div class="pill-row">
+										<span class="pill">Prompt migration</span>
+										<span class="pill">Regression sweep</span>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</article>
+
+				<article class="option option-2">
+					<div class="option-meta">
+						<div>
+							<div class="option-number">Option 2</div>
+							<h2 class="option-title">Kanban Strip</h2>
+						</div>
+						<div>
+							<p class="option-summary">
+								Lean into the “many tasks in parallel” story. Three permanent status lanes with review
+								centered visually as the choke point.
+							</p>
+						</div>
+						<ul class="option-fit">
+							<li>Choose this if the dashboard should feel like a board, not a report.</li>
+							<li>Best when users scan status distribution constantly.</li>
+							<li>Weakest if you need dense metadata per task.</li>
+						</ul>
+					</div>
+					<div class="mock">
+						<div class="surface">
+							<div class="lanes">
+								<div class="lane">
+									<div class="section-title"><span>Active</span><span class="count">14</span></div>
+									<div class="list-card"><h4>Atlas QA hardening</h4><p class="muted">2 agents executing, 1 blocker cleared</p></div>
+									<div class="list-card"><h4>Prompt schema cleanup</h4><p class="muted">Queued behind codegen test run</p></div>
+									<div class="list-card"><h4>CLI trace export</h4><p class="muted">Owner: Coder</p></div>
+								</div>
+								<div class="lane" style="background: linear-gradient(180deg, rgba(246, 182, 78, 0.08), transparent 8rem), #11131a;">
+									<div class="section-title"><span>Review</span><span class="count">5</span></div>
+									<div class="list-card"><h4>Space shell redesign</h4><p class="muted">Waiting on style direction</p></div>
+									<div class="list-card"><h4>Workflow editor labels</h4><p class="muted">Product signoff required</p></div>
+								</div>
+								<div class="lane">
+									<div class="section-title"><span>Done</span><span class="count">38</span></div>
+									<div class="list-card"><h4>Provider fallback patch</h4><p class="muted">Completed 17 min ago</p></div>
+									<div class="list-card"><h4>Typecheck stabilization</h4><p class="muted">Completed 42 min ago</p></div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</article>
+
+				<article class="option option-3">
+					<div class="option-meta">
+						<div>
+							<div class="option-number">Option 3</div>
+							<h2 class="option-title">Triage Table</h2>
+						</div>
+						<div>
+							<p class="option-summary">
+								Dense and clinical. Optimized for sorting, scanning, and bulk decisions rather than
+								atmosphere. This is the least decorative option.
+							</p>
+						</div>
+						<ul class="option-fit">
+							<li>Choose this if the dashboard is primarily an operations console.</li>
+							<li>Best for dozens of concurrent tasks.</li>
+							<li>Feels utilitarian by design.</li>
+						</ul>
+					</div>
+					<div class="mock">
+						<div class="surface">
+							<div class="tab-row">
+								<span class="active">Active <b class="count">14</b></span>
+								<span>Review <b class="count">5</b></span>
+								<span>Done <b class="count">38</b></span>
+							</div>
+							<div class="table">
+								<table>
+									<thead>
+										<tr>
+											<th>Task</th>
+											<th>Status</th>
+											<th>Owner</th>
+											<th>Priority</th>
+											<th>Updated</th>
+											<th>Blocker</th>
+										</tr>
+									</thead>
+									<tbody>
+										<tr><td>Space dashboard direction</td><td>Review</td><td>Planner</td><td>High</td><td>2m ago</td><td>Need visual pick</td></tr>
+										<tr><td>Workflow state cleanup</td><td>In progress</td><td>Coder</td><td>High</td><td>8m ago</td><td>None</td></tr>
+										<tr><td>Prompt bundle export</td><td>Queued</td><td>General</td><td>Med</td><td>11m ago</td><td>Waiting on branch</td></tr>
+										<tr><td>Mobile shell spacing</td><td>Done</td><td>Reviewer</td><td>Low</td><td>21m ago</td><td>Resolved</td></tr>
+										<tr><td>Provider fallback</td><td>Done</td><td>QA</td><td>High</td><td>35m ago</td><td>Resolved</td></tr>
+									</tbody>
+								</table>
+							</div>
+						</div>
+					</div>
+				</article>
+
+				<article class="option option-4">
+					<div class="option-meta">
+						<div>
+							<div class="option-number">Option 4</div>
+							<h2 class="option-title">Mission Control</h2>
+						</div>
+						<div>
+							<p class="option-summary">
+								Big signal, high drama. A central status pulse and side telemetry make the space feel
+								more like a live control room than a project page.
+							</p>
+						</div>
+						<ul class="option-fit">
+							<li>Choose this if you want a stronger identity.</li>
+							<li>Best when “parallel orchestration” should feel explicit.</li>
+							<li>Higher design and implementation complexity.</li>
+						</ul>
+					</div>
+					<div class="mock">
+						<div class="surface">
+							<div class="radar">
+								<div class="hero-panel">
+									<div class="eyebrow">Live Flow</div>
+									<h3>14 tasks moving across 5 agents</h3>
+									<p class="option-summary">Review pressure is building faster than execution capacity. Pull two blocked items forward.</p>
+									<div class="pill-row">
+										<span class="pill">2 waiting on design</span>
+										<span class="pill">1 failed check</span>
+										<span class="pill">12 completed today</span>
+									</div>
+								</div>
+								<div class="signal-panel">
+									<div class="rank-list">
+										<div class="rank-item"><div class="rank">1</div><div><strong>Review queue</strong><div class="muted">5 tasks need human action</div></div><div class="count">5</div></div>
+										<div class="rank-item"><div class="rank">2</div><div><strong>Agent load</strong><div class="muted">Coder + QA saturated</div></div><div class="count">3</div></div>
+										<div class="rank-item"><div class="rank">3</div><div><strong>Finished today</strong><div class="muted">Healthy throughput</div></div><div class="count">12</div></div>
+									</div>
+								</div>
+							</div>
+							<div class="cards-3">
+								<div class="card"><h4>Active Work</h4><p class="note">Cluster by execution stream rather than raw status.</p></div>
+								<div class="card"><h4>Needs Intervention</h4><p class="note">Humans are the scarce resource. Show them first.</p></div>
+								<div class="card"><h4>Completed Trail</h4><p class="note">Compact, but visible enough to prove motion.</p></div>
+							</div>
+						</div>
+					</div>
+				</article>
+
+				<article class="option option-5">
+					<div class="option-meta">
+						<div>
+							<div class="option-number">Option 5</div>
+							<h2 class="option-title">Review-First Split</h2>
+						</div>
+						<div>
+							<p class="option-summary">
+								The page admits the real bottleneck: human review. Left side is urgent intervention,
+								right side is execution and completion context.
+							</p>
+						</div>
+						<ul class="option-fit">
+							<li>Choose this if review and unblock work is the dashboard’s primary job.</li>
+							<li>Best when the user opens the space to decide what to approve next.</li>
+							<li>Less balanced than a general-purpose overview.</li>
+						</ul>
+					</div>
+					<div class="mock">
+						<div class="surface">
+							<div class="split">
+								<div class="review-column">
+									<div class="workspace-header">
+										<h3 class="section-title">Review Now</h3>
+										<span class="count">5</span>
+									</div>
+									<div class="sidebar-list" style="margin-top: 14px;">
+										<div class="sidebar-item"><h4>Space dashboard direction</h4><p class="muted">Choose a style before implementation resumes.</p></div>
+										<div class="sidebar-item"><h4>Workflow editor action labels</h4><p class="muted">Needs product language pass.</p></div>
+										<div class="sidebar-item"><h4>Task grouping names</h4><p class="muted">Need alignment on terminology.</p></div>
+									</div>
+								</div>
+								<div class="workspace">
+									<div class="metrics-row">
+										<div class="metric"><div class="metric-label">Active</div><div class="metric-value">14</div></div>
+										<div class="metric"><div class="metric-label">Done</div><div class="metric-value">38</div></div>
+										<div class="metric"><div class="metric-label">Agents</div><div class="metric-value">5</div></div>
+										<div class="metric"><div class="metric-label">Runs</div><div class="metric-value">3</div></div>
+									</div>
+									<div class="card">
+										<h4>Execution Context</h4>
+										<p class="note">The right side stays secondary. Enough context to make a decision, but not enough to distract from review work.</p>
+									</div>
+									<div class="card">
+										<h4>Recent Completions</h4>
+										<div class="pill-row"><span class="pill">Typecheck pass</span><span class="pill">Configure route move</span><span class="pill">Context panel cleanup</span></div>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</article>
+
+				<article class="option option-6">
+					<div class="option-meta">
+						<div>
+							<div class="option-number">Option 6</div>
+							<h2 class="option-title">Activity Feed</h2>
+						</div>
+						<div>
+							<p class="option-summary">
+								A living stream of task motion with a compact ranking rail. This makes the space feel
+								like a timeline of ongoing work rather than a static dashboard.
+							</p>
+						</div>
+						<ul class="option-fit">
+							<li>Choose this if “what changed recently?” matters most.</li>
+							<li>Best for active spaces with continuous movement.</li>
+							<li>Harder to use as a planning surface.</li>
+						</ul>
+					</div>
+					<div class="mock">
+						<div class="surface">
+							<div class="stream">
+								<div class="feed">
+									<div class="timeline-item"><div class="timeline-time">2 min ago</div><div><strong>Dashboard style review task reopened</strong><div class="muted">Blocked until a visual direction is selected.</div></div></div>
+									<div class="timeline-item"><div class="timeline-time">8 min ago</div><div><strong>Workflow cleanup entered code review</strong><div class="muted">Reviewer agent attached comments to latest patch.</div></div></div>
+									<div class="timeline-item"><div class="timeline-time">21 min ago</div><div><strong>Mobile spacing pass completed</strong><div class="muted">Typecheck and focused vitest suite passed.</div></div></div>
+									<div class="timeline-item"><div class="timeline-time">35 min ago</div><div><strong>Configure route extracted</strong><div class="muted">Settings controls moved behind dedicated route.</div></div></div>
+								</div>
+								<div class="sidebar">
+									<h4>Right Now</h4>
+									<div class="rank-list">
+										<div class="rank-item"><div class="rank">A</div><div><strong>Review queue</strong><div class="muted">5 tasks</div></div><div class="count">5</div></div>
+										<div class="rank-item"><div class="rank">B</div><div><strong>Active load</strong><div class="muted">14 tasks</div></div><div class="count">14</div></div>
+										<div class="rank-item"><div class="rank">C</div><div><strong>Finished today</strong><div class="muted">12 tasks</div></div><div class="count">12</div></div>
+									</div>
+									<p class="note">This direction emphasizes motion and recency over strict categorization.</p>
+								</div>
+							</div>
+						</div>
+					</div>
+				</article>
+			</section>
+		</main>
+	</body>
+</html>

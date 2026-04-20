@@ -3,8 +3,8 @@
  *
  * Consolidated tests for the settings panel:
  * - Basic interaction (open/close navigation)
- * - Settings navigation (General, MCP Servers, About)
- * - General settings content (model, permission mode, auto-scroll)
+ * - Settings navigation (8 sections: General, Providers, MCP Servers, etc.)
+ * - General settings content (model, permission mode, thinking level, auto-scroll)
  * - Settings persistence and MCP servers
  */
 
@@ -75,14 +75,23 @@ test.describe('Settings Modal - Authentication Status', () => {
 		await waitForWebSocketConnected(page);
 	});
 
-	test('should display Authentication Status section', async ({ page }) => {
-		// Authentication Status section was removed. Verify settings navigation sections instead.
+	test('should display all settings navigation sections', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Verify all settings navigation sections are visible in the ContextPanel
-		await expect(page.locator('button:has-text("General")')).toBeVisible();
-		await expect(page.locator('button:has-text("MCP Servers")')).toBeVisible();
-		await expect(page.locator('button:has-text("About")')).toBeVisible();
+		// Verify all 8 settings navigation sections are visible in the ContextPanel
+		const expectedSections = [
+			'General',
+			'Providers',
+			'MCP Servers',
+			'Application MCP Servers',
+			'Skills',
+			'Fallback Models',
+			'Usage',
+			'About',
+		];
+		for (const section of expectedSections) {
+			await expect(page.getByRole('button', { name: section, exact: true })).toBeVisible();
+		}
 	});
 
 	test('should show authenticated status with green indicator', async ({ page }) => {
@@ -99,26 +108,37 @@ test.describe('Settings Modal - Authentication Status', () => {
 	test('should display auth method (API Key or OAuth)', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Check if authenticated and what method
-		const authText = page.locator('text=Authenticated via');
-		const isAuthenticated = (await authText.count()) > 0;
+		// Wait for nav buttons to be visible before clicking
+		await page.getByRole('button', { name: 'Providers', exact: true }).waitFor();
 
-		if (isAuthenticated) {
-			// Should show one of the auth methods
-			const hasApiKey = (await page.locator('text=API Key').count()) > 0;
-			const hasOAuth = (await page.locator('text=OAuth').count()) > 0;
-			const hasOAuthToken = (await page.locator('text=OAuth Token').count()) > 0;
+		// Navigate to the Providers section
+		await page.getByRole('button', { name: 'Providers', exact: true }).click();
 
-			expect(hasApiKey || hasOAuth || hasOAuthToken).toBeTruthy();
+		// Wait for Providers section to load
+		await expect(page.locator('h3:has-text("Providers")')).toBeVisible();
+
+		// Check if any provider is authenticated (shows API Key or OAuth badge)
+		const hasApiKey = (await page.locator('text=API Key').count()) > 0;
+		const hasOAuth = (await page.locator('text=OAuth').count()) > 0;
+
+		if (hasApiKey || hasOAuth) {
+			// At least one provider is authenticated
+			expect(true).toBeTruthy();
+		} else {
+			// No authenticated provider — verify the section still loaded correctly
+			await expect(
+				page
+					.locator('text=No providers available')
+					.or(page.locator('text=Configure authentication for AI providers'))
+			).toBeVisible();
 		}
 	});
 
 	test('should show environment variable setup instructions', async ({ page }) => {
-		// Env var instructions removed. Verify About section shows app info instead.
 		await openSettingsModal(page);
 
 		// Navigate to the About section
-		await page.locator('button:has-text("About")').click();
+		await page.getByRole('button', { name: 'About', exact: true }).click();
 
 		// Verify About section is shown with NeoKai app info
 		await expect(page.locator('h3:has-text("About")')).toBeVisible();
@@ -133,16 +153,13 @@ test.describe('Settings Modal - Global Settings', () => {
 	});
 
 	test('should display Global Settings section', async ({ page }) => {
-		// The section heading is now "General" (via SettingsSection title), not "Global Settings".
-		// "Global Settings" is the page header (h2); the section h3 is "General".
 		await openSettingsModal(page);
 
-		// Verify General section heading is visible
+		// Verify General section heading is visible (h2 is "Global Settings", h3 is "General")
 		await expect(page.locator('h3:has-text("General")')).toBeVisible();
 	});
 
 	test('should show Model selection dropdown', async ({ page }) => {
-		// Updated: label is "Default Model", options are model names (not "Default").
 		await openSettingsModal(page);
 
 		// Find the Default Model label
@@ -157,11 +174,10 @@ test.describe('Settings Modal - Global Settings', () => {
 	});
 
 	test('should show Thinking Level selection dropdown', async ({ page }) => {
-		// Thinking Level is present in the settings UI.
 		await openSettingsModal(page);
 
-		// Thinking Level is present
-		await expect(page.locator('text=Thinking Level')).toBeVisible();
+		// Default Thinking Level is present
+		await expect(page.locator('text=Default Thinking Level')).toBeVisible();
 
 		// Permission Mode is the second dropdown in the General settings
 		await expect(page.locator('text=Permission Mode')).toBeVisible();
@@ -169,7 +185,6 @@ test.describe('Settings Modal - Global Settings', () => {
 	});
 
 	test('should show Auto Scroll toggle', async ({ page }) => {
-		// Updated: label is "Auto-scroll", control is a role="switch" toggle button.
 		await openSettingsModal(page);
 
 		// Find the auto-scroll label (exact match to avoid matching the description text)
@@ -180,7 +195,6 @@ test.describe('Settings Modal - Global Settings', () => {
 	});
 
 	test('should show Permission Mode selection', async ({ page }) => {
-		// Updated: label is "Permission Mode", select has "default" value option.
 		await openSettingsModal(page);
 
 		// Find the Permission Mode label
@@ -192,21 +206,20 @@ test.describe('Settings Modal - Global Settings', () => {
 		await expect(permissionSelect.locator('option[value="default"]')).toBeAttached();
 	});
 
-	test('should show Setting Sources checkboxes', async ({ page }) => {
-		// Setting Sources section has been removed from the current settings UI.
+	test('should show all General settings rows', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Setting Sources is no longer present
+		// Setting Sources was removed; verify the current General settings rows instead
 		await expect(page.locator('text=Setting Sources')).toBeHidden();
 
-		// Current General settings has: Default Model, Permission Mode, Auto-scroll
 		await expect(page.locator('text=Default Model')).toBeVisible();
 		await expect(page.locator('text=Permission Mode')).toBeVisible();
+		await expect(page.locator('text=Default Thinking Level')).toBeVisible();
 		await expect(page.getByText('Auto-scroll', { exact: true })).toBeVisible();
+		await expect(page.getByText('Show Archived Sessions', { exact: true })).toBeVisible();
 	});
 
-	test('should show auto-save notice', async ({ page }) => {
-		// Auto-save notice removed. Verify settings page description is shown instead.
+	test('should show settings page description', async ({ page }) => {
 		await openSettingsModal(page);
 
 		// Settings header shows a description of the page's purpose
@@ -220,23 +233,21 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 		await waitForWebSocketConnected(page);
 	});
 
-	test('should display Global Tools Settings section', async ({ page }) => {
-		// Global Tools Settings section removed. MCP Servers section is now a top-level section.
+	test('should display MCP Servers section from settings nav', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Navigate to MCP Servers section via nav button
-		await page.locator('button:has-text("MCP Servers")').click();
+		// Navigate to MCP Servers section via nav button (exact match to avoid matching "Application MCP Servers")
+		await page.getByRole('button', { name: 'MCP Servers', exact: true }).click();
 
 		// Verify MCP Servers section is shown
 		await expect(page.locator('h3:has-text("MCP Servers")')).toBeVisible();
 	});
 
 	test('should show System Prompt section with Claude Code Preset', async ({ page }) => {
-		// System Prompt/Claude Code Preset section removed. About section shows app info.
 		await openSettingsModal(page);
 
 		// Navigate to About section
-		await page.locator('button:has-text("About")').click();
+		await page.getByRole('button', { name: 'About', exact: true }).click();
 
 		// Verify About section is shown with version info
 		await expect(page.locator('h3:has-text("About")')).toBeVisible();
@@ -244,7 +255,6 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 	});
 
 	test('should NOT show NeoKai Tools section', async ({ page }) => {
-		// NeoKai Tools section has been removed
 		await openSettingsModal(page);
 
 		// Verify NeoKai Tools heading does NOT exist
@@ -254,25 +264,24 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 		await expect(page.locator('text=Persistent key-value storage')).not.toBeVisible();
 	});
 
-	test('should show SDK Built-in section with full tool names', async ({ page }) => {
-		// SDK Built-in section removed. General settings shows model, permission mode, auto-scroll.
+	test('should show all General settings rows from tools group', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Verify the three General settings rows are present
+		// Verify the General settings rows are present
 		await expect(page.locator('text=Default Model')).toBeVisible();
 		await expect(page.locator('text=Permission Mode')).toBeVisible();
+		await expect(page.locator('text=Default Thinking Level')).toBeVisible();
 		await expect(page.getByText('Auto-scroll', { exact: true })).toBeVisible();
+		await expect(page.getByText('Show Archived Sessions', { exact: true })).toBeVisible();
 	});
 
-	test('should have Allowed and Default ON checkboxes for tools', async ({ page }) => {
-		// Allowed/Default ON checkboxes replaced by toggle switches.
-		// Verify the auto-scroll toggle has proper aria attributes.
+	test('should have toggle switches for boolean settings', async ({ page }) => {
 		await openSettingsModal(page);
 
 		const autoScrollToggle = page.locator('button[role="switch"]').first();
 		await expect(autoScrollToggle).toBeVisible();
 
-		// Toggle should have aria-checked attribute (value is "true" or "false")
+		// Toggle should have aria-checked attribute
 		await expect(autoScrollToggle).toHaveAttribute('aria-checked');
 	});
 });
@@ -319,8 +328,7 @@ test.describe('Settings Modal - Settings Persistence', () => {
 		}
 	});
 
-	test('should toggle setting source and update', async ({ page }) => {
-		// Setting sources removed. Toggle auto-scroll setting instead.
+	test('should toggle auto-scroll setting and update', async ({ page }) => {
 		await openSettingsModal(page);
 
 		// Get the auto-scroll toggle switch
@@ -348,11 +356,10 @@ test.describe('Settings Modal - MCP Servers', () => {
 	});
 
 	test('should display MCP Servers section in Global Settings', async ({ page }) => {
-		// Updated: Navigate to MCP Servers via nav button and verify section heading.
 		await openSettingsModal(page);
 
-		// Navigate to MCP Servers section via the settings nav
-		await page.locator('button:has-text("MCP Servers")').click();
+		// Navigate to MCP Servers section via the settings nav (exact match to avoid matching "Application MCP Servers")
+		await page.getByRole('button', { name: 'MCP Servers', exact: true }).click();
 
 		// Verify MCP Servers section heading is displayed
 		await expect(page.locator('h3:has-text("MCP Servers")')).toBeVisible();

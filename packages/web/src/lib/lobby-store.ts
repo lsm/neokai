@@ -124,9 +124,12 @@ class LobbyStore {
 			const { rooms } = await hub.request<{ rooms: Room[] }>('room.list', {});
 			this.rooms.value = rooms;
 
-			// Fetch global status
-			const { status } = await hub.request<{ status: GlobalStatus }>('neo.status', {});
-			this.globalStatus.value = status;
+			// TODO: Re-enable neo.status once performance is investigated
+			// hub.request<{ status: GlobalStatus }>('neo.status', {})
+			// 	.then(({ status }) => {
+			// 		this.globalStatus.value = status;
+			// 	})
+			// 	.catch(() => {});
 		} catch (err) {
 			logger.error('Failed to fetch rooms:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load';

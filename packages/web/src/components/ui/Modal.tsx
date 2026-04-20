@@ -108,7 +108,7 @@ export function Modal({
 	const modalContent = (
 		<div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn">
 			{/* Backdrop */}
-			<div class="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+			<div class="absolute inset-0 bg-black/70 backdrop-blur-sm cursor-pointer" onClick={onClose} />
 
 			{/* Modal */}
 			<div

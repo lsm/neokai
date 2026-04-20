@@ -6,7 +6,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, parseJson, parseJsonOptional } from '@neokai/shared';
 import type {
 	RoomGoal,
 	GoalStatus,
@@ -21,6 +21,7 @@ import type {
 } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import type { ReactiveDatabase } from '../reactive-database';
+import type { ShortIdAllocator } from '../../lib/short-id-allocator';
 
 export interface CreateGoalParams {
 	roomId: string;
@@ -78,7 +79,8 @@ export interface UpdateExecutionParams {
 export class GoalRepository {
 	constructor(
 		private db: BunDatabase,
-		private reactiveDb: ReactiveDatabase
+		private reactiveDb: ReactiveDatabase,
+		private shortIdAllocator?: ShortIdAllocator
 	) {}
 
 	/**
@@ -87,6 +89,7 @@ export class GoalRepository {
 	createGoal(params: CreateGoalParams): RoomGoal {
 		const id = generateUUID();
 		const now = Date.now();
+		const shortId = this.shortIdAllocator?.allocate('goal', params.roomId) ?? null;
 
 		const stmt = this.db.prepare(
 			`INSERT INTO goals (
@@ -94,9 +97,9 @@ export class GoalRepository {
 				metrics, created_at, updated_at,
 				mission_type, autonomy_level, schedule, schedule_paused, next_run_at,
 				structured_metrics, max_consecutive_failures, max_planning_attempts, consecutive_failures,
-				replan_count
+				replan_count, short_id
 			)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -120,26 +123,56 @@ export class GoalRepository {
 			params.maxConsecutiveFailures ?? 3,
 			params.maxPlanningAttempts ?? 0,
 			params.consecutiveFailures ?? 0,
-			params.replanCount ?? 0
+			params.replanCount ?? 0,
+			shortId
 		);
 
 		this.reactiveDb.notifyChange('goals');
-		return this.getGoal(id)!;
+		return this.getGoalDirect(id)!;
 	}
 
 	/**
-	 * Get a goal by ID
+	 * Get a goal by ID (raw, no backfill — used internally to avoid recursion)
 	 */
-	getGoal(id: string): RoomGoal | null {
+	private getGoalDirect(id: string): RoomGoal | null {
 		const stmt = this.db.prepare(`SELECT * FROM goals WHERE id = ?`);
 		const row = stmt.get(id) as Record<string, unknown> | undefined;
-
 		if (!row) return null;
 		return this.rowToGoal(row);
 	}
 
 	/**
-	 * List goals for a room
+	 * Get a goal by ID, with lazy short ID backfill for legacy rows.
+	 */
+	getGoal(id: string): RoomGoal | null {
+		const goal = this.getGoalDirect(id);
+		if (!goal) return null;
+		if (!goal.shortId && this.shortIdAllocator) {
+			const shortId = this.shortIdAllocator.allocate('goal', goal.roomId);
+			this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, id);
+			return { ...goal, shortId };
+		}
+		return goal;
+	}
+
+	/**
+	 * Get a goal by its short ID within a room.
+	 */
+	getGoalByShortId(roomId: string, shortId: string): RoomGoal | null {
+		const stmt = this.db.prepare(`SELECT * FROM goals WHERE room_id = ? AND short_id = ?`);
+		const row = stmt.get(roomId, shortId) as Record<string, unknown> | undefined;
+		if (!row) return null;
+		return this.rowToGoal(row);
+	}
+
+	/**
+	 * List goals for a room.
+	 * Lazy backfill: any row missing short_id gets one assigned inline.
+	 * Each allocation is a separate atomic counter increment; under SQLite's
+	 * single-writer model concurrent callers cannot observe the same counter
+	 * value — a second concurrent listGoals for the same room would block on
+	 * the write lock and read already-written short_id values when it proceeds.
+	 * Counter values are never reused; a skipped value is cosmetic only.
 	 */
 	listGoals(roomId: string, status?: GoalStatus): RoomGoal[] {
 		let query = `SELECT * FROM goals WHERE room_id = ?`;
@@ -154,7 +187,15 @@ export class GoalRepository {
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToGoal(r));
+		return rows.map((row) => {
+			const goal = this.rowToGoal(row);
+			if (!goal.shortId && this.shortIdAllocator) {
+				const shortId = this.shortIdAllocator.allocate('goal', roomId);
+				this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, goal.id);
+				return { ...goal, shortId };
+			}
+			return goal;
+		});
 	}
 
 	/**
@@ -332,14 +373,31 @@ export class GoalRepository {
 	}
 
 	/**
-	 * Get goals that have a specific task linked
+	 * Get goals that have a specific task linked.
+	 * Applies the same lazy short ID backfill as listGoals so callers always
+	 * receive goals with shortId populated.
+	 *
+	 * Uses SQLite's json_each() to properly query the linked_task_ids JSON array
+	 * instead of the fragile LIKE '%id%' pattern (which could match partial strings
+	 * and cannot use indexes).
 	 */
 	getGoalsForTask(taskId: string): RoomGoal[] {
-		const stmt = this.db.prepare(
-			`SELECT * FROM goals WHERE linked_task_ids LIKE ? ORDER BY created_at ASC`
-		);
-		const rows = stmt.all(`%"${taskId}"%`) as Record<string, unknown>[];
-		return rows.map((r) => this.rowToGoal(r));
+		const stmt = this.db.prepare(`
+			SELECT g.*
+			FROM goals g, json_each(g.linked_task_ids) AS task_id
+			WHERE task_id.value = ?
+			ORDER BY g.created_at ASC
+		`);
+		const rows = stmt.all(taskId) as Record<string, unknown>[];
+		return rows.map((row) => {
+			const goal = this.rowToGoal(row);
+			if (!goal.shortId && this.shortIdAllocator) {
+				const shortId = this.shortIdAllocator.allocate('goal', goal.roomId);
+				this.db.prepare(`UPDATE goals SET short_id = ? WHERE id = ?`).run(shortId, goal.id);
+				return { ...goal, shortId };
+			}
+			return goal;
+		});
 	}
 
 	/**
@@ -597,13 +655,14 @@ export class GoalRepository {
 		return {
 			id: row.id as string,
 			roomId: row.room_id as string,
+			shortId: (row.short_id as string | null) ?? undefined,
 			title: row.title as string,
 			description: row.description as string,
 			status: row.status as GoalStatus,
 			priority: row.priority as GoalPriority,
 			progress: row.progress as number,
-			linkedTaskIds: JSON.parse(row.linked_task_ids as string) as string[],
-			metrics: JSON.parse(row.metrics as string) as Record<string, number>,
+			linkedTaskIds: parseJson<string[]>((row.linked_task_ids as string | null) ?? '[]', []),
+			metrics: parseJson<Record<string, number>>((row.metrics as string | null) ?? '{}', {}),
 			planning_attempts: (row.planning_attempts as number | null) ?? 0,
 			goal_review_attempts: (row.goal_review_attempts as number | null) ?? 0,
 			createdAt: row.created_at as number,
@@ -612,12 +671,10 @@ export class GoalRepository {
 			// Mission V2 fields
 			missionType: (row.mission_type as MissionType | null) ?? 'one_shot',
 			autonomyLevel: (row.autonomy_level as AutonomyLevel | null) ?? 'supervised',
-			structuredMetrics:
-				row.structured_metrics != null
-					? (JSON.parse(row.structured_metrics as string) as MissionMetric[])
-					: undefined,
-			schedule:
-				row.schedule != null ? (JSON.parse(row.schedule as string) as CronSchedule) : undefined,
+			structuredMetrics: parseJsonOptional<MissionMetric[]>(
+				row.structured_metrics as string | null
+			),
+			schedule: parseJsonOptional<CronSchedule>(row.schedule as string | null),
 			schedulePaused: row.schedule_paused === 1,
 			nextRunAt: (row.next_run_at as number | null) ?? undefined,
 			maxConsecutiveFailures: (row.max_consecutive_failures as number | null) ?? 3,
@@ -651,7 +708,7 @@ export class GoalRepository {
  * Priority order:
  * 1. goal.maxPlanningAttempts (per-goal override, stored in DB)
  * 2. roomConfig.maxPlanningRetries + 1 (room-level config, legacy key)
- * 3. Default: 1 (no retries)
+ * 3. Default: 2 (1 retry after first failure)
  */
 export function getEffectiveMaxPlanningAttempts(
 	goal: RoomGoal,
@@ -675,6 +732,9 @@ export function getEffectiveMaxPlanningAttempts(
 		}
 	}
 
-	// Global default: 1 total attempt (no retries)
-	return 1;
+	// Global default: 2 total attempts (1 retry after first failure).
+	// Planning is the most failure-prone phase (large context, multiple API calls,
+	// sub-agent spawning) so a single transient error should not permanently escalate
+	// the goal to needs_human.
+	return 2;
 }

@@ -34,7 +34,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -147,7 +147,7 @@ jobs:
             smoke: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -157,8 +157,9 @@ jobs:
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
+          sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
+          sudo apt-get install -y bubblewrap socat ripgrep
 
       - name: Install dependencies
         run: bun install
@@ -179,7 +180,7 @@ jobs:
           GLM_API_KEY: smoke-test
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.binary }}
           path: dist/bin/${{ matrix.binary }}
@@ -196,7 +197,7 @@ jobs:
     needs: [wait-for-ci, release-build]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -207,7 +208,7 @@ jobs:
         run: bun install
 
       - name: Download release binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: kai-*
           path: dist/bin/
@@ -227,7 +228,7 @@ jobs:
         run: bun run scripts/package-npm.ts --version ${{ needs.wait-for-ci.outputs.version }}
 
       - name: Upload npm packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-packages
           path: dist/npm/
@@ -248,13 +249,13 @@ jobs:
 
     steps:
       - name: Download npm packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: npm-packages
           path: dist/npm/
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -315,7 +316,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

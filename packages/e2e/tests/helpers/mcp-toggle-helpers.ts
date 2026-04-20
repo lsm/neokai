@@ -6,7 +6,7 @@
  */
 
 import type { Page } from '@playwright/test';
-import { readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 
 // Workspace path where settings.local.json is written
@@ -29,6 +29,11 @@ export async function openToolsModal(page: Page): Promise<void> {
 
 	// Wait for modal to appear
 	await page.locator('h2:has-text("Tools")').waitFor({ state: 'visible', timeout: 5000 });
+
+	// Wait for async MCP server loading to complete. While mcpLoading === true, the
+	// component renders "Loading servers..." instead of the GroupHeader button, so any
+	// helper that anchors on "Project MCP Servers" button would silently find nothing.
+	await page.locator('text=Loading servers...').waitFor({ state: 'hidden', timeout: 10000 });
 }
 
 /**
@@ -61,26 +66,49 @@ export async function saveToolsModal(page: Page): Promise<void> {
 }
 
 /**
- * Get the list of MCP server names displayed in the modal
+ * Locator for the expanded content area of the "Project MCP Servers" group.
+ * GroupHeader renders: outer-div > GroupHeader-div > button
+ * Content area is a sibling of GroupHeader-div inside the outer-div.
+ * Uses XPath to navigate up two levels from the button then find the ml-5 content div.
+ *
+ * Note: fileMcpGroupOpen initializes to true in ToolsModal.tsx, so the content div is
+ * always present in the DOM immediately after the modal opens.
+ */
+function getProjectMcpContent(page: Page) {
+	return page
+		.locator('button:has-text("Project MCP Servers")')
+		.locator('xpath=../../div[contains(@class,"ml-5")]');
+}
+
+/**
+ * Locator for individual server labels inside the Project MCP Servers content.
+ * Each server label contains a `div.text-sm` for the server name (ToolsModal.tsx renders
+ * `<div class="text-sm text-gray-200 truncate">{server.name}</div>`). Source-group toggle
+ * labels (for user/project/local sections) only contain a checkbox — no div.text-sm — so
+ * `label:has(div.text-sm)` is a structurally stable discriminator.
+ */
+function getServerLabels(page: Page) {
+	return getProjectMcpContent(page).locator('label:has(div.text-sm)');
+}
+
+/**
+ * Get the list of MCP server names displayed in the Project MCP Servers section.
+ * Returns bare server names as stored in settings (e.g. "my-server"), not truncated
+ * or split, because ToolsModal renders server.name directly in a dedicated div.text-sm.
  */
 export async function getMcpServerNames(page: Page): Promise<string[]> {
-	// MCP servers section contains server labels with checkbox inputs
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const serverNames: string[] = [];
-
-	// Get all labels that contain server checkboxes
-	const labels = mcpSection.locator('label:has(input[type="checkbox"])');
+	const labels = getServerLabels(page);
 	const count = await labels.count();
+	const serverNames: string[] = [];
 
 	for (let i = 0; i < count; i++) {
 		const label = labels.nth(i);
-		// Server name is usually in a span or div with text
-		const nameElement = label.locator('span, div').first();
+		// Server name is in `div.text-sm` (class="text-sm text-gray-200 truncate")
+		// which renders server.name directly — no extra words to strip.
+		const nameElement = label.locator('div.text-sm').first();
 		const name = await nameElement.textContent();
 		if (name) {
-			// Extract just the server name (remove "bunx" suffix if present)
-			const serverName = name.trim().split(/\s+/)[0];
-			serverNames.push(serverName);
+			serverNames.push(name.trim());
 		}
 	}
 
@@ -91,9 +119,7 @@ export async function getMcpServerNames(page: Page): Promise<string[]> {
  * Check if a specific MCP server is enabled (checkbox checked)
  */
 export async function isMcpServerEnabled(page: Page, serverName: string): Promise<boolean> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	// Find checkbox by looking for label containing server name
-	const labels = mcpSection.locator('label');
+	const labels = getServerLabels(page);
 	const count = await labels.count();
 
 	for (let i = 0; i < count; i++) {
@@ -112,8 +138,7 @@ export async function isMcpServerEnabled(page: Page, serverName: string): Promis
  * Toggle a specific MCP server by clicking its checkbox
  */
 export async function toggleMcpServer(page: Page, serverName: string): Promise<void> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const labels = mcpSection.locator('label');
+	const labels = getServerLabels(page);
 	const count = await labels.count();
 
 	for (let i = 0; i < count; i++) {
@@ -130,11 +155,10 @@ export async function toggleMcpServer(page: Page, serverName: string): Promise<v
 }
 
 /**
- * Enable all MCP servers
+ * Enable all MCP servers in the Project MCP Servers section
  */
 export async function enableAllMcpServers(page: Page): Promise<void> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const checkboxes = mcpSection.locator('input[type="checkbox"]');
+	const checkboxes = getServerLabels(page).locator('input[type="checkbox"]');
 
 	const count = await checkboxes.count();
 	for (let i = 0; i < count; i++) {
@@ -147,11 +171,10 @@ export async function enableAllMcpServers(page: Page): Promise<void> {
 }
 
 /**
- * Disable all MCP servers
+ * Disable all MCP servers in the Project MCP Servers section
  */
 export async function disableAllMcpServers(page: Page): Promise<void> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const checkboxes = mcpSection.locator('input[type="checkbox"]');
+	const checkboxes = getServerLabels(page).locator('input[type="checkbox"]');
 
 	const count = await checkboxes.count();
 	for (let i = 0; i < count; i++) {
@@ -164,11 +187,10 @@ export async function disableAllMcpServers(page: Page): Promise<void> {
 }
 
 /**
- * Get the count of enabled MCP servers
+ * Get the count of enabled MCP servers in the Project MCP Servers section
  */
 export async function getEnabledMcpServerCount(page: Page): Promise<number> {
-	const mcpSection = page.locator('h3:has-text("MCP Servers")').locator('..').first();
-	const checkboxes = mcpSection.locator('input[type="checkbox"]');
+	const checkboxes = getServerLabels(page).locator('input[type="checkbox"]');
 
 	const count = await checkboxes.count();
 	let enabledCount = 0;
@@ -220,6 +242,31 @@ export function ensureClaudeDir(): void {
 	const claudeDir = join(WORKSPACE_PATH, '.claude');
 	if (!existsSync(claudeDir)) {
 		mkdirSync(claudeDir, { recursive: true });
+	}
+}
+
+// Path to the project-level .mcp.json file in the test workspace
+export const PROJECT_MCP_JSON_PATH = join(WORKSPACE_PATH, '.mcp.json');
+
+/**
+ * Write a .mcp.json file in the test workspace with the given server configs.
+ * Used to set up project-level MCP servers for testing the disable toggle.
+ */
+export function writeProjectMcpJson(servers: Record<string, unknown>): void {
+	mkdirSync(WORKSPACE_PATH, { recursive: true });
+	writeFileSync(PROJECT_MCP_JSON_PATH, JSON.stringify({ mcpServers: servers }, null, 2));
+}
+
+/**
+ * Remove the .mcp.json file from the test workspace.
+ */
+export function cleanupProjectMcpJson(): void {
+	try {
+		if (existsSync(PROJECT_MCP_JSON_PATH)) {
+			rmSync(PROJECT_MCP_JSON_PATH);
+		}
+	} catch {
+		// Ignore errors
 	}
 }
 

@@ -1,4 +1,5 @@
 import type { Server } from 'bun';
+import { homedir } from 'os';
 import type { Config } from './config';
 import type { WebSocketData } from './types/websocket';
 import { Database } from './storage/database';
@@ -20,10 +21,16 @@ import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
 import { SpaceManager } from './lib/space/managers/space-manager';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
+import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
 import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
-import { JOB_QUEUE_CLEANUP } from './lib/job-queue-constants';
+import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
+import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE } from './lib/job-queue-constants';
+import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
+import { FileIndex } from './lib/file-index';
+import { SkillsManager } from './lib/skills-manager';
+import { NeoAgentManager } from './lib/neo/neo-agent-manager';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -67,10 +74,20 @@ export interface DaemonAppContext {
 	spaceRuntimeService: SpaceRuntimeService;
 	/** Task Agent Manager — manages Task Agent session lifecycle for space tasks */
 	taskAgentManager: TaskAgentManager;
+	/** Space Worktree Manager — one git worktree per task, shared by all node agents */
+	spaceWorktreeManager: SpaceWorktreeManager;
 	/** Persistent job queue repository */
 	jobQueue: JobQueueRepository;
 	/** Persistent job queue processor */
 	jobProcessor: JobQueueProcessor;
+	/** Application-level MCP lifecycle manager — converts registry entries to SDK configs */
+	appMcpManager: AppMcpLifecycleManager;
+	/** Application-level Skills manager — registry CRUD and validation */
+	skillsManager: SkillsManager;
+	/** Neo agent manager — singleton global AI assistant */
+	neoAgentManager: NeoAgentManager;
+	/** Workspace file index for fast fuzzy file/folder search */
+	fileIndex: FileIndex;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -149,8 +166,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const authManager = new AuthManager(db, config);
 	await authManager.initialize();
 
-	// Initialize settings manager
-	const settingsManager = new SettingsManager(db, config.workspaceRoot);
+	// Initialize settings manager.
+	// When NEOKAI_WORKSPACE_PATH is set (e.g., in tests via createDaemonServer), use
+	// that directory so each test instance writes file-only settings to its own temp
+	// workspace, preventing state leakage across tests.
+	// Otherwise fall back to homedir() so global MCP config (~/.claude/.mcp.json) is
+	// discovered. Room-scoped sessions use their own defaultPath for project-level
+	// MCP resolution and are not affected by this global instance.
+	const settingsManager = new SettingsManager(db, process.env.NEOKAI_WORKSPACE_PATH ?? homedir());
 
 	// Check authentication status
 	const authStatus = await authManager.getAuthStatus();
@@ -194,6 +217,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const eventBus = createDaemonHub('daemon');
 	await eventBus.initialize();
 
+	// Initialize application-level MCP and Skills managers before SessionManager
+	// so AgentSession can inject skills into SDK query options.
+	const appMcpManager = new AppMcpLifecycleManager(db);
+	seedDefaultMcpEntries(db);
+	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
+	skillsManager.initializeBuiltins();
+
 	// Initialize session manager (with EventBus, SettingsManager, no StateManager dependency!)
 	// Use reactiveDb.db so sdk_messages writes emitted by AgentSession pipelines
 	// trigger LiveQuery invalidation immediately.
@@ -207,14 +237,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			defaultModel: config.defaultModel,
 			maxTokens: config.maxTokens,
 			temperature: config.temperature,
-			workspaceRoot: config.workspaceRoot,
 		},
 		jobQueue,
-		jobProcessor
+		jobProcessor,
+		skillsManager,
+		db.appMcpServers
 	);
 
 	// Register session title generation handler before jobProcessor starts
 	sessionManager.start();
+
+	// Initialize Neo agent manager (singleton global AI assistant).
+	// Instantiated after sessionManager so it can be passed as the NeoSessionManager.
+	const neoAgentManager = new NeoAgentManager(sessionManager, settingsManager);
 
 	// Initialize State Manager (listens to EventBus, clean dependency graph!)
 	const stateManager = new StateManager(
@@ -260,11 +295,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		logInfo('[Daemon] GitHub integration disabled - authentication required');
 	}
 
+	// Initialize workspace file index (non-blocking — init runs in the background)
+	const fileIndex = new FileIndex(config.workspaceRoot);
+	void fileIndex.init();
+
 	// Setup RPC handlers (returns cleanup function + exposed services)
 	const {
 		cleanup: rpcHandlerCleanup,
 		spaceRuntimeService,
 		taskAgentManager,
+		spaceWorktreeManager,
 	} = setupRPCHandlers({
 		messageHub,
 		sessionManager,
@@ -280,6 +320,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		jobProcessor,
 		reactiveDb,
 		liveQueries,
+		appMcpManager,
+		skillsManager,
+		neoAgentManager,
 	});
 
 	// Create WebSocket handlers
@@ -398,6 +441,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 	// Register job handlers BEFORE starting the processor so no pending job
 	// from a previous run is dequeued without a handler available.
+	jobProcessor.register(
+		SKILL_VALIDATE,
+		createSkillValidateHandler(skillsManager, db.appMcpServers)
+	);
 	jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
 
 	// Enqueue the initial cleanup job if none is already pending.
@@ -415,6 +462,57 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	jobProcessor.start();
 	logInfo('[Daemon] Job queue processor started');
 
+	// Provision the Neo agent session (skip in test mode unless explicitly enabled).
+	// Mirrors the spaces agent guard: test runs are clean by default; online/e2e
+	// tests that need Neo set NEOKAI_ENABLE_NEO_AGENT=1.
+	if (process.env.NODE_ENV !== 'test' || process.env.NEOKAI_ENABLE_NEO_AGENT === '1') {
+		try {
+			await neoAgentManager.provision();
+			logInfo('[Daemon] Neo agent provisioned');
+		} catch (err) {
+			// Non-fatal: daemon continues without Neo. The Neo session will be null
+			// and the frontend will receive no responses from neo.* RPC calls.
+			// TODO(neo): publish a status channel event so the frontend can surface
+			// a "Neo unavailable" indicator when provisioning fails.
+			logError('[Daemon] Neo agent provisioning failed (non-fatal):', err);
+		}
+	}
+
+	// On startup: clean up orphaned worktrees (directories missing from disk) and run the TTL reaper.
+	// Both are non-blocking — errors are logged but never propagate to block server start.
+	let reaperTimer: ReturnType<typeof setInterval> | null = null;
+	if (process.env.NODE_ENV !== 'test') {
+		const worktreeStartupCleanup = async () => {
+			try {
+				const spaces = await spaceManager.listSpaces(false);
+				for (const space of spaces) {
+					await spaceWorktreeManager.cleanupOrphaned(space.id);
+				}
+				logInfo('[Daemon] Worktree orphan cleanup complete');
+			} catch (err) {
+				logError('[Daemon] Worktree orphan cleanup failed:', err);
+			}
+
+			try {
+				await spaceWorktreeManager.reapExpiredWorktrees();
+				logInfo('[Daemon] Worktree TTL reaper complete');
+			} catch (err) {
+				logError('[Daemon] Worktree TTL reaper failed:', err);
+			}
+		};
+		void worktreeStartupCleanup();
+
+		// Run TTL reaper periodically (every hour) for long-running daemon processes.
+		const WORKTREE_REAPER_INTERVAL_MS = 60 * 60 * 1000;
+		reaperTimer = setInterval(() => {
+			spaceWorktreeManager.reapExpiredWorktrees().catch((err) => {
+				logError('[Daemon] Periodic worktree TTL reaper failed:', err);
+			});
+		}, WORKTREE_REAPER_INTERVAL_MS);
+		// Allow the process to exit even if this timer is still pending.
+		reaperTimer.unref();
+	}
+
 	// Cleanup function for graceful shutdown
 	let isCleanedUp = false;
 	const cleanup = async () => {
@@ -422,6 +520,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			return;
 		}
 		isCleanedUp = true;
+
+		// Stop the hourly worktree TTL reaper before shutting down other resources.
+		if (reaperTimer !== null) {
+			clearInterval(reaperTimer);
+			reaperTimer = null;
+		}
 
 		try {
 			try {
@@ -473,7 +577,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
 			// Cleanup RPC handlers (disposes live query subscriptions) before
 			// tearing down the engine so handles are disposed against a live engine.
-			rpcHandlerCleanup();
+			await rpcHandlerCleanup();
 
 			// Dispose live query engine after all subscriptions are cleared
 			liveQueries.dispose();
@@ -488,6 +592,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Task Agent sessions are interrupted cleanly before the session pool drains.
 			await taskAgentManager.cleanupAll();
 
+			// Shut down the Neo agent session before the session pool drains.
+			await neoAgentManager.cleanup();
+			logInfo('[Daemon] Neo agent stopped');
+
 			// Stop all agent sessions first — this closes any open SSE connections
 			// that are held by providers (e.g. AnthropicToCopilotBridgeProvider's embedded
 			// HTTP server). Provider shutdown must follow so server.close() is not
@@ -501,6 +609,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			await Promise.allSettled(
 				providerRegistry.getAll().flatMap((p) => (p.shutdown ? [p.shutdown()] : []))
 			);
+
+			// Stop workspace file index polling
+			fileIndex.dispose();
 
 			// Close database
 			db.close();
@@ -529,8 +640,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		spaceManager,
 		spaceRuntimeService,
 		taskAgentManager,
+		spaceWorktreeManager,
 		jobQueue,
 		jobProcessor,
+		appMcpManager,
+		skillsManager,
+		neoAgentManager,
+		fileIndex,
 		cleanup,
 	};
 }

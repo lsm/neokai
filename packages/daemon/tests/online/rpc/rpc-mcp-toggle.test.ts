@@ -55,7 +55,6 @@ describe('MCP Toggle', () => {
 				tools: {
 					useClaudeCodePreset: true,
 					disabledMcpServers: [],
-					kaiTools: { memory: false },
 				},
 			})) as { success: boolean };
 
@@ -73,7 +72,6 @@ describe('MCP Toggle', () => {
 				tools: {
 					useClaudeCodePreset: true,
 					disabledMcpServers: ['chrome-devtools', 'filesystem'],
-					kaiTools: { memory: false },
 				},
 			})) as { success: boolean };
 
@@ -209,7 +207,6 @@ describe('MCP Toggle', () => {
 				tools: {
 					useClaudeCodePreset: true,
 					disabledMcpServers: [],
-					kaiTools: { memory: true },
 				},
 			});
 
@@ -218,14 +215,12 @@ describe('MCP Toggle', () => {
 				tools: {
 					useClaudeCodePreset: true,
 					disabledMcpServers: ['chrome-devtools'],
-					kaiTools: { memory: true },
 				},
 			});
 
 			const config = await getSessionConfig(sessionId);
 			expect(config.tools?.useClaudeCodePreset).toBe(true);
 			expect(config.tools?.disabledMcpServers).toEqual(['chrome-devtools']);
-			expect(config.tools?.kaiTools?.memory).toBe(true);
 		});
 	});
 });

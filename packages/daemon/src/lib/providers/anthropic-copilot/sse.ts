@@ -88,10 +88,17 @@ export class AnthropicStreamWriter {
 		// Heuristic estimate: ceil(outputTextLength / 4).
 		// NOT actual model-reported values — the Copilot SDK does not expose
 		// per-request token counts.  Approximation for UI display purposes only.
+		// All four usage fields are required — the Claude Agent SDK expects a
+		// complete NonNullableUsage shape; omitting any field causes a crash.
 		sendEvent(res, 'message_delta', {
 			type: 'message_delta',
 			delta: { stop_reason: stopReason, stop_sequence: null },
-			usage: { output_tokens: estimateTokens(this.outputCharCount) },
+			usage: {
+				output_tokens: estimateTokens(this.outputCharCount),
+				input_tokens: 0,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+			},
 		});
 		sendEvent(res, 'message_stop', { type: 'message_stop' });
 	}
@@ -113,10 +120,18 @@ export class AnthropicStreamWriter {
 				content: [],
 				model,
 				stop_reason: null,
+				stop_sequence: null,
 				// Heuristic estimate: ceil(inputTextLength / 4).
 				// NOT actual model-reported values — the Copilot SDK does not expose
 				// per-request token counts.  Approximation for UI display purposes only.
-				usage: { input_tokens: inputTokens, output_tokens: 0 },
+				// All four usage fields are required — the Claude Agent SDK expects a
+				// complete NonNullableUsage shape; omitting any field causes a crash.
+				usage: {
+					input_tokens: inputTokens,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
 			},
 		});
 	}

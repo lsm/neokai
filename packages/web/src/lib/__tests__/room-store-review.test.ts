@@ -38,7 +38,7 @@ function makeMockHub() {
 		onConnection: vi.fn(() => () => {}),
 		request: vi.fn(async (method: string) => {
 			if (method === 'room.get') {
-				return { room: { id: ROOM_ID }, sessions: [], allTasks: [] };
+				return { room: { id: ROOM_ID }, sessions: [] };
 			}
 			if (method === 'room.runtime.state') throw new Error('no runtime');
 			return { ok: true };
@@ -106,7 +106,7 @@ describe('RoomStore — review toast notification (via liveQuery.delta)', () => 
 		// populates tasks — the task is not yet in local state.
 		await roomStore.select(ROOM_ID);
 		await roomStore.subscribeRoom(ROOM_ID);
-		roomStore.tasks.value = [];
+		roomStore.taskStore.applySnapshot([]);
 
 		// Delta with an 'updated' task that is not in current state
 		fireEvent('liveQuery.delta', {
@@ -255,7 +255,7 @@ describe('RoomStore — reviewTaskCount computed signal', () => {
 	it('returns 0 when no tasks are in review', async () => {
 		await roomStore.select(ROOM_ID);
 
-		roomStore.tasks.value = [makeTask('t1', 'pending'), makeTask('t2', 'in_progress')];
+		roomStore.taskStore.applySnapshot([makeTask('t1', 'pending'), makeTask('t2', 'in_progress')]);
 
 		expect(roomStore.reviewTaskCount.value).toBe(0);
 	});
@@ -263,11 +263,11 @@ describe('RoomStore — reviewTaskCount computed signal', () => {
 	it('counts tasks in review status', async () => {
 		await roomStore.select(ROOM_ID);
 
-		roomStore.tasks.value = [
+		roomStore.taskStore.applySnapshot([
 			makeTask('t1', 'review'),
 			makeTask('t2', 'in_progress'),
 			makeTask('t3', 'review'),
-		];
+		]);
 
 		expect(roomStore.reviewTaskCount.value).toBe(2);
 	});
@@ -275,10 +275,10 @@ describe('RoomStore — reviewTaskCount computed signal', () => {
 	it('updates reactively when tasks change', async () => {
 		await roomStore.select(ROOM_ID);
 
-		roomStore.tasks.value = [makeTask('t1', 'pending')];
+		roomStore.taskStore.applySnapshot([makeTask('t1', 'pending')]);
 		expect(roomStore.reviewTaskCount.value).toBe(0);
 
-		roomStore.tasks.value = [makeTask('t1', 'review')];
+		roomStore.taskStore.applySnapshot([makeTask('t1', 'review')]);
 		expect(roomStore.reviewTaskCount.value).toBe(1);
 	});
 });

@@ -248,6 +248,7 @@ export async function waitForGroupState(
 export async function createRoom(daemon: DaemonServerContext, name: string): Promise<string> {
 	const result = (await daemon.messageHub.request('room.create', {
 		name: `${name} ${Date.now()}`,
+		defaultPath: daemon.workspacePath ?? process.env.NEOKAI_WORKSPACE_PATH,
 	})) as { room: { id: string } };
 	return result.room.id;
 }

@@ -26,6 +26,17 @@ vi.mock('../../lib/connection-manager', () => ({
 	},
 }));
 
+// Mock connectionState signal — default to 'connected' so loadModelInfo runs
+const { mockConnectionState } = vi.hoisted(() => {
+	// vi.hoisted runs before imports, so we inline a minimal signal-like object
+	const obj = { value: 'connected' };
+	return { mockConnectionState: obj };
+});
+
+vi.mock('../../lib/state', () => ({
+	connectionState: mockConnectionState,
+}));
+
 // Mock toast
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
@@ -42,6 +53,7 @@ vi.mock('../../lib/toast', () => ({
 describe('useModelSwitcher', () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
+		mockConnectionState.value = 'connected';
 		mockGetHubIfConnected.mockReturnValue({
 			request: vi.fn().mockResolvedValue({ acknowledged: true }),
 			onEvent: vi.fn().mockReturnValue(() => {}),

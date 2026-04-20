@@ -11,7 +11,7 @@
  * - EventBus subscriptions for async message processing
  */
 
-import type { Session, MessageHub, MessageDeliveryMode } from '@neokai/shared';
+import type { Session, MessageHub, MessageDeliveryMode, MessageOrigin } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
@@ -20,6 +20,8 @@ import type { AuthManager } from '../auth-manager';
 import type { SettingsManager } from '../settings-manager';
 import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
+import type { SkillsManager } from '../skills-manager';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import { SESSION_TITLE_GENERATION } from '../job-queue-constants';
@@ -34,6 +36,7 @@ import {
 } from './session-lifecycle';
 import { ToolsConfigManager } from './tools-config';
 import { MessagePersistence } from './message-persistence';
+import { ReferenceResolver } from './reference-resolver';
 
 /**
  * Cleanup state machine for SessionManager
@@ -74,7 +77,9 @@ export class SessionManager {
 		private eventBus: DaemonHub,
 		private config: SessionLifecycleConfig,
 		private jobQueue: JobQueueRepository,
-		private jobProcessor: JobQueueProcessor
+		private jobProcessor: JobQueueProcessor,
+		private skillsManager?: SkillsManager,
+		private appMcpServerRepo?: AppMcpServerRepository
 	) {
 		this.logger = new Logger('SessionManager');
 		this.worktreeManager = new WorktreeManager();
@@ -84,8 +89,14 @@ export class SessionManager {
 
 		// Factory function for creating AgentSession instances
 		const createAgentSession = (session: Session): AgentSession => {
-			return new AgentSession(session, db, messageHub, eventBus, () =>
-				this.authManager.getCurrentApiKey()
+			return new AgentSession(
+				session,
+				db,
+				messageHub,
+				eventBus,
+				() => this.authManager.getCurrentApiKey(),
+				this.skillsManager,
+				this.appMcpServerRepo
 			);
 		};
 
@@ -106,8 +117,18 @@ export class SessionManager {
 			createAgentSession
 		);
 
-		// Initialize message persistence
-		this.messagePersistence = new MessagePersistence(this.sessionCache, db, messageHub, eventBus);
+		// Initialize message persistence with @ reference resolver
+		const referenceResolver = new ReferenceResolver({
+			taskRepo: db.getTaskRepo(),
+			goalRepo: db.getGoalRepo(),
+		});
+		this.messagePersistence = new MessagePersistence(
+			this.sessionCache,
+			db,
+			messageHub,
+			eventBus,
+			referenceResolver
+		);
 
 		// Setup EventBus subscribers for async message processing
 		this.setupEventSubscriptions();
@@ -248,6 +269,23 @@ export class SessionManager {
 	}
 
 	/**
+	 * Remove an AgentSession from the session cache.
+	 *
+	 * Called when a session ends (e.g. room task completion) so that subsequent
+	 * getSessionAsync() calls fall through to DB loading rather than returning
+	 * a stale, already-cleaned-up instance.
+	 *
+	 * Also clears any in-flight load lock via SessionCache.remove(), preventing
+	 * a concurrent getAsync() from re-inserting the stale session after removal.
+	 *
+	 * Currently called by TaskAgentManager when a task agent session is torn down.
+	 * Space runtime callers will be added as that subsystem is wired up.
+	 */
+	unregisterSession(sessionId: string): void {
+		this.sessionCache.remove(sessionId);
+	}
+
+	/**
 	 * Inject a message into a session bypassing the RPC/UI message flow.
 	 *
 	 * Used for internal daemon-to-session communication (e.g. SpaceRuntime → global agent).
@@ -257,13 +295,14 @@ export class SessionManager {
 	async injectMessage(
 		sessionId: string,
 		message: string,
-		opts?: { deliveryMode?: MessageDeliveryMode }
+		opts?: { deliveryMode?: MessageDeliveryMode; origin?: MessageOrigin }
 	): Promise<void> {
 		await this.messagePersistence.persist({
 			sessionId,
 			messageId: generateUUID(),
 			content: message,
 			deliveryMode: opts?.deliveryMode,
+			origin: opts?.origin,
 		});
 	}
 
@@ -391,12 +430,12 @@ export class SessionManager {
 	}
 
 	/**
-	 * Manually cleanup orphaned worktrees in a workspace
-	 * Returns array of cleaned up worktree paths
+	 * Manually cleanup orphaned worktrees in a workspace.
+	 * Callers must supply an explicit path — no global fallback here.
+	 * Returns array of cleaned up worktree paths.
 	 */
-	async cleanupOrphanedWorktrees(workspacePath?: string): Promise<string[]> {
-		const path = workspacePath || this.config.workspaceRoot;
-		return await this.worktreeManager.cleanupOrphanedWorktrees(path);
+	async cleanupOrphanedWorktrees(workspacePath: string): Promise<string[]> {
+		return await this.worktreeManager.cleanupOrphanedWorktrees(workspacePath);
 	}
 
 	/**

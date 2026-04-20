@@ -54,12 +54,16 @@
 			"!package-lock.json",
 			"!*.tsbuildinfo",
 			"!playwright-report",
+			"!**/playwright-report",
 			"!test-results",
+			"!**/test-results",
 			"!coverage",
 			"!**/coverage",
 			"!**/settings.local.json",
 			"!packages/shared/src/sdk",
-			"!.claude"
+			"!.claude",
+			"!.worktrees",
+			"!**/.worktrees"
 		]
 	}
 }

@@ -11,20 +11,7 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom } from '../helpers/room-helpers';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', {
-			name: 'E2E Navigation Test Room',
-		});
-		return (res as { room: { id: string } }).room.id;
-	});
-}
+import { createRoom, deleteRoom } from '../helpers/room-helpers';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +25,7 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		roomId = await createRoom(page);
+		roomId = await createRoom(page, 'E2E Navigation Test Room');
 
 		// Create a task for the Task URL test (infrastructure — not a UI action)
 		orphanTaskId = await page.evaluate(async (rId) => {
@@ -68,7 +55,10 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}$`));
 
 		// Verify dashboard view is shown (room tab bar visible)
-		await expect(page.locator('button:has-text("Overview")')).toBeVisible({ timeout: 10000 });
+		// Use more semantic selector for robustness
+		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Reload page
 		await page.reload();
@@ -78,22 +68,24 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}$`));
 
 		// Verify dashboard view is still shown
-		await expect(page.locator('button:has-text("Overview")')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('button', { name: 'Overview' }).first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
-	test('Room Agent URL is /room/:id/agent and survives page refresh', async ({ page }) => {
+	test('Coordinator URL is /room/:id/agent and survives page refresh', async ({ page }) => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
-		// Click "Room Agent" in sidebar
-		const roomAgentButton = page.locator('button', { hasText: 'Room Agent' });
-		await expect(roomAgentButton).toBeVisible({ timeout: 10000 });
-		await roomAgentButton.click();
+		// Click "Coordinator" in sidebar via data-testid (scoped, DOM-order-independent)
+		const coordinatorButton = page.getByTestId('sidebar-coordinator-button');
+		await expect(coordinatorButton).toBeVisible({ timeout: 10000 });
+		await coordinatorButton.click();
 
 		// Verify URL changed to /room/:id/agent
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`), { timeout: 5000 });
 
-		// Verify Room Agent chat view is shown (ChatContainer renders a textarea)
+		// Verify Coordinator chat view is shown (ChatContainer renders a textarea)
 		await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 });
 
 		// Reload page
@@ -103,7 +95,7 @@ test.describe('Room Sidebar Navigation: URL persistence', () => {
 		// Verify URL is preserved after reload
 		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/agent$`));
 
-		// Verify Room Agent chat view is still shown
+		// Verify Coordinator chat view is still shown
 		await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 });
 	});
 

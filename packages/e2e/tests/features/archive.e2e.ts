@@ -180,19 +180,17 @@ test.describe('Session Archive - Archived Session Behavior', () => {
 		await openSessionOptionsMenu(page);
 		await clickArchiveSession(page);
 
-		// Wait for archive to complete
-		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
-
-		// The message input should be replaced with an archived label
-		// Check that textarea is not visible or is disabled
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
-		const isTextareaHidden = (await textarea.count()) === 0 || !(await textarea.isVisible());
-
-		// Should show archived indicator instead of input
+		// Wait for the archived state to propagate using a proper retry assertion.
+		// After archiving, the UI either shows "Session archived" text or removes the
+		// message textarea. Use toPass() to poll until one condition becomes true.
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		const archivedIndicator = page.locator('text=Session archived');
-		const hasArchivedLabel = (await archivedIndicator.count()) > 0;
 
-		expect(isTextareaHidden || hasArchivedLabel).toBeTruthy();
+		await expect(async () => {
+			const isTextareaHidden = (await textarea.count()) === 0 || !(await textarea.isVisible());
+			const hasArchivedLabel = (await archivedIndicator.count()) > 0;
+			expect(isTextareaHidden || hasArchivedLabel).toBeTruthy();
+		}).toPass({ timeout: 5000 });
 	});
 
 	test('should show archived indicator with icon', async ({ page }) => {
@@ -240,7 +238,7 @@ test.describe('Session Archive - Edge Cases', () => {
 		sessionId = await createSessionViaUI(page);
 
 		// Send a message
-		const textarea = page.locator('textarea[placeholder*="Ask"]');
+		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await textarea.fill('Unique test message 12345');
 		await page.keyboard.press('Meta+Enter');
 

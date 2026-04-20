@@ -4,8 +4,8 @@
  * Tests that tasks linked to a goal show the goal name badge:
  * - Goal badge appears in task list (RoomDashboard) when task is linked to a goal
  * - Goal badge appears in TaskView header when task is linked to a goal
- * - Clicking goal badge in task list switches to Missions tab
- * - Clicking goal badge in TaskView navigates back to room and switches to Missions tab
+ * - Clicking goal badge in task list navigates to MissionDetail page
+ * - Clicking goal badge in TaskView navigates to MissionDetail page
  * - Tasks without a goal do NOT show the badge
  *
  * Setup: RPC to create room, task, and goal and link them together (infrastructure).
@@ -28,9 +28,13 @@ async function createRoomWithLinkedGoalAndTask(
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
 		// Create room
 		const roomRes = await hub.request('room.create', {
 			name: 'E2E Goal Indicator Test Room',
+			defaultPath: workspaceRoot,
 		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
@@ -39,6 +43,9 @@ async function createRoomWithLinkedGoalAndTask(
 			roomId,
 			title: 'Goal-Linked Task',
 			description: 'A task linked to a mission',
+			// Use 'draft' to prevent the scheduler from spawning a worktree
+			// (the E2E workspace is not a git repo, so worktree creation fails).
+			status: 'draft',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
@@ -67,8 +74,12 @@ async function createRoomWithUnlinkedTask(
 		const hub = window.__messageHub || window.appState?.messageHub;
 		if (!hub?.request) throw new Error('MessageHub not available');
 
+		const systemState2 = await hub.request('state.system', {});
+		const workspaceRoot2 = (systemState2 as { workspaceRoot: string }).workspaceRoot;
+
 		const roomRes = await hub.request('room.create', {
 			name: 'E2E Goal Indicator Unlinked Test Room',
+			defaultPath: workspaceRoot2,
 		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
@@ -76,6 +87,9 @@ async function createRoomWithUnlinkedTask(
 			roomId,
 			title: 'Unlinked Task',
 			description: 'A task with no mission',
+			// Use 'draft' to prevent the scheduler from spawning a worktree
+			// (the E2E workspace is not a git repo, so worktree creation fails).
+			status: 'draft',
 		});
 		const taskId = (taskRes as { task: { id: string } }).task.id;
 
@@ -107,6 +121,11 @@ test.describe('Task Goal Indicator — Task List', () => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
+		// Switch to Tasks tab (default is Overview)
+		const tasksTab = page.getByRole('button', { name: 'Tasks' });
+		await tasksTab.click();
+		await expect(tasksTab).toHaveClass(/border-blue-400/);
+
 		// Should see the goal badge with mission title
 		const badge = page.locator(`[data-testid="task-goal-badge-${result.taskId}"]`);
 		await expect(badge).toBeVisible({ timeout: 10000 });
@@ -120,6 +139,11 @@ test.describe('Task Goal Indicator — Task List', () => {
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
+		// Switch to Tasks tab (default is Overview)
+		const tasksTab = page.getByRole('button', { name: 'Tasks' });
+		await tasksTab.click();
+		await expect(tasksTab).toHaveClass(/border-blue-400/);
+
 		// Ensure the task is visible first
 		await expect(page.locator('h4:has-text("Unlinked Task")')).toBeVisible({ timeout: 10000 });
 
@@ -128,20 +152,26 @@ test.describe('Task Goal Indicator — Task List', () => {
 		await expect(badge).not.toBeVisible();
 	});
 
-	test('clicking goal badge switches to Missions tab', async ({ page }) => {
+	test('clicking goal badge navigates to MissionDetail page', async ({ page }) => {
 		const result = await createRoomWithLinkedGoalAndTask(page);
 		roomId = result.roomId;
 
 		await page.goto(`/room/${roomId}`);
 		await waitForWebSocketConnected(page);
 
+		// Switch to Tasks tab (default is Overview)
+		const tasksTab = page.getByRole('button', { name: 'Tasks' });
+		await tasksTab.click();
+		await expect(tasksTab).toHaveClass(/border-blue-400/);
+
 		// Wait for and click the goal badge
 		const badge = page.locator(`[data-testid="task-goal-badge-${result.taskId}"]`);
 		await expect(badge).toBeVisible({ timeout: 10000 });
 		await badge.click();
 
-		// Should now be on the Missions tab
-		await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
+		// Should navigate to the MissionDetail page (not the Missions tab)
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/`), { timeout: 5000 });
 	});
 });
 
@@ -195,7 +225,7 @@ test.describe('Task Goal Indicator — TaskView', () => {
 		await expect(badge).not.toBeVisible();
 	});
 
-	test('clicking goal badge in TaskView navigates to room Missions tab', async ({ page }) => {
+	test('clicking goal badge in TaskView navigates to MissionDetail page', async ({ page }) => {
 		const result = await createRoomWithLinkedGoalAndTask(page);
 		roomId = result.roomId;
 
@@ -209,10 +239,11 @@ test.describe('Task Goal Indicator — TaskView', () => {
 		const badge = page.locator('[data-testid="task-view-goal-badge"]');
 		await expect(badge).toBeVisible({ timeout: 5000 });
 
-		// Click the badge — should navigate back to room and show Missions tab
+		// Click the badge — should navigate to MissionDetail page
 		await badge.click();
 
-		// Should be back at room overview showing Missions tab
-		await expect(page.locator('h2:has-text("Missions")')).toBeVisible({ timeout: 5000 });
+		// Should navigate to the MissionDetail page (not the Missions tab)
+		await expect(page.locator('[data-testid="mission-detail"]')).toBeVisible({ timeout: 10000 });
+		await expect(page).toHaveURL(new RegExp(`/room/${roomId}/mission/`), { timeout: 5000 });
 	});
 });

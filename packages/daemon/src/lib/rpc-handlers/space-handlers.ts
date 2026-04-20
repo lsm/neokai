@@ -14,6 +14,7 @@
 import type { MessageHub } from '@neokai/shared';
 import type {
 	Space,
+	SpaceCreateResult,
 	SpaceAutonomyLevel,
 	CreateSpaceParams,
 	UpdateSpaceParams,
@@ -26,18 +27,63 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { SessionManager } from '../session-manager';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { seedPresetAgents } from '../space/agents/seed-agents';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
 import { Logger } from '../logger';
 
 const log = new Logger('space-handlers');
-const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = ['supervised', 'semi_autonomous'];
+const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
 
 export interface SpaceOverviewResult {
 	space: Space;
 	tasks: SpaceTask[];
 	workflowRuns: SpaceWorkflowRun[];
 	sessions: string[];
+}
+
+function pickCanonicalTaskForRun(tasks: SpaceTask[], runTitle?: string): SpaceTask {
+	const normalizedRunTitle = runTitle?.trim().toLowerCase();
+	if (normalizedRunTitle) {
+		const exactTitleMatch = tasks.find(
+			(task) => task.title.trim().toLowerCase() === normalizedRunTitle
+		);
+		if (exactTitleMatch) return exactTitleMatch;
+	}
+
+	return [...tasks].sort((a, b) => {
+		if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+		return a.taskNumber - b.taskNumber;
+	})[0];
+}
+
+function collapseToCanonicalTasks(
+	tasks: SpaceTask[],
+	workflowRuns: SpaceWorkflowRun[]
+): SpaceTask[] {
+	if (tasks.length === 0) return [];
+
+	const runsById = new Map(workflowRuns.map((run) => [run.id, run]));
+	const groupedByRun = new Map<string, SpaceTask[]>();
+	const canonical: SpaceTask[] = [];
+
+	for (const task of tasks) {
+		if (!task.workflowRunId) {
+			canonical.push(task);
+			continue;
+		}
+		const existing = groupedByRun.get(task.workflowRunId) ?? [];
+		existing.push(task);
+		groupedByRun.set(task.workflowRunId, existing);
+	}
+
+	for (const [runId, runTasks] of groupedByRun) {
+		const runTitle = runsById.get(runId)?.title;
+		canonical.push(pickCanonicalTaskForRun(runTasks, runTitle));
+	}
+
+	return canonical.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function setupSpaceHandlers(
@@ -47,7 +93,9 @@ export function setupSpaceHandlers(
 	workflowRunRepo: SpaceWorkflowRunRepository,
 	daemonHub: DaemonHub,
 	spaceAgentManager: SpaceAgentManager,
-	spaceWorkflowManager: SpaceWorkflowManager
+	spaceWorkflowManager: SpaceWorkflowManager,
+	sessionManager?: SessionManager,
+	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	// ─── space.create ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.create', async (data) => {
@@ -69,26 +117,77 @@ export function setupSpaceHandlers(
 		}
 
 		const space = await spaceManager.createSpace(params);
+		const seedWarnings: string[] = [];
 
-		// Seed preset agents (Coder, General, Planner, Reviewer) for the new space.
+		// Seed preset agents (Coder, General, Planner, Reviewer, etc.) for the new space.
 		// Errors are non-fatal — the space is still usable without preset agents.
 		try {
-			await seedPresetAgents(space.id, spaceAgentManager);
+			const agentSeedResult = await seedPresetAgents(space.id, spaceAgentManager);
+			if (agentSeedResult.errors.length > 0) {
+				const failedNames = agentSeedResult.errors.map((e) => e.name).join(', ');
+				log.warn(
+					`Partial agent seed failure for space ${space.id}: ${failedNames}`,
+					agentSeedResult.errors
+				);
+				seedWarnings.push(`Failed to seed agents: ${failedNames}`);
+			}
 		} catch (err) {
 			log.warn('Failed to seed preset agents for space', space.id, err);
+			seedWarnings.push('Failed to seed preset agents');
 		}
 
 		// Seed built-in workflow templates after preset agents are available.
 		// Resolves role names ('planner', 'coder', 'general') to SpaceAgent UUIDs.
 		try {
 			const agents = spaceAgentManager.listBySpaceId(space.id);
-			seedBuiltInWorkflows(
+			const workflowSeedResult = seedBuiltInWorkflows(
 				space.id,
 				spaceWorkflowManager,
-				(role) => agents.find((a) => a.role === role)?.id
+				(name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
 			);
+			if (workflowSeedResult.errors.length > 0) {
+				const failedNames = workflowSeedResult.errors.map((e) => e.name).join(', ');
+				log.warn(
+					`Partial workflow seed failure for space ${space.id}: ${failedNames}`,
+					workflowSeedResult.errors
+				);
+				seedWarnings.push(`Failed to seed workflows: ${failedNames}`);
+			}
 		} catch (err) {
 			log.warn('Failed to seed built-in workflows for space', space.id, err);
+			seedWarnings.push('Failed to seed built-in workflows');
+		}
+
+		// Create the space's user-facing chat session.
+		// Session ID format: space:chat:${spaceId}
+		// Mirrors the room:chat:${roomId} pattern from room-handlers.ts.
+		if (sessionManager) {
+			const spaceChatSessionId = `space:chat:${space.id}`;
+			try {
+				await sessionManager.createSession({
+					sessionId: spaceChatSessionId,
+					title: space.name,
+					workspacePath: space.workspacePath,
+					config: {
+						model: space.defaultModel,
+					},
+					sessionType: 'space_chat',
+					spaceId: space.id,
+					createdBy: 'neo',
+				});
+				// Register the session on the space so it appears in space.sessionIds.
+				// Mirrors roomManager.assignSession() in room-handlers.ts.
+				await spaceManager.addSession(space.id, spaceChatSessionId);
+				// Attach MCP tools and system prompt directly (session is in DB now).
+				// This avoids relying on the space.created event which fires asynchronously.
+				if (spaceRuntimeService) {
+					await spaceRuntimeService.setupSpaceAgentSession(space).catch((err) => {
+						log.warn(`Failed to provision space chat session for space ${space.id}:`, err);
+					});
+				}
+			} catch (error) {
+				log.warn(`Failed to create space chat session for space ${space.id}:`, error);
+			}
 		}
 
 		daemonHub
@@ -97,6 +196,9 @@ export function setupSpaceHandlers(
 				log.warn('Failed to emit space.created:', err);
 			});
 
+		if (seedWarnings.length > 0) {
+			return { ...space, seedWarnings } satisfies SpaceCreateResult;
+		}
 		return space;
 	});
 
@@ -107,17 +209,46 @@ export function setupSpaceHandlers(
 	});
 
 	// ─── space.get ──────────────────────────────────────────────────────────────
+	// Accepts either { id } or { slug } to look up a space.
 	messageHub.onRequest('space.get', async (data) => {
-		const params = data as { id: string };
+		const params = data as { id?: string; slug?: string };
+
+		if (!params.id && !params.slug) {
+			throw new Error('id or slug is required');
+		}
+
+		let space;
+		if (params.id) {
+			space = await spaceManager.getSpace(params.id);
+		} else {
+			space = await spaceManager.getSpaceBySlug(params.slug!);
+		}
+
+		if (!space) {
+			throw new Error(`Space not found: ${params.id ?? params.slug}`);
+		}
+
+		return space;
+	});
+
+	// ─── space.updateSlug ──────────────────────────────────────────────────────
+	messageHub.onRequest('space.updateSlug', async (data) => {
+		const params = data as { id: string; slug: string };
 
 		if (!params.id) {
 			throw new Error('id is required');
 		}
-
-		const space = await spaceManager.getSpace(params.id);
-		if (!space) {
-			throw new Error(`Space not found: ${params.id}`);
+		if (!params.slug) {
+			throw new Error('slug is required');
 		}
+
+		const space = await spaceManager.updateSlug(params.id, params.slug);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
 
 		return space;
 	});
@@ -169,6 +300,92 @@ export function setupSpaceHandlers(
 		return space;
 	});
 
+	// ─── space.stop ─────────────────────────────────────────────────────────────
+	// Stops all active work (terminates running agent sessions, cancels in-progress
+	// tasks and workflow runs) and marks the space as stopped.
+	// Unlike space.archive, a stopped space remains active and can be restarted.
+	// The stopped flag persists across daemon restarts — no work auto-starts.
+	messageHub.onRequest('space.stop', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		// Terminate all running agent sessions and cancel active tasks/workflow runs.
+		if (spaceRuntimeService) {
+			await spaceRuntimeService.stopActiveWork(params.id);
+		}
+
+		const space = await spaceManager.stopSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
+	// ─── space.start ────────────────────────────────────────────────────────────
+	// Clears the stopped flag so the runtime resumes scheduling new work.
+	messageHub.onRequest('space.start', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const space = await spaceManager.startSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
+	// ─── space.pause ───────────────────────────────────────────────────────────
+	messageHub.onRequest('space.pause', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const space = await spaceManager.pauseSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
+	// ─── space.resume ──────────────────────────────────────────────────────────
+	messageHub.onRequest('space.resume', async (data) => {
+		const params = data as { id: string };
+
+		if (!params.id) {
+			throw new Error('id is required');
+		}
+
+		const space = await spaceManager.resumeSpace(params.id);
+
+		daemonHub
+			.emit('space.updated', { sessionId: 'global', spaceId: params.id, space })
+			.catch((err) => {
+				log.warn('Failed to emit space.updated:', err);
+			});
+
+		return space;
+	});
+
 	// ─── space.delete ───────────────────────────────────────────────────────────
 	messageHub.onRequest('space.delete', async (data) => {
 		const params = data as { id: string };
@@ -190,35 +407,74 @@ export function setupSpaceHandlers(
 	});
 
 	// ─── space.listWithTasks ────────────────────────────────────────────────────
-	// Returns all spaces with their active (non-completed, non-cancelled) tasks.
-	// Used by the Context Panel to show thread-style space list with nested tasks.
+	// Returns all spaces with their active (non-completed, non-cancelled) tasks
+	// and up to 3 recent active sessions per space.
+	// Used by the SpacesPage and Context Panel to show the space list.
 	messageHub.onRequest('space.listWithTasks', async (data) => {
 		const params = (data ?? {}) as { includeArchived?: boolean };
 		const spaces = await spaceManager.listSpaces(params.includeArchived ?? false);
 
-		return spaces.map((space) => ({
-			...space,
-			tasks: taskRepo
-				.listBySpace(space.id)
-				.filter((t) => t.status !== 'completed' && t.status !== 'cancelled'),
-		}));
+		// Load all non-archived sessions once; filter per-space below.
+		const allSessions = sessionManager?.listSessions({ includeArchived: false }) ?? [];
+		const sessionById = new Map(allSessions.map((s) => [s.id, s]));
+
+		return spaces.map((space) => {
+			const spaceSessions = space.sessionIds
+				.map((id) => sessionById.get(id))
+				.filter(
+					(s) =>
+						s !== undefined &&
+						s.status !== 'archived' &&
+						s.status !== 'ended' &&
+						s.type !== 'space_chat'
+				)
+				.sort((a, b) => {
+					const aTime = a!.lastActiveAt ? new Date(a!.lastActiveAt).getTime() : 0;
+					const bTime = b!.lastActiveAt ? new Date(b!.lastActiveAt).getTime() : 0;
+					return bTime - aTime;
+				})
+				.slice(0, 3)
+				.map((s) => ({
+					id: s!.id,
+					title: s!.title,
+					status: s!.status,
+					type: s!.type ?? 'worker',
+					lastActiveAt: s!.lastActiveAt ? new Date(s!.lastActiveAt).getTime() : 0,
+				}));
+
+			return {
+				...space,
+				tasks: collapseToCanonicalTasks(
+					taskRepo.listBySpace(space.id),
+					workflowRunRepo.listBySpace(space.id)
+				).filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
+				sessions: spaceSessions,
+			};
+		});
 	});
 
 	// ─── space.overview ─────────────────────────────────────────────────────────
+	// Accepts either { id } or { slug } to look up the space.
 	messageHub.onRequest('space.overview', async (data) => {
-		const params = data as { id: string };
+		const params = data as { id?: string; slug?: string };
 
-		if (!params.id) {
-			throw new Error('id is required');
+		if (!params.id && !params.slug) {
+			throw new Error('id or slug is required');
 		}
 
-		const space = await spaceManager.getSpace(params.id);
+		let space;
+		if (params.id) {
+			space = await spaceManager.getSpace(params.id);
+		} else {
+			space = await spaceManager.getSpaceBySlug(params.slug!);
+		}
+
 		if (!space) {
-			throw new Error(`Space not found: ${params.id}`);
+			throw new Error(`Space not found: ${params.id ?? params.slug}`);
 		}
 
-		const tasks = taskRepo.listBySpace(params.id);
-		const workflowRuns = workflowRunRepo.listBySpace(params.id);
+		const workflowRuns = workflowRunRepo.listBySpace(space.id);
+		const tasks = collapseToCanonicalTasks(taskRepo.listBySpace(space.id), workflowRuns);
 
 		const result: SpaceOverviewResult = {
 			space,

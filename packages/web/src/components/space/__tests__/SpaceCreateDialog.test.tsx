@@ -91,7 +91,6 @@ const SPACE_MOCK = {
 	workspacePath: '/projects/my-app',
 	description: '',
 	backgroundContext: '',
-	instructions: '',
 	sessionIds: [],
 	status: 'active' as const,
 	createdAt: Date.now(),

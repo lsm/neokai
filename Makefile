@@ -1,38 +1,43 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
-
-# Default workspace for development
-WORKSPACE ?= tmp/workspace
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-daemon-shard test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release release-prepare sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
 
 # Development server - uses random available port by default
-# Usage: make dev [WORKSPACE=/path/to/workspace]
+# Usage: make dev
+#        make dev PORT=8080
+#        make dev DB_PATH=/tmp/mydb.db           # isolated DB (avoids lock conflicts)
+#        make dev PORT=8080 DB_PATH=/tmp/mydb.db
 dev:
-	@echo "Finding available port..."
-	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
+	@mkdir -p tmp
+	@if [ -n "$(PORT)" ]; then \
+		PORT=$(PORT); \
+		echo "$(PORT)" > tmp/.dev-server-running; \
+	else \
+		echo "Finding available port..."; \
+		PORT=$$(node -e "const net = require('net'); const s = net.createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });"); \
+	fi; \
+	if [ -n "$(DB_PATH)" ]; then DB_FLAGS="--db-path $(DB_PATH)"; else DB_FLAGS=""; fi; \
 	echo "Starting development server on port $$PORT..."; \
-	mkdir -p $(WORKSPACE); \
 	echo ""; \
 	echo "================================================"; \
 	echo "🚀 Development server starting on http://localhost:$$PORT"; \
-	echo "   Workspace: $(WORKSPACE)"; \
+	if [ -n "$(DB_PATH)" ]; then echo "   Database: $(DB_PATH)"; fi; \
 	echo "================================================"; \
 	echo ""; \
-	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace $(WORKSPACE) --port $$PORT
+	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --port $$PORT $$DB_FLAGS
 
 # Alias for dev-random (deprecated, use make dev)
 dev-random:
-	@$(MAKE) dev WORKSPACE=$(WORKSPACE)
+	@$(MAKE) dev
 
 # Production server on random port - starts production build on available port
-# Usage: make serve-random [WORKSPACE=/path/to/workspace]
+# Usage: make serve-random
 serve-random:
 	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
-	echo "Running with PORT=$$PORT WORKSPACE=$(WORKSPACE)"; \
-	$(MAKE) run PORT=$$PORT WORKSPACE=$(WORKSPACE)
+	echo "Running with PORT=$$PORT"; \
+	$(MAKE) run PORT=$$PORT
 
-# Self-developing mode - production build serving the current directory on port 9983
-# This is a convenience wrapper around `make run`
+# Self-developing mode - production build on port 9983
 self:
-	@NEOKAI_SELF_MODE=1 $(MAKE) run WORKSPACE=$(shell pwd) PORT=9983
+	@NEOKAI_SELF_MODE=1 $(MAKE) run PORT=9983
 
 # Run E2E tests against the `make self` instance (requires `make self` to be running)
 # Usage: make self-test TEST=tests/core/navigation-3-column.e2e.ts
@@ -40,23 +45,23 @@ self:
 self-test:
 	@PLAYWRIGHT_BASE_URL=http://localhost:9983 cd packages/e2e && bunx playwright test $(TEST)
 
-# Run production server with custom workspace and port
-# Usage: make run WORKSPACE=/path/to/workspace PORT=8080
+# Run production server
+# Usage: make run [PORT=8080] [DB_PATH=/tmp/mydb.db]
 run:
 	@mkdir -p tmp
 	@if [ -n "$(PORT)" ]; then \
-		echo "$(PORT)" > tmp/.dev-server-running; \
+		echo "$(PORT)" > tmp/.prod-server-running; \
 	fi
 	@echo "Starting production server..."
-	@echo "   Workspace: $(WORKSPACE)"
 	@if [ -n "$(PORT)" ]; then \
 		echo "   Listening on port $(PORT)"; \
 	fi
 	@$(MAKE) build
-	@if [ -n "$(PORT)" ]; then \
-		NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE); \
+	@DB_FLAGS=""; if [ -n "$(DB_PATH)" ]; then DB_FLAGS="--db-path $(DB_PATH)"; fi; \
+	if [ -n "$(PORT)" ]; then \
+		NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) $$DB_FLAGS; \
 	else \
-		NODE_ENV=production bun run packages/cli/main.ts --workspace $(WORKSPACE); \
+		NODE_ENV=production bun run packages/cli/main.ts $$DB_FLAGS; \
 	fi
 
 # Run E2E tests with an auto-started server on a random port (self-contained, no server needed)
@@ -74,8 +79,10 @@ build:
 test: test-daemon test-web
 
 test-daemon:
-	@echo "Running daemon tests..."
-	@NODE_ENV=test bun test --jobs=1 --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
+	@./scripts/test-daemon.sh --coverage
+
+test-daemon-shard:
+	@./scripts/test-daemon.sh $(SHARD) --coverage
 
 test-web:
 	@echo "Running web tests..."

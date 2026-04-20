@@ -10,7 +10,13 @@ import type {
 	SDKRateLimitEvent as SDKRateLimitEventType,
 	SDKToolProgressMessage as SDKToolProgressMessageType,
 } from '@neokai/shared/sdk/sdk.d.ts';
-import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
+import type {
+	PendingUserQuestion,
+	QuestionDraftResponse,
+	ResolvedQuestion,
+	ChatMessage,
+	NeokaiActionMessage,
+} from '@neokai/shared';
 import {
 	isSDKAssistantMessage,
 	isSDKResultMessage,
@@ -22,6 +28,7 @@ import {
 	isSDKUserMessage,
 	isSDKUserMessageReplay,
 	isUserVisibleMessage,
+	isNeokaiActionMessage,
 } from '@neokai/shared/sdk/type-guards';
 
 // Component imports
@@ -32,11 +39,12 @@ import { SDKSystemMessage } from './SDKSystemMessage.tsx';
 import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
 import { SDKUserMessage } from './SDKUserMessage.tsx';
 import { AuthStatusCard } from './tools/index.ts';
+import { SDKResumeChoiceMessage } from './SDKResumeChoiceMessage.tsx';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {
-	message: SDKMessage;
+	message: ChatMessage;
 	toolResultsMap?: Map<string, unknown>;
 	toolInputsMap?: Map<string, unknown>;
 	subagentMessagesMap?: Map<string, SDKMessage[]>;
@@ -55,9 +63,28 @@ interface Props {
 	rewindMode?: boolean;
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
-	allMessages?: SDKMessage[];
+	allMessages?: ChatMessage[];
 	/** When true, renders all message types without skipping (for task conversation timelines) */
 	taskContext?: boolean;
+	/**
+	 * When true, keeps sub-agent child messages in the main feed instead of
+	 * suppressing them in favor of nested SubagentBlock rendering.
+	 */
+	showSubagentMessages?: boolean;
+	/**
+	 * When true, renders Task/Agent tool_use blocks as normal tool cards instead
+	 * of SubagentBlock.
+	 */
+	flattenSubagentTools?: boolean;
+	/** When true, user messages containing tool_result blocks are rendered. */
+	showToolResultUserMessages?: boolean;
+	/**
+	 * When true, the last non-terminal event message in a compact task thread is
+	 * still executing. The receiving component wraps its visible boundary element
+	 * (e.g. the assistant message bubble or tool card) in <RunningBorder> so the
+	 * animated arc traces exactly that element's rounded-rect border.
+	 */
+	isRunning?: boolean;
 }
 
 /**
@@ -171,23 +198,42 @@ export function SDKMessageRenderer({
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
 	taskContext,
+	showSubagentMessages = false,
+	flattenSubagentTools = false,
+	showToolResultUserMessages = false,
+	isRunning,
 }: Props) {
+	// NeoKai-native action messages are always shown and handled separately.
+	if (isNeokaiActionMessage(message)) {
+		const actionMsg = message as NeokaiActionMessage;
+		if (actionMsg.action === 'sdk_resume_choice') {
+			return (
+				<SDKResumeChoiceMessage message={actionMsg} sessionId={sessionId ?? actionMsg.session_id} />
+			);
+		}
+		// Unknown action type — render nothing
+		return null;
+	}
+
+	// The remaining message is a native SDKMessage.
+	const sdkMessage = message as SDKMessage;
+
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
-	if (!isUserVisibleMessage(message)) {
+	if (!isUserVisibleMessage(sdkMessage)) {
 		return null;
 	}
 
 	// Skip session init messages - they're now shown as indicators attached to user messages
 	// In task context, render them as compact info pills
-	if (isSDKSystemInit(message)) {
+	if (isSDKSystemInit(sdkMessage)) {
 		if (taskContext) {
-			return <SystemInitPill message={message as SystemInitMessage} />;
+			return <SystemInitPill message={sdkMessage as SystemInitMessage} />;
 		}
 		return null;
 	}
 
 	// Skip sub-agent messages - they're now shown inside SubagentBlock
-	if (isSubagentMessage(message)) {
+	if (!showSubagentMessages && isSubagentMessage(sdkMessage)) {
 		return null;
 	}
 
@@ -196,20 +242,21 @@ export function SDKMessageRenderer({
 
 	// Route to appropriate renderer based on message type
 	// Handle user replay messages (slash command responses) first
-	if (isSDKUserMessageReplay(message)) {
+	if (isSDKUserMessageReplay(sdkMessage)) {
 		renderedMessage = (
 			<SDKUserMessage
-				message={message}
+				message={sdkMessage}
 				sessionInfo={sessionInfo}
 				isReplay={true}
 				sessionId={sessionId}
+				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
-	} else if (isSDKUserMessage(message)) {
+	} else if (isSDKUserMessage(sdkMessage)) {
 		// Always render user messages - pass rewind mode props
 		renderedMessage = (
 			<SDKUserMessage
-				message={message}
+				message={sdkMessage}
 				sessionInfo={sessionInfo}
 				sessionId={sessionId}
 				onRewind={rewindMode ? undefined : onRewind}
@@ -218,12 +265,13 @@ export function SDKMessageRenderer({
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
 				allMessages={_allMessages}
+				showToolResultMessages={showToolResultUserMessages}
 			/>
 		);
-	} else if (isSDKAssistantMessage(message)) {
+	} else if (isSDKAssistantMessage(sdkMessage)) {
 		renderedMessage = (
 			<SDKAssistantMessage
-				message={message}
+				message={sdkMessage}
 				toolResultsMap={toolResultsMap}
 				subagentMessagesMap={subagentMessagesMap}
 				sessionId={sessionId}
@@ -234,17 +282,19 @@ export function SDKMessageRenderer({
 				selectedMessages={selectedMessages}
 				onMessageCheckboxChange={onMessageCheckboxChange}
 				allMessages={_allMessages}
+				flattenSubagentTools={flattenSubagentTools}
+				isRunning={isRunning}
 			/>
 		);
-	} else if (isSDKResultMessage(message)) {
-		renderedMessage = <SDKResultMessage message={message} />;
-	} else if (isSDKSystemMessage(message)) {
-		renderedMessage = <SDKSystemMessage message={message} />;
-	} else if (isSDKToolProgressMessage(message)) {
-		const toolInput = toolInputsMap?.get((message as SDKToolProgressMessageType).tool_use_id);
-		renderedMessage = <SDKToolProgressMessage message={message} toolInput={toolInput} />;
-	} else if (isSDKAuthStatusMessage(message)) {
-		const authMessage = message as SDKAuthStatusMessage;
+	} else if (isSDKResultMessage(sdkMessage)) {
+		renderedMessage = <SDKResultMessage message={sdkMessage} />;
+	} else if (isSDKSystemMessage(sdkMessage)) {
+		renderedMessage = <SDKSystemMessage message={sdkMessage} />;
+	} else if (isSDKToolProgressMessage(sdkMessage)) {
+		const toolInput = toolInputsMap?.get((sdkMessage as SDKToolProgressMessageType).tool_use_id);
+		renderedMessage = <SDKToolProgressMessage message={sdkMessage} toolInput={toolInput} />;
+	} else if (isSDKAuthStatusMessage(sdkMessage)) {
+		const authMessage = sdkMessage as SDKAuthStatusMessage;
 		renderedMessage = (
 			<AuthStatusCard
 				isAuthenticating={authMessage.isAuthenticating}
@@ -253,18 +303,18 @@ export function SDKMessageRenderer({
 				variant="default"
 			/>
 		);
-	} else if (isSDKRateLimitEvent(message)) {
-		renderedMessage = <SDKRateLimitEvent message={message as SDKRateLimitEventType} />;
+	} else if (isSDKRateLimitEvent(sdkMessage)) {
+		renderedMessage = <SDKRateLimitEvent message={sdkMessage as SDKRateLimitEventType} />;
 	} else {
 		// Fallback for unknown message types (shouldn't happen, but safe)
 		renderedMessage = (
 			<div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
 				<div class="text-xs text-gray-600 dark:text-gray-400 mb-1">
-					Unknown message type: {(message as SDKMessage).type}
+					Unknown message type: {sdkMessage.type}
 				</div>
 				<details>
 					<summary class="text-xs cursor-pointer text-gray-500">Show raw data</summary>
-					<pre class="text-xs mt-2 overflow-x-auto">{JSON.stringify(message, null, 2)}</pre>
+					<pre class="text-xs mt-2 overflow-x-auto">{JSON.stringify(sdkMessage, null, 2)}</pre>
 				</details>
 			</div>
 		);

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for useGroupMessages Hook
  *
@@ -50,7 +49,7 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Builds a minimal SessionGroupMessage for use in tests. */
+/** Builds a minimal top-level SessionGroupMessage for use in tests. */
 function makeMessage(id: number, content = `msg-${id}`): SessionGroupMessage {
 	return {
 		id,
@@ -60,6 +59,25 @@ function makeMessage(id: number, content = `msg-${id}`): SessionGroupMessage {
 		messageType: 'text',
 		content,
 		createdAt: 1_000_000 + id,
+	};
+}
+
+/**
+ * Builds a subagent child message whose parentToolUseId ties it to a parent.
+ * The `subId` is used to give each child a unique id and a createdAt after
+ * the parent, so they sort correctly (parent at 1_000_000+parentId, children
+ * start at 2_000_000+subId to ensure they always sort after the parent).
+ */
+function makeChild(subId: number, parentToolUseId: string): SessionGroupMessage {
+	return {
+		id: `child-${subId}`,
+		groupId: 'group-1',
+		sessionId: null,
+		role: 'assistant',
+		messageType: 'text',
+		content: `child-${subId}`,
+		createdAt: 2_000_000 + subId,
+		parentToolUseId,
 	};
 }
 
@@ -370,7 +388,8 @@ describe('useGroupMessages', () => {
 				(call) => call[0] === 'liveQuery.subscribe' && call[1]?.params?.[0] === 'group-2'
 			);
 			expect(group2Call).toBeDefined();
-			const secondSubId = group2Call[1].subscriptionId;
+			// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+			const secondSubId = group2Call![1].subscriptionId as string;
 
 			act(() => {
 				fireEvent('liveQuery.snapshot', {
@@ -513,7 +532,7 @@ describe('useGroupMessages', () => {
 		it('clears messages and stops loading when groupId becomes null', () => {
 			const { result, rerender } = renderHook(
 				({ groupId }: { groupId: string | null }) => useGroupMessages(groupId),
-				{ initialProps: { groupId: 'group-1' } }
+				{ initialProps: { groupId: 'group-1' as string | null } }
 			);
 
 			const subId = lastSubscribeSubId();
@@ -734,6 +753,207 @@ describe('useGroupMessages', () => {
 		});
 	});
 
+	describe('subagent block pagination', () => {
+		it('counts subagent blocks as 1 top-level unit: 20 TL + 1 parent + 70 children all visible with pageSize=50', () => {
+			// 20 top-level messages + 1 parent (also top-level) + 70 children = 91 total.
+			// 21 top-level < pageSize=50, so all 91 messages should be visible and hasOlder=false.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 50 }));
+			const subId = lastSubscribeSubId();
+
+			const topLevel = Array.from({ length: 20 }, (_, i) => makeMessage(i + 1));
+			const parent = makeMessage(21); // top-level parent of the subagent block
+			const children = Array.from({ length: 70 }, (_, i) => makeChild(i + 1, 'tool-use-id-21'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [...topLevel, parent, ...children],
+					version: 1,
+				});
+			});
+
+			// All 91 messages visible — subagent block not split
+			expect(result.current.messages).toHaveLength(91);
+			// No older messages — 21 top-level < pageSize=50
+			expect(result.current.hasOlder).toBe(false);
+		});
+
+		it('subagent block never split: parent and all children always shown together', () => {
+			// 55 top-level messages + 1 parent + 10 children = 66 total, 56 top-level.
+			// pageSize=50 → hide oldest 6 top-level; parent (top-level #56) is visible
+			// so all 10 children must also be visible.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 50 }));
+			const subId = lastSubscribeSubId();
+
+			const topLevel = Array.from({ length: 55 }, (_, i) => makeMessage(i + 1));
+			const parent = makeMessage(56);
+			const children = Array.from({ length: 10 }, (_, i) => makeChild(i + 1, 'tool-use-id-56'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [...topLevel, parent, ...children],
+					version: 1,
+				});
+			});
+
+			// 56 top-level, pageSize=50 → 6 oldest top-level hidden
+			expect(result.current.hasOlder).toBe(true);
+			// Visible: 50 top-level (messages 7-56) + 10 children = 60
+			expect(result.current.messages).toHaveLength(60);
+			// Parent (msg 56) must be in the visible window
+			expect(result.current.messages.some((m) => m.id === 56)).toBe(true);
+			// All 10 children must be in the visible window
+			const visibleChildIds = result.current.messages
+				.filter((m) => (m as SessionGroupMessage).parentToolUseId === 'tool-use-id-56')
+				.map((m) => m.id);
+			expect(visibleChildIds).toHaveLength(10);
+		});
+
+		it('loadEarlier reveals top-level messages and their children together', () => {
+			// 4 top-level + 1 parent + 5 children = 10 total, 5 top-level.
+			// pageSize=3 → hide 2 oldest top-level; show newest 3 top-level + 5 children.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 3 }));
+			const subId = lastSubscribeSubId();
+
+			const topLevel = Array.from({ length: 4 }, (_, i) => makeMessage(i + 1));
+			const parent = makeMessage(5);
+			const children = Array.from({ length: 5 }, (_, i) => makeChild(i + 1, 'tool-use-id-5'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [...topLevel, parent, ...children],
+					version: 1,
+				});
+			});
+
+			// 5 top-level, pageSize=3 → 2 hidden (msg 1 and msg 2)
+			expect(result.current.hasOlder).toBe(true);
+			// Visible: msg 3, msg 4, parent (msg 5) + 5 children = 8
+			expect(result.current.messages).toHaveLength(8);
+
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			// After loadEarlier: all 10 messages visible
+			expect(result.current.messages).toHaveLength(10);
+			expect(result.current.hasOlder).toBe(false);
+		});
+
+		it('does not crash when a combined removed+added delta removes all visible messages', () => {
+			// Regression for: msgs[hidden] is undefined when removed eliminates all
+			// visible messages before the added/sort step reads msgs[hidden].id.
+			// State: [A, B, C], hidden=2 → C is the only visible message.
+			// Delta: remove C and add D in the same event.
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 1 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3)],
+					version: 1,
+				});
+			});
+
+			// pageSize=1, 3 top-level → hidden=[1,2], visible=[3]
+			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.messages[0].id).toBe(3);
+
+			// Remove the only visible message and simultaneously add a new one.
+			const newMsg = makeMessage(4);
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					removed: [makeMessage(3)],
+					added: [newMsg],
+					version: 2,
+				});
+			});
+
+			// No crash. After removal hidden=2, msgs=[1,2]; after add+sort msgs=[1,2,4].
+			// boundaryId=null (hidden >= msgs.length after removal), so sort does not
+			// re-anchor — all of [1,2,4] are evaluated by topLevelCutoffIndex on the
+			// next snapshot, but here we just verify stability.
+			// hiddenOlderCount stays at 2 (msgs[2]=4 is visible).
+			expect(result.current.messages).toHaveLength(1);
+			expect(result.current.messages[0].id).toBe(4);
+		});
+
+		it('delta-added child with createdAt in hidden region is placed in hidden region, not visible window', () => {
+			// 5 top-level messages, pageSize=2 → hidden=[1,2,3], visible=[4,5].
+			// A subagent child arrives via delta with createdAt between msg2 and msg3,
+			// so it sorts into the hidden region. The visible window must stay [4,5].
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+
+			// Late-arriving child: createdAt=1_000_002 + 0.5 → between msg2 and msg3.
+			// We approximate with createdAt=1_000_002 (ties with msg2; string id sorts it after).
+			// The key point is it falls before the boundary (msg4 at 1_000_004).
+			const lateChild: SessionGroupMessage = {
+				id: 'late-child',
+				groupId: 'group-1',
+				sessionId: null,
+				role: 'assistant',
+				messageType: 'text',
+				content: 'late-child',
+				createdAt: 1_000_002, // before boundary msg4 (1_000_004)
+				parentToolUseId: 'tool-use-id-2',
+			};
+
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					added: [lateChild],
+					version: 2,
+				});
+			});
+
+			// Visible window must still be [4, 5] — late child sorted into hidden region.
+			// hiddenOlderCount was re-anchored to the identity of msg4.
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+			// hasOlder still true — hidden region now has [1, 2, late-child, 3]
+			expect(result.current.hasOlder).toBe(true);
+		});
+
+		it('hasOlder is false when all messages are subagent children of a single visible parent', () => {
+			// 1 top-level parent + 20 children — all fit in pageSize=5 top-level (only 1 TL)
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 5 }));
+			const subId = lastSubscribeSubId();
+
+			const parent = makeMessage(1);
+			const children = Array.from({ length: 20 }, (_, i) => makeChild(i + 1, 'tool-use-id-1'));
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [parent, ...children],
+					version: 1,
+				});
+			});
+
+			// 1 top-level < pageSize=5 → all 21 visible, hasOlder=false
+			expect(result.current.messages).toHaveLength(21);
+			expect(result.current.hasOlder).toBe(false);
+		});
+	});
+
 	describe('generateGroupMessagesSubId', () => {
 		it('includes the groupId in the subscription ID', () => {
 			const id = generateGroupMessagesSubId('my-group');
@@ -750,6 +970,220 @@ describe('useGroupMessages', () => {
 			// Counter was reset in beforeEach; first call should produce counter=1.
 			const id = generateGroupMessagesSubId('g');
 			expect(id).toBe('group-messages-g-1');
+		});
+	});
+
+	describe('pagination (hasOlder / loadEarlier)', () => {
+		it('hasOlder is false when snapshot has fewer messages than pageSize', () => {
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 5 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(false);
+			expect(result.current.messages).toHaveLength(3);
+		});
+
+		it('hasOlder is false when snapshot has exactly pageSize messages', () => {
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 3 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(false);
+			expect(result.current.messages).toHaveLength(3);
+		});
+
+		it('hasOlder is true when snapshot has more messages than pageSize', () => {
+			// pageSize=2, snapshot has 5 messages → oldest 3 are hidden
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(true);
+			// Only the newest 2 messages are visible
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+		});
+
+		it('loadEarlier reveals the previous page of messages', () => {
+			// 5 messages, pageSize=2 → shows [4,5], then after loadEarlier shows [2,3,4,5]
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.hasOlder).toBe(true);
+
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			// Now showing 4 messages: [2,3,4,5]
+			expect(result.current.messages).toHaveLength(4);
+			expect(result.current.messages[0].id).toBe(2);
+			expect(result.current.messages[3].id).toBe(5);
+		});
+
+		it('loadEarlier clamps to 0 — cannot hide negative messages', () => {
+			// 5 messages, pageSize=3 → first load shows [3,4,5]; then loadEarlier shows all
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 3 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			// All 5 messages visible, hasOlder = false
+			expect(result.current.messages).toHaveLength(5);
+			expect(result.current.hasOlder).toBe(false);
+
+			// Calling loadEarlier again is a no-op
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			expect(result.current.messages).toHaveLength(5);
+		});
+
+		it('new delta messages are always visible regardless of hiddenOlderCount', () => {
+			// pageSize=2, snapshot has 5 → shows [4,5], 3 hidden
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+
+			// New message arrives via delta
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					added: [makeMessage(6)],
+					version: 2,
+				});
+			});
+
+			// Still shows 2+1=3 messages (new one is always visible at end)
+			expect(result.current.messages).toHaveLength(3);
+			expect(result.current.messages[2].id).toBe(6);
+			expect(result.current.hasOlder).toBe(true); // older messages still hidden
+		});
+
+		it('removed delta for a hidden message adjusts hiddenOlderCount without shifting visible window', () => {
+			// pageSize=2, snapshot has 5 messages → shows [4,5], 3 hidden ([1,2,3])
+			const { result } = renderHook(() => useGroupMessages('group-1', { pageSize: 2 }));
+			const subId = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+			expect(result.current.hasOlder).toBe(true); // 3 hidden
+
+			// Remove message 2 (which is in the hidden region)
+			act(() => {
+				fireEvent('liveQuery.delta', {
+					subscriptionId: subId,
+					removed: [makeMessage(2)],
+					version: 2,
+				});
+			});
+
+			// Visible window must still show [4, 5] — not shift to expose [3]
+			expect(result.current.messages).toHaveLength(2);
+			expect(result.current.messages[0].id).toBe(4);
+			expect(result.current.messages[1].id).toBe(5);
+			// hasOlder still true: 2 hidden messages remain ([1, 3])
+			expect(result.current.hasOlder).toBe(true);
+
+			// loadEarlier now reveals the remaining 2 hidden messages
+			act(() => {
+				result.current.loadEarlier();
+			});
+
+			expect(result.current.messages).toHaveLength(4); // [1, 3, 4, 5]
+			expect(result.current.messages[0].id).toBe(1);
+			expect(result.current.messages[1].id).toBe(3);
+			expect(result.current.hasOlder).toBe(false);
+		});
+
+		it('hiddenOlderCount resets to 0 when groupId changes', () => {
+			// First group: 5 messages with pageSize=2
+			const { result, rerender } = renderHook(
+				({ groupId }: { groupId: string }) => useGroupMessages(groupId, { pageSize: 2 }),
+				{ initialProps: { groupId: 'group-1' } }
+			);
+
+			const subId1 = lastSubscribeSubId();
+
+			act(() => {
+				fireEvent('liveQuery.snapshot', {
+					subscriptionId: subId1,
+					rows: [makeMessage(1), makeMessage(2), makeMessage(3), makeMessage(4), makeMessage(5)],
+					version: 1,
+				});
+			});
+
+			expect(result.current.hasOlder).toBe(true);
+			expect(result.current.messages).toHaveLength(2);
+
+			// Switch to a new group
+			act(() => {
+				rerender({ groupId: 'group-2' });
+			});
+
+			// Messages cleared, hasOlder reset
+			expect(result.current.messages).toHaveLength(0);
+			expect(result.current.hasOlder).toBe(false);
 		});
 	});
 });

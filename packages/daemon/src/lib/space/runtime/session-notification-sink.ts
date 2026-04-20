@@ -27,7 +27,7 @@
 
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 import type { SessionFactory } from '../../room/runtime/task-group-manager';
-import type { AutonomyLevel } from '@neokai/shared';
+import type { SpaceAutonomyLevel } from '@neokai/shared/types/space';
 import { Logger } from '../../logger';
 
 const log = new Logger('session-notification-sink');
@@ -44,9 +44,9 @@ export interface SessionNotificationSinkConfig {
 	 * The autonomy level for this space. Included in every notification message
 	 * so the agent has context for how much it can act without human approval.
 	 *
-	 * Defaults to `'supervised'` if not provided.
+	 * Defaults to `1` (most supervised) if not provided.
 	 */
-	autonomyLevel?: AutonomyLevel;
+	autonomyLevel?: SpaceAutonomyLevel;
 }
 
 /**
@@ -58,12 +58,12 @@ export interface SessionNotificationSinkConfig {
 export class SessionNotificationSink implements NotificationSink {
 	private readonly sessionFactory: SessionFactory;
 	private readonly sessionId: string;
-	private readonly autonomyLevel: AutonomyLevel;
+	private readonly autonomyLevel: SpaceAutonomyLevel;
 
 	constructor(config: SessionNotificationSinkConfig) {
 		this.sessionFactory = config.sessionFactory;
 		this.sessionId = config.sessionId;
-		this.autonomyLevel = config.autonomyLevel ?? 'supervised';
+		this.autonomyLevel = config.autonomyLevel ?? 1;
 	}
 
 	async notify(event: SpaceNotificationEvent): Promise<void> {
@@ -98,31 +98,45 @@ export class SessionNotificationSink implements NotificationSink {
 // Exported for use in tests that build realistic [TASK_EVENT] messages.
 export function formatEventMessage(
 	event: SpaceNotificationEvent,
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	switch (event.kind) {
-		case 'task_needs_attention':
-			return formatTaskNeedsAttention(event, autonomyLevel);
-		case 'workflow_run_needs_attention':
-			return formatWorkflowRunNeedsAttention(event, autonomyLevel);
+		case 'task_blocked':
+			return formatTaskBlocked(event, autonomyLevel);
+		case 'workflow_run_blocked':
+			return formatWorkflowRunBlocked(event, autonomyLevel);
 		case 'task_timeout':
 			return formatTaskTimeout(event, autonomyLevel);
 		case 'workflow_run_completed':
 			return formatWorkflowRunCompleted(event, autonomyLevel);
+		case 'workflow_run_reopened':
+			return formatWorkflowRunReopened(event, autonomyLevel);
+		case 'agent_auto_completed':
+			return formatAgentAutoCompleted(event, autonomyLevel);
+		case 'agent_crash':
+			return formatAgentCrash(event, autonomyLevel);
+		case 'task_retry':
+			return formatTaskRetry(event, autonomyLevel);
+		case 'workflow_run_needs_attention':
+			return formatWorkflowRunNeedsAttention(event, autonomyLevel);
+		case 'task_awaiting_approval':
+			return formatTaskAwaitingApproval(event, autonomyLevel);
+		case 'completion_action_executed':
+			return formatCompletionActionExecuted(event, autonomyLevel);
 	}
 }
 
-function formatTaskNeedsAttention(
+function formatTaskBlocked(
 	event: {
-		kind: 'task_needs_attention';
+		kind: 'task_blocked';
 		spaceId: string;
 		taskId: string;
 		reason: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
-	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} needs attention: ${event.reason}`;
+	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} is blocked: ${event.reason}`;
 	const payload = {
 		kind: event.kind,
 		spaceId: event.spaceId,
@@ -134,17 +148,17 @@ function formatTaskNeedsAttention(
 	return buildMessage(event.kind, humanReadable, payload);
 }
 
-function formatWorkflowRunNeedsAttention(
+function formatWorkflowRunBlocked(
 	event: {
-		kind: 'workflow_run_needs_attention';
+		kind: 'workflow_run_blocked';
 		spaceId: string;
 		runId: string;
 		reason: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
-	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} needs attention: ${event.reason}`;
+	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} is blocked: ${event.reason}`;
 	const payload = {
 		kind: event.kind,
 		spaceId: event.spaceId,
@@ -164,7 +178,7 @@ function formatTaskTimeout(
 		elapsedMs: number;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const elapsedMin = Math.round(event.elapsedMs / 60000);
 	const humanReadable = `Task ${event.taskId} in space ${event.spaceId} has been running for ${elapsedMin} minute(s) and may be stuck.`;
@@ -184,18 +198,18 @@ function formatWorkflowRunCompleted(
 		kind: 'workflow_run_completed';
 		spaceId: string;
 		runId: string;
-		status: 'completed' | 'cancelled' | 'needs_attention';
+		status: 'done' | 'cancelled' | 'blocked';
 		summary?: string;
 		timestamp: string;
 	},
-	autonomyLevel: AutonomyLevel
+	autonomyLevel: SpaceAutonomyLevel
 ): string {
 	const statusLabel =
-		event.status === 'completed'
+		event.status === 'done'
 			? 'completed successfully'
 			: event.status === 'cancelled'
 				? 'was cancelled'
-				: 'ended and needs attention';
+				: 'ended and is blocked';
 	const summaryPart = event.summary ? ` Summary: ${event.summary}` : '';
 	const humanReadable = `Workflow run ${event.runId} in space ${event.spaceId} ${statusLabel}.${summaryPart}`;
 	const payload: Record<string, unknown> = {
@@ -210,6 +224,218 @@ function formatWorkflowRunCompleted(
 		payload['summary'] = event.summary;
 	}
 	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatWorkflowRunReopened(
+	event: {
+		kind: 'workflow_run_reopened';
+		spaceId: string;
+		runId: string;
+		fromStatus: 'done' | 'cancelled';
+		reason: string;
+		by: string;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const humanReadable =
+		`Workflow run ${event.runId} in space ${event.spaceId} was reopened from '${event.fromStatus}' ` +
+		`back to 'in_progress' (by: ${event.by}). Reason: ${event.reason}. ` +
+		`A previously-finished task is active again; completion actions will not re-fire.`;
+	const payload = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		runId: event.runId,
+		fromStatus: event.fromStatus,
+		reason: event.reason,
+		by: event.by,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
+	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatAgentAutoCompleted(
+	event: {
+		kind: 'agent_auto_completed';
+		spaceId: string;
+		taskId: string;
+		elapsedMs: number;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const elapsedMinutes = Math.round(event.elapsedMs / 60_000);
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} was auto-completed after ${elapsedMinutes} minute(s) ` +
+		`because the agent did not call report_result within the configured timeout.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		elapsedMs: event.elapsedMs,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
+}
+
+function formatAgentCrash(
+	event: {
+		kind: 'agent_crash';
+		spaceId: string;
+		taskId: string;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} encountered an agent crash. ` +
+		`The task has been marked as blocked. ` +
+		`Please investigate and retry the task when ready.`;
+	const payload = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		failureReason: 'agentCrash',
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
+	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatTaskRetry(
+	event: {
+		kind: 'task_retry';
+		spaceId: string;
+		taskId: string;
+		runId: string;
+		originalReason: string;
+		attemptNumber: number;
+		maxAttempts: number;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} was blocked (reason: ${event.originalReason}). ` +
+		`The runtime is automatically retrying (attempt ${event.attemptNumber}/${event.maxAttempts}). ` +
+		`The blocked node execution has been reset to pending and will be re-spawned.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		runId: event.runId,
+		originalReason: event.originalReason,
+		attemptNumber: event.attemptNumber,
+		maxAttempts: event.maxAttempts,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
+}
+
+function formatWorkflowRunNeedsAttention(
+	event: {
+		kind: 'workflow_run_needs_attention';
+		spaceId: string;
+		runId: string;
+		taskId: string;
+		reason: string;
+		retriesExhausted: number;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const humanReadable =
+		`Workflow run ${event.runId} in space ${event.spaceId} needs attention. ` +
+		`The runtime exhausted ${event.retriesExhausted} automatic retry attempt(s). ` +
+		`Reason: ${event.reason}. ` +
+		`Please investigate and take action: retry with updated instructions, reassign, cancel, or escalate to the human.`;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		runId: event.runId,
+		taskId: event.taskId,
+		reason: event.reason,
+		retriesExhausted: event.retriesExhausted,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
+}
+
+function formatTaskAwaitingApproval(
+	event: {
+		kind: 'task_awaiting_approval';
+		spaceId: string;
+		taskId: string;
+		actionId: string;
+		actionName: string;
+		actionDescription?: string;
+		actionType: 'script' | 'instruction' | 'mcp_call';
+		requiredLevel: number;
+		spaceLevel: number;
+		autonomyLevel: number;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const descPart = event.actionDescription ? ` — ${event.actionDescription}` : '';
+	const humanReadable =
+		`Task ${event.taskId} in space ${event.spaceId} is awaiting approval for completion action ` +
+		`'${event.actionName}' (type: ${event.actionType})${descPart}. ` +
+		`Requires autonomy ${event.requiredLevel}, space is at ${event.spaceLevel}. ` +
+		`Review the action and approve or reject to resume the task.`;
+	const payload: Record<string, unknown> = {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		actionId: event.actionId,
+		actionName: event.actionName,
+		actionType: event.actionType,
+		requiredLevel: event.requiredLevel,
+		spaceLevel: event.spaceLevel,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	};
+	if (event.actionDescription !== undefined) {
+		payload['actionDescription'] = event.actionDescription;
+	}
+	return buildMessage(event.kind, humanReadable, payload);
+}
+
+function formatCompletionActionExecuted(
+	event: {
+		kind: 'completion_action_executed';
+		spaceId: string;
+		taskId: string;
+		runId: string;
+		actionId: string;
+		actionName: string;
+		approvedBy: 'human' | 'auto_policy';
+		approvalReason: string | null;
+		executedAt: string;
+		timestamp: string;
+	},
+	autonomyLevel: SpaceAutonomyLevel
+): string {
+	const approverLabel = event.approvedBy === 'human' ? 'a human reviewer' : 'auto-policy';
+	const reasonSuffix = event.approvalReason ? ` Reason: ${event.approvalReason}` : '';
+	const humanReadable =
+		`Completion action "${event.actionName}" (${event.actionId}) on task ${event.taskId} ` +
+		`in space ${event.spaceId} was approved by ${approverLabel} and executed successfully.` +
+		reasonSuffix;
+	return buildMessage(event.kind, humanReadable, {
+		kind: event.kind,
+		spaceId: event.spaceId,
+		taskId: event.taskId,
+		runId: event.runId,
+		actionId: event.actionId,
+		actionName: event.actionName,
+		approvedBy: event.approvedBy,
+		approvalReason: event.approvalReason,
+		executedAt: event.executedAt,
+		timestamp: event.timestamp,
+		autonomyLevel,
+	});
 }
 
 function buildMessage(

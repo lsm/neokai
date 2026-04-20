@@ -11,21 +11,9 @@
 
 import { test, expect } from '../../fixtures';
 import { waitForWebSocketConnected } from '../helpers/wait-helpers';
-import { deleteRoom, openMissionsTab } from '../helpers/room-helpers';
+import { createRoom, deleteRoom, openMissionsTab } from '../helpers/room-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
-	await waitForWebSocketConnected(page);
-	return page.evaluate(async () => {
-		const hub = window.__messageHub || window.appState?.messageHub;
-		if (!hub?.request) throw new Error('MessageHub not available');
-		const res = await hub.request('room.create', {
-			name: 'E2E Mission Detail Test Room',
-		});
-		return (res as { room: { id: string } }).room.id;
-	});
-}
 
 async function openCreateMissionModal(
 	page: Parameters<typeof waitForWebSocketConnected>[0]
@@ -69,7 +57,11 @@ async function createMeasurableMission(
 	await page.locator('[aria-label="Metric 1 target"]').fill('80');
 	await page.locator('[aria-label="Metric 1 unit"]').fill('%');
 	await page.getByRole('button', { name: 'Create', exact: true }).click();
-	await expect(page.locator(`h4:has-text("${title}")`)).toBeVisible({ timeout: 8000 });
+	// After Task 6, mission titles render as <button> elements (not <h4>) when onGoalClick is wired.
+	// Target the goal card header which contains the title button.
+	await expect(
+		page.locator(`[data-testid="goal-item-header"]:has-text("${title}")`).first()
+	).toBeVisible({ timeout: 8000 });
 }
 
 /** Creates a recurring mission with default daily schedule and returns the mission title. */
@@ -82,20 +74,30 @@ async function createRecurringMission(
 	await advanceToStep2(page);
 	await page.locator('[data-testid="mission-type-recurring"]').click();
 	await page.getByRole('button', { name: 'Create', exact: true }).click();
-	await expect(page.locator(`h4:has-text("${title}")`)).toBeVisible({ timeout: 8000 });
+	// After Task 6, mission titles render as <button> elements (not <h4>) when onGoalClick is wired.
+	await expect(
+		page.locator(`[data-testid="goal-item-header"]:has-text("${title}")`).first()
+	).toBeVisible({ timeout: 8000 });
 }
 
-/** Expands a mission item by clicking its header. */
+/** Expands a mission item by clicking the "Show details" toggle at the bottom of its header.
+ *
+ * After Task 6, clicking the title button navigates to mission detail instead of expanding.
+ * To reliably expand without triggering navigation, click the "Show details" span in the
+ * card footer, which bubbles up to the header's expand handler.
+ */
 async function expandMission(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
 	title: string
 ): Promise<void> {
-	// Find the goal-item-header that contains the mission title and click it
-	const header = page
-		.locator(`[data-testid="goal-item-header"]:has(h4:has-text("${title}"))`)
-		.first();
+	// Find the goal-item-header containing the mission title
+	const header = page.locator(`[data-testid="goal-item-header"]:has-text("${title}")`).first();
 	await expect(header).toBeVisible({ timeout: 5000 });
-	await header.click();
+	// Click the "Show details" span (footer of header) to expand.
+	// This avoids the title button which now navigates to MissionDetail.
+	const showDetails = header.locator('span:has-text("Show details")');
+	await expect(showDetails).toBeVisible({ timeout: 5000 });
+	await showDetails.click();
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -105,7 +107,8 @@ test.describe('Mission Detail Views', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		roomId = await createRoom(page);
+		await waitForWebSocketConnected(page);
+		roomId = await createRoom(page, 'E2E Mission Detail Test Room');
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -123,7 +126,10 @@ test.describe('Mission Detail Views', () => {
 
 		// The MetricProgress component renders in the mission header when structuredMetrics exist.
 		// It shows metric name + value/target and a progress bar. Verify the metric label is visible.
-		const missionHeader = page.locator('h4:has-text("Coverage Mission")').first();
+		// After Task 6, titles render as <button> elements, so target the card header instead.
+		const missionHeader = page
+			.locator('[data-testid="goal-item-header"]:has-text("Coverage Mission")')
+			.first();
 		await expect(missionHeader).toBeVisible({ timeout: 5000 });
 
 		// MetricProgress renders the metric name in a span in the header area

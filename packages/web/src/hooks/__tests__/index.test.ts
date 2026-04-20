@@ -16,6 +16,9 @@ import {
 	useFileAttachments,
 	useGroupMessages,
 	useRoomLiveQuery,
+	useRoomSkills,
+	useReferenceAutocomplete,
+	extractActiveAtQuery,
 } from '../index.ts';
 
 describe('Hooks Index', () => {
@@ -68,6 +71,21 @@ describe('Hooks Index', () => {
 		it('should export useRoomLiveQuery', () => {
 			expect(useRoomLiveQuery).toBeDefined();
 			expect(typeof useRoomLiveQuery).toBe('function');
+		});
+
+		it('should export useRoomSkills', () => {
+			expect(useRoomSkills).toBeDefined();
+			expect(typeof useRoomSkills).toBe('function');
+		});
+
+		it('should export useReferenceAutocomplete', () => {
+			expect(useReferenceAutocomplete).toBeDefined();
+			expect(typeof useReferenceAutocomplete).toBe('function');
+		});
+
+		it('should export extractActiveAtQuery', () => {
+			expect(extractActiveAtQuery).toBeDefined();
+			expect(typeof extractActiveAtQuery).toBe('function');
 		});
 	});
 });

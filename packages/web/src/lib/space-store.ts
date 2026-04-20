@@ -13,40 +13,62 @@
  * - tasks: SpaceTask list for the space
  * - workflowRuns: SpaceWorkflowRun list for the space
  * - agents: SpaceAgent list for the space
+ * - agentTemplates: Built-in agent templates from daemon seeding source
  * - workflows: SpaceWorkflow list for the space
- * - sessionGroups: SpaceSessionGroup list for the space (real-time via events)
+ * - workflowTemplates: Built-in workflow templates from daemon seeding source
  * - runtimeState: Runtime state (running/paused/stopped)
+ * - nodeExecutions: NodeExecution list for all workflow runs in the space
+ * - nodeExecutionsByNodeId: NodeExecutions grouped by workflow node ID
  * - loading: Loading state
  * - error: Error state
  */
 
-import { signal, computed } from '@preact/signals';
 import type {
-	Space,
-	SpaceTask,
-	SpaceWorkflowRun,
-	SpaceAgent,
-	SpaceWorkflow,
-	SpaceSessionGroup,
-	SpaceSessionGroupMember,
-	RuntimeState,
-	CreateSpaceTaskParams,
-	UpdateSpaceTaskParams,
 	CreateSpaceAgentParams,
-	UpdateSpaceAgentParams,
+	CreateSpaceTaskParams,
 	CreateSpaceWorkflowParams,
-	UpdateSpaceWorkflowParams,
-	CreateWorkflowRunParams,
+	LiveQueryDeltaEvent,
+	LiveQuerySnapshotEvent,
+	NodeExecution,
+	RuntimeState,
+	Space,
+	SpaceAgent,
+	SpaceTask,
+	SpaceTaskActivityMember,
+	SpaceWorkflow,
+	SpaceWorkflowRun,
+	UpdateSpaceAgentParams,
 	UpdateSpaceParams,
+	UpdateSpaceTaskParams,
+	UpdateSpaceWorkflowParams,
+	WorkflowRunArtifact,
 } from '@neokai/shared';
-import { Logger } from '@neokai/shared';
+import { isUUID, Logger } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
 
 const logger = new Logger('kai:web:spacestore');
 
-/** Space enriched with active tasks for the sidebar list */
+export interface SpaceSessionSummary {
+	id: string;
+	title: string;
+	status: string;
+	type: string;
+	lastActiveAt: number;
+}
+
+/** Space enriched with active tasks and recent sessions for the global list */
 export interface SpaceWithTasks extends Space {
 	tasks: SpaceTask[];
+	sessions: SpaceSessionSummary[];
+}
+
+export interface SpaceAgentTemplate {
+	name: string;
+	description: string;
+	tools: string[];
+	customPrompt: string;
 }
 
 class SpaceStore {
@@ -81,14 +103,20 @@ class SpaceStore {
 	/** Agents configured for this space */
 	readonly agents = signal<SpaceAgent[]>([]);
 
+	/** Built-in agent templates sourced from daemon seeding definitions */
+	readonly agentTemplates = signal<SpaceAgentTemplate[]>([]);
+
 	/** Workflow definitions for this space */
 	readonly workflows = signal<SpaceWorkflow[]>([]);
+
+	/** Built-in workflow templates sourced from daemon seeding definitions */
+	readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
 
 	/** Runtime state for this space */
 	readonly runtimeState = signal<RuntimeState | null>(null);
 
-	/** Session groups for this space */
-	readonly sessionGroups = signal<SpaceSessionGroup[]>([]);
+	/** Live task-agent activity rows keyed by task ID */
+	readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
 	/** Loading state */
 	readonly loading = signal<boolean>(false);
@@ -96,9 +124,66 @@ class SpaceStore {
 	/** Error state */
 	readonly error = signal<string | null>(null);
 
+	/** Whether configure-view data (agents, workflows, templates) has been loaded for the current space */
+	readonly configDataLoaded = signal<boolean>(false);
+
+	/** Whether node executions have been loaded for the current space */
+	readonly nodeExecLoaded = signal<boolean>(false);
+
+	/** Sessions for this space — reactive via LiveQuery (title, status changes) */
+	readonly sessions = signal<
+		Array<{ id: string; title: string; status: string; lastActiveAt: number }>
+	>([]);
+
+	/** Cleanup functions for the space sessions LiveQuery subscription */
+	private spaceSessionsCleanupFns: Array<() => void> = [];
+
+	/** Stale-event guard for space sessions LiveQuery subscription */
+	private activeSpaceSessionsSubscriptionId: string | null = null;
+
+	/** Tasks needing human attention — reactive via LiveQuery */
+	readonly attentionTasks = signal<
+		Array<{
+			id: string;
+			title: string;
+			status: string;
+			blockReason: string | null;
+			result: string | null;
+			taskNumber: number;
+			spaceId: string;
+			updatedAt: number;
+		}>
+	>([]);
+
+	/** Cleanup functions for the attention tasks LiveQuery subscription */
+	private attentionTasksCleanupFns: Array<() => void> = [];
+
+	/** Stale-event guard for attention tasks LiveQuery subscription */
+	private activeAttentionTasksSubscriptionId: string | null = null;
+
+	// ========================================
+	// Private Helpers
+	// ========================================
+
+	/** Derive runtime state from Space fields */
+	private updateRuntimeState(space: Space): void {
+		if (space.status === 'archived') {
+			this.runtimeState.value = 'stopped';
+			return;
+		}
+		if (space.stopped) {
+			this.runtimeState.value = 'stopped';
+			return;
+		}
+		this.runtimeState.value = space.paused ? 'paused' : 'running';
+	}
+
 	// ========================================
 	// Computed Signals
 	// ========================================
+
+	/** Number of tasks needing human attention (review + human-blocked) */
+	readonly attentionCount = computed(() => this.attentionTasks.value.length);
 
 	/** Tasks that are currently in progress */
 	readonly activeTasks = computed(() => this.tasks.value.filter((t) => t.status === 'in_progress'));
@@ -123,14 +208,19 @@ class SpaceStore {
 	/** Tasks not associated with any workflow run */
 	readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
-	/** Session groups indexed by taskId for O(1) lookup */
-	readonly sessionGroupsByTask = computed(() => {
-		const map = new Map<string, SpaceSessionGroup[]>();
-		for (const group of this.sessionGroups.value) {
-			if (group.taskId) {
-				const existing = map.get(group.taskId) ?? [];
-				map.set(group.taskId, [...existing, group]);
+	/** Node executions for all workflow runs — loaded via initial fetch and LiveQuery subscriptions */
+	readonly nodeExecutions = signal<NodeExecution[]>([]);
+
+	/** Node executions grouped by workflow node ID */
+	readonly nodeExecutionsByNodeId = computed(() => {
+		const map = new Map<string, NodeExecution[]>();
+		for (const exec of this.nodeExecutions.value) {
+			let arr = map.get(exec.workflowNodeId);
+			if (!arr) {
+				arr = [];
+				map.set(exec.workflowNodeId, arr);
 			}
+			arr.push(exec);
 		}
 		return map;
 	});
@@ -161,6 +251,95 @@ class SpaceStore {
 	 * before registering new ones on the same hub instance.
 	 */
 	private globalListCleanupFns: Array<() => void> = [];
+
+	/** Cleanup functions for the active task-activity LiveQuery subscription */
+	private taskActivityCleanupFns: Array<() => void> = [];
+
+	/** Active task ID for the current task-activity LiveQuery subscription */
+	private activeTaskActivityTaskId: string | null = null;
+
+	/** Stale-event guard for task-activity LiveQuery subscriptions */
+	private activeTaskActivitySubscriptionIds = new Set<string>();
+
+	/** Cleanup functions for node execution LiveQuery subscriptions */
+	private nodeExecCleanupFns: Array<() => void> = [];
+
+	/** Stale-event guard for node execution LiveQuery subscriptions */
+	private activeNodeExecSubscriptionIds = new Set<string>();
+
+	/** In-flight promise for ensureConfigData to prevent duplicate fetches */
+	private configDataPromise: Promise<void> | null = null;
+
+	/** In-flight promise for ensureNodeExecutions to prevent duplicate fetches */
+	private nodeExecPromise: Promise<void> | null = null;
+
+	private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
+		const withoutSameId = tasks.filter((current) => current.id !== task.id);
+		if (!task.workflowRunId) {
+			return [...withoutSameId, task].sort((a, b) => b.updatedAt - a.updatedAt);
+		}
+
+		const sameRun = withoutSameId.filter((current) => current.workflowRunId === task.workflowRunId);
+		const others = withoutSameId.filter((current) => current.workflowRunId !== task.workflowRunId);
+		const runTitle =
+			this.workflowRuns.value
+				.find((run) => run.id === task.workflowRunId)
+				?.title?.trim()
+				.toLowerCase() ?? null;
+		const merged = [...sameRun, task];
+		const canonical = merged.find((candidate) => {
+			if (!runTitle) return false;
+			return candidate.title.trim().toLowerCase() === runTitle;
+		});
+		const fallback =
+			canonical ??
+			[...merged].sort((a, b) => {
+				if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+				return a.taskNumber - b.taskNumber;
+			})[0];
+		return [...others, fallback].sort((a, b) => b.updatedAt - a.updatedAt);
+	}
+
+	private removeTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
+		return tasks.filter(
+			(current) =>
+				current.id !== task.id &&
+				(!task.workflowRunId || current.workflowRunId !== task.workflowRunId)
+		);
+	}
+
+	private collapseTasksOnePerRun(tasks: SpaceTask[], runs: SpaceWorkflowRun[]): SpaceTask[] {
+		if (tasks.length === 0) return [];
+		const runsById = new Map(runs.map((run) => [run.id, run]));
+		const groupedByRun = new Map<string, SpaceTask[]>();
+		const standalone: SpaceTask[] = [];
+
+		for (const task of tasks) {
+			if (!task.workflowRunId) {
+				standalone.push(task);
+				continue;
+			}
+			const existing = groupedByRun.get(task.workflowRunId) ?? [];
+			existing.push(task);
+			groupedByRun.set(task.workflowRunId, existing);
+		}
+
+		const canonicalWorkflowTasks = Array.from(groupedByRun.entries()).map(([runId, runTasks]) => {
+			const runTitle = runsById.get(runId)?.title?.trim().toLowerCase() ?? null;
+			const byRunTitle = runTitle
+				? runTasks.find((task) => task.title.trim().toLowerCase() === runTitle)
+				: undefined;
+			return (
+				byRunTitle ??
+				[...runTasks].sort((a, b) => {
+					if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+					return a.taskNumber - b.taskNumber;
+				})[0]
+			);
+		});
+
+		return [...standalone, ...canonicalWorkflowTasks].sort((a, b) => b.updatedAt - a.updatedAt);
+	}
 
 	// ========================================
 	// Global Space List
@@ -193,7 +372,9 @@ class SpaceStore {
 		try {
 			const hub = await connectionManager.getHub();
 			const enriched = await hub.request<SpaceWithTasks[]>('space.listWithTasks', {});
-			const spaces = (enriched ?? []).map(({ tasks: _tasks, ...space }) => space);
+			const spaces = (enriched ?? []).map(
+				({ tasks: _tasks, sessions: _sessions, ...space }) => space
+			);
 			this.spaces.value = spaces;
 			this.spacesWithTasks.value = enriched ?? [];
 
@@ -206,7 +387,7 @@ class SpaceStore {
 							this.spaces.value = [...this.spaces.value, event.space];
 							this.spacesWithTasks.value = [
 								...this.spacesWithTasks.value,
-								{ ...event.space, tasks: [] },
+								{ ...event.space, tasks: [], sessions: [] },
 							];
 						}
 					}
@@ -230,7 +411,9 @@ class SpaceStore {
 						s.id === event.spaceId ? event.space : s
 					);
 					this.spacesWithTasks.value = this.spacesWithTasks.value.map((s) =>
-						s.id === event.spaceId ? ({ ...event.space, tasks: s.tasks } as SpaceWithTasks) : s
+						s.id === event.spaceId
+							? ({ ...event.space, tasks: s.tasks, sessions: s.sessions } as SpaceWithTasks)
+							: s
 					);
 				})
 			);
@@ -256,10 +439,11 @@ class SpaceStore {
 					const idx = swt.findIndex((s) => s.id === event.spaceId);
 					if (idx >= 0) {
 						// Only add if not completed/cancelled
-						if (event.task.status !== 'completed' && event.task.status !== 'cancelled') {
+						if (event.task.status !== 'done' && event.task.status !== 'cancelled') {
+							const nextTasks = this.upsertTaskOnePerRun(swt[idx].tasks, event.task);
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
-								{ ...swt[idx], tasks: [...swt[idx].tasks, event.task] },
+								{ ...swt[idx], tasks: nextTasks },
 								...swt.slice(idx + 1),
 							];
 						}
@@ -278,31 +462,19 @@ class SpaceStore {
 					const idx = swt.findIndex((s) => s.id === event.spaceId);
 					if (idx >= 0) {
 						const spaceTasks = swt[idx].tasks;
-						const taskIdx = spaceTasks.findIndex((t) => t.id === event.task.id);
 						// If task was completed/cancelled, remove it
-						if (event.task.status === 'completed' || event.task.status === 'cancelled') {
-							if (taskIdx >= 0) {
-								const updated = spaceTasks.filter((t) => t.id !== event.task.id);
-								this.spacesWithTasks.value = [
-									...swt.slice(0, idx),
-									{ ...swt[idx], tasks: updated },
-									...swt.slice(idx + 1),
-								];
-							}
-						} else if (taskIdx >= 0) {
-							// Update in place
-							const updated = [...spaceTasks];
-							updated[taskIdx] = event.task;
+						if (event.task.status === 'done' || event.task.status === 'cancelled') {
+							const updated = this.removeTaskOnePerRun(spaceTasks, event.task);
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
 								{ ...swt[idx], tasks: updated },
 								...swt.slice(idx + 1),
 							];
 						} else {
-							// Task wasn't tracked but is now active — add it
+							const updated = this.upsertTaskOnePerRun(spaceTasks, event.task);
 							this.spacesWithTasks.value = [
 								...swt.slice(0, idx),
-								{ ...swt[idx], tasks: [...spaceTasks, event.task] },
+								{ ...swt[idx], tasks: updated },
 								...swt.slice(idx + 1),
 							];
 						}
@@ -350,10 +522,12 @@ class SpaceStore {
 	}
 
 	/**
-	 * Internal selection logic (called within promise chain)
+	 * Internal selection logic (called within promise chain).
+	 * The spaceIdOrSlug parameter can be either a UUID or a slug — both are resolved
+	 * to the canonical UUID during initial state fetch.
 	 */
-	private async doSelect(spaceId: string | null): Promise<void> {
-		if (this.spaceId.value === spaceId) {
+	private async doSelect(spaceIdOrSlug: string | null): Promise<void> {
+		if (this.spaceId.value === spaceIdOrSlug) {
 			return;
 		}
 
@@ -372,19 +546,38 @@ class SpaceStore {
 		this.tasks.value = [];
 		this.workflowRuns.value = [];
 		this.agents.value = [];
+		this.agentTemplates.value = [];
 		this.workflows.value = [];
-		this.sessionGroups.value = [];
+		this.workflowTemplates.value = [];
+		this.nodeExecutions.value = [];
 		this.runtimeState.value = null;
+		this.taskActivity.value = new Map();
 		this.error.value = null;
+		this.configDataLoaded.value = false;
+		this.configDataPromise = null;
+		this.nodeExecLoaded.value = false;
+		this.nodeExecPromise = null;
+		this.sessions.value = [];
+		this.disposeSpaceSessionsSubscription();
+		this.attentionTasks.value = [];
+		this.disposeAttentionTasksSubscription();
 
-		// 3. Update active space
-		this.spaceId.value = spaceId;
+		// 3. Update active space (may be updated to real UUID after fetch)
+		this.spaceId.value = spaceIdOrSlug;
 
 		// 4. Start new subscriptions if space selected
-		if (spaceId) {
+		if (spaceIdOrSlug) {
 			this.loading.value = true;
 			try {
-				await this.startSubscriptions(spaceId);
+				// Resolve slug to UUID via overview fetch, then subscribe with the real UUID
+				const resolvedId = await this.fetchAndResolveSpace(spaceIdOrSlug);
+				if (resolvedId) {
+					// Update spaceId to the canonical UUID if it was a slug
+					if (resolvedId !== spaceIdOrSlug) {
+						this.spaceId.value = resolvedId;
+					}
+					await this.startSubscriptions(resolvedId);
+				}
 			} catch (err) {
 				logger.error('Failed to start space subscriptions:', err);
 				this.error.value = err instanceof Error ? err.message : 'Failed to load space';
@@ -418,10 +611,18 @@ class SpaceStore {
 			space?: Partial<Space>;
 		}>('space.updated', (event) => {
 			if (event.spaceId === spaceId && event.space && this.space.value) {
-				this.space.value = { ...this.space.value, ...event.space } as Space;
+				const updated = { ...this.space.value, ...event.space } as Space;
+				this.space.value = updated;
+				this.updateRuntimeState(updated);
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceUpdated);
+
+		// --- spaceSessions.bySpace LiveQuery ---
+		this.subscribeSpaceSessions(hub, spaceId);
+
+		// --- spaceTasks.needingAttention LiveQuery ---
+		this.subscribeAttentionTasks(hub, spaceId);
 
 		// --- space.archived ---
 		const unsubSpaceArchived = hub.onEvent<{
@@ -430,10 +631,18 @@ class SpaceStore {
 			space: Space;
 		}>('space.archived', (event) => {
 			if (event.spaceId === spaceId) {
-				// Space archived externally — clear selection
-				this.clearSpace().catch((err) => {
-					logger.error('Failed to clear space after external archive:', err);
-				});
+				// Conditional clear: only clear if still on this space when the promise chain
+				// executes. A late-arriving event for a previous space can otherwise clear the
+				// newly-selected space (race between selectSpace chain and delayed WS events).
+				this.selectPromise = this.selectPromise
+					.then(() => {
+						if (this.spaceId.value === spaceId) {
+							return this.doSelect(null);
+						}
+					})
+					.catch((err) => {
+						logger.error('Failed to clear space after external archive:', err);
+					});
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceArchived);
@@ -444,10 +653,18 @@ class SpaceStore {
 			spaceId: string;
 		}>('space.deleted', (event) => {
 			if (event.spaceId === spaceId) {
-				// Space deleted externally — clear selection
-				this.clearSpace().catch((err) => {
-					logger.error('Failed to clear space after external delete:', err);
-				});
+				// Conditional clear: only clear if still on this space when the promise chain
+				// executes. A late-arriving event for a previous space can otherwise clear the
+				// newly-selected space (race between selectSpace chain and delayed WS events).
+				this.selectPromise = this.selectPromise
+					.then(() => {
+						if (this.spaceId.value === spaceId) {
+							return this.doSelect(null);
+						}
+					})
+					.catch((err) => {
+						logger.error('Failed to clear space after external delete:', err);
+					});
 			}
 		});
 		this.cleanupFunctions.push(unsubSpaceDeleted);
@@ -460,10 +677,7 @@ class SpaceStore {
 			task: SpaceTask;
 		}>('space.task.created', (event) => {
 			if (event.spaceId === spaceId) {
-				const exists = this.tasks.value.some((t) => t.id === event.task.id);
-				if (!exists) {
-					this.tasks.value = [...this.tasks.value, event.task];
-				}
+				this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, event.task);
 			}
 		});
 		this.cleanupFunctions.push(unsubTaskCreated);
@@ -476,16 +690,7 @@ class SpaceStore {
 			task: SpaceTask;
 		}>('space.task.updated', (event) => {
 			if (event.spaceId === spaceId) {
-				const idx = this.tasks.value.findIndex((t) => t.id === event.task.id);
-				if (idx >= 0) {
-					this.tasks.value = [
-						...this.tasks.value.slice(0, idx),
-						event.task,
-						...this.tasks.value.slice(idx + 1),
-					];
-				} else {
-					this.tasks.value = [...this.tasks.value, event.task];
-				}
+				this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, event.task);
 			}
 		});
 		this.cleanupFunctions.push(unsubTaskUpdated);
@@ -501,6 +706,8 @@ class SpaceStore {
 				const exists = this.workflowRuns.value.some((r) => r.id === event.run.id);
 				if (!exists) {
 					this.workflowRuns.value = [...this.workflowRuns.value, event.run];
+					// Subscribe to the new run's LiveQuery for real-time updates
+					this.subscribeNodeExecutionsByRun(hub, event.run.id);
 				}
 			}
 		});
@@ -621,124 +828,34 @@ class SpaceStore {
 			}
 		});
 		this.cleanupFunctions.push(unsubWorkflowDeleted);
-
-		// --- spaceSessionGroup.created ---
-		const unsubGroupCreated = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			taskId: string;
-			group: SpaceSessionGroup;
-		}>('spaceSessionGroup.created', (event) => {
-			if (event.spaceId === spaceId) {
-				const exists = this.sessionGroups.value.some((g) => g.id === event.group.id);
-				if (!exists) {
-					this.sessionGroups.value = [...this.sessionGroups.value, event.group];
-				}
-			}
-		});
-		this.cleanupFunctions.push(unsubGroupCreated);
-
-		// --- spaceSessionGroup.memberAdded ---
-		const unsubMemberAdded = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			groupId: string;
-			member: SpaceSessionGroupMember;
-		}>('spaceSessionGroup.memberAdded', (event) => {
-			if (event.spaceId === spaceId) {
-				const idx = this.sessionGroups.value.findIndex((g) => g.id === event.groupId);
-				if (idx >= 0) {
-					const group = this.sessionGroups.value[idx];
-					const memberExists = group.members.some((m) => m.id === event.member.id);
-					if (!memberExists) {
-						const updatedGroup = { ...group, members: [...group.members, event.member] };
-						this.sessionGroups.value = [
-							...this.sessionGroups.value.slice(0, idx),
-							updatedGroup,
-							...this.sessionGroups.value.slice(idx + 1),
-						];
-					}
-				}
-			}
-		});
-		this.cleanupFunctions.push(unsubMemberAdded);
-
-		// --- spaceSessionGroup.memberUpdated ---
-		const unsubMemberUpdated = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			groupId: string;
-			memberId: string;
-			member: SpaceSessionGroupMember;
-		}>('spaceSessionGroup.memberUpdated', (event) => {
-			if (event.spaceId === spaceId) {
-				const idx = this.sessionGroups.value.findIndex((g) => g.id === event.groupId);
-				if (idx >= 0) {
-					const group = this.sessionGroups.value[idx];
-					const memberIdx = group.members.findIndex((m) => m.id === event.memberId);
-					if (memberIdx >= 0) {
-						const updatedMembers = [
-							...group.members.slice(0, memberIdx),
-							event.member,
-							...group.members.slice(memberIdx + 1),
-						];
-						const updatedGroup = { ...group, members: updatedMembers };
-						this.sessionGroups.value = [
-							...this.sessionGroups.value.slice(0, idx),
-							updatedGroup,
-							...this.sessionGroups.value.slice(idx + 1),
-						];
-					}
-				}
-			}
-		});
-		this.cleanupFunctions.push(unsubMemberUpdated);
-
-		// --- spaceSessionGroup.deleted ---
-		const unsubGroupDeleted = hub.onEvent<{
-			sessionId: string;
-			spaceId: string;
-			groupId: string;
-		}>('spaceSessionGroup.deleted', (event) => {
-			if (event.spaceId === spaceId) {
-				this.sessionGroups.value = this.sessionGroups.value.filter((g) => g.id !== event.groupId);
-			}
-		});
-		this.cleanupFunctions.push(unsubGroupDeleted);
-
-		// Fetch initial state via RPC
-		await this.fetchInitialState(hub, spaceId);
 	}
 
 	/**
-	 * Fetch initial state via RPC (pure WebSocket)
+	 * Fetch initial state and resolve slug to UUID.
+	 * Returns the resolved space UUID, or null if not found.
 	 */
-	private async fetchInitialState(
-		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-		spaceId: string
-	): Promise<void> {
+	private async fetchAndResolveSpace(spaceIdOrSlug: string): Promise<string | null> {
+		const hub = await connectionManager.getHub();
+
 		const overview = await hub.request<{
 			space: Space;
 			tasks: SpaceTask[];
 			workflowRuns: SpaceWorkflowRun[];
 			sessions: string[];
-		}>('space.overview', { id: spaceId });
+		}>('space.overview', isUUID(spaceIdOrSlug) ? { id: spaceIdOrSlug } : { slug: spaceIdOrSlug });
 
 		if (!overview) {
 			this.error.value = 'Space not found';
-			return;
+			return null;
 		}
 
 		this.space.value = overview.space;
-		this.tasks.value = overview.tasks ?? [];
+		this.updateRuntimeState(overview.space);
 		this.workflowRuns.value = overview.workflowRuns ?? [];
+		// Server already returns collapsed tasks via collapseToCanonicalTasks — use directly
+		this.tasks.value = overview.tasks ?? [];
 
-		// Fetch agents, workflows, and session groups in parallel
-		await Promise.all([
-			this.fetchAgents(hub, spaceId),
-			this.fetchWorkflows(hub, spaceId),
-			this.fetchSessionGroups(hub, spaceId),
-		]);
+		return overview.space.id;
 	}
 
 	/**
@@ -755,6 +872,27 @@ class SpaceStore {
 			this.agents.value = result?.agents ?? [];
 		} catch (err) {
 			logger.error('Failed to fetch agents:', err);
+		}
+	}
+
+	/**
+	 * Fetch built-in agent templates from daemon seeding source.
+	 */
+	private async fetchAgentTemplates(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+				'spaceAgent.listBuiltInTemplates',
+				{
+					spaceId,
+				}
+			);
+			this.agentTemplates.value = result?.templates ?? [];
+		} catch (err) {
+			logger.error('Failed to fetch agent templates:', err);
+			this.agentTemplates.value = [];
 		}
 	}
 
@@ -776,19 +914,61 @@ class SpaceStore {
 	}
 
 	/**
-	 * Fetch session groups for the space
+	 * Fetch built-in workflow templates from daemon seeding source.
 	 */
-	private async fetchSessionGroups(
+	private async fetchWorkflowTemplates(
 		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
 		spaceId: string
 	): Promise<void> {
 		try {
-			const result = await hub.request<{ groups: SpaceSessionGroup[] }>('space.sessionGroup.list', {
-				spaceId,
-			});
-			this.sessionGroups.value = result?.groups ?? [];
+			const result = await hub.request<{ workflows: SpaceWorkflow[] }>(
+				'spaceWorkflow.listBuiltInTemplates',
+				{
+					spaceId,
+				}
+			);
+			this.workflowTemplates.value = result?.workflows ?? [];
 		} catch (err) {
-			logger.error('Failed to fetch session groups:', err);
+			logger.error('Failed to fetch workflow templates:', err);
+			this.workflowTemplates.value = [];
+		}
+	}
+
+	/**
+	 * Fetch node executions for all workflow runs in the space.
+	 * Calls nodeExecution.list for each run and aggregates the results.
+	 */
+	private async fetchNodeExecutions(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): Promise<void> {
+		try {
+			const runs = this.workflowRuns.value;
+			if (runs.length === 0) {
+				this.nodeExecutions.value = [];
+				return;
+			}
+			const results = await Promise.allSettled(
+				runs.map((run) =>
+					hub
+						.request<{ executions: NodeExecution[] }>('nodeExecution.list', {
+							workflowRunId: run.id,
+							spaceId,
+						})
+						.then((r) => r?.executions ?? [])
+				)
+			);
+			const allExecs: NodeExecution[] = [];
+			for (const result of results) {
+				if (result.status === 'fulfilled') {
+					allExecs.push(...result.value);
+				} else {
+					logger.warn('Failed to fetch node executions for a run:', result.reason);
+				}
+			}
+			this.nodeExecutions.value = allExecs;
+		} catch (err) {
+			logger.error('Failed to fetch node executions:', err);
 		}
 	}
 
@@ -804,6 +984,494 @@ class SpaceStore {
 			}
 		}
 		this.cleanupFunctions = [];
+		this.unsubscribeTaskActivity();
+		this.unsubscribeNodeExecutions();
+		this.disposeAttentionTasksSubscription();
+	}
+
+	// ========================================
+	// Lazy-Loading: Config Data & Node Executions
+	// ========================================
+
+	/**
+	 * Lazily load agents, agent templates, workflows, and workflow templates.
+	 * Called by components that need this data (SpaceConfigurePage, SpaceTaskPane).
+	 * Safe to call multiple times — deduplicates via promise + flag.
+	 */
+	async ensureConfigData(): Promise<void> {
+		if (this.configDataLoaded.value) return;
+		if (this.configDataPromise) return this.configDataPromise;
+
+		const spaceId = this.spaceId.value;
+		if (!spaceId) return;
+
+		this.configDataPromise = this.doEnsureConfigData(spaceId);
+		try {
+			await this.configDataPromise;
+		} finally {
+			this.configDataPromise = null;
+		}
+	}
+
+	private async doEnsureConfigData(spaceId: string): Promise<void> {
+		try {
+			const hub = await connectionManager.getHub();
+			await Promise.all([
+				this.fetchAgents(hub, spaceId),
+				this.fetchAgentTemplates(hub, spaceId),
+				this.fetchWorkflows(hub, spaceId),
+				this.fetchWorkflowTemplates(hub, spaceId),
+			]);
+			// Only mark loaded if still the same space
+			if (this.spaceId.value === spaceId) {
+				this.configDataLoaded.value = true;
+			}
+		} catch (err) {
+			logger.error('Failed to load config data:', err);
+		}
+	}
+
+	/**
+	 * Lazily load node executions and subscribe to LiveQuery updates.
+	 * Called by components that render the workflow canvas.
+	 * Safe to call multiple times — deduplicates via promise + flag.
+	 */
+	async ensureNodeExecutions(): Promise<void> {
+		if (this.nodeExecLoaded.value) return;
+		if (this.nodeExecPromise) return this.nodeExecPromise;
+
+		const spaceId = this.spaceId.value;
+		if (!spaceId) return;
+
+		this.nodeExecPromise = this.doEnsureNodeExecutions(spaceId);
+		try {
+			await this.nodeExecPromise;
+		} finally {
+			this.nodeExecPromise = null;
+		}
+	}
+
+	private async doEnsureNodeExecutions(spaceId: string): Promise<void> {
+		try {
+			const hub = await connectionManager.getHub();
+			await this.fetchNodeExecutions(hub, spaceId);
+			// Subscribe to real-time updates
+			if (this.spaceId.value === spaceId) {
+				this.subscribeNodeExecutions(hub);
+				this.nodeExecLoaded.value = true;
+			}
+		} catch (err) {
+			logger.error('Failed to load node executions:', err);
+		}
+	}
+
+	private applyTaskActivityDelta(
+		currentRows: SpaceTaskActivityMember[],
+		event: LiveQueryDeltaEvent
+	): SpaceTaskActivityMember[] {
+		const next = new Map(currentRows.map((row) => [row.id, row]));
+
+		for (const row of (event.removed ?? []) as SpaceTaskActivityMember[]) {
+			next.delete(row.id);
+		}
+		for (const row of (event.updated ?? []) as SpaceTaskActivityMember[]) {
+			next.set(row.id, row);
+		}
+		for (const row of (event.added ?? []) as SpaceTaskActivityMember[]) {
+			next.set(row.id, row);
+		}
+
+		return Array.from(next.values()).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+	}
+
+	async subscribeTaskActivity(taskId: string): Promise<void> {
+		if (!taskId) return;
+		if (this.activeTaskActivityTaskId === taskId) return;
+
+		this.unsubscribeTaskActivity();
+		this.activeTaskActivityTaskId = taskId;
+
+		const subscriptionId = `spaceTaskActivity-${taskId}`;
+
+		try {
+			const hub = await connectionManager.getHub();
+			if (this.activeTaskActivityTaskId !== taskId) return;
+
+			this.activeTaskActivitySubscriptionIds.add(subscriptionId);
+
+			const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+				if (event.subscriptionId !== subscriptionId) return;
+				if (!this.activeTaskActivitySubscriptionIds.has(subscriptionId)) return;
+				this.taskActivity.value = new Map(this.taskActivity.value).set(
+					taskId,
+					(event.rows as SpaceTaskActivityMember[]) ?? []
+				);
+			});
+			this.taskActivityCleanupFns.push(unsubSnapshot);
+			this.taskActivityCleanupFns.push(() =>
+				this.activeTaskActivitySubscriptionIds.delete(subscriptionId)
+			);
+
+			const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+				if (event.subscriptionId !== subscriptionId) return;
+				if (!this.activeTaskActivitySubscriptionIds.has(subscriptionId)) return;
+				const currentRows = this.taskActivity.value.get(taskId) ?? [];
+				const nextRows = this.applyTaskActivityDelta(currentRows, event);
+				this.taskActivity.value = new Map(this.taskActivity.value).set(taskId, nextRows);
+			});
+			this.taskActivityCleanupFns.push(unsubDelta);
+
+			const unsubReconnect = hub.onConnection((state) => {
+				if (state !== 'connected') return;
+				if (!this.activeTaskActivitySubscriptionIds.has(subscriptionId)) return;
+				hub
+					.request('liveQuery.subscribe', {
+						queryName: 'spaceTaskActivity.byTask',
+						params: [taskId],
+						subscriptionId,
+					})
+					.catch((err) => {
+						logger.warn('Task activity LiveQuery re-subscribe failed:', err);
+					});
+			});
+			this.taskActivityCleanupFns.push(unsubReconnect);
+
+			await hub.request('liveQuery.subscribe', {
+				queryName: 'spaceTaskActivity.byTask',
+				params: [taskId],
+				subscriptionId,
+			});
+
+			if (this.activeTaskActivityTaskId !== taskId) {
+				this.unsubscribeTaskActivity(taskId);
+			}
+		} catch (err) {
+			this.unsubscribeTaskActivity(taskId);
+			throw err;
+		}
+	}
+
+	unsubscribeTaskActivity(taskId?: string): void {
+		const activeTaskId = this.activeTaskActivityTaskId;
+		if (!activeTaskId || (taskId && activeTaskId !== taskId)) return;
+
+		const subscriptionId = `spaceTaskActivity-${activeTaskId}`;
+		this.activeTaskActivitySubscriptionIds.delete(subscriptionId);
+
+		for (const cleanup of this.taskActivityCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+		this.taskActivityCleanupFns = [];
+		this.activeTaskActivityTaskId = null;
+
+		const hub = connectionManager.getHubIfConnected();
+		if (hub) {
+			hub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
+		}
+	}
+
+	// ========================================
+	// Node Execution LiveQuery subscriptions
+	// ========================================
+
+	/**
+	 * Subscribe to nodeExecutions.byRun LiveQueries for all current workflow runs.
+	 * Called after initial fetch to enable real-time status updates.
+	 */
+	private subscribeNodeExecutions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
+		this.unsubscribeNodeExecutions();
+
+		const runs = this.workflowRuns.value;
+		if (runs.length === 0) return;
+
+		for (const run of runs) {
+			this.subscribeNodeExecutionsByRun(hub, run.id);
+		}
+	}
+
+	/**
+	 * Subscribe to nodeExecutions.byRun for a single workflow run.
+	 */
+	private subscribeNodeExecutionsByRun(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		runId: string
+	): void {
+		const subscriptionId = `nodeExecutions-byRun-${runId}`;
+		if (this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+		this.activeNodeExecSubscriptionIds.add(subscriptionId);
+
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+			this.mergeNodeExecSnapshot(event.rows as NodeExecution[], runId);
+		});
+		this.nodeExecCleanupFns.push(unsubSnapshot);
+
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+			this.mergeNodeExecDelta(event);
+		});
+		this.nodeExecCleanupFns.push(unsubDelta);
+
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (!this.activeNodeExecSubscriptionIds.has(subscriptionId)) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'nodeExecutions.byRun',
+					params: [runId],
+					subscriptionId,
+				})
+				.catch((err) => {
+					logger.warn('Node execution LiveQuery re-subscribe failed:', err);
+				});
+		});
+		this.nodeExecCleanupFns.push(unsubReconnect);
+
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'nodeExecutions.byRun',
+				params: [runId],
+				subscriptionId,
+			})
+			.catch((err) => {
+				logger.warn('Node execution LiveQuery subscribe failed:', err);
+			});
+	}
+
+	/**
+	 * Merge a LiveQuery snapshot (full replace for one run) into nodeExecutions.
+	 */
+	private mergeNodeExecSnapshot(rows: NodeExecution[], runId: string): void {
+		const current = this.nodeExecutions.value;
+		// Remove old executions for this run, add fresh snapshot
+		const filtered = current.filter((e) => e.workflowRunId !== runId);
+		this.nodeExecutions.value = [...filtered, ...rows];
+	}
+
+	/**
+	 * Merge a LiveQuery delta (add/remove/update) into nodeExecutions.
+	 */
+	private mergeNodeExecDelta(event: LiveQueryDeltaEvent): void {
+		const current = this.nodeExecutions.value;
+		const next = new Map(current.map((e) => [e.id, e]));
+
+		for (const row of (event.removed ?? []) as NodeExecution[]) {
+			next.delete(row.id);
+		}
+		for (const row of (event.updated ?? []) as NodeExecution[]) {
+			next.set(row.id, row);
+		}
+		for (const row of (event.added ?? []) as NodeExecution[]) {
+			next.set(row.id, row);
+		}
+
+		this.nodeExecutions.value = Array.from(next.values());
+	}
+
+	/**
+	 * Unsubscribe from all node execution LiveQueries.
+	 */
+	private unsubscribeNodeExecutions(): void {
+		for (const cleanup of this.nodeExecCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+		this.nodeExecCleanupFns = [];
+
+		for (const subId of this.activeNodeExecSubscriptionIds) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub.request('liveQuery.unsubscribe', { subscriptionId: subId }).catch(() => {});
+			}
+		}
+		this.activeNodeExecSubscriptionIds = new Set();
+	}
+
+	// ========================================
+	// Space Sessions LiveQuery
+	// ========================================
+
+	/**
+	 * Subscribe to spaceSessions.bySpace LiveQuery for real-time session title/status updates.
+	 */
+	private subscribeSpaceSessions(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): void {
+		const subscriptionId = `spaceSessions-bySpace-${spaceId}`;
+		if (this.activeSpaceSessionsSubscriptionId === subscriptionId) return;
+		this.disposeSpaceSessionsSubscription();
+		this.activeSpaceSessionsSubscriptionId = subscriptionId;
+
+		type SessionRow = { id: string; title: string; status: string; lastActiveAt: number };
+
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeSpaceSessionsSubscriptionId !== subscriptionId) return;
+			this.sessions.value = (event.rows as SessionRow[]) ?? [];
+		});
+		this.spaceSessionsCleanupFns.push(unsubSnapshot);
+
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeSpaceSessionsSubscriptionId !== subscriptionId) return;
+			const current = this.sessions.value;
+			const next = new Map(current.map((s) => [s.id, s]));
+			for (const row of (event.removed ?? []) as SessionRow[]) next.delete(row.id);
+			for (const row of (event.updated ?? []) as SessionRow[]) next.set(row.id, row);
+			for (const row of (event.added ?? []) as SessionRow[]) next.set(row.id, row);
+			this.sessions.value = [...next.values()];
+		});
+		this.spaceSessionsCleanupFns.push(unsubDelta);
+
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (this.activeSpaceSessionsSubscriptionId !== subscriptionId) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'spaceSessions.bySpace',
+					params: [spaceId],
+					subscriptionId,
+				})
+				.catch((err) => {
+					logger.warn('Space sessions LiveQuery re-subscribe failed:', err);
+				});
+		});
+		this.spaceSessionsCleanupFns.push(unsubReconnect);
+
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'spaceSessions.bySpace',
+				params: [spaceId],
+				subscriptionId,
+			})
+			.catch((err) => {
+				logger.warn('Space sessions LiveQuery subscribe failed:', err);
+			});
+	}
+
+	private disposeSpaceSessionsSubscription(): void {
+		for (const cleanup of this.spaceSessionsCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore
+			}
+		}
+		this.spaceSessionsCleanupFns = [];
+
+		if (this.activeSpaceSessionsSubscriptionId) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub
+					.request('liveQuery.unsubscribe', {
+						subscriptionId: this.activeSpaceSessionsSubscriptionId,
+					})
+					.catch(() => {});
+			}
+			this.activeSpaceSessionsSubscriptionId = null;
+		}
+	}
+
+	// ========================================
+	// LiveQuery: Tasks Needing Attention
+	// ========================================
+
+	private subscribeAttentionTasks(
+		hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+		spaceId: string
+	): void {
+		const subscriptionId = `spaceTasks-needingAttention-${spaceId}`;
+		if (this.activeAttentionTasksSubscriptionId === subscriptionId) return;
+		this.disposeAttentionTasksSubscription();
+		this.activeAttentionTasksSubscriptionId = subscriptionId;
+
+		type AttentionRow = {
+			id: string;
+			title: string;
+			status: string;
+			blockReason: string | null;
+			result: string | null;
+			taskNumber: number;
+			spaceId: string;
+			updatedAt: number;
+		};
+
+		const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeAttentionTasksSubscriptionId !== subscriptionId) return;
+			this.attentionTasks.value = (event.rows as AttentionRow[]) ?? [];
+		});
+		this.attentionTasksCleanupFns.push(unsubSnapshot);
+
+		const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+			if (event.subscriptionId !== subscriptionId) return;
+			if (this.activeAttentionTasksSubscriptionId !== subscriptionId) return;
+			const current = this.attentionTasks.value;
+			const next = new Map(current.map((t) => [t.id, t]));
+			for (const row of (event.removed ?? []) as AttentionRow[]) next.delete(row.id);
+			for (const row of (event.updated ?? []) as AttentionRow[]) next.set(row.id, row);
+			for (const row of (event.added ?? []) as AttentionRow[]) next.set(row.id, row);
+			this.attentionTasks.value = [...next.values()];
+		});
+		this.attentionTasksCleanupFns.push(unsubDelta);
+
+		const unsubReconnect = hub.onConnection((state) => {
+			if (state !== 'connected') return;
+			if (this.activeAttentionTasksSubscriptionId !== subscriptionId) return;
+			hub
+				.request('liveQuery.subscribe', {
+					queryName: 'spaceTasks.needingAttention',
+					params: [spaceId],
+					subscriptionId,
+				})
+				.catch((err) => {
+					logger.warn('Attention tasks LiveQuery re-subscribe failed:', err);
+				});
+		});
+		this.attentionTasksCleanupFns.push(unsubReconnect);
+
+		hub
+			.request('liveQuery.subscribe', {
+				queryName: 'spaceTasks.needingAttention',
+				params: [spaceId],
+				subscriptionId,
+			})
+			.catch((err) => {
+				logger.warn('Attention tasks LiveQuery subscribe failed:', err);
+			});
+	}
+
+	private disposeAttentionTasksSubscription(): void {
+		for (const cleanup of this.attentionTasksCleanupFns) {
+			try {
+				cleanup();
+			} catch {
+				// Ignore
+			}
+		}
+		this.attentionTasksCleanupFns = [];
+
+		if (this.activeAttentionTasksSubscriptionId) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub
+					.request('liveQuery.unsubscribe', {
+						subscriptionId: this.activeAttentionTasksSubscriptionId,
+					})
+					.catch(() => {});
+			}
+			this.activeAttentionTasksSubscriptionId = null;
+		}
 	}
 
 	// ========================================
@@ -833,9 +1501,34 @@ class SpaceStore {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) return;
 
+		// Track what was loaded before reconnect so we can re-fetch it
+		const hadConfigData = this.configDataLoaded.value;
+		const hadNodeExec = this.nodeExecLoaded.value;
+
+		// Reset lazy-load flags so ensureX methods will re-fetch
+		this.configDataLoaded.value = false;
+		this.configDataPromise = null;
+		this.nodeExecLoaded.value = false;
+		this.nodeExecPromise = null;
+		this.sessions.value = [];
+		this.disposeSpaceSessionsSubscription();
+		this.attentionTasks.value = [];
+		this.disposeAttentionTasksSubscription();
+
 		try {
-			const hub = await connectionManager.getHub();
-			await this.fetchInitialState(hub, spaceId);
+			await this.fetchAndResolveSpace(spaceId);
+			await this.startSubscriptions(spaceId);
+			// Re-fetch previously loaded data in background
+			if (hadConfigData) {
+				this.ensureConfigData().catch((err) => {
+					logger.error('Failed to refresh config data:', err);
+				});
+			}
+			if (hadNodeExec) {
+				this.ensureNodeExecutions().catch((err) => {
+					logger.error('Failed to refresh node executions:', err);
+				});
+			}
 		} catch (err) {
 			logger.error('Failed to refresh space state:', err);
 		}
@@ -859,6 +1552,7 @@ class SpaceStore {
 		const space = await hub.request<Space>('space.update', { id: spaceId, ...params });
 		if (space) {
 			this.space.value = space;
+			this.updateRuntimeState(space);
 		}
 	}
 
@@ -875,6 +1569,77 @@ class SpaceStore {
 		await hub.request('space.archive', { id: spaceId });
 		// Clear selection after archive
 		await this.clearSpace();
+	}
+
+	/**
+	 * Stop the current space: terminates all running agent sessions and cancels
+	 * in-progress tasks/workflow runs. Marks the space as stopped so it does not
+	 * auto-start on daemon restart. The space remains active and can be restarted.
+	 */
+	async stopSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.stop', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
+	}
+
+	/**
+	 * Start (or restart) the current space after it has been stopped.
+	 * Clears the stopped flag so the runtime resumes scheduling new work.
+	 */
+	async startSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.start', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
+	}
+
+	/**
+	 * Pause the current space (stops task scheduling without archiving)
+	 */
+	async pauseSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.pause', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
+	}
+
+	/**
+	 * Resume a paused space
+	 */
+	async resumeSpace(): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const space = await hub.request<Space>('space.resume', { id: spaceId });
+		if (space) {
+			this.space.value = space;
+			this.updateRuntimeState(space);
+		}
 	}
 
 	/**
@@ -930,33 +1695,114 @@ class SpaceStore {
 		return task;
 	}
 
-	// ========================================
-	// Workflow Run Methods
-	// ========================================
-
 	/**
-	 * Start a new workflow run.
-	 *
-	 * TODO(M6): The `spaceWorkflowRun.create` RPC handler is not yet registered
-	 * in the daemon — workflow runs are currently created internally by the
-	 * SpaceRuntime. This method is a stub for the future client-initiated API.
-	 * The event subscriptions for space.workflowRun.created/updated are already
-	 * active and will reflect runs created by the runtime.
+	 * Ensure a Task Agent session exists for a task and return latest task state.
 	 */
-	async startWorkflowRun(
-		params: Omit<CreateWorkflowRunParams, 'spaceId'>
-	): Promise<SpaceWorkflowRun> {
+	async ensureTaskAgentSession(taskId: string): Promise<SpaceTask> {
 		const spaceId = this.spaceId.value;
 		if (!spaceId) throw new Error('No space selected');
 
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const run = await hub.request<SpaceWorkflowRun>('spaceWorkflowRun.create', {
-			...params,
+		const response = await hub.request<{ task: SpaceTask }>('space.task.ensureAgentSession', {
+			taskId,
 			spaceId,
 		});
-		return run;
+
+		if (!response?.task) throw new Error('Task session response missing task payload');
+
+		const nextTask = response.task;
+		this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, nextTask);
+
+		return nextTask;
+	}
+
+	/**
+	 * Send a human message into a task's agent thread.
+	 */
+	async sendTaskMessage(taskId: string, message: string): Promise<void> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('space.task.sendMessage', {
+			taskId,
+			spaceId,
+			message,
+		});
+	}
+
+	// ========================================
+	// Gate Methods
+	// ========================================
+
+	/**
+	 * List all gate data records for a workflow run.
+	 */
+	async listGateData(
+		runId: string
+	): Promise<
+		Array<{ runId: string; gateId: string; data: Record<string, unknown>; updatedAt: number }>
+	> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{
+			gateData: Array<{
+				runId: string;
+				gateId: string;
+				data: Record<string, unknown>;
+				updatedAt: number;
+			}>;
+		}>('spaceWorkflowRun.listGateData', { runId });
+		return result?.gateData ?? [];
+	}
+
+	/**
+	 * List all artifacts for a workflow run.
+	 */
+	async listArtifacts(runId: string): Promise<WorkflowRunArtifact[]> {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{ artifacts: WorkflowRunArtifact[] }>(
+			'spaceWorkflowRun.listArtifacts',
+			{ runId }
+		);
+		return result?.artifacts ?? [];
+	}
+
+	/**
+	 * Fetch a paginated snapshot of task-thread messages.
+	 */
+	async getTaskMessages(
+		taskId: string,
+		options?: { cursor?: string; limit?: number }
+	): Promise<{ messages: SDKMessage[]; hasMore: boolean; sessionId: string }> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const result = await hub.request<{
+			messages: SDKMessage[];
+			hasMore: boolean;
+			sessionId: string;
+		}>('space.task.getMessages', {
+			taskId,
+			spaceId,
+			cursor: options?.cursor,
+			limit: options?.limit,
+		});
+		return {
+			messages: result?.messages ?? [],
+			hasMore: result?.hasMore ?? false,
+			sessionId: result?.sessionId ?? '',
+		};
 	}
 
 	// ========================================
@@ -1064,6 +1910,24 @@ class SpaceStore {
 		if (!hub) throw new Error('Not connected');
 
 		await hub.request('spaceWorkflow.delete', { id: workflowId, spaceId });
+	}
+
+	/**
+	 * Sync a workflow from its built-in template, overwriting current content.
+	 * Requires the workflow to have been created from a built-in template (templateName set).
+	 */
+	async syncWorkflowFromTemplate(workflowId: string): Promise<SpaceWorkflow> {
+		const spaceId = this.spaceId.value;
+		if (!spaceId) throw new Error('No space selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		const { workflow } = await hub.request<{ workflow: SpaceWorkflow }>(
+			'spaceWorkflow.syncFromTemplate',
+			{ id: workflowId, spaceId }
+		);
+		return workflow;
 	}
 }
 

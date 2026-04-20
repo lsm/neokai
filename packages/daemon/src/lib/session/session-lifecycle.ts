@@ -25,12 +25,11 @@ export interface SessionLifecycleConfig {
 	defaultModel: string;
 	maxTokens: number;
 	temperature: number;
-	workspaceRoot: string;
 	disableWorktrees?: boolean;
 }
 
 export interface CreateSessionParams {
-	workspacePath?: string;
+	workspacePath?: string | null;
 	initialTools?: string[];
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
@@ -38,6 +37,8 @@ export interface CreateSessionParams {
 	sessionId?: string; // Optional custom session ID (for room chat/self sessions)
 	roomId?: string; // Optional room ID to assign session to
 	lobbyId?: string; // Optional lobby ID to assign session to
+	/** Optional Space ID for space_chat sessions (space:chat:${spaceId}) */
+	spaceId?: string;
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 	// Session types:
 	// - 'worker': Standard coding session with Claude Code system prompt
@@ -47,6 +48,7 @@ export interface CreateSessionParams {
 	// - 'leader': Leader agent session (Room Runtime)
 	// - 'general': General agent session (Room Runtime)
 	// - 'lobby': Instance-level agent session
+	// - 'space_chat': Per-space coordinator session (space:chat:${spaceId})
 	sessionType?:
 		| 'room_chat'
 		| 'planner'
@@ -55,7 +57,8 @@ export interface CreateSessionParams {
 		| 'general'
 		| 'worker'
 		| 'lobby'
-		| 'spaces_global';
+		| 'space_chat'
+		| 'neo';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -85,11 +88,38 @@ export class SessionLifecycle {
 		const sessionId = params.sessionId || generateUUID();
 		const sessionType = params.sessionType ?? 'worker';
 
-		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
+		// Room-scoped session types must always provide an explicit workspacePath.
+		// Non-room sessions are allowed to be unbound (workspacePath = null).
+		const ROOM_SCOPED_SESSION_TYPES = [
+			'room_chat',
+			'planner',
+			'coder',
+			'leader',
+			'general',
+			'space_chat',
+		] as const;
+		const providedWorkspacePath = params.workspacePath?.trim();
+		const baseWorkspacePath = providedWorkspacePath ? providedWorkspacePath : undefined;
+		if (
+			(ROOM_SCOPED_SESSION_TYPES as readonly string[]).includes(sessionType) &&
+			baseWorkspacePath === undefined
+		) {
+			throw new Error(
+				`Room-scoped session (type: '${sessionType}') must have explicit workspacePath`
+			);
+		}
 
-		// Detect git support before creating worktree
-		const gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
-		const isGitRepo = gitSupport.isGitRepo;
+		// Guard: when no workspace path is available (daemon started without --workspace and
+		// session provides no explicit workspacePath), skip git-support detection and worktree
+		// creation. This protects non-room sessions (e.g., spaces_global, neo) that
+		// intentionally omit workspacePath and would otherwise cause detectGitSupport(undefined)
+		// to crash.
+		let gitSupport: Awaited<ReturnType<typeof this.worktreeManager.detectGitSupport>> | undefined;
+		let isGitRepo = false;
+		if (baseWorkspacePath !== undefined) {
+			gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
+			isGitRepo = gitSupport.isGitRepo;
+		}
 
 		// Worktree choice is only for worker sessions.
 		const supportsWorktreeChoice = sessionType === 'worker';
@@ -98,9 +128,12 @@ export class SessionLifecycle {
 		const shouldShowChoice = supportsWorktreeChoice && isGitRepo && !this.config.disableWorktrees;
 
 		// Determine if worktree should be created immediately
-		// Only for non-git repos (git repos go through choice flow)
+		// Only for non-git repos (git repos go through choice flow); requires a workspace path.
 		const shouldCreateWorktree =
-			supportsWorktreeChoice && !this.config.disableWorktrees && !isGitRepo;
+			baseWorkspacePath !== undefined &&
+			supportsWorktreeChoice &&
+			!this.config.disableWorktrees &&
+			!isGitRepo;
 
 		// Read global settings for defaults (model, thinkingLevel, autoScroll)
 		const globalSettings = this.db.getGlobalSettings();
@@ -116,10 +149,10 @@ export class SessionLifecycle {
 		const providedTitle = params.title?.trim();
 		const shouldSkipAutoTitle = Boolean(providedTitle);
 
-		// Create worktree with appropriate branch name
-		// If title provided, use meaningful branch name; otherwise use session/{uuid}
+		// Create worktree with appropriate branch name.
+		// If no workspace is provided, keep the session unbound (workspacePath = null).
 		let worktreeMetadata: WorktreeMetadata | undefined;
-		let sessionWorkspacePath = baseWorkspacePath;
+		let sessionWorkspacePath: string | null = baseWorkspacePath ?? null;
 		const initialBranchName = shouldSkipAutoTitle
 			? generateBranchName(providedTitle!, sessionId) // Title is defined when shouldSkipAutoTitle is true
 			: `session/${sessionId}`;
@@ -155,9 +188,10 @@ export class SessionLifecycle {
 
 		// Detect current branch for non-worktree git repos
 		let currentBranch: string | undefined = worktreeMetadata?.branch;
-		if (!currentBranch && isGitRepo && gitSupport.gitRoot) {
+		if (!currentBranch && isGitRepo && gitSupport?.gitRoot) {
 			try {
-				const branch = await this.worktreeManager.getCurrentBranch(gitSupport.gitRoot);
+				// gitSupport and gitSupport.gitRoot are guaranteed non-null by the guard above
+				const branch = await this.worktreeManager.getCurrentBranch(gitSupport!.gitRoot!);
 				currentBranch = branch ?? undefined;
 			} catch (error) {
 				this.logger.debug('[SessionLifecycle] Failed to get current branch:', error);
@@ -207,8 +241,8 @@ export class SessionLifecycle {
 				toolCallCount: 0,
 				// Mark as generated if title was provided to skip auto-title generation
 				titleGenerated: shouldSkipAutoTitle,
-				// Workspace is already initialized (worktree created or using base path)
-				workspaceInitialized: true,
+				// Workspace is initialized only when a concrete workspace path exists.
+				workspaceInitialized: sessionWorkspacePath !== null,
 				// Only set worktreeChoice if we're showing the choice UI
 				worktreeChoice: shouldShowChoice
 					? {
@@ -225,12 +259,13 @@ export class SessionLifecycle {
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
-			// Context for room/lobby sessions (includes links between chat and self sessions)
+			// Context for room/lobby/space sessions (includes links between chat and self sessions)
 			context:
-				params.roomId || params.lobbyId
+				params.roomId || params.lobbyId || params.spaceId
 					? {
 							...(params.roomId && { roomId: params.roomId }),
 							...(params.lobbyId && { lobbyId: params.lobbyId }),
+							...(params.spaceId && { spaceId: params.spaceId }),
 						}
 					: undefined,
 		};
@@ -318,6 +353,9 @@ export class SessionLifecycle {
 		const effectiveChoice: 'worktree' | 'direct' = sessionType === 'worker' ? choice : 'direct';
 
 		if (effectiveChoice === 'worktree') {
+			if (!baseWorkspacePath) {
+				throw new Error(`Session ${sessionId} has no workspacePath for worktree creation`);
+			}
 			// Create worktree now
 			// Generate branch name (use session ID based name since title should be generated by now)
 			const branchName = `session/${sessionId}`;
@@ -341,7 +379,7 @@ export class SessionLifecycle {
 
 		// Detect current branch for direct mode (non-worktree)
 		let currentBranch: string | undefined = worktreeMetadata?.branch;
-		if (!currentBranch && effectiveChoice === 'direct') {
+		if (!currentBranch && effectiveChoice === 'direct' && baseWorkspacePath) {
 			try {
 				const branch = await this.worktreeManager.getCurrentBranch(baseWorkspacePath);
 				currentBranch = branch ?? undefined;
@@ -351,6 +389,12 @@ export class SessionLifecycle {
 			}
 		}
 
+		// Re-read session data after async operations to pick up any concurrent metadata
+		// updates (e.g. session.update clearing inputDraft) that arrived while we were
+		// awaiting worktree creation. Using stale `session` here would overwrite those
+		// updates when we call db.updateSession below.
+		const latestSession = agentSession.getSessionData();
+
 		// Update session
 		const updatedSession: Session = {
 			...session,
@@ -358,7 +402,7 @@ export class SessionLifecycle {
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
 			metadata: {
-				...session.metadata,
+				...latestSession.metadata,
 				worktreeChoice: {
 					status: 'completed',
 					choice: effectiveChoice,
@@ -372,6 +416,110 @@ export class SessionLifecycle {
 		this.db.updateSession(sessionId, updatedSession);
 
 		// Update in-memory agent session metadata
+		agentSession.updateMetadata(updatedSession);
+
+		// Emit event for state synchronization
+		await this.eventBus.emit('session.updated', {
+			sessionId,
+			session: updatedSession,
+		});
+
+		return updatedSession;
+	}
+
+	/**
+	 * Set workspace on an existing session (post-creation)
+	 *
+	 * Called when user selects a workspace via the inline WorkspaceSelector in chat.
+	 * The session must be active with no workspace (workspacePath === null).
+	 *
+	 * @param sessionId - Session ID
+	 * @param workspacePath - Workspace path to set
+	 * @param worktreeMode - Whether to create a worktree or use direct mode
+	 * @returns Updated session data
+	 */
+	async setWorkspace(
+		sessionId: string,
+		workspacePath: string,
+		worktreeMode: 'worktree' | 'direct'
+	): Promise<Session> {
+		const agentSession = this.sessionCache.get(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+
+		const session = agentSession.getSessionData();
+
+		// Only worker sessions support workspace setup
+		if (session.type !== 'worker') {
+			throw new Error(`Session ${sessionId} is not a worker session`);
+		}
+
+		// Session must be active
+		if (session.status !== 'active') {
+			throw new Error(
+				`Session ${sessionId} status is ${session.status}, must be active to set workspace`
+			);
+		}
+
+		// Guard against overwriting an existing workspace (would orphan old worktrees)
+		if (session.workspacePath !== null) {
+			throw new Error(`Session ${sessionId} already has a workspace`);
+		}
+
+		const normalizedPath = workspacePath.trim();
+		if (!normalizedPath) {
+			throw new Error('Workspace path cannot be empty');
+		}
+
+		let worktreeMetadata: WorktreeMetadata | undefined;
+		let currentBranch: string | undefined;
+
+		if (worktreeMode === 'worktree' && !this.config.disableWorktrees) {
+			const branchName = `session/${sessionId}`;
+			worktreeMetadata = await this.createWorktreeInternal(
+				sessionId,
+				normalizedPath,
+				branchName,
+				'HEAD'
+			);
+		} else if (worktreeMode === 'direct') {
+			// Detect current branch if git repo
+			try {
+				const gitSupport = await this.worktreeManager.detectGitSupport(normalizedPath);
+				if (gitSupport.isGitRepo && gitSupport.gitRoot) {
+					const branch = await this.worktreeManager.getCurrentBranch(gitSupport.gitRoot);
+					currentBranch = branch ?? undefined;
+				}
+			} catch (error) {
+				this.logger.debug('[SessionLifecycle] Failed to detect git/branch for direct mode:', error);
+			}
+		}
+
+		// Re-read to pick up any concurrent metadata updates
+		const latestSession = agentSession.getSessionData();
+
+		const updatedSession: Session = {
+			...latestSession,
+			workspacePath: normalizedPath,
+			worktree: worktreeMetadata,
+			gitBranch: currentBranch ?? worktreeMetadata?.branch,
+			metadata: {
+				...latestSession.metadata,
+				workspaceInitialized: true,
+				worktreeChoice: {
+					status: 'completed',
+					choice: worktreeMode,
+					createdAt: new Date().toISOString(),
+					completedAt: new Date().toISOString(),
+				},
+			},
+		};
+
+		// Save to database
+		this.db.updateSession(sessionId, updatedSession);
+
+		// Update in-memory agent session
 		agentSession.updateMetadata(updatedSession);
 
 		// Emit event for state synchronization
@@ -448,14 +596,18 @@ export class SessionLifecycle {
 					const sdkWorkspacePath = session.worktree
 						? session.worktree.worktreePath
 						: session.workspacePath;
-					const deleteResult = deleteSDKSessionFiles(
-						sdkWorkspacePath,
-						session.sdkSessionId ?? null,
-						sessionId
-					);
-					completedPhases.push(
-						deleteResult.success ? 'sdk-files-delete' : 'sdk-files-delete-partial'
-					);
+					if (!sdkWorkspacePath) {
+						completedPhases.push('sdk-files-delete-skipped');
+					} else {
+						const deleteResult = deleteSDKSessionFiles(
+							sdkWorkspacePath,
+							session.sdkSessionId ?? null,
+							sessionId
+						);
+						completedPhases.push(
+							deleteResult.success ? 'sdk-files-delete' : 'sdk-files-delete-partial'
+						);
+					}
 				} catch (error) {
 					this.logger.error(`[SessionLifecycle] SDK file deletion failed:`, error);
 					// Non-critical - continue with other cleanup

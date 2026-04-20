@@ -9,6 +9,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
+import type { MessageOrigin, NeokaiActionMessage, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
 import type { SQLiteValue } from '../types';
@@ -26,7 +27,7 @@ export class SDKMessageRepository {
 	 * FIX: Enhanced with proper error handling and logging
 	 * Returns true on success, false on failure
 	 */
-	saveSDKMessage(sessionId: string, message: SDKMessage): boolean {
+	saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
 		try {
 			const id = generateUUID();
 			const messageType = message.type;
@@ -34,11 +35,19 @@ export class SDKMessageRepository {
 			const timestamp = new Date().toISOString();
 
 			const stmt = this.db.prepare(
-				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?)`
+				`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
 			);
 
-			stmt.run(id, sessionId, messageType, messageSubtype, JSON.stringify(message), timestamp);
+			stmt.run(
+				id,
+				sessionId,
+				messageType,
+				messageSubtype,
+				JSON.stringify(message),
+				timestamp,
+				origin ?? null
+			);
 			return true;
 		} catch (error) {
 			// Log error but don't throw - prevents stream from dying
@@ -72,7 +81,12 @@ export class SDKMessageRepository {
 		limit?: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
 	}
 
@@ -85,10 +99,15 @@ export class SDKMessageRepository {
 		limit: number,
 		before?: number,
 		since?: number
-	): { messages: SDKMessage[]; hasMore: boolean } {
+	): {
+		messages: Array<
+			ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+		>;
+		hasMore: boolean;
+	} {
 		// Step 1: Get top-level messages (excluding subagent messages)
 		// Show user messages that were consumed to SDK, plus any that failed to deliver.
-		let query = `SELECT sdk_message, timestamp, send_status FROM sdk_messages
+		let query = `SELECT sdk_message, timestamp, send_status, origin FROM sdk_messages
       WHERE session_id = ?
         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))`;
@@ -113,11 +132,20 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-		// Parse SDK message and inject the timestamp and sendStatus from the database row
+		// Parse SDK message and inject the timestamp, sendStatus, and origin from the database row.
+		// Always explicitly set `origin` (even to undefined) so the SDK's own
+		// `origin?: SDKMessageOrigin` object field — added in SDK 0.2.110 — is stripped from the
+		// spread result. Without this, messages whose DB origin column is null would carry an
+		// SDKMessageOrigin object instead of a NeoKai MessageOrigin string, making the field's
+		// type inconsistent across messages.
 		const messages = rows.map((r) => {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
-			const extra: Record<string, unknown> = { timestamp };
+			const extra: Record<string, unknown> = {
+				timestamp,
+				// DB origin wins; undefined explicitly clears any SDK-level origin object.
+				origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
+			};
 			if (r.send_status === 'failed') {
 				extra.sendStatus = 'failed';
 			}
@@ -145,7 +173,7 @@ export class SDKMessageRepository {
 		});
 
 		// Fetch subagent messages that have parent_tool_use_id matching any of the tool use IDs
-		let subagentMessages: SDKMessage[] = [];
+		let subagentMessages: Array<SDKMessage & { timestamp: number }> = [];
 		if (toolUseIds.size > 0) {
 			const placeholders = Array.from(toolUseIds)
 				.map(() => '?')
@@ -163,14 +191,23 @@ export class SDKMessageRepository {
 			subagentMessages = subagentRows.map((r) => {
 				const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 				const timestamp = new Date(r.timestamp as string).getTime();
-				return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+				// Subagent messages have no DB origin column; explicitly set undefined to strip
+				// any SDK-level origin object from the JSON blob (same reasoning as top-level).
+				return { ...sdkMessage, timestamp, origin: undefined } as SDKMessage & {
+					timestamp: number;
+				};
 			});
 		}
 
 		// Combine and return: top-level messages + their associated subagent messages
 		// hasMore is based on top-level message count only (not including subagent messages)
+		// Note: cast required because the new SDK added `origin?: SDKMessageOrigin` to SDKUserMessage,
+		// which conflicts with our augmented `origin?: MessageOrigin` field (a different type used for
+		// tracking message provenance in NeoKai). The runtime values are always correct.
 		return {
-			messages: [...topLevelMessages, ...subagentMessages],
+			messages: [...topLevelMessages, ...subagentMessages] as Array<
+				SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+			>,
 			hasMore,
 		};
 	}
@@ -239,7 +276,8 @@ export class SDKMessageRepository {
 	saveUserMessage(
 		sessionId: string,
 		message: SDKMessage,
-		sendStatus: SendStatus = 'consumed'
+		sendStatus: SendStatus = 'consumed',
+		origin?: MessageOrigin
 	): string {
 		const id = generateUUID();
 		const messageType = message.type;
@@ -247,8 +285,8 @@ export class SDKMessageRepository {
 		const timestamp = new Date().toISOString();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -258,7 +296,8 @@ export class SDKMessageRepository {
 			messageSubtype,
 			JSON.stringify(message),
 			timestamp,
-			sendStatus
+			sendStatus,
+			origin ?? null
 		);
 		return id;
 	}
@@ -290,8 +329,9 @@ export class SDKMessageRepository {
 		return rows.map((row) => ({
 			...(JSON.parse(row.sdk_message) as SDKMessage),
 			dbId: row.id,
+			// DB timestamp (epoch ms) overrides the SDK's ISO string timestamp for persisted messages
 			timestamp: new Date(row.timestamp).getTime(),
-		}));
+		})) as Array<SDKMessage & { dbId: string; timestamp: number }>;
 	}
 
 	/**
@@ -571,5 +611,63 @@ export class SDKMessageRepository {
 		);
 		const result = stmt.get(sessionId, isoTimestamp) as { count: number };
 		return result.count;
+	}
+
+	// ============================================================================
+	// NeoKai action messages (interactive prompts stored in the chat timeline)
+	// ============================================================================
+
+	/**
+	 * Save a NeoKai-native action message to the sdk_messages table.
+	 *
+	 * The message is stored in the same `sdk_message` JSON column as SDK messages,
+	 * but with `message_type = 'neokai_action'` so it can be distinguished during
+	 * fetch.  No `send_status` is needed because action messages are never queued.
+	 *
+	 * @returns The generated row ID (used later to update the resolved state).
+	 */
+	saveNeokaiActionMessage(sessionId: string, message: NeokaiActionMessage): string {
+		const id = generateUUID();
+		const timestamp = new Date(message.timestamp).toISOString();
+
+		const stmt = this.db.prepare(
+			`INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?)`
+		);
+
+		stmt.run(id, sessionId, 'neokai_action', message.action, JSON.stringify(message), timestamp);
+		return id;
+	}
+
+	/**
+	 * Update a NeoKai action message in-place (e.g. mark it resolved after the
+	 * user has made a choice).
+	 *
+	 * @param rowId   The ID returned by saveNeokaiActionMessage.
+	 * @param updated The full updated message object (replaces the stored JSON).
+	 */
+	updateNeokaiActionMessage(rowId: string, updated: NeokaiActionMessage): void {
+		const stmt = this.db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`);
+		stmt.run(JSON.stringify(updated), rowId);
+	}
+
+	/**
+	 * Update a NeoKai action message by its uuid field (stored inside the JSON blob).
+	 *
+	 * This avoids having to carry the row ID through the RPC call.  The uuid is
+	 * unique per session (generated at emit time) so the lookup is unambiguous.
+	 */
+	updateNeokaiActionMessageByUuid(
+		sessionId: string,
+		messageUuid: string,
+		updated: NeokaiActionMessage
+	): void {
+		const stmt = this.db.prepare(
+			`UPDATE sdk_messages SET sdk_message = ?
+       WHERE session_id = ?
+         AND message_type = 'neokai_action'
+         AND json_extract(sdk_message, '$.uuid') = ?`
+		);
+		stmt.run(JSON.stringify(updated), sessionId, messageUuid);
 	}
 }

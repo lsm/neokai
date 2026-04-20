@@ -125,18 +125,13 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			const onSubmit = vi.fn().mockResolvedValue(undefined);
 			render(<NewSessionModal {...DEFAULT_PROPS} onSubmit={onSubmit} />);
 
-			// Set workspace path
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
-			// Submit without changing model selection
+			// Submit without changing model selection (workspace is set via inline WorkspaceSelector after session creation)
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
 
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith(
 					expect.objectContaining({
-						workspacePath: '/home/user/project',
 						model: undefined,
 					})
 				);
@@ -163,18 +158,13 @@ describe('NewSessionModal — provider-aware session creation', () => {
 				target: { value: 'anthropic-copilot:copilot-claude-sonnet' },
 			});
 
-			// Set workspace path
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
-			// Submit
+			// Submit (workspace is set via inline WorkspaceSelector after session creation)
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
 
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith(
 					expect.objectContaining({
-						workspacePath: '/home/user/project',
 						model: expect.objectContaining({
 							id: 'copilot-claude-sonnet',
 							provider: 'anthropic-copilot',
@@ -201,16 +191,13 @@ describe('NewSessionModal — provider-aware session creation', () => {
 				target: { value: 'anthropic-codex:codex-claude-sonnet' },
 			});
 
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
+			// Submit (workspace is set via inline WorkspaceSelector after session creation)
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
 
 			await waitFor(() => {
 				expect(onSubmit).toHaveBeenCalledWith(
 					expect.objectContaining({
-						workspacePath: '/home/user/project',
 						model: expect.objectContaining({
 							id: 'codex-claude-sonnet',
 							provider: 'anthropic-codex',
@@ -237,9 +224,7 @@ describe('NewSessionModal — provider-aware session creation', () => {
 				target: { value: 'anthropic:claude-opus-4-6' },
 			});
 
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
+			// Submit (workspace is set via inline WorkspaceSelector after session creation)
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
 
@@ -278,9 +263,7 @@ describe('NewSessionModal — provider-aware session creation', () => {
 				'anthropic-copilot:copilot-claude-sonnet'
 			);
 
-			const pathInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-			fireEvent.input(pathInput, { target: { value: '/home/user/project' } });
-
+			// Submit (workspace is set via inline WorkspaceSelector after session creation)
 			const form = document.querySelector('form') as HTMLFormElement;
 			fireEvent.submit(form);
 

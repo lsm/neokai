@@ -21,17 +21,18 @@ export class SpaceRepository {
 	/**
 	 * Create a new space
 	 */
-	createSpace(params: CreateSpaceParams): Space {
+	createSpace(params: CreateSpaceParams & { slug: string }): Space {
 		const id = generateUUID();
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO spaces (id, slug, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, autonomy_level, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
 			id,
+			params.slug,
 			params.workspacePath,
 			params.name,
 			params.description ?? '',
@@ -41,7 +42,7 @@ export class SpaceRepository {
 			JSON.stringify(params.allowedModels ?? []),
 			'[]',
 			'active',
-			params.autonomyLevel ?? 'supervised',
+			params.autonomyLevel ?? 1,
 			params.config ? JSON.stringify(params.config) : null,
 			now,
 			now
@@ -75,6 +76,36 @@ export class SpaceRepository {
 
 		if (!row) return null;
 		return this.rowToSpace(row);
+	}
+
+	/**
+	 * Get a space by slug
+	 */
+	getSpaceBySlug(slug: string): Space | null {
+		const stmt = this.db.prepare(`SELECT * FROM spaces WHERE slug = ?`);
+		const row = stmt.get(slug) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+		return this.rowToSpace(row);
+	}
+
+	/**
+	 * Update a space's slug
+	 */
+	updateSlug(id: string, slug: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET slug = ?, updated_at = ? WHERE id = ?`);
+		stmt.run(slug, Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Get all slugs currently in use (for collision detection)
+	 */
+	getAllSlugs(): string[] {
+		const rows = this.db.prepare(`SELECT slug FROM spaces WHERE slug IS NOT NULL`).all() as Array<{
+			slug: string;
+		}>;
+		return rows.map((r) => r.slug);
 	}
 
 	/**
@@ -140,6 +171,44 @@ export class SpaceRepository {
 			stmt.run(...values);
 		}
 
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Pause a space (stops runtime task scheduling without archiving)
+	 */
+	pauseSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET paused = 1, updated_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Resume a paused space
+	 */
+	resumeSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET paused = 0, updated_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Stop a space (kills active work; no auto-start on daemon restart)
+	 */
+	stopSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`UPDATE spaces SET stopped = 1, updated_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Start (or restart) a stopped space
+	 */
+	startSpace(id: string): Space | null {
+		const stmt = this.db.prepare(
+			`UPDATE spaces SET stopped = 0, paused = 0, updated_at = ? WHERE id = ?`
+		);
+		stmt.run(Date.now(), id);
 		return this.getSpace(id);
 	}
 
@@ -216,10 +285,9 @@ export class SpaceRepository {
 		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
 		const rawConfig = row.config as string | null;
 		const config = rawConfig ? (JSON.parse(rawConfig) as SpaceConfig) : undefined;
-		const rawAutonomyLevel = (row.autonomy_level as string | null) ?? 'supervised';
-
 		return {
 			id: row.id as string,
+			slug: (row.slug as string) ?? '',
 			workspacePath: row.workspace_path as string,
 			name: row.name as string,
 			description: (row.description as string) ?? '',
@@ -229,7 +297,9 @@ export class SpaceRepository {
 			allowedModels: rawModels.length > 0 ? rawModels : undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
-			autonomyLevel: rawAutonomyLevel as SpaceAutonomyLevel,
+			paused: (row.paused as number) === 1,
+			stopped: (row.stopped as number) === 1,
+			autonomyLevel: ((row.autonomy_level as number) ?? 1) as SpaceAutonomyLevel,
 			config,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,

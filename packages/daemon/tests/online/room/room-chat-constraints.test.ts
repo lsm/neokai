@@ -76,6 +76,7 @@ describe('Room Chat Constraints', () => {
 		async () => {
 			const createRoomResult = (await daemon.messageHub.request('room.create', {
 				name: `Room Chat Constraints ${Date.now()}`,
+				defaultPath: daemon.workspacePath ?? process.env.NEOKAI_WORKSPACE_PATH,
 			})) as { room: { id: string } };
 
 			const roomChatSessionId = `room:chat:${createRoomResult.room.id}`;

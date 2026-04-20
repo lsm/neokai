@@ -1,122 +1,133 @@
 /**
  * SpaceIsland — main content area for the Space view.
  *
- * 2-column layout:
- * - Main (flex-1): tabbed view — Dashboard | Agents | Workflows | Settings
- * - Right (~320px, conditional): SpaceTaskPane when a task is selected
+ * Content priority chain (full-width, each replaces the next):
+ * 1. sessionViewId set → ChatContainer (agent/session chat)
+ * 2. taskViewId set    → SpaceTaskPane (full-width task detail)
+ * 3. viewMode === 'configure' → SpaceConfigurePage (agents / workflows / settings)
+ * 4. default           → overview surface (space task list/dashboard)
  *
  * Space navigation is handled by the Context Panel sidebar.
  */
 
-import { useState, useEffect } from 'preact/hooks';
+import { useCallback, useEffect } from 'preact/hooks';
+import { lazy, Suspense } from 'preact/compat';
+import type { SpaceViewMode } from '../lib/signals';
+import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib/signals';
+import { SpacePageHeader } from '../components/space/SpacePageHeader';
+import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
-import { currentSpaceTaskIdSignal } from '../lib/signals';
-import { navigateToSpace } from '../lib/router';
-import { SpaceDashboard } from '../components/space/SpaceDashboard';
-import { SpaceTaskPane } from '../components/space/SpaceTaskPane';
-import { SpaceAgentList } from '../components/space/SpaceAgentList';
-import { WorkflowList } from '../components/space/WorkflowList';
-import { WorkflowEditor } from '../components/space/WorkflowEditor';
-import { VisualWorkflowEditor } from '../components/space/visual-editor/VisualWorkflowEditor';
-import { SpaceSettings } from '../components/space/SpaceSettings';
-import { cn } from '../lib/utils';
+import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
+import ChatContainer from './ChatContainer';
+
+const SpaceConfigurePage = lazy(() =>
+	import('../components/space/SpaceConfigurePage').then((m) => ({ default: m.SpaceConfigurePage }))
+);
+const SpaceSessionsPage = lazy(() =>
+	import('../components/space/SpaceSessionsPage').then((m) => ({ default: m.SpaceSessionsPage }))
+);
+const SpaceTasks = lazy(() =>
+	import('../components/space/SpaceTasks').then((m) => ({ default: m.SpaceTasks }))
+);
+const SpaceOverview = lazy(() =>
+	import('../components/space/SpaceOverview').then((m) => ({ default: m.SpaceOverview }))
+);
+const SpaceTaskPane = lazy(() =>
+	import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
+);
+
+/** Shared Suspense fallback for lazy-loaded space views. */
+const lazyFallback = (
+	<div class="flex-1 flex items-center justify-center bg-dark-900">
+		<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+	</div>
+);
 
 interface SpaceIslandProps {
 	spaceId: string;
+	viewMode: SpaceViewMode;
+	sessionViewId?: string | null;
+	taskViewId?: string | null;
 }
 
-type SpaceTab = 'dashboard' | 'agents' | 'workflows' | 'settings';
-type EditorMode = 'list' | 'visual';
+export default function SpaceIsland({
+	spaceId,
+	viewMode,
+	sessionViewId,
+	taskViewId,
+}: SpaceIslandProps) {
+	// Overlay session — shown as a slide-over on top of the current view
+	const overlaySessionId = spaceOverlaySessionIdSignal.value;
+	const overlayAgentName = spaceOverlayAgentNameSignal.value;
+	const handleOverlayClose = useCallback(() => {
+		spaceOverlaySessionIdSignal.value = null;
+		spaceOverlayAgentNameSignal.value = null;
+	}, []);
 
-/**
- * localStorage key for the user's preferred workflow editor mode.
- * Shared across all spaces — the preference is global, not per-space.
- */
-const EDITOR_MODE_KEY = 'workflow-editor-mode';
+	// Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
+	// tests can trigger the overlay programmatically. Opening is purely
+	// client-side signal manipulation — no security concern in exposing this.
+	useEffect(() => {
+		type OverlayApi = { open: (sessionId: string, agentName?: string) => void; close: () => void };
+		const w = window as typeof window & { __neokai_space_overlay?: OverlayApi };
+		w.__neokai_space_overlay = {
+			open(sessionId, agentName) {
+				spaceOverlayAgentNameSignal.value = agentName ?? null;
+				spaceOverlaySessionIdSignal.value = sessionId;
+			},
+			close() {
+				spaceOverlaySessionIdSignal.value = null;
+				spaceOverlayAgentNameSignal.value = null;
+			},
+		};
+		return () => {
+			w.__neokai_space_overlay = undefined;
+		};
+	}, []);
 
-const TABS: { id: SpaceTab; label: string }[] = [
-	{ id: 'dashboard', label: 'Dashboard' },
-	{ id: 'agents', label: 'Agents' },
-	{ id: 'workflows', label: 'Workflows' },
-	{ id: 'settings', label: 'Settings' },
-];
-
-function readStoredEditorMode(): EditorMode {
-	try {
-		const stored = localStorage.getItem(EDITOR_MODE_KEY);
-		return stored === 'visual' ? 'visual' : 'list';
-	} catch {
-		return 'list';
-	}
-}
-
-export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
-	const [activeTab, setActiveTab] = useState<SpaceTab>('dashboard');
-	/** null = list view; 'new' = create editor; <id> = edit editor */
-	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
-	const [editorMode, setEditorMode] = useState<EditorMode>(readStoredEditorMode);
-	const loading = spaceStore.loading.value;
 	const error = spaceStore.error.value;
 
-	// Derive active task ID from the global signal
-	const activeTaskId = currentSpaceTaskIdSignal.value;
-
-	// Load space data on mount or when spaceId changes
 	useEffect(() => {
 		spaceStore.selectSpace(spaceId).catch(() => {
 			// Error is tracked in spaceStore.error
 		});
-
-		return () => {
-			// Optionally clear when unmounting; leave it for now so
-			// navigating back is instant (store shows stale-then-fresh data).
-		};
 	}, [spaceId]);
 
-	// Reset workflow edit state when switching away from workflows tab
-	useEffect(() => {
-		if (activeTab !== 'workflows') {
-			setWorkflowEditId(null);
-		}
-	}, [activeTab]);
-
-	/**
-	 * Switch editor mode, persisting the preference to localStorage.
-	 * Prompts the user to confirm if an editor is open — switching modes
-	 * unmounts the active editor, which would discard any unsaved draft state.
-	 */
-	function handleSetEditorMode(mode: EditorMode) {
-		if (mode === editorMode) return;
-		if (
-			workflowEditId !== null &&
-			!confirm('Switching editor modes will discard any unsaved changes. Continue?')
-		) {
-			return;
-		}
-		setEditorMode(mode);
-		try {
-			localStorage.setItem(EDITOR_MODE_KEY, mode);
-		} catch {
-			// ignore storage errors
-		}
-	}
-
-	const handleTaskPaneClose = () => {
+	const handleTaskPaneClose = useCallback(() => {
 		navigateToSpace(spaceId);
-	};
+	}, [spaceId]);
 
-	if (loading && !spaceStore.space.value) {
+	// Session/agent chat view — render immediately, don't block on space data
+	// ChatContainer's root is already flex-1 flex-col overflow-hidden.
+	// AgentOverlayChat uses a Portal so it doesn't affect layout.
+	if (sessionViewId) {
 		return (
-			<div class="flex-1 flex items-center justify-center bg-dark-900">
-				<div class="text-center">
-					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-					<p class="text-sm text-gray-500">Loading space...</p>
-				</div>
-			</div>
+			<>
+				<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
 		);
 	}
 
-	if (error && !spaceStore.space.value) {
+	// For non-session views, show spinner/error while space data loads.
+	// Show spinner if space is not yet loaded and there's no error — this covers
+	// both the initial render (loading=false, space=null) before the useEffect has
+	// called selectSpace and the active-loading state (loading=true, space=null).
+	const space = spaceStore.space.value;
+	if (!space && !error) {
+		return (
+			<div class="flex-1 flex items-center justify-center bg-dark-900">
+				<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+			</div>
+		);
+	}
+	if (!space && error) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center max-w-sm">
@@ -127,124 +138,126 @@ export default function SpaceIsland({ spaceId }: SpaceIslandProps) {
 		);
 	}
 
-	const space = spaceStore.space.value;
-	const workflows = spaceStore.workflows.value;
+	if (taskViewId) {
+		return (
+			<>
+				<div class="flex-1 flex flex-col overflow-hidden bg-dark-900" data-testid="space-task-pane">
+					<Suspense fallback={lazyFallback}>
+						<SpaceTaskPane taskId={taskViewId} spaceId={spaceId} onClose={handleTaskPaneClose} />
+					</Suspense>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
+	}
 
-	const editingWorkflow =
-		workflowEditId && workflowEditId !== 'new'
-			? workflows.find((w) => w.id === workflowEditId)
-			: undefined;
+	if (viewMode === 'tasks' && space) {
+		return (
+			<>
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					data-testid="space-tasks-view"
+				>
+					<SpacePageHeader spaceName={space.name} pageTitle="Tasks" />
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<Suspense fallback={lazyFallback}>
+							<SpaceTasks
+								spaceId={spaceId}
+								onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+							/>
+						</Suspense>
+					</div>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
+	}
 
-	const showWorkflowEditor = activeTab === 'workflows' && workflowEditId !== null;
+	if (viewMode === 'sessions' && space) {
+		return (
+			<>
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					data-testid="space-sessions-view"
+				>
+					<SpacePageHeader spaceName={space.name} pageTitle="Sessions" />
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<Suspense fallback={lazyFallback}>
+							<SpaceSessionsPage spaceId={spaceId} />
+						</Suspense>
+					</div>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
+	}
+
+	if (viewMode === 'configure' && space) {
+		return (
+			<>
+				<div
+					class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+					data-testid="space-configure-view"
+				>
+					<SpacePageHeader spaceName={space.name} pageTitle="Settings" />
+					<div class="flex-1 min-w-0 overflow-hidden flex flex-col">
+						<Suspense fallback={lazyFallback}>
+							<SpaceConfigurePage space={space} />
+						</Suspense>
+					</div>
+				</div>
+				{overlaySessionId && (
+					<AgentOverlayChat
+						sessionId={overlaySessionId}
+						agentName={overlayAgentName ?? undefined}
+						onClose={handleOverlayClose}
+					/>
+				)}
+			</>
+		);
+	}
 
 	return (
-		<div class="flex-1 flex overflow-hidden bg-dark-900">
-			{/* Main content — tabbed view */}
-			<div class="flex-1 overflow-hidden flex flex-col min-w-0">
-				{/* Tab bar — hidden when workflow editor is open (editor has its own back button) */}
-				{!showWorkflowEditor && (
-					<div class="flex border-b border-dark-700 px-4 flex-shrink-0">
-						{TABS.map((tab) => (
-							<button
-								key={tab.id}
-								type="button"
-								onClick={() => setActiveTab(tab.id)}
-								class={cn(
-									'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
-									activeTab === tab.id
-										? 'text-gray-100 border-blue-400'
-										: 'text-gray-400 border-transparent hover:text-gray-200'
-								)}
-							>
-								{tab.label}
-							</button>
-						))}
-					</div>
-				)}
-
-				{/* Tab content */}
-				<div class="flex-1 overflow-hidden">
-					{showWorkflowEditor ? (
-						<div class="flex flex-col h-full overflow-hidden">
-							{/* Editor mode toggle strip */}
-							<div
-								class="flex items-center justify-end px-4 py-1.5 border-b border-dark-700 bg-dark-900 flex-shrink-0"
-								data-testid="editor-mode-toggle"
-							>
-								<div class="flex rounded-md overflow-hidden border border-dark-600 text-xs">
-									<button
-										type="button"
-										data-testid="editor-mode-list"
-										aria-pressed={editorMode === 'list'}
-										onClick={() => handleSetEditorMode('list')}
-										class={cn(
-											'px-3 py-1 transition-colors',
-											editorMode === 'list'
-												? 'bg-dark-600 text-gray-100'
-												: 'bg-dark-800 text-gray-500 hover:text-gray-300'
-										)}
-									>
-										List
-									</button>
-									<button
-										type="button"
-										data-testid="editor-mode-visual"
-										aria-pressed={editorMode === 'visual'}
-										onClick={() => handleSetEditorMode('visual')}
-										class={cn(
-											'px-3 py-1 transition-colors',
-											editorMode === 'visual'
-												? 'bg-dark-600 text-gray-100'
-												: 'bg-dark-800 text-gray-500 hover:text-gray-300'
-										)}
-									>
-										Visual
-									</button>
-								</div>
-							</div>
-
-							{/* Active editor */}
-							{editorMode === 'visual' ? (
-								<VisualWorkflowEditor
-									key={workflowEditId}
-									workflow={editingWorkflow}
-									onSave={() => setWorkflowEditId(null)}
-									onCancel={() => setWorkflowEditId(null)}
-								/>
-							) : (
-								<WorkflowEditor
-									key={workflowEditId}
-									workflow={editingWorkflow}
-									onSave={() => setWorkflowEditId(null)}
-									onCancel={() => setWorkflowEditId(null)}
-								/>
-							)}
-						</div>
-					) : (
-						<>
-							{activeTab === 'dashboard' && <SpaceDashboard spaceId={spaceId} />}
-							{activeTab === 'agents' && <SpaceAgentList />}
-							{activeTab === 'workflows' && space && (
-								<WorkflowList
-									spaceId={spaceId}
-									spaceName={space.name}
-									workflows={workflows}
-									onCreateWorkflow={() => setWorkflowEditId('new')}
-									onEditWorkflow={(id) => setWorkflowEditId(id)}
-								/>
-							)}
-							{activeTab === 'settings' && space && <SpaceSettings space={space} />}
-						</>
-					)}
+		<>
+			{overlaySessionId && (
+				<AgentOverlayChat
+					sessionId={overlaySessionId}
+					agentName={overlayAgentName ?? undefined}
+					onClose={handleOverlayClose}
+				/>
+			)}
+			<div
+				class="flex-1 flex flex-col overflow-hidden bg-dark-900"
+				data-testid="space-overview-view"
+			>
+				<SpacePageHeader spaceName={space?.name ?? ''} pageTitle="Overview" />
+				<div class="flex-1 overflow-hidden flex flex-col min-w-0">
+					<Suspense fallback={lazyFallback}>
+						<SpaceOverview
+							spaceId={spaceId}
+							onSelectTask={(taskId) => navigateToSpaceTask(spaceId, taskId)}
+						/>
+					</Suspense>
 				</div>
 			</div>
-
-			{/* Right column — task detail pane (conditionally shown) */}
-			{activeTaskId && (
-				<div class="hidden md:flex w-80 flex-shrink-0 border-l border-dark-700 overflow-hidden flex-col">
-					<SpaceTaskPane taskId={activeTaskId} onClose={handleTaskPaneClose} />
-				</div>
-			)}
-		</div>
+		</>
 	);
 }

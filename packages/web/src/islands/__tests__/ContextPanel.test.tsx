@@ -16,6 +16,7 @@ const {
 	mockCreateSession,
 	mockNavigateToSession,
 	mockNavigateToRoom,
+	mockNavigateToSpaces,
 	mockCreateRoom,
 	mockToastError,
 	mockToastSuccess,
@@ -23,6 +24,7 @@ const {
 	mockCreateSession: vi.fn(),
 	mockNavigateToSession: vi.fn(),
 	mockNavigateToRoom: vi.fn(),
+	mockNavigateToSpaces: vi.fn(),
 	mockCreateRoom: vi.fn().mockResolvedValue({ id: 'room-1', name: 'Test Room' }),
 	mockToastError: vi.fn(),
 	mockToastSuccess: vi.fn(),
@@ -39,6 +41,7 @@ let mockHasArchivedSessionsSignal: ReturnType<typeof signal<boolean>>;
 let mockGlobalSettingsSignal: ReturnType<typeof signal<any>>;
 let mockSettingsSectionSignal: ReturnType<typeof signal<string>>;
 let mockCreateRoomModalSignal: ReturnType<typeof signal<boolean>>;
+let mockCurrentSpaceIdSignal: ReturnType<typeof signal<string | null>>;
 // Mock the signals module - use importOriginal to pass through signals not under test
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
 	const actual = await importOriginal();
@@ -55,6 +58,9 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
 		},
 		get createRoomModalSignal() {
 			return mockCreateRoomModalSignal;
+		},
+		get currentSpaceIdSignal() {
+			return mockCurrentSpaceIdSignal;
 		},
 	};
 });
@@ -99,6 +105,12 @@ vi.mock('../../lib/toast.ts', () => ({
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSession: mockNavigateToSession,
 	navigateToRoom: mockNavigateToRoom,
+	navigateToSpaces: mockNavigateToSpaces,
+	navigateToHome: vi.fn(),
+	navigateToSessions: vi.fn(),
+	navigateToRooms: vi.fn(),
+	navigateToInbox: vi.fn(),
+	navigateToSettings: vi.fn(),
 }));
 
 // Mock the lobby-store module
@@ -109,6 +121,21 @@ vi.mock('../../lib/lobby-store.ts', () => ({
 			createRoom: mockCreateRoom,
 		};
 	},
+}));
+
+// Mock the space-store module
+vi.mock('../../lib/space-store.ts', () => ({
+	spaceStore: {
+		space: { value: null },
+		initGlobalList: vi.fn().mockResolvedValue(undefined),
+	},
+}));
+
+// Mock space components
+vi.mock('../../islands/SpaceDetailPanel.tsx', () => ({
+	SpaceDetailPanel: ({ spaceId }: { spaceId: string }) => (
+		<div data-testid="space-detail-panel">SpaceDetailPanel:{spaceId}</div>
+	),
 }));
 
 // Mock the design-tokens module
@@ -150,6 +177,7 @@ mockHasArchivedSessionsSignal = signal<boolean>(false);
 mockGlobalSettingsSignal = signal<any>({ showArchived: false });
 mockSettingsSectionSignal = signal<string>('general');
 mockCreateRoomModalSignal = signal<boolean>(false);
+mockCurrentSpaceIdSignal = signal<string | null>(null);
 
 import { ContextPanel } from '../ContextPanel';
 
@@ -168,6 +196,7 @@ describe('ContextPanel', () => {
 		mockGlobalSettingsSignal.value = { showArchived: false };
 		mockSettingsSectionSignal.value = 'general';
 		mockCreateRoomModalSignal.value = false;
+		mockCurrentSpaceIdSignal.value = null;
 	});
 
 	afterEach(() => {
@@ -377,18 +406,6 @@ describe('ContextPanel', () => {
 			// The button should open the modal by setting the signal to true
 			expect(mockCreateRoomModalSignal.value).toBe(true);
 		});
-
-		it('should open create room modal from home section', async () => {
-			mockNavSectionSignal.value = 'home';
-
-			render(<ContextPanel />);
-
-			const button = screen.getByRole('button', { name: /Create Room/i });
-			fireEvent.click(button);
-
-			// The button should open the modal by setting the signal to true
-			expect(mockCreateRoomModalSignal.value).toBe(true);
-		});
 	});
 
 	describe('Mobile Drawer Behavior', () => {
@@ -476,39 +493,40 @@ describe('ContextPanel', () => {
 			expect(panel?.className).toContain('md:relative');
 		});
 
-		it('should have -translate-x-full when closed on mobile', () => {
+		it('should have max-md:-translate-x-full when closed on mobile', () => {
 			mockContextPanelOpenSignal.value = false;
 
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('-translate-x-full');
+			expect(panel?.className).toContain('max-md:-translate-x-full');
 		});
 
-		it('should have translate-x-0 when open on mobile', () => {
+		it('should have max-md:translate-x-0 when open on mobile', () => {
 			mockContextPanelOpenSignal.value = true;
 
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('translate-x-0');
+			expect(panel?.className).toContain('max-md:translate-x-0');
 		});
 
-		it('should have md:translate-x-0 to always show on desktop', () => {
+		it('should not have transform classes on desktop', () => {
 			mockContextPanelOpenSignal.value = false;
 
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('md:translate-x-0');
+			expect(panel?.className).not.toContain('translate-x-0');
+			expect(panel?.className).not.toContain('md:translate-x-0');
 		});
 
-		it('should have transition classes for smooth animation', () => {
+		it('should have max-md:transition classes for smooth mobile animation', () => {
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('transition-transform');
-			expect(panel?.className).toContain('duration-300');
+			expect(panel?.className).toContain('max-md:transition-transform');
+			expect(panel?.className).toContain('max-md:duration-300');
 		});
 
 		it('should have z-40 for mobile stacking', () => {
@@ -567,11 +585,86 @@ describe('ContextPanel', () => {
 			expect(header).toBeTruthy();
 		});
 
-		it('should have full screen height', () => {
+		it('should use h-safe-screen on mobile and h-full on desktop to respect safe-area boundary', () => {
 			const { container } = render(<ContextPanel />);
 
 			const panel = container.querySelector('.w-70');
-			expect(panel?.className).toContain('h-screen');
+			expect(panel?.className).toContain('h-safe-screen');
+			expect(panel?.className).toContain('md:h-full');
+			expect(panel?.className).not.toContain('h-screen');
+		});
+	});
+
+	describe('Spaces Section Switching', () => {
+		it('should show Spaces title when navSection is spaces with no space selected', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = null;
+
+			render(<ContextPanel />);
+
+			expect(screen.getByRole('heading', { name: 'Spaces' })).toBeTruthy();
+		});
+
+		it('should render SpaceDetailPanel when navSection is spaces and a space is selected', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = 'space-abc';
+
+			render(<ContextPanel />);
+
+			expect(screen.getByTestId('space-detail-panel')).toBeTruthy();
+		});
+
+		it('should pass spaceId to SpaceDetailPanel', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = 'space-xyz';
+
+			render(<ContextPanel />);
+
+			expect(screen.getByTestId('space-detail-panel').textContent).toContain('space-xyz');
+		});
+
+		it('should show back button when inside a space', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = 'space-abc';
+
+			render(<ContextPanel />);
+
+			const backButton = screen.getByTitle('Back to Spaces');
+			expect(backButton).toBeTruthy();
+		});
+
+		it('should not show back button when viewing the spaces list', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = null;
+
+			render(<ContextPanel />);
+
+			expect(screen.queryByTitle('Back to Spaces')).toBeNull();
+		});
+
+		it('should call navigateToSpaces when back button is clicked', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = 'space-abc';
+
+			render(<ContextPanel />);
+
+			const backButton = screen.getByTitle('Back to Spaces');
+			fireEvent.click(backButton);
+
+			expect(mockNavigateToSpaces).toHaveBeenCalled();
+		});
+
+		it('should hide SpaceDetailPanel when space is deselected', () => {
+			mockNavSectionSignal.value = 'spaces';
+			mockCurrentSpaceIdSignal.value = 'space-abc';
+
+			const { rerender } = render(<ContextPanel />);
+			expect(screen.getByTestId('space-detail-panel')).toBeTruthy();
+
+			mockCurrentSpaceIdSignal.value = null;
+			rerender(<ContextPanel />);
+
+			expect(screen.queryByTestId('space-detail-panel')).toBeNull();
 		});
 	});
 });

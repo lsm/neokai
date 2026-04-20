@@ -39,15 +39,24 @@ Each package's `tsconfig.json` defines path aliases that resolve to source files
 
 ```bash
 # Development
-make dev WORKSPACE=/path/to/workspace    # Start dev server on random available port
+make dev                                    # Start dev server on random available port
+make dev PORT=8080                          # Start dev server on specific port
+make dev PORT=8080 DB_PATH=/tmp/mydb.db    # Isolated DB (avoids lock conflicts)
 
 # Production
-make serve-random WORKSPACE=/path/to/workspace   # Production server on random port
-make run WORKSPACE=/path/to/workspace [PORT=8080] # Production server (PORT optional)
+make serve-random                 # Production server on random port
+make run [PORT=8080]             # Production server (PORT optional)
 
 # Testing
-make test-daemon       # Daemon tests only (bun test) with coverage
+make test-daemon       # Daemon tests (all shards in parallel, with coverage)
 make test-web          # Web tests only (vitest run) with coverage
+
+# Daemon test runner (scripts/test-daemon.sh)
+./scripts/test-daemon.sh                # All 7 shards in parallel (fast, no coverage)
+./scripts/test-daemon.sh --coverage     # All shards with coverage
+./scripts/test-daemon.sh 2-handlers     # Run a single shard
+./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
+./scripts/test-daemon.sh --show-failures # Show failure details from last run
 
 # Run a single test file
 cd packages/daemon && bun test tests/unit/some-test.test.ts
@@ -127,6 +136,58 @@ Three-layer architecture:
 
 Initialization order matters: Router → MessageHub, then Transport → MessageHub.
 
+### Skills System
+
+The Skills system extends agent capabilities with slash commands, plugins, and MCP servers. Skills are configured globally at the application level and can be selectively enabled per room via room-level overrides.
+
+**Data flow:**
+```
+Skills registry (SQLite) → SkillsManager → QueryOptionsBuilder → SDK session options
+```
+
+At session init, `QueryOptionsBuilder.build()` calls `SkillsManager.getEnabledSkills()` and injects enabled skills:
+- `plugin` sourceType → adds `{ type: 'local', path }` to `SDKConfig.plugins`
+- `mcp_server` sourceType → merges into `Options.mcpServers` (stdio/sse/http variants)
+
+All three sourceTypes are actively injected by `QueryOptionsBuilder`: `plugin` and `builtin` via `buildPluginsFromSkills()` / `buildPluginsFromBuiltinSkills()`, and `mcp_server` via `getMcpServersFromSkills()`.
+
+**Key files:**
+- `packages/shared/src/types/skills.ts` — `AppSkill`, discriminated union configs (`BuiltinSkillConfig` / `PluginSkillConfig` / `McpServerSkillConfig`), `SkillValidationStatus`
+- `packages/daemon/src/lib/skills-manager.ts` — `SkillsManager`: CRUD, validation, built-in initialization (seeds `chrome-devtools-mcp`, `playwright`, `playwright-interactive` on startup)
+- `packages/daemon/src/lib/rpc-handlers/skill-handlers.ts` — RPC handlers: `skill.list`, `skill.get`, `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`
+- `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` — `skills.list` and `skills.byRoom` named queries for reactive frontend sync
+- `packages/daemon/src/lib/agent/query-options-builder.ts` — `buildPluginsFromSkills()`, `getMcpServersFromSkills()`, `getRoomDisabledSkillIds()` methods; room overrides only disable globally-enabled skills (cannot enable globally-disabled)
+- `packages/web/src/lib/skills-store.ts` — `SkillsStore`: signal-based frontend store with LiveQuery subscription (`skills.list`)
+
+See [`docs/features/skills.md`](docs/features/skills.md) for user-facing documentation.
+
+### Space Agent User Message Anatomy
+
+Every Space agent session receives a structured user message composed by
+`buildCustomAgentTaskMessage` (`packages/daemon/src/lib/space/agents/custom-agent.ts`)
+plus a runtime execution contract appended by the Task Agent Manager. The
+message is action-first and workflow-aware:
+
+1. `## Your Task` — task number, title, description, priority
+2. `## Runtime Location` — worktree path, derived PR URL (`none yet` when no
+   gate has recorded a `pr_url`)
+3. `## Your Role in This Workflow` — current node, peers, outbound channels,
+   gates writable by this node/agent (omitted outside a workflow)
+4. `## Previous Work on This Goal` — bulleted summaries from prior tasks
+5. `## Project Context` — `space.backgroundContext`
+6. `## Standing Instructions` — `space.instructions` then
+   `workflow.instructions`, merged under one heading
+
+Slot prompts in `built-in-workflows.ts` (and any user-authored workflow) must
+contain only **behavioral** instruction — what the agent does, how to use
+tools, and any required step-by-step checklists. Do not re-state peers,
+channel targets, gate IDs, or "X is my reviewer" chrome: that context is
+injected centrally by the builder. Re-adding it creates drift when the
+workflow graph is edited later.
+
+A dev-mode warning is logged when the final user message exceeds 4 KB so
+future prompt bloat surfaces during development without failing sessions.
+
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
@@ -134,6 +195,49 @@ Initialization order matters: Router → MessageHub, then Transport → MessageH
 - `packages/e2e/tests/` — Browser automation tests
 
 Unit tests preload `packages/daemon/tests/unit/setup.ts` which sets `NODE_ENV='test'`, clears all API keys (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, GLM_API_KEY, ZHIPU_API_KEY), and suppresses console output. This ensures unit tests never make real API calls.
+
+#### Database Configuration for Tests
+
+**⚠️ Important: Database Lock Conflicts**
+
+The daemon uses a file-based SQLite database with a PID lock file (`~/.neokai/data/daemon.db.lock`). Running multiple daemons with the same database path will fail with:
+
+```
+Another NeoKai daemon is already running with this database (PID XXXX).
+```
+
+**Starting a dev server in a worktree (agents must do this):**
+
+When working in a worktree, always start the dev server with an isolated `DB_PATH` so it does not conflict with any already-running production or development daemon:
+
+```bash
+# In the worktree root — picks a random port, uses an isolated DB
+make dev PORT=8383 DB_PATH=/tmp/neokai-$(basename $PWD).db
+
+# Or with a fully random temp path
+make dev DB_PATH=$(mktemp -u /tmp/neokai-XXXXXX.db)
+```
+
+Never run `make dev` without `DB_PATH` in a worktree — it will fail with "Another NeoKai daemon is already running" if the main daemon is active.
+
+**For testing scenarios that start a dev server:**
+- Pass `DB_PATH=<path>` to `make dev` or `make run`
+- This prevents conflicts with any running production daemon instance
+- Example: `make dev PORT=8484 DB_PATH=/tmp/test-db.db`
+
+**For E2E tests:**
+- E2E tests use `make run-e2e` which handles database isolation automatically (uses temp directories)
+- Do NOT run a separate `make dev` or `make run` while E2E tests are running
+
+**In-memory database (preferred for unit tests):**
+- Unit tests should use in-memory SQLite databases where possible
+- This avoids filesystem conflicts and improves test speed
+- See `packages/daemon/tests/unit/helpers/` for test database helpers
+
+**Real filesystem database (for integration tests):**
+- Use temporary directories (e.g., `/tmp/neokai-test-XXXXXX`)
+- Clean up after tests complete
+- E2E tests already follow this pattern via `e2e/` test isolation
 
 #### Dev Proxy Mode for Online Tests
 
@@ -217,6 +321,23 @@ make self-test TEST=tests/core/navigation-3-column.e2e.ts
 - Always run a single E2E test file at a time — too slow to run all together
 - If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
 
+## Space Runtime
+
+### Space tool surface
+
+Every session whose `session.context.spaceId` is set — **not just** the Space chat agent — is attached to the `space-agent-tools` MCP server at startup. This means worker sessions, coder sessions, room_chat sessions opened in a Space, and any ad-hoc sessions created with a Space as their context can all query Space state, read/write gate data, signal tasks, etc.
+
+- **Wiring:** `SpaceRuntimeService.attachSpaceToolsToMemberSession(session)` runs for each member session (from `session.created` event + startup backfill). It uses `AgentSession.mergeRuntimeMcpServers({ 'space-agent-tools': … })` so other runtime-attached MCP servers (room tools, db-query, task-agent glue) are preserved.
+- **Not re-attached here:** `space_chat` sessions (`setupSpaceAgentSession` already attaches) and `space_task_agent` sessions (TaskAgentManager attaches them during config build — attaching again afterwards would race with its `setRuntimeMcpServers`).
+- **Permissions:** All gating (writer auth, autonomy level) happens inside the tool handlers themselves, so widening the surface is safe.
+- **No `myAgentName` for ordinary members:** gate writer-authorization for member sessions falls through to the autonomy path, matching the existing contract.
+
+### LiveQuery: `messages.bySession`
+
+SDK messages for a session are published as a LiveQuery under the name `messages.bySession` in `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`. The frontend `SessionStore` subscribes via `hub.request('liveQuery.subscribe', { queryName: 'messages.bySession', params: [sessionId, limit], subscriptionId })` and applies the resulting snapshot + delta stream — no per-message RPC fetch and no `state.sdkMessages.delta` event listening. Optimistic user echo is preserved via `pendingLocalMessageUuids` until the snapshot/delta includes the user's message.
+
+---
+
 ## Mission System
 
 The Mission System (Goal V2) extends the room's goal tracking with structured, automated workflows. Use the following terminology consistently across code, tests, and documentation.
@@ -234,7 +355,7 @@ The Mission System (Goal V2) extends the room's goal tracking with structured, a
 | Level | `autonomyLevel` value | Description |
 |-------|----------------------|-------------|
 | Supervised | `supervised` | Worker submits PRs for human review before merging. Default. |
-| Semi-autonomous | `semi_autonomous` | Worker can merge approved PRs without human confirmation. |
+| Semi-autonomous | `semi_autonomous` | Tasks auto-complete without human review at workflow completion. |
 
 ### Key Terminology
 

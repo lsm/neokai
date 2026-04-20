@@ -2,6 +2,13 @@ import type { SettingSource } from './types/settings.ts';
 import type { ResolvedQuestion } from './state-types.ts';
 import type { SDKConfig, ToolsPresetConfig } from './types/sdk-config.ts';
 
+export type {
+	AppMcpServerSourceType,
+	AppMcpServer,
+	CreateAppMcpServerRequest,
+	UpdateAppMcpServerRequest,
+} from './types/app-mcp-server.ts';
+
 // Re-export SDK config types for convenience
 export type {
 	SDKConfig,
@@ -57,6 +64,7 @@ export type {
  * - 'general': General-purpose agent session (Room Runtime)
  * - 'lobby': Instance-level agent session
  * - 'space_task_agent': Task Agent session that orchestrates a single SpaceTask's workflow
+ * - 'space_chat': Per-space coordinator session (space:chat:${spaceId}) — the human-facing interface for a Space
  */
 export type SessionType =
 	| 'worker'
@@ -66,8 +74,9 @@ export type SessionType =
 	| 'leader'
 	| 'general'
 	| 'lobby'
-	| 'spaces_global'
-	| 'space_task_agent';
+	| 'space_task_agent'
+	| 'space_chat'
+	| 'neo';
 
 /**
  * Context for room/lobby/space sessions
@@ -79,6 +88,8 @@ export interface SessionContext {
 	spaceId?: string;
 	/** Task ID for Space Task Agent sessions */
 	taskId?: string;
+	/** Neo session ID for the global Neo agent */
+	neoId?: string;
 }
 
 /**
@@ -139,7 +150,7 @@ export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
 export interface SessionInfo {
 	id: string;
 	title: string;
-	workspacePath: string;
+	workspacePath: string | null;
 	createdAt: string;
 	lastActiveAt: string;
 	status: SessionStatus;
@@ -148,6 +159,14 @@ export interface SessionInfo {
 	worktree?: WorktreeMetadata;
 	gitBranch?: string; // Current git branch for non-worktree sessions in git repos
 	sdkSessionId?: string; // SDK's internal session ID for resuming conversations
+	/**
+	 * The workspace path (resolved) that was used as CWD when the SDK session was first
+	 * created. The SDK stores conversation files under
+	 * ~/.claude/projects/{encoded-sdkOriginPath}/{sdkSessionId}.jsonl
+	 * Persisting this allows reliable resume even when the session's effective CWD
+	 * changes (e.g., worktree is added/removed between daemon restarts).
+	 */
+	sdkOriginPath?: string;
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
@@ -400,7 +419,7 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
 /**
  * Tools configuration for a session
- * Controls system prompt, setting sources, MCP tools, and NeoKai tools
+ * Controls system prompt, setting sources, and MCP tools
  *
  * SDK Terms Reference:
  * - systemPrompt: { type: 'preset', preset: 'claude_code' } - The Claude Code system prompt
@@ -428,12 +447,6 @@ export interface ToolsConfig {
 	// List of MCP server names to disable (unchecked in UI)
 	// Written to settings.local.json as "disabledMcpjsonServers"
 	disabledMcpServers?: string[];
-
-	// NeoKai-specific tools (not SDK built-in tools)
-	kaiTools?: {
-		// Memory tool: persistent key-value storage for the workspace
-		memory?: boolean;
-	};
 }
 
 /**
@@ -471,13 +484,6 @@ export interface GlobalToolsConfig {
 		// Default for new sessions
 		defaultProjectMcp: boolean;
 	};
-	// NeoKai-specific tools settings
-	kaiTools: {
-		memory: {
-			allowed: boolean;
-			defaultEnabled: boolean;
-		};
-	};
 }
 
 /**
@@ -500,12 +506,6 @@ export const DEFAULT_GLOBAL_TOOLS_CONFIG: GlobalToolsConfig = {
 	mcp: {
 		allowProjectMcp: true, // Allow but don't enable by default
 		defaultProjectMcp: false,
-	},
-	kaiTools: {
-		memory: {
-			allowed: true,
-			defaultEnabled: false,
-		},
 	},
 };
 
@@ -535,16 +535,7 @@ export interface SessionMetadata {
 	};
 	// Session architecture fields
 	/** Type of session in architecture context */
-	sessionType?:
-		| 'room_chat'
-		| 'planner'
-		| 'coder'
-		| 'leader'
-		| 'general'
-		| 'worker'
-		| 'lobby'
-		| 'spaces_global'
-		| 'space_task_agent';
+	sessionType?: SessionType;
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */
@@ -605,6 +596,35 @@ export interface MessageImage {
 }
 
 export type MessageDeliveryMode = 'immediate' | 'defer';
+
+/**
+ * Origin of a message — stored as a DB-level annotation on sdk_messages for frontend display.
+ * This is NOT injected into the SDK message JSON blob; room/space agents do not see it.
+ * - 'human': default for user-sent messages (NULL in DB treated as 'human')
+ * - 'neo': message was injected by the Neo global AI agent
+ * - 'system': message was injected by the daemon system internally
+ */
+export type MessageOrigin = 'human' | 'neo' | 'system';
+
+/**
+ * A NeoKai-native action message stored alongside SDK messages in the chat.
+ *
+ * Used to present interactive prompts to the user from the daemon — for
+ * example, asking whether to start a fresh SDK session when the transcript
+ * file can no longer be found.
+ *
+ * The `type` field is intentionally distinct from all SDK message types so
+ * the frontend can identify and route it without ambiguity.
+ */
+export type NeokaiActionMessage = {
+	type: 'neokai_action';
+	uuid: string;
+	session_id: string;
+	action: 'sdk_resume_choice';
+	resolved: boolean;
+	chosenOption?: 'start_fresh' | 'leave_as_is';
+	timestamp: number;
+};
 
 // Tool types
 export interface Tool {
@@ -824,8 +844,34 @@ export interface ContextAPIUsage {
 }
 
 /**
- * Comprehensive context information from /context command
- * Includes model info, token usage, category breakdown, and tool statistics
+ * Per-message-type token breakdown (SDK `getContextUsage()` messageBreakdown)
+ */
+export interface ContextMessageBreakdown {
+	toolCallTokens: number;
+	toolResultTokens: number;
+	attachmentTokens: number;
+	assistantMessageTokens: number;
+	userMessageTokens: number;
+	/**
+	 * Tokens consumed by content redirected into the conversation
+	 * (e.g. sub-agent outputs). Exposed by the SDK alongside other
+	 * per-category totals.
+	 */
+	redirectedContextTokens?: number;
+	/**
+	 * Tokens the SDK couldn't attribute to any single category —
+	 * useful for detecting breakdown drift over time.
+	 */
+	unattributedTokens?: number;
+	toolCallsByType?: Array<{ name: string; callTokens: number; resultTokens: number }>;
+	attachmentsByType?: Array<{ name: string; tokens: number }>;
+}
+
+/**
+ * Comprehensive context information sourced from the Claude Agent SDK
+ * `query.getContextUsage()` call. Includes model info, token usage,
+ * category breakdown, auto-compact threshold, and optional debugging
+ * details (per-message breakdown).
  */
 export interface ContextInfo {
 	model: string | null;
@@ -837,7 +883,12 @@ export interface ContextInfo {
 	breakdown: Record<string, ContextCategoryBreakdown>;
 	// Optional additional info
 	apiUsage?: ContextAPIUsage;
+	// Auto-compaction (from SDK getContextUsage())
+	autoCompactThreshold?: number;
+	isAutoCompactEnabled?: boolean;
+	// Per-message-type breakdown for debugging heavy sessions
+	messageBreakdown?: ContextMessageBreakdown;
 	// Metadata
 	lastUpdated?: number; // Timestamp of last update
-	source?: 'stream' | 'context-command' | 'merged'; // Source of context data
+	source?: 'stream' | 'context-command' | 'sdk-get-context-usage' | 'merged'; // Source of context data
 }

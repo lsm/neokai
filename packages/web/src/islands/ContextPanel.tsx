@@ -3,6 +3,8 @@ import {
 	navSectionSignal,
 	contextPanelOpenSignal,
 	currentRoomIdSignal,
+	currentSpaceIdSignal,
+	currentSpaceViewModeSignal,
 	settingsSectionSignal,
 	createRoomModalSignal,
 	type NavSection,
@@ -15,10 +17,10 @@ import {
 	navigateToSession,
 	navigateToSessions,
 	navigateToSettings,
-	navigateToHome,
 	navigateToRooms,
 	navigateToInbox,
 	navigateToSpaces,
+	navigateToSpaceConfigure,
 } from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -30,8 +32,7 @@ import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
-import { SpaceContextPanel } from '../components/space/SpaceContextPanel.tsx';
-import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
+import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import { spaceStore } from '../lib/space-store.ts';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 
@@ -44,7 +45,10 @@ const SETTINGS_SECTIONS: Array<{
 	{ id: 'general', label: 'General', icon: 'settings' },
 	{ id: 'providers', label: 'Providers', icon: 'cloud' },
 	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
+	{ id: 'app-mcp-servers', label: 'Application MCP Servers', icon: 'app-server' },
+	{ id: 'skills', label: 'Skills', icon: 'skills' },
 	{ id: 'fallback-models', label: 'Fallback Models', icon: 'swap' },
+	{ id: 'neo', label: 'Neo Agent', icon: 'neo' },
 	{ id: 'usage', label: 'Usage', icon: 'chart' },
 	{ id: 'about', label: 'About', icon: 'info' },
 ];
@@ -124,6 +128,41 @@ function SectionIcon({ type }: { type: string }) {
 					/>
 				</svg>
 			);
+		case 'app-server':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
+					/>
+					<circle cx="8" cy="8" r="1" fill="currentColor" />
+					<circle cx="12" cy="8" r="1" fill="currentColor" />
+				</svg>
+			);
+		case 'skills':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"
+					/>
+				</svg>
+			);
+		case 'neo':
+			return (
+				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width={2}
+						d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+					/>
+				</svg>
+			);
 		default:
 			return null;
 	}
@@ -131,7 +170,6 @@ function SectionIcon({ type }: { type: string }) {
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
-	const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
@@ -146,6 +184,8 @@ export function ContextPanel() {
 	}, [navSection]);
 	const activeSettingsSection = settingsSectionSignal.value;
 	const currentRoomId = currentRoomIdSignal.value;
+	const currentSpaceId = currentSpaceIdSignal.value;
+	const currentSpaceViewMode = currentSpaceViewModeSignal.value;
 
 	// Inbox takes full content width — no sidebar needed
 	if (navSection === 'inbox') return null;
@@ -153,15 +193,11 @@ export function ContextPanel() {
 	// When a specific room is selected in the rooms section, show room-specific panel
 	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
 
+	// When a specific space is selected in the spaces section, show space-specific panel
+	const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
+
 	// Section config
 	const sectionConfig = {
-		home: {
-			title: 'Rooms',
-			emptyIcon: '🏢',
-			emptyTitle: 'No rooms yet',
-			emptyDesc: 'Create a room to organize work',
-			actionLabel: 'Create Room',
-		},
 		chats: {
 			title: 'Sessions',
 			emptyIcon: '💬',
@@ -178,7 +214,6 @@ export function ContextPanel() {
 		},
 		spaces: {
 			title: 'Spaces',
-			emptyIcon: '🚀',
 			emptyTitle: 'No spaces yet',
 			emptyDesc: 'Create a space to orchestrate agents',
 			actionLabel: 'Create Space',
@@ -207,11 +242,10 @@ export function ContextPanel() {
 	};
 
 	const config = sectionConfig[navSection];
-	const isSpaces = navSection === 'spaces';
 	const headerTitle = isRoomDetail
 		? (roomStore.room.value?.name ?? 'Room')
-		: isSpaces
-			? null
+		: isSpaceDetail
+			? (spaceStore.space.value?.name ?? 'Space')
 			: config.title;
 
 	const handleCreateSession = async () => {
@@ -248,15 +282,11 @@ export function ContextPanel() {
 
 	const handleAction = () => {
 		switch (navSection) {
-			case 'home':
 			case 'rooms':
 				createRoomModalSignal.value = true;
 				break;
 			case 'chats':
 				handleCreateSession();
-				break;
-			case 'spaces':
-				setCreateSpaceOpen(true);
 				break;
 			default:
 				break;
@@ -269,10 +299,6 @@ export function ContextPanel() {
 
 	const handleMobileNavClick = (section: NavSection) => {
 		switch (section) {
-			case 'home':
-				navSectionSignal.value = 'home';
-				navigateToHome();
-				break;
 			case 'chats':
 				navigateToSessions();
 				break;
@@ -299,26 +325,33 @@ export function ContextPanel() {
 
 	const isActionLoading = creatingSession;
 
+	// On the spaces list view (no space selected), hide the desktop sidebar — SpacesPage fills
+	// the full width. On mobile, the panel still slides in so the nav strip is accessible.
+	const hideDesktopPanel = navSection === 'spaces' && !isSpaceDetail;
+
 	return (
 		<>
 			{/* Mobile backdrop */}
 			{isPanelOpen && (
-				<div class="fixed inset-0 bg-black/50 z-35 md:hidden" onClick={handlePanelClose} />
+				<div
+					class="fixed inset-0 bg-black/50 z-35 md:hidden cursor-pointer"
+					onClick={handlePanelClose}
+				/>
 			)}
-
-			{/* Space Create Dialog */}
-			<SpaceCreateDialog isOpen={createSpaceOpen} onClose={() => setCreateSpaceOpen(false)} />
 
 			<div
 				class={`
 					fixed md:relative
-					h-screen w-70
+					top-0 left-0 md:left-auto
+					h-safe-screen md:h-full w-70
 					bg-dark-950 border-r ${borderColors.ui.default}
 					flex flex-col
+					pt-safe md:pt-0
 					z-40 md:z-auto
-					transition-transform duration-300 ease-in-out
-					left-0 md:left-auto
-					${isPanelOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+					max-md:transition-transform max-md:duration-300 max-md:ease-in-out
+					${isPanelOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
+					${hideDesktopPanel ? 'md:hidden' : ''}
+					overflow-hidden
 				`}
 			>
 				{/* Mobile nav strip - replaces NavRail on mobile */}
@@ -348,38 +381,66 @@ export function ContextPanel() {
 				</div>
 
 				{/* Header */}
-				<div class={`p-4 border-b ${borderColors.ui.default}`}>
-					<div class="flex items-center justify-between mb-3">
-						{isSpaces ? (
-							<button
-								onClick={() => navigateToSpaces()}
-								class={cn(
-									'flex items-center gap-2 text-lg font-semibold text-gray-100 truncate mr-2',
-									'hover:text-blue-400 transition-colors'
-								)}
-							>
-								<svg
-									class="w-5 h-5 flex-shrink-0"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
+				<div class={`px-4 h-[65px] flex items-center border-b ${borderColors.ui.default}`}>
+					<div
+						class={cn(
+							'flex-1 flex items-center justify-between',
+							!isRoomDetail && !isSpaceDetail && 'mb-3'
+						)}
+					>
+						{isSpaceDetail ? (
+							<div class="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pointer-events-none">
+								<button
+									onClick={() => navigateToSpaces()}
+									class="p-1 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
+									title="Back to Spaces"
 								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
-									/>
-								</svg>
-								Home
-							</button>
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M15 19l-7-7 7-7"
+										/>
+									</svg>
+								</button>
+								<h2 class="min-w-0 flex-1 text-lg font-semibold text-gray-100 truncate pointer-events-none">
+									{headerTitle}
+								</h2>
+								<button
+									onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
+									class={cn(
+										'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0 pointer-events-auto',
+										currentSpaceViewMode === 'configure'
+											? 'bg-dark-800 text-gray-100'
+											: 'text-gray-400 hover:bg-dark-800 hover:text-gray-100'
+									)}
+									title="Configure space"
+									aria-label="Configure space"
+								>
+									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+										/>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width={2}
+											d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+										/>
+									</svg>
+								</button>
+							</div>
 						) : (
 							<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
 						)}
 						{/* Close button for mobile */}
 						<button
 							onClick={handlePanelClose}
-							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
+							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0 pointer-events-auto"
 							title="Close panel"
 						>
 							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -393,9 +454,7 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'home' ||
-						navSection === 'chats' ||
-						(navSection === 'rooms' && !isRoomDetail)) && (
+					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}
@@ -419,12 +478,11 @@ export function ContextPanel() {
 
 				{/* Content — key triggers fade-in (animate-fadeIn) on section change */}
 				<div
-					key={navSection + (isRoomDetail ? '-detail' : '')}
+					key={
+						navSection + (isRoomDetail ? '-detail' : '') + (isSpaceDetail ? '-space-detail' : '')
+					}
 					class="flex-1 overflow-hidden flex flex-col animate-fadeIn"
 				>
-					{navSection === 'home' && (
-						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
-					)}
 					{navSection === 'chats' && (
 						<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
@@ -437,10 +495,10 @@ export function ContextPanel() {
 					{navSection === 'rooms' && !isRoomDetail && (
 						<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 					)}
-					{navSection === 'spaces' && (
-						<SpaceContextPanel
-							onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
-							onCreateSpace={() => setCreateSpaceOpen(true)}
+					{navSection === 'spaces' && isSpaceDetail && (
+						<SpaceDetailPanel
+							spaceId={currentSpaceId!}
+							onNavigate={() => (contextPanelOpenSignal.value = false)}
 						/>
 					)}
 					{navSection === 'projects' && (

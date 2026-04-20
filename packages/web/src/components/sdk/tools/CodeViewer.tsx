@@ -6,8 +6,17 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
-import hljs from 'highlight.js';
 import { cn } from '../../../lib/utils.ts';
+
+// Lazy-loaded highlight.js — cached after first import
+let hljsModule: typeof import('highlight.js') | null = null;
+
+async function getHljs() {
+	if (!hljsModule) {
+		hljsModule = await import('highlight.js');
+	}
+	return hljsModule.default;
+}
 
 export interface CodeViewerProps {
 	/** The code content to display */
@@ -79,9 +88,15 @@ export function CodeViewer({
 	const detectedLanguage = language || (filePath ? detectLanguageFromPath(filePath) : undefined);
 
 	useEffect(() => {
-		if (codeRef.current) {
+		if (!codeRef.current) return;
+		const el = codeRef.current;
+		let cancelled = false;
+
+		getHljs().then((hljs) => {
+			if (cancelled || !el) return;
+
 			// Clear previous highlighting
-			codeRef.current.removeAttribute('data-highlighted');
+			el.removeAttribute('data-highlighted');
 
 			// Apply syntax highlighting
 			let highlightedCode: string;
@@ -110,11 +125,15 @@ export function CodeViewer({
 						return `<div class="code-line"><span class="code-line-content">${line || ' '}</span></div>`;
 					})
 					.join('');
-				codeRef.current.innerHTML = `<div class="code-with-lines">${wrappedLines}</div>`;
+				el.innerHTML = `<div class="code-with-lines">${wrappedLines}</div>`;
 			} else {
-				codeRef.current.innerHTML = highlightedCode;
+				el.innerHTML = highlightedCode;
 			}
-		}
+		});
+
+		return () => {
+			cancelled = true;
+		};
 	}, [code, detectedLanguage, showLineNumbers]);
 
 	const lines = code.split('\n');

@@ -1,0 +1,1346 @@
+/**
+ * SpaceRuntime Completion Detection & Status Transition Tests
+ *
+ * Tests the tick loop integration with CompletionDetector:
+ *   - Status transition in_progress → done sets completedAt
+ *   - Multi-node workflows with mixed terminal statuses
+ *   - blocked / done / cancelled runs are skipped
+ *   - Pending-but-blocked via workflow channels
+ *   - No duplicate notifications across ticks
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { Database as BunDatabase } from 'bun:sqlite';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type {
+	NotificationSink,
+	SpaceNotificationEvent,
+} from '../../../../src/lib/space/runtime/notification-sink.ts';
+import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@neokai/shared';
+import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+
+// ---------------------------------------------------------------------------
+// MockNotificationSink
+// ---------------------------------------------------------------------------
+
+class MockNotificationSink implements NotificationSink {
+	readonly events: SpaceNotificationEvent[] = [];
+
+	notify(event: SpaceNotificationEvent): Promise<void> {
+		this.events.push(event);
+		return Promise.resolve();
+	}
+
+	get byKind(): Record<string, SpaceNotificationEvent[]> {
+		const map: Record<string, SpaceNotificationEvent[]> = {};
+		for (const e of this.events) {
+			if (!map[e.kind]) map[e.kind] = [];
+			map[e.kind].push(e);
+		}
+		return map;
+	}
+
+	clear(): void {
+		this.events.length = 0;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DB helpers
+// ---------------------------------------------------------------------------
+
+function makeDb(): { db: BunDatabase; dir: string } {
+	const dir = join(
+		process.cwd(),
+		'tmp',
+		'test-space-runtime-completion',
+		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
+	);
+	mkdirSync(dir, { recursive: true });
+	const db = new BunDatabase(join(dir, 'test.db'));
+	db.exec('PRAGMA foreign_keys = ON');
+	runMigrations(db, () => {});
+	return { db, dir };
+}
+
+function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
+	db.prepare(
+		`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+     allowed_models, session_ids, slug, status, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+	).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
+}
+
+function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
+	db.prepare(
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
+	).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+}
+
+function buildLinearWorkflow(
+	spaceId: string,
+	workflowManager: SpaceWorkflowManager,
+	nodes: Array<{ id: string; name: string; agentId: string }>,
+	channels?: Array<{ from: string; to: string | string[] }>
+): SpaceWorkflow {
+	return workflowManager.createWorkflow({
+		spaceId,
+		name: `Workflow ${Date.now()}-${Math.random()}`,
+		description: '',
+		nodes,
+		transitions: [],
+		startNodeId: nodes[0].id,
+		rules: [],
+		tags: [],
+		channels,
+	});
+}
+
+// End nodes must have exactly 1 agent (validator rule). For tests that exercise
+// a multi-agent step, append a downstream single-agent end node so the
+// multi-agent step remains an intermediate node.
+const SYNTHETIC_END_NODE_ID = '__test_end__';
+function withSyntheticEnd(endAgentId: string): {
+	id: string;
+	name: string;
+	agents: Array<{ agentId: string; name: string }>;
+} {
+	return {
+		id: SYNTHETIC_END_NODE_ID,
+		name: 'Synthetic End',
+		agents: [{ agentId: endAgentId, name: 'end' }],
+	};
+}
+
+function seedNodeExec(
+	db: BunDatabase,
+	workflowRunId: string,
+	workflowNodeId: string,
+	agentName: string,
+	status: string
+): string {
+	const repo = new NodeExecutionRepository(db);
+	const existing = repo.listByNode(workflowRunId, workflowNodeId);
+	if (existing.length > 0) {
+		const byAgent = existing.find((exec) => exec.agentName === agentName);
+		const target = byAgent ?? (existing.length === 1 ? existing[0] : null);
+		if (target) {
+			repo.update(target.id, {
+				status: status as 'pending' | 'in_progress' | 'idle' | 'done' | 'cancelled' | 'blocked',
+				result: null,
+			});
+			return target.id;
+		}
+	}
+
+	const id = `exec-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const now = Date.now();
+	db.prepare(
+		`INSERT OR REPLACE INTO node_executions
+			     (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+			      agent_session_id, status, result, created_at, started_at,
+		      completed_at, updated_at)
+		     VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL, ?, NULL, NULL, ?)`
+	).run(id, workflowRunId, workflowNodeId, agentName, status, now, now);
+	return id;
+}
+
+// ---------------------------------------------------------------------------
+// MockTaskAgentManager
+// ---------------------------------------------------------------------------
+
+class MockTaskAgentManager {
+	readonly cancelledSessions: string[] = [];
+	readonly interruptedSessions: string[] = [];
+	readonly spawnedExecutionSessions: string[] = [];
+
+	isTaskAgentAlive(_taskId: string): boolean {
+		return false;
+	}
+
+	isSpawning(_taskId: string): boolean {
+		return false;
+	}
+
+	isExecutionSpawning(_executionId: string): boolean {
+		return false;
+	}
+
+	isSessionAlive(_sessionId: string): boolean {
+		return false;
+	}
+
+	async spawnWorkflowNodeAgent(
+		_task: SpaceTask,
+		_space: Space,
+		_workflow: SpaceWorkflow | null,
+		_run: SpaceWorkflowRun | null
+	): Promise<string> {
+		return 'mock-session';
+	}
+
+	async spawnWorkflowNodeAgentForExecution(
+		_task: SpaceTask,
+		_space: Space,
+		_workflow: SpaceWorkflow,
+		_run: SpaceWorkflowRun,
+		execution: { id: string }
+	): Promise<string> {
+		const sessionId = `mock-session:${execution.id}`;
+		this.spawnedExecutionSessions.push(sessionId);
+		return sessionId;
+	}
+
+	async rehydrate(): Promise<void> {}
+
+	cancelBySessionId(agentSessionId: string): void {
+		this.cancelledSessions.push(agentSessionId);
+	}
+
+	async interruptBySessionId(agentSessionId: string): Promise<void> {
+		this.interruptedSessions.push(agentSessionId);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+
+describe('SpaceRuntime — completion detection & status transitions', () => {
+	let db: BunDatabase;
+	let dir: string;
+
+	let workflowRunRepo: SpaceWorkflowRunRepository;
+	let taskRepo: SpaceTaskRepository;
+	let agentManager: SpaceAgentManager;
+	let workflowManager: SpaceWorkflowManager;
+	let spaceManager: SpaceManager;
+	let sink: MockNotificationSink;
+
+	let nodeExecutionRepo: NodeExecutionRepository;
+
+	const SPACE_ID = 'space-cd-1';
+	const WORKSPACE = '/tmp/cd-ws';
+	const AGENT_A = 'agent-cd-a';
+	const AGENT_B = 'agent-cd-b';
+	const AGENT_C = 'agent-cd-c';
+
+	function makeRuntimeWithTam(extraConfig?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
+		const nodeExecutionRepo = new NodeExecutionRepository(db);
+		const config: SpaceRuntimeConfig = {
+			db,
+			spaceManager,
+			spaceAgentManager: agentManager,
+			spaceWorkflowManager: workflowManager,
+			workflowRunRepo,
+			taskRepo,
+			nodeExecutionRepo,
+			notificationSink: sink,
+			taskAgentManager: new MockTaskAgentManager() as unknown as TaskAgentManager,
+			...extraConfig,
+		};
+		return new SpaceRuntime(config);
+	}
+
+	beforeEach(() => {
+		({ db, dir } = makeDb());
+
+		seedSpaceRow(db, SPACE_ID, WORKSPACE);
+		seedAgentRow(db, AGENT_A, SPACE_ID);
+		seedAgentRow(db, AGENT_B, SPACE_ID);
+		seedAgentRow(db, AGENT_C, SPACE_ID);
+
+		workflowRunRepo = new SpaceWorkflowRunRepository(db);
+		taskRepo = new SpaceTaskRepository(db);
+
+		const agentRepo = new SpaceAgentRepository(db);
+		agentManager = new SpaceAgentManager(agentRepo);
+
+		const workflowRepo = new SpaceWorkflowRepository(db);
+		workflowManager = new SpaceWorkflowManager(workflowRepo);
+
+		spaceManager = new SpaceManager(db);
+		sink = new MockNotificationSink();
+		nodeExecutionRepo = new NodeExecutionRepository(db);
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			/* ignore */
+		}
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	});
+
+	// -------------------------------------------------------------------------
+	// completedAt timestamp
+	// -------------------------------------------------------------------------
+
+	describe('completedAt timestamp', () => {
+		test('sets completedAt when CompletionDetector marks run as done', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-ts', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Verify run starts without completedAt
+			const freshRun = workflowRunRepo.getRun(run.id);
+			expect(freshRun?.completedAt).toBeNull();
+
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Create matching node_execution record for CompletionDetector
+			seedNodeExec(db, run.id, 'step-ts', 'agent', 'idle');
+
+			// Capture time before tick to verify completedAt is recent
+			const beforeTick = Date.now();
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(completedRun?.completedAt).toBeDefined();
+			expect(typeof completedRun?.completedAt).toBe('number');
+			// Verify completedAt is set to a recent timestamp (within the tick's execution window)
+			expect(completedRun!.completedAt!).toBeGreaterThanOrEqual(beforeTick);
+			expect(completedRun!.completedAt!).toBeLessThanOrEqual(Date.now() + 100);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Multi-node workflow completion
+	// -------------------------------------------------------------------------
+
+	describe('multi-node workflow completion', () => {
+		test('multi-node with all tasks done → run completes', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-cd-1', name: 'Plan', agentId: AGENT_B },
+				{ id: 'node-cd-2', name: 'Code', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1); // Only start node activated
+
+			// Complete the start node task
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Manually activate the second node and complete it
+			// (In production this would be done by ChannelRouter.activateNode)
+			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
+			const secondTask = await taskManager.createTask({
+				title: 'Code',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'node-cd-2',
+				taskType: 'coding',
+				agentName: 'coder',
+				status: 'done',
+			});
+
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'node-cd-1', 'agent', 'idle');
+			seedNodeExec(db, run.id, 'node-cd-2', 'coder', 'idle');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(completedRun?.completedAt).toBeDefined();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].runId).toBe(run.id);
+				expect(completedEvents[0].status).toBe('done');
+			}
+		});
+
+		test('multi-node with mixed terminal statuses (done + cancelled) → run completes', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-mix-1', name: 'Plan', agentId: AGENT_B },
+				{ id: 'node-mix-2', name: 'Code', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// First node done
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Second node cancelled
+			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
+			await taskManager.createTask({
+				title: 'Code',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'node-mix-2',
+				taskType: 'coding',
+				agentName: 'coder',
+				status: 'cancelled',
+			});
+
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'node-mix-1', 'agent', 'idle');
+			seedNodeExec(db, run.id, 'node-mix-2', 'coder', 'cancelled');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('multi-node with canonical task in_progress → run does NOT complete', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'node-ip-1', name: 'Plan', agentId: AGENT_B },
+				{ id: 'node-ip-2', name: 'Code', agentId: AGENT_A },
+			]);
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Canonical task is left in default in_progress; node executions are
+			// in flight. Completion is purely task-status driven, so the run must
+			// not complete while the canonical task is non-terminal.
+			seedNodeExec(db, run.id, 'node-ip-1', 'agent', 'idle');
+			seedNodeExec(db, run.id, 'node-ip-2', 'coder', 'in_progress');
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Tick loop early returns for terminal/paused run states
+	// -------------------------------------------------------------------------
+
+	describe('tick loop early returns', () => {
+		test('processRunTick skips run in blocked state', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-na-skip', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			// Escalate to blocked
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+			// Set task to done — normally this would trigger completion
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			await rt.executeTick();
+
+			// Run should still be blocked (not done) because
+			// processRunTick returns early for blocked runs
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('blocked');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(0);
+		});
+
+		test('processRunTick skips run in done state', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-done-skip', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Complete the task and let tick mark run as done
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-done-skip', 'agent', 'idle');
+			await rt.executeTick();
+
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(rt.executorCount).toBe(0);
+
+			// Reset the sink to track events after first tick
+			sink.clear();
+
+			// Second tick — no events, no errors
+			await rt.executeTick();
+			expect(sink.events).toHaveLength(0);
+		});
+
+		test('processRunTick skips run in cancelled state', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-cancel-skip', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Cancel via status transition
+			workflowRunRepo.transitionStatus(run.id, 'cancelled');
+
+			sink.clear();
+			await rt.executeTick();
+
+			// No notifications for cancelled runs (cleanupTerminalExecutors
+			// does NOT emit for cancelled, only for done)
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(0);
+
+			// Executor cleaned up
+			expect(rt.executorCount).toBe(0);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Status transition lifecycle via tick loop
+	// -------------------------------------------------------------------------
+
+	describe('status transition lifecycle', () => {
+		test('in_progress → done is a valid transition via CompletionDetector', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-lifecycle', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(run.status).toBe('in_progress');
+
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-lifecycle', 'agent', 'idle');
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('done');
+		});
+
+		test('done run cannot transition again — subsequent ticks are no-ops', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-Immutable', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-Immutable', 'agent', 'idle');
+			await rt.executeTick();
+
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+
+			// Multiple additional ticks
+			await rt.executeTick();
+			await rt.executeTick();
+			await rt.executeTick();
+
+			// Still exactly one done event
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+
+		test('blocked run does not auto-complete even when all tasks become terminal', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-na-no-auto', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Move to blocked
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+			// All tasks terminal
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			await rt.executeTick();
+
+			// Run stays blocked — processRunTick returns early
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('blocked');
+			expect(runAfter?.completedAt).toBeNull();
+		});
+
+		test('blocked → in_progress → done lifecycle via resume', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-resume', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Step 1: escalate to blocked
+			workflowRunRepo.transitionStatus(run.id, 'blocked');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+
+			// Step 2: human resolves → resume to in_progress
+			workflowRunRepo.transitionStatus(run.id, 'in_progress');
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+
+			// Step 3: complete all tasks
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-resume', 'agent', 'idle');
+			await rt.executeTick();
+
+			// Step 4: run should now be done
+			const finalRun = workflowRunRepo.getRun(run.id);
+			expect(finalRun?.status).toBe('done');
+			expect(finalRun?.completedAt).toBeDefined();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Pending-but-blocked via workflow channels in tick loop context
+	// -------------------------------------------------------------------------
+
+	describe('pending-but-blocked via workflow channels', () => {
+		test('canonical task done → run completes (task-status drives completion)', async () => {
+			// Completion is purely task-status driven: when the single canonical
+			// task reaches a terminal status, the run completes, regardless of
+			// channel topology or which node the canonical task is attached to.
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Channeled Workflow ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: 'chan-plan',
+						name: 'planner',
+						agents: [{ agentId: AGENT_B, name: 'Planner' }],
+					},
+					{
+						id: 'chan-code',
+						name: 'coder',
+						agents: [{ agentId: AGENT_A, name: 'Coder' }],
+					},
+				],
+				startNodeId: 'chan-plan',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1); // Only start node
+
+			// Mark the canonical task done; completion fires regardless of
+			// whether downstream nodes were ever activated.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'chan-plan', 'Planner', 'idle');
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('done');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('all channels satisfied — completion proceeds normally', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Full Channel Workflow ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'full-plan', name: 'planner', agentId: AGENT_B },
+					{ id: 'full-code', name: 'coder', agentId: AGENT_A },
+				],
+				startNodeId: 'full-plan',
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Complete start node
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Manually activate second node and complete it
+			const taskManager = rt.getTaskManagerForSpace(SPACE_ID);
+			await taskManager.createTask({
+				title: 'Code',
+				description: '',
+				workflowRunId: run.id,
+				workflowNodeId: 'full-code',
+				taskType: 'coding',
+				agentName: 'coder',
+				status: 'done',
+			});
+
+			// Create node_execution records for CompletionDetector
+			seedNodeExec(db, run.id, 'full-plan', 'agent', 'idle');
+			seedNodeExec(db, run.id, 'full-code', 'coder', 'idle');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('no channels on workflow — completion only checks canonical task status', async () => {
+			const rt = makeRuntimeWithTam();
+
+			// Workflow with NO channels
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'no-chan-1', name: 'Plan', agentId: AGENT_B },
+				{ id: 'no-chan-2', name: 'Code', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Mark canonical task done — completion fires regardless of channels.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'no-chan-1', 'agent', 'idle');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('wildcard channel does not block completion', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Wildcard Channel ${Date.now()}`,
+				description: '',
+				nodes: [{ id: 'wc-plan', name: 'planner', agentId: AGENT_B }],
+				startNodeId: 'wc-plan',
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'wc-plan', 'planner', 'idle');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Multi-agent parallel node completion
+	// -------------------------------------------------------------------------
+
+	describe('multi-agent parallel node', () => {
+		test('multi-agent step + canonical task done → run completes', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Parallel Complete ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: 'par-node',
+						name: 'Parallel Step',
+						agents: [
+							{ agentId: AGENT_A, name: 'coder' },
+							{ agentId: AGENT_B, name: 'planner' },
+							{ agentId: AGENT_C, name: 'general' },
+						],
+					},
+					withSyntheticEnd(AGENT_A),
+				],
+				startNodeId: 'par-node',
+				endNodeId: SYNTHETIC_END_NODE_ID,
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			expect(tasks).toHaveLength(1);
+
+			// Completion is task-status driven; mark the canonical task done.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'par-node', 'coder', 'idle');
+			seedNodeExec(db, run.id, 'par-node', 'planner', 'idle');
+			seedNodeExec(db, run.id, 'par-node', 'general', 'cancelled');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(completedRun?.completedAt).toBeDefined();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('multi-agent step + canonical task in_progress → run stays in_progress', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Parallel Partial ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: 'par-partial',
+						name: 'Parallel Step',
+						agents: [
+							{ agentId: AGENT_A, name: 'coder' },
+							{ agentId: AGENT_B, name: 'planner' },
+						],
+					},
+					withSyntheticEnd(AGENT_A),
+				],
+				startNodeId: 'par-partial',
+				endNodeId: SYNTHETIC_END_NODE_ID,
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Canonical task left in default in_progress.
+			seedNodeExec(db, run.id, 'par-partial', 'coder', 'idle');
+			seedNodeExec(db, run.id, 'par-partial', 'planner', 'in_progress');
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('in_progress');
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(0);
+		});
+
+		test('multi-agent step: completion detected when canonical task flips terminal', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Staggered Complete ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: 'stag-node',
+						name: 'Staggered Step',
+						agents: [
+							{ agentId: AGENT_A, name: 'coder' },
+							{ agentId: AGENT_B, name: 'planner' },
+						],
+					},
+					withSyntheticEnd(AGENT_A),
+				],
+				startNodeId: 'stag-node',
+				endNodeId: SYNTHETIC_END_NODE_ID,
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			seedNodeExec(db, run.id, 'stag-node', 'coder', 'in_progress');
+			seedNodeExec(db, run.id, 'stag-node', 'planner', 'in_progress');
+
+			// Tick 1: canonical task in_progress; no completion.
+			await rt.executeTick();
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+
+			// Tick 2: canonical task flips to done; completion fires.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			await rt.executeTick();
+
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+
+			// Tick 3: no duplicate
+			await rt.executeTick();
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+
+		test('mixed-status multi-agent start node: tick loop syncs per-agent node_executions', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Mixed Status Sync ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: 'mix-start',
+						name: 'Mixed Start Node',
+						agents: [
+							{ agentId: AGENT_A, name: 'coder' },
+							{ agentId: AGENT_B, name: 'reviewer' },
+						],
+					},
+					withSyntheticEnd(AGENT_A),
+				],
+				startNodeId: 'mix-start',
+				endNodeId: SYNTHETIC_END_NODE_ID,
+				rules: [],
+				tags: [],
+				transitions: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// startWorkflowRun() creates per-agent node_execution records for the
+			// multi-agent start step (not the synthetic end). Both should be
+			// 'pending' initially.
+			const startExecs = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.filter((e) => e.workflowNodeId === 'mix-start');
+			expect(startExecs).toHaveLength(2);
+			expect(startExecs.every((e) => e.status === 'pending')).toBe(true);
+
+			// Set executions to heterogeneous statuses: coder done, reviewer still in_progress.
+			seedNodeExec(db, run.id, 'mix-start', 'coder', 'idle');
+			seedNodeExec(db, run.id, 'mix-start', 'reviewer', 'in_progress');
+
+			await rt.executeTick();
+
+			// Node executions should reflect the seeded mixed state.
+			const execsAfter = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.filter((e) => e.workflowNodeId === 'mix-start');
+			const coderExec = execsAfter.find((e) => e.agentName === 'coder');
+			const reviewerExec = execsAfter.find((e) => e.agentName === 'reviewer');
+			expect(coderExec?.status).toBe('idle');
+			expect(reviewerExec?.status).toBe('in_progress');
+
+			// Run stays in_progress while canonical task is in_progress.
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
+
+			// Flip canonical task to done; reviewer execution becomes idle as the
+			// agent finishes.
+			seedNodeExec(db, run.id, 'mix-start', 'reviewer', 'idle');
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			await rt.executeTick();
+
+			const startExecsFinal = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.filter((e) => e.workflowNodeId === 'mix-start');
+			expect(startExecsFinal.every((e) => e.status === 'idle')).toBe(true);
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// Dedup cleanup on terminal executor removal
+	// -------------------------------------------------------------------------
+
+	describe('dedup cleanup on completion', () => {
+		test('dedup entries are cleaned up when executor is removed on completion', async () => {
+			const rt = makeRuntimeWithTam();
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'step-dedup-clean', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const taskId = tasks[0].id;
+			const dedupKey = `${taskId}:timeout`;
+
+			// Empty dedup set at start
+			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
+
+			// Trigger timeout dedup by marking the execution stale.
+			db.prepare(`UPDATE spaces SET config = ? WHERE id = ?`).run(
+				JSON.stringify({ taskTimeoutMs: 1 }),
+				SPACE_ID
+			);
+			seedNodeExec(db, run.id, 'step-dedup-clean', 'agent', 'in_progress');
+			db.prepare(
+				`UPDATE node_executions
+				 SET started_at = ?, updated_at = ?
+				 WHERE workflow_run_id = ? AND workflow_node_id = ?`
+			).run(Date.now() - 10_000, Date.now() - 10_000, run.id, 'step-dedup-clean');
+			await rt.executeTick();
+			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(true);
+
+			// Complete the run
+			taskRepo.updateTask(taskId, { status: 'done' });
+			seedNodeExec(db, run.id, 'step-dedup-clean', 'agent', 'idle');
+			await rt.executeTick();
+
+			// Run should be done
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			// Dedup entry was removed when executor was cleaned up
+			expect(rt.getNotifiedTaskSet().has(dedupKey)).toBe(false);
+		});
+	});
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// End-node bypass completion scenarios
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	describe('end-node bypass completion', () => {
+		test('end node execution done → run completes via end-node short-circuit', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `End-Node Bypass ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'en-start', name: 'Start', agentId: AGENT_A },
+					{ id: 'en-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'en-start',
+				endNodeId: 'en-end',
+				tags: [],
+			});
+			expect(workflow.endNodeId).toBe('en-end');
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Complete start node task
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			// Seed both node executions — end node is done
+			seedNodeExec(db, run.id, 'en-start', 'Start', 'idle');
+			seedNodeExec(db, run.id, 'en-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(completedRun?.completedAt).toBeDefined();
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+			if (completedEvents[0].kind === 'workflow_run_completed') {
+				expect(completedEvents[0].status).toBe('done');
+			}
+		});
+
+		test('canonical task done interrupts siblings but keeps sessions alive (idle)', async () => {
+			// Per issue #1515: node agent sessions must remain reachable via
+			// send_message until the parent task reaches `archived`. When the
+			// task transitions to `done` / `cancelled`, sibling NodeExecutions
+			// still in flight are interrupted (session stops processing) and
+			// their status transitions to `idle` — NOT `cancelled` — so they
+			// remain a valid message target. The session itself is kept alive
+			// in memory; only `archived` triggers full teardown.
+			const mockTam = new MockTaskAgentManager();
+			mockTam.isSessionAlive = () => true;
+			const rt = makeRuntimeWithTam({
+				taskAgentManager: mockTam as unknown as TaskAgentManager,
+			});
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Sibling Interrupt On Task Terminal ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'ec-sibling', name: 'Sibling', agentId: AGENT_A },
+					{ id: 'ec-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'ec-sibling',
+				endNodeId: 'ec-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Sibling exec in flight with an agent session.
+			const siblingExecId = seedNodeExec(db, run.id, 'ec-sibling', 'Sibling', 'in_progress');
+			const siblingSessionId = 'mock-sibling-session-001';
+			db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+				siblingSessionId,
+				siblingExecId
+			);
+			seedNodeExec(db, run.id, 'ec-end', 'End', 'idle');
+
+			// Canonical task transitions to done; runtime quiesces in-flight siblings.
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			await rt.executeTick();
+
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+
+			const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+			const siblingExec = execs.find((e) => e.workflowNodeId === 'ec-sibling');
+			// Sibling execution transitions to `idle` (reachable), not `cancelled` (destroyed).
+			expect(siblingExec?.status).toBe('idle');
+			// Sibling session retains its agentSessionId so send_message can still reach it.
+			expect(siblingExec?.agentSessionId).toBe(siblingSessionId);
+			// Runtime interrupted the session — but did NOT delete/cancel it.
+			expect(mockTam.interruptedSessions).toContain(siblingSessionId);
+			expect(mockTam.cancelledSessions).not.toContain(siblingSessionId);
+
+			const completedEvents = sink.events.filter((e) => e.kind === 'workflow_run_completed');
+			expect(completedEvents).toHaveLength(1);
+		});
+
+		test('sibling session remains reachable for send_message after workflow completion (#1515)', async () => {
+			// Regression for issue #1515: when a downstream node (e.g. a reviewer)
+			// tries to resolve peers for send_message AFTER an upstream sibling
+			// has completed, the sibling's session must still appear as a valid
+			// target. This test asserts the post-completion state that feeds
+			// AgentMessageRouter.deliverMessage's peer lookup:
+			//
+			//   1. The sibling NodeExecution row status === 'idle' (not cancelled)
+			//   2. The sibling agentSessionId is still populated
+			//
+			// These two invariants are what list_peers / deliverMessage rely on
+			// when the Task Agent asks for a reviewer→coder send_message to
+			// succeed after the coder node has finished.
+			const mockTam = new MockTaskAgentManager();
+			mockTam.isSessionAlive = () => true;
+			const rt = makeRuntimeWithTam({
+				taskAgentManager: mockTam as unknown as TaskAgentManager,
+			});
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Post-Completion Messaging ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'coder-node', name: 'Coder', agentId: AGENT_A },
+					{ id: 'reviewer-node', name: 'Reviewer', agentId: AGENT_B },
+				],
+				startNodeId: 'coder-node',
+				endNodeId: 'reviewer-node',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			const coderSessionId = 'coder-session-1515';
+			const coderExecId = seedNodeExec(db, run.id, 'coder-node', 'Coder', 'in_progress');
+			db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+				coderSessionId,
+				coderExecId
+			);
+			seedNodeExec(db, run.id, 'reviewer-node', 'Reviewer', 'idle');
+
+			// Reviewer flips the canonical task to done (e.g. after merging a PR).
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			await rt.executeTick();
+
+			// The coder NodeExecution must remain a valid send_message target:
+			// status=idle (listed by list_peers) and agentSessionId preserved
+			// (used by AgentMessageRouter.deliverMessage to locate the session).
+			const coderExec = nodeExecutionRepo
+				.listByWorkflowRun(run.id)
+				.find((e) => e.workflowNodeId === 'coder-node');
+			expect(coderExec?.status).toBe('idle');
+			expect(coderExec?.agentSessionId).toBe(coderSessionId);
+
+			// TaskAgentManager was instructed to interrupt (not destroy) the
+			// coder session — the session object itself is still registered
+			// and reachable for message injection.
+			expect(mockTam.interruptedSessions).toContain(coderSessionId);
+			expect(mockTam.cancelledSessions).not.toContain(coderSessionId);
+
+			// The parent task is `done`, not yet `archived` — in production this
+			// means TaskAgentManager's archive listener has not fired, so the
+			// sub-session record also survives full cleanup.
+			const updatedTask = taskRepo.getTask(tasks[0].id);
+			expect(updatedTask?.status).toBe('done');
+		});
+
+		test('workflow without endNodeId is rejected at start', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `No End Node ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'no-en-1', name: 'Step 1', agentId: AGENT_A },
+					{ id: 'no-en-2', name: 'Step 2', agentId: AGENT_B },
+				],
+				startNodeId: 'no-en-1',
+				tags: [],
+			});
+
+			// Simulate a legacy workflow row persisted before end_node_id existed.
+			db.prepare(`UPDATE space_workflows SET end_node_id = NULL WHERE id = ?`).run(workflow.id);
+			const legacyWorkflow = workflowManager.getWorkflow(workflow.id)!;
+			expect(legacyWorkflow.endNodeId).toBeUndefined();
+			await expect(rt.startWorkflowRun(SPACE_ID, legacyWorkflow.id, 'Run')).rejects.toThrow(
+				'is missing endNodeId'
+			);
+		});
+
+		test('reportedStatus alone is enough to mark a run for completion resolution', async () => {
+			// Even when task.status is non-terminal, a non-null reportedStatus
+			// signals the runtime to resolve completion via completion-actions on
+			// the next tick.
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Reported Status Drives Resolution ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'rs-start', name: 'Start', agentId: AGENT_A },
+					{ id: 'rs-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'rs-start',
+				endNodeId: 'rs-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+			// Agent reported result via report_result; task.status not yet flipped.
+			taskRepo.updateTask(tasks[0].id, {
+				reportedStatus: 'done',
+				reportedSummary: 'work complete',
+			});
+			seedNodeExec(db, run.id, 'rs-end', 'End', 'idle');
+
+			await rt.executeTick();
+
+			const runAfter = workflowRunRepo.getRun(run.id);
+			expect(runAfter?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+
+		test('end node execution cancelled (terminal) also triggers run completion', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `End Node Cancelled ${Date.now()}`,
+				description: '',
+				nodes: [
+					{ id: 'enc-start', name: 'Start', agentId: AGENT_A },
+					{ id: 'enc-end', name: 'End', agentId: AGENT_B },
+				],
+				startNodeId: 'enc-start',
+				endNodeId: 'enc-end',
+				tags: [],
+			});
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+
+			seedNodeExec(db, run.id, 'enc-start', 'Start', 'idle');
+			// End node exec is 'cancelled' — still terminal, should trigger completion
+			seedNodeExec(db, run.id, 'enc-end', 'End', 'cancelled');
+
+			await rt.executeTick();
+
+			// 'cancelled' is a terminal status for end-node short-circuit
+			const completedRun = workflowRunRepo.getRun(run.id);
+			expect(completedRun?.status).toBe('done');
+			expect(sink.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(1);
+		});
+	});
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// Orchestration task auto-complete on run completion
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	describe('orchestration task auto-complete on run completion', () => {
+		test('legacy in_progress orchestration task is ignored when run completes', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'orch-node-1', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Orch Run');
+
+			// Create an orchestration task with taskAgentSessionId starting with 'space:'
+			const orchTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Orchestration',
+				description: 'Task agent orchestration task',
+				workflowRunId: run.id,
+				status: 'in_progress',
+				taskAgentSessionId: `space:${SPACE_ID}:task:${tasks[0].id}`,
+			});
+
+			// Complete the workflow node execution
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'orch-node-1', 'agent', 'idle');
+
+			await rt.executeTick();
+
+			// Run should be done
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Strict one-task-per-run repair archives duplicate helper/orchestration tasks.
+			const orchTaskAfter = taskRepo.getTask(orchTask.id);
+			expect(orchTaskAfter?.status).toBe('archived');
+		});
+
+		test('open orchestration task is skipped on run completion (no throw)', async () => {
+			const rt = makeRuntimeWithTam();
+
+			const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+				{ id: 'orch-open-1', name: 'Step', agentId: AGENT_A },
+			]);
+
+			const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Orch Open Run');
+
+			// Create an orchestration task with taskAgentSessionId but in 'open' state
+			const orchTask = taskRepo.createTask({
+				spaceId: SPACE_ID,
+				title: 'Orchestration Open',
+				description: 'Task agent orchestration task in open state',
+				workflowRunId: run.id,
+				status: 'open',
+				taskAgentSessionId: `space:${SPACE_ID}:task:${tasks[0].id}`,
+			});
+
+			// Complete the workflow node execution
+			taskRepo.updateTask(tasks[0].id, { status: 'done' });
+			seedNodeExec(db, run.id, 'orch-open-1', 'agent', 'idle');
+
+			// Should not throw
+			await rt.executeTick();
+
+			// Run should be done
+			expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+
+			// Strict one-task-per-run repair archives duplicate helper/orchestration tasks.
+			const orchTaskAfter = taskRepo.getTask(orchTask.id);
+			expect(orchTaskAfter?.status).toBe('archived');
+		});
+	});
+});

@@ -5,7 +5,7 @@
  * the human user. The Room Agent session already exists (room:chat:${roomId}),
  * these tools are attached to it.
  *
- * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
+ * Tools: create_goal, list_goals, update_goal, reset_goal, create_task, list_tasks,
  *        update_task, cancel_task, stop_session, get_room_status, approve_task, reject_task,
  *        send_message_to_task, get_task_detail, set_schedule, pause_schedule, resume_schedule,
  *        record_metric, get_metrics, list_executions
@@ -41,12 +41,23 @@ export interface RoomAgentToolsConfig {
 }
 
 interface ToolResult {
+	[key: string]: unknown;
 	content: Array<{ type: 'text'; text: string }>;
 }
 
 function jsonResult(data: Record<string, unknown>): ToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
+
+/** Task statuses that are not yet terminal and should be cancelled when resetting/invalidating goals. */
+const NON_TERMINAL_TASK_STATUSES = new Set([
+	'pending',
+	'in_progress',
+	'draft',
+	'review',
+	'rate_limited',
+	'usage_limited',
+]);
 
 /**
  * Create tool handler functions that can be tested directly.
@@ -99,9 +110,36 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: true, goalId: goal.id, goal });
 		},
 
-		async list_goals(): Promise<ToolResult> {
-			const goals = await goalManager.listGoals();
-			return jsonResult({ success: true, goals });
+		async list_goals(
+			args: {
+				status?: 'active' | 'needs_human' | 'completed' | 'archived';
+				search?: string;
+				limit?: number;
+				offset?: number;
+				compact?: boolean;
+			} = {}
+		): Promise<ToolResult> {
+			let goals = await goalManager.listGoals(args.status);
+			if (args.search) {
+				const q = args.search.toLowerCase();
+				goals = goals.filter((g) => g.title.toLowerCase().includes(q));
+			}
+			const total = goals.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			goals = goals.slice(offset, offset + limit);
+			if (args.compact) {
+				const compactGoals = goals.map((g) => ({
+					id: g.id,
+					title: g.title,
+					status: g.status,
+					priority: g.priority,
+					missionType: g.missionType ?? 'one_shot',
+					createdAt: g.createdAt,
+				}));
+				return jsonResult({ success: true, total, goals: compactGoals });
+			}
+			return jsonResult({ success: true, total, goals });
 		},
 
 		async update_goal(args: {
@@ -112,6 +150,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
 			mission_type?: MissionType;
 			autonomy_level?: AutonomyLevel;
+			planning_attempts?: number;
 			structured_metrics?: Array<{
 				name: string;
 				target: number;
@@ -133,6 +172,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				args.priority === undefined &&
 				args.mission_type === undefined &&
 				args.autonomy_level === undefined &&
+				args.planning_attempts === undefined &&
 				args.structured_metrics === undefined
 			) {
 				return jsonResult({ success: false, error: 'No update fields provided.' });
@@ -140,13 +180,42 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 			let updated = goal;
 
-			// Collect patch fields: title, description, priority, missionType, autonomyLevel, structuredMetrics
+			// Pre-scan: if title/description is changing and runtime is unavailable, check for
+			// blocked planning tasks BEFORE any DB writes so we fail atomically.
+			if (args.title !== undefined || args.description !== undefined) {
+				const runtime = runtimeService?.getRuntime(roomId) ?? null;
+				if (!runtime) {
+					for (const taskId of goal.linkedTaskIds) {
+						const task = await taskManager.getTask(taskId);
+						if (
+							!task ||
+							task.taskType !== 'planning' ||
+							!NON_TERMINAL_TASK_STATUSES.has(task.status)
+						)
+							continue;
+						if (task.status === 'in_progress' || task.status === 'review') {
+							const activeGroup = groupRepo.getGroupByTaskId(taskId);
+							if (activeGroup && activeGroup.completedAt === null) {
+								return jsonResult({
+									success: false,
+									error:
+										`Cannot invalidate planning for goal ${args.goal_id}: planning task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+										`The active planner session would not be stopped.`,
+								});
+							}
+						}
+					}
+				}
+			}
+
+			// Collect patch fields: title, description, priority, missionType, autonomyLevel, planning_attempts, structuredMetrics
 			const hasPatchFields =
 				args.title !== undefined ||
 				args.description !== undefined ||
 				args.priority !== undefined ||
 				args.mission_type !== undefined ||
 				args.autonomy_level !== undefined ||
+				args.planning_attempts !== undefined ||
 				args.structured_metrics !== undefined;
 
 			if (hasPatchFields) {
@@ -156,6 +225,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				if (args.priority !== undefined) patch.priority = args.priority;
 				if (args.mission_type !== undefined) patch.missionType = args.mission_type;
 				if (args.autonomy_level !== undefined) patch.autonomyLevel = args.autonomy_level;
+				if (args.planning_attempts !== undefined) patch.planning_attempts = args.planning_attempts;
 				if (args.structured_metrics !== undefined) {
 					patch.structuredMetrics = args.structured_metrics.map((m) => ({
 						name: m.name,
@@ -172,6 +242,56 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			// Status update is a distinct operation from patch (changes state + timestamps)
 			if (args.status) {
 				updated = await goalManager.updateGoalStatus(args.goal_id, args.status);
+			}
+
+			// Invalidate in-progress planning when title or description changes
+			if (args.title !== undefined || args.description !== undefined) {
+				const runtime = runtimeService?.getRuntime(roomId) ?? null;
+
+				// Find and cancel any in-progress planning tasks linked to this goal
+				for (const taskId of goal.linkedTaskIds) {
+					const task = await taskManager.getTask(taskId);
+					if (!task || task.taskType !== 'planning' || !NON_TERMINAL_TASK_STATUSES.has(task.status))
+						continue;
+
+					if (runtime) {
+						await runtime.cancelTask(taskId);
+					} else {
+						// Fallback path: no runtime available.
+						// The pre-scan above already rejected any blocked in_progress/review tasks,
+						// so it is safe to cancel here without an additional session-group check.
+						await taskManager.cancelTaskCascade(taskId);
+						if (daemonHub) {
+							const cancelledTask = await taskManager.getTask(taskId);
+							if (cancelledTask) {
+								void daemonHub.emit('room.task.update', {
+									sessionId: `room:${roomId}`,
+									roomId,
+									task: cancelledTask,
+								});
+							}
+						}
+					}
+				}
+
+				// Reset planning_attempts so a fresh planner picks up the updated context.
+				// Skip if the caller explicitly provided planning_attempts — their value takes precedence.
+				if (args.planning_attempts === undefined) {
+					updated = await goalManager.patchGoal(args.goal_id, { planning_attempts: 0 });
+				}
+
+				// If the goal is stuck in needs_human, transition it back to active so it's
+				// eligible for replanning (getNextGoalForPlanning only iterates 'active' goals).
+				// Only auto-transition when the caller did not explicitly set a status in this
+				// same call — an explicit status instruction takes precedence.
+				if (args.status === undefined && updated.status === 'needs_human') {
+					updated = await goalManager.updateGoalStatus(args.goal_id, 'active');
+				}
+
+				// Trigger a fresh planning tick if runtime is available
+				if (runtime) {
+					runtime.onGoalCreated(args.goal_id);
+				}
 			}
 
 			return jsonResult({ success: true, goal: updated });
@@ -195,6 +315,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						"Task type 'planning' is reserved for internal use. Use 'coding', 'research', 'design', or 'goal_review' instead.",
 				});
 			}
+			// goal_review tasks should be handled by the planner agent unless explicitly assigned
+			const effectiveAgent =
+				args.assigned_agent ?? (args.task_type === 'goal_review' ? 'planner' : undefined);
 			let task;
 			try {
 				task = await taskManager.createTask({
@@ -203,7 +326,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					priority: args.priority,
 					dependsOn: args.depends_on,
 					taskType: args.task_type,
-					assignedAgent: args.assigned_agent,
+					assignedAgent: effectiveAgent,
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -235,7 +358,14 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: true, taskId: task.id, task });
 		},
 
-		async list_tasks(args: { goal_id?: string; status?: TaskStatus }): Promise<ToolResult> {
+		async list_tasks(args: {
+			goal_id?: string;
+			status?: TaskStatus;
+			search?: string;
+			limit?: number;
+			offset?: number;
+			compact?: boolean;
+		}): Promise<ToolResult> {
 			// When explicitly filtering by 'archived', we must pass includeArchived:true
 			// because listTasks excludes archived tasks by default.
 			const filter = args.status
@@ -249,7 +379,29 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					tasks = tasks.filter((t) => linkedIds.has(t.id));
 				}
 			}
-			return jsonResult({ success: true, tasks });
+			if (args.search) {
+				const q = args.search.toLowerCase();
+				tasks = tasks.filter((t) => t.title.toLowerCase().includes(q));
+			}
+			const total = tasks.length;
+			const limit = args.limit ?? 50;
+			const offset = args.offset ?? 0;
+			tasks = tasks.slice(offset, offset + limit);
+			if (args.compact) {
+				const compactTasks = tasks.map((t) => ({
+					id: t.id,
+					shortId: t.shortId,
+					title: t.title,
+					status: t.status,
+					priority: t.priority,
+					taskType: t.taskType,
+					assignedAgent: t.assignedAgent,
+					dependsOn: t.dependsOn,
+					createdAt: t.createdAt,
+				}));
+				return jsonResult({ success: true, total, tasks: compactTasks });
+			}
+			return jsonResult({ success: true, total, tasks });
 		},
 
 		async update_task(args: {
@@ -673,10 +825,36 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				});
 			}
 
+			// in_progress tasks with no active group: this can happen when set_task_status
+			// transitions a task back to in_progress (e.g., after a phase transition) without
+			// creating a new group. Revive the task so a fresh execution group is created.
+			// Note: no target parameter — reviveTaskForMessage defaults to 'leader', which is
+			// correct here since agents always communicate with the leader session.
+			if (
+				task.status === 'in_progress' &&
+				groupRepo.getActiveGroupsForTask(args.task_id).length === 0
+			) {
+				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
+				if (!revived) {
+					// No status rollback needed — unlike needs_attention/cancelled paths, no status
+					// transition was made before calling reviveTaskForMessage (task is already in_progress).
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to revive task ${args.task_id}: no active group and revival failed. ` +
+							`Use set_task_status to restart the task explicitly.`,
+					});
+				}
+				// reviveTaskForMessage emits task updates internally — no extra daemonHub.emit needed.
+				return jsonResult({
+					success: true,
+					message: `Task ${args.task_id} revived and message delivered to agent`,
+				});
+			}
+
 			const { success, error } = await routeHumanMessageToGroup(
 				runtime,
 				groupRepo,
-				taskManager,
 				args.task_id,
 				args.message
 			);
@@ -942,6 +1120,66 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				executions,
 			});
 		},
+
+		async reset_goal(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+
+			// Hoist the runtime lookup so it isn't repeated on every loop iteration
+			const runtime = runtimeService?.getRuntime(roomId) ?? null;
+
+			// Cancel all in-progress linked tasks
+			for (const taskId of goal.linkedTaskIds) {
+				const task = await taskManager.getTask(taskId);
+				if (!task || !NON_TERMINAL_TASK_STATUSES.has(task.status)) continue;
+
+				if (runtime) {
+					await runtime.cancelTask(taskId);
+					continue;
+				}
+
+				// Fallback path: no runtime available.
+				// Guard: if the task has an active session group we cannot safely cancel it
+				// without the runtime — the DB row would be updated but the agent sessions
+				// would keep running (same guard as `cancel_task`).
+				if (task.status === 'in_progress' || task.status === 'review') {
+					const activeGroup = groupRepo.getGroupByTaskId(taskId);
+					if (activeGroup && activeGroup.completedAt === null) {
+						return jsonResult({
+							success: false,
+							error:
+								`Cannot reset goal ${args.goal_id}: task ${taskId} (status '${task.status}') has an active session group but no runtime service is available to stop it. ` +
+								`The active worker session would not be stopped.`,
+						});
+					}
+				}
+
+				// No active session group — safe to cancel via taskManager
+				await taskManager.cancelTaskCascade(taskId);
+				if (daemonHub) {
+					const cancelledTask = await taskManager.getTask(taskId);
+					if (cancelledTask) {
+						void daemonHub.emit('room.task.update', {
+							sessionId: `room:${roomId}`,
+							roomId,
+							task: cancelledTask,
+						});
+					}
+				}
+			}
+
+			// Reset the goal state
+			const resetGoal = await goalManager.resetGoal(args.goal_id);
+
+			// Trigger a fresh planning tick if runtime is available
+			if (runtime) {
+				runtime.onGoalCreated(args.goal_id);
+			}
+
+			return jsonResult({ success: true, goal: resetGoal });
+		},
 	};
 }
 
@@ -951,7 +1189,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 	const tools = [
 		tool(
 			'create_goal',
-			'Create a new goal for the room',
+			'Create a new goal (mission) for the room. Use mission_type to specify one_shot (default), measurable (KPI tracking), or recurring (cron-scheduled).',
 			{
 				title: z.string().describe('Short title for the goal'),
 				description: z.string().optional().describe('Detailed description'),
@@ -994,7 +1232,39 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			},
 			(args) => handlers.create_goal(args)
 		),
-		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
+		tool(
+			'list_goals',
+			'List goals in this room. Filterable by status. Use compact:true and limit/offset to reduce payload size when there are many goals.',
+			{
+				status: z
+					.enum(['active', 'needs_human', 'completed', 'archived'])
+					.optional()
+					.describe('Filter by goal status'),
+				search: z.string().optional().describe('Substring match on goal title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of goals to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of goals to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, missionType, createdAt) to reduce payload size'
+					),
+			},
+			(args) => handlers.list_goals(args)
+		),
 		tool(
 			'update_goal',
 			'Update an existing goal. Provide only the fields you want to change; omitted fields keep their current values.',
@@ -1015,6 +1285,12 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.enum(['supervised', 'semi_autonomous'])
 					.optional()
 					.describe('Change autonomy level'),
+				planning_attempts: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.describe('Reset or set the planning attempts counter'),
 				structured_metrics: z
 					.array(
 						z.object({
@@ -1030,6 +1306,12 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.describe('Replace structured metrics for measurable missions'),
 			},
 			(args) => handlers.update_goal(args)
+		),
+		tool(
+			'reset_goal',
+			'Reset a goal to its initial state: cancels all linked tasks, clears linkedTaskIds, resets planning_attempts, consecutiveFailures, and replanCount to 0, and sets status to active. Use when a goal is stuck or needs a fresh start.',
+			{ goal_id: z.string().describe('ID of the goal to reset') },
+			(args) => handlers.reset_goal(args)
 		),
 		tool(
 			'create_task',
@@ -1054,7 +1336,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 						"Task type - determines agent preset (default: coding). Note: 'planning' is reserved for internal use."
 					),
 				assigned_agent: z
-					.enum(['coder', 'general'])
+					.enum(['coder', 'general', 'planner'])
 					.optional()
 					.describe('Agent type to execute this task (default: coder)'),
 			},
@@ -1062,7 +1344,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'list_tasks',
-			'List tasks in this room, optionally filtered by goal',
+			'List tasks in this room. Filterable by goal, status. Use compact:true and limit/offset to reduce payload size.',
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
@@ -1078,6 +1360,28 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					])
 					.optional()
 					.describe('Filter by status'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, shortId, title, status, priority, taskType, assignedAgent, dependsOn, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),
@@ -1256,6 +1560,7 @@ export type LeaderContextMcpConfig = Pick<
  *
  * Included tools:
  *   - list_goals, list_tasks, get_task_detail, get_room_status: read-only context
+ *   - create_task: create new tasks under the current goal (for adaptive planning and recurring missions)
  *   - update_task: edit title, description, priority, or dependencies of any task
  *   - cancel_task: cancel a task and cascade to pending dependents
  *   - update_task_status: change task status with transition validation
@@ -1263,7 +1568,6 @@ export type LeaderContextMcpConfig = Pick<
  * Excluded tools and reasons:
  *   - approve_task / reject_task: human-only decisions
  *   - create_goal / update_goal: not the leader's role
- *   - create_task: leader delegates task creation to worker via send_to_worker
  *   - stop_session: session management is handled by the runtime
  *   - complete_task / fail_task: leader uses these from leader-agent-tools for the current task
  *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
@@ -1272,10 +1576,42 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 	const handlers = createRoomAgentToolHandlers(config);
 
 	const tools = [
-		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
+		tool(
+			'list_goals',
+			'List goals in this room. Filterable by status. Use compact:true and limit/offset to reduce payload size when there are many goals.',
+			{
+				status: z
+					.enum(['active', 'needs_human', 'completed', 'archived'])
+					.optional()
+					.describe('Filter by goal status'),
+				search: z.string().optional().describe('Substring match on goal title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of goals to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of goals to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, title, status, priority, missionType, createdAt) to reduce payload size'
+					),
+			},
+			(args) => handlers.list_goals(args)
+		),
 		tool(
 			'list_tasks',
-			'List tasks in this room, optionally filtered by goal',
+			'List tasks in this room. Filterable by goal, status. Use compact:true and limit/offset to reduce payload size.',
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
@@ -1291,6 +1627,28 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 					])
 					.optional()
 					.describe('Filter by status'),
+				search: z.string().optional().describe('Substring match on task title'),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.default(50)
+					.describe('Maximum number of tasks to return (default: 50)'),
+				offset: z
+					.number()
+					.int()
+					.min(0)
+					.optional()
+					.default(0)
+					.describe('Number of tasks to skip for pagination (default: 0)'),
+				compact: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						'Return only summary fields (id, shortId, title, status, priority, taskType, assignedAgent, dependsOn, createdAt) to reduce payload size'
+					),
 			},
 			(args) => handlers.list_tasks(args)
 		),
@@ -1305,6 +1663,35 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
+		),
+		tool(
+			'create_task',
+			'Create a new task and optionally link it to a goal. Use to spawn fix tasks, investigation tasks, or sub-tasks discovered during execution.',
+			{
+				title: z.string().describe('Short title for the task'),
+				description: z.string().describe('Detailed task description and acceptance criteria'),
+				goal_id: z.string().optional().describe('Goal ID to link this task to'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.default('normal')
+					.describe('Task priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('IDs of tasks this task depends on (must complete first)'),
+				task_type: z
+					.enum(['coding', 'research', 'design', 'goal_review'])
+					.optional()
+					.describe(
+						"Task type - determines agent preset (default: coding). Note: 'planning' is reserved for internal use."
+					),
+				assigned_agent: z
+					.enum(['coder', 'general', 'planner'])
+					.optional()
+					.describe('Agent type to execute this task (default: coder)'),
+			},
+			(args) => handlers.create_task(args)
 		),
 		tool(
 			'update_task',

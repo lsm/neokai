@@ -13,7 +13,7 @@
  */
 
 import { useSignalEffect } from '@preact/signals';
-import { useState, useCallback, useEffect } from 'preact/hooks';
+import { useState, useCallback, useEffect, useRef } from 'preact/hooks';
 import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
@@ -23,6 +23,7 @@ import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 import {
 	useModal,
+	useClickOutside,
 	getModelFamilyIcon,
 	getProviderLabel,
 	groupModelsByProvider,
@@ -267,6 +268,10 @@ export default function SessionStatusBar({
 	// Dropdowns - only one can be open at a time
 	const modelDropdown = useModal();
 	const thinkingDropdown = useModal();
+	const modelDropdownRef = useRef<HTMLDivElement>(null);
+	const thinkingDropdownRef = useRef<HTMLDivElement>(null);
+	useClickOutside(modelDropdownRef, modelDropdown.close, modelDropdown.isOpen);
+	useClickOutside(thinkingDropdownRef, thinkingDropdown.close, thinkingDropdown.isOpen);
 
 	// Helper to toggle dropdown and close the other one
 	const toggleModelDropdown = useCallback(() => {
@@ -336,6 +341,8 @@ export default function SessionStatusBar({
 
 	// Get current model icon
 	const currentModelIcon = currentModelInfo ? getModelFamilyIcon(currentModelInfo.family) : '💎';
+	const glassControlButtonBaseClass =
+		'control-btn w-8 h-8 flex items-center justify-center rounded-full bg-transparent backdrop-blur-sm hover:bg-dark-800/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
 	return (
 		<ContentContainer className="pb-2 flex items-center gap-4 justify-between">
@@ -357,8 +364,8 @@ export default function SessionStatusBar({
 						delay={300}
 					>
 						<button
-							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-								coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
+							class={`${glassControlButtonBaseClass} ${
+								coordinatorMode ? 'border-2 border-purple-500' : 'border border-dark-600/80'
 							}`}
 							onClick={handleCoordinatorModeToggle}
 							disabled={coordinatorSwitching || modelSwitching}
@@ -393,8 +400,8 @@ export default function SessionStatusBar({
 						delay={300}
 					>
 						<button
-							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-								sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
+							class={`${glassControlButtonBaseClass} ${
+								sandboxEnabled ? 'border-2 border-green-500' : 'border border-dark-600/80'
 							}`}
 							onClick={handleSandboxModeToggle}
 							disabled={sandboxSwitching || modelSwitching}
@@ -423,14 +430,14 @@ export default function SessionStatusBar({
 
 				{/* Model Switcher + Provider Badge */}
 				<div class="flex items-center gap-1.5">
-					<div class="relative">
+					<div class="relative" ref={modelDropdownRef}>
 						<Tooltip
 							content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
 							position="top"
 							delay={300}
 						>
 							<button
-								class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+								class={`${glassControlButtonBaseClass} border border-dark-600/80 text-lg`}
 								onClick={toggleModelDropdown}
 								disabled={modelLoading || modelSwitching || coordinatorSwitching}
 								title={
@@ -445,7 +452,7 @@ export default function SessionStatusBar({
 						{modelDropdown.isOpen && (
 							<div
 								data-testid="model-dropdown"
-								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn`}
+								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn max-h-[60vh] overflow-y-auto`}
 							>
 								<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
 								{Array.from(
@@ -520,15 +527,15 @@ export default function SessionStatusBar({
 				</div>
 
 				{/* Thinking Level */}
-				<div class="relative">
+				<div class="relative" ref={thinkingDropdownRef}>
 					<Tooltip
 						content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
 						position="top"
 						delay={300}
 					>
 						<button
-							class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
-								thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
+							class={`${glassControlButtonBaseClass} relative ${
+								thinkingLevel === 'auto' ? 'border-dark-600/80' : 'border-transparent'
 							}`}
 							onClick={toggleThinkingDropdown}
 							title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
@@ -568,8 +575,8 @@ export default function SessionStatusBar({
 					delay={300}
 				>
 					<button
-						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
-							autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
+						class={`${glassControlButtonBaseClass} ${
+							autoScroll ? 'border-2 border-emerald-500' : 'border border-dark-600/80'
 						}`}
 						onClick={handleAutoScrollToggle}
 						title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}

@@ -617,7 +617,6 @@ describe('Computed Signals', () => {
 	beforeEach(() => {
 		// Reset global store state for each test
 		globalStore.sessions.value = [];
-		globalStore.hasArchivedSessions.value = false;
 		globalStore.systemState.value = null;
 		globalStore.settings.value = null;
 	});
@@ -644,9 +643,18 @@ describe('Computed Signals', () => {
 
 	describe('hasArchivedSessions signal', () => {
 		it('should reflect globalStore hasArchivedSessions', () => {
+			// hasArchivedSessions is now a computed derived from sessionsTotalCount > sessions.length
 			expect(hasArchivedSessions.value).toBe(false);
 
-			globalStore.hasArchivedSessions.value = true;
+			// Set totalCount greater than visible sessions to indicate archived sessions exist
+			globalStore.sessions.value = [
+				{
+					id: '1',
+					title: 'Active Session',
+					status: 'active',
+				} as unknown as import('@neokai/shared').Session,
+			];
+			globalStore.sessionsTotalCount.value = 5;
 
 			expect(hasArchivedSessions.value).toBe(true);
 		});

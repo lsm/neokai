@@ -26,9 +26,13 @@ test.describe('Recovery Mechanisms', () => {
 		const draftMessage = 'This is a draft message that should be preserved';
 		await messageInput.fill(draftMessage);
 
-		// Navigate away (click Home button in NavRail)
-		await page.click('button[aria-label="Home"]');
-		await page.waitForTimeout(1000);
+		// Navigate away by clicking Inbox in NavRail
+		await page.getByRole('button', { name: 'Inbox', exact: true }).click();
+		await page.waitForTimeout(500);
+
+		// Navigate back to sessions list via Chats button
+		await page.getByRole('button', { name: 'Chats', exact: true }).click();
+		await page.waitForTimeout(500);
 
 		// Navigate back to session
 		await page.click(`[data-session-id="${sessionId}"]`);

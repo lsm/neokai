@@ -18,14 +18,37 @@
  * mouse events because fireEvent(window, ...) does not work in happy-dom.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { WorkflowNode } from '../WorkflowNode';
 import type { WorkflowNodeProps } from '../WorkflowNode';
 import type { SpaceAgent } from '@neokai/shared';
+import { TASK_AGENT_NODE_ID } from '@neokai/shared';
+import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 
+// Default to non-mobile for every test — individual tests (see "mobile"
+// describe blocks) override this before rendering. This keeps matchMedia
+// defined in happy-dom, which otherwise returns undefined.
+function mockMatchMedia(isMobile: boolean) {
+	Object.defineProperty(window, 'matchMedia', {
+		writable: true,
+		configurable: true,
+		value: vi.fn().mockImplementation((query: string) => ({
+			matches: query === '(max-width: 767px)' ? isMobile : false,
+			media: query,
+			onchange: null,
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			dispatchEvent: vi.fn(),
+		})),
+	});
+}
+
+beforeEach(() => mockMatchMedia(false));
 afterEach(() => cleanup());
 
 // ============================================================================
@@ -48,7 +71,7 @@ const AGENT_A: SpaceAgent = {
 	id: 'agent-1',
 	spaceId: 'space-1',
 	name: 'Alpha Agent',
-	role: 'coder',
+	customPrompt: null,
 	createdAt: 0,
 	updatedAt: 0,
 };
@@ -57,7 +80,7 @@ const AGENT_B: SpaceAgent = {
 	id: 'agent-2',
 	spaceId: 'space-1',
 	name: 'Beta Agent',
-	role: 'reviewer',
+	customPrompt: null,
 	createdAt: 0,
 	updatedAt: 0,
 };
@@ -78,6 +101,7 @@ function makeProps(overrides: Partial<WorkflowNodeProps> = {}): WorkflowNodeProp
 		step: STEP_DRAFT,
 		position: DEFAULT_POSITION,
 		agents: [AGENT_A, AGENT_B],
+		workflowChannels: [],
 		isSelected: false,
 		isStartNode: false,
 		scale: 1,
@@ -161,6 +185,19 @@ describe('WorkflowNode rendering', () => {
 		const props = makeProps({ step: { ...STEP_DRAFT, name: '' } });
 		const { getByTestId } = render(<WorkflowNode {...props} />);
 		expect(getByTestId('step-name').textContent).toBe('(unnamed)');
+	});
+
+	it('does not render channel topology text inside the node card', () => {
+		const { queryByTestId, queryByText } = render(
+			<WorkflowNode
+				{...makeProps({
+					workflowChannels: [],
+				})}
+			/>
+		);
+
+		expect(queryByTestId('channel-topology-badge')).toBeNull();
+		expect(queryByText('handoff')).toBeNull();
 	});
 });
 
@@ -260,16 +297,19 @@ describe('WorkflowNode multi-agent rendering', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		};
 		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		const badges = getByTestId('agent-badges');
 		expect(badges).toBeTruthy();
 		// agent-name element should not be present in multi-agent mode
 		expect(queryByTestId('agent-name')).toBeNull();
-		// Both agent names should appear
-		expect(badges.textContent).toContain('Alpha Agent');
-		expect(badges.textContent).toContain('Beta Agent');
+		// Canvas shows slot role names (not agent names) for compact display
+		expect(badges.textContent).toContain('coder');
+		expect(badges.textContent).toContain('reviewer');
 	});
 
 	it('renders single agent name when agents array is absent', () => {
@@ -279,38 +319,70 @@ describe('WorkflowNode multi-agent rendering', () => {
 	});
 
 	it('renders single agent name when agents array is empty', () => {
-		const step = { ...STEP_DRAFT, agents: [] as { agentId: string }[] };
+		const step = { ...STEP_DRAFT, agents: [] as { agentId: string; name: string }[] };
 		const { getByTestId, queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		// Empty agents array = single-agent mode
 		expect(getByTestId('agent-name')).toBeTruthy();
 		expect(queryByTestId('agent-badges')).toBeNull();
 	});
 
-	it('falls back to agentId as badge label when agent not found', () => {
+	it('shows slot role in single-agent label when one slot is present and agent lookup fails', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'unknown-agent-id' }],
+			agents: [{ agentId: 'unknown-agent-id', name: 'coder' }],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
-		expect(getByTestId('agent-badges').textContent).toContain('unknown-agent-id');
+		expect(getByTestId('agent-name').textContent).toContain('coder');
+	});
+
+	it('shows override-indicator dot when a multi-agent slot has customPrompt override', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [
+				{
+					agentId: 'agent-1',
+					name: 'coder',
+					customPrompt: { value: 'Be precise.' },
+				},
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
+		};
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		expect(getByTestId('override-indicator')).toBeTruthy();
+	});
+
+	it('does not show override-indicator when slot has no overrides', () => {
+		const step = {
+			...STEP_DRAFT,
+			agentId: '',
+			agents: [{ agentId: 'agent-1', name: 'coder' }],
+		};
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
+		expect(queryByTestId('override-indicator')).toBeNull();
 	});
 
 	it('uses wider minWidth for multi-agent steps', () => {
 		const step = {
 			...STEP_DRAFT,
 			agentId: '',
-			agents: [{ agentId: 'agent-1' }, { agentId: 'agent-2' }],
+			agents: [
+				{ agentId: 'agent-1', name: 'coder' },
+				{ agentId: 'agent-2', name: 'reviewer' },
+			],
 		};
 		const { getByTestId } = render(<WorkflowNode {...makeProps({ step })} />);
 		const node = getByTestId('workflow-node-step-local-1');
-		expect(node.style.minWidth).toBe('200px');
+		expect(node.style.width).toBe('200px');
+		expect(node.style.minHeight).toBe('112px');
 	});
 
 	it('uses default minWidth for single-agent steps', () => {
 		const { getByTestId } = render(<WorkflowNode {...makeProps()} />);
 		const node = getByTestId('workflow-node-step-local-1');
-		expect(node.style.minWidth).toBe('160px');
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('80px');
 	});
 });
 
@@ -510,5 +582,294 @@ describe('WorkflowNode drag-and-drop', () => {
 		expect(onPositionChange).toHaveBeenLastCalledWith('step-local-1', { x: 80, y: 70 });
 
 		windowMouseUp();
+	});
+});
+
+// ============================================================================
+// Task Agent node tests
+// ============================================================================
+
+const TASK_AGENT_STEP = {
+	localId: TASK_AGENT_NODE_ID,
+	id: TASK_AGENT_NODE_ID,
+	name: 'Task Agent',
+	agentId: '',
+	instructions: '',
+};
+
+describe('WorkflowNode Task Agent rendering', () => {
+	it('renders with data-task-agent attribute', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-task-agent')).toBe('true');
+	});
+
+	it('renders Task Agent badge', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(getByTestId('task-agent-badge').textContent).toBe('Task Agent');
+	});
+
+	it('renders step name as amber text', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const stepName = getByTestId('step-name');
+		expect(stepName.className).toContain('text-amber-100');
+	});
+
+	it('applies amber border style', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.className).toContain('border-amber-400');
+	});
+
+	it('applies amber background style', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.className).toContain('bg-amber-950');
+	});
+
+	it('has higher z-index than regular nodes', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.style.zIndex).toBe('10');
+	});
+
+	it('does not render input port', () => {
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(queryByTestId('port-input')).toBeNull();
+	});
+
+	it('does not render output port', () => {
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(queryByTestId('port-output')).toBeNull();
+	});
+
+	it('does not show step number badge', () => {
+		const { queryByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		expect(queryByTestId('step-badge')).toBeNull();
+	});
+
+	it('does not trigger drag on mousedown', () => {
+		const onPositionChange = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP, onPositionChange })} />
+		);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(50, 50);
+		expect(onPositionChange).not.toHaveBeenCalled();
+		windowMouseUp();
+	});
+
+	it('does not fire onClick when clicked', () => {
+		const onClick = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP, onClick })} />
+		);
+		// Task Agent node does not register onClick (no handleClick in its JSX)
+		fireEvent.click(getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`));
+		expect(onClick).not.toHaveBeenCalled();
+	});
+
+	it('uses default cursor (not grab)', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.style.cursor).toBe('grab');
+	});
+
+	it('marks Task Agent as a canvas pan surface', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-pan-canvas')).toBe('true');
+	});
+
+	it('exposes an aria-label for screen readers', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('aria-label')).toBe('Task Agent');
+	});
+});
+
+// ============================================================================
+// Task Agent — mobile canvas variant
+// ============================================================================
+
+describe('WorkflowNode Task Agent — mobile canvas variant', () => {
+	beforeEach(() => mockMatchMedia(true));
+
+	it('marks the node as compact on mobile', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-task-agent-compact')).toBe('true');
+	});
+
+	it('shrinks card dimensions below the desktop baseline', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		// Card shrinks from 160x60 (desktop) to 112x36 (mobile compact)
+		expect(node.style.width).toBe('112px');
+		expect(node.style.minHeight).toBe('36px');
+	});
+
+	it('keeps the Task Agent badge in the DOM but hides it visually with sr-only', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const badge = getByTestId('task-agent-badge');
+		// Badge text is still present for screen readers
+		expect(badge.textContent).toBe('Task Agent');
+		// Visible styling is swapped for sr-only (no uppercase/tracking on mobile)
+		expect(badge.className).toContain('sr-only');
+		expect(badge.className).not.toContain('uppercase');
+		expect(badge.className).not.toContain('tracking-wider');
+	});
+
+	it('uses a smaller name text class on mobile', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const name = getByTestId('step-name');
+		// Desktop uses text-sm; mobile drops to a compact 11px size
+		expect(name.className).toContain('text-[11px]');
+		expect(name.className).not.toContain('text-sm');
+	});
+
+	it('preserves the aria-label even when the badge is visually hidden', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('aria-label')).toBe('Task Agent');
+	});
+
+	it('still prevents dragging on mobile', () => {
+		const onPositionChange = vi.fn();
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP, onPositionChange })} />
+		);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		fireEvent.mouseDown(node, { button: 0, clientX: 0, clientY: 0 });
+		windowMouseMove(40, 40);
+		expect(onPositionChange).not.toHaveBeenCalled();
+		windowMouseUp();
+	});
+
+	it('still renders as a canvas pan surface on mobile', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-pan-canvas')).toBe('true');
+	});
+
+	it('does not apply compact styles to regular (non-Task-Agent) nodes', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps()} />);
+		const node = getByTestId('workflow-node-step-local-1');
+		// Regular nodes preserve their default dimensions even on mobile
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('80px');
+		expect(node.getAttribute('data-task-agent-compact')).toBeNull();
+	});
+});
+
+describe('WorkflowNode Task Agent — desktop canvas variant', () => {
+	// Safety net to ensure the desktop rendering is NOT regressed by mobile work.
+	beforeEach(() => mockMatchMedia(false));
+
+	it('marks the node as non-compact on desktop', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.getAttribute('data-task-agent-compact')).toBe('false');
+	});
+
+	it('renders the Task Agent badge with the full visible styling', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const badge = getByTestId('task-agent-badge');
+		expect(badge.className).toContain('uppercase');
+		expect(badge.className).toContain('tracking-wider');
+		expect(badge.className).not.toContain('sr-only');
+	});
+
+	it('keeps the default desktop dimensions', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const node = getByTestId(`workflow-node-${TASK_AGENT_NODE_ID}`);
+		expect(node.style.width).toBe('160px');
+		expect(node.style.minHeight).toBe('60px');
+	});
+
+	it('keeps the original text-sm step-name class on desktop', () => {
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ step: TASK_AGENT_STEP })} />);
+		const name = getByTestId('step-name');
+		expect(name.className).toContain('text-sm');
+		expect(name.className).not.toContain('text-[11px]');
+	});
+});
+
+// ============================================================================
+// Agent completion state
+// ============================================================================
+
+describe('WorkflowNode — agent completion state', () => {
+	const MULTI_STEP = {
+		localId: 'step-multi',
+		id: 'node-multi',
+		name: 'Multi Agent Step',
+		agentId: '',
+		instructions: '',
+		agents: [
+			{ agentId: 'agent-1', name: 'coder' },
+			{ agentId: 'agent-2', name: 'reviewer' },
+		],
+	};
+
+	it('shows spinner for in_progress single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'in_progress' }];
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-spinner')).toBeTruthy();
+	});
+
+	it('shows checkmark for idle single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'idle' }];
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-check')).toBeTruthy();
+	});
+
+	it('shows fail icon for blocked single-agent', () => {
+		const states: AgentTaskState[] = [{ agentName: null, status: 'blocked' }];
+		const { getByTestId } = render(<WorkflowNode {...makeProps({ nodeTaskStates: states })} />);
+		expect(getByTestId('agent-status-fail')).toBeTruthy();
+	});
+
+	it('shows per-agent status icons for multi-agent node', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'idle' },
+			{ agentName: 'reviewer', status: 'in_progress' },
+		];
+		const { getAllByTestId } = render(
+			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
+		);
+		expect(getAllByTestId('agent-status-check')).toHaveLength(1);
+		expect(getAllByTestId('agent-status-spinner')).toHaveLength(1);
+	});
+
+	it('applies gray border when all agents done (green is start-node only)', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'idle' },
+			{ agentName: 'reviewer', status: 'idle' },
+		];
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
+		);
+		const node = getByTestId('workflow-node-step-multi');
+		expect(node.className).not.toContain('green');
+	});
+
+	it('does not apply green border when not all done', () => {
+		const states: AgentTaskState[] = [
+			{ agentName: 'coder', status: 'idle' },
+			{ agentName: 'reviewer', status: 'in_progress' },
+		];
+		const { getByTestId } = render(
+			<WorkflowNode {...makeProps({ step: MULTI_STEP, nodeTaskStates: states })} />
+		);
+		const node = getByTestId('workflow-node-step-multi');
+		expect(node.className).not.toContain('green');
+	});
+
+	it('does not show status icons without nodeTaskStates', () => {
+		const { container } = render(<WorkflowNode {...makeProps()} />);
+		expect(container.querySelector('[data-testid="agent-status-check"]')).toBeNull();
+		expect(container.querySelector('[data-testid="agent-status-spinner"]')).toBeNull();
 	});
 });

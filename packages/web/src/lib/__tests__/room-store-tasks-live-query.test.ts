@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { TaskSummary } from '@neokai/shared';
+import type { NeoTask } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -91,7 +91,7 @@ import { roomStore } from '../room-store.js';
 const ROOM_ID = 'room-tasks-test';
 const TASKS_SUB_ID = `tasks-byRoom-${ROOM_ID}`;
 
-function makeTask(id: string, overrides: Partial<TaskSummary> = {}): TaskSummary {
+function makeTask(id: string, overrides: Partial<NeoTask> = {}): NeoTask {
 	return {
 		id,
 		roomId: ROOM_ID,
@@ -100,16 +100,16 @@ function makeTask(id: string, overrides: Partial<TaskSummary> = {}): TaskSummary
 		status: 'pending',
 		priority: 'normal',
 		progress: 0,
+		dependsOn: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 		...overrides,
-	} as TaskSummary;
+	} as NeoTask;
 }
 
 function setupHubRequests(hub: MockHub): void {
 	hub.request.mockImplementation((method: string) => {
-		if (method === 'room.get')
-			return Promise.resolve({ room: { id: ROOM_ID }, sessions: [], allTasks: [] });
+		if (method === 'room.get') return Promise.resolve({ room: { id: ROOM_ID }, sessions: [] });
 		if (method === 'room.runtime.state') return Promise.reject(new Error('no runtime'));
 		// liveQuery.subscribe and liveQuery.unsubscribe return { ok: true }
 		return Promise.resolve({ ok: true });
@@ -284,6 +284,36 @@ describe('RoomStore — tasks.byRoom LiveQuery subscription', () => {
 		expect(roomStore.tasks.value).toEqual([]);
 	});
 
+	it('task derived from LiveQuery reflects status change without room.task.update event', () => {
+		// Verify the fix: when Runtime calls notifyChange('tasks'), the LiveQuery delta
+		// path updates roomStore.tasks reactively — no room.task.update event required.
+
+		// 1. Seed a pending task via snapshot (simulates initial LiveQuery delivery)
+		const pendingTask = makeTask('t-runtime', { status: 'pending' });
+		hub.fire('liveQuery.snapshot', {
+			subscriptionId: TASKS_SUB_ID,
+			rows: [pendingTask],
+			version: 1,
+		});
+		expect(roomStore.tasks.value[0].status).toBe('pending');
+
+		// 2. No room.task.update handler should be registered (architecture check)
+		expect(hub._handlers.has('room.task.update')).toBe(false);
+
+		// 3. Runtime triggers notifyChange('tasks') → daemon emits liveQuery.delta
+		const updatedTask = makeTask('t-runtime', { status: 'in_progress' });
+		hub.fire('liveQuery.delta', {
+			subscriptionId: TASKS_SUB_ID,
+			updated: [updatedTask],
+			version: 2,
+		});
+
+		// 4. roomStore.tasks reflects the new status — no room.task.update event was needed
+		expect(roomStore.tasks.value).toHaveLength(1);
+		expect(roomStore.tasks.value[0].id).toBe('t-runtime');
+		expect(roomStore.tasks.value[0].status).toBe('in_progress');
+	});
+
 	it('does not optimistically append task after task.create RPC', async () => {
 		hub.fire('liveQuery.snapshot', {
 			subscriptionId: TASKS_SUB_ID,
@@ -331,11 +361,11 @@ describe('RoomStore — subscribeRoom error path', () => {
 	it('clears liveQueryActive on getHub() rejection so re-subscribe is possible', async () => {
 		await roomStore.select(ROOM_ID);
 
-		// Make getHub reject for the next call (which will be subscribeRoom)
+		// Make getHub reject for the next call (which will be subscribeRoomTasks)
 		vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('connection failed'));
 
-		// First subscribeRoom — hub rejects, should clean up liveQueryActive
-		await roomStore.subscribeRoom(ROOM_ID);
+		// First subscribeRoomTasks — hub rejects, should clean up liveQueryActive
+		await roomStore.subscribeRoomTasks(ROOM_ID);
 
 		// No snapshot/delta handlers should have been registered (hub was unavailable)
 		expect(hub._handlers.get('liveQuery.snapshot') ?? []).toHaveLength(0);
@@ -343,8 +373,8 @@ describe('RoomStore — subscribeRoom error path', () => {
 		// Restore hub for the second call
 		vi.mocked(connectionManager.getHub).mockResolvedValue(hub as never);
 
-		// Second subscribeRoom should succeed (liveQueryActive was cleared by error path)
-		await roomStore.subscribeRoom(ROOM_ID);
+		// Second subscribeRoomTasks should succeed (liveQueryActive was cleared by error path)
+		await roomStore.subscribeRoomTasks(ROOM_ID);
 
 		// Handlers should now be registered
 		expect((hub._handlers.get('liveQuery.snapshot') ?? []).length).toBeGreaterThan(0);

@@ -2,7 +2,7 @@
  * Message RPC Handlers
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, ChatMessage } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import {
 	isSDKAssistantMessage,
@@ -53,6 +53,9 @@ export function setupMessageHandlers(
 		const sdkWorkspacePath = session.worktree
 			? session.worktree.worktreePath
 			: session.workspacePath;
+		if (!sdkWorkspacePath) {
+			throw new Error('Session has no workspace path for SDK session file update');
+		}
 		const success = removeToolResultFromSessionFile(
 			sdkWorkspacePath,
 			sdkSessionId,
@@ -172,8 +175,10 @@ function convertToMarkdown(
 		config: { model: string };
 		createdAt: string;
 	},
-	messages: SDKMessage[]
+	messages: ChatMessage[]
 ): string {
+	// Filter out NeoKai-native action messages — they are UI prompts, not conversation content.
+	const sdkOnly = messages.filter((m) => m.type !== 'neokai_action') as SDKMessage[];
 	const lines: string[] = [];
 
 	// Header
@@ -187,7 +192,7 @@ function convertToMarkdown(
 	lines.push('');
 
 	// Messages
-	for (const msg of messages) {
+	for (const msg of sdkOnly) {
 		const formatted = formatMessage(msg);
 		if (formatted) {
 			lines.push(formatted);

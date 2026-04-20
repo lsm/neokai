@@ -3,6 +3,8 @@
  *
  * Used by both space-agent-repository.test.ts and space-agent-manager.test.ts
  * to avoid duplicating schema setup and fixture insertion code.
+ *
+ * Keep in sync with the fully-migrated production schema (after M74).
  */
 
 import type { Database } from 'bun:sqlite';
@@ -12,6 +14,7 @@ export function createSpaceAgentSchema(db: Database): void {
 	db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
 			workspace_path TEXT NOT NULL UNIQUE,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -27,8 +30,9 @@ export function createSpaceAgentSchema(db: Database): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
+	db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-	// Keep in sync with runMigration33 in migrations.ts and space-test-db.ts.
+	// Keep in sync with space-test-db.ts (post-M74 schema).
 	db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -37,13 +41,10 @@ export function createSpaceAgentSchema(db: Database): void {
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
-			system_prompt TEXT NOT NULL DEFAULT '',
-			config TEXT,
-			inject_workflow_context INTEGER NOT NULL DEFAULT 0,
+			custom_prompt TEXT,
+			provider TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			role TEXT NOT NULL,
-			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
@@ -55,10 +56,15 @@ export function createSpaceAgentSchema(db: Database): void {
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			start_step_id TEXT,
-			config TEXT,
+			start_node_id TEXT,
+			end_node_id TEXT,
+			tags TEXT NOT NULL DEFAULT '[]',
+			channels TEXT,
+			gates TEXT,
 			layout TEXT,
-			max_iterations INTEGER,
+			template_name TEXT DEFAULT NULL,
+			template_hash TEXT DEFAULT NULL,
+			instructions TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -66,13 +72,11 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 
 	db.exec(`
-		CREATE TABLE space_workflow_steps (
+		CREATE TABLE space_workflow_nodes (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
-			agent_id TEXT,
-			order_index INTEGER NOT NULL,
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
@@ -84,8 +88,8 @@ export function createSpaceAgentSchema(db: Database): void {
 export function insertSpace(db: Database, id = 'space-1'): void {
 	const now = Date.now();
 	db.prepare(
-		`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-	).run(id, `/workspace/${id}`, `Space ${id}`, now, now);
+		`INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+	).run(id, `/workspace/${id}`, `Space ${id}`, id, now, now);
 }
 
 export function insertWorkflow(db: Database, id: string, spaceId: string, name: string): void {
@@ -95,14 +99,16 @@ export function insertWorkflow(db: Database, id: string, spaceId: string, name: 
 	).run(id, spaceId, name, now, now);
 }
 
-export function insertWorkflowStep(
+export function insertWorkflowNode(
 	db: Database,
 	id: string,
 	workflowId: string,
 	agentId: string | null
 ): void {
 	const now = Date.now();
+	// config stores JSON: { agents?: [{ agentId, name }] }
+	const configJson = agentId ? JSON.stringify({ agents: [{ agentId, name: `Node ${id}` }] }) : null;
 	db.prepare(
-		`INSERT INTO space_workflow_steps (id, workflow_id, name, agent_id, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	).run(id, workflowId, `Step ${id}`, agentId, 0, now, now);
+		`INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+	).run(id, workflowId, `Node ${id}`, configJson, now, now);
 }

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { render, fireEvent } from '@testing-library/preact';
+import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SubagentBlock } from '../SubagentBlock';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { AgentInput } from '@neokai/shared/sdk/sdk-tools.d.ts';
@@ -252,7 +252,7 @@ describe('SubagentBlock', () => {
 			expect(container.textContent).toContain('Search for test files');
 		});
 
-		it('should show output section when expanded', () => {
+		it('should show output section when expanded', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = 'Found 5 test files in the project.';
 			const { container } = render(
@@ -263,7 +263,9 @@ describe('SubagentBlock', () => {
 			fireEvent.click(button);
 
 			expect(container.textContent).toContain('Output');
-			expect(container.textContent).toContain('Found 5 test files');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Found 5 test files');
+			});
 		});
 
 		it('should show "No output yet..." when output is empty', () => {
@@ -308,7 +310,7 @@ describe('SubagentBlock', () => {
 			expect(container.textContent).toContain('Messages (1)');
 		});
 
-		it('should render nested assistant messages', () => {
+		it('should render nested assistant messages', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const nestedMessages = [createNestedAssistantMessage('I found 3 test files.')];
 
@@ -319,7 +321,9 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('I found 3 test files');
+			await waitFor(() => {
+				expect(container.textContent).toContain('I found 3 test files');
+			});
 		});
 
 		it('should render nested user messages', () => {
@@ -376,7 +380,7 @@ describe('SubagentBlock', () => {
 	});
 
 	describe('Output Extraction', () => {
-		it('should extract text from string output', () => {
+		it('should extract text from string output', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = 'Simple text output';
 
@@ -387,10 +391,12 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('Simple text output');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Simple text output');
+			});
 		});
 
-		it('should extract text from object output with content field', () => {
+		it('should extract text from object output with content field', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = { content: 'Content from object' };
 
@@ -401,10 +407,12 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('Content from object');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Content from object');
+			});
 		});
 
-		it('should extract text from object output with text field', () => {
+		it('should extract text from object output with text field', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = { text: 'Text from object' };
 
@@ -415,10 +423,12 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('Text from object');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Text from object');
+			});
 		});
 
-		it('should render markdown in output', () => {
+		it('should render markdown in output', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = '# Heading\n\nSome **bold** text.';
 
@@ -430,8 +440,10 @@ describe('SubagentBlock', () => {
 			fireEvent.click(button);
 
 			// MarkdownRenderer should process the content
-			expect(container.textContent).toContain('Heading');
-			expect(container.textContent).toContain('bold');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Heading');
+				expect(container.textContent).toContain('bold');
+			});
 		});
 	});
 
@@ -518,7 +530,7 @@ describe('SubagentBlock', () => {
 	});
 
 	describe('Output Extraction Advanced', () => {
-		it('should extract text from content array with text blocks', () => {
+		it('should extract text from content array with text blocks', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = {
 				content: [
@@ -534,11 +546,13 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('First block');
-			expect(container.textContent).toContain('Second block');
+			await waitFor(() => {
+				expect(container.textContent).toContain('First block');
+				expect(container.textContent).toContain('Second block');
+			});
 		});
 
-		it('should extract text from content array with content field in blocks', () => {
+		it('should extract text from content array with content field in blocks', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = {
 				content: [{ type: 'document', content: 'Document content here' }],
@@ -551,10 +565,12 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('Document content here');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Document content here');
+			});
 		});
 
-		it('should extract text from content array with string items', () => {
+		it('should extract text from content array with string items', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = {
 				content: ['String item 1', 'String item 2'],
@@ -567,11 +583,13 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('String item 1');
-			expect(container.textContent).toContain('String item 2');
+			await waitFor(() => {
+				expect(container.textContent).toContain('String item 1');
+				expect(container.textContent).toContain('String item 2');
+			});
 		});
 
-		it('should extract text from result field', () => {
+		it('should extract text from result field', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = { result: 'Result text here' };
 
@@ -582,10 +600,12 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('Result text here');
+			await waitFor(() => {
+				expect(container.textContent).toContain('Result text here');
+			});
 		});
 
-		it('should fallback to JSON stringify for unknown object structure', () => {
+		it('should fallback to JSON stringify for unknown object structure', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = { unknown_field: 'value', another: 123 };
 
@@ -596,11 +616,13 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('unknown_field');
-			expect(container.textContent).toContain('value');
+			await waitFor(() => {
+				expect(container.textContent).toContain('unknown_field');
+				expect(container.textContent).toContain('value');
+			});
 		});
 
-		it('should convert non-object non-string to string', () => {
+		it('should convert non-object non-string to string', async () => {
 			const input = createAgentInput('Explore', 'Find files', 'Search for test files');
 			const output = 12345;
 
@@ -611,7 +633,9 @@ describe('SubagentBlock', () => {
 			const button = container.querySelector('button')!;
 			fireEvent.click(button);
 
-			expect(container.textContent).toContain('12345');
+			await waitFor(() => {
+				expect(container.textContent).toContain('12345');
+			});
 		});
 	});
 

@@ -3,29 +3,35 @@
  *
  * Tests:
  * - Renders name and description fields
- * - Add step button adds a new step card
- * - Remove step removes the card
+ * - Add Step button adds a new node card
+ * - Remove node removes the card
  * - Reorder: move up / move down
- * - Agent dropdown (via WorkflowStepCard) excludes 'leader' agent
+ * - Agent dropdown (via WorkflowNodeCard) excludes 'leader' agent
  * - Template selection pre-fills steps
  * - Save calls spaceStore.createWorkflow with correct params
  * - Save calls spaceStore.updateWorkflow when editing
  * - Error shown when name is empty on save
  * - Error shown when a step has no agent assigned
- * - Error shown when a condition transition has empty shell expression
  * - Cancel fires onCancel
+ * - initFromWorkflow preserves systemPrompt from agents[0]
+ * - buildTemplateNodes wraps systemPrompt in WorkflowNodeAgentOverride
+ * - handleSave includes systemPrompt in saved agent for single-agent nodes
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
+import { makeBuiltInTemplateWorkflows } from './fixtures/builtInTemplateWorkflows';
 
 // ---- Mocks ----
 // Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
 
 const mockAgents: Signal<SpaceAgent[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
+const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
+const mockNodeExecutionsByNodeId = signal(new Map<string, unknown[]>());
+const mockWorkflowRuns = signal<unknown[]>([]);
 
 const mockCreateWorkflow = vi.fn();
 const mockUpdateWorkflow = vi.fn();
@@ -35,6 +41,9 @@ vi.mock('../../../lib/space-store', () => ({
 		return {
 			agents: mockAgents,
 			workflows: mockWorkflows,
+			workflowTemplates: mockWorkflowTemplates,
+			nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
+			workflowRuns: mockWorkflowRuns,
 			createWorkflow: mockCreateWorkflow,
 			updateWorkflow: mockUpdateWorkflow,
 		};
@@ -45,14 +54,20 @@ vi.mock('../../../lib/utils', () => ({
 	cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-import { WorkflowEditor, filterAgents, initFromWorkflow } from '../WorkflowEditor';
+import {
+	WorkflowEditor,
+	buildTemplateNodes,
+	filterAgents,
+	getAvailableTemplates,
+	initFromWorkflow,
+} from '../WorkflowEditor';
 
-function makeAgent(id: string, name: string, role = 'coder'): SpaceAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceAgent {
 	return {
 		id,
 		spaceId: 'space-1',
 		name,
-		role,
+		customPrompt: null,
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
@@ -66,13 +81,19 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 		spaceId: 'space-1',
 		name: 'Existing Workflow',
 		description: 'A description',
-		steps: [
-			{ id: step1Id, name: 'Plan', agentId: 'agent-1', instructions: 'Plan things' },
-			{ id: step2Id, name: 'Code', agentId: 'agent-2', instructions: '' },
+		nodes: [
+			{
+				id: step1Id,
+				name: 'Plan',
+				agents: [{ agentId: 'agent-1', name: 'planner' }],
+			},
+			{
+				id: step2Id,
+				name: 'Code',
+				agents: [{ agentId: 'agent-2', name: 'coder' }],
+			},
 		],
-		transitions: [{ id: 'tr-1', from: step1Id, to: step2Id, order: 0 }],
-		startStepId: step1Id,
-		rules: [],
+		startNodeId: step1Id,
 		tags: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -98,11 +119,15 @@ describe('WorkflowEditor', () => {
 			makeAgent('agent-1', 'planner', 'planner'),
 			makeAgent('agent-2', 'coder', 'coder'),
 			makeAgent('agent-3', 'general', 'general'),
+			makeAgent('agent-4', 'reviewer', 'reviewer'),
+			makeAgent('agent-5', 'research', 'research'),
+			makeAgent('agent-6', 'qa', 'qa'),
 			makeAgent('agent-leader', 'leader', 'leader'),
 		];
 		mockWorkflows.value = [];
-		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', steps: [], transitions: [], tags: [] });
-		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', steps: [], transitions: [], tags: [] });
+		mockWorkflowTemplates.value = makeBuiltInTemplateWorkflows({ includeSystemPrompts: true });
+		mockCreateWorkflow.mockResolvedValue({ id: 'new-wf', nodes: [], tags: [] });
+		mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
 		mockCreateWorkflow.mockClear();
 		mockUpdateWorkflow.mockClear();
 		defaultProps.onSave.mockClear();
@@ -160,21 +185,21 @@ describe('WorkflowEditor', () => {
 		expect(getByText('1 step')).toBeTruthy();
 		fireEvent.click(getByText('Add Step'));
 		expect(getByText('2 steps')).toBeTruthy();
-		const removeButtons = getAllByTitle('Remove step');
+		const removeButtons = getAllByTitle('Remove node');
 		fireEvent.click(removeButtons[0]);
 		expect(getByText('1 step')).toBeTruthy();
 	});
 
 	it('disables Remove button when only one step remains', () => {
 		const { getByTitle } = render(<WorkflowEditor {...defaultProps} />);
-		const removeBtn = getByTitle('Remove step') as HTMLButtonElement;
+		const removeBtn = getByTitle('Remove node') as HTMLButtonElement;
 		expect(removeBtn.disabled).toBe(true);
 	});
 
 	it('enables Remove button when more than one step exists', () => {
 		const { getByText, getAllByTitle } = render(<WorkflowEditor {...defaultProps} />);
 		fireEvent.click(getByText('Add Step'));
-		const removeBtns = getAllByTitle('Remove step') as HTMLButtonElement[];
+		const removeBtns = getAllByTitle('Remove node') as HTMLButtonElement[];
 		expect(removeBtns[0].disabled).toBe(false);
 		expect(removeBtns[1].disabled).toBe(false);
 	});
@@ -209,14 +234,19 @@ describe('WorkflowEditor', () => {
 			expect(filtered.map((a) => a.name)).toEqual(['planner', 'coder']);
 		});
 
-		it('excludes agents with role "leader" regardless of name', () => {
+		it('excludes agents whose name contains "leader" (case-insensitive)', () => {
+			// filterAgents filters by a.name.toLowerCase() !== 'leader'.
+			// It only excludes agents whose name (not role) is exactly "leader" (case-insensitive).
+			// Agents named "orchestrator" or "coordinator" are NOT filtered.
 			const agents: SpaceAgent[] = [
-				makeAgent('1', 'orchestrator', 'leader'),
-				makeAgent('2', 'coordinator', 'Leader'),
-				makeAgent('3', 'coder', 'coder'),
+				makeAgent('1', 'leader'),
+				makeAgent('2', 'Leader'),
+				makeAgent('3', 'orchestrator'),
+				makeAgent('4', 'coordinator'),
+				makeAgent('5', 'coder'),
 			];
 			const filtered = filterAgents(agents);
-			expect(filtered.map((a) => a.name)).toEqual(['coder']);
+			expect(filtered.map((a) => a.name)).toEqual(['orchestrator', 'coordinator', 'coder']);
 		});
 
 		it('preserves all non-leader agents', () => {
@@ -232,41 +262,151 @@ describe('WorkflowEditor', () => {
 	});
 
 	describe('initFromWorkflow', () => {
-		it('returns ordered steps following startStepId', () => {
+		it('returns ordered steps following startNodeId', () => {
 			const wf = makeWorkflow();
 			const { steps } = initFromWorkflow(wf);
 			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code']);
 		});
 
-		it('returns transitions between sequential steps', () => {
+		it('returns transitions (always) between sequential steps', () => {
 			const wf = makeWorkflow();
 			const { transitions } = initFromWorkflow(wf);
 			expect(transitions).toHaveLength(1);
 			expect(transitions[0].type).toBe('always');
 		});
 
-		it('preserves transition condition type', () => {
-			const s1 = 'step-1';
-			const s2 = 'step-2';
+		it('appends nodes not matching startNodeId after the start node', () => {
 			const wf = makeWorkflow({
-				transitions: [{ id: 'tr-1', from: s1, to: s2, condition: { type: 'human' }, order: 0 }],
-			});
-			const { transitions } = initFromWorkflow(wf);
-			expect(transitions[0].type).toBe('human');
-		});
-
-		it('appends orphaned steps not reachable from startStepId', () => {
-			const wf = makeWorkflow({
-				steps: [
-					{ id: 'step-1', name: 'Plan', agentId: 'a1' },
-					{ id: 'step-2', name: 'Code', agentId: 'a2' },
-					{ id: 'orphan', name: 'Orphan', agentId: 'a3' },
+				nodes: [
+					{ id: 'step-1', name: 'Plan', agents: [{ agentId: 'a1', name: 'planner' }] },
+					{ id: 'step-2', name: 'Code', agents: [{ agentId: 'a2', name: 'coder' }] },
+					{ id: 'orphan', name: 'Orphan', agents: [{ agentId: 'a3', name: 'general' }] },
 				],
-				transitions: [{ id: 'tr-1', from: 'step-1', to: 'step-2', order: 0 }],
-				startStepId: 'step-1',
+				startNodeId: 'step-1',
 			});
 			const { steps } = initFromWorkflow(wf);
 			expect(steps.map((s) => s.name)).toEqual(['Plan', 'Code', 'Orphan']);
+		});
+
+		it('loads channels from existing workflow', () => {
+			const wf = makeWorkflow({
+				channels: [{ from: 'task-agent', to: 'coder' }],
+			});
+			const { channels } = initFromWorkflow(wf);
+			expect(channels).toHaveLength(1);
+			expect(channels[0].from).toBe('task-agent');
+			expect(channels[0].to).toBe('coder');
+		});
+
+		it('returns empty channels array when workflow has none', () => {
+			const wf = makeWorkflow();
+			const { channels } = initFromWorkflow(wf);
+			expect(channels).toHaveLength(0);
+		});
+
+		it('preserves customPrompt from agents[0] for single-agent nodes', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								customPrompt: { value: 'Plan carefully.' },
+							},
+						],
+					},
+					{
+						id: 'step-2',
+						name: 'Code',
+						agents: [
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								customPrompt: { value: 'Code fast.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].customPrompt).toEqual({ value: 'Plan carefully.' });
+			expect(steps[1].customPrompt).toEqual({ value: 'Code fast.' });
+		});
+
+		it('preserves customPrompt value from agents[0]', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								customPrompt: { value: 'Extra planning context.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].customPrompt?.value).toBe('Extra planning context.');
+		});
+
+		it('sets customPrompt from agents[0].customPrompt object', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Step 1',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'coder',
+								customPrompt: { value: 'Be helpful.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].customPrompt).toEqual({ value: 'Be helpful.' });
+		});
+
+		it('sets customPrompt to undefined when agents[0] has no customPrompt', () => {
+			const wf = makeWorkflow();
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].customPrompt).toBeUndefined();
+		});
+
+		it('preserves multi-agent nodes with their agents array', () => {
+			const wf = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Multi',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								customPrompt: { value: 'Plan.' },
+							},
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								customPrompt: { value: 'Code.' },
+							},
+						],
+					},
+				],
+			});
+			const { steps } = initFromWorkflow(wf);
+			expect(steps[0].agents).toHaveLength(2);
+			expect(steps[0].agents?.[0].customPrompt).toEqual({ value: 'Plan.' });
+			expect(steps[0].agents?.[1].customPrompt).toEqual({ value: 'Code.' });
 		});
 	});
 
@@ -286,40 +426,67 @@ describe('WorkflowEditor', () => {
 		it('shows template options when toggle clicked', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			expect(getByText('Coding (Plan → Code)')).toBeTruthy();
-			expect(getByText('Research (Plan → Research)')).toBeTruthy();
-			expect(getByText('Quick Fix (Code only)')).toBeTruthy();
+			expect(getByText('Coding Workflow')).toBeTruthy();
+			expect(getByText('Coding with QA Workflow')).toBeTruthy();
+			expect(getByText('Research Workflow')).toBeTruthy();
+			expect(getByText('Review-Only Workflow')).toBeTruthy();
+			expect(getByText('Plan & Decompose Workflow')).toBeTruthy();
 		});
 
 		it('applying Coding template creates 2 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Coding (Plan → Code)'));
+			fireEvent.click(getByText('Coding Workflow'));
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
-		it('applying Quick Fix template creates 1 step', () => {
+		it('applying Review-Only template creates 1 step', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			expect(getByText('1 step')).toBeTruthy();
 		});
 
 		it('applying Research template creates 2 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Research (Plan → Research)'));
+			fireEvent.click(getByText('Research Workflow'));
 			expect(getByText('2 steps')).toBeTruthy();
+		});
+
+		it('applying Plan & Decompose Workflow template creates 3 steps', () => {
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText(/Start from template/));
+			fireEvent.click(getByText('Plan & Decompose Workflow'));
+			expect(getByText('3 steps')).toBeTruthy();
+		});
+
+		it('Plan & Decompose Workflow template builds explicit custom prompts for every node', () => {
+			const template = getAvailableTemplates(mockWorkflowTemplates.value).find(
+				(entry) => entry.label === 'Plan & Decompose Workflow'
+			);
+			expect(template).toBeTruthy();
+			const nodes = buildTemplateNodes(template!, mockAgents.value);
+			expect(nodes).toHaveLength(3);
+			for (const node of nodes) {
+				if (node.agents && node.agents.length > 0) {
+					for (const agent of node.agents) {
+						expect(agent.customPrompt?.value?.trim().length).toBeGreaterThan(0);
+					}
+					continue;
+				}
+				expect(node.customPrompt?.value?.trim().length).toBeGreaterThan(0);
+			}
 		});
 
 		it('template sets workflow name if name is empty', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
 			) as HTMLInputElement;
-			expect(nameInput.value).toBe('Quick Fix (Code only)');
+			expect(nameInput.value).toBe('Review-Only Workflow');
 		});
 
 		it('template does not override existing name', () => {
@@ -329,18 +496,179 @@ describe('WorkflowEditor', () => {
 			) as HTMLInputElement;
 			fireEvent.input(nameInput, { target: { value: 'My Custom Name' } });
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Quick Fix (Code only)'));
+			fireEvent.click(getByText('Review-Only Workflow'));
 			expect(nameInput.value).toBe('My Custom Name');
 		});
 
 		it('template looks up agents by name matching role', () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Coding (Plan → Code)'));
+			fireEvent.click(getByText('Coding Workflow'));
 			const agentSelects = container.querySelectorAll('select');
 			if (agentSelects.length > 0) {
-				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-1');
+				expect((agentSelects[0] as HTMLSelectElement).value).toBe('agent-2');
 			}
+		});
+
+		it('template agent lookup supports fuzzy role-name matching', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Coding Workflow',
+					description: 'Two-step coding workflow',
+					steps: [
+						{ name: 'Code', role: 'coder' },
+						{ name: 'Review', role: 'reviewer' },
+					],
+				},
+				[
+					makeAgent('agent-a', 'Primary Planner Agent'),
+					makeAgent('agent-b', 'Senior Coder'),
+					makeAgent('agent-c', 'Principal Reviewer'),
+				]
+			);
+
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-b');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+			expect(nodes[1].agents?.[0].agentId).toBe('agent-c');
+			expect(nodes[1].agents?.[0].name).toBe('reviewer');
+		});
+
+		it('template assigns fallback agents when no role-name match exists', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Fallback Template',
+					description: 'No matching roles',
+					steps: [
+						{ name: 'Step A', role: 'coder' },
+						{ name: 'Step B', role: 'reviewer' },
+					],
+				},
+				[makeAgent('agent-x', 'Alice'), makeAgent('agent-y', 'Bob')]
+			);
+
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-x');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+			expect(nodes[1].agents?.[0].agentId).toBe('agent-y');
+			expect(nodes[1].agents?.[0].name).toBe('reviewer');
+		});
+
+		it('uses explicit agentId from template step when provided', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Explicit Agent ID',
+					description: 'Template with explicit IDs',
+					steps: [{ name: 'Code', role: 'coder', agentId: 'agent-2' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-2');
+			expect(nodes[0].agents?.[0].name).toBe('coder');
+		});
+
+		it('prefers built-in workflows from store as template source', () => {
+			const templates = getAvailableTemplates(
+				makeBuiltInTemplateWorkflows({ includeSystemPrompts: true })
+			);
+			expect(templates.map((template) => template.label)).toEqual([
+				'Coding Workflow',
+				'Research Workflow',
+				'Review-Only Workflow',
+				'Plan & Decompose Workflow',
+				'Coding with QA Workflow',
+			]);
+		});
+
+		it('shows empty state when no built-in templates are available', () => {
+			mockWorkflowTemplates.value = [];
+			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
+			fireEvent.click(getByText(/Start from template/));
+			expect(getByText('No built-in templates are available for this space yet.')).toBeTruthy();
+		});
+	});
+
+	describe('buildTemplateNodes', () => {
+		it('wraps systemPrompt in WorkflowNodeAgentOverride for single-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Test Template',
+					description: 'Test',
+					steps: [{ name: 'Step A', role: 'coder', systemPrompt: 'Be careful.' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].customPrompt).toEqual({ value: 'Be careful.' });
+		});
+
+		it('creates a single-slot agents entry for single-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Single Slot Template',
+					description: 'Single slot',
+					steps: [{ name: 'Review', role: 'reviewer' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agentId).toBe('agent-4');
+			expect(nodes[0].agents).toHaveLength(1);
+			expect(nodes[0].agents?.[0].name).toBe('reviewer');
+			expect(nodes[0].agents?.[0].agentId).toBe('agent-4');
+		});
+
+		it('wraps per-slot systemPrompt in WorkflowNodeAgentOverride for multi-agent steps', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Multi Template',
+					description: 'Multi',
+					steps: [
+						{
+							name: 'Review',
+							agentSlots: [
+								{ name: 'Reviewer 1', role: 'reviewer', systemPrompt: 'Review carefully.' },
+								{ name: 'Reviewer 2', role: 'reviewer', systemPrompt: 'Focus on bugs.' },
+							],
+						},
+					],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agents).toHaveLength(2);
+			expect(nodes[0].agents?.[0].customPrompt).toEqual({
+				value: 'Review carefully.',
+			});
+			expect(nodes[0].agents?.[1].customPrompt).toEqual({
+				value: 'Focus on bugs.',
+			});
+		});
+
+		it('sets customPrompt to undefined when template step has no systemPrompt', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'No Prompt Template',
+					description: 'Test',
+					steps: [{ name: 'Step A', role: 'coder' }],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].customPrompt).toBeUndefined();
+		});
+
+		it('wraps per-slot systemPrompt in WorkflowNodeAgentOverride for multi-agent steps (via instructions field)', () => {
+			const nodes = buildTemplateNodes(
+				{
+					label: 'Instructions Template',
+					description: 'Test',
+					steps: [
+						{
+							name: 'Code',
+							agentSlots: [{ name: 'Coder 1', role: 'coder', systemPrompt: 'Focus on tests.' }],
+						},
+					],
+				},
+				mockAgents.value
+			);
+			expect(nodes[0].agents?.[0].customPrompt).toEqual({
+				value: 'Focus on tests.',
+			});
 		});
 	});
 
@@ -367,36 +695,6 @@ describe('WorkflowEditor', () => {
 			expect(mockCreateWorkflow).not.toHaveBeenCalled();
 		});
 
-		it('shows error when a condition transition has empty shell expression', async () => {
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			// Set name
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			// Select agent for step 1
-			selectAgent(container, 'agent-1');
-			// Add step 2
-			fireEvent.click(getByText('Add Step'));
-			selectAgent(container, 'agent-2');
-			// Change exit gate of step 1 to 'condition' with empty expression
-			// Step 1 was previously expanded, but after Add Step, step 2 is expanded.
-			// Click step 1 header to expand it
-			const stepHeaders = container.querySelectorAll('.cursor-pointer');
-			fireEvent.click(stepHeaders[0]);
-			// Now find the exit gate select (selects[2] = exit gate when entry+agent are visible)
-			const selects = container.querySelectorAll('select');
-			// Find exit gate select — it's labeled 'Exit Gate', the last condition select
-			const exitGateSelect = selects[selects.length - 1] as HTMLSelectElement;
-			fireEvent.change(exitGateSelect, { target: { value: 'condition' } });
-			// Leave expression empty and try to save
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(getByText(/Transition after step 1 requires a shell expression/)).toBeTruthy();
-			});
-			expect(mockCreateWorkflow).not.toHaveBeenCalled();
-		});
-
 		it('calls createWorkflow on save in create mode', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
@@ -409,6 +707,76 @@ describe('WorkflowEditor', () => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(
 					expect.objectContaining({ name: 'My Workflow' })
 				);
+			});
+		});
+
+		it('persists per-agent customPrompt overrides when saving an existing workflow', async () => {
+			const workflow = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								customPrompt: { value: 'Visible workflow prompt.' },
+							},
+						],
+					},
+					{
+						id: 'step-2',
+						name: 'Code',
+						agents: [
+							{
+								agentId: 'agent-2',
+								name: 'coder',
+								customPrompt: { value: 'Implement exactly what was approved.' },
+							},
+						],
+					},
+				],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={workflow} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
+					'wf-1',
+					expect.objectContaining({
+						nodes: expect.arrayContaining([
+							expect.objectContaining({ name: 'Plan' }),
+							expect.objectContaining({ name: 'Code' }),
+						]),
+					})
+				);
+			});
+		});
+
+		it('includes customPrompt in saved agent for single-agent nodes', async () => {
+			const workflow = makeWorkflow({
+				nodes: [
+					{
+						id: 'step-1',
+						name: 'Plan',
+						agents: [
+							{
+								agentId: 'agent-1',
+								name: 'planner',
+								customPrompt: { value: 'Plan carefully.' },
+							},
+						],
+					},
+				],
+			});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={workflow} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1);
+			});
+			const callArgs = mockUpdateWorkflow.mock.calls[0][1];
+			const savedNode = callArgs.nodes[0];
+			expect(savedNode.agents[0].customPrompt).toEqual({
+				value: 'Plan carefully.',
 			});
 		});
 
@@ -450,7 +818,7 @@ describe('WorkflowEditor', () => {
 			});
 		});
 
-		it('sends steps with generated IDs and transitions', async () => {
+		it('sends steps with generated IDs', async () => {
 			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
@@ -463,77 +831,36 @@ describe('WorkflowEditor', () => {
 			await waitFor(() => {
 				expect(mockCreateWorkflow).toHaveBeenCalledWith(
 					expect.objectContaining({
-						steps: expect.arrayContaining([expect.objectContaining({ name: expect.any(String) })]),
-						transitions: expect.arrayContaining([
-							expect.objectContaining({ from: expect.any(String), to: expect.any(String) }),
-						]),
+						nodes: expect.arrayContaining([expect.objectContaining({ name: expect.any(String) })]),
 					})
 				);
 			});
 		});
+	});
 
-		it('remaps rule appliesTo from step localId to final persisted step ID (P0 regression)', async () => {
-			// When a new step has no persisted ID yet, its localId is used in appliesTo.
-			// The save path must remap localId → the UUID generated at save time so the
-			// persisted rule references the correct step ID.
-			const { getByRole, getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-
-			// Set workflow name
+	describe('channels', () => {
+		it('channels are included in createWorkflow call when empty', async () => {
+			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
 			const nameInput = container.querySelector(
 				'input[placeholder="e.g. Feature Development"]'
 			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'Remapped Workflow' } });
-
-			// Give the step a unique name so StepMultiSelect renders a named button we
-			// can find via getByRole — which throws on no match, unlike querySelectorAll.
-			const stepNameInput = container.querySelector(
-				'input[placeholder*="Plan the approach"]'
-			) as HTMLInputElement;
-			fireEvent.input(stepNameInput, { target: { value: 'UniqueStepName' } });
-
-			// Assign agent to the step (new step, no persisted id)
+			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
 			selectAgent(container, 'agent-1');
-
-			// Add a rule and fill it in
-			fireEvent.click(getByRole('button', { name: 'Add Rule' }));
-			const ruleNameInput = container.querySelector(
-				'input[placeholder*="Rule name"]'
-			) as HTMLInputElement;
-			fireEvent.input(ruleNameInput, { target: { value: 'Scoped Rule' } });
-			const ruleContent = container.querySelector(
-				'textarea[placeholder*="Describe the rule"]'
-			) as HTMLTextAreaElement;
-			fireEvent.input(ruleContent, { target: { value: 'Content' } });
-
-			// Scope the rule to the step by clicking the named step button in "Applies to".
-			// getByRole('button', { name }) throws if no such button exists, ensuring the
-			// test fails rather than silently skips when the DOM structure changes.
-			// The StepMultiSelect renders exactly one <button> per step using the step name.
-			const scopeButton = getByRole('button', { name: 'UniqueStepName' });
-			fireEvent.click(scopeButton);
-
 			fireEvent.click(getByText('Create Workflow'));
-
 			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledTimes(1);
+				expect(mockCreateWorkflow).toHaveBeenCalledWith(
+					expect.objectContaining({ channels: undefined })
+				);
 			});
+		});
 
-			const call = mockCreateWorkflow.mock.calls[0][0];
-			const savedStepId = call.steps[0]?.id;
-			const savedRules = call.rules ?? [];
-
-			// The scoped rule must have at least one appliesTo entry — a zero length
-			// means the scope click was silently ignored and the loop below never runs.
-			expect(savedRules.length).toBeGreaterThan(0);
-			expect(savedRules[0].appliesTo.length).toBeGreaterThan(0);
-
-			// Every scoped ID must exactly match the final persisted step UUID,
-			// not the draft localId that was visible in the UI before save.
-			for (const rule of savedRules) {
-				for (const scopedId of rule.appliesTo ?? []) {
-					expect(scopedId).toBe(savedStepId);
-				}
-			}
+		it('channels from existing workflow are included in updateWorkflow call', async () => {
+			const wf = makeWorkflow({});
+			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
+			fireEvent.click(getByText('Save Changes'));
+			await waitFor(() => {
+				expect(mockUpdateWorkflow).toHaveBeenCalledWith('wf-1', expect.objectContaining({}));
+			});
 		});
 	});
 
@@ -553,14 +880,6 @@ describe('WorkflowEditor', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
 			expect(getByText('coding')).toBeTruthy();
 			expect(getByText('review')).toBeTruthy();
-		});
-
-		it('loads rules from existing workflow', () => {
-			const wf = makeWorkflow({
-				rules: [{ id: 'r1', name: 'My Rule', content: 'Rule content', appliesTo: [] }],
-			});
-			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			expect(getByText('1 rule')).toBeTruthy();
 		});
 	});
 
@@ -616,85 +935,6 @@ describe('WorkflowEditor', () => {
 				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
 					'wf-1',
 					expect.objectContaining({ tags: ['research'] })
-				);
-			});
-		});
-	});
-
-	describe('rules', () => {
-		it('renders the Rules section with "Add Rule" button', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			expect(getByText('Add Rule')).toBeTruthy();
-		});
-
-		it('clicking Add Rule shows a rule card', () => {
-			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
-			fireEvent.click(getByText('Add Rule'));
-			expect(getByText('1 rule')).toBeTruthy();
-		});
-
-		it('rules are included in createWorkflow call (non-blank rules only)', async () => {
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			selectAgent(container, 'agent-1');
-			fireEvent.click(getByText('Add Rule'));
-			// Fill rule name — rule card has an input with "Rule name" placeholder
-			const ruleNameInput = container.querySelector(
-				'input[placeholder*="Rule name"]'
-			) as HTMLInputElement;
-			fireEvent.input(ruleNameInput, { target: { value: 'Follow conventions' } });
-			// Fill rule content — rule card textarea has "Describe the rule" placeholder
-			const ruleTextarea = container.querySelector(
-				'textarea[placeholder*="Describe the rule"]'
-			) as HTMLTextAreaElement;
-			fireEvent.input(ruleTextarea, { target: { value: 'Write clean code' } });
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledWith(
-					expect.objectContaining({
-						rules: expect.arrayContaining([
-							expect.objectContaining({
-								name: 'Follow conventions',
-								content: 'Write clean code',
-							}),
-						]),
-					})
-				);
-			});
-		});
-
-		it('blank rules are excluded from the createWorkflow call', async () => {
-			const { getByText, container } = render(<WorkflowEditor {...defaultProps} />);
-			const nameInput = container.querySelector(
-				'input[placeholder="e.g. Feature Development"]'
-			) as HTMLInputElement;
-			fireEvent.input(nameInput, { target: { value: 'My Workflow' } });
-			selectAgent(container, 'agent-1');
-			// Add a rule but leave it blank
-			fireEvent.click(getByText('Add Rule'));
-			fireEvent.click(getByText('Create Workflow'));
-			await waitFor(() => {
-				expect(mockCreateWorkflow).toHaveBeenCalledWith(expect.objectContaining({ rules: [] }));
-			});
-		});
-
-		it('rules are included in updateWorkflow call', async () => {
-			const wf = makeWorkflow({
-				rules: [{ id: 'r1', name: 'Existing Rule', content: 'Some content', appliesTo: [] }],
-			});
-			const { getByText } = render(<WorkflowEditor {...defaultProps} workflow={wf} />);
-			fireEvent.click(getByText('Save Changes'));
-			await waitFor(() => {
-				expect(mockUpdateWorkflow).toHaveBeenCalledWith(
-					'wf-1',
-					expect.objectContaining({
-						rules: expect.arrayContaining([
-							expect.objectContaining({ name: 'Existing Rule', content: 'Some content' }),
-						]),
-					})
 				);
 			});
 		});

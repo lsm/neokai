@@ -299,6 +299,29 @@ describe('useSendMessage', () => {
 			});
 		});
 
+		it('should notify message accepted callback with messageId', async () => {
+			mockRequest.mockResolvedValueOnce({ messageId: 'msg-accepted-1' });
+			const onMessageAccepted = vi.fn();
+
+			const { result } = renderHook(() =>
+				useSendMessage({
+					sessionId: 'session-1',
+					session: defaultSession,
+					isSending: false,
+					onSendStart: vi.fn(),
+					onSendComplete: vi.fn(),
+					onError: vi.fn(),
+					onMessageAccepted,
+				})
+			);
+
+			await act(async () => {
+				await result.current.sendMessage('Hello');
+			});
+
+			expect(onMessageAccepted).toHaveBeenCalledWith('msg-accepted-1');
+		});
+
 		it('should send message with images', async () => {
 			const onSendStart = vi.fn();
 

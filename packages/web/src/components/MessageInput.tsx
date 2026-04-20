@@ -7,10 +7,17 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
-import { useCallback, useEffect, useState } from 'preact/hooks';
-import type { MessageDeliveryMode, MessageImage, ModelInfo, SessionType } from '@neokai/shared';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import type {
+	MessageDeliveryMode,
+	MessageImage,
+	ModelInfo,
+	ReferenceMention,
+	SessionType,
+} from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager';
+import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
@@ -20,9 +27,31 @@ import {
 	useModelSwitcher,
 	useModal,
 	useCommandAutocomplete,
+	useReferenceAutocomplete,
 	useFileAttachments,
 	useInterrupt,
 } from '../hooks';
+
+/**
+ * Replace the active @query at the end of `content` with a formatted reference token.
+ *
+ * Scans for the last word-boundary `@\S*` at the end of the string (matching
+ * the same logic as `extractActiveAtQuery` in `useReferenceAutocomplete`), then
+ * replaces it with `@ref{type:id} ` (trailing space prevents re-triggering).
+ *
+ * Returns the updated content, or the original string if no active @query is found.
+ */
+export function replaceActiveAtQuery(content: string, type: string, id: string): string {
+	const replacement = `@ref{${type}:${id}} `;
+	// Match the last word-boundary @ and the non-whitespace characters following it.
+	// Group 1 captures the leading whitespace (or empty string at start) so we can
+	// preserve it in the replacement.
+	const match = content.match(/((?:^|\s))@(\S*)$/);
+	if (!match) return content;
+	const prefix = match[1];
+	const matchStart = content.length - match[0].length;
+	return content.slice(0, matchStart) + prefix + replacement;
+}
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
 	switch (sessionType) {
@@ -71,8 +100,18 @@ export default function MessageInput({
 	rewindMode,
 	onExitRewindMode,
 }: MessageInputProps) {
+	// Cache touch device detection — computed once on first render, stable thereafter.
+	// Using useRef (not a module constant) so tests can mock matchMedia before render.
+	const isTouchDeviceRef = useRef(
+		window.matchMedia('(pointer: coarse)').matches ||
+			('ontouchstart' in window && window.innerWidth < 768)
+	);
+
 	// Drag and drop state
 	const [isDragging, setIsDragging] = useState(false);
+
+	// Textarea ref for programmatic focus after reference selection
+	const textareaInputRef = useRef<HTMLTextAreaElement>(null);
 
 	// Use shared hooks
 	const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
@@ -110,9 +149,41 @@ export default function MessageInput({
 		content,
 		onSelect: handleCommandSelect,
 	});
+
+	// Reference autocomplete
+	const handleReferenceSelect = useCallback(
+		(reference: ReferenceMention) => {
+			const updated = replaceActiveAtQuery(content, reference.type, reference.id);
+			// No active @query — nothing to replace; skip the setContent call to avoid spurious re-renders
+			if (updated === content) return;
+			setContent(updated);
+			// Restore focus to textarea after selection
+			textareaInputRef.current?.focus();
+		},
+		[content, setContent]
+	);
+
+	const referenceAutocomplete = useReferenceAutocomplete({
+		content,
+		onSelect: handleReferenceSelect,
+	});
 	const agentWorking = isAgentWorking.value;
 	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
 	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
+
+	const syncMessagesContainerPadding = useCallback(() => {
+		const scroller = document.querySelector<HTMLElement>('[data-messages-container]');
+		const footer = document.querySelector<HTMLElement>('.chat-footer');
+		if (!scroller || !footer) return;
+
+		const footerHeightPx = Math.max(footer.getBoundingClientRect().height, footer.scrollHeight);
+		const nextPaddingPx = getMessagesBottomPaddingPx(footerHeightPx);
+		const nextPaddingValue = `${nextPaddingPx}px`;
+		const currentPaddingVar = scroller.style.getPropertyValue('--messages-bottom-padding').trim();
+		if (currentPaddingVar !== nextPaddingValue) {
+			scroller.style.setProperty('--messages-bottom-padding', nextPaddingValue);
+		}
+	}, []);
 
 	const extractOutgoingMessage = useCallback(() => {
 		const messageContent = content.trim();
@@ -156,6 +227,10 @@ export default function MessageInput({
 	}, [refreshQueuedMessages]);
 
 	useEffect(() => {
+		syncMessagesContainerPadding();
+	}, [syncMessagesContainerPadding]);
+
+	useEffect(() => {
 		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
 			return;
 		const timer = setInterval(() => {
@@ -163,6 +238,23 @@ export default function MessageInput({
 		}, 700);
 		return () => clearInterval(timer);
 	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
+
+	useEffect(() => {
+		syncMessagesContainerPadding();
+	}, [
+		syncMessagesContainerPadding,
+		attachments.length,
+		isDragging,
+		queuedForCurrentTurn.length,
+		queuedForNextTurn.length,
+	]);
+
+	const handleTextareaHeightChange = useCallback(
+		(_heightPx: number) => {
+			syncMessagesContainerPadding();
+		},
+		[syncMessagesContainerPadding]
+	);
 
 	// Submit handler
 	const handleSubmit = useCallback(
@@ -201,11 +293,22 @@ export default function MessageInput({
 		]
 	);
 
+	// Destructure stable callback refs to avoid recreating handleKeyDown on every render
+	// (hooks return new object instances each render, but the functions inside are stable
+	// via useCallback, so depending on the functions directly is more efficient)
+	const refHandleKeyDown = referenceAutocomplete.handleKeyDown;
+	const cmdHandleKeyDown = commandAutocomplete.handleKeyDown;
+
 	// Keyboard handler
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			// Try command autocomplete first
-			if (commandAutocomplete.handleKeyDown(e)) {
+			// Reference autocomplete takes precedence when visible
+			if (refHandleKeyDown(e)) {
+				return;
+			}
+
+			// Then try command autocomplete
+			if (cmdHandleKeyDown(e)) {
 				return;
 			}
 
@@ -224,17 +327,13 @@ export default function MessageInput({
 				}
 
 				// Desktop: Enter submits, Shift+Enter for newline
-				const isTouchDevice =
-					window.matchMedia('(pointer: coarse)').matches ||
-					('ontouchstart' in window && window.innerWidth < 768);
-
-				if (!isTouchDevice && !e.shiftKey) {
+				if (!isTouchDeviceRef.current && !e.shiftKey) {
 					e.preventDefault();
 					void handleSubmit('immediate');
 				}
 			}
 		},
-		[commandAutocomplete, handleSubmit, agentWorking]
+		[refHandleKeyDown, cmdHandleKeyDown, handleSubmit, agentWorking]
 	);
 
 	// Model switch handler
@@ -423,14 +522,24 @@ export default function MessageInput({
 							}}
 							disabled={disabled}
 							placeholder={getPlaceholderForSessionType(sessionType)}
-							showCommandAutocomplete={commandAutocomplete.showAutocomplete}
+							showCommandAutocomplete={
+								commandAutocomplete.showAutocomplete && !referenceAutocomplete.showAutocomplete
+							}
 							filteredCommands={commandAutocomplete.filteredCommands}
 							selectedCommandIndex={commandAutocomplete.selectedIndex}
 							onCommandSelect={commandAutocomplete.handleSelect}
 							onCommandClose={commandAutocomplete.close}
+							showReferenceAutocomplete={referenceAutocomplete.showAutocomplete}
+							referenceResults={referenceAutocomplete.results}
+							selectedReferenceIndex={referenceAutocomplete.selectedIndex}
+							onReferenceSelect={referenceAutocomplete.handleSelect}
+							onReferenceClose={referenceAutocomplete.close}
 							isAgentWorking={agentWorking}
 							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
+							textareaRef={textareaInputRef}
+							transparent={true}
+							onHeightChange={handleTextareaHeightChange}
 						/>
 					</div>
 				</form>

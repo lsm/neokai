@@ -42,12 +42,18 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 		// Verify NavRail has w-16 class (64px width)
 		await expect(navRail).toHaveClass(/w-16/);
 
-		// Verify it contains navigation icons (current UI: Home, Chats, Settings)
-		const homeButton = page.getByRole('button', { name: 'Home', exact: true });
-		await expect(homeButton).toBeVisible();
+		// Verify it contains navigation icons (current UI: Rooms, Inbox, Chats, Spaces, Settings)
+		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
+		await expect(roomsButton).toBeVisible();
+
+		const inboxButton = page.getByRole('button', { name: 'Inbox', exact: true });
+		await expect(inboxButton).toBeVisible();
 
 		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
 		await expect(chatsButton).toBeVisible();
+
+		const spacesButton = page.getByRole('button', { name: 'Spaces', exact: true });
+		await expect(spacesButton).toBeVisible();
 
 		const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
 		await expect(settingsButton).toBeVisible();
@@ -84,9 +90,9 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await expect(newSessionButton).toBeVisible();
 
-		// Home button in NavRail should be active
-		const homeButton = page.getByRole('button', { name: 'Home', exact: true });
-		await expect(homeButton).toHaveAttribute('aria-pressed', 'true');
+		// Rooms button in NavRail should be active (default section)
+		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
+		await expect(roomsButton).toHaveAttribute('aria-pressed', 'true');
 	});
 });
 
@@ -102,10 +108,10 @@ test.describe('Navigation Section Switching', () => {
 		await page.waitForTimeout(500);
 	});
 
-	test('should show SessionList when Home is active', async ({ page }) => {
-		// Click Home button to ensure we're on that section
-		const homeButton = page.getByRole('button', { name: 'Home', exact: true });
-		await homeButton.click();
+	test('should show SessionList when Rooms is active', async ({ page }) => {
+		// Click Rooms button to ensure we're on that section
+		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
+		await roomsButton.click();
 		await page.waitForTimeout(300);
 
 		// ContextPanel header should show "Rooms" on home page
@@ -116,8 +122,8 @@ test.describe('Navigation Section Switching', () => {
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await expect(newSessionButton).toBeVisible();
 
-		// Home button should be active (aria-pressed=true)
-		await expect(homeButton).toHaveAttribute('aria-pressed', 'true');
+		// Rooms button should be active (aria-pressed=true)
+		await expect(roomsButton).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	test('should show Settings section when Settings is clicked', async ({ page }) => {
@@ -186,15 +192,19 @@ test.describe('Session Navigation', () => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
-		// Navigate away to home first
-		await page.goto('/');
-		// Wait for Lobby to load with Recent Sessions section
-		await expect(page.locator('h3:has-text("Recent Sessions")')).toBeVisible({ timeout: 10000 });
+		// After creating session, we're on the session page - verify we're there
+		await expect(page.url()).toContain(`/session/${sessionId}`);
+
+		// Now navigate to Chats section to find the session list
+		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
+		await chatsButton.click();
 		await page.waitForTimeout(500);
 
-		// Click on the session in the Recent Sessions list
+		// Session card should be visible in the sidebar
 		const sessionCard = page.locator(`[data-session-id="${sessionId}"]`);
 		await expect(sessionCard).toBeVisible({ timeout: 10000 });
+
+		// Click on the session card
 		await sessionCard.click();
 
 		// URL should change to /session/{sessionId}

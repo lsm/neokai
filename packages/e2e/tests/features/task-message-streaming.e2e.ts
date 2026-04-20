@@ -68,7 +68,13 @@ async function createRoomWithTask(
 		};
 		if (!hub?.request) throw new Error('MessageHub not available');
 
-		const roomRes = await hub.request('room.create', { name: 'E2E Streaming Test Room' });
+		const systemState = await hub.request('state.system', {});
+		const workspaceRoot = (systemState as { workspaceRoot: string }).workspaceRoot;
+
+		const roomRes = await hub.request('room.create', {
+			name: 'E2E Streaming Test Room',
+			defaultPath: workspaceRoot,
+		});
 		const roomId = (roomRes as { room: { id: string } }).room.id;
 
 		const taskRes = await hub.request('task.create', {
@@ -273,8 +279,11 @@ test.describe('no loading flash when user sends a message (regression)', () => {
 		await expect(page.locator('text=Pre-existing message alpha')).toBeVisible({ timeout: 10000 });
 		await expect(page.locator('text=Pre-existing message beta')).toBeVisible({ timeout: 10000 });
 
-		// Type a message in the human input area (no data-testid on <textarea> in prod)
-		const textarea = page.locator('textarea');
+		// Type a message in the task view's human input area.
+		// Use :visible to avoid selecting the hidden ChatContainer textarea
+		// (Room.tsx keeps ChatContainer always-mounted but hidden via CSS for state preservation).
+		// Works for both V1 and V2 task views.
+		const textarea = page.locator('textarea:visible').first();
 		await textarea.fill('Hello, please continue working');
 
 		// Pre-existing messages must still be visible while typing (no wipe on input)
@@ -283,7 +292,7 @@ test.describe('no loading flash when user sends a message (regression)', () => {
 
 		// Click send — the RPC will fail (no real session), but the UI must NOT
 		// clear the conversation pane or flash a loading state at any point
-		await page.locator('[data-testid="send-button"]').click();
+		await page.locator('[data-testid="send-button"]:visible').click();
 
 		// After the send attempt, pre-existing messages must still be visible —
 		// this verifies the conversationKey is NOT bumped on message send
