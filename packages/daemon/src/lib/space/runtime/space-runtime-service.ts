@@ -493,6 +493,9 @@ export class SpaceRuntimeService {
 				return s?.autonomyLevel ?? 1;
 			},
 			isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
+			// Forward the runtime's current sink so a gate-driven reopen still
+			// surfaces `workflow_run_reopened` to the Space Agent session.
+			notificationSink: this.runtime.getNotificationSink(),
 		});
 		return router.onGateDataChanged(runId, gateId);
 	}
