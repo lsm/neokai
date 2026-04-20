@@ -227,6 +227,24 @@ if [ "$HAD_FAILURE" -eq 1 ]; then
 		echo "  $file"
 	done
 	echo ""
+	# Dump per-shard log output on failure so CI runners can diagnose the issue
+	# without having to download junit artifacts. Only dump shards that failed.
+	if [ -n "${CI:-}" ] || [ "${TEST_DAEMON_DUMP_ON_FAIL:-}" = "1" ]; then
+		for shard in "${RUN_SHARDS[@]}"; do
+			JUNIT_FILE="$RESULTS_DIR/junit-${shard}.xml"
+			LOG_FILE="$RESULTS_DIR/output-${shard}.log"
+			[ -f "$JUNIT_FILE" ] || continue
+			shard_fails=$(grep '<testsuites' "$JUNIT_FILE" | grep -o 'failures="[0-9]*"' | grep -o '[0-9]*')
+			if [ "${shard_fails:-0}" -gt 0 ] && [ -f "$LOG_FILE" ]; then
+				echo "========================================================================"
+				echo "Shard output: $shard"
+				echo "========================================================================"
+				cat "$LOG_FILE"
+				echo "========================================================================"
+				echo ""
+			fi
+		done
+	fi
 	echo "To rerun failing tests:"
 	echo "  ./scripts/test-daemon.sh --rerun"
 else
