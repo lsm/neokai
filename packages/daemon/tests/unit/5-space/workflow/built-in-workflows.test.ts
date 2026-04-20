@@ -1897,6 +1897,20 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
 		expect(closer.customPrompt!.value).toContain('report_result(');
 	});
 
+	test('Done node closer prompt does NOT instruct passing a `status` field (schema is .strict())', () => {
+		// ReportResultSchema in task-agent-tool-schemas.ts uses `.strict()` and
+		// does not declare a `status` field — passing one fails Zod validation.
+		// The runtime records `reportedStatus: 'done'` internally, so the agent
+		// must call `report_result({ summary: ... })` only.
+		const doneNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Done')!;
+		const closer = doneNode.agents[0];
+		const prompt = closer.customPrompt!.value;
+		// Catch both `report_result(status=...)` and `report_result({ status: ... })`
+		// style instructions — either would be a bug.
+		expect(prompt).not.toMatch(/report_result\s*\(\s*status\s*[:=]/);
+		expect(prompt).not.toMatch(/report_result\s*\(\s*\{\s*status\s*:/);
+	});
+
 	test('Review node reviewer customPrompt requires posting to GitHub and echoing review_url', () => {
 		const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
 		const reviewer = reviewNode.agents[0];

@@ -520,10 +520,12 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 						value:
 							'You are the Done node of the Coding Workflow. The Reviewer has already approved ' +
 							'the PR — your only job is to finalize the run.\n\n' +
-							'Call `report_result(status="done", summary="Reviewer approved; run complete.")` ' +
-							'immediately as your first and only tool call. Do not read files, run tests, or ' +
-							'send messages. The runtime will handle PR merge via the completion action after ' +
-							'you return.',
+							'Call `report_result({ summary: "Reviewer approved; run complete." })` ' +
+							'immediately as your first and only tool call. Do NOT pass a `status` field — ' +
+							'the schema is `.strict()` and passing `status` is a validation error; the ' +
+							'runtime records `reportedStatus: "done"` internally. Do not read files, run ' +
+							'tests, or send messages. The runtime will handle PR merge via the completion ' +
+							'action after you return.',
 					},
 				},
 			],
