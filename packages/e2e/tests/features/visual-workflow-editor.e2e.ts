@@ -196,6 +196,7 @@ test.describe('Visual Workflow Editor', () => {
 					rules: [],
 					tags: [],
 					layout,
+					completionAutonomyLevel: 3,
 				});
 			},
 			{ sid: spaceId, aId: agentId }
@@ -675,6 +676,7 @@ test.describe('Visual Workflow Editor', () => {
 						[step1]: { x: 100, y: 80 },
 						[step2]: { x: 450, y: 80 },
 					},
+					completionAutonomyLevel: 3,
 				});
 			},
 			{ sid: spaceId, aId: agentId, step1: s1, step2: s2, trans1: t1 }
