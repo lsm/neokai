@@ -1208,13 +1208,13 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		const stepId = 'v2-planning-step';
 		const wf = ctx.workflowManager.createWorkflow({
 			spaceId: ctx.spaceId,
-			name: 'Full-Cycle Coding Workflow',
-			description: 'Full-cycle coding workflow with plan review',
+			name: 'Plan & Decompose Workflow',
+			description: 'Plan-and-decompose workflow with parallel plan review',
 			nodes: [{ id: stepId, name: 'Planning', agentId: 'agent-planner-2' }],
 			transitions: [],
 			startNodeId: stepId,
 			rules: [],
-			tags: ['coding', 'v2', 'default'],
+			tags: ['planning', 'decomposition'],
 		});
 
 		await startWorkflowRun(ctx, {
@@ -1248,9 +1248,9 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 			ctx.spaceId,
 			ctx.workflowManager,
 			ctx.agentId,
-			'Full-Cycle Coding Workflow',
-			['coding', 'v2', 'default'],
-			'Full-cycle coding with plan review and parallel reviewers'
+			'Plan & Decompose Workflow',
+			['planning', 'decomposition'],
+			'Plan-and-decompose with parallel plan review and task fan-out'
 		);
 
 		const result = await makeHandlers(ctx).suggest_workflow({
@@ -1261,7 +1261,7 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 		expect(parsed.success).toBe(true);
 		expect(parsed.workflows).toHaveLength(2);
 		const names = parsed.workflows.map((w: { name: string }) => w.name).sort();
-		expect(names).toEqual(['Coding Workflow', 'Full-Cycle Coding Workflow']);
+		expect(names).toEqual(['Coding Workflow', 'Plan & Decompose Workflow']);
 	});
 });
 

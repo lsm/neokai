@@ -1,6 +1,7 @@
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	type ContentBlock,
+	hasRenderableThinking,
 	isSDKAssistantMessage,
 	isSDKRateLimitEvent,
 	isSDKResultMessage,
@@ -142,6 +143,12 @@ function extractAssistantEvents(
 		const eventId = `${String(row.id)}-assistant-${idx}`;
 
 		if (isThinkingBlock(block)) {
+			// Skip Opus 4.7 "omitted" thinking stubs — they carry an empty
+			// `thinking` payload (plus a signature for multi-turn continuity)
+			// and would otherwise produce a blank "Thinking" thread event.
+			if (!hasRenderableThinking(block)) {
+				continue;
+			}
 			events.push({
 				id: eventId,
 				label: row.label,

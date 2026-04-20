@@ -67,7 +67,11 @@ class TestDaemonHub {
 // ---------------------------------------------------------------------------
 
 interface MockAgentSession {
-	session: { id: string; context?: Record<string, unknown> };
+	session: {
+		id: string;
+		context?: Record<string, unknown>;
+		config: { mcpServers?: Record<string, unknown> };
+	};
 	getProcessingState: () => AgentProcessingState;
 	getSDKMessageCount: () => number;
 	getSessionData: () => { id: string; context?: Record<string, unknown> };
@@ -89,7 +93,7 @@ interface MockAgentSession {
 
 function makeMockSession(sessionId: string): MockAgentSession {
 	const m: MockAgentSession = {
-		session: { id: sessionId, context: {} },
+		session: { id: sessionId, context: {}, config: { mcpServers: {} } },
 		_processingState: { status: 'idle' } as AgentProcessingState,
 		_sdkMessageCount: 0,
 		_startCalled: false,
@@ -108,6 +112,9 @@ function makeMockSession(sessionId: string): MockAgentSession {
 		},
 		setRuntimeMcpServers(servers) {
 			this._mcpServers = servers;
+			// Mirror the real AgentSession behaviour so ensureNodeAgentAttached's
+			// `session.config.mcpServers` invariant check sees the merged map.
+			this.session.config = { ...this.session.config, mcpServers: servers };
 		},
 		setRuntimeSystemPrompt(_sp: unknown) {},
 		async startStreamingQuery() {
@@ -256,6 +263,8 @@ function makeCtx(): TestCtx {
 
 	const mockSpaceRuntimeService = {
 		createOrGetRuntime: async (_spaceId: string) => runtime,
+		getSharedRuntime: () => runtime,
+		notifyGateDataChanged: async (_runId: string, _gateId: string) => {},
 	};
 
 	const mockSessionManager = {

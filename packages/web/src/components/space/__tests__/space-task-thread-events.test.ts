@@ -169,6 +169,55 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
 		expect(events[2].kind).toBe('text');
 	});
 
+	it('skips empty Opus 4.7 "omitted" thinking stubs (empty thinking + signature)', () => {
+		// Opus 4.7 with `thinking.display = 'omitted'` returns a
+		// structurally valid thinking block with empty `thinking` but a
+		// non-empty `signature`. Those stubs must not produce "Thinking"
+		// thread events with an empty summary.
+		const row = makeRow({
+			id: 'opus-47-omitted',
+			label: 'Task Agent',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'a1',
+				session_id: 'session-1',
+				message: {
+					content: [
+						{ type: 'thinking', thinking: '', signature: 'sig_abc123' },
+						{ type: 'text', text: 'Here is my response.' },
+					],
+				},
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		expect(events).toHaveLength(1);
+		expect(events[0].kind).toBe('text');
+		// Ensure no thinking event leaked through with an empty summary
+		expect(events.some((e) => e.kind === 'thinking')).toBe(false);
+	});
+
+	it('skips whitespace-only thinking payloads', () => {
+		const row = makeRow({
+			id: 'whitespace-thinking',
+			label: 'Task Agent',
+			content: JSON.stringify({
+				type: 'assistant',
+				uuid: 'a1',
+				session_id: 'session-1',
+				message: {
+					content: [
+						{ type: 'thinking', thinking: '   \n\t  ' },
+						{ type: 'text', text: 'Done.' },
+					],
+				},
+			}),
+			createdAt: 1_000,
+		});
+		const events = buildThreadEvents([parseThreadRow(row)]);
+		expect(events.some((e) => e.kind === 'thinking')).toBe(false);
+	});
+
 	it('all events from a multi-block message share the same label', () => {
 		const row = makeRow({
 			id: 'multi-block-2',

@@ -52,6 +52,7 @@ import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-man
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
+import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 
 // ---------------------------------------------------------------------------
 // Gate result types (formerly in channel-gate-evaluator.ts)
@@ -118,7 +119,7 @@ export interface DeliveredMessage {
 /**
  * Thrown by activateNode() for unrecoverable problems such as a missing run
  * or workflow, a node that does not exist, or an attempted activation on a
- * run that has already reached a terminal state.
+ * run whose parent task has been archived.
  *
  * Also thrown by deliverMessage() when the iteration cap is exceeded on a
  * cyclic channel (an unrecoverable limit — not a retryable gate block).
@@ -132,6 +133,13 @@ export class ActivationError extends Error {
 		this.name = 'ActivationError';
 	}
 }
+
+/**
+ * Error message used when the parent task has been archived. Archive is the
+ * only tombstone — `done` and `cancelled` runs remain reopenable until the
+ * task is archived.
+ */
+export const ARCHIVED_TASK_ERROR_MESSAGE = 'This task is archived — create a new task to continue.';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -209,6 +217,15 @@ export interface ChannelRouterConfig {
 	 * re-entry — appropriate for tests and contexts without a TaskAgentManager.
 	 */
 	isSessionAlive?: (sessionId: string) => boolean;
+	/**
+	 * Optional notification sink for surfacing runtime events (e.g.
+	 * `workflow_run_reopened`). When omitted, the router silently skips
+	 * notification emission — appropriate for tests and other standalone uses.
+	 *
+	 * Failures from `notify()` are caught and logged; notification errors never
+	 * propagate into message delivery / activation paths.
+	 */
+	notificationSink?: NotificationSink;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,16 +267,46 @@ export class ChannelRouter {
 	 * Lazily activate a workflow node by ensuring pending node_execution rows
 	 * exist (or are reset) for every declared node agent.
 	 *
+	 * Archive is the only tombstone:
+	 * - If the parent task's `archivedAt` is set → throws `ActivationError`.
+	 * - If the run is `done` / `cancelled` but the task is NOT archived → the
+	 *   run is auto-reopened back to `in_progress` and a `workflow_run_reopened`
+	 *   event is emitted before activation proceeds.
+	 *
+	 * An optional `reopenReason` / `reopenBy` lets the caller describe who
+	 * triggered the reopen (peer agent name, user id, or gate id). When
+	 * omitted, a generic `'activation'` attribution is used.
+	 *
 	 * No per-node SpaceTask rows are created.
 	 */
-	async activateNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
+	async activateNode(
+		runId: string,
+		nodeId: string,
+		options?: { reopenReason?: string; reopenBy?: string }
+	): Promise<SpaceTask[]> {
 		// ── 1. Load the run ────────────────────────────────────────────────────
 		const run = this.config.workflowRunRepo.getRun(runId);
 		if (!run) {
 			throw new ActivationError(`Run not found: ${runId}`);
 		}
-		if (run.status === 'cancelled' || run.status === 'done') {
-			throw new ActivationError(`Cannot activate node for run in status "${run.status}": ${runId}`);
+
+		// Archive check — the only hard block. Done/cancelled are reopenable
+		// as long as the parent task has not been archived.
+		if (this.isParentTaskArchived(runId)) {
+			throw new ActivationError(ARCHIVED_TASK_ERROR_MESSAGE);
+		}
+
+		// Auto-reopen from terminal run statuses. The status machine permits
+		// done → in_progress and cancelled → in_progress.
+		if (run.status === 'done' || run.status === 'cancelled') {
+			await this.reopenRun(
+				run.id,
+				run.status,
+				run.spaceId,
+				options?.reopenReason ??
+					`inbound activation of node "${nodeId}" on run in status "${run.status}"`,
+				options?.reopenBy ?? 'activation'
+			);
 		}
 
 		// ── 2. Idempotency check — return when node already has active executions ─────
@@ -510,7 +557,10 @@ export class ChannelRouter {
 		let activatedTasks: SpaceTask[] | undefined;
 
 		if (activeTasks.length === 0) {
-			activatedTasks = await this.activateNode(runId, targetNode.id);
+			activatedTasks = await this.activateNode(runId, targetNode.id, {
+				reopenBy: `agent:${fromRole}`,
+				reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
+			});
 		}
 
 		// ── 5. Increment per-channel cycle count and reset cyclic gates ──────
@@ -552,7 +602,11 @@ export class ChannelRouter {
 	 */
 	async onGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
 		const run = this.config.workflowRunRepo.getRun(runId);
-		if (!run || run.status === 'cancelled' || run.status === 'done') return [];
+		if (!run) return [];
+
+		// Archive is the only tombstone. Done / cancelled runs are reopened
+		// below when the gate re-evaluation opens a channel requiring activation.
+		if (this.isParentTaskArchived(runId)) return [];
 
 		const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
 		if (!workflow) return [];
@@ -629,8 +683,12 @@ export class ChannelRouter {
 		// Activate all target nodes in parallel. When a shared gate controls multiple
 		// independent nodes (e.g., code-pr-gate → reviewer1, reviewer2, reviewer3),
 		// this ensures they all become active simultaneously rather than sequentially.
+		const reopenOptions = {
+			reopenReason: `gate "${gateId}" opened — re-activating target node(s)`,
+			reopenBy: `gate:${gateId}`,
+		};
 		const results = await Promise.allSettled(
-			[...nodeIdsToActivate].map((nodeId) => this.activateNode(runId, nodeId))
+			[...nodeIdsToActivate].map((nodeId) => this.activateNode(runId, nodeId, reopenOptions))
 		);
 
 		const activatedTasks: SpaceTask[] = [];
@@ -745,13 +803,19 @@ export class ChannelRouter {
 			return evaluateGate(gateDef, runtimeData);
 		}
 
-		// Script-based gates acquire the semaphore and pass executor + context
+		// Script-based gates acquire the semaphore and pass executor + context.
+		// Inject workflow start time as ISO8601 so scripts that need to filter by
+		// "since workflow start" (e.g. review-posted-gate) have a stable reference.
+		const run = this.config.workflowRunRepo.getRun(runId);
+		const workflowStartIso = run ? new Date(run.createdAt).toISOString() : undefined;
+
 		const scriptExecutor: GateScriptExecutorFn = executeGateScript;
 		const scriptContext: GateScriptContext = {
 			workspacePath: this.config.workspacePath ?? process.cwd(),
 			gateId,
 			runId,
 			gateData: runtimeData,
+			workflowStartIso,
 		};
 
 		return this.withScriptSemaphore(async () => {
@@ -973,6 +1037,68 @@ export class ChannelRouter {
 					`Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
 				);
 			}
+		}
+	}
+
+	/**
+	 * Returns `true` when the run's parent task has been archived.
+	 *
+	 * Archive is the single authoritative tombstone for inter-agent activity.
+	 * `listByWorkflowRunIncludingArchived` is used so archived tasks remain
+	 * visible — `listByWorkflowRun` filters them out and would incorrectly
+	 * report "no tasks" (treated as not archived) for a run whose task was
+	 * the only one and has since been archived.
+	 *
+	 * Policy: the NeoKai space runtime uses a one-task-per-run model. The run
+	 * is considered archived when every task associated with it has been
+	 * archived. A run with zero tasks is treated as not archived (archival
+	 * requires evidence of a tombstone, not absence of a task).
+	 */
+	private isParentTaskArchived(runId: string): boolean {
+		const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(runId);
+		if (tasks.length === 0) return false;
+		return tasks.every((t) => t.archivedAt != null);
+	}
+
+	/**
+	 * Transition a run from a terminal status (`done` or `cancelled`) back to
+	 * `in_progress` and emit a `workflow_run_reopened` notification.
+	 *
+	 * Callers should only invoke this after confirming the parent task has
+	 * NOT been archived (see `isParentTaskArchived`).
+	 */
+	private async reopenRun(
+		runId: string,
+		fromStatus: 'done' | 'cancelled',
+		spaceId: string,
+		reason: string,
+		by: string
+	): Promise<void> {
+		this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
+		await this.safeNotify({
+			kind: 'workflow_run_reopened',
+			spaceId,
+			runId,
+			fromStatus,
+			reason,
+			by,
+			timestamp: new Date().toISOString(),
+		});
+	}
+
+	/**
+	 * Invoke the configured notification sink, swallowing any errors so a
+	 * faulty consumer cannot break message delivery or node activation.
+	 *
+	 * When no sink is configured (e.g. unit tests), this is a no-op.
+	 */
+	private async safeNotify(event: SpaceNotificationEvent): Promise<void> {
+		if (!this.config.notificationSink) return;
+		try {
+			await this.config.notificationSink.notify(event);
+		} catch {
+			// Intentionally swallow — the runtime must remain resilient to
+			// consumer failures. A separate telemetry layer can log these.
 		}
 	}
 }

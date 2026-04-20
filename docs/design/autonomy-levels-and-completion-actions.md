@@ -127,8 +127,9 @@ interface ScriptCompletionAction extends CompletionAction {
 
 interface InstructionCompletionAction extends CompletionAction {
   type: 'instruction';
-  targetNodeId: string;           // which node agent receives the instruction
+  agentName: string;              // name of the SpaceAgent that will execute the instruction
   instruction: string;            // supports {{artifact.field}} templates
+  timeoutMs?: number;             // default 120000 — max time to wait for the verifier agent
 }
 
 interface McpCallCompletionAction extends CompletionAction {
@@ -136,8 +137,21 @@ interface McpCallCompletionAction extends CompletionAction {
   server: string;                 // MCP server name (must be enabled in space skills)
   tool: string;                   // tool name on that server
   args: Record<string, string>;   // supports {{artifact.field}} templates
+  expect?: McpCallExpectation;    // optional assertion applied to the tool result
+}
+
+interface McpCallExpectation {
+  path: string;                   // dot/bracket accessor into the result (e.g. 'data.items[0].status')
+  op: 'eq' | 'neq' | 'contains' | 'exists' | 'truthy';
+  value?: unknown;                // required for eq/neq/contains, ignored for exists/truthy
 }
 ```
+
+**`instruction` executor.** The runtime resolves `agentName` to a SpaceAgent, spawns an ephemeral verification session bound to that agent, injects a `report_verification(pass, reason)` MCP tool, and sends `instruction` (template-interpolated from the resolved artifact) as the user message. The action completes when the agent calls `report_verification` — passing `true` makes the action succeed, `false` makes it fail with the supplied `reason`. If the agent does not call the tool within `timeoutMs` (default 120s), the action fails with reason `'timed out'`.
+
+**`mcp_call` executor.** The runtime invokes `tool` on `server` with `args`. If `expect` is provided, the `path`/`op`/`value` assertion is applied to the tool's JSON result; a failing assertion fails the action with a descriptive reason (e.g. `'expected "state" to equal "MERGED", got "OPEN"'`). Any thrown error from the tool invocation fails the action with the error's message.
+
+Both executors are **dependency-injected** into `SpaceRuntime` via `SpaceRuntimeConfig.instructionActionExecutor` and `SpaceRuntimeConfig.mcpToolExecutor`. When an executor is not configured, the corresponding action type fails with a configuration error rather than silently succeeding — the runtime refuses to skip a human-authored verification step.
 
 Three action types cover the spectrum of complexity:
 
@@ -146,6 +160,32 @@ Three action types cover the spectrum of complexity:
 | `script` | CLI commands (`gh pr merge`, `npm publish`) | Yes | No |
 | `mcp_call` | External service calls (Slack, JIRA, deploy tools) | Yes | No |
 | `instruction` | Complex reasoning tasks (write release notes, analyze test results) | No | Yes |
+
+### 2c. `report_result`: agents report outcomes, runtime decides status
+
+Agents signal task completion by calling the `report_result` MCP tool. Stage-2 tightens this tool's contract so that agents can no longer self-certify terminal status:
+
+```typescript
+report_result({
+  summary: string,                 // human-readable summary of what was done
+  evidence?: {                     // optional structured evidence
+    prUrl?: string,
+    commitSha?: string,
+    testOutput?: string,
+    // ...additional keys allowed via passthrough
+  },
+})
+```
+
+The Zod schema is `.strict()` — passing a `status` or `error` field is a **validation error**, not silently accepted. This is enforced at both the Task Agent and Node Agent `report_result` surfaces (`task-agent-tool-schemas.ts`, `node-agent-tools.ts`).
+
+**The completion-action pipeline is the sole arbiter of terminal task status.** When a `report_result` call is recorded:
+
+1. The runtime sets `task.reportedStatus = 'done'` and stores the agent's summary (+ serialized evidence block) on `task.reportedSummary`.
+2. `CompletionDetector` fires on the `reportedStatus` change and triggers `resolveCompletionWithActions()`.
+3. The completion actions on the end node run in order. Their collective outcome decides whether the task ends `done` (all actions passed), pauses at `review` (an action requires human approval), or ends `blocked` (an action failed).
+
+Notably, **the runtime does NOT read `reportedStatus` to decide terminal status anymore** — it only uses it as a trigger. Legacy values like `reportedStatus='blocked'` or `'cancelled'` written by older code paths do NOT short-circuit the pipeline. This closes the "agent lies" gap: an agent claiming "I merged the PR" cannot mark the task `done` — the `VERIFY_PR_MERGED` completion action on the workflow's QA end node runs regardless and will fail the task if the PR is still open.
 
 ### 3. Execution Flow
 

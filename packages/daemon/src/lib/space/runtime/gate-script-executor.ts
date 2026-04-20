@@ -39,6 +39,15 @@ export interface GateScriptContext {
 	 * Exposed to scripts as NEOKAI_GATE_DATA_JSON.
 	 */
 	gateData?: Record<string, unknown>;
+	/**
+	 * ISO8601 timestamp marking when the workflow run started (workflowRun.createdAt
+	 * converted to ISO8601). Exposed to scripts as NEOKAI_WORKFLOW_START_ISO.
+	 * Gate scripts that compare against fresh activity (e.g. reviews submitted
+	 * since start) rely on this variable.
+	 * Undefined when the context wasn't able to resolve a run start time
+	 * (e.g. in unit tests); the env var is only injected when set.
+	 */
+	workflowStartIso?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +129,10 @@ export function buildRestrictedEnv(
 	env['NEOKAI_WORKFLOW_RUN_ID'] = context.runId;
 	env['NEOKAI_WORKSPACE_PATH'] = context.workspacePath;
 
+	if (context.workflowStartIso) {
+		env['NEOKAI_WORKFLOW_START_ISO'] = context.workflowStartIso;
+	}
+
 	const gateData = context.gateData ?? {};
 	try {
 		env['NEOKAI_GATE_DATA_JSON'] = JSON.stringify(gateData);
@@ -135,7 +148,8 @@ export function buildRestrictedEnv(
 				key === 'NEOKAI_GATE_ID' ||
 				key === 'NEOKAI_WORKFLOW_RUN_ID' ||
 				key === 'NEOKAI_WORKSPACE_PATH' ||
-				key === 'NEOKAI_GATE_DATA_JSON'
+				key === 'NEOKAI_GATE_DATA_JSON' ||
+				key === 'NEOKAI_WORKFLOW_START_ISO'
 			) {
 				continue;
 			}

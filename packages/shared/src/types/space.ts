@@ -578,6 +578,15 @@ export interface SpaceWorkflowRun {
 	updatedAt: number;
 	/** Completion timestamp (milliseconds since epoch); null until the run reaches a terminal state */
 	completedAt: number | null;
+	/**
+	 * Timestamp (milliseconds since epoch) at which the run's end-node
+	 * `completionActions` have been successfully fired. Used as an idempotency
+	 * marker so that a run which is reopened (done → in_progress) and later
+	 * completes again does not re-fire its completion actions.
+	 *
+	 * Null until the first successful completion. Never cleared on reopen.
+	 */
+	completionActionsFiredAt: number | null;
 }
 
 /**
@@ -1154,6 +1163,35 @@ export interface UpdateSpaceWorkflowParams {
 	templateHash?: string | null;
 }
 
+/**
+ * A single workflow row that participates in a duplicate-drift group.
+ * Part of {@link DuplicateDriftReport}.
+ */
+export interface DuplicateDriftRow {
+	/** Workflow UUID. */
+	id: string;
+	/** Canonical content hash at last sync. May be null for legacy rows. */
+	templateHash: string | null;
+	/** Creation timestamp (ms since epoch). Newest-first ordering is used for resync. */
+	createdAt: number;
+}
+
+/**
+ * One drift group surfaced by `spaceWorkflow.detectDuplicateDrift`.
+ *
+ * A drift group is formed by multiple workflow rows in the same space that
+ * share a `templateName` but carry differing `templateHash` values. These
+ * rows represent template drift — either duplicate seed passes left stale
+ * versions behind, or the source built-in template changed after some rows
+ * were seeded but before others were re-synced.
+ */
+export interface DuplicateDriftReport {
+	/** Shared `templateName` for the group. Always non-empty. */
+	templateName: string;
+	/** Workflow rows in the group, newest-first. Always >= 2 entries. */
+	rows: DuplicateDriftRow[];
+}
+
 // ============================================================================
 // Export / Import Format Types (M8)
 // ============================================================================
@@ -1379,24 +1417,54 @@ export interface ScriptCompletionAction extends CompletionActionBase {
 	script: string;
 }
 
-/** Agent instruction — sends a prompt to a specific node agent for execution */
+/** Agent instruction — spawns a short-lived SpaceAgent session to verify an outcome */
 export interface InstructionCompletionAction extends CompletionActionBase {
 	type: 'instruction';
-	/** Node ID of the agent that receives the instruction */
-	targetNodeId: string;
+	/**
+	 * Name of the SpaceAgent that should execute the instruction. The runtime
+	 * spawns an ephemeral session bound to this agent, injects a
+	 * `report_verification` tool, and awaits its response.
+	 */
+	agentName: string;
 	/** Prompt text — supports `{{artifact.field}}` template interpolation */
 	instruction: string;
+	/**
+	 * Maximum time to wait for the spawned agent to call
+	 * `report_verification`. Defaults to 120000ms (2 minutes).
+	 */
+	timeoutMs?: number;
 }
 
 /** Direct MCP tool invocation — no agent reasoning needed */
 export interface McpCallCompletionAction extends CompletionActionBase {
 	type: 'mcp_call';
-	/** MCP server name (must be enabled in the space's skills config) */
+	/** MCP server id (must be enabled in the space's skills config) */
 	server: string;
 	/** Tool name on the MCP server */
 	tool: string;
 	/** Tool arguments — values support `{{artifact.field}}` template interpolation */
 	args: Record<string, string>;
+	/**
+	 * Optional assertion applied to the tool result. The runtime extracts the
+	 * value at `path` from the result object and compares it via `op` to
+	 * `value`. If the assertion fails, the action fails.
+	 */
+	expect?: McpCallExpectation;
+}
+
+/**
+ * Assertion applied to the JSON result of an `mcp_call` completion action.
+ *
+ * `path` uses a dot/bracket accessor syntax (e.g. `data.items[0].status`).
+ * Empty path matches the whole result.
+ */
+export interface McpCallExpectation {
+	/** Dot/bracket accessor path into the tool result (e.g. `status`, `data.items[0].ok`). */
+	path: string;
+	/** Comparison operator. */
+	op: 'eq' | 'neq' | 'contains' | 'exists' | 'truthy';
+	/** Right-hand side. Required for `eq`/`neq`/`contains`, ignored for `exists`/`truthy`. */
+	value?: unknown;
 }
 
 // ── Approval Records ──────────────────────────────────────────────────────

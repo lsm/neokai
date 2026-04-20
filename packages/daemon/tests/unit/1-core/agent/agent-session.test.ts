@@ -13,6 +13,7 @@ import type {
 	AgentProcessingState,
 	SelectiveRewindResult,
 	RewindMode,
+	McpServerConfig,
 } from '@neokai/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
@@ -2199,6 +2200,152 @@ describe('AgentSession', () => {
 			agentSession.setRuntimeSystemPrompt('new prompt');
 
 			expect(agentSession.getSessionData().config.systemPrompt).toBe('new prompt');
+		});
+	});
+
+	describe('mergeRuntimeMcpServers', () => {
+		const makeMockSession = (existingServers?: Record<string, unknown>): Session => ({
+			id: 'space:worker:test',
+			title: 'Space Worker',
+			workspacePath: '/test/workspace',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: {
+				model: 'claude-sonnet-4-5-20250929',
+				maxTokens: 8192,
+				temperature: 1.0,
+				mcpServers: existingServers as Record<string, McpServerConfig> | undefined,
+			},
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+			},
+			type: 'general',
+		});
+
+		const makeMocks = () => {
+			const mockDb = {
+				getSession: mock(() => null),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-api-key');
+			return { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey };
+		};
+
+		it('should merge new servers into empty mcpServers config without persisting', () => {
+			const mockSession = makeMockSession();
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			expect(agentSession.getSessionData().config.mcpServers).toBeUndefined();
+
+			const newServer = { type: 'sdk', name: 'space-agent-tools' } as unknown as McpServerConfig;
+			agentSession.mergeRuntimeMcpServers({ 'space-agent-tools': newServer });
+
+			const merged = agentSession.getSessionData().config.mcpServers;
+			expect(merged).toBeDefined();
+			expect(merged?.['space-agent-tools']).toBe(newServer);
+
+			// Runtime-only: DB update should NOT be called
+			const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
+				.updateSession.mock.calls;
+			expect(updateSessionCalls.length).toBe(0);
+		});
+
+		it('should preserve existing mcpServers while adding new entries', () => {
+			const existing = {
+				'task-agent': { type: 'sdk', name: 'task-agent' } as unknown as McpServerConfig,
+				'db-query': { type: 'sdk', name: 'db-query' } as unknown as McpServerConfig,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			const spaceAgent = {
+				type: 'sdk',
+				name: 'space-agent-tools',
+			} as unknown as McpServerConfig;
+			agentSession.mergeRuntimeMcpServers({ 'space-agent-tools': spaceAgent });
+
+			const merged = agentSession.getSessionData().config.mcpServers;
+			expect(merged).toBeDefined();
+			// Existing entries preserved
+			expect(merged?.['task-agent']).toBe(existing['task-agent']);
+			expect(merged?.['db-query']).toBe(existing['db-query']);
+			// New entry added
+			expect(merged?.['space-agent-tools']).toBe(spaceAgent);
+			expect(Object.keys(merged ?? {}).sort()).toEqual([
+				'db-query',
+				'space-agent-tools',
+				'task-agent',
+			]);
+		});
+
+		it('should overwrite only overlapping keys, leaving others untouched', () => {
+			const originalDbQuery = {
+				type: 'sdk',
+				name: 'db-query',
+				mark: 'original',
+			} as unknown as McpServerConfig;
+			const existing = {
+				'task-agent': { type: 'sdk', name: 'task-agent' } as unknown as McpServerConfig,
+				'db-query': originalDbQuery,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			const replacementDbQuery = {
+				type: 'sdk',
+				name: 'db-query',
+				mark: 'replacement',
+			} as unknown as McpServerConfig;
+			agentSession.mergeRuntimeMcpServers({ 'db-query': replacementDbQuery });
+
+			const merged = agentSession.getSessionData().config.mcpServers;
+			// Overlapping key was overwritten
+			expect(merged?.['db-query']).toBe(replacementDbQuery);
+			expect(merged?.['db-query']).not.toBe(originalDbQuery);
+			// Non-overlapping key preserved
+			expect(merged?.['task-agent']).toBe(existing['task-agent']);
+
+			// Runtime-only: DB update should NOT be called
+			const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
+				.updateSession.mock.calls;
+			expect(updateSessionCalls.length).toBe(0);
 		});
 	});
 

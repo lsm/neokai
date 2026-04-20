@@ -182,8 +182,10 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push('');
 	sections.push(
-		`- **report_result** — Mark the task as completed or failed and record a result summary. ` +
-			`Pass \`status\` (\`done\`, \`blocked\`, or \`cancelled\`) and a \`summary\` string. ` +
+		`- **report_result** — Record the final result of the task. Pass a \`summary\` string and ` +
+			`optional structured \`evidence\` (\`prUrl\`, \`commitSha\`, \`testOutput\`, …). ` +
+			`Do NOT pass a \`status\` — the runtime decides the terminal task status by running the ` +
+			`completion-action pipeline on the end node. ` +
 			`Call this when the workflow reaches an unrecoverable error or you need to cancel. ` +
 			`Workflow completion is automatic — it triggers when the end node's session completes.`
 	);
@@ -240,8 +242,9 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`call any completion tool — just wait for the \`[NODE_COMPLETE]\` event from the end node. ` +
 			`Use \`list_group_members\` to verify all agents have reached idle status if needed. ` +
 			`Only call \`report_result\` if you need to cancel or signal an unrecoverable error.\n` +
-			`6. **Handle errors** — If a node agent errors, call \`report_result\` with ` +
-			`\`status: "cancelled"\` and the error details.`
+			`6. **Handle errors** — If a node agent errors, call \`report_result\` with a \`summary\` ` +
+			`describing what went wrong. The runtime will classify the task based on the ` +
+			`completion-action pipeline; you do not control the final status.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
@@ -563,6 +566,5 @@ export function createTaskAgentInit(config: TaskAgentSessionConfig): AgentSessio
 		type: 'space_task_agent',
 		model,
 		provider,
-		contextAutoQueue: false,
 	};
 }

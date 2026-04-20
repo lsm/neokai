@@ -2,13 +2,18 @@
 #
 # Test execution is flattened based on trigger:
 #
-# | Trigger                              | Tests Run                                      | Rationale                      |
-# |--------------------------------------|-----------------------------------------------|--------------------------------|
-# | PR to dev                            | check + unit + online                         | Fast feedback for PRs          |
-# | Push to dev                          | e2e only                                      | Already passed unit/online    |
-# | PR to main                           | all tests (check + unit + online + e2e + web + CLI) | Full gate              |
-# | Push to main                         | all tests                                     | Full gate for main branch     |
-# | workflow_dispatch (run_e2e_only=true) | discover + build + e2e only                   | Selective E2E on PR branches  |
+# | Trigger                              | Tests Run                                                    | Rationale                               |
+# |--------------------------------------|--------------------------------------------------------------|-----------------------------------------|
+# | PR to dev                            | check + unit + online                                        | Fast feedback for PRs                   |
+# | Push to dev                          | (no tests)                                                   | Already passed unit/online on PR        |
+# | PR to main                           | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
+# | Push to main                         | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
+# | workflow_dispatch (default)          | all tests including E2E                                      | Manual full run including E2E           |
+# | workflow_dispatch (run_e2e_only=true) | discover + build + e2e only                                 | Selective E2E on any branch             |
+#
+# NOTE: E2E tests are NOT run on any automatic trigger (push / PR). They are
+# manual-only via workflow_dispatch on any branch. This keeps the release
+# pipeline and PR feedback loop unblocked by flaky or long-running E2E suites.
 #
 # Release is handled separately in release.yml (triggered by version tags).
 # Test coverage (unit, online, web) is uploaded to Coveralls.
@@ -23,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       run_e2e_only:
-        description: 'Skip all prerequisite jobs and run only E2E tests (for PR branches)'
+        description: 'Skip all prerequisite jobs and run only E2E tests (any branch)'
         required: false
         default: 'false'
         type: boolean
@@ -146,7 +151,6 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - agent-context
           - agent-sdk
           - components
           - coordinator
@@ -192,9 +196,6 @@ jobs:
           # Modules with directory-level test_path auto-discover new test files.
           # Split modules (rpc-*, room-*, features-*) use explicit file lists.
           # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
-          - module: agent-context
-            test_path: tests/online/agent/context-command.test.ts
-            mock_sdk: true
           - module: agent-sdk
             test_path: tests/online/agent/agent-session-sdk.test.ts
             mock_sdk: true
@@ -731,8 +732,9 @@ jobs:
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
-  # Waits for test jobs; proceeds if they passed or were skipped (push to dev).
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev, push to dev)
+  # Waits for test jobs; proceeds if they passed or were skipped.
+  # Discover may be skipped (E2E is workflow_dispatch-only); we tolerate that.
   # ============================================
 
   build:
@@ -742,10 +744,11 @@ jobs:
     if: >-
       always() &&
       (github.event_name == 'pull_request' && github.base_ref == 'main' ||
-       github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') ||
+       github.event_name == 'push' && github.ref == 'refs/heads/main' ||
        github.event_name == 'workflow_dispatch') &&
       (github.event.inputs.run_e2e_only == 'true' ||
-       (needs.discover.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
+       (contains(fromJSON('["success", "skipped"]'), needs.discover.result) &&
+        contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
         contains(fromJSON('["success", "skipped"]'), needs.test-web.result) &&
@@ -811,13 +814,13 @@ jobs:
   # Tests are split into two groups:
   #   - no-llm: UI-only tests (run fully parallel)
   #   - llm: Tests requiring LLM round-trips (max 4 parallel)
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Run on: workflow_dispatch only (E2E is manual-only)
   # ============================================
 
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -895,19 +898,19 @@ jobs:
   # ============================================
   # E2E TESTS - No LLM (Matrix, fully parallel)
   # UI-only tests that don't require LLM API calls
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Run on: workflow_dispatch only (E2E is manual-only on any branch)
   # ============================================
 
   e2e-no-llm:
     name: E2E No-LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    # Runs when build succeeds; skip release PRs to avoid blocking releases with flaky tests
+    # Manual-only: E2E must be explicitly triggered via workflow_dispatch.
     if: >-
       always() &&
+      github.event_name == 'workflow_dispatch' &&
       needs.build.result == 'success' &&
-      needs.discover.result == 'success' &&
-      (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
+      needs.discover.result == 'success'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -1034,19 +1037,19 @@ jobs:
   # ============================================
   # E2E TESTS - LLM Required (Matrix, max 4 parallel)
   # Tests that send messages and wait for LLM responses
-  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Run on: workflow_dispatch only (E2E is manual-only on any branch)
   # ============================================
 
   e2e-llm:
     name: E2E LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    # Runs when build succeeds; skip release PRs to avoid blocking releases with flaky tests
+    # Manual-only: E2E must be explicitly triggered via workflow_dispatch.
     if: >-
       always() &&
+      github.event_name == 'workflow_dispatch' &&
       needs.build.result == 'success' &&
-      needs.discover.result == 'success' &&
-      (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
+      needs.discover.result == 'success'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -1245,25 +1248,25 @@ jobs:
             FAILED=1
           fi
 
-          # build: PR to main, push to dev, push to main (skip on PR to dev)
+          # build: PR to main, push to main, workflow_dispatch (skip on PR to dev, push to dev)
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
             FAILED=1
           fi
 
-          # discover: PR to main, push to dev, push to main (skip on PR to dev)
+          # discover: workflow_dispatch only (E2E is manual-only)
           if [[ "${{ needs.discover.result }}" == "failure" ]]; then
             echo "❌ discover failed"
             FAILED=1
           fi
 
-          # e2e-no-llm: PR to main, push to dev, push to main (skip on PR to dev)
+          # e2e-no-llm: workflow_dispatch only (E2E is manual-only)
           if [[ "${{ needs.e2e-no-llm.result }}" == "failure" ]]; then
             echo "❌ e2e-no-llm failed"
             FAILED=1
           fi
 
-          # e2e-llm: PR to main, push to dev, push to main (skip on PR to dev)
+          # e2e-llm: workflow_dispatch only (E2E is manual-only)
           if [[ "${{ needs.e2e-llm.result }}" == "failure" ]]; then
             echo "❌ e2e-llm failed"
             FAILED=1

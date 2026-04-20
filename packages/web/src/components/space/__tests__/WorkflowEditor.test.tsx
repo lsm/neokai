@@ -430,7 +430,7 @@ describe('WorkflowEditor', () => {
 			expect(getByText('Coding with QA Workflow')).toBeTruthy();
 			expect(getByText('Research Workflow')).toBeTruthy();
 			expect(getByText('Review-Only Workflow')).toBeTruthy();
-			expect(getByText('Full-Cycle Coding Workflow')).toBeTruthy();
+			expect(getByText('Plan & Decompose Workflow')).toBeTruthy();
 		});
 
 		it('applying Coding template creates 2 steps', () => {
@@ -454,20 +454,20 @@ describe('WorkflowEditor', () => {
 			expect(getByText('2 steps')).toBeTruthy();
 		});
 
-		it('applying Full-Cycle Coding Workflow template creates 5 steps', () => {
+		it('applying Plan & Decompose Workflow template creates 3 steps', () => {
 			const { getByText } = render(<WorkflowEditor {...defaultProps} />);
 			fireEvent.click(getByText(/Start from template/));
-			fireEvent.click(getByText('Full-Cycle Coding Workflow'));
-			expect(getByText('5 steps')).toBeTruthy();
+			fireEvent.click(getByText('Plan & Decompose Workflow'));
+			expect(getByText('3 steps')).toBeTruthy();
 		});
 
-		it('Full-Cycle Coding Workflow template builds explicit custom prompts for every node', () => {
+		it('Plan & Decompose Workflow template builds explicit custom prompts for every node', () => {
 			const template = getAvailableTemplates(mockWorkflowTemplates.value).find(
-				(entry) => entry.label === 'Full-Cycle Coding Workflow'
+				(entry) => entry.label === 'Plan & Decompose Workflow'
 			);
 			expect(template).toBeTruthy();
 			const nodes = buildTemplateNodes(template!, mockAgents.value);
-			expect(nodes).toHaveLength(5);
+			expect(nodes).toHaveLength(3);
 			for (const node of nodes) {
 				if (node.agents && node.agents.length > 0) {
 					for (const agent of node.agents) {
@@ -573,7 +573,7 @@ describe('WorkflowEditor', () => {
 				'Coding Workflow',
 				'Research Workflow',
 				'Review-Only Workflow',
-				'Full-Cycle Coding Workflow',
+				'Plan & Decompose Workflow',
 				'Coding with QA Workflow',
 			]);
 		});

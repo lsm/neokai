@@ -142,6 +142,30 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`  4. Create a task with \`create_standalone_task\` using a clear title/description aligned with the selected workflow.`
 	);
 	sections.push('');
+
+	// Workflow shape guidance — what each built-in workflow is good at and when
+	// to pick it. Kept short so the LLM can skim it before calling the discovery
+	// tools above. Descriptions mirror the tags declared in built-in-workflows.ts.
+	sections.push(
+		`**Picking the right workflow:**\n` +
+			`  - **Coding Workflow** — the default for a single, well-scoped implementation change. ` +
+			`One engineer + one reviewer iterating on one PR. Pick this when the user describes ` +
+			`one concrete change (bug fix, single feature, refactor in a defined area).\n` +
+			`  - **Coding with QA Workflow** — same coder/reviewer loop plus an explicit QA node ` +
+			`that runs backend, frontend, and browser-based checks before merge. Pick this when ` +
+			`the change spans multiple services or needs heavier verification than unit tests.\n` +
+			`  - **Plan & Decompose Workflow** — NOT a coding workflow. Produces a plan PR, has ` +
+			`four reviewers (architecture, security, correctness, UX) approve it, then fans the ` +
+			`plan out into individual follow-up tasks via \`create_standalone_task\`. Pick this when ` +
+			`the user goal is too broad for one PR — e.g. "build feature X", "migrate system Y", ` +
+			`"overhaul area Z" — and needs to be broken into smaller tasks before any coding starts. ` +
+			`The output is a set of tasks, not a merged change.\n` +
+			`  - **Research Workflow** — read-only investigation that produces a research document PR. ` +
+			`Pick this when the user wants findings or a recommendation, not a code change.\n` +
+			`  - **Review-Only Workflow** — single reviewer against an existing PR or codebase. ` +
+			`Pick this when the work is already implemented and the user just wants a review.`
+	);
+	sections.push('');
 	sections.push(
 		`**Ask for clarification** before creating any work when:\n` +
 			`  - The request is too vague to determine what needs to be built (e.g. "improve the app", "make it better", "help me")\n` +
@@ -303,6 +327,17 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`\`cancelled\`), result summary, and saved data. Use this when you need more granular insight ` +
 			`into a running workflow than \`get_task_detail\` provides — for example, to see which specific ` +
 			`node is stuck or to read intermediate outputs from individual agents.`
+	);
+
+	// Multi-session coordination note
+	sections.push(`\n## Multi-Session Coordination\n`);
+	sections.push(
+		`Other sessions in this Space — task agents, worker/coder sessions, and any ad-hoc sessions created ` +
+			`with this Space as their context — now share the same \`space-agent-tools\` MCP surface you use. ` +
+			`That means:\n` +
+			`  - Task agents can send messages back to you directly via \`send_message_to_agent\`/\`send_message_to_task\`.\n` +
+			`  - Coordination is bidirectional: you are not the only agent that can inspect tasks, approve gates, or message peers.\n` +
+			`  - When you receive a message from another session, verify the sender context (task id, workflow run id) before acting.`
 	);
 
 	// Operator-supplied context appended last — after all contract sections —
