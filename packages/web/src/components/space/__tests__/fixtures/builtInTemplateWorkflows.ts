@@ -159,7 +159,7 @@ export function makeBuiltInTemplateWorkflows(
 					description: 'All four Plan Reviewers must approve the plan.',
 					fields: [
 						{
-							name: 'votes',
+							name: 'approvals',
 							type: 'map',
 							writers: ['reviewer'],
 							check: { op: 'count', match: 'approved', min: 4 },
