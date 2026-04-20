@@ -462,6 +462,9 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 				label: 'QA → Coding (fix loop)',
 			},
 		],
+		// Test fixture: supervised tier (level 3) — matches the production CODING_WORKFLOW
+		// default so tests exercise the autonomy-gated end-node tool path realistically.
+		completionAutonomyLevel: 3,
 		tags: ['v2', 'test'],
 	})) as { workflow: SpaceWorkflow };
 

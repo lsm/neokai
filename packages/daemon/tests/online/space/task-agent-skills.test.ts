@@ -78,6 +78,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 		nodes: [{ id: 'step-skills-001', name: 'Code Implementation', agentId: coderAgent.id }],
 		transitions: [],
 		startNodeId: 'step-skills-001',
+		completionAutonomyLevel: 3,
 	})) as { workflow: SpaceWorkflow };
 
 	return { space, coderAgent, workflow: workflowResult.workflow };
