@@ -1,5 +1,5 @@
 /**
- * Migration 95 Tests — Remove legacy "Full-Cycle Coding Workflow" rows.
+ * Migration 96 Tests — Remove legacy "Full-Cycle Coding Workflow" rows.
  *
  * Covers:
  *   - Deletes Full-Cycle workflow rows that have no active runs
@@ -15,7 +15,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations, runMigration95 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigrations, runMigration96 } from '../../../../../src/storage/schema/migrations.ts';
 
 function insertSpace(db: BunDatabase, id: string): void {
 	const now = Date.now();
@@ -54,7 +54,7 @@ function workflowExists(db: BunDatabase, id: string): boolean {
 	return row !== null && row !== undefined;
 }
 
-describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
+describe('Migration 96: remove legacy Full-Cycle Coding Workflow rows', () => {
 	let testDir: string;
 	let db: BunDatabase;
 
@@ -62,7 +62,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 		testDir = join(
 			process.cwd(),
 			'tmp',
-			'test-migration-95',
+			'test-migration-96',
 			`test-${Date.now()}-${Math.random()}`
 		);
 		mkdirSync(testDir, { recursive: true });
@@ -91,7 +91,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 		insertWorkflow(db, { id: 'wf-fc', spaceId: 'sp-1', name: 'Full-Cycle Coding Workflow' });
 		expect(workflowExists(db, 'wf-fc')).toBe(true);
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(false);
 	});
@@ -105,7 +105,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 			status: 'done',
 		});
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(false);
 	});
@@ -119,7 +119,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 			status: 'cancelled',
 		});
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(false);
 	});
@@ -129,7 +129,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 		insertWorkflow(db, { id: 'wf-fc-1', spaceId: 'sp-1', name: 'Full-Cycle Coding Workflow' });
 		insertWorkflow(db, { id: 'wf-fc-2', spaceId: 'sp-2', name: 'Full-Cycle Coding Workflow' });
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc-1')).toBe(false);
 		expect(workflowExists(db, 'wf-fc-2')).toBe(false);
@@ -146,7 +146,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 			status: 'pending',
 		});
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(true);
 	});
@@ -160,7 +160,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 			status: 'in_progress',
 		});
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(true);
 	});
@@ -174,7 +174,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 			status: 'blocked',
 		});
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(true);
 	});
@@ -194,7 +194,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 			status: 'in_progress',
 		});
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(true);
 	});
@@ -207,7 +207,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 		insertWorkflow(db, { id: 'wf-research', spaceId: 'sp-1', name: 'Research Workflow' });
 		insertWorkflow(db, { id: 'wf-fc', spaceId: 'sp-1', name: 'Full-Cycle Coding Workflow' });
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-coding')).toBe(true);
 		expect(workflowExists(db, 'wf-plan')).toBe(true);
@@ -219,7 +219,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 		// Matching is on exact name — a workflow named differently should survive
 		insertWorkflow(db, { id: 'wf-custom', spaceId: 'sp-1', name: 'My Full-Cycle Variant' });
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-custom')).toBe(true);
 	});
@@ -229,7 +229,7 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 	test('is a no-op when no Full-Cycle rows exist', () => {
 		insertWorkflow(db, { id: 'wf-coding', spaceId: 'sp-1', name: 'Coding Workflow' });
 
-		runMigration95(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-coding')).toBe(true);
 	});
@@ -237,8 +237,8 @@ describe('Migration 95: remove legacy Full-Cycle Coding Workflow rows', () => {
 	test('running twice yields the same result (idempotent)', () => {
 		insertWorkflow(db, { id: 'wf-fc', spaceId: 'sp-1', name: 'Full-Cycle Coding Workflow' });
 
-		runMigration95(db);
-		runMigration95(db);
+		runMigration96(db);
+		runMigration96(db);
 
 		expect(workflowExists(db, 'wf-fc')).toBe(false);
 	});
