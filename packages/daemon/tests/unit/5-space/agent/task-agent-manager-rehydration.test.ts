@@ -256,6 +256,8 @@ function makeCtx(): TestCtx {
 
 	const mockSpaceRuntimeService = {
 		createOrGetRuntime: async (_spaceId: string) => runtime,
+		getSharedRuntime: () => runtime,
+		notifyGateDataChanged: async (_runId: string, _gateId: string) => {},
 	};
 
 	const mockSessionManager = {
