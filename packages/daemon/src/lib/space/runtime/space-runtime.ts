@@ -1681,12 +1681,16 @@ export class SpaceRuntime {
 							);
 						}
 					}
-					if (canonicalTask.status === 'open') {
+					if (
+						canonicalTask.status === 'open' ||
+						(canonicalTask.status === 'review' && canonicalTask.pendingCheckpointType === 'gate')
+					) {
 						const nowTs = Date.now();
 						await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
 							status: 'in_progress',
 							startedAt: canonicalTask.startedAt ?? nowTs,
 							completedAt: null,
+							pendingCheckpointType: null,
 						});
 					}
 				}
