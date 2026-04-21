@@ -5,7 +5,7 @@
 # | Trigger                              | Tests Run                                                    | Rationale                               |
 # |--------------------------------------|--------------------------------------------------------------|-----------------------------------------|
 # | PR to dev                            | check + unit + online                                        | Fast feedback for PRs                   |
-# | Push to dev                          | (no tests)                                                   | Already passed unit/online on PR        |
+# | Push to dev                          | check + unit + online                                        | Same checks as PR for merge safety     |
 # | PR to main                           | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
 # | Push to main                         | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
 # | workflow_dispatch (default)          | all tests including E2E                                      | Manual full run including E2E           |
@@ -59,14 +59,14 @@ jobs:
 
   # ============================================
   # CODE QUALITY CHECKS
-  # Run on: PR to dev, PR to main, push to main (skip on push to dev)
+  # Run on: PR to dev, PR to main, push to dev, push to main
   # ============================================
 
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
+    if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v6
@@ -138,13 +138,13 @@ jobs:
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
-  # Run on: PR to dev, PR to main, push to main (skip on push to dev)
+  # Run on: PR to dev, PR to main, push to dev, push to main
   # ============================================
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag' && (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
+    if: github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'
     timeout-minutes: ${{ matrix.timeout || 5 }}
 
     strategy:
@@ -447,14 +447,14 @@ jobs:
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
-  # Run on: PR to dev, PR to main, push to main (skip on push to dev)
+  # Run on: PR to dev, PR to main, push to dev, push to main
   # ============================================
 
   test-daemon-shared-unit:
     name: Daemon Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 4
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev') && github.event.inputs.run_e2e_only != 'true'
+    if: github.event.inputs.run_e2e_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -511,14 +511,14 @@ jobs:
 
   # ============================================
   # WEB TESTS
-  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
+  # Run on: PR to dev, PR to main, push to dev, push to main, workflow_dispatch
   # ============================================
 
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name == 'pull_request' && (github.base_ref == 'dev' || github.base_ref == 'main') || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: (github.event_name == 'pull_request' && (github.base_ref == 'dev' || github.base_ref == 'main') || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v6
@@ -625,7 +625,7 @@ jobs:
   # ============================================
   # COVERALLS FINALIZATION
   # Merges all parallel coverage uploads
-  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
+  # Run on: PR to dev, PR to main, push to dev, push to main, workflow_dispatch
   # ============================================
 
   coveralls-finalize:
@@ -633,7 +633,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     timeout-minutes: 1
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - name: Finalize Coveralls parallel build
@@ -646,7 +646,7 @@ jobs:
   # ============================================
   # COVERAGE QUALITY GATE
   # Verifies minimum coverage and regression thresholds via Coveralls API.
-  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
+  # Run on: PR to dev, PR to main, push to dev, push to main, workflow_dispatch
   # ============================================
 
   coverage-gate:
@@ -654,7 +654,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [coveralls-finalize]
     timeout-minutes: 3
-    if: (github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - name: Check coverage thresholds via Coveralls API
@@ -1212,25 +1212,25 @@ jobs:
             FAILED=1
           fi
 
-          # Check job: PR to dev, PR to main, push to main (skip on push to dev)
+          # Check job: PR to dev, PR to main, push to dev, push to main
           if [[ "${{ needs.check.result }}" == "failure" ]]; then
             echo "❌ check failed"
             FAILED=1
           fi
 
-          # test-daemon-online: PR to dev, PR to main, push to main (skip on push to dev)
+          # test-daemon-online: PR to dev, PR to main, push to dev, push to main
           if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
             echo "❌ test-daemon-online failed"
             FAILED=1
           fi
 
-          # test-daemon-shared-unit: PR to dev, PR to main, push to main (skip on push to dev)
+          # test-daemon-shared-unit: PR to dev, PR to main, push to dev, push to main
           if [[ "${{ needs.test-daemon-shared-unit.result }}" == "failure" ]]; then
             echo "❌ test-daemon-shared-unit failed"
             FAILED=1
           fi
 
-          # test-web: PR to dev, PR to main, push to main (skip on push to dev)
+          # test-web: PR to dev, PR to main, push to dev, push to main
           if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
             echo "❌ test-web failed"
             FAILED=1
