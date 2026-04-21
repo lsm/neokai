@@ -18,6 +18,7 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -718,5 +719,193 @@ describe('AgentMessageRouter: notFoundAgentNames structured field', () => {
 		expect(result.delivered[0].agentName).toBe('reviewer');
 		expect(result.notFoundAgentNames).toBeDefined();
 		expect(result.notFoundAgentNames).toContain('ghost-role');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: queue-when-inactive — Bug #2 fix (declared-but-no-session targets)
+// ---------------------------------------------------------------------------
+
+describe('AgentMessageRouter: queue message for declared-but-inactive target', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('queues message when target has a pending execution but no active session', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		// Seed coder with session, reviewer WITHOUT a session (pending activation)
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const injected: string[] = [];
+
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer')],
+			messageInjector: async (sid) => {
+				injected.push(sid);
+			},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'code ready',
+		});
+
+		// Message should be queued, not failed
+		expect(result.success).toBe(true);
+		expect(result.queued).toBeDefined();
+		expect(result.queued).toHaveLength(1);
+		expect(result.queued![0].agentName).toBe('reviewer');
+		expect(result.delivered).toHaveLength(0);
+		expect(injected).toHaveLength(0);
+
+		// Verify queue record
+		const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+		expect(pending).toHaveLength(1);
+		expect(pending[0].sourceAgentName).toBe('coder');
+		expect(pending[0].message).toBe('code ready');
+		expect(pending[0].targetKind).toBe('node_agent');
+	});
+
+	test('resolves target declared in execution even without live session (no sessionId filter)', async () => {
+		// Bug #2: target resolution was filtering to only executions with agentSessionId.
+		// Now it resolves all declared executions, enabling queuing.
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// reviewer has an execution record but NO session ID
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'in_progress', // in_progress but session hasn't been spawned yet
+		});
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer')],
+			messageInjector: async () => {},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'hello reviewer',
+		});
+
+		// Should succeed by queuing, not fail with "Unknown target" or "No active sessions"
+		expect(result.success).toBe(true);
+		expect(result.queued).toBeDefined();
+		expect(result.queued![0].agentName).toBe('reviewer');
+	});
+
+	test('delivers to live session if available, queues for inactive declared agents', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+			makeChannel('coder', 'security'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// reviewer has live session
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+		// security has no session
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'security',
+			status: 'pending',
+		});
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const injected: string[] = [];
+
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer'), makeChannel('coder', 'security')],
+			messageInjector: async (sid) => {
+				injected.push(sid);
+			},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: ['reviewer', 'security'],
+			message: 'status update',
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.delivered).toHaveLength(1);
+		expect(result.delivered[0].agentName).toBe('reviewer');
+		expect(injected).toContain(ctx.reviewerSessionId);
+
+		expect(result.queued).toBeDefined();
+		expect(result.queued).toHaveLength(1);
+		expect(result.queued![0].agentName).toBe('security');
+	});
+
+	test('still returns no-session error for topology-declared target without pendingMessageRepo', async () => {
+		// Without a queue, topology-declared targets with no session result in notFound error
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// reviewer has an execution but no session
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		// No pendingMessageRepo configured
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder', 'reviewer')]);
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'hello',
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.reason).toContain('No active sessions found for target agent(s): reviewer');
 	});
 });

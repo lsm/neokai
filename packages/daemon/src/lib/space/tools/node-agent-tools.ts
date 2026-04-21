@@ -48,7 +48,7 @@ import {
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflow } from '@neokai/shared';
-import { computeGateDefaults } from '@neokai/shared';
+import { computeGateDefaults, resolveNodeAgents } from '@neokai/shared';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
@@ -260,12 +260,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
 			const resolver = channelResolver;
+
+			// Within-node executions (agents sharing the same workflow node as the caller).
 			const nodeExecs = workflowRunId
 				? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
 				: [];
 
 			// Exclude self (by agentSessionId) and include peers with a session or completed state
-			const peers = nodeExecs
+			const withinNodePeers = nodeExecs
 				.filter(
 					(ne) =>
 						ne.agentSessionId !== mySessionId && (ne.agentSessionId != null || ne.status === 'idle')
@@ -283,9 +285,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						agentName: ne.agentName,
 						agentId: ne.agentId ?? null,
 						status: memberStatus,
+						nodeName: null as string | null,
 						completionState: {
 							agentName: ne.agentName,
-							taskStatus: ne.status,
+							taskStatus: ne.status as string,
 							completionSummary: ne.result ?? null,
 							completedAt: ne.completedAt ?? null,
 						},
@@ -299,7 +302,119 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 				completedAt: ne.completedAt ?? null,
 			}));
 
-			const topologyTargets = resolver.getPermittedTargets(myAgentName);
+			// Cross-node peers from channel topology:
+			// All declared peer nodes reachable via send_message — even those not yet started.
+			// This fixes the chicken-and-egg problem where agents couldn't discover peers that
+			// haven't been activated yet (they'd see no peers and never know to send a message).
+			//
+			// Channels may be addressed by either agent name (e.g. 'coder') or node name
+			// (e.g. 'Coding'), so we query by both to ensure we don't miss any targets.
+			const myNodeName = workflow?.nodes.find((n) => n.id === workflowNodeId)?.name;
+			const topologyTargetsRaw = [
+				...resolver.getPermittedTargets(myAgentName),
+				...(myNodeName && myNodeName !== myAgentName
+					? resolver.getPermittedTargets(myNodeName)
+					: []),
+			];
+			const topologyTargets = [...new Set(topologyTargetsRaw)];
+			const crossNodePeers: Array<{
+				sessionId: string | null;
+				agentName: string;
+				agentId: string | null;
+				status: 'active' | 'completed' | 'failed' | 'not_started';
+				nodeName: string | null;
+				completionState: {
+					agentName: string;
+					taskStatus: string;
+					completionSummary: string | null;
+					completedAt: number | null;
+				};
+			}> = [];
+
+			if (workflowRunId && topologyTargets.length > 0) {
+				// All executions in this run (to look up cross-node state).
+				const allRunExecs = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+				// Index by workflowNodeId for fast lookup
+				const execsByNode = new Map<string, typeof allRunExecs>();
+				for (const exec of allRunExecs) {
+					if (exec.workflowNodeId === workflowNodeId) continue; // skip self-node
+					const arr = execsByNode.get(exec.workflowNodeId) ?? [];
+					arr.push(exec);
+					execsByNode.set(exec.workflowNodeId, arr);
+				}
+
+				const seenAgentNames = new Set<string>(withinNodePeers.map((p) => p.agentName));
+
+				for (const targetNodeName of topologyTargets) {
+					// Resolve the target node definition so we can look up its executions.
+					const targetNode = workflow?.nodes.find((n) => n.name === targetNodeName);
+					const targetNodeId = targetNode?.id;
+					const targetExecs = targetNodeId ? (execsByNode.get(targetNodeId) ?? []) : [];
+
+					if (targetExecs.length === 0) {
+						// Node not yet activated — resolve declared agent slots from the workflow
+						// definition and show them as "not_started" so the caller knows who to
+						// target via send_message to kick off the node.
+						let agentNames: string[] = [];
+						if (targetNode) {
+							try {
+								agentNames = resolveNodeAgents(targetNode).map((a) => a.name);
+							} catch {
+								// If resolveNodeAgents fails, fall back to the node name itself.
+								agentNames = [targetNodeName];
+							}
+						} else {
+							agentNames = [targetNodeName];
+						}
+
+						for (const agentName of agentNames) {
+							if (seenAgentNames.has(agentName)) continue;
+							seenAgentNames.add(agentName);
+							crossNodePeers.push({
+								sessionId: null,
+								agentName,
+								agentId: null,
+								status: 'not_started' as const,
+								nodeName: targetNodeName,
+								completionState: {
+									agentName,
+									taskStatus: 'not_started',
+									completionSummary: null,
+									completedAt: null,
+								},
+							});
+						}
+					} else {
+						// Node has execution records — include all agents with their current status.
+						for (const ne of targetExecs) {
+							if (seenAgentNames.has(ne.agentName)) continue;
+							seenAgentNames.add(ne.agentName);
+							const execStatus = ne.status;
+							const memberStatus =
+								execStatus === 'idle'
+									? ('completed' as const)
+									: execStatus === 'blocked' || execStatus === 'cancelled'
+										? ('failed' as const)
+										: ('active' as const);
+							crossNodePeers.push({
+								sessionId: ne.agentSessionId ?? null,
+								agentName: ne.agentName,
+								agentId: ne.agentId ?? null,
+								status: memberStatus,
+								nodeName: targetNodeName,
+								completionState: {
+									agentName: ne.agentName,
+									taskStatus: ne.status,
+									completionSummary: ne.result ?? null,
+									completedAt: ne.completedAt ?? null,
+								},
+							});
+						}
+					}
+				}
+			}
+
+			const peers = [...withinNodePeers, ...crossNodePeers];
 			const permittedTargets = [...topologyTargets, 'task-agent'];
 			const channelTopologyDeclared = !resolver.isEmpty();
 
@@ -503,21 +618,35 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 					success: 'partial',
 					delivered: result.delivered,
 					failed: result.failed,
+					queued: result.queued,
 					notFoundAgentNames: result.notFoundAgentNames,
 					gateWrite: gateWriteResult ?? undefined,
 					message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
 				});
 			}
 
+			// Build a human-readable summary
+			const summaryParts: string[] = [];
+			if (result.delivered.length > 0) {
+				summaryParts.push(
+					`delivered to ${result.delivered.length} peer(s): ` +
+						result.delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ')
+				);
+			}
+			if (result.queued && result.queued.length > 0) {
+				summaryParts.push(
+					`queued for ${result.queued.length} peer(s) pending activation: ` +
+						result.queued.map((t) => t.agentName).join(', ')
+				);
+			}
+
 			return jsonResult({
 				success: true,
 				delivered: result.delivered,
+				queued: result.queued,
 				notFoundAgentNames: result.notFoundAgentNames,
 				gateWrite: gateWriteResult ?? undefined,
-				message:
-					`Message delivered to ${result.delivered.length} peer(s): ` +
-					result.delivered.map((t) => `${t.agentName} (${t.sessionId})`).join(', ') +
-					'.',
+				message: summaryParts.length > 0 ? `Message ${summaryParts.join('; ')}.` : 'No action.',
 			});
 		},
 
