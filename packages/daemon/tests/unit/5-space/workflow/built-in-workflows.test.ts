@@ -166,14 +166,30 @@ describe('CODING_WORKFLOW template', () => {
 		expect(gate.script!.timeoutMs).toBe(30000);
 		// The script must consult the workflow start timestamp injected by the runner.
 		expect(gate.script!.source).toContain('NEOKAI_WORKFLOW_START_ISO');
-		// And query GitHub for the reviews list via the PR URL.
+		// Primary check: query GitHub for the formal reviews list via the PR URL.
 		expect(gate.script!.source).toContain('gh pr view "$PR_URL" --json reviews');
 		expect(gate.script!.source).toContain('submittedAt');
-		// Must fail loudly when no review has landed since start.
+		// Must fail loudly when neither review nor PR comment has landed since start.
 		expect(gate.script!.source).toContain('exit 1');
 		// Must echo pr_url/review_count on success for downstream consumers.
 		expect(gate.script!.source).toContain('pr_url');
 		expect(gate.script!.source).toContain('review_count');
+	});
+
+	test('review-posted-gate falls back to PR comments when no formal review exists', () => {
+		const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const src = gate.script!.source;
+		// Fallback: check PR conversation comments when no formal review is found.
+		// This handles same-account setups where GitHub blocks self-reviews.
+		expect(src).toContain('gh pr view "$PR_URL" --json comments');
+		expect(src).toContain('createdAt');
+		// Must also filter comments by workflow start timestamp.
+		expect(src).toContain('NEOKAI_WORKFLOW_START_ISO');
+		// Gate passes via comments fallback — outputs the same pr_url/review_count shape.
+		expect(src).toContain('pr_url');
+		expect(src).toContain('review_count');
+		// Error message must mention both "review" and "PR comment" so operators understand what was checked.
+		expect(src).toContain('PR comment');
 	});
 
 	test('review-posted-gate resets on cycle so each feedback round is re-verified', () => {

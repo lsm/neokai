@@ -85,11 +85,16 @@ const PR_READY_BASH_SCRIPT = [
 /**
  * Review-posted gate script.
  *
- * Verifies that the Reviewer has actually posted a GitHub review since the
- * workflow run started. This gate guards the Review → Coding feedback channel:
- * the runtime refuses to deliver a "changes requested" message until the review
- * is visible on GitHub, closing the gap where reviewers summarize feedback
- * internally and never call `gh pr review`.
+ * Verifies that the Reviewer has actually posted review evidence on the PR
+ * since the workflow run started. This gate guards the Review → Coding feedback
+ * channel: the runtime refuses to deliver a "changes requested" message until
+ * a formal review or at least one PR comment is visible on GitHub.
+ *
+ * Primary check: formal GitHub review (gh pr review / pulls/{n}/reviews).
+ * Fallback check: PR conversation comments since workflow start. This covers
+ * the edge case where reviewer and coder share the same GitHub account —
+ * GitHub blocks self-reviews, so a formal review can never be posted, but
+ * the reviewer can still post comments on the PR thread.
  *
  * Environment variables:
  *   NEOKAI_GATE_DATA_JSON       — current gate data; may contain `pr_url`
@@ -115,11 +120,21 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 	'  exit 1',
 	'fi',
 	'REVIEW_COUNT=$(jq --arg since "$START_ISO" \'[.reviews[] | select(.submittedAt > $since)] | length\' <<< "$REVIEW_JSON")',
-	'if [ "$REVIEW_COUNT" = "0" ] || [ -z "$REVIEW_COUNT" ]; then',
-	'  echo "No review submitted on ${PR_URL} since workflow start (${START_ISO})" >&2',
+	'if [ "$REVIEW_COUNT" != "0" ] && [ -n "$REVIEW_COUNT" ]; then',
+	'  jq -n --arg url "$PR_URL" --argjson n "$REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+	'  exit 0',
+	'fi',
+	'# No formal review found — fall back to PR comments (handles same-account self-review restriction)',
+	'if ! COMMENTS_JSON=$(gh pr view "$PR_URL" --json comments); then',
+	'  echo "No formal review on ${PR_URL} since ${START_ISO}; also failed to fetch PR comments" >&2',
 	'  exit 1',
 	'fi',
-	'jq -n --arg url "$PR_URL" --argjson n "$REVIEW_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
+	'COMMENT_COUNT=$(jq --arg since "$START_ISO" \'[.comments[] | select(.createdAt > $since)] | length\' <<< "$COMMENTS_JSON")',
+	'if [ "$COMMENT_COUNT" = "0" ] || [ -z "$COMMENT_COUNT" ]; then',
+	'  echo "No review or PR comment found on ${PR_URL} since workflow start (${START_ISO})" >&2',
+	'  exit 1',
+	'fi',
+	'jq -n --arg url "$PR_URL" --argjson n "$COMMENT_COUNT" \'{"pr_url":$url,"review_count":$n}\'',
 ].join('\n');
 
 /**
@@ -502,9 +517,10 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 			id: 'review-posted-gate',
 			label: 'Review Posted',
 			description:
-				'Reviewer has posted a GitHub review (via `gh pr review`) since the workflow ' +
-				'started. Blocks the Review → Coding feedback channel until a real review is ' +
-				'visible on the PR.',
+				'Reviewer has posted a GitHub review or PR comment since the workflow started. ' +
+				'Accepts a formal review (via `gh pr review`) as primary evidence; falls back to ' +
+				'PR conversation comments for same-account setups where GitHub blocks self-reviews. ' +
+				'Blocks the Review → Coding feedback channel until review evidence is visible on the PR.',
 			fields: [
 				{
 					name: 'review_url',
