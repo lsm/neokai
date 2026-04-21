@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { pushOverlayHistory } from '../../lib/router';
+import { pushOverlayHistory, navigateToSpaceTask } from '../../lib/router';
+import { currentSpaceTaskViewTabSignal, currentSpaceIdSignal } from '../../lib/signals';
 import type {
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
@@ -84,11 +85,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
-	const [activeView, setActiveView] = useState<'thread' | 'canvas' | 'artifacts'>('thread');
+	const activeView = currentSpaceTaskViewTabSignal.value;
+	const _spaceId = currentSpaceIdSignal.value ?? '';
 
 	useEffect(() => {
 		setThreadSendError(null);
-		setActiveView('thread');
 	}, [taskId]);
 
 	useEffect(() => {
@@ -174,11 +175,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		if (activeView === 'canvas' && !canShowCanvasTab) {
-			setActiveView('thread');
+			navigateToSpaceTask(_spaceId, taskId, 'thread');
 			return;
 		}
 		if (activeView === 'artifacts' && !canShowArtifactsTab) {
-			setActiveView('thread');
+			navigateToSpaceTask(_spaceId, taskId, 'thread');
 		}
 	}, [activeView, canShowCanvasTab, canShowArtifactsTab]);
 
@@ -339,7 +340,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				<div class="flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
 					<button
 						type="button"
-						onClick={() => setActiveView('thread')}
+						onClick={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
 						class={cn(
 							'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
 							activeView === 'thread'
@@ -356,11 +357,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							type="button"
 							onClick={() => {
 								if (activeView === 'canvas') {
-									setActiveView('thread');
+									navigateToSpaceTask(_spaceId, taskId, 'thread');
 									return;
 								}
 								spaceStore.ensureNodeExecutions().catch(() => {});
-								setActiveView('canvas');
+								navigateToSpaceTask(_spaceId, taskId, 'canvas');
 							}}
 							class={cn(
 								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
@@ -378,7 +379,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<button
 							type="button"
 							onClick={() =>
-								setActiveView((view) => (view === 'artifacts' ? 'thread' : 'artifacts'))
+								currentSpaceTaskViewTabSignal.value === 'artifacts'
+									? navigateToSpaceTask(_spaceId, taskId, 'thread')
+									: navigateToSpaceTask(_spaceId, taskId, 'artifacts')
 							}
 							class={cn(
 								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
@@ -409,7 +412,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					<TaskArtifactsPanel
 						runId={task.workflowRunId}
 						taskId={task.id}
-						onClose={() => setActiveView('thread')}
+						onClose={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
 						class="h-full"
 					/>
 				) : (
