@@ -2,10 +2,11 @@
  * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
  *
  * Action tools:
- *   send_message — channel-validated direct messaging; auto-writes gate data on gated channels
- *   save         — persist agent output (summary + structured data) to NodeExecution
+ *   send_message   — channel-validated direct messaging; auto-writes gate data on gated channels
+ *   save_artifact  — persist typed data to the workflow run artifact store
  *
  * Discovery tools (read-only):
+ *   list_artifacts        — list artifacts for the current workflow run
  *   list_peers            — discover other group members with agent names and permitted channels
  *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
  *   list_channels         — list all channels declared in the workflow
@@ -16,8 +17,9 @@
  * - Node agents communicate via declared channel topology (`send_message`).
  * - When a channel is gated, the `data` payload in `send_message` is automatically
  *   merged into the gate's data store — no separate write_gate call needed.
- * - `save` stores the agent's result summary and structured output on NodeExecution
- *   for Task Agent visibility.
+ * - `save_artifact` stores typed artifacts in the workflow run artifact table.
+ *   Progress updates: `save_artifact({ type: 'progress', key: 'current', summary: '...' })`
+ *   Audit records: `save_artifact({ type: 'result', append: true, summary: '...' })`
  *
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
@@ -27,16 +29,8 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../daemon-hub';
-import {
-	ReportResultSchema,
-	ApproveTaskSchema,
-	SubmitForApprovalSchema,
-} from './task-agent-tool-schemas';
-import type {
-	ReportResultInput,
-	ApproveTaskInput,
-	SubmitForApprovalInput,
-} from './task-agent-tool-schemas';
+import { ApproveTaskSchema, SubmitForApprovalSchema } from './task-agent-tool-schemas';
+import type { ApproveTaskInput, SubmitForApprovalInput } from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
@@ -54,25 +48,23 @@ import type { ToolResult } from './tool-result';
 import {
 	ListPeersSchema,
 	SendMessageSchema,
-	SaveSchema,
+	SaveArtifactSchema,
+	ListArtifactsSchema,
 	ListReachableAgentsSchema,
 	ListChannelsSchema,
 	ListGatesSchema,
 	ReadGateSchema,
-	WriteArtifactSchema,
-	ListArtifactsSchema,
 	RestoreNodeAgentSchema,
 } from './node-agent-tool-schemas';
 import type {
 	ListPeersInput,
 	SendMessageInput,
-	SaveInput,
+	SaveArtifactInput,
+	ListArtifactsInput,
 	ListReachableAgentsInput,
 	ListChannelsInput,
 	ListGatesInput,
 	ReadGateInput,
-	WriteArtifactInput,
-	ListArtifactsInput,
 	RestoreNodeAgentInput,
 } from './node-agent-tool-schemas';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -106,7 +98,7 @@ export interface NodeAgentToolsConfig {
 	myAgentNameAliases?: string[];
 	/** ID of the parent task (used for error messages). */
 	taskId: string;
-	/** Space ID — used for event emission in report_result. */
+	/** Space ID — used for event emission. */
 	spaceId: string;
 	/**
 	 * Pre-built channel resolver for this sub-session's topology.
@@ -119,7 +111,7 @@ export interface NodeAgentToolsConfig {
 	/** Workflow node ID — used to query peer executions on the same node. */
 	workflowNodeId: string;
 	/**
-	 * Node execution repository for report_result, list_peers, and send_message peer resolution.
+	 * Node execution repository for list_peers and send_message peer resolution.
 	 */
 	nodeExecutionRepo: NodeExecutionRepository;
 	/**
@@ -165,14 +157,6 @@ export interface NodeAgentToolsConfig {
 	 */
 	scriptContext?: GateScriptExecutorContext;
 	/**
-	 * Optional callback for the `report_result` tool.
-	 * When provided, a `report_result` tool is added to the MCP server —
-	 * intended for the end node of a workflow so it can append an audit record
-	 * of what it observed. Design v2: this call does NOT close the task.
-	 * When absent, `report_result` is not available to this node agent.
-	 */
-	onReportResult?: (args: ReportResultInput) => Promise<ToolResult>;
-	/**
 	 * Optional callback for the `approve_task` tool. When provided, `approve_task`
 	 * is added to the MCP server. Intended for the end node when
 	 * `space.autonomyLevel >= workflow.completionAutonomyLevel`. The handler
@@ -194,7 +178,7 @@ export interface NodeAgentToolsConfig {
 	 */
 	getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
 	/**
-	 * Workflow run artifact repository for write_artifact / list_artifacts tools.
+	 * Workflow run artifact repository for save_artifact / list_artifacts tools.
 	 * Optional — when absent, artifact tools are not registered.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
@@ -255,14 +239,35 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 		 * Always includes `task-agent` as a reachable coordinator target.
 		 *
 		 * Returns permittedTargets: agent names this agent can directly send to via send_message.
-		 * Returns completionState per peer: execution status, completion summary, and completedAt.
+		 * Returns completionState per peer: execution status, latest progress summary, and completedAt.
 		 * Returns nodeCompletionState: all executions on this workflow node with their completion state.
+		 *
+		 * Progress summary is sourced from the latest 'progress' type artifact for the node
+		 * (written via save_artifact({ type: 'progress', ... })). Falls back to ne.result for
+		 * historical rows that predate the artifact migration.
 		 */
 		async list_peers(_args: ListPeersInput): Promise<ToolResult> {
 			const resolver = channelResolver;
 			const nodeExecs = workflowRunId
 				? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
 				: [];
+
+			// Fetch the latest progress artifact for this node so we can surface it in
+			// completionState. All agents in the same node share the same nodeId, so we
+			// read the latest progress artifact across the whole node and use it as the
+			// completion summary for peers that don't have a direct ne.result.
+			let latestProgressSummary: string | null = null;
+			if (config.artifactRepo && workflowRunId) {
+				const progressArtifacts = config.artifactRepo.listByRun(workflowRunId, {
+					nodeId: workflowNodeId,
+					artifactType: 'progress',
+				});
+				if (progressArtifacts.length > 0) {
+					const latest = progressArtifacts[progressArtifacts.length - 1];
+					const s = latest.data.summary;
+					latestProgressSummary = typeof s === 'string' ? s : null;
+				}
+			}
 
 			// Exclude self (by agentSessionId) and include peers with a session or completed state
 			const peers = nodeExecs
@@ -278,6 +283,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							: execStatus === 'blocked' || execStatus === 'cancelled'
 								? ('failed' as const)
 								: ('active' as const);
+
+					// Source completion summary from artifacts first, then fall back to ne.result.
+					const completionSummary = latestProgressSummary ?? ne.result ?? null;
+
 					return {
 						sessionId: ne.agentSessionId ?? null,
 						agentName: ne.agentName,
@@ -286,18 +295,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 						completionState: {
 							agentName: ne.agentName,
 							taskStatus: ne.status,
-							completionSummary: ne.result ?? null,
+							completionSummary,
 							completedAt: ne.completedAt ?? null,
 						},
 					};
 				});
 
-			const nodeCompletionState = nodeExecs.map((ne) => ({
-				agentName: ne.agentName,
-				taskStatus: ne.status,
-				completionSummary: ne.result ?? null,
-				completedAt: ne.completedAt ?? null,
-			}));
+			const nodeCompletionState = nodeExecs.map((ne) => {
+				const completionSummary = latestProgressSummary ?? ne.result ?? null;
+				return {
+					agentName: ne.agentName,
+					taskStatus: ne.status,
+					completionSummary,
+					completedAt: ne.completedAt ?? null,
+				};
+			});
 
 			const topologyTargets = resolver.getPermittedTargets(myAgentName);
 			const permittedTargets = [...topologyTargets, 'task-agent'];
@@ -742,17 +754,29 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			});
 		},
 
+		// ── Artifact tools ────────────────────────────────────────────────
+
 		/**
-		 * Persist this agent's output to the NodeExecution record.
+		 * Persist data to the workflow run artifact store.
 		 *
-		 * Call whenever you have produced output worth recording — at any point
-		 * during your work, not just at the end. Can be called multiple times;
-		 * each call overwrites the previous summary and data.
+		 * Unified replacement for the old `save` and `write_artifact` tools.
 		 *
-		 * `summary` and `data` are independent — provide either or both.
+		 * Two modes:
+		 *   - Overwrite (default, append: false): upsert on (nodeId, type, key).
+		 *     Same (type, key) replaces the previous value.
+		 *     Use `type: 'progress', key: 'current'` for a rolling status update.
+		 *   - Append (append: true): always inserts a new row with an auto-generated key.
+		 *     Use for audit trails, cycle records, or any multi-record history.
+		 *
+		 * Requires `artifactRepo` to be provided in the config.
 		 */
-		async save(args: SaveInput): Promise<ToolResult> {
-			const { summary, data } = args;
+		async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
+			const { artifactRepo } = config;
+			if (!artifactRepo) {
+				return jsonResult({ success: false, error: 'Artifact repository not available.' });
+			}
+
+			const { type, key: keyArg, append, summary, data } = args;
 
 			if (summary === undefined && data === undefined) {
 				return jsonResult({
@@ -762,66 +786,36 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			try {
-				const nodeExecs = workflowRunId
-					? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
-					: [];
-				const myExec = nodeExecs.find((e) => e.agentName === myAgentName);
+				// In append mode, always generate a unique key to guarantee a new row.
+				// In overwrite mode, use the provided key (defaults to '' for upsert matching the DB default).
+				const artifactKey = append
+					? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+					: (keyArg ?? '');
 
-				if (!myExec) {
-					return jsonResult({
-						success: false,
-						error:
-							`NodeExecution not found for agent "${myAgentName}" in node "${workflowNodeId}" ` +
-							`(run: ${workflowRunId}). Cannot save output.`,
-					});
-				}
+				// Merge summary and data into a single record stored in the data field.
+				const artifactData: Record<string, unknown> = {};
+				if (summary !== undefined) artifactData.summary = summary;
+				if (data !== undefined) Object.assign(artifactData, data);
 
-				const updates: { result?: string | null; data?: Record<string, unknown> | null } = {};
-				if (summary !== undefined) updates.result = summary;
-				if (data !== undefined) updates.data = data;
-
-				nodeExecutionRepo.update(myExec.id, updates);
-
-				return jsonResult({
-					success: true,
-					executionId: myExec.id,
-					agentName: myAgentName,
-					savedSummary: summary ?? null,
-					savedData: data ?? null,
-					message: 'Output saved to execution record.',
-				});
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				return jsonResult({ success: false, error: message });
-			}
-		},
-
-		// ── Artifact tools ────────────────────────────────────────────────
-
-		async write_artifact(args: WriteArtifactInput): Promise<ToolResult> {
-			const { artifactRepo } = config;
-			if (!artifactRepo) {
-				return jsonResult({ success: false, error: 'Artifact repository not available.' });
-			}
-			try {
 				const record = artifactRepo.upsert({
 					id: crypto.randomUUID(),
 					runId: workflowRunId,
 					nodeId: workflowNodeId,
-					artifactType: args.artifactType,
-					artifactKey: args.artifactKey,
-					data: args.data,
+					artifactType: type,
+					artifactKey,
+					data: artifactData,
 				});
+
 				return jsonResult({
 					success: true,
 					artifact: {
 						id: record.id,
 						runId: record.runId,
 						nodeId: record.nodeId,
-						artifactType: record.artifactType,
-						artifactKey: record.artifactKey,
+						type: record.artifactType,
+						key: record.artifactKey,
 					},
-					message: `Artifact "${args.artifactType}" written successfully.`,
+					message: `Artifact "${type}" ${append ? 'appended as new record' : 'saved (upsert)'}.`,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -837,15 +831,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			try {
 				const artifacts = artifactRepo.listByRun(workflowRunId, {
 					nodeId: args.nodeId,
-					artifactType: args.artifactType,
+					artifactType: args.type,
 				});
 				return jsonResult({
 					success: true,
 					artifacts: artifacts.map((a) => ({
 						id: a.id,
 						nodeId: a.nodeId,
-						artifactType: a.artifactType,
-						artifactKey: a.artifactKey,
+						type: a.artifactType,
+						key: a.artifactKey,
 						data: a.data,
 						createdAt: a.createdAt,
 						updatedAt: a.updatedAt,
@@ -913,7 +907,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
  */
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 	const handlers = createNodeAgentToolHandlers(config);
-	const { onReportResult } = config;
 
 	const tools = [
 		tool(
@@ -971,15 +964,6 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 			(args) => handlers.send_message(args)
 		),
 		tool(
-			'save',
-			'Persist your output to the execution record. ' +
-				'Provide a human-readable `summary`, structured `data` (key-value pairs), or both. ' +
-				'Can be called multiple times — each call overwrites previous values. ' +
-				'Use `data` for machine-readable artifacts like pr_url, commit_sha, test_results.',
-			SaveSchema.shape,
-			(args) => handlers.save(args)
-		),
-		tool(
 			'restore_node_agent',
 			'Self-heal primitive — call when you suspect the node-agent MCP server is unhealthy ' +
 				'(e.g. a previous mcp__node-agent__send_message returned "No such tool available"). ' +
@@ -993,33 +977,22 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
 		...(config.artifactRepo
 			? [
 					tool(
-						'write_artifact',
-						'Write a typed artifact (PR, commit set, test result, deployment) to the workflow run. ' +
-							'Artifacts are visible in the UI and to downstream nodes. ' +
-							'Uses upsert — writing the same (type, key) pair updates the existing artifact.',
-						WriteArtifactSchema.shape,
-						(args) => handlers.write_artifact(args)
+						'save_artifact',
+						'Persist data to the workflow run artifact store. Provide a `type` (category tag), ' +
+							'`key` (unique within type; defaults to empty string), and at least one of `summary` or `data`. ' +
+							'By default (append: false), writing the same (type, key) overwrites the previous value. ' +
+							'Set `append: true` to always create a new record — useful for audit trails and cycle history. ' +
+							'The `type` field is fully generic: use "progress" for rolling status, "result" for final outcomes, ' +
+							'"review" for review feedback, or any custom label.',
+						SaveArtifactSchema.shape,
+						(args) => handlers.save_artifact(args)
 					),
 					tool(
 						'list_artifacts',
 						'List artifacts for the current workflow run. ' +
-							'Optionally filter by nodeId or artifactType.',
+							'Optionally filter by nodeId or type (e.g. "progress", "result", "review").',
 						ListArtifactsSchema.shape,
 						(args) => handlers.list_artifacts(args)
-					),
-				]
-			: []),
-		...(onReportResult
-			? [
-					tool(
-						'report_result',
-						"Append an audit record of what you observed to the task's report log. " +
-							'This does NOT close the task — it is append-only. To finalize the task, ' +
-							'call `approve_task` (if available) for self-close, or `submit_for_approval` ' +
-							'to request human review. Provide a human-readable summary and optional ' +
-							'structured evidence (prUrl, commitSha, testOutput, …).',
-						ReportResultSchema.shape,
-						(args) => onReportResult(args)
 					),
 				]
 			: []),

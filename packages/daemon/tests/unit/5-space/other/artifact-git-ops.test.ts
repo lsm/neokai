@@ -22,6 +22,8 @@ import {
 	CACHE_KEY_COMMITS,
 	FILE_DIFF_SIZE_LIMIT_BYTES,
 	MERGE_BASE_TTL_MS,
+	normalizeGithubUrl,
+	getGitRemoteUrl,
 } from '../../../../src/lib/space/artifact-git-ops';
 
 describe('parseNumstat', () => {
@@ -216,5 +218,59 @@ describe('getDiffBaseRef / merge-base cache', () => {
 
 	it('defaults the TTL to MERGE_BASE_TTL_MS', () => {
 		expect(MERGE_BASE_TTL_MS).toBe(60_000);
+	});
+});
+
+describe('normalizeGithubUrl', () => {
+	it('converts SSH remote to HTTPS GitHub URL (with .git)', () => {
+		expect(normalizeGithubUrl('git@github.com:owner/repo.git')).toBe(
+			'https://github.com/owner/repo'
+		);
+	});
+
+	it('converts SSH remote to HTTPS GitHub URL (without .git)', () => {
+		expect(normalizeGithubUrl('git@github.com:owner/repo')).toBe('https://github.com/owner/repo');
+	});
+
+	it('normalises HTTPS GitHub URL with .git suffix', () => {
+		expect(normalizeGithubUrl('https://github.com/owner/repo.git')).toBe(
+			'https://github.com/owner/repo'
+		);
+	});
+
+	it('passes through HTTPS GitHub URL without .git suffix unchanged', () => {
+		expect(normalizeGithubUrl('https://github.com/owner/repo')).toBe(
+			'https://github.com/owner/repo'
+		);
+	});
+
+	it('returns null for non-GitHub remotes', () => {
+		expect(normalizeGithubUrl('https://gitlab.com/owner/repo.git')).toBeNull();
+		expect(normalizeGithubUrl('git@bitbucket.org:owner/repo.git')).toBeNull();
+		expect(normalizeGithubUrl('https://example.com/repo')).toBeNull();
+	});
+
+	it('returns null for arbitrary strings', () => {
+		expect(normalizeGithubUrl('not-a-url')).toBeNull();
+		expect(normalizeGithubUrl('')).toBeNull();
+	});
+});
+
+describe('getGitRemoteUrl', () => {
+	it('returns null for a non-existent directory (git command fails)', async () => {
+		const result = await getGitRemoteUrl('/tmp/nonexistent-dir-for-remote-url-test');
+		expect(result).toBeNull();
+	});
+
+	it('returns null for a directory with no git repo', async () => {
+		const { mkdtempSync, rmdirSync } = await import('node:fs');
+		const { tmpdir } = await import('node:os');
+		const dir = mkdtempSync(`${tmpdir()}/neokai-no-git-`);
+		try {
+			const result = await getGitRemoteUrl(dir);
+			expect(result).toBeNull();
+		} finally {
+			rmdirSync(dir);
+		}
 	});
 });

@@ -1449,8 +1449,14 @@ export interface SpaceExportBundle {
 
 // ── Workflow Run Artifacts ──────────────────────────────────────────────────
 
-/** Artifact types that node agents can produce. Extensible union. */
-export type ArtifactType = 'pr' | 'commit_set' | 'test_result' | 'deployment';
+/**
+ * Artifact type label — a generic string tag agents use to categorise their
+ * output (e.g. 'pr', 'result', 'progress', 'review').  The UI renders
+ * artifacts based on the **shape of `data`**, not this string, so no fixed
+ * enum is needed.  The type is still displayed as a badge on each artifact
+ * card for human scanning.
+ */
+export type ArtifactType = string;
 
 /** A typed artifact produced by a workflow node execution. */
 export interface WorkflowRunArtifact {

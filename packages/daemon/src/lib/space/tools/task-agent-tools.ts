@@ -1,8 +1,11 @@
 /**
  * Task Agent Tools — MCP tool handlers for the Task Agent session.
  *
- * These handlers implement the business logic for the 4 Task Agent tools:
- *   report_result         — Mark the task as completed/failed and record the result
+ * These handlers implement the business logic for the Task Agent tools:
+ *   save_artifact         — Persist typed data to the workflow run artifact store
+ *   list_artifacts        — List artifacts for the current workflow run
+ *   approve_task          — Self-close the task (gated by autonomy level)
+ *   submit_for_approval   — Request human sign-off (always available)
  *   request_human_input   — Pause execution and surface a question to the human user
  *   list_group_members    — List all members of the current task's session group
  *   send_message          — Send a message to peer node agents via channel topology
@@ -17,17 +20,17 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { Space } from '@neokai/shared';
+import type { Space, SpaceTask } from '@neokai/shared';
 import { z } from 'zod';
 import type { DaemonHub } from '../../daemon-hub';
 import { Logger } from '../../logger';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceTaskReportResultRepository } from '../../../storage/repositories/space-task-report-result-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type {
 	PendingAgentMessageRepository,
 	PendingAgentMessageRecord,
@@ -36,17 +39,27 @@ import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import { jsonResult } from './tool-result';
 import type { ToolResult } from './tool-result';
 import {
-	ReportResultSchema,
+	ApproveTaskSchema,
+	SubmitForApprovalSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
 } from './task-agent-tool-schemas';
-import { SendMessageSchema } from './node-agent-tool-schemas';
+import {
+	SendMessageSchema,
+	SaveArtifactSchema,
+	ListArtifactsSchema,
+} from './node-agent-tool-schemas';
 import type {
-	ReportResultInput,
+	ApproveTaskInput,
+	SubmitForApprovalInput,
 	RequestHumanInputInput,
 	ListGroupMembersInput,
 } from './task-agent-tool-schemas';
-import type { SendMessageInput } from './node-agent-tool-schemas';
+import type {
+	SendMessageInput,
+	SaveArtifactInput,
+	ListArtifactsInput,
+} from './node-agent-tool-schemas';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -87,12 +100,6 @@ export interface TaskAgentToolsConfig {
 	workflowRunId: string;
 	/** Task repository for direct DB reads. */
 	taskRepo: SpaceTaskRepository;
-	/**
-	 * Append-only audit log for `report_result` tool calls. Design v2 (Task #39):
-	 * the task-agent `report_result` is purely audit — it does not mutate task
-	 * state or emit `space.task.done`. Each call appends one row here.
-	 */
-	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Node execution repository for querying execution state in list_group_members. */
 	nodeExecutionRepo: NodeExecutionRepository;
 	/** Task manager for validated status transitions. */
@@ -162,6 +169,11 @@ export interface TaskAgentToolsConfig {
 	 * task is archived, so status-filtered lookup is no longer needed.
 	 */
 	taskAgentManager?: TaskAgentManager;
+	/**
+	 * Workflow run artifact repository for save_artifact / list_artifacts tools.
+	 * Optional — when absent, artifact tools are not registered.
+	 */
+	artifactRepo?: WorkflowRunArtifactRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +190,6 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 		space,
 		workflowRunId,
 		taskRepo,
-		taskReportResultRepo,
 		nodeExecutionRepo,
 		taskManager,
 		messageInjector,
@@ -227,50 +238,196 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			.catch(() => {});
 	}
 
+	/** Emit task updated event to DaemonHub. */
+	function emitTaskUpdated(task: SpaceTask): void {
+		if (!daemonHub) return;
+		void daemonHub
+			.emit('space.task.updated', { sessionId: 'global', spaceId: space.id, taskId, task })
+			.catch((err: unknown) => {
+				log.warn(
+					`Failed to emit space.task.updated for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			});
+	}
+
 	return {
 		/**
-		 * Record a progress report (Design v2 — Task #39, append-only audit).
+		 * Persist data to the workflow run artifact store.
 		 *
-		 * Post Stage-2, `report_result` is NOT a terminal tool. It simply appends
-		 * one row to `space_task_report_results` so the full history of reports
-		 * issued during a task is preserved. It never mutates task status, never
-		 * emits `space.task.done`, and never triggers the completion-action
-		 * pipeline.
-		 *
-		 * Terminal state is decided by:
-		 *   - End-node agents: via `approve_task` (auto-close when autonomy
-		 *     permits) or `submit_for_approval` (human review).
-		 *   - Human operators: via `spaceTask.approvePendingCompletion` RPC.
+		 * Two modes:
+		 *   - Overwrite (default, append: false): upsert on (nodeId='task-agent', type, key).
+		 *     Use `type: 'progress', key: 'current'` for rolling status, or `type: 'result'`
+		 *     for the final outcome.
+		 *   - Append (append: true): always inserts a new row with auto-generated key.
+		 *     Use for audit trails and multi-round history.
 		 */
-		async report_result(args: ReportResultInput): Promise<ToolResult> {
-			const { summary, evidence } = args;
+		async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
+			const { artifactRepo } = config;
+			if (!artifactRepo) {
+				return jsonResult({ success: false, error: 'Artifact repository not available.' });
+			}
 
-			const mainTask = taskRepo.getTask(taskId);
-			if (!mainTask) {
-				return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+			const { type, key: keyArg, append, summary, data } = args;
+
+			if (summary === undefined && data === undefined) {
+				return jsonResult({
+					success: false,
+					error: 'At least one of `summary` or `data` must be provided.',
+				});
 			}
 
 			try {
-				const record = taskReportResultRepo.append({
-					taskId,
-					spaceId: space.id,
-					workflowNodeId: null,
-					agentName: 'task-agent',
-					summary,
-					evidence: evidence ?? null,
+				// In append mode, always generate a unique key to guarantee a new row.
+				// In overwrite mode, default to '' to match the artifact_key NOT NULL DEFAULT '' column.
+				const artifactKey = append
+					? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+					: (keyArg ?? '');
+
+				// Merge summary and data into a single record.
+				const artifactData: Record<string, unknown> = {};
+				if (summary !== undefined) artifactData.summary = summary;
+				if (data !== undefined) Object.assign(artifactData, data);
+
+				const record = artifactRepo.upsert({
+					id: crypto.randomUUID(),
+					runId: workflowRunId,
+					nodeId: 'task-agent',
+					artifactType: type,
+					artifactKey,
+					data: artifactData,
 				});
 
 				return jsonResult({
 					success: true,
-					taskId,
-					reportId: record.id,
-					message:
-						'Report recorded (audit-only). This does not close the task. ' +
-						'Use approve_task or submit_for_approval on an end node to finalize.',
+					artifact: {
+						id: record.id,
+						runId: record.runId,
+						nodeId: record.nodeId,
+						type: record.artifactType,
+						key: record.artifactKey,
+					},
+					message: `Artifact "${type}" ${append ? 'appended as new record' : 'saved (upsert)'}.`,
 				});
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async list_artifacts(args: ListArtifactsInput): Promise<ToolResult> {
+			const { artifactRepo } = config;
+			if (!artifactRepo) {
+				return jsonResult({ success: false, error: 'Artifact repository not available.' });
+			}
+			try {
+				const artifacts = artifactRepo.listByRun(workflowRunId, {
+					nodeId: args.nodeId,
+					artifactType: args.type,
+				});
+				return jsonResult({
+					success: true,
+					artifacts: artifacts.map((a) => ({
+						id: a.id,
+						nodeId: a.nodeId,
+						type: a.artifactType,
+						key: a.artifactKey,
+						data: a.data,
+						createdAt: a.createdAt,
+						updatedAt: a.updatedAt,
+					})),
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		/**
+		 * Self-close this task as done.
+		 *
+		 * Gated by space.autonomyLevel >= workflow.completionAutonomyLevel.
+		 * For standalone tasks (no workflow), always requires human review (blocked at level 1-4).
+		 * Sets reportedStatus='done' which triggers the completion-action pipeline.
+		 */
+		async approve_task(_args: ApproveTaskInput): Promise<ToolResult> {
+			const currentLevel = space.autonomyLevel ?? 1;
+
+			// Resolve completionAutonomyLevel from the workflow (if any).
+			let completionAutonomyLevel = 5; // default: require human approval
+			if (workflowRunRepo && workflowManager) {
+				const run = workflowRunRepo.getRun(workflowRunId);
+				if (run?.workflowId) {
+					const wf = workflowManager.getWorkflow(run.workflowId);
+					if (wf?.completionAutonomyLevel !== undefined) {
+						completionAutonomyLevel = wf.completionAutonomyLevel;
+					}
+				}
+			}
+
+			if (currentLevel < completionAutonomyLevel) {
+				return jsonResult({
+					success: false,
+					error: `approve_task not permitted: space autonomy level ${currentLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
+				});
+			}
+
+			const task = taskRepo.getTask(taskId);
+			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+
+			try {
+				const updated = taskRepo.updateTask(taskId, {
+					reportedStatus: 'done',
+					pendingCheckpointType: null,
+					pendingCompletionSubmittedByNodeId: null,
+					pendingCompletionSubmittedAt: null,
+					pendingCompletionReason: null,
+				});
+				if (updated) emitTaskUpdated(updated);
+				return jsonResult({
+					success: true,
+					taskId,
+					message:
+						'Task approved for completion. The completion-action pipeline will now resolve terminal status.',
+				});
+			} catch (err) {
+				return jsonResult({
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+
+		/**
+		 * Request human sign-off for task completion.
+		 *
+		 * Always available regardless of autonomy level. Sets task.status = 'review'
+		 * and populates pending-completion fields so the UI can route a human to
+		 * approve or reject. Even at high autonomy levels agents may want to escalate
+		 * risky outcomes.
+		 */
+		async submit_for_approval(args: SubmitForApprovalInput): Promise<ToolResult> {
+			const task = taskRepo.getTask(taskId);
+			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+
+			try {
+				const updated = taskRepo.updateTask(taskId, {
+					status: 'review',
+					pendingCheckpointType: 'task_completion',
+					pendingCompletionSubmittedByNodeId: null, // Task Agent has no workflow node
+					pendingCompletionSubmittedAt: Date.now(),
+					pendingCompletionReason: args.reason ?? null,
+				});
+				if (updated) emitTaskUpdated(updated);
+				return jsonResult({
+					success: true,
+					taskId,
+					message: `Task submitted for human review${args.reason ? ` (reason: ${args.reason})` : ''}. A human must approve or reject via the UI before the workflow continues.`,
+				});
+			} catch (err) {
+				return jsonResult({
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				});
 			}
 		},
 
@@ -795,17 +952,6 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 
 	const tools = [
 		tool(
-			'report_result',
-			'Record a progress report for this task as an append-only audit entry. ' +
-				'This does NOT close the task — it only appends a summary (and optional evidence) ' +
-				'to the task report history. Terminal completion is handled by `approve_task` ' +
-				'(end-node, self-close when autonomy permits) or `submit_for_approval` (end-node, ' +
-				'human review). Use `report_result` to share intermediate outcomes, status updates, ' +
-				'or findings without ending the workflow run.',
-			ReportResultSchema.shape,
-			(args) => handlers.report_result(args)
-		),
-		tool(
 			'request_human_input',
 			'Pause workflow execution and surface a question to the human user. ' +
 				'The task will be marked as needs_attention until the human responds. ' +
@@ -853,6 +999,46 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 				reason: z.string().optional().describe('Reason for approval or rejection'),
 			},
 			(args) => handlers.approve_gate(args)
+		),
+		...(config.artifactRepo
+			? [
+					tool(
+						'save_artifact',
+						'Persist data to the workflow run artifact store. Provide a `type` (category tag), ' +
+							'`key` (unique within type; defaults to empty string), and at least one of `summary` or `data`. ' +
+							'By default (append: false), writing the same (type, key) overwrites the previous value. ' +
+							'Set `append: true` to always create a new record — useful for audit trails and cycle history. ' +
+							'The `type` field is fully generic: use "progress" for rolling status, "result" for final outcomes.',
+						SaveArtifactSchema.shape,
+						(args) => handlers.save_artifact(args)
+					),
+					tool(
+						'list_artifacts',
+						'List artifacts for the current workflow run. ' +
+							'Optionally filter by nodeId or type (e.g. "progress", "result").',
+						ListArtifactsSchema.shape,
+						(args) => handlers.list_artifacts(args)
+					),
+				]
+			: []),
+		tool(
+			'approve_task',
+			'Close this task as done (self-approval). Only available when the space autonomy level ' +
+				"meets the workflow's completionAutonomyLevel threshold. Takes no arguments — the task " +
+				'is inferred from your session context. After calling, the completion-action pipeline ' +
+				'runs and resolves the terminal status. Use as your final action when you are ' +
+				'authorized to self-close; otherwise use submit_for_approval.',
+			ApproveTaskSchema.shape,
+			(args) => handlers.approve_task(args)
+		),
+		tool(
+			'submit_for_approval',
+			"Request human review of this task's completion. Always available. " +
+				'Use when you want to escalate for human sign-off — either because autonomy rules ' +
+				'require it, or because the outcome is risky enough to warrant attention. Pass an ' +
+				'optional `reason` explaining why you are escalating; it is shown in the approval UI.',
+			SubmitForApprovalSchema.shape,
+			(args) => handlers.submit_for_approval(args)
 		),
 	];
 
