@@ -14,7 +14,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { runMigrations } from '../../../../../src/storage/schema/index.ts';
+import { runMigrations, runMigration86 } from '../../../../../src/storage/schema/index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -359,5 +359,162 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
 		const rows = db.prepare(`SELECT id FROM spaces`).all();
 		expect(rows).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Regression: M86 partial-migration — spaces already numeric, tasks missing column
+// ---------------------------------------------------------------------------
+// This tests the specific bug where an older version of migration 86 only rebuilt
+// the `spaces` table (converting autonomy_level TEXT → INTEGER) but did NOT yet add
+// `pending_checkpoint_type` to `space_tasks`. On subsequent daemon startups the
+// early-return check (`autonomy_level` is already integer) would fire and skip the
+// column addition, leaving `space_tasks` without `pending_checkpoint_type`.
+// After the fix, Parts 2+3 of M86 run unconditionally so the column is always added.
+
+describe('Migration 86 regression: partial migration (spaces numeric, tasks column missing)', () => {
+	let testDir: string;
+	let db: BunDatabase;
+
+	beforeEach(() => {
+		testDir = join(
+			process.cwd(),
+			'tmp',
+			'test-migration-86-regression',
+			`test-${Date.now()}-${Math.random()}`
+		);
+		mkdirSync(testDir, { recursive: true });
+		db = new BunDatabase(join(testDir, 'test.db'));
+		db.exec('PRAGMA foreign_keys = ON');
+	});
+
+	afterEach(() => {
+		try {
+			db.close();
+		} catch {
+			// ignore
+		}
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+		} catch {
+			// ignore
+		}
+	});
+
+	test('adds pending_checkpoint_type when spaces.autonomy_level is already INTEGER but column is missing', () => {
+		// Simulate a database that was partially upgraded by an old version of M86:
+		// `spaces.autonomy_level` is already INTEGER (Part 1 done) but
+		// `space_tasks.pending_checkpoint_type` was never added (Parts 2+3 not done).
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				background_context TEXT NOT NULL DEFAULT '',
+				instructions TEXT NOT NULL DEFAULT '',
+				default_model TEXT,
+				allowed_models TEXT NOT NULL DEFAULT '[]',
+				session_ids TEXT NOT NULL DEFAULT '[]',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'archived')),
+				autonomy_level INTEGER NOT NULL DEFAULT 1
+					CHECK(autonomy_level BETWEEN 1 AND 5),
+				config TEXT,
+				paused INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`CREATE UNIQUE INDEX idx_spaces_slug ON spaces(slug)`);
+
+		db.exec(`
+			CREATE TABLE space_tasks (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'open',
+				priority TEXT NOT NULL DEFAULT 'normal',
+				labels TEXT NOT NULL DEFAULT '[]',
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				approval_source TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+
+		// Seed a space so the `typeof(autonomy_level)` check returns 'integer',
+		// which is the exact condition that triggered the premature early-return.
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run('sp-1', 'sp-1', '/ws/1', 'Space 1', now, now);
+
+		// Before the fix: runMigration86 would early-return here and skip the column.
+		runMigration86(db);
+
+		expect(columnExists(db, 'space_tasks', 'pending_checkpoint_type')).toBe(true);
+		expect(columnExists(db, 'space_tasks', 'pending_action_index')).toBe(true);
+	});
+
+	test('pending_checkpoint_type column is writable after M86 fixes it up', () => {
+		// Same partial-migration setup as above.
+		db.exec(`
+			CREATE TABLE spaces (
+				id TEXT PRIMARY KEY,
+				slug TEXT NOT NULL,
+				workspace_path TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				autonomy_level INTEGER NOT NULL DEFAULT 1
+					CHECK(autonomy_level BETWEEN 1 AND 5),
+				paused INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+		db.exec(`
+			CREATE TABLE space_tasks (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				task_number INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'open',
+				priority TEXT NOT NULL DEFAULT 'normal',
+				labels TEXT NOT NULL DEFAULT '[]',
+				depends_on TEXT NOT NULL DEFAULT '[]',
+				approval_source TEXT,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		`);
+
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run('sp-2', 'sp-2', '/ws/2', 'Space 2', now, now);
+		db.prepare(
+			`INSERT INTO space_tasks (id, space_id, task_number, title, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		).run('t-1', 'sp-2', 1, 'Test Task', now, now);
+
+		runMigration86(db);
+
+		// Verify the column can be written — the root production error was
+		// "no such column: pending_checkpoint_type" on an UPDATE that set this field.
+		// M86's CHECK constraint allows 'gate'; 'task_completion' is widened by M98.
+		expect(() => {
+			db.prepare(`UPDATE space_tasks SET pending_checkpoint_type = 'gate' WHERE id = ?`).run('t-1');
+		}).not.toThrow();
+
+		const row = db
+			.prepare(`SELECT pending_checkpoint_type FROM space_tasks WHERE id = ?`)
+			.get('t-1') as { pending_checkpoint_type: string } | undefined;
+		expect(row?.pending_checkpoint_type).toBe('gate');
 	});
 });
