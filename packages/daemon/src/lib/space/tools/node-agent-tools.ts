@@ -402,12 +402,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 							if (seenAgentNames.has(ne.agentName)) continue;
 							seenAgentNames.add(ne.agentName);
 							const execStatus = ne.status;
+							// 'pending' means the execution was created but the session hasn't spawned yet —
+							// report as 'not_started' rather than 'active' to avoid misleading callers.
 							const memberStatus =
 								execStatus === 'idle'
 									? ('completed' as const)
 									: execStatus === 'blocked' || execStatus === 'cancelled'
 										? ('failed' as const)
-										: ('active' as const);
+										: execStatus === 'pending'
+											? ('not_started' as const)
+											: ('active' as const);
 							crossNodePeers.push({
 								sessionId: ne.agentSessionId ?? null,
 								agentName: ne.agentName,
@@ -427,7 +431,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 			}
 
 			const peers = [...withinNodePeers, ...crossNodePeers];
-			const permittedTargets = [...topologyTargets, 'task-agent'];
+			// Include BOTH topology node names (e.g. 'Review') AND resolved agent slot names
+			// (e.g. 'agent-reviewer') so callers can use either form with send_message.
+			// The router accepts both: node names via nodeGroups fan-out, slot names via
+			// allDeclaredAgentNames or peer session lookup.
+			const permittedTargetSet = new Set<string>([
+				...topologyTargets,
+				...crossNodePeers.map((p) => p.agentName),
+			]);
+			const permittedTargets = [...permittedTargetSet, 'task-agent'];
 			const channelTopologyDeclared = !resolver.isEmpty();
 
 			return jsonResult({

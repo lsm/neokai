@@ -2635,6 +2635,12 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
 		expect(crossNodePeer.status).toBe('not_started');
 		expect(crossNodePeer.completionState.taskStatus).toBe('not_started');
 		expect(crossNodePeer.nodeName).toBe('Review');
+
+		// permittedTargets must include BOTH the topology node name AND the resolved slot name
+		// so callers can use either form with send_message.
+		expect(data.permittedTargets).toContain('Review'); // topology node name
+		expect(data.permittedTargets).toContain('agent-reviewer'); // resolved slot name
+		expect(data.permittedTargets).toContain('task-agent'); // always present
 	});
 
 	test('shows cross-node peer with active status when node has been activated', async () => {
@@ -2780,6 +2786,137 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
 		// Only within-node peers (reviewer), no cross-node since topology empty
 		expect(data.peers).toHaveLength(1);
 		expect(data.peers[0].agentName).toBe('reviewer');
+	});
+
+	test('cross-node peer uses topology target name as agentName when workflow is null', async () => {
+		// workflow: null means workflow?.nodes.find(...) → undefined, so targetNode is never found.
+		// The fallback path (else branch after resolveNodeAgents) uses targetNodeName as agentName.
+		// This verifies the code path is safe when a non-empty channelResolver is provided
+		// but no workflow definition is available to look up node details.
+		const config = makeConfig(ctx, {
+			myAgentName: 'coder',
+			mySessionId: ctx.coderSessionId,
+			workflowNodeId: ctx.nodeId,
+			channelResolver: makeResolver([{ id: 'ch-coder-review', from: 'coder', to: 'Review' }]),
+			workflow: null,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// No workflow → targetNode is undefined → agentName falls back to targetNodeName ('Review')
+		const crossPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'Review');
+		expect(crossPeer).toBeDefined();
+		expect(crossPeer.status).toBe('not_started');
+		expect(crossPeer.nodeName).toBe('Review');
+	});
+
+	test('cross-node peer uses node name when resolveNodeAgents throws (no agents defined)', async () => {
+		// When a node has no agents array and no agentId shorthand, resolveNodeAgents throws.
+		// The catch block falls back to using the targetNodeName as the agent name.
+		const reviewNodeId = 'node-review-no-agents';
+		const codingNodeId = ctx.nodeId;
+
+		const workflow: SpaceWorkflow = {
+			id: 'wf-no-agents',
+			spaceId: ctx.spaceId,
+			name: 'No Agents Workflow',
+			description: '',
+			nodes: [
+				{
+					id: codingNodeId,
+					name: 'Coding',
+					agents: [{ agentId: 'agent-coder', name: 'coder' }],
+				},
+				// No agents defined and no legacy agentId — resolveNodeAgents will throw
+				{ id: reviewNodeId, name: 'Review', agents: [] },
+			],
+			startNodeId: codingNodeId,
+			endNodeId: reviewNodeId,
+			transitions: [],
+			rules: [],
+			channels: [{ id: 'ch-coding-review', from: 'Coding', to: 'Review' }],
+		};
+
+		const config = makeConfig(ctx, {
+			myAgentName: 'coder',
+			mySessionId: ctx.coderSessionId,
+			workflowNodeId: codingNodeId,
+			channelResolver: makeResolver([{ id: 'ch-coding-review', from: 'Coding', to: 'Review' }]),
+			workflow,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		// resolveNodeAgents throws (empty agents, no legacy agentId) → catch → agentName = 'Review'
+		const crossPeer = data.peers.find((p: { agentName: string }) => p.agentName === 'Review');
+		expect(crossPeer).toBeDefined();
+		expect(crossPeer.status).toBe('not_started');
+		expect(crossPeer.nodeName).toBe('Review');
+	});
+
+	test('cross-node peer with pending execution status appears as not_started', async () => {
+		// Guards the fix for comment #1: 'pending' execution (node activated, session not yet
+		// spawned) must appear as 'not_started' not 'active' in the cross-node peer list.
+		const reviewNodeId = 'node-review-pending';
+		const codingNodeId = ctx.nodeId;
+
+		const workflow: SpaceWorkflow = {
+			id: 'wf-pending-status',
+			spaceId: ctx.spaceId,
+			name: 'Pending Status Workflow',
+			description: '',
+			nodes: [
+				{
+					id: codingNodeId,
+					name: 'Coding',
+					agents: [{ agentId: 'agent-coder', name: 'coder' }],
+				},
+				{
+					id: reviewNodeId,
+					name: 'Review',
+					agents: [{ agentId: 'agent-reviewer', name: 'agent-reviewer' }],
+				},
+			],
+			startNodeId: codingNodeId,
+			endNodeId: reviewNodeId,
+			transitions: [],
+			rules: [],
+			channels: [{ id: 'ch-coding-review', from: 'Coding', to: 'Review' }],
+		};
+
+		// Seed a 'pending' execution for reviewer (activation created, session not yet spawned)
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId: ctx.workflowRunId,
+			workflowNodeId: reviewNodeId,
+			agentName: 'agent-reviewer',
+			status: 'pending',
+		});
+		// No agentSessionId set — the session hasn't been assigned yet
+
+		const config = makeConfig(ctx, {
+			myAgentName: 'coder',
+			mySessionId: ctx.coderSessionId,
+			workflowNodeId: codingNodeId,
+			channelResolver: makeResolver([{ id: 'ch-coding-review', from: 'Coding', to: 'Review' }]),
+			workflow,
+		});
+		const handlers = createNodeAgentToolHandlers(config);
+		const result = await handlers.list_peers({});
+		const data = JSON.parse(result.content[0].text);
+
+		expect(data.success).toBe(true);
+		const crossPeer = data.peers.find(
+			(p: { agentName: string }) => p.agentName === 'agent-reviewer'
+		);
+		expect(crossPeer).toBeDefined();
+		// 'pending' must NOT map to 'active' — it should be 'not_started'
+		expect(crossPeer.status).toBe('not_started');
+		expect(crossPeer.completionState.taskStatus).toBe('pending');
+		expect(crossPeer.nodeName).toBe('Review');
 	});
 });
 

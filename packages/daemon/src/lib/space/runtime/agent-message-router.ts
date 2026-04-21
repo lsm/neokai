@@ -380,7 +380,14 @@ export class AgentMessageRouter {
 				// — and a pendingMessageRepo is available for persistent queuing.
 				const isDeclaredOrActivated =
 					activatedTargets.has(agentName) ||
+					// Target appears in a node_execution (pending activation by the tick loop).
 					allDeclaredAgentNames.has(agentName) ||
+					// Target appears in the channel topology even without an execution record.
+					// Three sub-conditions cover the slot/node name mapping in both directions:
+					//   n === agentName             — channel target IS the slot name directly (slot-name addressed channel)
+					//   resolveNodeName(n) === agentName — channel target is a node name that maps to this agent via slotToNode
+					//   n === resolveNodeName(agentName) — agent's slot maps to a node name that is the channel target
+					//                                      (node-name addressed channels when nodeGroups is configured)
 					resolver
 						.getPermittedTargets(fromNodeName)
 						.some(
