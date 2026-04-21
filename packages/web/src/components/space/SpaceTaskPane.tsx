@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
+import { pushOverlayHistory, navigateToSpaceTask } from '../../lib/router';
+import { currentSpaceTaskViewTabSignal, currentSpaceIdSignal } from '../../lib/signals';
 import type {
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
@@ -84,11 +85,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const [threadSendError, setThreadSendError] = useState<string | null>(null);
 	const [sendingThread, setSendingThread] = useState(false);
 	const [statusTransitioning, setStatusTransitioning] = useState(false);
-	const [activeView, setActiveView] = useState<'thread' | 'canvas' | 'artifacts'>('thread');
+	const activeView = currentSpaceTaskViewTabSignal.value;
+	const _spaceId = currentSpaceIdSignal.value ?? '';
 
 	useEffect(() => {
 		setThreadSendError(null);
-		setActiveView('thread');
 	}, [taskId]);
 
 	useEffect(() => {
@@ -174,11 +175,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 
 	useEffect(() => {
 		if (activeView === 'canvas' && !canShowCanvasTab) {
-			setActiveView('thread');
+			navigateToSpaceTask(_spaceId, taskId, 'thread');
 			return;
 		}
 		if (activeView === 'artifacts' && !canShowArtifactsTab) {
-			setActiveView('thread');
+			navigateToSpaceTask(_spaceId, taskId, 'thread');
 		}
 	}, [activeView, canShowCanvasTab, canShowArtifactsTab]);
 
@@ -198,23 +199,20 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			(m) => m.kind === 'node_agent' && agentDisplayNames.includes(m.label)
 		);
 		if (nodeMember) {
-			spaceOverlayAgentNameSignal.value = nodeMember.label;
-			spaceOverlaySessionIdSignal.value = nodeMember.sessionId;
+			pushOverlayHistory(nodeMember.sessionId, nodeMember.label);
 			return;
 		}
 
 		// Fall back to the task agent session (coordinator/leader)
 		const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent');
 		if (taskAgentMember) {
-			spaceOverlayAgentNameSignal.value = taskAgentMember.label;
-			spaceOverlaySessionIdSignal.value = taskAgentMember.sessionId;
+			pushOverlayHistory(taskAgentMember.sessionId, taskAgentMember.label);
 			return;
 		}
 
 		// Last resort: use the task’s own agentSessionId
 		if (agentSessionId) {
-			spaceOverlayAgentNameSignal.value = agentActionLabel;
-			spaceOverlaySessionIdSignal.value = agentSessionId;
+			pushOverlayHistory(agentSessionId, agentActionLabel);
 		}
 	};
 
@@ -262,8 +260,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			...activityMembers.map((member) => ({
 				label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
 				onClick: () => {
-					spaceOverlayAgentNameSignal.value = member.label;
-					spaceOverlaySessionIdSignal.value = member.sessionId;
+					pushOverlayHistory(member.sessionId, member.label);
 				},
 			}))
 		);
@@ -343,7 +340,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 				<div class="flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
 					<button
 						type="button"
-						onClick={() => setActiveView('thread')}
+						onClick={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
 						class={cn(
 							'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
 							activeView === 'thread'
@@ -360,11 +357,11 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							type="button"
 							onClick={() => {
 								if (activeView === 'canvas') {
-									setActiveView('thread');
+									navigateToSpaceTask(_spaceId, taskId, 'thread');
 									return;
 								}
 								spaceStore.ensureNodeExecutions().catch(() => {});
-								setActiveView('canvas');
+								navigateToSpaceTask(_spaceId, taskId, 'canvas');
 							}}
 							class={cn(
 								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
@@ -382,7 +379,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						<button
 							type="button"
 							onClick={() =>
-								setActiveView((view) => (view === 'artifacts' ? 'thread' : 'artifacts'))
+								currentSpaceTaskViewTabSignal.value === 'artifacts'
+									? navigateToSpaceTask(_spaceId, taskId, 'thread')
+									: navigateToSpaceTask(_spaceId, taskId, 'artifacts')
 							}
 							class={cn(
 								'px-2.5 py-1 text-xs font-medium rounded-2xl transition-all',
@@ -413,7 +412,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					<TaskArtifactsPanel
 						runId={task.workflowRunId}
 						taskId={task.id}
-						onClose={() => setActiveView('thread')}
+						onClose={() => navigateToSpaceTask(_spaceId, taskId, 'thread')}
 						class="h-full"
 					/>
 				) : (
