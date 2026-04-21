@@ -2,12 +2,24 @@
 /**
  * SyntheticMessageBlock Component Tests
  *
- * Tests synthetic (system-generated) user message rendering
+ * Tests synthetic (system-generated) user message rendering.
+ * Validates the redesigned component: subtle dark card, markdown rendering,
+ * collapsible content, and right-aligned placement.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
+
+// Mock MarkdownRenderer — its behaviour is tested separately in MarkdownRenderer.test.tsx.
+// Here we only care that SyntheticMessageBlock passes text content to it.
+vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
+	default: ({ content, class: className }: { content: string; class?: string }) => (
+		<div data-testid="markdown-renderer" class={className}>
+			{content}
+		</div>
+	),
+}));
 
 // Mock copyToClipboard
 const mockCopyToClipboard = vi.fn();
@@ -81,27 +93,41 @@ describe('SyntheticMessageBlock', () => {
 	});
 
 	describe('Header', () => {
-		it('should show "Synthetic Message" header', () => {
+		it('should show "Synthetic" label in header', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(container.textContent).toContain('Synthetic Message');
+			expect(container.textContent).toContain('Synthetic');
 		});
 
-		it('should have lightbulb icon', () => {
+		it('should have purple dot icon in header', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			// Should have SVG icon in header
-			const headerSvg = container.querySelector('.border-b svg');
-			expect(headerSvg).toBeTruthy();
+			// Purple dot is a div with rounded-full bg-purple-500
+			const dot = container.querySelector('[data-testid="synthetic-dot"]');
+			expect(dot).toBeTruthy();
+		});
+
+		it('should not show an SVG lightbulb in the card header', () => {
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
+			);
+
+			// The header area (inside the card) should NOT have an SVG lightbulb
+			const card = container.querySelector('[data-testid="synthetic-card"]');
+			// SVGs inside the card are only the toggle chevrons (which appear only when needsCollapse)
+			// For short content, no SVGs should appear inside the card header area
+			const headerBorderB = card?.querySelector('.border-b');
+			const svgInHeader = headerBorderB?.querySelector('svg');
+			expect(svgInHeader).toBeNull();
 		});
 	});
 
 	describe('String Content', () => {
-		it('should render simple string content', () => {
+		it('should render simple string content via MarkdownRenderer', () => {
 			const content = 'This is a synthetic message.';
 			const { container } = render(
 				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
@@ -110,20 +136,20 @@ describe('SyntheticMessageBlock', () => {
 			expect(container.textContent).toContain('This is a synthetic message');
 		});
 
-		it('should preserve whitespace in text content', () => {
-			const content = 'Line 1\nLine 2\n  Indented line';
+		it('should pass text to MarkdownRenderer', () => {
+			const content = 'Markdown content here.';
 			const { container } = render(
 				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
 			);
 
-			// Should have whitespace-pre-wrap class
-			const textDiv = container.querySelector('.whitespace-pre-wrap');
-			expect(textDiv).toBeTruthy();
+			const renderer = container.querySelector('[data-testid="markdown-renderer"]');
+			expect(renderer).toBeTruthy();
+			expect(renderer?.textContent).toContain('Markdown content here');
 		});
 	});
 
 	describe('Array Content Blocks', () => {
-		it('should render text blocks', () => {
+		it('should render text blocks via MarkdownRenderer', () => {
 			const content = [{ type: 'text', text: 'Text block content' }];
 			const { container } = render(
 				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
@@ -262,7 +288,7 @@ describe('SyntheticMessageBlock', () => {
 	});
 
 	describe('Synthetic Badge', () => {
-		it('should show synthetic badge', () => {
+		it('should show synthetic badge in action row', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
@@ -280,7 +306,7 @@ describe('SyntheticMessageBlock', () => {
 	});
 
 	describe('Copy Functionality', () => {
-		it('should have copy button', () => {
+		it('should have copy button in action row', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content to copy" timestamp={Date.now()} />
 			);
@@ -412,12 +438,24 @@ describe('SyntheticMessageBlock', () => {
 			expect(container.querySelector('.justify-end')).toBeTruthy();
 		});
 
-		it('should have purple border and background', () => {
+		it('should use subtle dark card (gray-900 background, gray-700 border)', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(container.querySelector('.bg-purple-900\\/20, .border-purple-700\\/50')).toBeTruthy();
+			const card = container.querySelector('[data-testid="synthetic-card"]');
+			expect(card?.className).toContain('bg-gray-900');
+			expect(card?.className).toContain('border-gray-700');
+		});
+
+		it('should NOT use purple background on the card', () => {
+			const { container } = render(
+				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
+			);
+
+			const card = container.querySelector('[data-testid="synthetic-card"]');
+			expect(card?.className).not.toContain('bg-purple-900');
+			expect(card?.className).not.toContain('border-purple-700');
 		});
 
 		it('should have max-width constraint', () => {
@@ -433,20 +471,203 @@ describe('SyntheticMessageBlock', () => {
 				<SyntheticMessageBlock content="Content" timestamp={Date.now()} />
 			);
 
-			expect(container.querySelector('.rounded-lg')).toBeTruthy();
+			expect(
+				container.querySelector('[data-testid="synthetic-card"].rounded-\\[20px\\]')
+			).toBeTruthy();
+		});
+	});
+
+	describe('Markdown Rendering', () => {
+		it('should render text blocks through MarkdownRenderer', () => {
+			const content = '## Task Title\n\n- Item 1\n- Item 2';
+			const { container } = render(
+				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
+			);
+
+			const renderer = container.querySelector('[data-testid="markdown-renderer"]');
+			expect(renderer).toBeTruthy();
+		});
+
+		it('should pass the full text to MarkdownRenderer', () => {
+			const content = [{ type: 'text', text: '**bold** and `code`' }];
+			const { container } = render(
+				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
+			);
+
+			const renderer = container.querySelector('[data-testid="markdown-renderer"]');
+			expect(renderer?.textContent).toContain('**bold** and `code`');
+		});
+
+		it('should not render MarkdownRenderer for non-text blocks', () => {
+			const content = [
+				{
+					type: 'tool_use',
+					name: 'Bash',
+					input: { command: 'ls' },
+				},
+			];
+			const { container } = render(
+				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
+			);
+
+			// No markdown renderer for tool_use blocks
+			const renderers = container.querySelectorAll('[data-testid="markdown-renderer"]');
+			expect(renderers.length).toBe(0);
+		});
+	});
+
+	describe('Collapse/Expand Behavior', () => {
+		it('should not show collapse toggle for short content', () => {
+			const shortContent = 'Short content';
+			const { container } = render(
+				<SyntheticMessageBlock content={shortContent} timestamp={Date.now()} />
+			);
+
+			// No toggle button when content is short
+			const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
+			expect(toggle).toBeNull();
+		});
+
+		it('should show "Show more" toggle when content is long (scrollHeight > threshold)', () => {
+			const originalScrollHeight = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'scrollHeight'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+				configurable: true,
+				get() {
+					return 500; // Exceeds 8 * 21 = 168px threshold
+				},
+			});
+
+			try {
+				const longContent =
+					'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
+				const { container } = render(
+					<SyntheticMessageBlock content={longContent} timestamp={Date.now()} />
+				);
+
+				const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
+				expect(toggle).toBeTruthy();
+				expect(toggle?.textContent).toContain('Show more');
+			} finally {
+				if (originalScrollHeight) {
+					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+				}
+			}
+		});
+
+		it('should toggle between "Show more" and "Show less"', () => {
+			const originalScrollHeight = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'scrollHeight'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+				configurable: true,
+				get() {
+					return 500;
+				},
+			});
+
+			try {
+				const longContent =
+					'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10';
+				const { container } = render(
+					<SyntheticMessageBlock content={longContent} timestamp={Date.now()} />
+				);
+
+				const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
+				expect(toggle?.textContent).toContain('Show more');
+
+				// Expand
+				fireEvent.click(toggle as HTMLElement);
+				expect(container.textContent).toContain('Show less');
+
+				// Collapse
+				const showLessButton = container.querySelector('[data-testid="synthetic-toggle"]');
+				fireEvent.click(showLessButton as HTMLElement);
+				expect(container.textContent).toContain('Show more');
+			} finally {
+				if (originalScrollHeight) {
+					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+				}
+			}
+		});
+
+		it('should show line count in header when collapsed and needs collapse', () => {
+			const originalScrollHeight = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'scrollHeight'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+				configurable: true,
+				get() {
+					return 500;
+				},
+			});
+
+			try {
+				const longContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
+				const { container } = render(
+					<SyntheticMessageBlock content={longContent} timestamp={Date.now()} />
+				);
+
+				// 5 lines in content → header shows "— 5 lines"
+				expect(container.textContent).toContain('5 lines');
+			} finally {
+				if (originalScrollHeight) {
+					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+				}
+			}
+		});
+
+		it('should hide line count when expanded', () => {
+			const originalScrollHeight = Object.getOwnPropertyDescriptor(
+				HTMLElement.prototype,
+				'scrollHeight'
+			);
+			Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+				configurable: true,
+				get() {
+					return 500;
+				},
+			});
+
+			try {
+				const longContent = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
+				const { container } = render(
+					<SyntheticMessageBlock content={longContent} timestamp={Date.now()} />
+				);
+
+				const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
+				fireEvent.click(toggle as HTMLElement);
+
+				// After expansion, line count should not be shown
+				expect(container.textContent).not.toContain('5 lines');
+			} finally {
+				if (originalScrollHeight) {
+					Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+				}
+			}
 		});
 	});
 
 	describe('Overflow Protection', () => {
-		it('should apply break-words to text content', () => {
+		it('should apply overflow-x-auto to JSON content (image blocks)', () => {
+			const content = [
+				{
+					type: 'image',
+					source: { type: 'base64', data: 'abc123' },
+				},
+			];
 			const { container } = render(
-				<SyntheticMessageBlock content="Long text content" timestamp={Date.now()} />
+				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
 			);
 
-			expect(container.querySelector('.break-words')).toBeTruthy();
+			expect(container.querySelector('.overflow-x-auto')).toBeTruthy();
 		});
 
-		it('should apply overflow-x-auto to JSON content', () => {
+		it('should apply overflow-x-auto to JSON content (tool_use blocks)', () => {
 			const content = [
 				{
 					type: 'tool_use',
@@ -530,7 +751,7 @@ describe('SyntheticMessageBlock', () => {
 				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
 			);
 
-			// Content should be rendered (escaped by React/Preact)
+			// Content should be rendered (escaped by Preact/MarkdownRenderer mock)
 			expect(container.textContent).toContain('Special chars');
 		});
 
@@ -546,9 +767,7 @@ describe('SyntheticMessageBlock', () => {
 	});
 
 	describe('formatTime Helper', () => {
-		// Tests the formatTime function behavior
 		it('should format morning time correctly', () => {
-			// Create a fixed timestamp for 9:30 AM
 			const date = new Date();
 			date.setHours(9, 30, 0, 0);
 			const timestamp = date.getTime();
@@ -557,12 +776,10 @@ describe('SyntheticMessageBlock', () => {
 				<SyntheticMessageBlock content="Content" timestamp={timestamp} />
 			);
 
-			// Should contain time format
 			expect(container.textContent).toMatch(/\d{1,2}:\d{2}/);
 		});
 
 		it('should format afternoon time correctly', () => {
-			// Create a fixed timestamp for 2:45 PM
 			const date = new Date();
 			date.setHours(14, 45, 0, 0);
 			const timestamp = date.getTime();
@@ -600,7 +817,6 @@ describe('SyntheticMessageBlock', () => {
 	});
 
 	describe('getTextContent Helper', () => {
-		// Tests the text extraction logic for copy functionality
 		it('should extract text from string content', () => {
 			const content = 'Simple text content';
 			const extracted = typeof content === 'string' ? content : '';
@@ -653,7 +869,6 @@ describe('SyntheticMessageBlock', () => {
 				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
 			);
 
-			// All blocks should be rendered
 			expect(container.textContent).toContain('Block 1');
 			expect(container.textContent).toContain('Block 2');
 			expect(container.textContent).toContain('Block 3');
@@ -664,7 +879,6 @@ describe('SyntheticMessageBlock', () => {
 		it('should handle timestamp of 0', () => {
 			const { container } = render(<SyntheticMessageBlock content="Content" timestamp={0} />);
 
-			// Timestamp 0 should result in "0" attribute but no displayed time
 			const element = container.querySelector('[data-message-timestamp]');
 			expect(element?.getAttribute('data-message-timestamp')).toBe('0');
 		});
@@ -672,7 +886,6 @@ describe('SyntheticMessageBlock', () => {
 		it('should handle negative timestamp', () => {
 			const { container } = render(<SyntheticMessageBlock content="Content" timestamp={-1000} />);
 
-			// Should still render
 			expect(container.querySelector('[data-testid="synthetic-message"]')).toBeTruthy();
 		});
 	});
@@ -733,7 +946,6 @@ describe('SyntheticMessageBlock', () => {
 				<SyntheticMessageBlock content={content} timestamp={Date.now()} />
 			);
 
-			// Should show truncated ID with ellipsis
 			expect(container.textContent).toContain('toolu_abc123');
 			expect(container.textContent).toContain('...');
 		});
@@ -754,7 +966,6 @@ describe('SyntheticMessageBlock', () => {
 	describe('Content Normalization', () => {
 		it('should normalize string content to text block', () => {
 			const stringContent = 'Simple string';
-			// The component normalizes string to [{ type: 'text', text: content }]
 			const normalized =
 				typeof stringContent === 'string' ? [{ type: 'text', text: stringContent }] : stringContent;
 
