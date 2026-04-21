@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 // @ts-nocheck
 /**
  * Tests for the Space Agent Overlay history integration
