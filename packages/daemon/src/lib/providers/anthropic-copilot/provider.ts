@@ -901,13 +901,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
 	private async createServer(): Promise<EmbeddedServer> {
 		const token = await this.resolveGitHubToken();
-		const client = this.getOrCreateClient(token);
+		const client = await this.getOrCreateClient(token);
 		const server = await startEmbeddedServer(client, this.cwd);
 		logger.debug(`Embedded Anthropic server started at ${server.url}`);
 		return server;
 	}
 
-	private getOrCreateClient(token?: string): CopilotClient {
+	private async getOrCreateClient(token?: string): Promise<CopilotClient> {
 		if (this.clientCache === undefined) {
 			// Pass the GitHub OAuth token as COPILOT_GITHUB_TOKEN in the subprocess env.
 			// The CLI will exchange it for a Copilot session token internally.
@@ -920,11 +920,16 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 			if (token) {
 				env.COPILOT_GITHUB_TOKEN = token;
 			}
-			this.clientCache = new CopilotClient({
+			const client = new CopilotClient({
 				useStdio: true,
 				logLevel: 'error',
 				env: buildCopilotEnv(env),
 			});
+			// start() must be called to establish the underlying CLI connection.
+			// If it throws, the exception propagates and clientCache is left undefined,
+			// so the next call to getOrCreateClient() creates a fresh instance.
+			await client.start();
+			this.clientCache = client;
 			logger.debug('Created CopilotClient (bundled CLI path)');
 		}
 		return this.clientCache;
