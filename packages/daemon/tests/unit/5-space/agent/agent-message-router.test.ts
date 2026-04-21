@@ -678,6 +678,82 @@ describe('AgentMessageRouter: node name target without nodeGroups → unknown ta
 	});
 });
 
+describe('AgentMessageRouter: fromNodeName resolution edge cases', () => {
+	// These tests guard the isTopologyDeclared check: when channels are node-name addressed
+	// (e.g. from:'Coding') but the agent slot name differs (e.g. 'coder'), the check must
+	// not false-positive by treating the slot name as a valid channel source.
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('isTopologyDeclared is false when slot name differs from node-name-addressed channel source (no nodeGroups)', async () => {
+		// Channel: { from: 'Coding', to: 'Review' }  ← node-name addressed
+		// Agent slot name: 'coder'  ← doesn't match 'Coding'
+		// No nodeGroups → fromNodeName resolves to identity 'coder'
+		// getPermittedTargets('coder') → [] → isTopologyDeclared('Review') = false
+		// Expected: "Unknown target 'Review'" (not "no active sessions found")
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('Coding', 'Review'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+
+		// No nodeGroups — router cannot translate 'coder' → 'Coding'
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')]);
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'Review',
+			message: 'hello review',
+		});
+
+		expect(result.success).toBe(false);
+		// Target was not in any execution record AND fromNodeName ('coder') ≠ channel source
+		// ('Coding'), so topology check returns [] → isTopologyDeclared = false → unknown target
+		expect(result.reason).toContain("Unknown target 'Review'");
+		expect(result.reason).toContain('no agent or node found');
+	});
+
+	test('isTopologyDeclared is true when nodeGroups maps slot name to channel source', async () => {
+		// Same channel setup as above, but this time nodeGroups tells the router that
+		// agent 'coder' belongs to node 'Coding'. fromNodeName('coder') → 'Coding'.
+		// getPermittedTargets('Coding') → ['Review'] → isTopologyDeclared('Review') = true.
+		// No active session for 'Review', so message is queued (pendingMessageRepo provided).
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('Coding', 'Review'),
+		]);
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// 'Review' node not yet activated — no execution record
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
+			nodeGroups: { Coding: ['coder'] }, // maps slot → node name
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+		});
+
+		const result = await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'Review',
+			message: 'hello review',
+		});
+
+		// With nodeGroups, the topology resolves correctly → isTopologyDeclared = true
+		// No session exists → message queued (not "unknown target")
+		expect(result.success).toBe(true);
+		expect(result.queued).toHaveLength(1);
+		expect(result.queued?.[0].agentName).toBe('Review');
+	});
+});
+
 describe('AgentMessageRouter: notFoundAgentNames structured field', () => {
 	let ctx: TestCtx;
 
