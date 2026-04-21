@@ -2662,6 +2662,12 @@ export class TaskAgentManager {
 				await this.injectTaskAgentMessage(taskId, message);
 				return { sessionId: ensuredTask.taskAgentSessionId ?? '' };
 			},
+			// Wire up the pending-message queue so node agents can queue messages for
+			// peers that haven't spawned yet (declared but inactive). The queue is
+			// drained by flushPendingMessagesForTarget() when the target session activates.
+			pendingMessageRepo: this.config.pendingMessageRepo,
+			spaceId,
+			taskId,
 		});
 
 		const agentNameAliases = execution

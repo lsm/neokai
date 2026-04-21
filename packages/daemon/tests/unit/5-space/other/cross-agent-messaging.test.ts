@@ -1144,7 +1144,10 @@ describe('Error cases — non-existent targets and injection failures', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	test('send_message to non-existent role returns unknown-target error', async () => {
+	test('send_message to topology-declared but missing role fails with no-active-sessions', async () => {
+		// 'ghost' is declared as the channel target (coder→ghost) but has no execution record.
+		// After the fix: topology-declared targets are no longer "unknown" — they resolve as
+		// permitted targets but fail with "no active sessions" since no session exists for them.
 		ctx = makeStepCtx([{ sessionId: 'sess-coder', agentName: 'coder' }]);
 		const cfg = makeStepConfig(ctx, 'sess-coder', 'coder', {
 			channelResolver: new ChannelResolver([ch('coder', 'ghost')]),
@@ -1153,7 +1156,8 @@ describe('Error cases — non-existent targets and injection failures', () => {
 
 		const result = parse(await handlers.send_message({ target: 'ghost', message: 'Hello ghost' }));
 		expect(result.success).toBe(false);
-		expect((result.error as string).toLowerCase()).toContain("unknown target 'ghost'");
+		expect((result.error as string).toLowerCase()).toContain('no active sessions found');
+		expect((result.error as string).toLowerCase()).toContain('ghost');
 	});
 
 	test('send_message injection failure returns all-failed error', async () => {
