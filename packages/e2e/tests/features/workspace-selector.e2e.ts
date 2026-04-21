@@ -67,7 +67,7 @@ test.describe('Inline Workspace Selector', () => {
 		// Workspace selector should appear in chat
 		await expect(page.getByText('Select a workspace')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByRole('button', { name: 'Skip' })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Set Workspace' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Start with workspace' })).toBeVisible();
 	});
 
 	test('should show worktree/direct mode toggle when a workspace path is entered', async ({
@@ -78,9 +78,9 @@ test.describe('Inline Workspace Selector', () => {
 		// Wait for workspace selector
 		await expect(page.getByText('Select a workspace')).toBeVisible({ timeout: 5000 });
 
-		// Select "Select new workspace..." to show text input
+		// Select "Enter path manually..." to show text input
 		const dropdown = page.locator('select').first();
-		await dropdown.selectOption('__new__');
+		await dropdown.selectOption('__manual__');
 
 		// Text input should appear
 		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
@@ -104,7 +104,7 @@ test.describe('Inline Workspace Selector', () => {
 
 		// Enter a path to show the toggle
 		const dropdown = page.locator('select').first();
-		await dropdown.selectOption('__new__');
+		await dropdown.selectOption('__manual__');
 		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
 
 		// Click Direct mode
@@ -138,8 +138,8 @@ test.describe('Inline Workspace Selector', () => {
 		// Workspace selector appears
 		await expect(page.getByText('Select a workspace')).toBeVisible({ timeout: 5000 });
 
-		// Choose "Select new workspace..." to get text input
-		await page.locator('select').first().selectOption('__new__');
+		// Choose "Enter path manually..." to get text input
+		await page.locator('select').first().selectOption('__manual__');
 		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
 		await expect(pathInput).toBeVisible({ timeout: 3000 });
 
@@ -150,7 +150,7 @@ test.describe('Inline Workspace Selector', () => {
 		await page.getByRole('button', { name: 'Direct' }).click();
 
 		// Confirm workspace
-		await page.getByRole('button', { name: 'Set Workspace' }).click();
+		await page.getByRole('button', { name: 'Start with workspace' }).click();
 
 		// Selector should disappear after confirmation
 		await expect(page.getByText('Select a workspace')).not.toBeVisible({ timeout: 5000 });

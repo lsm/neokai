@@ -73,8 +73,9 @@ export function WorkspaceSelector({
 	};
 
 	const handleSelectChange = (value: string) => {
-		if (value === '__browse__') {
-			handleBrowse();
+		if (value === '__manual__') {
+			setShowCustomInput(true);
+			setSelectedPath('');
 		} else if (value === '__none__') {
 			// placeholder, do nothing
 		} else {
@@ -145,7 +146,7 @@ export function WorkspaceSelector({
 							<label class="block text-xs font-medium text-gray-400 mb-1.5">Workspace folder</label>
 							<div class="flex gap-2">
 								<select
-									value={selectedPath || (history.length === 0 ? '__none__' : selectedPath)}
+									value={selectedPath || '__none__'}
 									onChange={(e) => handleSelectChange((e.target as HTMLSelectElement).value)}
 									class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
 								>
@@ -160,7 +161,7 @@ export function WorkspaceSelector({
 											</option>
 										))
 									)}
-									<option value="__browse__">Browse for folder...</option>
+									<option value="__manual__">Enter path manually...</option>
 								</select>
 								<button
 									type="button"
