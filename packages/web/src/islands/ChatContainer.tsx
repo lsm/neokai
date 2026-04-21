@@ -953,15 +953,23 @@ export default function ChatContainer({
 						</div>
 					)}
 					{messages.length === 0 ? (
-						<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
-							<div class="text-center">
-								<div class="text-5xl mb-4">💬</div>
-								<p class="text-lg text-gray-300 mb-2">No messages yet</p>
-								<p class="text-sm text-gray-500">
-									Start a conversation with Claude to see the magic happen
-								</p>
+						showWorkspaceSelector && session ? (
+							<WorkspaceSelector
+								sessionId={sessionId}
+								onConfirm={() => setShowWorkspaceSelector(false)}
+								onSkip={() => setShowWorkspaceSelector(false)}
+							/>
+						) : (
+							<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
+								<div class="text-center">
+									<div class="text-5xl mb-4">💬</div>
+									<p class="text-lg text-gray-300 mb-2">No messages yet</p>
+									<p class="text-sm text-gray-500">
+										Start a conversation with Claude to see the magic happen
+									</p>
+								</div>
 							</div>
-						</div>
+						)
 					) : (
 						<ContentContainer className="space-y-0 min-h-[calc(100%+1px)]">
 							{/* Load More Button */}
@@ -1044,17 +1052,6 @@ export default function ChatContainer({
 				{/* Scroll Button - positioned relative to container, not scrollable content */}
 				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
 			</div>
-
-			{/* Inline Workspace Selector - shown for sessions without workspace */}
-			{showWorkspaceSelector && session && (
-				<WorkspaceSelector
-					sessionId={sessionId}
-					onConfirm={() => {
-						setShowWorkspaceSelector(false);
-					}}
-					onSkip={() => setShowWorkspaceSelector(false)}
-				/>
-			)}
 
 			{/* Footer - Floating Status Bar */}
 			<ChatComposer

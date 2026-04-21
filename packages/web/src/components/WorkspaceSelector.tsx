@@ -1,12 +1,15 @@
 /**
  * WorkspaceSelector Component
  *
- * Inline workspace selector shown in the chat container for sessions
+ * Centered panel shown in the ChatContainer empty state for worker sessions
  * that were created without a workspace. Allows users to:
  * - Select from recent workspace history (pre-selected: most recent)
  * - Pick a new workspace via system folder picker
  * - Choose worktree vs direct mode
  * - Skip workspace selection entirely
+ *
+ * Rendered inside the message area (replacing "No messages yet") so the UX
+ * feels like workspace context is set early in the session flow.
  */
 
 import { useState, useEffect } from 'preact/hooks';
@@ -48,7 +51,7 @@ export function WorkspaceSelector({
 				}
 			})
 			.catch(() => {
-				// Non-critical - proceed without history
+				// Non-critical — proceed without history
 			});
 	}, []);
 
@@ -65,14 +68,15 @@ export function WorkspaceSelector({
 				setSelectedPath('');
 			}
 		} catch {
-			// Silently ignore - user cancelled dialog
+			// Silently ignore — user cancelled dialog
 		}
 	};
 
 	const handleSelectChange = (value: string) => {
-		if (value === '__new__') {
-			setShowCustomInput(true);
-			setSelectedPath('');
+		if (value === '__browse__') {
+			handleBrowse();
+		} else if (value === '__none__') {
+			// placeholder, do nothing
 		} else {
 			setSelectedPath(value);
 			setShowCustomInput(false);
@@ -105,13 +109,14 @@ export function WorkspaceSelector({
 	};
 
 	return (
-		<div class="relative z-20 border-t border-dark-700 bg-dark-850/60 px-4 py-3">
-			<div class="max-w-4xl mx-auto">
-				<div class="flex items-start gap-3">
-					<div class="flex-1 min-w-0">
-						<div class="flex items-center gap-2 mb-2">
+		<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 py-12">
+			<div class="w-full max-w-md">
+				{/* Welcome area */}
+				<div class="text-center mb-8">
+					<div class="flex items-center justify-center mb-5">
+						<div class="w-16 h-16 rounded-2xl bg-dark-800 border border-dark-700 flex items-center justify-center shadow-lg">
 							<svg
-								class="w-4 h-4 text-blue-400 shrink-0"
+								class="w-8 h-8 text-blue-400"
 								fill="none"
 								viewBox="0 0 24 24"
 								stroke="currentColor"
@@ -119,35 +124,49 @@ export function WorkspaceSelector({
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"
-									stroke-width={2}
+									stroke-width={1.5}
 									d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
 								/>
 							</svg>
-							<span class="text-sm font-medium text-gray-200">Select a workspace</span>
-							<span class="text-xs text-gray-500">(optional)</span>
 						</div>
+					</div>
+					<h2 class="text-xl font-semibold text-gray-100 mb-2">Select a workspace</h2>
+					<p class="text-sm text-gray-500 max-w-xs mx-auto">
+						Choose a project folder to give Claude context for your work, or skip to chat without
+						one.
+					</p>
+				</div>
 
-						{/* Workspace Dropdown */}
-						{!showCustomInput ? (
+				{/* Selection card */}
+				<div class="bg-dark-800 border border-dark-700 rounded-2xl p-5 space-y-4 shadow-xl">
+					{/* Workspace picker */}
+					{!showCustomInput ? (
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1.5">Workspace folder</label>
 							<div class="flex gap-2">
 								<select
-									value={selectedPath}
+									value={selectedPath || (history.length === 0 ? '__none__' : selectedPath)}
 									onChange={(e) => handleSelectChange((e.target as HTMLSelectElement).value)}
-									class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+									class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
 								>
-									{history.length === 0 && <option value="">No recent workspaces</option>}
-									{history.map((item) => (
-										<option key={item.path} value={item.path}>
-											{item.path}
+									{history.length === 0 ? (
+										<option value="__none__" disabled>
+											No recent workspaces
 										</option>
-									))}
-									<option value="__new__">Select new workspace...</option>
+									) : (
+										history.map((item) => (
+											<option key={item.path} value={item.path}>
+												{item.path}
+											</option>
+										))
+									)}
+									<option value="__browse__">Browse for folder...</option>
 								</select>
 								<button
 									type="button"
 									onClick={handleBrowse}
 									title="Browse for folder"
-									class="p-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors"
+									class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
 								>
 									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path
@@ -159,7 +178,10 @@ export function WorkspaceSelector({
 									</svg>
 								</button>
 							</div>
-						) : (
+						</div>
+					) : (
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1.5">Workspace folder</label>
 							<div class="flex gap-2">
 								<input
 									type="text"
@@ -167,13 +189,13 @@ export function WorkspaceSelector({
 									onInput={(e) => setCustomPath((e.target as HTMLInputElement).value)}
 									placeholder="Enter workspace path..."
 									autoFocus
-									class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+									class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
 								/>
 								<button
 									type="button"
 									onClick={handleBrowse}
 									title="Browse for folder"
-									class="p-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors"
+									class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
 								>
 									<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path
@@ -191,8 +213,8 @@ export function WorkspaceSelector({
 											setShowCustomInput(false);
 											setSelectedPath(history[0].path);
 										}}
-										class="p-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors"
-										title="Back to history"
+										title="Back to recent workspaces"
+										class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
 									>
 										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 											<path
@@ -205,51 +227,63 @@ export function WorkspaceSelector({
 									</button>
 								)}
 							</div>
-						)}
+						</div>
+					)}
 
-						{/* Worktree/Direct Toggle - shown when a path is selected */}
-						{activePath && (
-							<div class="mt-2 flex items-center gap-2">
-								<span class="text-xs text-gray-500">Mode:</span>
-								<div class="flex rounded-lg overflow-hidden border border-dark-600">
-									<button
-										type="button"
-										onClick={() => setWorktreeMode('worktree')}
-										class={`px-3 py-1 text-xs font-medium transition-colors ${
-											worktreeMode === 'worktree'
-												? 'bg-green-700/50 text-green-300 border-r border-dark-600'
-												: 'bg-dark-800 text-gray-400 hover:text-gray-200 border-r border-dark-600'
+					{/* Worktree / Direct toggle — only when a path is chosen */}
+					{activePath && (
+						<div>
+							<label class="block text-xs font-medium text-gray-400 mb-1.5">Edit mode</label>
+							<div class="flex rounded-lg overflow-hidden border border-dark-600">
+								<button
+									type="button"
+									onClick={() => setWorktreeMode('worktree')}
+									class={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+										worktreeMode === 'worktree'
+											? 'bg-green-700/40 text-green-300'
+											: 'bg-dark-900 text-gray-400 hover:text-gray-200'
+									}`}
+								>
+									Worktree
+									<span
+										class={`block text-[10px] font-normal mt-0.5 ${
+											worktreeMode === 'worktree' ? 'text-green-400/70' : 'text-gray-600'
 										}`}
 									>
-										Worktree
-									</button>
-									<button
-										type="button"
-										onClick={() => setWorktreeMode('direct')}
-										class={`px-3 py-1 text-xs font-medium transition-colors ${
-											worktreeMode === 'direct'
-												? 'bg-amber-700/40 text-amber-300'
-												: 'bg-dark-800 text-gray-400 hover:text-gray-200'
+										Isolated branch (safe)
+									</span>
+								</button>
+								<button
+									type="button"
+									onClick={() => setWorktreeMode('direct')}
+									class={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-l border-dark-600 ${
+										worktreeMode === 'direct'
+											? 'bg-amber-700/30 text-amber-300'
+											: 'bg-dark-900 text-gray-400 hover:text-gray-200'
+									}`}
+								>
+									Direct
+									<span
+										class={`block text-[10px] font-normal mt-0.5 ${
+											worktreeMode === 'direct' ? 'text-amber-400/70' : 'text-gray-600'
 										}`}
 									>
-										Direct
-									</button>
-								</div>
-								<span class="text-xs text-gray-600">
-									{worktreeMode === 'worktree' ? 'Isolated branch (safe)' : 'Edit directly (fast)'}
-								</span>
+										Edit directly (fast)
+									</span>
+								</button>
 							</div>
-						)}
+						</div>
+					)}
 
-						{error && <p class="mt-1.5 text-xs text-red-400">{error}</p>}
-					</div>
+					{/* Error */}
+					{error && <p class="text-xs text-red-400">{error}</p>}
 
-					{/* Action buttons */}
-					<div class="flex items-center gap-2 shrink-0 mt-6">
+					{/* Actions */}
+					<div class="flex gap-3 pt-1">
 						<button
 							type="button"
 							onClick={onSkip}
-							class="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+							class="flex-1 px-4 py-2.5 text-sm text-gray-400 hover:text-gray-200 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-xl transition-colors font-medium"
 						>
 							Skip
 						</button>
@@ -257,9 +291,9 @@ export function WorkspaceSelector({
 							type="button"
 							onClick={handleConfirm}
 							disabled={!activePath || loading}
-							class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors"
+							class="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-colors"
 						>
-							{loading ? 'Setting...' : 'Set Workspace'}
+							{loading ? 'Setting...' : 'Start with workspace'}
 						</button>
 					</div>
 				</div>
