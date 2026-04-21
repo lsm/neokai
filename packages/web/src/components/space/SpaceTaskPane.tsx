@@ -16,7 +16,7 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingCompletionActionBanner } from './PendingCompletionActionBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
-import { ThreadedChatComposer } from './ThreadedChatComposer';
+import { TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 
@@ -471,17 +471,15 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 						</div>
 
 						{showInlineComposer && (
-							<div class="absolute bottom-0 left-0 right-0 z-10">
-								<ThreadedChatComposer
-									taskSessionId={agentSessionId ?? ''}
-									mentionCandidates={mentionCandidates}
-									hasTaskAgentSession={!!agentSessionId}
-									canSend={canSendThreadMessage}
-									isSending={sendingThread}
-									errorMessage={threadSendError}
-									onSend={sendThreadMessage}
-								/>
-							</div>
+							<TaskSessionChatComposer
+								sessionId={agentSessionId ?? ''}
+								mentionCandidates={mentionCandidates}
+								hasTaskAgentSession={!!agentSessionId}
+								canSend={canSendThreadMessage}
+								isSending={sendingThread}
+								errorMessage={threadSendError}
+								onSend={sendThreadMessage}
+							/>
 						)}
 					</div>
 				)}

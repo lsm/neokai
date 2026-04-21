@@ -7,7 +7,7 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
 	MessageDeliveryMode,
 	MessageImage,
@@ -78,6 +78,9 @@ interface MessageInputProps {
 	onEnterRewindMode?: () => void;
 	rewindMode?: boolean;
 	onExitRewindMode?: () => void;
+	agentMentionCandidates?: Array<{ id: string; name: string }>;
+	/** Override the default placeholder derived from sessionType */
+	placeholder?: string;
 }
 
 interface QueuedOverlayMessage {
@@ -99,6 +102,8 @@ export default function MessageInput({
 	onEnterRewindMode,
 	rewindMode,
 	onExitRewindMode,
+	agentMentionCandidates,
+	placeholder: placeholderProp,
 }: MessageInputProps) {
 	// Cache touch device detection — computed once on first render, stable thereafter.
 	// Using useRef (not a module constant) so tests can mock matchMedia before render.
@@ -167,6 +172,72 @@ export default function MessageInput({
 		content,
 		onSelect: handleReferenceSelect,
 	});
+
+	// Agent mention autocomplete (for workflow agent @-mentions)
+	const [agentMentionQuery, setAgentMentionQuery] = useState<string | null>(null);
+	const [agentMentionSelectedIndex, setAgentMentionSelectedIndex] = useState(0);
+	const lastCursorRef = useRef(0);
+
+	const filteredAgentMentionCandidates = useMemo(() => {
+		if (agentMentionQuery === null || !agentMentionCandidates) return [];
+		return agentMentionCandidates.filter((a) =>
+			a.name.toLowerCase().startsWith(agentMentionQuery.toLowerCase())
+		);
+	}, [agentMentionCandidates, agentMentionQuery]);
+
+	const showAgentMentionAutocomplete =
+		agentMentionQuery !== null && filteredAgentMentionCandidates.length > 0;
+
+	// Wrap setContent to detect @-mentions
+	const handleContentChange = useCallback(
+		(value: string) => {
+			// Track cursor position via the textarea ref
+			const cursor = textareaInputRef.current?.selectionStart ?? value.length;
+			lastCursorRef.current = cursor;
+			setContent(value);
+
+			if (agentMentionCandidates && agentMentionCandidates.length > 0) {
+				const textBeforeCursor = value.slice(0, cursor);
+				const match = textBeforeCursor.match(/@(\w*)$/);
+				if (match) {
+					setAgentMentionQuery(match[1]);
+					setAgentMentionSelectedIndex(0);
+				} else {
+					setAgentMentionQuery(null);
+				}
+			}
+		},
+		[setContent, agentMentionCandidates]
+	);
+
+	const handleAgentMentionSelect = useCallback(
+		(name: string) => {
+			const cursor = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+			const textBeforeCursor = content.slice(0, cursor);
+			const textAfterCursor = content.slice(cursor);
+			const match = textBeforeCursor.match(/@(\w*)$/);
+			if (!match) return;
+			const start = cursor - match[0].length;
+			const newValue = content.slice(0, start) + '@' + name + ' ' + textAfterCursor;
+			setContent(newValue);
+			setAgentMentionQuery(null);
+			setAgentMentionSelectedIndex(0);
+			setTimeout(() => {
+				if (textareaInputRef.current) {
+					const newCursor = start + name.length + 2;
+					textareaInputRef.current.focus();
+					textareaInputRef.current.setSelectionRange(newCursor, newCursor);
+				}
+			}, 0);
+		},
+		[content, setContent]
+	);
+
+	const handleAgentMentionClose = useCallback(() => {
+		setAgentMentionQuery(null);
+		setAgentMentionSelectedIndex(0);
+	}, []);
+
 	const agentWorking = isAgentWorking.value;
 	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
 	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
@@ -302,6 +373,35 @@ export default function MessageInput({
 	// Keyboard handler
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
+			// Agent mention autocomplete takes highest precedence when visible
+			if (showAgentMentionAutocomplete) {
+				if (e.key === 'ArrowDown') {
+					e.preventDefault();
+					setAgentMentionSelectedIndex((i) =>
+						Math.min(i + 1, filteredAgentMentionCandidates.length - 1)
+					);
+					return;
+				}
+				if (e.key === 'ArrowUp') {
+					e.preventDefault();
+					setAgentMentionSelectedIndex((i) => Math.max(i - 1, 0));
+					return;
+				}
+				if (e.key === 'Enter' && !e.shiftKey) {
+					e.preventDefault();
+					const candidate = filteredAgentMentionCandidates[agentMentionSelectedIndex];
+					if (candidate) {
+						handleAgentMentionSelect(candidate.name);
+					}
+					return;
+				}
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					handleAgentMentionClose();
+					return;
+				}
+			}
+
 			// Reference autocomplete takes precedence when visible
 			if (refHandleKeyDown(e)) {
 				return;
@@ -333,7 +433,17 @@ export default function MessageInput({
 				}
 			}
 		},
-		[refHandleKeyDown, cmdHandleKeyDown, handleSubmit, agentWorking]
+		[
+			refHandleKeyDown,
+			cmdHandleKeyDown,
+			handleSubmit,
+			agentWorking,
+			showAgentMentionAutocomplete,
+			filteredAgentMentionCandidates,
+			agentMentionSelectedIndex,
+			handleAgentMentionSelect,
+			handleAgentMentionClose,
+		]
 	);
 
 	// Model switch handler
@@ -515,21 +625,30 @@ export default function MessageInput({
 						{/* Input Textarea */}
 						<InputTextarea
 							content={content}
-							onContentChange={setContent}
+							onContentChange={handleContentChange}
 							onKeyDown={handleKeyDown}
 							onSubmit={() => {
 								void handleSubmit('immediate');
 							}}
 							disabled={disabled}
-							placeholder={getPlaceholderForSessionType(sessionType)}
+							placeholder={placeholderProp ?? getPlaceholderForSessionType(sessionType)}
+							showAgentMentionAutocomplete={showAgentMentionAutocomplete}
+							agentMentionCandidates={filteredAgentMentionCandidates}
+							selectedAgentMentionIndex={agentMentionSelectedIndex}
+							onAgentMentionSelect={handleAgentMentionSelect}
+							onAgentMentionClose={handleAgentMentionClose}
 							showCommandAutocomplete={
-								commandAutocomplete.showAutocomplete && !referenceAutocomplete.showAutocomplete
+								!showAgentMentionAutocomplete &&
+								commandAutocomplete.showAutocomplete &&
+								!referenceAutocomplete.showAutocomplete
 							}
 							filteredCommands={commandAutocomplete.filteredCommands}
 							selectedCommandIndex={commandAutocomplete.selectedIndex}
 							onCommandSelect={commandAutocomplete.handleSelect}
 							onCommandClose={commandAutocomplete.close}
-							showReferenceAutocomplete={referenceAutocomplete.showAutocomplete}
+							showReferenceAutocomplete={
+								!showAgentMentionAutocomplete && referenceAutocomplete.showAutocomplete
+							}
 							referenceResults={referenceAutocomplete.results}
 							selectedReferenceIndex={referenceAutocomplete.selectedIndex}
 							onReferenceSelect={referenceAutocomplete.handleSelect}

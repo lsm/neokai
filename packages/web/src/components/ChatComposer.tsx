@@ -48,6 +48,9 @@ interface ChatComposerProps {
 	onOpenTools: () => void;
 	onEnterRewindMode: () => void;
 	onExitRewindMode: () => void;
+	agentMentionCandidates?: Array<{ id: string; name: string }>;
+	/** Override the default placeholder text in the message input */
+	inputPlaceholder?: string;
 }
 
 export function ChatComposer({
@@ -82,6 +85,8 @@ export function ChatComposer({
 	onOpenTools,
 	onEnterRewindMode,
 	onExitRewindMode,
+	agentMentionCandidates,
+	inputPlaceholder,
 }: ChatComposerProps) {
 	return (
 		<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-transparent">
@@ -147,6 +152,8 @@ export function ChatComposer({
 						onEnterRewindMode={onEnterRewindMode}
 						rewindMode={rewindMode}
 						onExitRewindMode={onExitRewindMode}
+						agentMentionCandidates={agentMentionCandidates}
+						placeholder={inputPlaceholder}
 					/>
 				)
 			)}
