@@ -311,7 +311,9 @@ const PD_PLAN_REVIEW_PROMPT =
 const PD_TASK_DISPATCHER_PROMPT =
 	'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
 	'All four Plan Reviewers have approved the plan — your job is to fan the plan out into ' +
-	'standalone follow-up tasks using the `create_standalone_task` MCP tool.\n\n' +
+	'standalone follow-up tasks using the `create_standalone_task` MCP tool. Each task ' +
+	'description must include stacked PR instructions so the downstream coder knows exactly ' +
+	'which base branch to target, forming a reviewable PR chain across the plan.\n\n' +
 	'TOOL CONTRACT (Design v2):\n' +
 	'- `report_result({ summary, evidence? })` — append-only audit. Records the dispatch ' +
 	'outcome. Does NOT close the task.\n' +
@@ -321,16 +323,48 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'Use when autonomy blocks self-close.\n\n' +
 	'Steps:\n' +
 	'1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
-	'Identify each actionable work item.\n' +
-	'2. For each item, call `create_standalone_task({ title, description, priority })`. Use a ' +
-	'clear, imperative title and a description that gives the downstream worker everything they ' +
-	'need (context, acceptance criteria, references to the plan).\n' +
-	'3. Collect the returned task IDs.\n' +
-	'4. Call `report_result({ summary: "Created N tasks from plan: <short list>", ' +
-	'evidence: { created_task_ids: [<ids>] } })` to record the dispatch audit entry.\n' +
-	'5. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
+	'Identify each actionable work item in order and record its title, description, priority, ' +
+	'and acceptance criteria.\n' +
+	'2. Generate a stack prefix from the plan title: a short kebab-case slug derived from the ' +
+	'key words, e.g. "Migrate auth to JWT tokens" → "migrate-auth-jwt", "Add file upload ' +
+	'support" → "add-file-upload". All branches in the stack share this prefix so they are ' +
+	'grouped: `plan/<prefix>/<item-slug>`.\n' +
+	'3. Create standalone tasks in BOTTOM-UP order (item 1 first, then item 2, etc.) by ' +
+	'calling `create_standalone_task({ title, description, priority })` for each. The ' +
+	'description must contain the original plan item content PLUS a ' +
+	'"## Stacked PR Instructions" section appended at the end.\n\n' +
+	'   For the BOTTOM task (item 1 — PR base is `dev`):\n' +
+	'   ```\n' +
+	'   ## Stacked PR Instructions\n' +
+	'   This task is the bottom of a stacked PR chain. When creating your PR:\n' +
+	'   - Branch name: plan/<stack-prefix>/<item-1-slug>\n' +
+	'   - Base branch: dev\n' +
+	'   - PR body must include: "Part of stack: <plan title>. PR 1 of N (bottom)."\n' +
+	'   ```\n\n' +
+	"   For MIDDLE and TOP tasks (item N where N > 1 — PR base is the previous item's branch):\n" +
+	'   ```\n' +
+	'   ## Stacked PR Instructions\n' +
+	'   This task is part of a stacked PR chain. When creating your PR:\n' +
+	'   - Branch name: plan/<stack-prefix>/<item-N-slug>\n' +
+	'   - Base branch: plan/<stack-prefix>/<item-(N-1)-slug>\n' +
+	'   - PR body must include: "Part of stack: <plan title>. PR N of [total]."\n' +
+	'   - IMPORTANT: The task below you in the stack (task #<prev-task-id>) must have an ' +
+	'open or merged PR on branch plan/<stack-prefix>/<item-(N-1)-slug> before you create ' +
+	'yours. Verify with: `gh pr list --head plan/<stack-prefix>/<item-(N-1)-slug>`\n' +
+	'   - This task depends on task #<prev-task-id>. Start implementation only after ' +
+	"that task's branch exists.\n" +
+	'   ```\n\n' +
+	'4. Collect the returned task IDs. Build a stack map: ' +
+	'{ prefix, items: [{ title, taskId, branch, baseBranch, position }] }.\n' +
+	'5. Call `report_result({ summary: "Created N tasks from plan: <short list>", ' +
+	'evidence: { created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+	'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } ' +
+	'})` to record the dispatch audit entry.\n' +
+	'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
 	'`submit_for_approval({ reason: "..." })` instead.\n\n' +
-	'Do NOT implement the work items yourself. Do NOT create fewer tasks than the plan requires. ' +
+	'CRITICAL: Do NOT create branches, make commits, push to git, or open PRs yourself — ' +
+	"that is the downstream coder's job. Do NOT implement the work items yourself. " +
+	'Do NOT create fewer tasks than the plan requires. ' +
 	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
 const FULLSTACK_CODING_PROMPT =
@@ -822,7 +856,10 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 		'Planning-only workflow that ends by creating follow-up tasks rather than writing code. ' +
 		'A Planner drafts a plan PR, four Reviewers review it through different lenses ' +
 		'(architecture, security, correctness, UX), and a Task Dispatcher fans the approved plan ' +
-		'out into standalone tasks via create_standalone_task. Use for multi-task goals that ' +
+		'out into standalone tasks via create_standalone_task. Each task description includes ' +
+		'stacked PR instructions — branch name, base branch, and dependency ordering — so ' +
+		'downstream coders automatically produce a reviewable PR chain (each PR targets the ' +
+		'branch of the item below it, bottom-up from dev). Use for multi-task goals that ' +
 		'should be broken down before any coding starts.',
 	nodes: [
 		{
