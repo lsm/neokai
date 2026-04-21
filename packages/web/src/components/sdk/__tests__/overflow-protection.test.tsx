@@ -10,10 +10,20 @@ import { describe, it, expect } from 'vitest';
  * and triggering mobile horizontal scrolling.
  */
 
+import { vi } from 'vitest';
 import { render } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 import { SubagentBlock } from '../SubagentBlock';
 import { SlashCommandOutput } from '../SlashCommandOutput';
+
+// Mock MarkdownRenderer so the .prose container renders synchronously.
+// SyntheticMessageBlock text blocks route through MarkdownRenderer; the .prose
+// wrapper div is always present in JSX (sync), providing overflow-wrap via CSS.
+vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
+	default: ({ content, class: className }: { content: string; class?: string }) => (
+		<div class={`prose ${className || ''}`}>{content}</div>
+	),
+}));
 
 describe('Overflow Protection', () => {
 	describe('SyntheticMessageBlock', () => {

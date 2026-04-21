@@ -180,7 +180,8 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 								!isExpanded && needsCollapse ? { maxHeight: `${previewMaxHeight + 24}px` } : {}
 							}
 						>
-							{/* Inner ref measured for height — outside the maxHeight container */}
+							{/* contentRef is inside the maxHeight wrapper but has no overflow clipping of
+							    its own, so scrollHeight returns the true unclipped content height. */}
 							<div ref={contentRef} class="space-y-2">
 								{contentBlocks.map((block, idx) => (
 									<div key={idx} class="text-sm">
