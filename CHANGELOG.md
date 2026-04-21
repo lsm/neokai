@@ -9,6 +9,7 @@ A focused release hardening the Space Workflow System for production use — aut
 ### Added
 
 #### Space Workflow System
+- **Stacked PR task chain**: Plan & Decompose Task Dispatcher embeds branch name, base branch, and dependency ordering instructions in each task description so downstream coders automatically produce a reviewable PR chain bottom-up from `dev`
 - **Completion actions pipeline**: `script`, `instruction`, and `mcp_call` completion actions with audit trail, approval reason tracking, pause/resume flow, and `task_awaiting_approval` events
 - **Autonomy-gated approvals**: Supervisor/semi-autonomous enforcement for workflow gates; "X of Y workflows autonomous" selector in SpaceSettings and SpaceOverview
 - **Runtime controls**: Pause/resume lifecycle; Stop/Start runtime on overview page

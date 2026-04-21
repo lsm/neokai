@@ -588,6 +588,51 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 		expect(prompt).toContain('created_task_ids');
 	});
 
+	test('Task Dispatcher prompt embeds Stacked PR Instructions in task descriptions', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
+		// Must embed stacked PR instructions in each task description
+		expect(prompt).toContain('Stacked PR Instructions');
+		// Must specify branch naming convention using plan/ prefix
+		expect(prompt).toContain('plan/');
+		// Evidence must include stack metadata
+		expect(prompt).toContain('stack_prefix');
+		expect(prompt).toContain('stack_branches');
+	});
+
+	test('Task Dispatcher prompt uses dev (not main) as the base branch for the bottom PR', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
+		// Bottom item must target dev as base branch
+		expect(prompt).toContain('Base branch: dev');
+		// Must never reference main as the trunk
+		expect(prompt).not.toContain('Base branch: main');
+	});
+
+	test('Task Dispatcher prompt instructs building stacked PR chain bottom-up', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
+		// Must instruct bottom-up ordering (item 1 first)
+		expect(prompt).toMatch(/BOTTOM.UP order|bottom.up/i);
+		// Subsequent items must reference the previous item's branch as base
+		expect(prompt).toContain('item-(N-1)-slug');
+	});
+
+	test('Task Dispatcher prompt instructs Task Dispatcher NOT to create branches or PRs itself', () => {
+		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
+			(n) => n.name === 'Task Dispatcher'
+		)!;
+		const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
+		// The dispatcher delegates branch/PR creation to downstream coders
+		expect(prompt).toContain('downstream coder');
+	});
+
 	test('Task Dispatcher node carries a verify-tasks-created completion action', () => {
 		const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
 			(n) => n.name === 'Task Dispatcher'
@@ -607,6 +652,13 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
 			expect(action.script).toContain('NEOKAI_WORKFLOW_START_ISO');
 			expect(action.script).toContain('space_tasks');
 		}
+	});
+
+	test('workflow description describes stacked PR chain output', () => {
+		// The workflow description must convey that the output is a stacked PR chain
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.description).toMatch(/stacked PR/i);
+		// Must mention that PRs are built bottom-up from dev
+		expect(PLAN_AND_DECOMPOSE_WORKFLOW.description).toContain('dev');
 	});
 
 	test('does not reference leader', () => {
