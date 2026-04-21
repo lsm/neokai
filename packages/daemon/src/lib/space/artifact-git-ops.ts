@@ -242,3 +242,39 @@ export function commitFileDiffCacheKey(commitSha: string, filePath: string): str
 
 /** Size cap (in bytes) for full diff payloads served from the cache. */
 export const FILE_DIFF_SIZE_LIMIT_BYTES = 100 * 1024;
+
+/**
+ * Returns the push URL for the `origin` remote, or `null` when git is
+ * unavailable, the path is not a repo, or no origin remote is configured.
+ */
+export async function getGitRemoteUrl(worktreePath: string): Promise<string | null> {
+	try {
+		const url = await execGit(['remote', 'get-url', 'origin'], worktreePath, 5_000);
+		return url.trim() || null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Converts a git remote URL (SSH or HTTPS) for a GitHub repo into a clean
+ * `https://github.com/{owner}/{repo}` URL.
+ *
+ * Returns `null` when the remote is not a GitHub URL.
+ *
+ * Examples:
+ *   `git@github.com:owner/repo.git`       → `https://github.com/owner/repo`
+ *   `https://github.com/owner/repo.git`   → `https://github.com/owner/repo`
+ *   `https://github.com/owner/repo`       → `https://github.com/owner/repo`
+ */
+export function normalizeGithubUrl(remoteUrl: string): string | null {
+	// SSH format: git@github.com:owner/repo.git or git@github.com:owner/repo
+	const sshMatch = remoteUrl.match(/^git@github\.com:([^/]+\/[^.]+?)(?:\.git)?$/);
+	if (sshMatch) return `https://github.com/${sshMatch[1]}`;
+
+	// HTTPS format: https://github.com/owner/repo.git or https://github.com/owner/repo
+	const httpsMatch = remoteUrl.match(/^https?:\/\/github\.com\/([^/]+\/[^.]+?)(?:\.git)?$/);
+	if (httpsMatch) return `https://github.com/${httpsMatch[1]}`;
+
+	return null;
+}

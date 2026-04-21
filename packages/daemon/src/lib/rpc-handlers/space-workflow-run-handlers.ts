@@ -44,6 +44,8 @@ import {
 	parseCommitLog,
 	countDiffLines,
 	getDiffBaseRef,
+	getGitRemoteUrl,
+	normalizeGithubUrl,
 	CACHE_KEY_GATE_ARTIFACTS,
 	CACHE_KEY_COMMITS,
 	COMMIT_LOG_FORMAT,
@@ -822,10 +824,14 @@ export function setupSpaceWorkflowRunHandlers(
 		if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
 
 		if (!(await isGitRepo(worktreePath))) {
-			return { commits: [], baseRef: null, isGitRepo: false };
+			return { commits: [], baseRef: null, isGitRepo: false, repoUrl: null };
 		}
 
-		const baseRef = await getDiffBaseRef(worktreePath);
+		const [baseRef, rawRemoteUrl] = await Promise.all([
+			getDiffBaseRef(worktreePath),
+			getGitRemoteUrl(worktreePath),
+		]);
+		const repoUrl = rawRemoteUrl ? normalizeGithubUrl(rawRemoteUrl) : null;
 		const range = baseRef ? `${baseRef}..HEAD` : '';
 
 		let logOutput = '';
@@ -838,7 +844,7 @@ export function setupSpaceWorkflowRunHandlers(
 		}
 
 		const commits = parseCommitLog(logOutput);
-		return { commits, baseRef: baseRef || null, isGitRepo: true };
+		return { commits, baseRef: baseRef || null, isGitRepo: true, repoUrl };
 	});
 
 	// ─── spaceWorkflowRun.getCommitFiles ─────────────────────────────────────

@@ -30,6 +30,8 @@ import {
 	parseCommitLog,
 	countDiffLines,
 	getDiffBaseRef,
+	getGitRemoteUrl,
+	normalizeGithubUrl,
 	CACHE_KEY_GATE_ARTIFACTS,
 	CACHE_KEY_COMMITS,
 	COMMIT_LOG_FORMAT,
@@ -233,7 +235,7 @@ async function handleSyncCommits(
 			taskId,
 			cacheKey: CACHE_KEY_COMMITS,
 			status: 'ok',
-			data: { commits: [], baseRef: null, isGitRepo: false },
+			data: { commits: [], baseRef: null, isGitRepo: false, repoUrl: null },
 		});
 		emitCacheUpdated(deps.daemonHub, {
 			spaceId,
@@ -245,7 +247,11 @@ async function handleSyncCommits(
 		return { ok: true, isGitRepo: false };
 	}
 
-	const baseRef = await getDiffBaseRef(worktreePath);
+	const [baseRef, rawRemoteUrl] = await Promise.all([
+		getDiffBaseRef(worktreePath),
+		getGitRemoteUrl(worktreePath),
+	]);
+	const repoUrl = rawRemoteUrl ? normalizeGithubUrl(rawRemoteUrl) : null;
 	const range = baseRef ? `${baseRef}..HEAD` : '';
 
 	let logOutput = '';
@@ -260,7 +266,7 @@ async function handleSyncCommits(
 			taskId,
 			cacheKey: CACHE_KEY_COMMITS,
 			status: 'error',
-			data: { commits: [], baseRef: baseRef || null, isGitRepo: true },
+			data: { commits: [], baseRef: baseRef || null, isGitRepo: true, repoUrl },
 			error: err instanceof Error ? err.message : String(err),
 		});
 		emitCacheUpdated(deps.daemonHub, {
@@ -279,7 +285,7 @@ async function handleSyncCommits(
 		taskId,
 		cacheKey: CACHE_KEY_COMMITS,
 		status: 'ok',
-		data: { commits, baseRef: baseRef || null, isGitRepo: true },
+		data: { commits, baseRef: baseRef || null, isGitRepo: true, repoUrl },
 	});
 	emitCacheUpdated(deps.daemonHub, {
 		spaceId,
