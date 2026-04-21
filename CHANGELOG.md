@@ -2,6 +2,65 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.10.0] - 2026-04-21
+
+A focused release hardening the Space Workflow System for production use — autonomy enforcement, completion pipelines, workflow template sync, and significant UI polish. 76 commits since v0.9.0.
+
+### Added
+
+#### Space Workflow System
+- **Completion actions pipeline**: `script`, `instruction`, and `mcp_call` completion actions with audit trail, approval reason tracking, pause/resume flow, and `task_awaiting_approval` events
+- **Autonomy-gated approvals**: Supervisor/semi-autonomous enforcement for workflow gates; "X of Y workflows autonomous" selector in SpaceSettings and SpaceOverview
+- **Runtime controls**: Pause/resume lifecycle; Stop/Start runtime on overview page
+- **Task dependency enforcement**: Cycle detection and failure cascade for dependent tasks
+- **LLM-driven workflow selection**: Space chat agent auto-selects workflows for standalone tasks
+- **Target any workflow node**: `send_message_to_task` auto-spawns and activates nodes across the workflow graph
+- **Workflow template sync**: Drift detection with confirmation UI
+- **Channel topology hardening**: Queue-until-active behavior; Task→Space escalation for unreachable targets
+- **Workflow run artifacts**: Persisted artifacts per run with `GateArtifactsView` and `FileDiffView`
+- **Reason-aware blocked tasks**: Blocked-task banner with gate approval UI and reason-based grouping
+- **Approval audit trail**: `SpaceApprovalSource` tracking with `approvalReason` and thread events
+- **Sessions page**: New Sessions list page and tab
+- **Attention LiveQuery**: Action tab with reason-based grouping for tasks needing attention
+
+#### Frontend & UI
+- **URL-addressable Space views**: Overlay history, `/settings` route, slug-based routing
+- **Redesigned SyntheticMessageBlock**: Markdown rendering, subtle card style, collapsible sections
+- **Glass-style chat composer**: Multiline-aware bottom padding
+- **Compact task thread**: Config-switchable compact renderer, cleaner agent headers, clickable hidden-message dividers
+- **ThreadedChatComposer replaced with ChatComposer** in task view
+- **Space chat agent**: Removed edit/write tools for cleaner agent boundaries
+
+#### Performance
+- **Background job queue + cache** for artifact git operations
+- **Server-side slicing** of `spaceTaskMessages.byTask` for compact view
+
+### Changed
+- Replaced Full-Cycle with **Plan & Decompose** built-in workflow
+- `report_result` now result-only; completion pipeline is sole status arbiter
+- Split `report_result` into audit/approve/submit to end reviewer-loop premature completion
+- Reorganized agent task message with injected runtime context
+- Native `getContextUsage()` replacing `/context` text parsing
+- Migration M86 early-return skips `pending_checkpoint_type` on pre-migrated DBs
+- LiveQuery migration for ChatContainer + widened `space-agent-tools` to all Space sessions
+- Lazy-load heavy deps, inline workspace selection in chat container, improve `/spaces` page UX
+
+### Fixed
+
+- **Reviewer loop**: Split report_result into audit/approve/submit to prevent premature completion; review-posted-gate falls back to PR comments when formal review is blocked
+- **Space communication**: Keep node-agent sessions reachable until task is archived; allow communication until task is archived; @mention routing includes idle agents
+- **Space workflow**: Persist `completionActions` and backfill workflow template tracking; gate banners only show after activation
+- **Sessions**: Resume SDK sessions across workspace/worktree path changes; session error layout and retry button
+- **Runtime**: Node-agent injection invariant + agent-callable restore; model switch stability
+- **Mobile/iOS**: Compact Task Agent node on mobile canvas; standardize panel header heights and fix mobile Safari bottom gap
+- **Copilot**: Call `client.start()` before caching CopilotClient
+
+### CI
+
+- E2E removed from all automatic CI triggers (workflow_dispatch only)
+- Run lint/unit/online tests on push to dev
+- Remove broken Microsoft apt repos before `apt-get update`
+
 ## [0.9.0] - 2026-04-20
 
 A major release introducing the **Space Workflow System** — a multi-agent orchestration platform with visual workflow editing, channel-based routing, approval gates, and autonomy levels. ~1,145 commits since v0.8.0.
