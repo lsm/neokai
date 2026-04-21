@@ -176,9 +176,11 @@ describe('buildTaskAgentSystemPrompt — MCP tools', () => {
 		expect(prompt).toContain('check_node_status');
 	});
 
-	test('includes report_result tool', () => {
+	test('includes save_artifact, approve_task, and submit_for_approval tools', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('report_result');
+		expect(prompt).toContain('save_artifact');
+		expect(prompt).toContain('approve_task');
+		expect(prompt).toContain('submit_for_approval');
 	});
 
 	test('includes request_human_input tool', () => {
@@ -198,9 +200,9 @@ describe('buildTaskAgentSystemPrompt — workflow execution instructions', () =>
 		expect(prompt).toContain('check_node_status');
 	});
 
-	test('includes instructions to call report_result on terminal step', () => {
+	test('includes instructions to call save_artifact to record results', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toContain('report_result');
+		expect(prompt).toContain('save_artifact');
 	});
 });
 
@@ -222,18 +224,18 @@ describe('buildTaskAgentSystemPrompt — human gate handling', () => {
 });
 
 describe('buildTaskAgentSystemPrompt — result handling (Stage-2 result-only contract)', () => {
-	test('documents report_result as summary + optional evidence (no status)', () => {
-		// Stage-2 invariant: agents do NOT self-certify terminal status. The
-		// prompt must tell them to pass only `summary` + `evidence` — the
-		// runtime decides the final status via completion actions.
+	test('documents save_artifact with summary and optional structured data', () => {
+		// Stage-2 invariant: agents record outcomes via save_artifact (with summary/data)
+		// and then close via approve_task or submit_for_approval. The runtime decides
+		// the final status via the completion-action pipeline.
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
+		expect(prompt).toContain('save_artifact');
 		expect(prompt).toContain('summary');
-		expect(prompt).toContain('evidence');
 	});
 
-	test('explicitly instructs agents NOT to pass a status field', () => {
+	test('does not reference the removed report_result tool', () => {
 		const prompt = buildTaskAgentSystemPrompt(makeContext());
-		expect(prompt).toMatch(/Do NOT pass a `status`|do not pass a `status`/i);
+		expect(prompt).not.toContain('report_result');
 	});
 
 	test('references the completion-action pipeline as the status arbiter', () => {

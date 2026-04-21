@@ -22,6 +22,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import {
 	createNodeAgentToolHandlers,
 	createNodeAgentMcpServer,
@@ -174,6 +175,7 @@ interface TestCtx {
 	taskManager: SpaceTaskManager;
 	spaceTaskRepo: SpaceTaskRepository;
 	nodeExecutionRepo: NodeExecutionRepository;
+	artifactRepo: WorkflowRunArtifactRepository;
 	/** Workflow run ID for peer task seeding. */
 	workflowRunId: string;
 	/** Workflow node ID for peer task seeding. */
@@ -197,6 +199,7 @@ function makeCtx(): TestCtx {
 	const spaceTaskRepo = taskRepo;
 	const taskManager = new SpaceTaskManager(db, spaceId);
 	const nodeExecutionRepo = new NodeExecutionRepository(db);
+	const artifactRepo = new WorkflowRunArtifactRepository(db);
 
 	// Session IDs for peers
 	const taskAgentSessionId = 'session-task-agent';
@@ -245,6 +248,7 @@ function makeCtx(): TestCtx {
 		taskManager,
 		spaceTaskRepo,
 		nodeExecutionRepo,
+		artifactRepo,
 		workflowRunId,
 		nodeId,
 		coderSessionId,
@@ -286,6 +290,7 @@ function makeConfig(ctx: TestCtx, overrides: NodeConfigOverrides = {}): NodeAgen
 		agentMessageRouter,
 		workflow: null,
 		gateDataRepo: new GateDataRepository(ctx.db),
+		artifactRepo: ctx.artifactRepo,
 		...configOverrides,
 	};
 }
@@ -804,10 +809,10 @@ describe('node-agent-tools: send_message', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: save
+// Tests: save_artifact
 // ---------------------------------------------------------------------------
 
-describe('node-agent-tools: save', () => {
+describe('node-agent-tools: save_artifact', () => {
 	let ctx: TestCtx;
 
 	beforeEach(() => {
@@ -819,119 +824,108 @@ describe('node-agent-tools: save', () => {
 		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
-	function getCoderExecution() {
-		return ctx.nodeExecutionRepo
-			.listByNode(ctx.workflowRunId, ctx.nodeId)
-			.find((e) => e.agentName === 'coder');
-	}
-
-	test('save({ summary }) persists summary to result field', async () => {
-		const myExec = getCoderExecution();
-		expect(myExec).toBeDefined();
-
+	test('save_artifact({ type, summary }) writes to artifact store and does NOT mutate task status', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const result = await handlers.save({ summary: 'PR #42 merged.' });
+		const result = await handlers.save_artifact({ type: 'progress', summary: 'PR #42 merged.' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(true);
-		expect(data.executionId).toBe(myExec!.id);
-		expect(data.agentName).toBe('coder');
-		expect(data.savedSummary).toBe('PR #42 merged.');
-		expect(data.savedData).toBeNull();
+		expect(data.artifact.type).toBe('progress');
+		expect(data.artifact.nodeId).toBe(ctx.nodeId);
+		expect(data.artifact.runId).toBe(ctx.workflowRunId);
 
-		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
-		expect(updated?.result).toBe('PR #42 merged.');
-		expect(updated?.data).toBeNull();
-		expect(updated?.status).toBe('in_progress'); // save does not change status
+		// Verify persisted in DB
+		const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'progress' });
+		expect(artifacts).toHaveLength(1);
+		expect(artifacts[0].data.summary).toBe('PR #42 merged.');
+		expect(artifacts[0].nodeId).toBe(ctx.nodeId);
 	});
 
-	test('save({ data }) persists data to data field', async () => {
-		const myExec = getCoderExecution();
-		expect(myExec).toBeDefined();
-
+	test('save_artifact({ type, data }) persists structured data', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const result = await handlers.save({ data: { prNumber: 42, merged: true } });
-		const data = JSON.parse(result.content[0].text);
+		const result = await handlers.save_artifact({
+			type: 'pr',
+			data: { prNumber: 42, merged: true },
+		});
+		const parsed = JSON.parse(result.content[0].text);
 
-		expect(data.success).toBe(true);
-		expect(data.savedSummary).toBeNull();
-		expect(data.savedData).toEqual({ prNumber: 42, merged: true });
-
-		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
-		expect(updated?.data).toEqual({ prNumber: 42, merged: true });
-		expect(updated?.result).toBeNull();
+		expect(parsed.success).toBe(true);
+		const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'pr' });
+		expect(artifacts).toHaveLength(1);
+		expect(artifacts[0].data.prNumber).toBe(42);
+		expect(artifacts[0].data.merged).toBe(true);
 	});
 
-	test('save({ summary, data }) persists both fields', async () => {
-		const myExec = getCoderExecution();
-		expect(myExec).toBeDefined();
-
+	test('save_artifact({ type, summary, data }) persists both fields', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const result = await handlers.save({ summary: 'work done', data: { pr: 99 } });
-		const data = JSON.parse(result.content[0].text);
+		const result = await handlers.save_artifact({
+			type: 'result',
+			summary: 'work done',
+			data: { pr: 99 },
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
 
-		expect(data.success).toBe(true);
-		expect(data.savedSummary).toBe('work done');
-		expect(data.savedData).toEqual({ pr: 99 });
-
-		const updated = ctx.nodeExecutionRepo.getById(myExec!.id);
-		expect(updated?.result).toBe('work done');
-		expect(updated?.data).toEqual({ pr: 99 });
+		const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'result' });
+		expect(artifacts).toHaveLength(1);
+		expect(artifacts[0].data.summary).toBe('work done');
+		expect(artifacts[0].data.pr).toBe(99);
 	});
 
-	test('multiple save calls overwrite previous values', async () => {
+	test('overwrite mode (default): same (type, key) upserts the record', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const first = JSON.parse(
-			(await handlers.save({ summary: 'first', data: { v: 1 } })).content[0].text
+		const r1 = JSON.parse(
+			(await handlers.save_artifact({ type: 'progress', key: 'current', summary: 'first' }))
+				.content[0].text
 		);
-		expect(first.success).toBe(true);
+		expect(r1.success).toBe(true);
 
-		const second = JSON.parse(
-			(await handlers.save({ summary: 'second', data: { v: 2 } })).content[0].text
+		const r2 = JSON.parse(
+			(await handlers.save_artifact({ type: 'progress', key: 'current', summary: 'second' }))
+				.content[0].text
 		);
-		expect(second.success).toBe(true);
+		expect(r2.success).toBe(true);
+		// Same artifact ID (upserted, not inserted)
+		expect(r2.artifact.id).toBe(r1.artifact.id);
 
-		const myExec = getCoderExecution();
-		expect(myExec?.result).toBe('second');
-		expect(myExec?.data).toEqual({ v: 2 });
+		const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'progress' });
+		expect(artifacts).toHaveLength(1);
+		expect(artifacts[0].data.summary).toBe('second');
 	});
 
-	test('returns error when NodeExecution not found for agent', async () => {
-		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { myAgentName: 'ghost-agent' }));
-		const result = await handlers.save({ summary: 'hello' });
-		const data = JSON.parse(result.content[0].text);
+	test('append mode: multiple calls create multiple records', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+		const r1 = JSON.parse(
+			(await handlers.save_artifact({ type: 'audit', append: true, summary: 'first' })).content[0]
+				.text
+		);
+		const r2 = JSON.parse(
+			(await handlers.save_artifact({ type: 'audit', append: true, summary: 'second' })).content[0]
+				.text
+		);
+		expect(r1.success).toBe(true);
+		expect(r2.success).toBe(true);
+		// Distinct records
+		expect(r2.artifact.id).not.toBe(r1.artifact.id);
 
+		const artifacts = ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'audit' });
+		expect(artifacts).toHaveLength(2);
+	});
+
+	test('returns error when artifactRepo is absent', async () => {
+		const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { artifactRepo: undefined }));
+		const result = await handlers.save_artifact({ type: 'result', summary: 'done' });
+		const data = JSON.parse(result.content[0].text);
 		expect(data.success).toBe(false);
-		expect(data.error).toContain('NodeExecution not found');
-		expect(data.error).toContain('ghost-agent');
 	});
 
 	test('returns error when neither summary nor data provided', async () => {
 		const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
-		const result = await handlers.save({});
+		const result = await handlers.save_artifact({ type: 'result' });
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect(data.error).toContain('At least one');
-	});
-
-	test('does not emit daemonHub events', async () => {
-		const emitted: string[] = [];
-		const fakeDaemonHub = {
-			emit: async (name: string) => {
-				emitted.push(name);
-			},
-		};
-
-		const handlers = createNodeAgentToolHandlers(
-			makeConfig(ctx, {
-				daemonHub: fakeDaemonHub as unknown as NodeAgentToolsConfig['daemonHub'],
-			})
-		);
-		const result = JSON.parse((await handlers.save({ summary: 'done' })).content[0].text);
-
-		expect(result.success).toBe(true);
-		expect(emitted).toHaveLength(0);
+		expect(data.error).toContain('summary');
 	});
 });
 

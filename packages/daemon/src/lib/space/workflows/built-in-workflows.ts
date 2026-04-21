@@ -311,9 +311,11 @@ const PD_PLAN_REVIEW_PROMPT =
 const PD_TASK_DISPATCHER_PROMPT =
 	'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
 	'All four Plan Reviewers have approved the plan — your job is to fan the plan out into ' +
-	'standalone follow-up tasks using the `create_standalone_task` MCP tool.\n\n' +
+	'standalone follow-up tasks using the `create_standalone_task` MCP tool. Each task ' +
+	'description must include stacked PR instructions so the downstream coder knows exactly ' +
+	'which base branch to target, forming a reviewable PR chain across the plan.\n\n' +
 	'TOOL CONTRACT (Design v2):\n' +
-	'- `report_result({ summary, evidence? })` — append-only audit. Records the dispatch ' +
+	'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records the dispatch ' +
 	'outcome. Does NOT close the task.\n' +
 	'- `approve_task()` — closes this task as done. Call after every required downstream task ' +
 	'has been created.\n' +
@@ -321,16 +323,47 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'Use when autonomy blocks self-close.\n\n' +
 	'Steps:\n' +
 	'1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
-	'Identify each actionable work item.\n' +
-	'2. For each item, call `create_standalone_task({ title, description, priority })`. Use a ' +
-	'clear, imperative title and a description that gives the downstream worker everything they ' +
-	'need (context, acceptance criteria, references to the plan).\n' +
-	'3. Collect the returned task IDs.\n' +
-	'4. Call `report_result({ summary: "Created N tasks from plan: <short list>", ' +
-	'evidence: { created_task_ids: [<ids>] } })` to record the dispatch audit entry.\n' +
-	'5. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
+	'Identify each actionable work item in order and record its title, description, priority, ' +
+	'and acceptance criteria.\n' +
+	'2. Generate a stack prefix from the plan title: a short kebab-case slug derived from the ' +
+	'key words, e.g. "Migrate auth to JWT tokens" → "migrate-auth-jwt", "Add file upload ' +
+	'support" → "add-file-upload". All branches in the stack share this prefix so they are ' +
+	'grouped: `plan/<prefix>/<item-slug>`.\n' +
+	'3. Create standalone tasks in BOTTOM-UP order (item 1 first, then item 2, etc.) by ' +
+	'calling `create_standalone_task({ title, description, priority })` for each. The ' +
+	'description must contain the original plan item content PLUS a ' +
+	'"## Stacked PR Instructions" section appended at the end.\n\n' +
+	'   For the BOTTOM task (item 1 — PR base is `dev`):\n' +
+	'   ```\n' +
+	'   ## Stacked PR Instructions\n' +
+	'   This task is the bottom of a stacked PR chain. When creating your PR:\n' +
+	'   - Branch name: plan/<stack-prefix>/<item-1-slug>\n' +
+	'   - Base branch: dev\n' +
+	'   - PR body must include: "Part of stack: <plan title>. PR 1 of N (bottom)."\n' +
+	'   ```\n\n' +
+	"   For MIDDLE and TOP tasks (item N where N > 1 — PR base is the previous item's branch):\n" +
+	'   ```\n' +
+	'   ## Stacked PR Instructions\n' +
+	'   This task is part of a stacked PR chain. When creating your PR:\n' +
+	'   - Branch name: plan/<stack-prefix>/<item-N-slug>\n' +
+	'   - Base branch: plan/<stack-prefix>/<item-(N-1)-slug>\n' +
+	'   - PR body must include: "Part of stack: <plan title>. PR N of [total]."\n' +
+	'   - IMPORTANT: The task below you in the stack (task #<prev-task-id>) must have an ' +
+	'open or merged PR on branch plan/<stack-prefix>/<item-(N-1)-slug> before you create ' +
+	'yours. Verify with: `gh pr list --head plan/<stack-prefix>/<item-(N-1)-slug>`\n' +
+	'   - This task depends on task #<prev-task-id>. Start implementation only after ' +
+	"that task's branch exists.\n" +
+	'   ```\n\n' +
+	'4. Collect the returned task IDs. Build a stack map: ' +
+	'{ prefix, items: [{ title, taskId, branch, baseBranch, position }] }.\n' +
+	'5. Call `save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
+	'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
+	'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry.\n' +
+	'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
 	'`submit_for_approval({ reason: "..." })` instead.\n\n' +
-	'Do NOT implement the work items yourself. Do NOT create fewer tasks than the plan requires. ' +
+	'CRITICAL: Do NOT create branches, make commits, push to git, or open PRs yourself — ' +
+	"that is the downstream coder's job. Do NOT implement the work items yourself. " +
+	'Do NOT create fewer tasks than the plan requires. ' +
 	'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
 const FULLSTACK_CODING_PROMPT =
@@ -351,15 +384,15 @@ const FULLSTACK_QA_PROMPT =
 	'You are the QA node in a Fullstack QA Loop workflow. Run thorough validation, including backend tests, ' +
 	'frontend tests, and browser-based checks for critical flows.\n\n' +
 	'TOOL CONTRACT (Design v2):\n' +
-	'- `report_result({ summary, evidence? })` — append-only audit. Records what you observed ' +
+	'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you observed ' +
 	'during this cycle. Does NOT close the task.\n' +
 	'- `approve_task()` — closes this task as done. Only call after the PR is actually merged ' +
 	'and the workspace is synced.\n' +
 	'- `submit_for_approval({ reason? })` — request human sign-off instead of self-closing. ' +
 	'Use when autonomy blocks self-close.\n\n' +
-	'If everything passes, merge the PR, sync the worktree, then call `report_result` followed by ' +
+	'If everything passes, merge the PR, sync the worktree, then call `save_artifact({ type: "result", append: true, summary: "QA passed." })` followed by ' +
 	'`approve_task`. If issues are found, send a detailed fix list to Coding and record a ' +
-	'`report_result({ summary: "QA failed: ..." })` audit entry; do NOT call `approve_task`.';
+	'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` audit entry; do NOT call `approve_task`.';
 
 const RESEARCH_RESEARCH_NODE = 'tpl-research-research';
 const RESEARCH_REVIEW_NODE = 'tpl-research-review';
@@ -377,8 +410,8 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * - Coding → Review: gated by `code-ready-gate` — a bash script verifies that an
  *   open, mergeable PR exists and emits its URL as `{"pr_url":"..."}`.
  * - Review → Coding: ungated — Reviewer sends back for changes without any gate.
- *   When satisfied, Reviewer calls `report_result()` on the Review node (endNodeId)
- *   which signals workflow completion.
+ *   When satisfied, Reviewer calls `save_artifact({ type: 'result', append: true })` then
+ *   `approve_task()` on the Review node (endNodeId) which signals workflow completion.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -448,7 +481,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'checks GitHub for a fresh review before releasing your message. If you skip ' +
 							'`gh pr review`, the gate will block and the coder will never hear from you.\n\n' +
 							'TOOL CONTRACT (Design v2):\n' +
-							'- `report_result({ summary, evidence? })` — append-only audit. Records what you ' +
+							'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you ' +
 							'observed. Does NOT close the task. Call it every cycle (changes-requested AND ' +
 							'approval) so the audit log has a clear trail of each decision.\n' +
 							'- `approve_task()` — closes this task as done. Call this ONLY when you are ' +
@@ -471,12 +504,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 							'comment_urls: ["<comment #1 url>", "<comment #2 url>"] }). The `data` payload ' +
 							'satisfies the review-posted-gate and gives the coder direct links to each ' +
 							'thread.\n' +
-							'   d. Call `report_result({ summary: "Requested changes: ...", evidence: { ' +
-							'prUrl, reviewUrl } })` so the cycle is recorded. Do NOT call `approve_task` — ' +
+							'   d. Call `save_artifact({ type: "result", append: true, summary: "Requested changes: ...", prUrl, reviewUrl })` so the cycle is recorded. Do NOT call `approve_task` — ' +
 							'the workflow must stay open for the next cycle.\n' +
 							'5. If satisfied: post an approval review with `gh pr review <pr-url> --approve ' +
 							'--body-file <file>`, verify the PR is open and mergeable, then call ' +
-							'`report_result({ summary, evidence: { prUrl } })` to record the audit entry, ' +
+							'`save_artifact({ type: "result", append: true, summary, prUrl })` to record the audit entry, ' +
 							'and finally call `approve_task()` to close the task. If autonomy blocks ' +
 							'self-close, call `submit_for_approval({ reason: "..." })` instead.',
 					},
@@ -562,7 +594,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
  *   Review → Research (ungated back-channel, max 5 cycles)
  *
  * Research agent researches thoroughly, commits findings, opens a PR.
- * Reviewer agent reviews the research PR; calls report_result() if satisfied,
+ * Reviewer agent reviews the research PR; calls save_artifact() then approve_task() if satisfied,
  * or sends back for more research via the back-channel.
  */
 export const RESEARCH_WORKFLOW: SpaceWorkflow = {
@@ -608,7 +640,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'You are the Reviewer in a Research→Reviewer iterative workflow. You review the ' +
 							'research findings for completeness, accuracy, and quality.\n\n' +
 							'TOOL CONTRACT (Design v2):\n' +
-							'- `report_result({ summary, evidence? })` — append-only audit. Records what you ' +
+							'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you ' +
 							'observed during this cycle. Does NOT close the task.\n' +
 							'- `approve_task()` — closes the task as done. Call only when satisfied.\n' +
 							'- `submit_for_approval({ reason? })` — request human sign-off instead of self- ' +
@@ -619,10 +651,10 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 							'3. Check accuracy: are claims supported by evidence or sources?\n' +
 							'4. Check clarity: are findings well-organized and easy to follow?\n' +
 							'5. If more research is needed: send_message back to Research with specific areas ' +
-							'to investigate, then `report_result({ summary: "Requested more research: ..." })` ' +
+							'to investigate, then `save_artifact({ type: "result", append: true, summary: "Requested more research: ..." })` ' +
 							'to record the cycle. Do NOT call `approve_task` — leave the workflow open.\n' +
 							'6. If satisfied: verify the PR is still open and mergeable, call ' +
-							'`report_result({ summary, evidence: { prUrl } })` to record the final audit ' +
+							'`save_artifact({ type: "result", append: true, summary, prUrl })` to record the final audit ' +
 							'entry, then `approve_task()` to close. If autonomy blocks self-close, call ' +
 							'`submit_for_approval({ reason: "..." })` instead.',
 					},
@@ -704,7 +736,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'You are the sole Reviewer in a single-node Review-Only workflow. There is no planning ' +
 							'or coding phase — you are reviewing an existing PR or codebase directly.\n\n' +
 							'TOOL CONTRACT (Design v2):\n' +
-							'- `report_result({ summary, evidence? })` — append-only audit. Records what you ' +
+							'- `save_artifact({ type: "result", append: true, summary, ...data? })` — append-only audit. Records what you ' +
 							'observed. Does NOT close the task.\n' +
 							'- `approve_task()` — closes the task as done. Call only after you have posted ' +
 							'your review to the PR via `gh pr review`.\n' +
@@ -724,7 +756,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 							'4. Post your review to the PR via `gh pr review` (+ inline comments via `gh api` ' +
 							'where relevant) — this is required, not optional; the runtime verifies at least one ' +
 							'review/comment exists before accepting completion\n' +
-							'5. Call `report_result({ summary, evidence: { prUrl } })` to record the audit entry\n' +
+							'5. Call `save_artifact({ type: "result", append: true, summary, prUrl })` to record the audit entry\n' +
 							'6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
 							'`submit_for_approval({ reason: "..." })` instead.',
 					},
@@ -748,7 +780,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
  *
  * Verifies that the Task Dispatcher actually fanned the plan out into at least
  * one standalone task during this workflow run. Without this guard, a Task
- * Dispatcher that ran report_result() without creating tasks would look
+ * Dispatcher that ran save_artifact() without creating tasks would look
  * successful on the surface but leave the user with zero follow-up work.
  *
  * Environment variables required (injected by the completion-action executor):
@@ -811,7 +843,7 @@ const PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION: CompletionAction = {
  *   Plan Review → Planning (revision requests, maxCycles: 5)
  *
  * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
- * and calls `report_result(..., evidence={ created_task_ids })`. A script-based
+ * and calls `save_artifact({ type: 'result', append: true, created_task_ids })`. A script-based
  * completion action then verifies that at least one task was actually created.
  */
 export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
@@ -822,7 +854,10 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 		'Planning-only workflow that ends by creating follow-up tasks rather than writing code. ' +
 		'A Planner drafts a plan PR, four Reviewers review it through different lenses ' +
 		'(architecture, security, correctness, UX), and a Task Dispatcher fans the approved plan ' +
-		'out into standalone tasks via create_standalone_task. Use for multi-task goals that ' +
+		'out into standalone tasks via create_standalone_task. Each task description includes ' +
+		'stacked PR instructions — branch name, base branch, and dependency ordering — so ' +
+		'downstream coders automatically produce a reviewable PR chain (each PR targets the ' +
+		'branch of the item below it, bottom-up from dev). Use for multi-task goals that ' +
 		'should be broken down before any coding starts.',
 	nodes: [
 		{
@@ -926,7 +961,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
 							'Expected inputs: An approved plan PR (plan-approval-gate satisfied — all 4 ' +
 							'reviewers voted `approved: true`).\n' +
 							'Expected outputs: One standalone task per actionable work item in the plan, ' +
-							'then report_result() with `evidence.created_task_ids`.\n\n' +
+							'then save_artifact({ type: "result", append: true, created_task_ids: [...] }).\n\n' +
 							'Tool contract:\n' +
 							"- `create_standalone_task` is available from the space's MCP server and " +
 							'creates a task owned by the same space as this workflow.',
@@ -1013,7 +1048,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  *   Review → Coding (changes requested)
  *   QA → Coding (test failures/regressions)
  *
- * QA is the end node. QA calls report_result() on success.
+ * QA is the end node. QA calls save_artifact() then approve_task() on success.
  */
 export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -1085,11 +1120,11 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 							'2. Run browser-based critical-path validation\n' +
 							'3. Validate CI and mergeability\n' +
 							'4. If fail: send detailed failures and repro steps to Coding, then call ' +
-							'`report_result({ summary: "QA failed: ..." })` to record the audit entry. Do ' +
+							'`save_artifact({ type: "result", append: true, summary: "QA failed: ..." })` to record the audit entry. Do ' +
 							'NOT call `approve_task` — leave the workflow open for the next Coding cycle.\n' +
 							'5. If all green: merge the PR with `gh pr merge <URL> --squash`\n' +
 							'6. Sync worktree: `git checkout <base-branch> && git pull --ff-only`\n' +
-							'7. Call `report_result({ summary, evidence: { prUrl, testOutput } })` to record ' +
+							'7. Call `save_artifact({ type: "result", append: true, summary, prUrl, testOutput })` to record ' +
 							'the audit entry, then `approve_task()` as your final action. If autonomy blocks ' +
 							'self-close, call `submit_for_approval({ reason: "..." })` instead. The runtime ' +
 							'also verifies the PR is actually merged before accepting completion.',
@@ -1286,7 +1321,7 @@ export function seedBuiltInWorkflows(
 				})),
 				// Thread completionActions through to persisted nodes. Without this,
 				// end-node actions like MERGE_PR_COMPLETION_ACTION are silently dropped
-				// so report_result() completes the workflow but the PR never merges.
+				// so approve_task() completes the workflow but the PR never merges.
 				...(s.completionActions ? { completionActions: s.completionActions } : {}),
 			}));
 
