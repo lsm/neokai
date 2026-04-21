@@ -5,7 +5,13 @@
  * These tests verify the fixes for UI freeze during state transitions.
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { describe, it, expect, beforeEach, vi, afterEach, beforeAll } from 'vitest';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Mock requestAnimationFrame for testing
 const rafCallbacks: Array<() => void> = [];
@@ -334,6 +340,58 @@ describe('ResizeObserver Integration', () => {
 		// Simulate cleanup
 		resizeObserver.disconnect();
 		expect(disconnectCalled.value).toBe(true);
+	});
+});
+
+/**
+ * Loading Skeleton Layout Invariants (CLS prevention)
+ *
+ * These tests guard against regressions that would re-introduce Cumulative Layout
+ * Shift (CLS) when the loading skeleton transitions to real content.
+ *
+ * Root cause of CLS:
+ * - ChatHeader uses `h-[65px]` (fixed 65 px).  A skeleton header with `py-3`
+ *   renders at ~40 px — a 25 px shift on load.
+ * - ChatComposer renders as `absolute bottom-0 left-0 right-0`, so it does NOT
+ *   participate in the flex layout.  A skeleton footer that IS in the flex flow
+ *   consumes height that later disappears, causing the messages area to shift.
+ */
+describe('ChatContainer Loading Skeleton CLS Prevention', () => {
+	let source: string;
+
+	beforeAll(() => {
+		const componentPath = resolve(__dirname, '../ChatContainer.tsx');
+		source = readFileSync(componentPath, 'utf-8');
+	});
+
+	it('skeleton header uses h-[65px] to match ChatHeader fixed height', () => {
+		// ChatHeader sets `h-[65px]`.  The skeleton must use the same value so
+		// the header occupies identical vertical space before and after load.
+		expect(source).toMatch(/Skeleton header[\s\S]*?h-\[65px\]/);
+	});
+
+	it('skeleton header does not use py-3 for height', () => {
+		// py-3 gives ~40 px, which caused a 25 px shift when the 65 px real
+		// header appeared.  Verify it is not used as a height stand-in.
+		const skeletonSection =
+			source.match(/\/\* Skeleton header[\s\S]*?\/\* Skeleton messages/)?.[0] ?? '';
+		expect(skeletonSection).not.toContain('py-3');
+	});
+
+	it('skeleton footer uses absolute positioning to match ChatComposer layout', () => {
+		// ChatComposer renders as `absolute bottom-0 left-0 right-0` — it is
+		// outside the flex flow.  The skeleton footer must also be absolute so the
+		// flex calculation (header + messages flex-1) is identical on both sides of
+		// the skeleton → content transition.
+		expect(source).toMatch(/Skeleton footer[\s\S]*?absolute bottom-0 left-0 right-0/);
+	});
+
+	it('skeleton outer container includes relative to anchor the absolute footer', () => {
+		// The absolutely-positioned footer needs a positioned ancestor.
+		// Verify `relative` is present in the skeleton's outer container class.
+		expect(source).toMatch(
+			/flex-1 flex flex-col bg-dark-900 overflow-hidden relative[\s\S]*?Skeleton header/
+		);
 	});
 });
 

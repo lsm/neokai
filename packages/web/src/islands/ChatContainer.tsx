@@ -785,18 +785,23 @@ export default function ChatContainer({
 			);
 		}
 		return (
-			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
-				{/* Skeleton header to prevent CLS */}
-				<div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700">
+			// `relative` is required so the absolutely-positioned footer skeleton is
+			// anchored to this container, matching the real ChatComposer positioning.
+			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden relative">
+				{/* Skeleton header — h-[65px] matches ChatHeader's fixed height exactly */}
+				<div class="flex items-center gap-3 px-4 h-[65px] border-b border-dark-700 flex-shrink-0">
 					<div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
 					<div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
 				</div>
-				{/* Skeleton messages area */}
+				{/* Skeleton messages area — flex-1 fills all remaining space, matching the
+				    real layout where ChatComposer is absolutely positioned (not in flex flow) */}
 				<div class="flex-1 flex items-center justify-center">
 					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
 				</div>
-				{/* Skeleton footer to prevent CLS */}
-				<div class="px-4 pb-4 pt-4">
+				{/* Skeleton footer — absolute bottom-0 matches ChatComposer's
+				    `absolute bottom-0 left-0 right-0` so it doesn't participate in the
+				    flex layout (prevents the messages area from shifting on load) */}
+				<div class="absolute bottom-0 left-0 right-0 pt-4 pb-4 px-4">
 					<div class="h-10 rounded-2xl bg-dark-800 animate-pulse" />
 				</div>
 			</div>
