@@ -4,19 +4,20 @@
  * Reusable component for rendering synthetic (system-generated) user messages.
  * Used for interrupt messages, compaction summaries, and other synthetic content.
  *
- * Features:
- * - Purple color scheme for visual distinction
- * - "Synthetic Message" header with icon
- * - Support for multiple content block types (text, image, tool_use, tool_result)
- * - Timestamp and synthetic badge in footer
+ * Design:
+ * - Subtle dark card (gray-900 bg, gray-700 border) — purple is accent only
+ * - Renders markdown for text blocks (headings, lists, code blocks)
+ * - Collapsible by default when content exceeds 8 lines
+ * - Right-aligned (user-side bubble placement)
  */
 
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { messageSpacing, borderRadius } from '../../lib/design-tokens.ts';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
+import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 
 interface Props {
 	/** Content to display - can be a simple string or array of content blocks */
@@ -26,6 +27,11 @@ interface Props {
 	/** Optional UUID for data attributes */
 	uuid?: string;
 }
+
+// Number of lines to show in preview mode before "Show more"
+const PREVIEW_LINE_COUNT = 8;
+// Approximate line height in pixels (matches typical 1.5em line height at 14px)
+const LINE_HEIGHT_PX = 21;
 
 /**
  * Format timestamp for display (e.g., "09:32 PM")
@@ -58,7 +64,28 @@ function formatFullTimestamp(timestamp?: number): string {
 }
 
 /**
- * Synthetic Message Block - Renders system-generated user messages
+ * Count approximate lines in the raw text content.
+ * Used for the "N lines" indicator in the collapsed header.
+ */
+function countTextLines(content: string | Array<Record<string, unknown>>): number {
+	if (typeof content === 'string') {
+		return content.split('\n').length;
+	}
+	let total = 0;
+	for (const block of content) {
+		if (block.type === 'text' && typeof block.text === 'string') {
+			total += (block.text as string).split('\n').length;
+		} else {
+			// Non-text blocks contribute at least a few lines each
+			total += 3;
+		}
+	}
+	return Math.max(1, total);
+}
+
+/**
+ * Synthetic Message Block - Renders system-generated user messages with subtle
+ * dark card, markdown rendering, and collapsible content.
  */
 export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 	// Normalize content to array of blocks
@@ -77,6 +104,31 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 	};
 
 	const [copied, setCopied] = useState(false);
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [needsCollapse, setNeedsCollapse] = useState(false);
+	const contentRef = useRef<HTMLDivElement>(null);
+	const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
+
+	// Initial measurement via useLayoutEffect
+	useLayoutEffect(() => {
+		if (contentRef.current) {
+			setNeedsCollapse(contentRef.current.scrollHeight > previewMaxHeight);
+		}
+	}, [content, previewMaxHeight]);
+
+	// ResizeObserver re-measures after MarkdownRenderer async-renders HTML content
+	useEffect(() => {
+		const el = contentRef.current;
+		if (!el) return;
+
+		if (typeof ResizeObserver === 'undefined') return;
+
+		const observer = new ResizeObserver(() => {
+			setNeedsCollapse(el.scrollHeight > previewMaxHeight);
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [previewMaxHeight]);
 
 	useEffect(() => {
 		if (!copied) return;
@@ -93,6 +145,8 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 		}
 	};
 
+	const lineCount = countTextLines(content);
+
 	return (
 		<div
 			class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
@@ -103,79 +157,139 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 		>
 			<div class="max-w-[85%] md:max-w-[70%] w-auto">
 				<div
-					class={cn(
-						'bg-purple-900/20 border border-purple-700/50 rounded-lg p-3',
-						borderRadius.message.bubble
-					)}
+					class={cn('bg-gray-900 border border-gray-700', borderRadius.message.bubble)}
+					data-testid="synthetic-card"
 				>
-					{/* Synthetic message label */}
-					<div class="flex items-center gap-2 mb-2 pb-2 border-b border-purple-700/30">
-						<svg
-							class="w-4 h-4 text-purple-400"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-							/>
-						</svg>
-						<span class="text-xs font-semibold text-purple-300">Synthetic Message</span>
+					{/* Header — purple accent only (dot + label) */}
+					<div class="flex items-center gap-2 px-3 py-2 border-b border-gray-700">
+						<div
+							class="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0"
+							data-testid="synthetic-dot"
+						/>
+						<span class="text-xs font-semibold text-purple-400">Synthetic</span>
+						{!isExpanded && needsCollapse && (
+							<span class="text-xs text-gray-500">— {lineCount} lines</span>
+						)}
 					</div>
 
-					{/* Render each content block */}
-					<div class="space-y-2">
-						{contentBlocks.map((block, idx) => (
-							<div key={idx} class="text-sm">
-								{block.type === 'text' && (
-									<div class="text-gray-100 whitespace-pre-wrap break-words">
-										{block.text as string}
+					{/* Collapsible content area */}
+					<div class="relative">
+						<div
+							class={cn('px-3 py-2', !isExpanded && needsCollapse && 'overflow-hidden')}
+							style={
+								!isExpanded && needsCollapse ? { maxHeight: `${previewMaxHeight + 24}px` } : {}
+							}
+						>
+							{/* Inner ref measured for height — outside the maxHeight container */}
+							<div ref={contentRef} class="space-y-2">
+								{contentBlocks.map((block, idx) => (
+									<div key={idx} class="text-sm">
+										{block.type === 'text' && (
+											<MarkdownRenderer
+												content={block.text as string}
+												class="text-gray-200 text-sm"
+											/>
+										)}
+										{block.type === 'image' && (
+											<div class="space-y-1">
+												<div class="text-xs text-purple-400">Image:</div>
+												<div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+													{JSON.stringify(block, null, 2)}
+												</div>
+											</div>
+										)}
+										{block.type === 'tool_use' && (
+											<div class="space-y-1">
+												<div class="text-xs text-purple-400">Tool Use: {block.name as string}</div>
+												<div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+													{JSON.stringify(block.input, null, 2)}
+												</div>
+											</div>
+										)}
+										{block.type === 'tool_result' && (
+											<div class="space-y-1">
+												<div class="text-xs text-purple-400">
+													Tool Result: {(block.tool_use_id as string).slice(0, 12)}
+													...
+												</div>
+												<div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded max-h-48 overflow-auto">
+													{block.content !== undefined && block.content !== null
+														? typeof block.content === 'string'
+															? block.content
+															: JSON.stringify(block.content, null, 2)
+														: '(empty)'}
+												</div>
+											</div>
+										)}
+										{!['text', 'image', 'tool_use', 'tool_result'].includes(
+											block.type as string
+										) && (
+											<div class="space-y-1">
+												<div class="text-xs text-purple-400">{block.type as string}:</div>
+												<div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+													{JSON.stringify(block, null, 2)}
+												</div>
+											</div>
+										)}
 									</div>
-								)}
-								{block.type === 'image' && (
-									<div class="space-y-1">
-										<div class="text-xs text-purple-400">Image:</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded overflow-x-auto">
-											{JSON.stringify(block, null, 2)}
-										</div>
-									</div>
-								)}
-								{block.type === 'tool_use' && (
-									<div class="space-y-1">
-										<div class="text-xs text-purple-400">Tool Use: {block.name as string}</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded overflow-x-auto">
-											{JSON.stringify(block.input, null, 2)}
-										</div>
-									</div>
-								)}
-								{block.type === 'tool_result' && (
-									<div class="space-y-1">
-										<div class="text-xs text-purple-400">
-											Tool Result: {(block.tool_use_id as string).slice(0, 12)}
-											...
-										</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded max-h-48 overflow-auto">
-											{block.content !== undefined && block.content !== null
-												? typeof block.content === 'string'
-													? block.content
-													: JSON.stringify(block.content, null, 2)
-												: '(empty)'}
-										</div>
-									</div>
-								)}
-								{!['text', 'image', 'tool_use', 'tool_result'].includes(block.type as string) && (
-									<div class="space-y-1">
-										<div class="text-xs text-purple-400">{block.type as string}:</div>
-										<div class="font-mono text-xs text-gray-300 bg-gray-900/50 p-2 rounded overflow-x-auto">
-											{JSON.stringify(block, null, 2)}
-										</div>
-									</div>
-								)}
+								))}
 							</div>
-						))}
+						</div>
+
+						{/* Gradient fade overlay when truncated and not expanded */}
+						{needsCollapse && !isExpanded && (
+							<div
+								class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-gray-900 to-transparent pointer-events-none"
+								aria-hidden="true"
+							/>
+						)}
+
+						{/* Show more / Show less toggle */}
+						{needsCollapse && (
+							<div class="flex justify-center py-2 border-t border-gray-700">
+								<button
+									onClick={() => setIsExpanded(!isExpanded)}
+									class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+									data-testid="synthetic-toggle"
+								>
+									{isExpanded ? (
+										<>
+											<svg
+												class="w-3.5 h-3.5"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M5 15l7-7 7 7"
+												/>
+											</svg>
+											Show less
+										</>
+									) : (
+										<>
+											<svg
+												class="w-3.5 h-3.5"
+												fill="none"
+												viewBox="0 0 24 24"
+												stroke="currentColor"
+											>
+												<path
+													strokeLinecap="round"
+													strokeLinejoin="round"
+													strokeWidth={2}
+													d="M19 9l-7 7-7-7"
+												/>
+											</svg>
+											Show more
+										</>
+									)}
+								</button>
+							</div>
+						)}
 					</div>
 				</div>
 
