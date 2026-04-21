@@ -658,6 +658,44 @@ export class SpaceRuntimeService {
 	}
 
 	/**
+	 * Called when a gate is waiting for human approval (gate data exists but
+	 * `approved` hasn't been set yet). Transitions the canonical task to `review`
+	 * so the task appears in the "Needs Attention" group in the UI.
+	 *
+	 * No-op when:
+	 * - The run or its tasks cannot be found
+	 * - No non-archived task is currently `in_progress` or `open`
+	 */
+	async handleGatePendingApproval(runId: string, _gateId: string): Promise<void> {
+		const run = this.config.workflowRunRepo.getRun(runId);
+		if (!run) return;
+
+		const tasks = this.config.taskRepo.listByWorkflowRun(runId);
+		if (tasks.length === 0) return;
+
+		// Find the canonical task that is actively running. Gate pending approval
+		// happens while the agent is working or has just finished writing gate data.
+		const canonical =
+			tasks.find((t) => t.status === 'in_progress') ?? tasks.find((t) => t.status === 'open');
+		if (!canonical) return;
+
+		const updated = this.config.taskRepo.updateTask(canonical.id, {
+			status: 'review',
+			pendingCheckpointType: 'gate',
+		});
+		if (!updated) return;
+
+		if (this.config.daemonHub) {
+			await this.config.daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: run.spaceId,
+				taskId: updated.id,
+				task: updated,
+			});
+		}
+	}
+
+	/**
 	 * Notify that gate data has changed for a given run/gate pair.
 	 *
 	 * Creates a temporary ChannelRouter and calls onGateDataChanged() to re-evaluate
@@ -698,6 +736,7 @@ export class SpaceRuntimeService {
 			// Forward the runtime's current sink so a gate-driven reopen still
 			// surfaces `workflow_run_reopened` to the Space Agent session.
 			notificationSink: this.runtime.getNotificationSink(),
+			onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
 		});
 		return router.onGateDataChanged(runId, gateId);
 	}
