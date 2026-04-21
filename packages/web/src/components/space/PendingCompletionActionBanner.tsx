@@ -11,9 +11,8 @@
  * `status: 'cancelled'` — we treat rejection as cancelling the task, which is
  * the transition the daemon already permits out of `review`.
  *
- * For `type: 'script'` actions the bash source is shown under a `<details>`
- * disclosure, collapsed by default — so risky shell commands are visible to
- * reviewers but don't dominate the banner.
+ * Compact design: shows a single status line inline; full action details and
+ * confirmation are shown in modals opened by the Approve / Reject buttons.
  *
  * Distinct from `PendingGateBanner` (workflow-level gates) and
  * `TaskBlockedBanner` (blocked-status tasks). The three can, in principle, be
@@ -25,7 +24,7 @@ import { useCallback, useMemo, useState } from 'preact/hooks';
 import type { CompletionAction, SpaceAutonomyLevel, SpaceTask } from '@neokai/shared';
 import { spaceStore } from '../../lib/space-store';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
-import { ConfirmModal } from '../ui/ConfirmModal';
+import { Modal } from '../ui/Modal.tsx';
 
 interface PendingCompletionActionBannerProps {
 	task: SpaceTask;
@@ -75,7 +74,8 @@ export function PendingCompletionActionBanner({
 
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [showRejectConfirm, setShowRejectConfirm] = useState(false);
+	const [showApproveModal, setShowApproveModal] = useState(false);
+	const [showRejectModal, setShowRejectModal] = useState(false);
 	const [rejectReason, setRejectReason] = useState('');
 
 	const onApprove = useCallback(async () => {
@@ -87,6 +87,7 @@ export function PendingCompletionActionBanner({
 			// recomputes the resulting status (done / review / blocked) based on
 			// the action outcome + remaining actions, so we don't need to guess.
 			await spaceStore.updateTask(task.id, { status: 'done' });
+			setShowApproveModal(false);
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : 'Failed to approve');
 		} finally {
@@ -111,7 +112,7 @@ export function PendingCompletionActionBanner({
 				pendingCheckpointType: null,
 				...(reason ? { result: reason } : {}),
 			});
-			setShowRejectConfirm(false);
+			setShowRejectModal(false);
 			setRejectReason('');
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : 'Failed to reject');
@@ -135,89 +136,173 @@ export function PendingCompletionActionBanner({
 
 	return (
 		<>
+			{/* Compact one-line banner */}
 			<div
-				class="mx-4 mt-2 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 space-y-2"
+				class="mx-4 mt-2 mb-2 flex items-center gap-2 px-2 py-1 rounded text-xs text-amber-400/90"
 				data-testid="pending-completion-action-banner"
 				data-action-type={action.type}
 			>
-				<div class="flex items-start justify-between gap-2">
-					<div class="flex-1 min-w-0">
-						<p class="text-xs font-medium text-amber-300">
-							⏸ Completion Action Awaiting Approval — {action.name}
-						</p>
-						<p
-							class="mt-0.5 text-xs text-amber-400/70"
-							data-testid="pending-completion-action-type"
-						>
-							{typeLabel} · requires {requiredLabel} (Level {action.requiredLevel}); space is{' '}
-							<span data-testid="pending-completion-action-current-level">
-								{currentLabel} (Level {currentLevel})
-							</span>
-						</p>
+				<span class="shrink-0">⏸</span>
+				<span class="flex-1 min-w-0 truncate">
+					Completion action: <span class="font-medium">{action.name}</span>
+					<span class="text-amber-400/60 ml-1">· {typeLabel}</span>
+					<span class="text-amber-400/60 ml-1">· requires Level {action.requiredLevel}</span>
+				</span>
+
+				<div class="flex items-center gap-1 flex-shrink-0">
+					<button
+						type="button"
+						onClick={() => {
+							setError(null);
+							setShowApproveModal(true);
+						}}
+						disabled={busy}
+						data-testid="pending-completion-action-approve-btn"
+						class="px-2 py-0.5 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+					>
+						Approve
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							setError(null);
+							setShowRejectModal(true);
+						}}
+						disabled={busy}
+						data-testid="pending-completion-action-reject-btn"
+						class="px-2 py-0.5 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+					>
+						Reject
+					</button>
+				</div>
+			</div>
+
+			{/* Approve modal */}
+			<Modal
+				isOpen={showApproveModal}
+				onClose={() => {
+					if (!busy) {
+						setShowApproveModal(false);
+						setError(null);
+					}
+				}}
+				title={`Approve "${action.name}"?`}
+				size="md"
+				data-testid="pending-completion-action-approve-modal"
+			>
+				<div class="space-y-4" data-testid="pending-completion-action-approve-modal-content">
+					<div class="text-xs text-amber-400/80" data-testid="pending-completion-action-type">
+						{typeLabel} · requires {requiredLabel} (Level {action.requiredLevel}); space is{' '}
+						<span data-testid="pending-completion-action-current-level">
+							{currentLabel} (Level {currentLevel})
+						</span>
 					</div>
 
-					<div class="flex items-center gap-1.5 flex-shrink-0">
+					<CompletionActionDetails action={action} />
+
+					{error && (
+						<p class="text-xs text-red-400" data-testid="pending-completion-action-error">
+							{error}
+						</p>
+					)}
+
+					<div class="flex items-center justify-end gap-3 pt-1">
+						<button
+							type="button"
+							onClick={() => {
+								if (!busy) {
+									setShowApproveModal(false);
+									setError(null);
+								}
+							}}
+							disabled={busy}
+							class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							Cancel
+						</button>
 						<button
 							type="button"
 							onClick={() => void onApprove()}
 							disabled={busy}
-							data-testid="pending-completion-action-approve-btn"
-							class="px-2 py-1 text-xs font-medium rounded bg-green-900/40 text-green-300 border border-green-700/50 hover:bg-green-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+							data-testid="pending-completion-action-approve-confirm"
+							class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-green-600 hover:bg-green-700 text-white disabled:bg-green-600/50 disabled:cursor-not-allowed"
 						>
-							Approve
-						</button>
-						<button
-							type="button"
-							onClick={() => setShowRejectConfirm(true)}
-							disabled={busy}
-							data-testid="pending-completion-action-reject-btn"
-							class="px-2 py-1 text-xs font-medium rounded bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						>
-							Reject
+							{busy ? 'Processing...' : 'Approve'}
 						</button>
 					</div>
 				</div>
+			</Modal>
 
-				<CompletionActionDetails action={action} />
-
-				{error && (
-					<p class="text-xs text-red-400" data-testid="pending-completion-action-error">
-						{error}
-					</p>
-				)}
-			</div>
-
-			<ConfirmModal
-				isOpen={showRejectConfirm}
+			{/* Reject modal */}
+			<Modal
+				isOpen={showRejectModal}
 				onClose={() => {
 					if (!busy) {
-						setShowRejectConfirm(false);
+						setShowRejectModal(false);
 						setRejectReason('');
+						setError(null);
 					}
 				}}
-				onConfirm={() => void onRejectConfirm()}
 				title={`Reject "${action.name}"?`}
-				message={`The task will be cancelled and the ${typeLabel.toLowerCase()} will not run. This can't be undone by the banner — to retry, reopen the task.`}
-				confirmText="Reject and Cancel Task"
-				cancelText="Keep Pending"
-				confirmButtonVariant="danger"
-				isLoading={busy}
-				error={error}
-				confirmTestId="pending-completion-action-reject-confirm"
+				size="md"
+				data-testid="pending-completion-action-reject-modal"
 			>
-				<label class="block text-xs text-gray-400 mb-1" for="reject-reason-input">
-					Reason (optional — recorded on the task)
-				</label>
-				<textarea
-					id="reject-reason-input"
-					data-testid="pending-completion-action-reject-reason"
-					value={rejectReason}
-					onInput={(e) => setRejectReason((e.target as HTMLTextAreaElement).value)}
-					class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1 text-sm text-gray-200 focus:border-red-500 focus:outline-none"
-					rows={2}
-					disabled={busy}
-				/>
-			</ConfirmModal>
+				<div class="space-y-4" data-testid="pending-completion-action-reject-modal-content">
+					<p class="text-gray-300 text-sm leading-relaxed">
+						The task will be cancelled and the {typeLabel.toLowerCase()} will not run. This can't be
+						undone by the banner — to retry, reopen the task.
+					</p>
+
+					<CompletionActionDetails action={action} />
+
+					<div>
+						<label class="block text-xs text-gray-400 mb-1" for="reject-reason-input">
+							Reason (optional — recorded on the task)
+						</label>
+						<textarea
+							id="reject-reason-input"
+							data-testid="pending-completion-action-reject-reason"
+							value={rejectReason}
+							onInput={(e) => setRejectReason((e.target as HTMLTextAreaElement).value)}
+							class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1 text-sm text-gray-200 focus:border-red-500 focus:outline-none"
+							rows={2}
+							disabled={busy}
+						/>
+					</div>
+
+					{error && (
+						<p class="text-xs text-red-400" data-testid="pending-completion-action-error">
+							{error}
+						</p>
+					)}
+
+					<div class="flex items-center justify-end gap-3 pt-1">
+						<button
+							type="button"
+							onClick={() => {
+								if (!busy) {
+									setShowRejectModal(false);
+									setRejectReason('');
+									setError(null);
+								}
+							}}
+							disabled={busy}
+							class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							Keep Pending
+						</button>
+						<button
+							type="button"
+							onClick={() => void onRejectConfirm()}
+							disabled={busy}
+							data-testid="pending-completion-action-reject-confirm"
+							class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50 disabled:cursor-not-allowed"
+						>
+							{busy ? 'Processing...' : 'Reject and Cancel Task'}
+						</button>
+					</div>
+				</div>
+			</Modal>
 		</>
 	);
 }
