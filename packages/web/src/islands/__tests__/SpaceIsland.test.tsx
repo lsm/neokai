@@ -103,6 +103,8 @@ vi.mock('../../lib/space-store', () => ({
 vi.mock('../../lib/router', () => ({
 	navigateToSpace: vi.fn(),
 	navigateToSpaceTask: vi.fn(),
+	pushOverlayHistory: vi.fn(),
+	closeOverlayHistory: vi.fn(),
 }));
 
 import SpaceIsland from '../SpaceIsland';

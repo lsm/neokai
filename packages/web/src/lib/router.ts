@@ -28,6 +28,8 @@ import {
 	currentSpaceTaskIdSignal,
 	currentSpaceViewModeSignal,
 	navSectionSignal,
+	spaceOverlaySessionIdSignal,
+	spaceOverlayAgentNameSignal,
 } from './signals.ts';
 
 /** Route patterns */
@@ -45,6 +47,7 @@ const ROOM_SETTINGS_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/settings$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 const INBOX_ROUTE_PATTERN = /^\/inbox$/;
 const SPACES_ROUTE_PATTERN = /^\/spaces$/;
+const SETTINGS_ROUTE_PATTERN = /^\/settings$/;
 /** Legacy: /room/:id/chat was removed — treat as plain room route for backwards compat */
 const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
 /** Space routes accept both UUIDs (a-f0-9-) and slugs (a-z0-9-) — slugs are always lowercase */
@@ -390,6 +393,11 @@ export function createSpaceSessionsPath(spaceId: string): string {
  */
 export function createSpaceAgentPath(spaceId: string): string {
 	return `/space/${spaceId}/agent`;
+}
+
+/** Create settings URL path */
+export function createSettingsPath(): string {
+	return '/settings';
 }
 
 /**
@@ -993,11 +1001,52 @@ export function navigateToInbox(replace = false): void {
 
 /**
  * Navigate to Settings section
- * Sets nav section to 'settings' and navigates home
+ * Sets nav section to 'settings' and updates URL to /settings
  */
-export function navigateToSettings(): void {
-	navSectionSignal.value = 'settings';
-	navigateToHome();
+export function navigateToSettings(replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = '/settings';
+	const currentPath = getCurrentPath();
+	if (currentPath === targetPath) {
+		navSectionSignal.value = 'settings';
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ path: targetPath }, '', targetPath);
+
+		navSectionSignal.value = 'settings';
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
 }
 
 /**
@@ -1442,6 +1491,14 @@ function handlePopState(_event: PopStateEvent): void {
 		return;
 	}
 
+	// If the overlay is open and the user pressed back, close the overlay
+	// instead of navigating away from the current view.
+	if (spaceOverlaySessionIdSignal.value && !window.history.state?.overlaySessionId) {
+		spaceOverlaySessionIdSignal.value = null;
+		spaceOverlayAgentNameSignal.value = null;
+		return;
+	}
+
 	const path = getCurrentPath();
 	const sessionId = getSessionIdFromPath(path);
 	const roomId = getRoomIdFromPath(path);
@@ -1680,6 +1737,19 @@ function handlePopState(_event: PopStateEvent): void {
 			currentRoomActiveTabSignal.value = null;
 			currentSessionIdSignal.value = null;
 			navSectionSignal.value = 'spaces';
+		} else if (SETTINGS_ROUTE_PATTERN.test(path)) {
+			currentSpaceIdSignal.value = null;
+			currentSpaceViewModeSignal.value = 'overview';
+			currentSpaceSessionIdSignal.value = null;
+			currentSpaceTaskIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentRoomGoalIdSignal.value = null;
+			currentRoomAgentActiveSignal.value = false;
+			currentRoomActiveTabSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'settings';
 		} else {
 			currentSpaceIdSignal.value = null;
 			currentSpaceViewModeSignal.value = 'overview';
@@ -1937,6 +2007,19 @@ export function initializeRouter(): string | null {
 		currentRoomActiveTabSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'spaces';
+	} else if (SETTINGS_ROUTE_PATTERN.test(initialPath)) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceViewModeSignal.value = 'overview';
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentRoomGoalIdSignal.value = null;
+		currentRoomAgentActiveSignal.value = false;
+		currentRoomActiveTabSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'settings';
 	} else {
 		currentSpaceIdSignal.value = null;
 		currentSpaceViewModeSignal.value = 'overview';
@@ -1961,6 +2044,44 @@ export function initializeRouter(): string | null {
 	routerState.isInitialized = true;
 
 	return initialSessionId;
+}
+
+/**
+ * Push a history entry for the Space Agent Overlay.
+ *
+ * When the overlay panel opens, we push a marker state so the browser back
+ * button dismisses the overlay instead of navigating away from the parent view.
+ * The URL itself does NOT change — we push a state entry with the same path
+ * but tagged with `overlaySessionId`.
+ *
+ * Call `closeOverlayHistory()` when the overlay is dismissed by the user
+ * (Escape, backdrop click, etc.) to go back in history.
+ */
+export function pushOverlayHistory(sessionId: string, agentName?: string): void {
+	const currentPath = getCurrentPath();
+	window.history.pushState(
+		{ ...window.history.state, overlaySessionId: sessionId },
+		'',
+		currentPath
+	);
+	// Set overlay signals after pushing history so the effect doesn't race
+	spaceOverlaySessionIdSignal.value = sessionId;
+	spaceOverlayAgentNameSignal.value = agentName ?? null;
+}
+
+/**
+ * Close the overlay and go back in history to the pre-overlay entry.
+ */
+export function closeOverlayHistory(): void {
+	if (window.history.state?.overlaySessionId) {
+		spaceOverlaySessionIdSignal.value = null;
+		spaceOverlayAgentNameSignal.value = null;
+		window.history.back();
+	} else {
+		// No overlay history entry — just close the overlay signal
+		spaceOverlaySessionIdSignal.value = null;
+		spaceOverlayAgentNameSignal.value = null;
+	}
 }
 
 /**

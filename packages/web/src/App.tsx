@@ -43,6 +43,7 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
+	navigateToSettings,
 	createSessionPath,
 	createRoomPath,
 	createRoomAgentPath,
@@ -166,7 +167,9 @@ export function App() {
 																	? '/spaces'
 																	: navSection === 'chats'
 																		? '/sessions'
-																		: '/';
+																		: navSection === 'settings'
+																			? '/settings'
+																			: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -201,6 +204,8 @@ export function App() {
 					navigateToSpacesPage(true);
 				} else if (navSection === 'chats') {
 					// Already at /sessions or no navigation needed
+				} else if (navSection === 'settings') {
+					navigateToSettings(true);
 				} else {
 					navigateToHome(true);
 				}

@@ -10,9 +10,16 @@ import type {
 	SpaceWorkflowRun,
 } from '@neokai/shared';
 
-const { mockNavigateToSpaceAgent } = vi.hoisted(() => ({ mockNavigateToSpaceAgent: vi.fn() }));
+const { mockNavigateToSpaceAgent, mockPushOverlayHistory } = vi.hoisted(() => ({
+	mockNavigateToSpaceAgent: vi.fn(),
+	mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
+		mockSpaceOverlaySessionIdSignal.value = sessionId;
+		mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
+	}),
+}));
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
+	pushOverlayHistory: mockPushOverlayHistory,
 }));
 
 // Plain signal-like holders for the overlay signals — hoisted so the mock factory can reference them

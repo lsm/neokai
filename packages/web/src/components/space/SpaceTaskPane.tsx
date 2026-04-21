@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
-import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../../lib/signals';
+import { pushOverlayHistory } from '../../lib/router';
 import type {
 	SpaceTaskActivityMember,
 	SpaceTaskActivityState,
@@ -198,23 +198,20 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			(m) => m.kind === 'node_agent' && agentDisplayNames.includes(m.label)
 		);
 		if (nodeMember) {
-			spaceOverlayAgentNameSignal.value = nodeMember.label;
-			spaceOverlaySessionIdSignal.value = nodeMember.sessionId;
+			pushOverlayHistory(nodeMember.sessionId, nodeMember.label);
 			return;
 		}
 
 		// Fall back to the task agent session (coordinator/leader)
 		const taskAgentMember = activityMembers.find((m) => m.kind === 'task_agent');
 		if (taskAgentMember) {
-			spaceOverlayAgentNameSignal.value = taskAgentMember.label;
-			spaceOverlaySessionIdSignal.value = taskAgentMember.sessionId;
+			pushOverlayHistory(taskAgentMember.sessionId, taskAgentMember.label);
 			return;
 		}
 
 		// Last resort: use the task’s own agentSessionId
 		if (agentSessionId) {
-			spaceOverlayAgentNameSignal.value = agentActionLabel;
-			spaceOverlaySessionIdSignal.value = agentSessionId;
+			pushOverlayHistory(agentSessionId, agentActionLabel);
 		}
 	};
 
@@ -262,8 +259,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			...activityMembers.map((member) => ({
 				label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
 				onClick: () => {
-					spaceOverlayAgentNameSignal.value = member.label;
-					spaceOverlaySessionIdSignal.value = member.sessionId;
+					pushOverlayHistory(member.sessionId, member.label);
 				},
 			}))
 		);
