@@ -90,13 +90,17 @@ export function TaskStatusActions({
 	pendingCheckpointType,
 }: TaskStatusActionsProps) {
 	const allActions = getTransitionActions(status);
-	// When a task is paused at a completion action or a submit_for_approval
-	// checkpoint, hide the generic Approve (review → done) and Cancel (review →
-	// cancelled) buttons. The dedicated banner owns those transitions so it can
-	// disclose what the approval will actually run / send. Non-checkpoint
-	// transitions (e.g. Reopen → in_progress, Archive) stay visible.
+	// When a task is paused at a completion action, a submit_for_approval
+	// checkpoint, or a channel gate awaiting human approval, hide the generic
+	// Approve (review → done) and Cancel (review → cancelled) buttons. The
+	// dedicated banner owns those transitions. For gate-pending tasks the
+	// PendingGateBanner provides the Approve/Reject UX; bypassing it via the
+	// generic button would mark the task done without opening the gate.
+	// Non-checkpoint transitions (e.g. Reopen → in_progress, Archive) stay visible.
 	const actions =
-		pendingCheckpointType === 'completion_action' || pendingCheckpointType === 'task_completion'
+		pendingCheckpointType === 'completion_action' ||
+		pendingCheckpointType === 'task_completion' ||
+		pendingCheckpointType === 'gate'
 			? allActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
 			: allActions;
 

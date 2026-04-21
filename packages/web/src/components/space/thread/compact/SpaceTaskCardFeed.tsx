@@ -2,7 +2,7 @@ import { useMemo } from 'preact/hooks';
 import { isSDKSystemInit, isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { UseMessageMapsResult } from '../../../../hooks/useMessageMaps';
-import { spaceOverlayAgentNameSignal, spaceOverlaySessionIdSignal } from '../../../../lib/signals';
+import { pushOverlayHistory } from '../../../../lib/router';
 import { SDKMessageRenderer } from '../../../sdk/SDKMessageRenderer';
 import { getAgentColor } from '../space-task-thread-agent-colors';
 import { SpaceSystemInitCard } from './SpaceSystemInitCard';
@@ -149,8 +149,7 @@ function renderAgentBlock(
 
 	const handleOpenAgentOverlay = () => {
 		if (!block.sessionId) return;
-		spaceOverlayAgentNameSignal.value = block.label;
-		spaceOverlaySessionIdSignal.value = block.sessionId;
+		pushOverlayHistory(block.sessionId, block.label);
 	};
 
 	const handleHeaderKeyDown = (e: KeyboardEvent) => {

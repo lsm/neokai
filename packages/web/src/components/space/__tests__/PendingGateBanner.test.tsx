@@ -113,9 +113,24 @@ describe('PendingGateBanner', () => {
 		expect(queryByTestId('pending-gate-fetch-error')).toBeNull();
 	});
 
+	it('does not show banner for gates with no data (not yet activated)', async () => {
+		workflowsSignal.value = [makeWorkflow([approvalGate('g1', 'Review')])];
+		mockRequest.mockResolvedValue({ gateData: [] });
+		const { queryByTestId } = render(
+			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+		);
+		await waitFor(() =>
+			expect(mockRequest).toHaveBeenCalledWith('spaceWorkflowRun.listGateData', { runId: 'r1' })
+		);
+		expect(queryByTestId('pending-gate-banner')).toBeNull();
+		expect(queryByTestId('pending-gate-fetch-error')).toBeNull();
+	});
+
 	it('renders the banner for a gate that is waiting_human', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1', 'Merge PR')])];
-		mockRequest.mockResolvedValue({ gateData: [] });
+		mockRequest.mockResolvedValue({
+			gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+		});
 		const { findByTestId, getByTestId } = render(
 			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
 		);
@@ -129,7 +144,12 @@ describe('PendingGateBanner', () => {
 		workflowsSignal.value = [
 			makeWorkflow([approvalGate('g1', 'First'), approvalGate('g2', 'Second')]),
 		];
-		mockRequest.mockResolvedValue({ gateData: [] });
+		mockRequest.mockResolvedValue({
+			gateData: [
+				{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 },
+				{ runId: 'r1', gateId: 'g2', data: {}, updatedAt: 0 },
+			],
+		});
 		const { findByTestId, getAllByTestId } = render(
 			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
 		);
@@ -140,7 +160,10 @@ describe('PendingGateBanner', () => {
 	it('approve click fires approveGate with approved=true', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
 		mockRequest.mockImplementation((method: string) => {
-			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.listGateData')
+				return Promise.resolve({
+					gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+				});
 			return Promise.resolve({});
 		});
 		const { findByTestId } = render(
@@ -160,7 +183,10 @@ describe('PendingGateBanner', () => {
 	it('reject click fires approveGate with approved=false', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
 		mockRequest.mockImplementation((method: string) => {
-			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.listGateData')
+				return Promise.resolve({
+					gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+				});
 			return Promise.resolve({});
 		});
 		const { findByTestId } = render(
@@ -193,7 +219,9 @@ describe('PendingGateBanner', () => {
 
 	it('Review button opens the artifacts overlay', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
-		mockRequest.mockResolvedValue({ gateData: [] });
+		mockRequest.mockResolvedValue({
+			gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+		});
 		const { findByTestId, queryByTestId, getByTestId } = render(
 			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
 		);
@@ -206,7 +234,9 @@ describe('PendingGateBanner', () => {
 
 	it('Escape key closes the review overlay', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
-		mockRequest.mockResolvedValue({ gateData: [] });
+		mockRequest.mockResolvedValue({
+			gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+		});
 		const { findByTestId, queryByTestId, getByTestId } = render(
 			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
 		);
@@ -230,7 +260,13 @@ describe('PendingGateBanner', () => {
 			resolveApprove = resolve;
 		});
 		mockRequest.mockImplementation((method: string) => {
-			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.listGateData')
+				return Promise.resolve({
+					gateData: [
+						{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 },
+						{ runId: 'r1', gateId: 'g2', data: {}, updatedAt: 0 },
+					],
+				});
 			if (method === 'spaceWorkflowRun.approveGate') return pending;
 			return Promise.resolve({});
 		});
@@ -254,7 +290,13 @@ describe('PendingGateBanner', () => {
 			makeWorkflow([approvalGate('g1', 'First'), approvalGate('g2', 'Second')]),
 		];
 		mockRequest.mockImplementation((method: string, params: { gateId?: string }) => {
-			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.listGateData')
+				return Promise.resolve({
+					gateData: [
+						{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 },
+						{ runId: 'r1', gateId: 'g2', data: {}, updatedAt: 0 },
+					],
+				});
 			if (method === 'spaceWorkflowRun.approveGate' && params.gateId === 'g1') {
 				return Promise.reject(new Error('backend exploded'));
 			}
@@ -279,7 +321,10 @@ describe('PendingGateBanner', () => {
 			resolveApprove = resolve;
 		});
 		mockRequest.mockImplementation((method: string) => {
-			if (method === 'spaceWorkflowRun.listGateData') return Promise.resolve({ gateData: [] });
+			if (method === 'spaceWorkflowRun.listGateData')
+				return Promise.resolve({
+					gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+				});
 			if (method === 'spaceWorkflowRun.approveGate') return pending;
 			return Promise.resolve({});
 		});
@@ -335,7 +380,9 @@ describe('PendingGateBanner', () => {
 
 	it('closing overlay restores focus to the opening Review button', async () => {
 		workflowsSignal.value = [makeWorkflow([approvalGate('g1')])];
-		mockRequest.mockResolvedValue({ gateData: [] });
+		mockRequest.mockResolvedValue({
+			gateData: [{ runId: 'r1', gateId: 'g1', data: {}, updatedAt: 0 }],
+		});
 		const { findByTestId, queryByTestId, getByTestId } = render(
 			<PendingGateBanner runId="r1" spaceId="s1" workflowId="wf-1" />
 		);

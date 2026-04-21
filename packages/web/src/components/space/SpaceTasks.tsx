@@ -12,7 +12,12 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { spaceStore } from '../../lib/space-store';
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@neokai/shared';
 import { getRelativeTime } from '../../lib/utils';
-import { currentSpaceTasksFilterSignal } from '../../lib/signals';
+import {
+	currentSpaceTasksFilterSignal,
+	currentSpaceTasksFilterTabSignal,
+	currentSpaceIdSignal,
+} from '../../lib/signals';
+import { navigateToSpaceTasks } from '../../lib/router';
 
 type TaskFilterTab = 'action' | 'active' | 'completed' | 'archived';
 
@@ -304,8 +309,8 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	// land on the Action tab so the filtered list is non-empty by default.
 	// Otherwise keep the default of "Active" — matches historical behavior for
 	// users coming in without a filter.
-	const initialTab: TaskFilterTab = preFilter ? 'action' : 'active';
-	const [activeTab, setActiveTab] = useState<TaskFilterTab>(initialTab);
+	const activeTab: TaskFilterTab = currentSpaceTasksFilterTabSignal.value;
+	const spaceId = currentSpaceIdSignal.value ?? '';
 	const [activeFilter, setActiveFilter] = useState<'awaiting_completion_action' | null>(preFilter);
 
 	// Sync from the signal once, then clear it so the filter doesn't re-apply on
@@ -315,7 +320,7 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 	useEffect(() => {
 		if (preFilter) {
 			setActiveFilter(preFilter);
-			setActiveTab('action');
+			navigateToSpaceTasks(spaceId, 'action');
 			currentSpaceTasksFilterSignal.value = null;
 		}
 	}, []);
@@ -385,27 +390,27 @@ export function SpaceTasks({ spaceId: _spaceId, onSelectTask }: SpaceTasksProps)
 						label="Action"
 						count={counts.action}
 						isActive={activeTab === 'action'}
-						onClick={() => setActiveTab('action')}
+						onClick={() => navigateToSpaceTasks(spaceId, 'action')}
 						variant="amber"
 					/>
 					<TabButton
 						label="Active"
 						count={counts.active}
 						isActive={activeTab === 'active'}
-						onClick={() => setActiveTab('active')}
+						onClick={() => navigateToSpaceTasks(spaceId, 'active')}
 					/>
 					<TabButton
 						label="Completed"
 						count={counts.completed}
 						isActive={activeTab === 'completed'}
-						onClick={() => setActiveTab('completed')}
+						onClick={() => navigateToSpaceTasks(spaceId, 'completed')}
 						variant="green"
 					/>
 					<TabButton
 						label="Archived"
 						count={counts.archived}
 						isActive={activeTab === 'archived'}
-						onClick={() => setActiveTab('archived')}
+						onClick={() => navigateToSpaceTasks(spaceId, 'archived')}
 						variant="gray"
 					/>
 				</div>

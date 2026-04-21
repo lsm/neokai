@@ -273,7 +273,7 @@ describe('navigateToSpaceTask', () => {
 	});
 
 	it('uses replaceState when replace=true', () => {
-		navigateToSpaceTask(SPACE_ID, TASK_ID, true);
+		navigateToSpaceTask(SPACE_ID, TASK_ID, undefined, true);
 		expect(mockHistory.replaceState).toHaveBeenCalled();
 	});
 });

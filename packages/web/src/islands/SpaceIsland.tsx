@@ -17,7 +17,12 @@ import { spaceOverlaySessionIdSignal, spaceOverlayAgentNameSignal } from '../lib
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { spaceStore } from '../lib/space-store';
-import { navigateToSpace, navigateToSpaceTask } from '../lib/router';
+import {
+	navigateToSpace,
+	navigateToSpaceTask,
+	pushOverlayHistory,
+	closeOverlayHistory,
+} from '../lib/router';
 import ChatContainer from './ChatContainer';
 
 const SpaceConfigurePage = lazy(() =>
@@ -60,8 +65,7 @@ export default function SpaceIsland({
 	const overlaySessionId = spaceOverlaySessionIdSignal.value;
 	const overlayAgentName = spaceOverlayAgentNameSignal.value;
 	const handleOverlayClose = useCallback(() => {
-		spaceOverlaySessionIdSignal.value = null;
-		spaceOverlayAgentNameSignal.value = null;
+		closeOverlayHistory();
 	}, []);
 
 	// Test hook: expose overlay controls on window.__neokai_space_overlay so E2E
@@ -72,12 +76,10 @@ export default function SpaceIsland({
 		const w = window as typeof window & { __neokai_space_overlay?: OverlayApi };
 		w.__neokai_space_overlay = {
 			open(sessionId, agentName) {
-				spaceOverlayAgentNameSignal.value = agentName ?? null;
-				spaceOverlaySessionIdSignal.value = sessionId;
+				pushOverlayHistory(sessionId, agentName);
 			},
 			close() {
-				spaceOverlaySessionIdSignal.value = null;
-				spaceOverlayAgentNameSignal.value = null;
+				closeOverlayHistory();
 			},
 		};
 		return () => {

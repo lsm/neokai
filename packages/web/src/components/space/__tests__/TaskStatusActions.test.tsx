@@ -211,9 +211,9 @@ describe('TaskStatusActions component', () => {
 			expect(getByTestId('task-action-archived')).toBeTruthy();
 		});
 
-		it('keeps Approve / Cancel visible when pendingCheckpointType is gate or null', () => {
+		it('keeps Approve / Cancel visible when pendingCheckpointType is null', () => {
 			const onTransition = vi.fn();
-			const { getByTestId, rerender } = render(
+			const { getByTestId } = render(
 				<TaskStatusActions
 					status="review"
 					onTransition={onTransition}
@@ -222,16 +222,24 @@ describe('TaskStatusActions component', () => {
 			);
 			expect(getByTestId('task-action-done')).toBeTruthy();
 			expect(getByTestId('task-action-cancelled')).toBeTruthy();
+		});
 
-			rerender(
+		it('hides Approve (done) and Cancel (cancelled) when paused at gate approval', () => {
+			const onTransition = vi.fn();
+			const { queryByTestId, getByTestId } = render(
 				<TaskStatusActions
 					status="review"
 					onTransition={onTransition}
 					pendingCheckpointType="gate"
 				/>
 			);
-			expect(getByTestId('task-action-done')).toBeTruthy();
-			expect(getByTestId('task-action-cancelled')).toBeTruthy();
+			// PendingGateBanner owns the approval UX for gate-pending tasks;
+			// the generic buttons must not be visible to prevent bypassing the gate.
+			expect(queryByTestId('task-action-done')).toBeNull();
+			expect(queryByTestId('task-action-cancelled')).toBeNull();
+			// Non-approval transitions stay visible.
+			expect(getByTestId('task-action-in_progress')).toBeTruthy();
+			expect(getByTestId('task-action-archived')).toBeTruthy();
 		});
 	});
 });

@@ -31,6 +31,7 @@ import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
+import MentionAutocomplete from './space/MentionAutocomplete.tsx';
 import type { ReferenceSearchResult } from '@neokai/shared';
 import { REFERENCE_PATTERN } from '@neokai/shared';
 
@@ -54,6 +55,12 @@ export interface InputTextareaProps {
 	selectedReferenceIndex?: number;
 	onReferenceSelect?: (result: ReferenceSearchResult) => void;
 	onReferenceClose?: () => void;
+	// Agent mention autocomplete
+	showAgentMentionAutocomplete?: boolean;
+	agentMentionCandidates?: Array<{ id: string; name: string }>;
+	selectedAgentMentionIndex?: number;
+	onAgentMentionSelect?: (name: string) => void;
+	onAgentMentionClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
 	onStop?: () => void;
@@ -79,6 +86,11 @@ export function InputTextarea({
 	disabled,
 	maxChars = 10000,
 	placeholder = 'Ask or make anything...',
+	showAgentMentionAutocomplete = false,
+	agentMentionCandidates = [],
+	selectedAgentMentionIndex = 0,
+	onAgentMentionSelect,
+	onAgentMentionClose,
 	showCommandAutocomplete = false,
 	filteredCommands = [],
 	selectedCommandIndex = 0,
@@ -181,8 +193,15 @@ export function InputTextarea({
 
 	return (
 		<div class="relative flex-1">
-			{/* Autocomplete menus — only one shown at a time; reference takes priority */}
-			{showReferenceAutocomplete && onReferenceSelect && onReferenceClose ? (
+			{/* Autocomplete menus — only one shown at a time; agent mention takes highest priority */}
+			{showAgentMentionAutocomplete && onAgentMentionSelect && onAgentMentionClose ? (
+				<MentionAutocomplete
+					agents={agentMentionCandidates}
+					selectedIndex={selectedAgentMentionIndex}
+					onSelect={onAgentMentionSelect}
+					onClose={onAgentMentionClose}
+				/>
+			) : showReferenceAutocomplete && onReferenceSelect && onReferenceClose ? (
 				<ReferenceAutocomplete
 					results={referenceResults ?? []}
 					selectedIndex={selectedReferenceIndex ?? 0}
