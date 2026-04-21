@@ -178,7 +178,11 @@ export function PendingGateBanner({ runId, spaceId, workflowId }: PendingGateBan
 
 	const pendingGates: PendingGate[] = [];
 	for (const gate of gates) {
-		const data = gateDataMap.get(gate.id) ?? {};
+		// Only evaluate gates that have been activated (data written to gate_data table).
+		// An external-approval gate with no data has never been triggered — it's merely
+		// configured, so the banner must not show.
+		if (!gateDataMap.has(gate.id)) continue;
+		const data = gateDataMap.get(gate.id)!;
 		const scriptResult = parseScriptResult(data);
 		if (evaluateGateStatus(gate, data, scriptResult.failed) === 'waiting_human') {
 			pendingGates.push({ gateId: gate.id, data, label: gate.label ?? gate.description });
