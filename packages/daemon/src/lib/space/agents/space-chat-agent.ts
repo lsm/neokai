@@ -156,10 +156,14 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 			`the change spans multiple services or needs heavier verification than unit tests.\n` +
 			`  - **Plan & Decompose Workflow** — NOT a coding workflow. Produces a plan PR, has ` +
 			`four reviewers (architecture, security, correctness, UX) approve it, then fans the ` +
-			`plan out into individual follow-up tasks via \`create_standalone_task\`. Pick this when ` +
+			`plan out into individual follow-up tasks via \`create_standalone_task\`. Each task ` +
+			`description includes stacked PR instructions (branch name, base branch, dependency ` +
+			`ordering) so downstream coders automatically produce a reviewable PR chain — each PR ` +
+			`targets the branch of the item below it, building bottom-up from dev. Pick this when ` +
 			`the user goal is too broad for one PR — e.g. "build feature X", "migrate system Y", ` +
-			`"overhaul area Z" — and needs to be broken into smaller tasks before any coding starts. ` +
-			`The output is a set of tasks, not a merged change.\n` +
+			`"overhaul area Z" — and needs to be broken into smaller tasks before any coding ` +
+			`starts. The output is a set of dependency-ordered tasks that produce a stacked PR ` +
+			`chain when executed, not a merged change.\n` +
 			`  - **Research Workflow** — read-only investigation that produces a research document PR. ` +
 			`Pick this when the user wants findings or a recommendation, not a code change.\n` +
 			`  - **Review-Only Workflow** — single reviewer against an existing PR or codebase. ` +

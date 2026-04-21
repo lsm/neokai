@@ -212,6 +212,14 @@ describe('buildSpaceChatSystemPrompt — workflow vs task guidance', () => {
 		const prompt = buildSpaceChatSystemPrompt(makeContext());
 		expect(prompt).toContain('Never create tasks immediately');
 	});
+
+	test('Plan & Decompose guidance mentions stacked PR chain output', () => {
+		const prompt = buildSpaceChatSystemPrompt(makeContext());
+		// Must explain that the output produces a stacked PR chain
+		expect(prompt).toMatch(/stacked PR/i);
+		// Must clarify it is not a coding workflow
+		expect(prompt).toContain('NOT a coding workflow');
+	});
 });
 
 // ---------------------------------------------------------------------------
