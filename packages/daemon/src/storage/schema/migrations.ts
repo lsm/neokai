@@ -5941,94 +5941,104 @@ function runMigration85(db: BunDatabase): void {
  * 2. Add `pending_action_index` and `pending_checkpoint_type` to `space_tasks`.
  * 3. Migrate `approval_source` values: collapse agent sub-types → 'agent',
  *    'semi_auto' → 'auto_policy'.
+ *
+ * IMPORTANT — idempotency design:
+ * Parts 1 (spaces rebuild) and 2+3 (space_tasks columns) are checked independently.
+ * An older version of this migration only did Part 1; databases upgraded from that
+ * version already have INTEGER autonomy_level but may be missing pending_checkpoint_type.
+ * Using a single early-return on the spaces check would silently skip Parts 2+3 for
+ * those databases. Instead: skip Part 1 if already done, but always run Parts 2+3.
  */
-function runMigration86(db: BunDatabase): void {
+export function runMigration86(db: BunDatabase): void {
 	if (!tableExists(db, 'spaces')) return;
 
-	// Check if already migrated: try reading autonomy_level as integer
+	// ── Part 1: Rebuild spaces with numeric autonomy_level (if still needed) ──
+	let spacesAlreadyNumeric = false;
 	try {
 		const row = db.prepare(`SELECT typeof(autonomy_level) as t FROM spaces LIMIT 1`).get() as
 			| { t: string }
 			| undefined;
-		if (row && row.t === 'integer') return; // already numeric
+		if (row && row.t === 'integer') spacesAlreadyNumeric = true;
 	} catch {
-		// table might be empty, proceed with migration
+		// Column might not exist yet — proceed with full spaces rebuild.
 	}
 
-	db.exec('PRAGMA foreign_keys = OFF');
-	db.exec('BEGIN');
-	try {
-		// ── 1. Rebuild spaces with numeric autonomy_level ──
-		db.exec(`
-			CREATE TABLE spaces_m86_new (
-				id TEXT PRIMARY KEY,
-				slug TEXT NOT NULL,
-				workspace_path TEXT NOT NULL UNIQUE,
-				name TEXT NOT NULL,
-				description TEXT NOT NULL DEFAULT '',
-				background_context TEXT NOT NULL DEFAULT '',
-				instructions TEXT NOT NULL DEFAULT '',
-				default_model TEXT,
-				allowed_models TEXT NOT NULL DEFAULT '[]',
-				session_ids TEXT NOT NULL DEFAULT '[]',
-				status TEXT NOT NULL DEFAULT 'active'
-					CHECK(status IN ('active', 'archived')),
-				autonomy_level INTEGER NOT NULL DEFAULT 1
-					CHECK(autonomy_level BETWEEN 1 AND 5),
-				config TEXT,
-				paused INTEGER NOT NULL DEFAULT 0,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL
-			)
-		`);
-		db.exec(`
-			INSERT INTO spaces_m86_new (id, slug, workspace_path, name, description,
-				background_context, instructions, default_model, allowed_models,
-				session_ids, status, autonomy_level, config, paused, created_at, updated_at)
-			SELECT id, slug, workspace_path, name, description,
-				background_context, instructions, default_model, allowed_models,
-				session_ids, status,
-				CASE autonomy_level
-					WHEN 'semi_autonomous' THEN 3
-					ELSE 1
-				END,
-				config, paused, created_at, updated_at
-			FROM spaces
-		`);
-		db.exec(`DROP TABLE spaces`);
-		db.exec(`ALTER TABLE spaces_m86_new RENAME TO spaces`);
-		db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
-
-		// ── 2. Add pending checkpoint columns to space_tasks ──
-		if (tableExists(db, 'space_tasks')) {
-			if (!tableHasColumn(db, 'space_tasks', 'pending_action_index')) {
-				db.exec(`ALTER TABLE space_tasks ADD COLUMN pending_action_index INTEGER DEFAULT NULL`);
-			}
-			if (!tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')) {
-				db.exec(
-					`ALTER TABLE space_tasks ADD COLUMN pending_checkpoint_type TEXT DEFAULT NULL` +
-						` CHECK(pending_checkpoint_type IN ('completion_action', 'gate'))`
-				);
-			}
-
-			// ── 3. Migrate approval_source values ──
+	if (!spacesAlreadyNumeric) {
+		db.exec('PRAGMA foreign_keys = OFF');
+		db.exec('BEGIN');
+		try {
 			db.exec(`
-				UPDATE space_tasks SET approval_source = 'agent'
-				WHERE approval_source IN ('neo_agent', 'space_agent', 'task_agent', 'node_agent')
+				CREATE TABLE spaces_m86_new (
+					id TEXT PRIMARY KEY,
+					slug TEXT NOT NULL,
+					workspace_path TEXT NOT NULL UNIQUE,
+					name TEXT NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					background_context TEXT NOT NULL DEFAULT '',
+					instructions TEXT NOT NULL DEFAULT '',
+					default_model TEXT,
+					allowed_models TEXT NOT NULL DEFAULT '[]',
+					session_ids TEXT NOT NULL DEFAULT '[]',
+					status TEXT NOT NULL DEFAULT 'active'
+						CHECK(status IN ('active', 'archived')),
+					autonomy_level INTEGER NOT NULL DEFAULT 1
+						CHECK(autonomy_level BETWEEN 1 AND 5),
+					config TEXT,
+					paused INTEGER NOT NULL DEFAULT 0,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
+				)
 			`);
 			db.exec(`
-				UPDATE space_tasks SET approval_source = 'auto_policy'
-				WHERE approval_source = 'semi_auto'
+				INSERT INTO spaces_m86_new (id, slug, workspace_path, name, description,
+					background_context, instructions, default_model, allowed_models,
+					session_ids, status, autonomy_level, config, paused, created_at, updated_at)
+				SELECT id, slug, workspace_path, name, description,
+					background_context, instructions, default_model, allowed_models,
+					session_ids, status,
+					CASE autonomy_level
+						WHEN 'semi_autonomous' THEN 3
+						ELSE 1
+					END,
+					config, paused, created_at, updated_at
+				FROM spaces
 			`);
+			db.exec(`DROP TABLE spaces`);
+			db.exec(`ALTER TABLE spaces_m86_new RENAME TO spaces`);
+			db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
+			db.exec('COMMIT');
+		} catch (err) {
+			db.exec('ROLLBACK');
+			throw err;
+		} finally {
+			db.exec('PRAGMA foreign_keys = ON');
+		}
+	}
+
+	// ── Parts 2+3: space_tasks columns and approval_source migration ──
+	// These run unconditionally (each guarded by its own tableHasColumn check) so
+	// that databases where Part 1 already ran but Parts 2+3 did not are caught up.
+	if (tableExists(db, 'space_tasks')) {
+		if (!tableHasColumn(db, 'space_tasks', 'pending_action_index')) {
+			db.exec(`ALTER TABLE space_tasks ADD COLUMN pending_action_index INTEGER DEFAULT NULL`);
+		}
+		if (!tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')) {
+			db.exec(
+				`ALTER TABLE space_tasks ADD COLUMN pending_checkpoint_type TEXT DEFAULT NULL` +
+					` CHECK(pending_checkpoint_type IN ('completion_action', 'gate'))`
+			);
 		}
 
-		db.exec('COMMIT');
-	} catch (err) {
-		db.exec('ROLLBACK');
-		throw err;
-	} finally {
-		db.exec('PRAGMA foreign_keys = ON');
+		// ── 3. Migrate approval_source values ──
+		db.exec(`
+			UPDATE space_tasks SET approval_source = 'agent'
+			WHERE approval_source IN ('neo_agent', 'space_agent', 'task_agent', 'node_agent')
+		`);
+		db.exec(`
+			UPDATE space_tasks SET approval_source = 'auto_policy'
+			WHERE approval_source = 'semi_auto'
+		`);
 	}
 }
 
