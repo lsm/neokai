@@ -17,6 +17,7 @@
  */
 
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { WorkflowChannel } from '@neokai/shared';
 import { ChannelResolver } from './channel-resolver';
 import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';
@@ -46,6 +47,22 @@ export interface AgentMessageRouterConfig {
 	 * Used when a node agent explicitly targets `task-agent`.
 	 */
 	taskAgentRouter?: (message: string) => Promise<{ sessionId: string }>;
+	/**
+	 * Optional persistent queue for messages whose target session is not yet active.
+	 * When provided, a message whose target is declared in the workflow topology or
+	 * node_executions (but has no live session yet) is queued instead of failing.
+	 * The queue is drained when TaskAgentManager activates the target session.
+	 */
+	pendingMessageRepo?: PendingAgentMessageRepository;
+	/**
+	 * Space ID — required when pendingMessageRepo is provided (used when enqueueing).
+	 */
+	spaceId?: string;
+	/**
+	 * Task ID — stored on queued messages for diagnostics and filtering.
+	 * Optional; defaults to null.
+	 */
+	taskId?: string;
 }
 
 export interface AgentMessageParams {
@@ -90,6 +107,12 @@ export interface AgentMessageResult {
 	 * Populated when delivery was attempted but no sessions were found.
 	 */
 	notFoundAgentNames?: string[];
+	/**
+	 * Messages that were queued for later delivery because the target session
+	 * was not yet active. Populated when pendingMessageRepo is configured and
+	 * the target is a declared-but-inactive node agent.
+	 */
+	queued?: Array<{ agentName: string; messageId: string }>;
 }
 
 import { Logger } from '../../logger';
@@ -121,6 +144,9 @@ export class AgentMessageRouter {
 			channelRouter,
 			nodeGroups,
 			taskAgentRouter,
+			pendingMessageRepo,
+			spaceId,
+			taskId,
 		} = this.config;
 
 		// --- Build channel resolver + slot-to-node translation map ---
@@ -153,26 +179,37 @@ export class AgentMessageRouter {
 			};
 		}
 
-		// --- Load peers from node_executions (workflow-internal state) ---
-		const executions = nodeExecutionRepo
-			.listByWorkflowRun(workflowRunId)
-			.filter((e) => e.agentSessionId);
-		if (executions.length === 0) {
+		// --- Load ALL executions (for target resolution and declared-agent detection) ---
+		// We load ALL executions — not just those with agentSessionId — so we can detect
+		// agents that are declared but not yet active (pending activation by the tick loop).
+		// This prevents "Unknown target" errors for agents whose sessions haven't spawned yet.
+		const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+
+		// Peers with live sessions — used for direct message injection.
+		const execWithSession = allExecutions.filter(
+			(e) => e.agentSessionId && e.agentSessionId !== fromSessionId
+		);
+		if (execWithSession.length === 0 && allExecutions.length > 0) {
 			log.warn(
-				`[AgentMessageRouter] nodeExecutionRepo returned no sessions with agentSessionId for run ${workflowRunId} — ` +
-					`peers will be empty. Check that NodeExecution.agentSessionId is being written at spawn time.`
+				`[AgentMessageRouter] nodeExecutionRepo has ${allExecutions.length} execution(s) for run ${workflowRunId} ` +
+					`but none have an agentSessionId yet — will attempt activation/queuing.`
 			);
 		}
-		const peers: Array<{ sessionId: string; agentName: string }> = executions
-			.filter((e) => e.agentSessionId !== fromSessionId)
-			.map((e) => ({ sessionId: e.agentSessionId!, agentName: e.agentName }));
+		const peers: Array<{ sessionId: string; agentName: string }> = execWithSession.map((e) => ({
+			sessionId: e.agentSessionId!,
+			agentName: e.agentName,
+		}));
+
+		// All declared agent names (with or without a live session) for target resolution.
+		const allDeclaredAgentNames = new Set(
+			allExecutions.filter((e) => e.agentSessionId !== fromSessionId).map((e) => e.agentName)
+		);
 
 		// --- Resolve target agent names ---
 		let targetAgentNames: string[];
 
 		if (target === '*') {
 			// Broadcast: expand to all topology-permitted targets
-			// getPermittedTargets returns node names; translate back to slot names for delivery
 			const permittedNodes = resolver.getPermittedTargets(fromNodeName);
 			if (permittedNodes.length === 0) {
 				return {
@@ -182,7 +219,6 @@ export class AgentMessageRouter {
 					reason: `No permitted targets for agent '${fromAgentName}' in the declared channel topology.`,
 				};
 			}
-			// Map node names back to slot names for delivery (or keep node name for fan-out)
 			targetAgentNames = permittedNodes;
 		} else if (Array.isArray(target)) {
 			// Multicast: explicit list of agent names
@@ -190,31 +226,55 @@ export class AgentMessageRouter {
 		} else if (target === 'task-agent' && taskAgentRouter) {
 			targetAgentNames = ['task-agent'];
 		} else {
-			// Try agent name match first (agent name within the node peers)
+			// Single target: try to resolve by agent name or node name.
+			// Resolution order:
+			//   1. Agent name matches a live session peer
+			//   2. Node name maps to agents via nodeGroups
+			//   3. Agent name is declared in any node_execution for this run (pending activation)
+			//   4. Channel topology declares a channel to this node name (not yet activated)
+			// If none match → unknown target error.
 			const agentMatches = peers.filter((m) => m.agentName === target).map((m) => m.agentName);
 
 			if (agentMatches.length > 0) {
-				// Agent name → DM (or fan-out if multiple agents share the name)
+				// Agent name → DM to its live session(s)
 				targetAgentNames = [target];
 			} else if (nodeGroups && nodeGroups[target]) {
 				// Node name match → fan-out to all agents in that node
 				targetAgentNames = nodeGroups[target];
+			} else if (allDeclaredAgentNames.has(target)) {
+				// Agent is declared in a node_execution but hasn't spawned a session yet.
+				// Route through activation/queue path below.
+				targetAgentNames = [target];
 			} else {
-				// No match — unknown target
-				const knownAgentNames = [...new Set(peers.map((m) => m.agentName))].sort();
-				const nodeNames = nodeGroups ? Object.keys(nodeGroups) : [];
-				const allTargets = [...knownAgentNames, ...nodeNames];
-				if (taskAgentRouter) allTargets.push('task-agent');
-				return {
-					success: false,
-					delivered: [],
-					failed: [],
-					reason:
-						`Unknown target '${target}': no agent or node found with this name. ` +
-						(allTargets.length > 0
-							? `Reachable targets: ${allTargets.join(', ')}.`
-							: 'No reachable targets available.'),
-				};
+				// Check if the target is a topology-declared node that hasn't been activated yet.
+				// This handles the case where the caller uses a node name that hasn't been seen yet.
+				const permittedNodes = resolver.getPermittedTargets(fromNodeName);
+				const isTopologyDeclared =
+					permittedNodes.includes(target) ||
+					permittedNodes.some((n) => resolveNodeName(n) === target);
+				if (isTopologyDeclared) {
+					// Target is declared in channel topology but not yet activated.
+					// Route through activation/queue path below as a single target.
+					targetAgentNames = [target];
+				} else {
+					// No match — unknown target
+					const knownAgentNames = [...new Set(peers.map((m) => m.agentName))].sort();
+					const nodeNames = nodeGroups ? Object.keys(nodeGroups) : [];
+					const allTargets = [
+						...new Set([...knownAgentNames, ...nodeNames, ...allDeclaredAgentNames]),
+					].sort();
+					if (taskAgentRouter) allTargets.push('task-agent');
+					return {
+						success: false,
+						delivered: [],
+						failed: [],
+						reason:
+							`Unknown target '${target}': no agent or node found with this name. ` +
+							(allTargets.length > 0
+								? `Reachable targets: ${allTargets.join(', ')}.`
+								: 'No reachable targets available.'),
+					};
+				}
 			}
 		}
 
@@ -281,8 +341,15 @@ export class AgentMessageRouter {
 			}
 		}
 
+		// --- Build the message content (with optional structured-data appendix) ---
+		const dataAppendix =
+			data && Object.keys(data).length > 0
+				? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
+				: '';
+
 		// --- Deliver to all resolved sessions (best-effort) ---
 		const delivered: Array<{ agentName: string; sessionId: string }> = [];
+		const queued: Array<{ agentName: string; messageId: string }> = [];
 		const notFound: string[] = [];
 		const failed: Array<{ agentName: string; sessionId: string; error: string }> = [];
 
@@ -292,10 +359,6 @@ export class AgentMessageRouter {
 					notFound.push(agentName);
 					continue;
 				}
-				const dataAppendix =
-					data && Object.keys(data).length > 0
-						? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
-						: '';
 				const prefixedMessage = `[Message from ${fromAgentName}]: ${message}${dataAppendix}`;
 				try {
 					const routed = await taskAgentRouter(prefixedMessage);
@@ -306,22 +369,75 @@ export class AgentMessageRouter {
 				}
 				continue;
 			}
+
 			const agentSessions = peers.filter((m) => m.agentName === agentName);
 			if (agentSessions.length === 0) {
-				// No active session yet, but the channel router successfully activated
-				// the target node in this call. Treat as accepted delivery initiation.
-				if (activatedTargets.has(agentName)) {
-					continue;
+				// No live session for this target. Determine whether to queue or fail.
+				// Queue when:
+				//   (a) channelRouter just activated the target node (activatedTargets), OR
+				//   (b) the target is already declared in node_executions (pending spawn), OR
+				//   (c) the target was resolved from topology (may not have an execution yet)
+				// — and a pendingMessageRepo is available for persistent queuing.
+				const isDeclaredOrActivated =
+					activatedTargets.has(agentName) ||
+					// Target appears in a node_execution (pending activation by the tick loop).
+					allDeclaredAgentNames.has(agentName) ||
+					// Target appears in the channel topology even without an execution record.
+					// Three sub-conditions cover the slot/node name mapping in both directions:
+					//   n === agentName             — channel target IS the slot name directly (slot-name addressed channel)
+					//   resolveNodeName(n) === agentName — channel target is a node name that maps to this agent via slotToNode
+					//   n === resolveNodeName(agentName) — agent's slot maps to a node name that is the channel target
+					//                                      (node-name addressed channels when nodeGroups is configured)
+					resolver
+						.getPermittedTargets(fromNodeName)
+						.some(
+							(n) =>
+								n === agentName ||
+								resolveNodeName(n) === agentName ||
+								n === resolveNodeName(agentName)
+						);
+
+				if (isDeclaredOrActivated && pendingMessageRepo && spaceId) {
+					// Queue the message (without the "[Message from X]:" prefix — flushPendingMessages
+					// adds it at delivery time so the source name is always accurate).
+					const rawMessage = `${message}${dataAppendix}`;
+					try {
+						const { record } = pendingMessageRepo.enqueue({
+							workflowRunId,
+							spaceId,
+							taskId: taskId ?? null,
+							sourceAgentName: fromAgentName,
+							targetKind: 'node_agent',
+							targetAgentName: agentName,
+							message: rawMessage,
+						});
+						queued.push({ agentName, messageId: record.id });
+						log.info(
+							`[AgentMessageRouter] queued message ${record.id} for agent "${agentName}" ` +
+								`(run=${workflowRunId}, from=${fromAgentName})`
+						);
+					} catch (err) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						log.warn(
+							`[AgentMessageRouter] failed to queue message for agent "${agentName}": ${errMsg}`
+						);
+						notFound.push(agentName);
+					}
+				} else if (activatedTargets.has(agentName)) {
+					// channelRouter activated the node but no pending queue is configured.
+					// The node will be spawned by the tick loop; message delivery is best-effort.
+					// Don't count as notFound since the activation handoff was accepted.
+					log.warn(
+						`[AgentMessageRouter] target "${agentName}" was activated but no pendingMessageRepo is configured — ` +
+							`message may not be delivered to the new session. Configure pendingMessageRepo to enable reliable delivery.`
+					);
+				} else {
+					notFound.push(agentName);
 				}
-				notFound.push(agentName);
 				continue;
 			}
+
 			for (const member of agentSessions) {
-				// Include structured data as a JSON appendix when present
-				const dataAppendix =
-					data && Object.keys(data).length > 0
-						? `\n\n<structured-data>\n${JSON.stringify(data, null, 2)}\n</structured-data>`
-						: '';
 				const prefixedMessage = `[Message from ${fromAgentName}]: ${message}${dataAppendix}`;
 				try {
 					await messageInjector(member.sessionId, prefixedMessage);
@@ -333,7 +449,13 @@ export class AgentMessageRouter {
 			}
 		}
 
-		if (notFound.length > 0 && delivered.length === 0 && failed.length === 0) {
+		// All outcomes failed (nothing delivered, queued, or in-flight)
+		if (
+			notFound.length > 0 &&
+			delivered.length === 0 &&
+			queued.length === 0 &&
+			failed.length === 0
+		) {
 			return {
 				success: false,
 				delivered: [],
@@ -345,7 +467,7 @@ export class AgentMessageRouter {
 			};
 		}
 
-		if (delivered.length === 0 && failed.length > 0) {
+		if (delivered.length === 0 && queued.length === 0 && failed.length > 0) {
 			return {
 				success: false,
 				delivered,
@@ -358,6 +480,7 @@ export class AgentMessageRouter {
 				success: 'partial',
 				delivered,
 				failed,
+				queued: queued.length > 0 ? queued : undefined,
 				notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 			};
 		}
@@ -365,6 +488,7 @@ export class AgentMessageRouter {
 			success: true,
 			delivered,
 			failed,
+			queued: queued.length > 0 ? queued : undefined,
 			notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
 		};
 	}
