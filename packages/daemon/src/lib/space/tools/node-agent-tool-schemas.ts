@@ -3,10 +3,11 @@
  * tools available to node agent sub-sessions.
  *
  * Action tools:
- *   send_message — channel-validated direct messaging; writes gate data on gated channels
- *   save         — persist agent output (summary + structured data) to NodeExecution
+ *   send_message    — channel-validated direct messaging; writes gate data on gated channels
+ *   save_artifact   — persist typed data to the workflow run artifact store (replaces save/write_artifact)
  *
  * Discovery tools (read-only):
+ *   list_artifacts       — list artifacts for the current workflow run
  *   list_peers           — list other group members with statuses and permitted channels
  *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
  *   list_channels        — list all channels declared in the workflow
@@ -87,41 +88,75 @@ export const SendMessageSchema = z.object({
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
 // ---------------------------------------------------------------------------
-// save
+// save_artifact
 // ---------------------------------------------------------------------------
 
 /**
- * Schema for `save` input.
+ * Schema for `save_artifact` input.
  *
- * Persists the agent's output to the NodeExecution record.
- * Call this whenever you have produced output worth recording — at any point
- * during your work, not just at the end. Multiple calls overwrite previous values.
+ * Persists data to the workflow run artifact store. Replaces the old `save` and
+ * `write_artifact` tools with a unified interface.
  *
- * `summary` and `data` are independent — provide either or both.
+ * Two modes:
+ *   - Overwrite mode (default, `append: false`): upsert on `(nodeId, type, key)`.
+ *     Writing the same (type, key) replaces the previous value. Use for progress
+ *     tracking, current state, or any data with at most one active record.
+ *   - Append mode (`append: true`): always inserts a new row. Key is auto-generated
+ *     if not provided. Use for audit trails, cycle records, multi-round reviews, etc.
+ *
+ * `type` is fully generic — no built-in enum. Use any label that makes sense:
+ *   'progress', 'result', 'review', 'pr', 'test_result', 'my-custom-type', etc.
  */
-export const SaveSchema = z.object({
+export const SaveArtifactSchema = z.object({
 	/**
-	 * Human-readable summary of work completed so far.
-	 * Overwrites any previous summary on each call.
+	 * Category tag for organizing artifacts. Fully generic — no built-in enum.
+	 * Use whatever labels make sense for your workflow.
+	 * Examples: 'progress', 'result', 'review', 'pr', 'test_result', 'commit'
 	 */
-	summary: z
+	type: z
 		.string()
-		.describe('Human-readable summary of work completed. Overwrites previous summary.')
-		.optional(),
+		.min(1)
+		.describe(
+			"Category tag for organizing artifacts. Fully generic — use whatever makes sense. Examples: 'progress', 'result', 'review', 'pr'"
+		),
 	/**
-	 * Structured output data (key-value pairs) produced by this agent.
+	 * Unique key within (node, type) for deduplication.
+	 * Same (type, key) = overwrite (upsert). Different key = new record.
+	 * Defaults to empty string. When `append: true`, key is auto-generated.
+	 */
+	key: z
+		.string()
+		.describe(
+			"Unique key within (node, type). Same (type, key) = overwrite. Use 'current' for a single live record. Ignored in append mode (key is auto-generated)."
+		)
+		.default(''),
+	/**
+	 * Append mode: when true, always inserts a new row regardless of key.
+	 * Key is auto-generated to guarantee uniqueness. Use for audit trails
+	 * (multi-round reviews, cycle records, progress history).
+	 * Default: false (overwrite/upsert mode).
+	 */
+	append: z
+		.boolean()
+		.describe(
+			'If true, always inserts a new row (append-only). Key is auto-generated. Use for audit trails. Default: false (upsert/overwrite mode).'
+		)
+		.default(false),
+	/** Human-readable summary of the content. */
+	summary: z.string().describe('Human-readable summary of the content or work status.').optional(),
+	/**
+	 * Structured key-value data payload.
 	 * Use for machine-readable artifacts: pr_url, commit_sha, test_results, etc.
-	 * Overwrites previous data on each call.
 	 */
 	data: z
 		.record(z.string(), z.unknown())
 		.describe(
-			'Structured output data (key-value pairs). Use for artifacts like pr_url, commit_sha, test_results. Overwrites previous data.'
+			'Structured key-value data payload. Use for machine-readable artifacts: pr_url, commit_sha, test_results, etc.'
 		)
 		.optional(),
 });
 
-export type SaveInput = z.infer<typeof SaveSchema>;
+export type SaveArtifactInput = z.infer<typeof SaveArtifactSchema>;
 
 // ---------------------------------------------------------------------------
 // list_reachable_agents
@@ -179,38 +214,6 @@ export const ReadGateSchema = z.object({
 export type ReadGateInput = z.infer<typeof ReadGateSchema>;
 
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// write_artifact
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `write_artifact` input.
- * Writes a typed artifact (PR, commit set, test result, etc.) to the workflow run.
- * Uses upsert semantics — writing the same (type, key) pair overwrites previous data.
- */
-export const WriteArtifactSchema = z.object({
-	/** Type of artifact: pr, commit_set, test_result, deployment */
-	artifactType: z
-		.enum(['pr', 'commit_set', 'test_result', 'deployment'])
-		.describe('Type of artifact: pr, commit_set, test_result, deployment'),
-	/** Unique key within (node, type) for dedup. Defaults to empty string. */
-	artifactKey: z
-		.string()
-		.describe(
-			'Unique key within (node, type) for dedup — e.g. "main" for the primary PR. Defaults to empty.'
-		)
-		.default(''),
-	/** Artifact payload. Shape depends on artifactType. */
-	data: z
-		.record(z.string(), z.unknown())
-		.describe(
-			'Artifact payload. For pr: { url, number, title, state, headBranch }. For commit_set: { commits: [...] }.'
-		),
-});
-
-export type WriteArtifactInput = z.infer<typeof WriteArtifactSchema>;
-
-// ---------------------------------------------------------------------------
 // list_artifacts
 // ---------------------------------------------------------------------------
 
@@ -221,8 +224,11 @@ export type WriteArtifactInput = z.infer<typeof WriteArtifactSchema>;
 export const ListArtifactsSchema = z.object({
 	/** Filter by originating node ID. */
 	nodeId: z.string().describe('Filter by node ID').optional(),
-	/** Filter by artifact type. */
-	artifactType: z.string().describe('Filter by artifact type').optional(),
+	/** Filter by artifact type (generic string, e.g. 'progress', 'result', 'review'). */
+	type: z
+		.string()
+		.describe('Filter by artifact type (e.g. "progress", "result", "review")')
+		.optional(),
 });
 
 export type ListArtifactsInput = z.infer<typeof ListArtifactsSchema>;
@@ -269,13 +275,12 @@ export type RestoreNodeAgentInput = z.infer<typeof RestoreNodeAgentSchema>;
 export const NODE_AGENT_TOOL_SCHEMAS = {
 	list_peers: ListPeersSchema,
 	send_message: SendMessageSchema,
-	save: SaveSchema,
+	save_artifact: SaveArtifactSchema,
+	list_artifacts: ListArtifactsSchema,
 	list_reachable_agents: ListReachableAgentsSchema,
 	list_channels: ListChannelsSchema,
 	list_gates: ListGatesSchema,
 	read_gate: ReadGateSchema,
-	write_artifact: WriteArtifactSchema,
-	list_artifacts: ListArtifactsSchema,
 	restore_node_agent: RestoreNodeAgentSchema,
 } as const;
 

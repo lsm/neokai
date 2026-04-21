@@ -116,11 +116,11 @@ export interface TaskAgentManagerConfig {
 	/** Task repository — direct DB reads */
 	taskRepo: SpaceTaskRepository;
 	/**
-	 * Append-only audit log for `report_result` tool calls from end-node agents.
-	 * Every `report_result` invocation writes one row here — the table is the
-	 * source of truth for "what did the agent observe", independent of the
-	 * task's reported/terminal status. Task #39: this separation is what keeps
-	 * Coding↔Review loops from closing on review feedback.
+	 * Append-only audit log repository for historical `report_result` rows.
+	 * No longer used by active tool handlers (report_result was removed in favor
+	 * of save_artifact). Kept for backward compatibility with callers; existing
+	 * rows in the space_task_report_results table remain as historical data.
+	 * @deprecated Tool handlers no longer write to this table.
 	 */
 	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Workflow run repository — reading and updating runs */
@@ -548,7 +548,6 @@ export class TaskAgentManager {
 				space,
 				workflowRunId,
 				taskRepo: this.config.taskRepo,
-				taskReportResultRepo: this.config.taskReportResultRepo,
 				nodeExecutionRepo: this.config.nodeExecutionRepo,
 				taskManager,
 				messageInjector: (subSessionId, message) =>
@@ -568,6 +567,7 @@ export class TaskAgentManager {
 				pendingMessageRepo: this.config.pendingMessageRepo,
 				spaceAgentInjector: this.config.spaceAgentInjector,
 				taskAgentManager: this,
+				artifactRepo: this.config.artifactRepo,
 			});
 
 			// setRuntimeMcpServers expects McpServerConfig but the MCP SDK's `Server`
@@ -1785,17 +1785,15 @@ export class TaskAgentManager {
 		const requiredLevel = workflow?.completionAutonomyLevel ?? 5;
 		const approveUnlocked = spaceLevel >= requiredLevel;
 
-		// Design v2 end-node tool contract (Task #39):
-		//   - report_result: append-only audit — does NOT close the task.
-		//   - approve_task : self-close (autonomy-gated).
-		//   - submit_for_approval: human sign-off (always available).
+		// End-node tool contract:
+		//   - save_artifact: persist typed data to artifact store (all node agents).
+		//   - approve_task : self-close (autonomy-gated, end-node only).
+		//   - submit_for_approval: human sign-off (always available, end-node only).
 		// Keep these strings in sync with `node-agent-tools.ts` and
 		// `task-agent-manager.ts` where the handlers live.
 		const endNodeContractLines = (indent: string): string[] => {
 			if (!isEndNode) return [];
-			const lines = [
-				`${indent}- report_result({ summary, evidence? }) — APPEND-ONLY AUDIT. Records what you observed; does NOT close the task. Every call is a new entry.`,
-			];
+			const lines: string[] = [];
 			if (approveUnlocked) {
 				lines.push(
 					`${indent}- approve_task({}) — Close this task as done (self-approval). Unlocked for this space (autonomy ${spaceLevel} >= required ${requiredLevel}). Use as your FINAL action when you are satisfied the work is complete.`
@@ -1816,8 +1814,9 @@ export class TaskAgentManager {
 			`Role: "${execution.agentName}"`,
 			'Tools available:',
 			'  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
-			'  - save({ summary?, data? }) — persist your output at any time (call multiple times as needed)',
+			'  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store at any time. Use type="progress" for rolling status, type="result" for final outcomes.',
 			...endNodeContractLines('  '),
+			'  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
 			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
 			'Only contact the task-agent via send_message if you are blocked or need human input.',
 		].join('\n');
@@ -1848,8 +1847,9 @@ export class TaskAgentManager {
 			`Agent: "${execution.agentName}"`,
 			'Tools available:',
 			'  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
-			'  - save({ summary?, data? }) — persist your output (summary text and/or structured data like pr_url)',
+			'  - save_artifact({ type, key?, append?, summary?, data? }) — persist typed data to the artifact store. Use type="progress" for rolling status, type="result" for final outcomes.',
 			...endNodeContractLines('  '),
+			'  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
 			'  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
 			'  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
 		];
@@ -1897,16 +1897,13 @@ export class TaskAgentManager {
 			'Only contact the task-agent via send_message if you are blocked or need human input.'
 		);
 		if (isEndNode) {
-			// Closure guidance: record audit first (report_result), then finalize
-			// via the appropriate tool. This replaces the old (incorrect) guidance
-			// that said report_result closes the run.
 			if (approveUnlocked) {
 				lines.push(
-					'When your work is complete: (1) call report_result({ summary, evidence? }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your report — decides the terminal status via completion actions.'
+					'When your work is complete: (1) call save_artifact({ type: "result", append: true, summary: "..." }) to record the outcome, then (2) call approve_task({}) as your FINAL action to close the task. The runtime — not your artifact — decides the terminal status via completion actions.'
 				);
 			} else {
 				lines.push(
-					'When your work is complete: (1) call report_result({ summary, evidence? }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
+					'When your work is complete: (1) call save_artifact({ type: "result", append: true, summary: "..." }) to record the outcome, then (2) call submit_for_approval({ reason: "..." }) as your FINAL action. approve_task is NOT available at this autonomy level; only a human can finalize.'
 				);
 			}
 		}
@@ -2117,7 +2114,6 @@ export class TaskAgentManager {
 			space,
 			workflowRunId: rehydrateWorkflowRunId,
 			taskRepo: this.config.taskRepo,
-			taskReportResultRepo: this.config.taskReportResultRepo,
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
 			taskManager,
 			messageInjector: (subSessionId, message) =>
@@ -2137,6 +2133,7 @@ export class TaskAgentManager {
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceAgentInjector: this.config.spaceAgentInjector,
 			taskAgentManager: this,
+			artifactRepo: this.config.artifactRepo,
 		});
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
@@ -2671,16 +2668,13 @@ export class TaskAgentManager {
 			? this.buildAgentNameAliasesForExecution(workflow, execution)
 			: this.agentNameVariants(agentName);
 
-		// Design v2 tool contract (Task #39):
-		//   `report_result`      — append-only audit. Does NOT close the task.
+		// End-node tool contract:
+		//   `save_artifact`      — persist typed data to artifact store (available to all node agents).
 		//   `approve_task`       — closes the task as done (self-approval). Gated
 		//                          by `space.autonomyLevel >= workflow.completionAutonomyLevel`.
+		//                          Only available to end-node agents.
 		//   `submit_for_approval` — request human review of completion.
-		//
-		// The previous behaviour where `report_result` set `reportedStatus='done'`
-		// caused cycle-graphs like Coding↔Review to close the moment the Reviewer
-		// reported feedback. Splitting audit from closure restores the intended
-		// iterative semantics.
+		//                           Only available to end-node agents.
 		const isEndNode = !!workflow?.endNodeId && workflowNodeId === workflow.endNodeId;
 		const endNodeHandlers = isEndNode
 			? createEndNodeHandlers({
@@ -2690,12 +2684,10 @@ export class TaskAgentManager {
 					workflowNodeId,
 					agentName,
 					taskRepo: this.config.taskRepo,
-					taskReportResultRepo: this.config.taskReportResultRepo,
 					spaceManager: this.config.spaceManager,
 					daemonHub: this.config.daemonHub,
 				})
 			: undefined;
-		const onReportResult = endNodeHandlers?.onReportResult;
 		const onApproveTask = endNodeHandlers?.onApproveTask;
 		const onSubmitForApproval = endNodeHandlers?.onSubmitForApproval;
 
@@ -2761,7 +2753,6 @@ export class TaskAgentManager {
 				gateId: '',
 				workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
 			},
-			onReportResult,
 			onApproveTask,
 			onSubmitForApproval,
 			artifactRepo: this.config.artifactRepo,
