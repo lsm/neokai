@@ -439,6 +439,95 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
+	describe('space chat session restrictions', () => {
+		it('should preserve space MCP servers while enforcing strict MCP config', async () => {
+			mockSession.type = 'space_chat';
+			mockSession.config.mcpServers = {
+				'space-agent-tools': { command: 'space-cmd' },
+			};
+
+			const options = await builder.build();
+			expect(options.mcpServers).toEqual({
+				'space-agent-tools': { command: 'space-cmd' },
+			});
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+		});
+
+		it('should enforce space built-in tool allowlist including Bash', async () => {
+			mockSession.type = 'space_chat';
+			const options = await builder.build();
+			expect(options.tools).toEqual([
+				'Read',
+				'Glob',
+				'Grep',
+				'Bash',
+				'WebFetch',
+				'WebSearch',
+				'ToolSearch',
+				'AskUserQuestion',
+			]);
+			expect(options.allowedTools).toEqual(
+				expect.arrayContaining([
+					'Read',
+					'Glob',
+					'Grep',
+					'Bash',
+					'WebFetch',
+					'WebSearch',
+					'ToolSearch',
+					'AskUserQuestion',
+				])
+			);
+		});
+
+		it('should not include Write/Edit/NotebookEdit in space chat tool allowlist', async () => {
+			mockSession.type = 'space_chat';
+			const options = await builder.build();
+			expect(options.disallowedTools).toEqual(
+				expect.arrayContaining(['Edit', 'Write', 'NotebookEdit'])
+			);
+			expect(options.tools).not.toContain('Edit');
+			expect(options.tools).not.toContain('Write');
+			expect(options.tools).not.toContain('NotebookEdit');
+		});
+
+		it('should auto-allow wildcards for all configured space MCP servers', async () => {
+			mockSession.type = 'space_chat';
+			mockSession.config.mcpServers = {
+				'space-agent-tools': { command: 'space-cmd' },
+				'db-query': { command: 'db-cmd' },
+			};
+
+			const options = await builder.build();
+			expect(options.allowedTools).toEqual(
+				expect.arrayContaining(['space-agent-tools__*', 'db-query__*'])
+			);
+		});
+
+		it('should disable Claude Code preset system prompt for space chat sessions', async () => {
+			mockSession.type = 'space_chat';
+			const options = await builder.build();
+			expect(options.systemPrompt).toBeUndefined();
+		});
+
+		it('should preserve a custom string system prompt for space chat sessions', async () => {
+			mockSession.type = 'space_chat';
+			mockSession.config.systemPrompt = 'You are the Space coordinator.';
+			const options = await builder.build();
+			expect(options.systemPrompt).toBe('You are the Space coordinator.');
+		});
+
+		it('should not affect worker sessions (coder/reviewer tool access unchanged)', async () => {
+			// Worker sessions (type: 'worker') must not be affected by space_chat restrictions
+			mockSession.type = 'worker';
+			const options = await builder.build();
+			// Worker sessions use the default claude_code preset — no restrictions imposed
+			expect(options.strictMcpConfig).toBeUndefined();
+			expect(options.tools).toBeUndefined();
+		});
+	});
+
 	describe('additional directories configuration', () => {
 		it('should allow temp directories for shell operations when worktree exists', async () => {
 			mockSession.worktree = {
