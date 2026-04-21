@@ -249,10 +249,16 @@ describe('TaskArtifactsPanel', () => {
 describe('SpaceTaskPane — artifacts toggle', () => {
 	// Import SpaceTaskPane with signal mocks to test the toggle button
 	let mockTasks: ReturnType<typeof import('@preact/signals').signal>;
+	let mockCurrentSpaceTaskViewTabSignal: ReturnType<typeof import('@preact/signals').signal>;
+	let mockCurrentSpaceIdSignal: ReturnType<typeof import('@preact/signals').signal>;
 
 	beforeEach(async () => {
 		cleanup();
 		vi.resetModules();
+		// Create fresh real Preact signals so the component gets reactivity
+		const { signal } = await import('@preact/signals');
+		mockCurrentSpaceTaskViewTabSignal = signal('thread');
+		mockCurrentSpaceIdSignal = signal(null);
 	});
 
 	afterEach(() => {
@@ -313,7 +319,22 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 		vi.doMock('../../../lib/router', () => ({
 			navigateToSpaceSession: vi.fn(),
 			navigateToSpaceAgent: vi.fn(),
+			navigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
+				mockCurrentSpaceTaskViewTabSignal.value = view ?? 'thread';
+			}),
 		}));
+		vi.doMock('../../../lib/signals', async (importOriginal) => {
+			const actual = await importOriginal();
+			return {
+				...actual,
+				get currentSpaceTaskViewTabSignal() {
+					return mockCurrentSpaceTaskViewTabSignal;
+				},
+				get currentSpaceIdSignal() {
+					return mockCurrentSpaceIdSignal;
+				},
+			};
+		});
 		vi.doMock('../../../lib/utils', () => ({
 			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 		}));
@@ -372,7 +393,22 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 		vi.doMock('../../../lib/router', () => ({
 			navigateToSpaceSession: vi.fn(),
 			navigateToSpaceAgent: vi.fn(),
+			navigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
+				mockCurrentSpaceTaskViewTabSignal.value = view ?? 'thread';
+			}),
 		}));
+		vi.doMock('../../../lib/signals', async (importOriginal) => {
+			const actual = await importOriginal();
+			return {
+				...actual,
+				get currentSpaceTaskViewTabSignal() {
+					return mockCurrentSpaceTaskViewTabSignal;
+				},
+				get currentSpaceIdSignal() {
+					return mockCurrentSpaceIdSignal;
+				},
+			};
+		});
 		vi.doMock('../../../lib/utils', () => ({
 			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 		}));
@@ -440,7 +476,22 @@ describe('SpaceTaskPane — artifacts toggle', () => {
 		vi.doMock('../../../lib/router', () => ({
 			navigateToSpaceSession: vi.fn(),
 			navigateToSpaceAgent: vi.fn(),
+			navigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
+				mockCurrentSpaceTaskViewTabSignal.value = view ?? 'thread';
+			}),
 		}));
+		vi.doMock('../../../lib/signals', async (importOriginal) => {
+			const actual = await importOriginal();
+			return {
+				...actual,
+				get currentSpaceTaskViewTabSignal() {
+					return mockCurrentSpaceTaskViewTabSignal;
+				},
+				get currentSpaceIdSignal() {
+					return mockCurrentSpaceIdSignal;
+				},
+			};
+		});
 		vi.doMock('../../../lib/utils', () => ({
 			cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 		}));

@@ -64,7 +64,8 @@ import { toast } from '../lib/toast.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
 
 import type { RoomContext } from '../components/ChatHeader.tsx';
-import { navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
+import { settingsSectionSignal } from '../lib/signals.ts';
+import { navigateToSettings } from '../lib/router.ts';
 import { ErrorCategory } from '../types/error.ts';
 import type { StructuredError } from '../types/error.ts';
 import { getProviderLabel } from '../hooks/index.ts';
@@ -742,7 +743,7 @@ export default function ChatContainer({
 				{
 					label: `Re-authenticate ${providerLabel}`,
 					onClick: () => {
-						navSectionSignal.value = 'settings';
+						navigateToSettings();
 						settingsSectionSignal.value = 'providers';
 					},
 				},

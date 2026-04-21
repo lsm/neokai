@@ -2,11 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { inboxStore, type InboxTask } from '../../lib/inbox-store.ts';
 import { Spinner } from '../ui/Spinner.tsx';
 import { toast } from '../../lib/toast.ts';
-import {
-	currentRoomIdSignal,
-	currentRoomTaskIdSignal,
-	navSectionSignal,
-} from '../../lib/signals.ts';
+import { navigateToRoomTask } from '../../lib/router.ts';
 
 function InboxTaskCard({
 	item,
@@ -25,9 +21,7 @@ function InboxTaskCard({
 	const anyApproving = approvingId !== null;
 
 	const handleView = () => {
-		navSectionSignal.value = 'rooms';
-		currentRoomIdSignal.value = item.roomId;
-		currentRoomTaskIdSignal.value = item.task.id;
+		navigateToRoomTask(item.roomId, item.task.id);
 	};
 
 	const handleApprove = async () => {
