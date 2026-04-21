@@ -2649,6 +2649,8 @@ export class TaskAgentManager {
 			// that auto-reopens a terminal run still emits `workflow_run_reopened`
 			// into the Space Agent session.
 			notificationSink: this.config.spaceRuntimeService.getSharedRuntime().getNotificationSink(),
+			onGatePendingApproval: (runId, gateId) =>
+				this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
 		});
 		const agentMessageRouter = new AgentMessageRouter({
 			nodeExecutionRepo: this.config.nodeExecutionRepo,
