@@ -1,11 +1,13 @@
 /**
- * Unit tests for createEndNodeHandlers() — the Design v2 three-tool contract
- * for end-node agents (Task #39).
+ * Unit tests for createEndNodeHandlers() — the Design v2 two-tool contract
+ * for end-node agents.
  *
  * Covers:
- *   - report_result       — append-only audit; never mutates task state
  *   - approve_task        — autonomy-gated self-close
  *   - submit_for_approval — always-available human sign-off request
+ *
+ * Note: report_result was removed. Audit records are now written via
+ * save_artifact({ type: 'result', append: true }) on the node-agent tool surface.
  *
  * These handlers were extracted from task-agent-manager.ts so they can be
  * unit-tested directly with a real SQLite DB and no live agent sessions.
@@ -17,7 +19,6 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceTaskReportResultRepository } from '../../../../src/storage/repositories/space-task-report-result-repository.ts';
 import { createEndNodeHandlers } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { EndNodeHandlerDeps } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { Space, SpaceWorkflow } from '@neokai/shared';
@@ -104,7 +105,6 @@ interface TestCtx {
 	dir: string;
 	spaceId: string;
 	taskRepo: SpaceTaskRepository;
-	reportRepo: SpaceTaskReportResultRepository;
 }
 
 function makeCtx(autonomyLevel = 1): TestCtx {
@@ -116,7 +116,6 @@ function makeCtx(autonomyLevel = 1): TestCtx {
 		dir,
 		spaceId,
 		taskRepo: new SpaceTaskRepository(db),
-		reportRepo: new SpaceTaskReportResultRepository(db),
 	};
 }
 
@@ -131,102 +130,13 @@ function makeDeps(
 		spaceId: ctx.spaceId,
 		workflow: makeWorkflow(3),
 		workflowNodeId: 'end-node',
-		agentName: 'reviewer',
 		taskRepo: ctx.taskRepo,
-		taskReportResultRepo: ctx.reportRepo,
 		spaceManager: {
 			getSpace: async () => makeSpace(ctx.spaceId, 3),
 		},
 		...overrides,
 	};
 }
-
-// ===========================================================================
-// report_result — APPEND-ONLY
-// ===========================================================================
-
-describe('createEndNodeHandlers — report_result', () => {
-	let ctx: TestCtx;
-	beforeEach(() => {
-		ctx = makeCtx();
-	});
-	afterEach(() => {
-		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
-	});
-
-	test('appends an audit row and does NOT mutate task state', async () => {
-		const task = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'T1',
-			description: '',
-			status: 'in_progress',
-		});
-		const { onReportResult } = createEndNodeHandlers(makeDeps(ctx, task.id));
-
-		const out = await onReportResult({ summary: 'PR opened' });
-		const parsed = JSON.parse(out.content[0].text);
-
-		expect(parsed.success).toBe(true);
-		expect(parsed.taskId).toBe(task.id);
-		expect(parsed.message).toContain('does NOT close the task');
-
-		// task unchanged
-		const t = ctx.taskRepo.getTask(task.id);
-		expect(t?.status).toBe('in_progress');
-		expect(t?.reportedStatus).toBeFalsy();
-
-		// audit row written
-		const audit = ctx.reportRepo.listByTask(task.id);
-		expect(audit).toHaveLength(1);
-		expect(audit[0].summary).toBe('PR opened');
-		expect(audit[0].agentName).toBe('reviewer');
-	});
-
-	test('records optional evidence payload', async () => {
-		const task = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'T',
-			description: '',
-			status: 'in_progress',
-		});
-		const { onReportResult } = createEndNodeHandlers(makeDeps(ctx, task.id));
-
-		const out = await onReportResult({
-			summary: 'Done',
-			evidence: { prUrl: 'https://example.com/pr/1', commitSha: 'abc123' },
-		});
-		expect(JSON.parse(out.content[0].text).success).toBe(true);
-
-		const audit = ctx.reportRepo.listByTask(task.id);
-		expect(audit[0].evidence).toEqual({
-			prUrl: 'https://example.com/pr/1',
-			commitSha: 'abc123',
-		});
-	});
-
-	test('returns error when task does not exist', async () => {
-		const { onReportResult } = createEndNodeHandlers(makeDeps(ctx, 'no-such-task'));
-		const out = await onReportResult({ summary: 'x' });
-		const parsed = JSON.parse(out.content[0].text);
-		expect(parsed.success).toBe(false);
-		expect(parsed.error).toContain('no-such-task');
-	});
-
-	test('does NOT emit space.task.updated (audit-only)', async () => {
-		const task = ctx.taskRepo.createTask({
-			spaceId: ctx.spaceId,
-			title: 'T',
-			description: '',
-			status: 'in_progress',
-		});
-		const { hub, emitted } = makeMockHub();
-		const { onReportResult } = createEndNodeHandlers(makeDeps(ctx, task.id, { daemonHub: hub }));
-
-		await onReportResult({ summary: 'x' });
-		expect(emitted.filter((e) => e.name.startsWith('space.task.'))).toHaveLength(0);
-	});
-});
 
 // ===========================================================================
 // approve_task — autonomy-gated self-close

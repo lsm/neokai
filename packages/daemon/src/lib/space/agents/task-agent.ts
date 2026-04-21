@@ -15,7 +15,10 @@
  * The prompt references the following MCP tools by name. They must be registered
  * in the MCP server(s) composed with this agent's session at runtime:
  *
- *   - report_result         — Mark the task complete/failed and record the result summary
+ *   - save_artifact         — Append an audit record for this task (type, summary, optional data)
+ *   - list_artifacts        — List artifacts for the current workflow run
+ *   - approve_task          — Self-close the task as done (gated by autonomy level)
+ *   - submit_for_approval   — Request human sign-off instead of self-closing
  *   - request_human_input   — Surface a human gate and block until the user responds
  *   - list_group_members    — List all group members with completion state from space_tasks
  *   - send_message          — Send a message to peer node agents (string-based target)
@@ -24,7 +27,7 @@
  * Node agents have their own peer communication tools:
  *   - list_peers            — Discover peers and their completion state (queries space_tasks)
  *   - send_message          — Channel-validated messaging; auto-writes gate data when channel has a gate
- *   - save                  — Persist intermediate or final result data; does not change node status
+ *   - save_artifact         — Persist typed artifacts to the workflow run store; does not change node status
  *   - list_reachable_agents — Discover which agents/nodes are reachable and gate status
  *
  * ## Content interpolation
@@ -165,7 +168,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`1. Monitoring workflow activity via \`list_group_members\` (queries node execution state)\n` +
 			`2. Relaying intent/messages between human and workflow agents when needed\n` +
 			`3. Surfacing human gates encountered during agent communication via \`request_human_input\`\n` +
-			`4. Reporting unrecoverable outcomes via \`report_result\` only when cancellation/blocking is required`
+			`4. Recording outcomes via \`save_artifact\` and closing via \`approve_task\` or \`submit_for_approval\` when needed`
 	);
 	sections.push(
 		`\n## Critical Constraints\n` +
@@ -182,12 +185,21 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 	);
 	sections.push('');
 	sections.push(
-		`- **report_result** — Record the final result of the task. Pass a \`summary\` string and ` +
-			`optional structured \`evidence\` (\`prUrl\`, \`commitSha\`, \`testOutput\`, …). ` +
-			`Do NOT pass a \`status\` — the runtime decides the terminal task status by running the ` +
-			`completion-action pipeline on the end node. ` +
-			`Call this when the workflow reaches an unrecoverable error or you need to cancel. ` +
-			`Workflow completion is automatic — it triggers when the end node's session completes.`
+		`- **save_artifact** — Append an audit record for this task. ` +
+			`Pass \`type: "result"\`, \`append: true\`, and a \`summary\` string. ` +
+			`Optional: include structured \`data\` fields (\`prUrl\`, \`commitSha\`, \`testOutput\`, …). ` +
+			`Does NOT close the task — call \`approve_task\` or \`submit_for_approval\` to close.`
+	);
+	sections.push(
+		`- **approve_task** — Close this task as done. ` +
+			`Gated by \`space.autonomyLevel >= workflow.completionAutonomyLevel\`. ` +
+			`Call only when workflow execution is complete and you can self-close. ` +
+			`The runtime will return an error if the autonomy level is too low.`
+	);
+	sections.push(
+		`- **submit_for_approval** — Request human sign-off instead of self-closing. ` +
+			`Always available regardless of autonomy level. ` +
+			`Use when the task is risky, ambiguous, or autonomy rules block self-close.`
 	);
 	sections.push(
 		`- **request_human_input** — Surface a human gate and block until the human responds. ` +
@@ -213,7 +225,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 		`**Node agent tools (for reference):** Each spawned node agent also has access to: ` +
 			`\`list_peers\` (discover peers with completion state from node executions), ` +
 			`\`send_message\` (same string-based targeting; automatically writes gate data when the channel has a gate and \`data\` is provided), ` +
-			`\`save\` (persist intermediate or final result data without changing node status), and ` +
+			`\`save_artifact\` (persist typed artifacts to the workflow run store without changing node status), and ` +
 			`\`list_reachable_agents\` (discover reachable agents and cross-node gate status). ` +
 			`Node agents drive their own progression — you do not need to manually route messages between them.`
 	);
@@ -241,10 +253,10 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`system automatically marks the workflow run and main task as completed. You do not need to ` +
 			`call any completion tool — just wait for the \`[NODE_COMPLETE]\` event from the end node. ` +
 			`Use \`list_group_members\` to verify all agents have reached idle status if needed. ` +
-			`Only call \`report_result\` if you need to cancel or signal an unrecoverable error.\n` +
-			`6. **Handle errors** — If a node agent errors, call \`report_result\` with a \`summary\` ` +
-			`describing what went wrong. The runtime will classify the task based on the ` +
-			`completion-action pipeline; you do not control the final status.`
+			`Only call \`save_artifact\` + \`approve_task\`/\`submit_for_approval\` if you need to cancel or signal an unrecoverable error.\n` +
+			`6. **Handle errors** — If a node agent errors, call \`save_artifact({ type: "result", append: true, summary: "..." })\` ` +
+			`to record what went wrong, then \`submit_for_approval\` to escalate to human review. ` +
+			`The runtime will classify the task based on the completion-action pipeline; you do not control the final status.`
 	);
 
 	// ---- Human gate handling -------------------------------------------------
@@ -280,7 +292,7 @@ export function buildTaskAgentSystemPrompt(context: TaskAgentContext): string {
 			`\`request_human_input\` — do not silently deviate from the workflow.\n`
 	);
 	sections.push(
-		`4. **Report results accurately.** When calling \`report_result\`, include a factual ` +
+		`4. **Record results accurately.** When calling \`save_artifact\`, include a factual ` +
 			`summary of what was accomplished. Do not embellish or speculate.\n`
 	);
 	sections.push(

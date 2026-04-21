@@ -25,6 +25,26 @@ import {
 } from './thread/space-task-thread-events';
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Returns a human-readable relative time string (e.g. "3m ago", "2h ago").
+ * Intentionally simple — no i18n dependency.
+ */
+function relativeTime(timestampMs: number): string {
+	const diffMs = Date.now() - timestampMs;
+	const diffSec = Math.floor(diffMs / 1_000);
+	if (diffSec < 60) return `${diffSec}s ago`;
+	const diffMin = Math.floor(diffSec / 60);
+	if (diffMin < 60) return `${diffMin}m ago`;
+	const diffHr = Math.floor(diffMin / 60);
+	if (diffHr < 24) return `${diffHr}h ago`;
+	const diffDays = Math.floor(diffHr / 24);
+	return `${diffDays}d ago`;
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -63,6 +83,7 @@ interface CommitsResult {
 	commits: CommitInfo[];
 	baseRef: string | null;
 	isGitRepo: boolean;
+	repoUrl?: string | null;
 }
 
 type PanelView =
@@ -615,65 +636,101 @@ export function TaskArtifactsPanel({
 										{!commitsData?.commits.length ? (
 											<p class="px-2 py-3 text-sm text-gray-500">No commits yet</p>
 										) : (
-											commitsData.commits.map((commit) => (
-												<button
-													key={commit.sha}
-													onClick={() => setView({ mode: 'commitFiles', commit })}
-													class={cn(
-														'w-full flex items-start gap-3 px-3 py-2 rounded text-left',
-														'hover:bg-dark-700 transition-colors group'
-													)}
-													data-testid="artifacts-commit-row"
-												>
-													<svg
-														class="w-3.5 h-3.5 text-gray-500 flex-shrink-0 mt-0.5"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
+											commitsData.commits.map((commit) => {
+												const ghCommitUrl = commitsData.repoUrl
+													? `${commitsData.repoUrl}/commit/${commit.sha}`
+													: null;
+												const shortSha = commit.sha.slice(0, 7);
+												return (
+													<button
+														key={commit.sha}
+														onClick={() => setView({ mode: 'commitFiles', commit })}
+														class={cn(
+															'w-full flex items-start gap-3 px-3 py-2 rounded text-left',
+															'hover:bg-dark-700 transition-colors group'
+														)}
+														data-testid="artifacts-commit-row"
 													>
-														<circle cx="12" cy="12" r="3" stroke-width={2} />
-														<path
-															stroke-linecap="round"
-															stroke-width={2}
-															d="M12 3v6m0 6v6M3 12h6m6 0h6"
-														/>
-													</svg>
-													<div class="flex-1 min-w-0">
-														<p class="text-xs text-gray-300 truncate group-hover:text-gray-100">
-															{commit.message}
-														</p>
-														<p class="text-xs text-gray-600 font-mono mt-0.5">
-															{commit.sha.slice(0, 7)}
-															{commit.fileCount > 0 && (
-																<span class="ml-2 font-sans">
-																	{commit.fileCount} file{commit.fileCount === 1 ? '' : 's'}
-																</span>
+														<svg
+															class="w-3.5 h-3.5 text-gray-500 flex-shrink-0 mt-0.5"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+														>
+															<circle cx="12" cy="12" r="3" stroke-width={2} />
+															<path
+																stroke-linecap="round"
+																stroke-width={2}
+																d="M12 3v6m0 6v6M3 12h6m6 0h6"
+															/>
+														</svg>
+														<div class="flex-1 min-w-0">
+															<p class="text-xs text-gray-300 truncate group-hover:text-gray-100">
+																{commit.message}
+															</p>
+															<p class="text-xs text-gray-600 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+																{/* SHA — links to GitHub when repoUrl is available */}
+																{ghCommitUrl ? (
+																	<a
+																		href={ghCommitUrl}
+																		target="_blank"
+																		rel="noopener noreferrer"
+																		class="hover:text-blue-400 transition-colors"
+																		onClick={(e) => e.stopPropagation()}
+																		data-testid="artifacts-commit-sha-link"
+																	>
+																		{shortSha}
+																	</a>
+																) : (
+																	<span>{shortSha}</span>
+																)}
+																{commit.author && (
+																	<span
+																		class="font-sans text-gray-600 truncate"
+																		data-testid="artifacts-commit-author"
+																	>
+																		{commit.author}
+																	</span>
+																)}
+																{commit.timestamp > 0 && (
+																	<span
+																		class="font-sans text-gray-700"
+																		data-testid="artifacts-commit-time"
+																	>
+																		{relativeTime(commit.timestamp)}
+																	</span>
+																)}
+																{commit.fileCount > 0 && (
+																	<span class="font-sans">
+																		{commit.fileCount} file{commit.fileCount === 1 ? '' : 's'}
+																	</span>
+																)}
+															</p>
+														</div>
+														<span class="flex-shrink-0 flex items-center gap-1 text-xs font-mono">
+															{commit.additions > 0 && (
+																<span class="text-green-400">+{commit.additions}</span>
 															)}
-														</p>
-													</div>
-													<span class="flex-shrink-0 flex items-center gap-1 text-xs font-mono">
-														{commit.additions > 0 && (
-															<span class="text-green-400">+{commit.additions}</span>
-														)}
-														{commit.deletions > 0 && (
-															<span class="text-red-400">-{commit.deletions}</span>
-														)}
-													</span>
-													<svg
-														class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400 mt-0.5"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width={2}
-															d="M9 5l7 7-7 7"
-														/>
-													</svg>
-												</button>
-											))
+															{commit.deletions > 0 && (
+																<span class="text-red-400">-{commit.deletions}</span>
+															)}
+														</span>
+														<svg
+															class="w-3 h-3 text-gray-600 flex-shrink-0 group-hover:text-gray-400 mt-0.5"
+															fill="none"
+															viewBox="0 0 24 24"
+															stroke="currentColor"
+														>
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																stroke-width={2}
+																d="M9 5l7 7-7 7"
+															/>
+														</svg>
+													</button>
+												);
+											})
 										)}
 									</div>
 								)}

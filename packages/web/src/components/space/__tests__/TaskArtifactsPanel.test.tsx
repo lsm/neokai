@@ -53,6 +53,7 @@ const COMMITS_RESULT = {
 	commits: [],
 	baseRef: null,
 	isGitRepo: true,
+	repoUrl: null,
 };
 
 function setupDefaultMocks() {
@@ -212,6 +213,7 @@ describe('TaskArtifactsPanel', () => {
 					],
 					baseRef: 'origin/dev',
 					isGitRepo: true,
+					repoUrl: null,
 				});
 			return Promise.resolve({});
 		});
@@ -221,6 +223,153 @@ describe('TaskArtifactsPanel', () => {
 			expect(getByTestId('artifacts-commits-list').textContent).toContain('feat: add feature')
 		);
 		expect(getByTestId('artifacts-commits-list').textContent).toContain('abc1234');
+	});
+
+	it('shows commit author in each commit row', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve(UNCOMMITTED_RESULT);
+			if (method === 'spaceWorkflowRun.getCommits')
+				return Promise.resolve({
+					commits: [
+						{
+							sha: 'abc1234',
+							message: 'feat: add feature',
+							author: 'Alice',
+							timestamp: Date.now(),
+							additions: 10,
+							deletions: 2,
+							fileCount: 3,
+						},
+					],
+					baseRef: 'origin/dev',
+					isGitRepo: true,
+					repoUrl: null,
+				});
+			return Promise.resolve({});
+		});
+
+		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
+		await waitFor(() =>
+			expect(getByTestId('artifacts-commits-list').textContent).toContain('Alice')
+		);
+		expect(
+			getByTestId('artifacts-commits-list').querySelector('[data-testid="artifacts-commit-author"]')
+				?.textContent
+		).toBe('Alice');
+	});
+
+	it('shows relative time in each commit row', async () => {
+		const recentTimestamp = Date.now() - 5 * 60 * 1000; // 5 minutes ago
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve(UNCOMMITTED_RESULT);
+			if (method === 'spaceWorkflowRun.getCommits')
+				return Promise.resolve({
+					commits: [
+						{
+							sha: 'abc1234',
+							message: 'feat: add feature',
+							author: 'Alice',
+							timestamp: recentTimestamp,
+							additions: 0,
+							deletions: 0,
+							fileCount: 0,
+						},
+					],
+					baseRef: 'origin/dev',
+					isGitRepo: true,
+					repoUrl: null,
+				});
+			return Promise.resolve({});
+		});
+
+		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
+		await waitFor(() =>
+			expect(
+				getByTestId('artifacts-commits-list').querySelector('[data-testid="artifacts-commit-time"]')
+			).toBeTruthy()
+		);
+		const timeEl = getByTestId('artifacts-commits-list').querySelector(
+			'[data-testid="artifacts-commit-time"]'
+		);
+		// Should show something like "5m ago"
+		expect(timeEl?.textContent).toMatch(/\d+[smhd] ago/);
+	});
+
+	it('shows GitHub commit link when repoUrl is available', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve(UNCOMMITTED_RESULT);
+			if (method === 'spaceWorkflowRun.getCommits')
+				return Promise.resolve({
+					commits: [
+						{
+							sha: 'abc1234def5678',
+							message: 'feat: add feature',
+							author: 'Alice',
+							timestamp: Date.now(),
+							additions: 0,
+							deletions: 0,
+							fileCount: 0,
+						},
+					],
+					baseRef: 'origin/dev',
+					isGitRepo: true,
+					repoUrl: 'https://github.com/owner/repo',
+				});
+			return Promise.resolve({});
+		});
+
+		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
+		await waitFor(() =>
+			expect(
+				getByTestId('artifacts-commits-list').querySelector(
+					'[data-testid="artifacts-commit-sha-link"]'
+				)
+			).toBeTruthy()
+		);
+		const link = getByTestId('artifacts-commits-list').querySelector(
+			'[data-testid="artifacts-commit-sha-link"]'
+		) as HTMLAnchorElement;
+		expect(link.href).toContain('https://github.com/owner/repo/commit/abc1234def5678');
+		expect(link.textContent).toBe('abc1234');
+	});
+
+	it('does not show GitHub link when repoUrl is null', async () => {
+		mockRequest.mockImplementation((method: string) => {
+			if (method === 'spaceWorkflowRun.getGateArtifacts')
+				return Promise.resolve(UNCOMMITTED_RESULT);
+			if (method === 'spaceWorkflowRun.getCommits')
+				return Promise.resolve({
+					commits: [
+						{
+							sha: 'abc1234',
+							message: 'feat: add feature',
+							author: 'Alice',
+							timestamp: Date.now(),
+							additions: 0,
+							deletions: 0,
+							fileCount: 0,
+						},
+					],
+					baseRef: 'origin/dev',
+					isGitRepo: true,
+					repoUrl: null,
+				});
+			return Promise.resolve({});
+		});
+
+		const { getByTestId } = render(<TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />);
+		await waitFor(() =>
+			expect(getByTestId('artifacts-commits-list').textContent).toContain('abc1234')
+		);
+		// No link element
+		expect(
+			getByTestId('artifacts-commits-list').querySelector(
+				'[data-testid="artifacts-commit-sha-link"]'
+			)
+		).toBeNull();
 	});
 
 	it('shows Files Touched section (not Commits) when isGitRepo is false', async () => {
