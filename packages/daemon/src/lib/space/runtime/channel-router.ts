@@ -53,6 +53,9 @@ import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
+import { Logger } from '../../logger';
+
+const log = new Logger('channel-router');
 
 // ---------------------------------------------------------------------------
 // Gate result types (formerly in channel-gate-evaluator.ts)
@@ -226,6 +229,17 @@ export interface ChannelRouterConfig {
 	 * propagate into message delivery / activation paths.
 	 */
 	notificationSink?: NotificationSink;
+	/**
+	 * Called when a gate is actively waiting for human approval (gate data was
+	 * written, but the gate is still not open because `approved` has not been set).
+	 * Allows the caller to transition the canonical task to `review` status so the
+	 * task appears in the correct group in the UI.
+	 *
+	 * Only invoked for external-approval gates (gates with an `approved` field whose
+	 * `writers` array is empty). Not invoked when the gate opens, when it's blocked
+	 * by a script failure, or when it has no external-approval field.
+	 */
+	onGatePendingApproval?: (runId: string, gateId: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +651,25 @@ export class ChannelRouter {
 
 		// Evaluate the gate once (shared across all channels referencing it)
 		const gateResult = await this.evaluateGateById(runId, gateId, workflow);
-		if (!gateResult.open) return [];
+		if (!gateResult.open) {
+			// Notify caller when the gate is waiting for human approval. Only fires for
+			// external-approval gates — those with an `approved` field with no declared
+			// writers (i.e. only a human can set `approved: true`).
+			if (this.config.onGatePendingApproval && gateDef) {
+				const needsHuman = (gateDef.fields ?? []).some(
+					(f) => f.name === 'approved' && Array.isArray(f.writers) && f.writers.length === 0
+				);
+				if (needsHuman) {
+					void this.config.onGatePendingApproval(runId, gateId).catch((err) => {
+						log.warn(
+							`onGatePendingApproval failed for gate "${gateId}" in run "${runId}": ` +
+								(err instanceof Error ? err.message : String(err))
+						);
+					});
+				}
+			}
+			return [];
+		}
 
 		// Determine if any of these channels are cyclic — if so, enforce the per-channel cap
 		// before activating any node (mirrors the guard in deliverMessage).

@@ -2594,5 +2594,212 @@ describe('ChannelRouter', () => {
 			const result = await router.deliverMessage(run.id, 'coder', 'planner', 'approved');
 			expect(result.fromRole).toBe('coder');
 		});
+
+		// -----------------------------------------------------------------------
+		// onGatePendingApproval callback
+		// -----------------------------------------------------------------------
+
+		describe('onGatePendingApproval callback', () => {
+			test('fires when gate data is written but gate is still not open (external approval gate)', async () => {
+				const gate: Gate = {
+					id: 'external-approval-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [], // empty writers = external/human-only approval
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'external-approval-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{
+							id: NODE_A,
+							name: 'Coder Node',
+							agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+						},
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'External Approval Pending Run',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const pendingCalls: Array<{ runId: string; gateId: string }> = [];
+				const routerWithCallback = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+					onGatePendingApproval: async (rId, gId) => {
+						pendingCalls.push({ runId: rId, gateId: gId });
+					},
+				});
+
+				// Write gate data that does NOT satisfy the condition (approved not set to true)
+				gateDataRepo.set(run.id, 'external-approval-gate', {});
+
+				const activated = await routerWithCallback.onGateDataChanged(
+					run.id,
+					'external-approval-gate'
+				);
+				expect(activated).toHaveLength(0);
+				expect(pendingCalls).toHaveLength(1);
+				expect(pendingCalls[0]).toEqual({ runId: run.id, gateId: 'external-approval-gate' });
+			});
+
+			test('does NOT fire when gate opens (auto-approved)', async () => {
+				const gate: Gate = {
+					id: 'auto-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: [], // external approval gate
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'auto-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{
+							id: NODE_A,
+							name: 'Coder Node',
+							agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+						},
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Auto-Approved Gate Run',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const pendingCalls: Array<{ runId: string; gateId: string }> = [];
+				const routerWithCallback = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+					onGatePendingApproval: async (rId, gId) => {
+						pendingCalls.push({ runId: rId, gateId: gId });
+					},
+				});
+
+				// Write gate data that satisfies the condition — gate opens
+				gateDataRepo.set(run.id, 'auto-gate', { approved: true });
+
+				const activated = await routerWithCallback.onGateDataChanged(run.id, 'auto-gate');
+				// Gate opens → node activated, callback NOT fired
+				expect(activated.length).toBeGreaterThan(0);
+				expect(pendingCalls).toHaveLength(0);
+			});
+
+			test('does NOT fire for non-external-approval gates (writers not empty)', async () => {
+				const gate: Gate = {
+					id: 'agent-approval-gate',
+					fields: [
+						{
+							name: 'approved',
+							type: 'boolean',
+							writers: ['planner'], // non-empty writers — agents can write
+							check: { op: '==', value: true },
+						},
+					],
+					resetOnCycle: false,
+				};
+				const channels: WorkflowChannel[] = [
+					{ id: 'ch-1', from: 'coder', to: 'planner', gateId: 'agent-approval-gate' },
+				];
+				const workflow = buildWorkflowWithGates(
+					SPACE_ID,
+					workflowManager,
+					[
+						{
+							id: NODE_A,
+							name: 'Coder Node',
+							agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+						},
+						{
+							id: NODE_B,
+							name: 'Planner Node',
+							agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+						},
+					],
+					channels,
+					[gate]
+				);
+
+				const run = workflowRunRepo.createRun({
+					spaceId: SPACE_ID,
+					workflowId: workflow.id,
+					title: 'Agent Approval Gate Run',
+				});
+				workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+				const pendingCalls: Array<{ runId: string; gateId: string }> = [];
+				const routerWithCallback = new ChannelRouter({
+					taskRepo,
+					workflowRunRepo,
+					workflowManager,
+					agentManager,
+					gateDataRepo,
+					channelCycleRepo,
+					db,
+					nodeExecutionRepo: new NodeExecutionRepository(db),
+					onGatePendingApproval: async (rId, gId) => {
+						pendingCalls.push({ runId: rId, gateId: gId });
+					},
+				});
+
+				// Write data that does NOT satisfy the condition (approved = false)
+				gateDataRepo.set(run.id, 'agent-approval-gate', { approved: false });
+
+				const activated = await routerWithCallback.onGateDataChanged(run.id, 'agent-approval-gate');
+				// Gate is closed but this is NOT an external-approval gate → callback not fired
+				expect(activated).toHaveLength(0);
+				expect(pendingCalls).toHaveLength(0);
+			});
+		});
 	});
 });
