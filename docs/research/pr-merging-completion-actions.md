@@ -444,6 +444,159 @@ human approval when `spaceLevel < someThreshold`, independent of the
 
 ---
 
+## 10. Failure Modes of the Completion-Action Pipeline
+
+The failure handling is the same in both entry paths:
+- `resolveCompletionWithActions` (`space-runtime.ts:1945-1953`)
+- `resumeCompletionActions` (`space-runtime.ts:1025-1030`)
+
+Both do:
+
+```ts
+const result = await this.executeCompletionAction(action, spaceId, runId, workspacePath);
+if (!result.success) {
+    return {
+        status: 'blocked' as const,
+        result: result.reason ?? `Completion action "${action.name}" failed`,
+    };
+}
+```
+
+That is the entire failure surface. Everything below follows from it.
+
+### 10.1 Observable outcome of a failed action
+
+| Aspect | Behavior |
+|---|---|
+| Task status | `blocked` (not `review`, not `failed`) |
+| UI banner | `TaskBlockedBanner` — exits the pending-approval UX |
+| Error surface | Single string on `task.result`: either the executor's `reason` or `Completion action "X" failed` |
+| Script stderr | Captured, capped at `MAX_BUFFER_BYTES`, silently truncated past limit |
+| Script stdout | Discarded |
+| Exit code | Not preserved |
+| Retry affordance | None — no UI, no RPC, no tool |
+| `completionActionsFiredAt` | **Not stamped** on failure. If the run is reopened, all earlier successful actions re-fire. |
+| Pipeline halts at first failure | Remaining actions never run |
+| Rollback | None — earlier successful side effects persist |
+| Timeout | Only `script` actions have the 2-minute SIGKILL (`space-runtime.ts:2209`). `instruction` and `mcp_call` actions can hang indefinitely. |
+
+### 10.2 Per-action-type failure modes
+
+- **`script`:** non-zero exit OR bash spawner failure (e.g. `command not found`) both collapse to the same `blocked` result. Stderr is the error context; if the script wrote useful stdout, it's lost.
+- **`instruction`:** if `instructionActionExecutor` is not wired up (`space-runtime.ts:2086-2091`), every instruction action fails with `instruction completion action is not supported: no instructionActionExecutor configured`. Silent configuration bug → every workflow that uses an instruction action is DOA.
+- **`mcp_call`:** same missing-executor pattern (`:2117-2122`). Plus the underlying MCP tool's error shape (not captured structurally, just `reason: message`).
+
+### 10.3 The false-negative block problem
+
+The worst failure mode is **verification actions that fail transiently on external state**:
+
+| Action | Realistic transient failure | Effect |
+|---|---|---|
+| `verify-pr-merged` | GitHub 5xx / rate-limit / `gh` auth glitch | Task blocked; PR was merged |
+| `verify-review-posted` | GitHub eventual consistency right after posting | Task blocked; reviewer did their job |
+| `verify-tasks-created` | SQLite lock contention | Task blocked; tasks were created |
+| `merge-pr` | Merge conflict introduced between approval and execution | Task blocked; PR still open but recoverable |
+
+The recovery path for a user hitting any of these is: read daemon logs, edit SQLite directly, or cancel and re-run the whole workflow. None of these are product-grade.
+
+### 10.4 Partial-failure hazard
+
+Because `completionActionsFiredAt` is only stamped on the *all-succeed* path (`:2005`, `:1093`), any failure mid-pipeline leaves the idempotency flag unset. If a code path ever reopens the run (daemon restart + stale executor record, a manual retry tool we might add later, a reconcile bug), **every previously-succeeded action re-runs**. For read-only verifications that's fine; for `merge-pr` the script's own "already MERGED" guard saves us, but that's per-action defensive code, not a runtime guarantee.
+
+Any future completion action with non-idempotent side effects (create-release, post-to-slack, send-email, create-issue) inherits this hazard silently.
+
+---
+
+## 11. Proposal — Consolidate into Gates + Nodes
+
+Taken together, §6 (three gaps) + §10 (failure modes) argue that completion actions should be **removed**, not fixed. The two mechanisms we already have — **gates** and **nodes** — cover every job a completion action does today, with better UX.
+
+### 11.1 What each mechanism gives you
+
+| Concern | Completion action | Gate | Node |
+|---|---|---|---|
+| Runtime-enforced assertion | ✅ script | ✅ script with same env shape | — |
+| Waits-until-true retry UX | ❌ fails → `blocked` | ✅ closed → "not yet" | — |
+| Autonomy gating | `requiredLevel` | `requiredLevel` | — (via gate on inbound channel) |
+| Idempotency | `completionActionsFiredAt` (single flag) | Gate state in `gate_data` | Per-run state in agent session |
+| Streaming logs | ❌ | ❌ (but short) | ✅ full transcript |
+| Retry | ❌ | ✅ gate re-evaluates on write | ✅ re-activate node |
+| Error context | Single string | Gate check result | Full session |
+| Approval UI | Own banner | Existing gate banner | Task/thread UI |
+| Tamper resistance | ✅ declarative | ✅ declarative | ⚠️ agent can subvert via prompt |
+
+### 11.2 Migration table — one-for-one replacements
+
+| Existing completion action | Replacement |
+|---|---|
+| `MERGE_PR_COMPLETION_ACTION` | **Merge node** after Reviewer. Inbound channel has `approval-gate: approved=true` with `requiredLevel: 4`. Agent runs `gh pr merge --squash`. Thread shows stdout/stderr. Failures are the agent's session errors — retry by re-activating the node. |
+| `VERIFY_PR_MERGED_COMPLETION_ACTION` | **Delete.** The Merge node's agent is the evidence; no separate verification needed. (Also kills Gap #1 — no prompt can instruct a merge outside the Merge node.) |
+| `VERIFY_REVIEW_POSTED_COMPLETION_ACTION` | **Move into `review-posted-gate`** on the Review → Coding feedback channel. Gate already exists; extend its bash check with the review-count query. Reviewer posts → gate re-evaluates → channel unlocks. No task-blocked state. |
+| `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION` | **Move into a new `tasks-created-gate`** on the Task Dispatcher's outbound channel (or a post-dispatch self-gate). Same mechanics. |
+
+### 11.3 What goes away
+
+- `CompletionAction` type and its three variants (`script`, `instruction`, `mcp_call`)
+- `node.completionActions[]` field
+- `workflow.completionAutonomyLevel` (folded into gates' `requiredLevel`)
+- `pendingCheckpointType = 'completion_action'` — only `'gate'` and `'task_completion'` remain
+- `SpaceTask.pendingActionIndex`
+- `resolveCompletionWithActions`, `resumeCompletionActions`, `executeCompletionAction` in `space-runtime.ts`
+- `PendingCompletionActionBanner` in the web bundle
+- `spaceTask.update` special-case for `pendingCheckpointType === 'completion_action'`
+- `approve_completion_action` MCP tool (Gap #2 disappears)
+- `run.completionActionsFiredAt` column and idempotency logic
+- `buildAwaitingApprovalReason`, `emitTaskAwaitingApproval` helpers
+- The dead-code branch in `approvePendingCompletion` (Gap #3 disappears)
+- `isAutonomousWithoutActions` / `EMPTY_ACTIONS_AUTONOMY_THRESHOLD` — the zero-actions fallback is no longer needed because there are no completion actions
+- The `task-agent-manager.ts` logic that conditionally hides `approve_task` based on `completionAutonomyLevel` (the gate on the outbound channel handles this)
+
+### 11.4 What stays the same (and gets simpler)
+
+- `approve_task` still closes the task. Gating moves to the outbound channel's gate.
+- `submit_for_approval` still pauses at `task_completion` for human sign-off on the task itself (the "is this work any good" question).
+- Autonomy levels (1-5) still determine which gates auto-approve.
+- Workflow editor: the graph gains a node instead of a fiddly "Add completion action" form.
+
+### 11.5 Shape of the new Coding workflow
+
+```
+Coder ──(code-ready-gate: pr_url + reviewable)──▶ Reviewer ──(approval-gate: approved + requiredLevel=4)──▶ Merge ──[end]
+  ▲                                                  │
+  └──(review-posted-gate: review_posted)─────────────┘
+
+  Merge.endNode = true
+  workflow.completionAutonomyLevel: REMOVED (gates handle it)
+```
+
+At Level 1: `approval-gate` is closed, awaits human. Human approves → channel unlocks → Merge node activates → agent merges PR → `approve_task` → done. **Single approval UX. Single banner. Single retry path.**
+
+At Level 4+: `approval-gate` auto-opens (via `requiredLevel: 4`). Merge node activates and runs end-to-end. Same code path, no auto_policy special case.
+
+### 11.6 Migration plan (sketch, not a ship plan)
+
+1. **Ship a new "Merge" preset node** agent and a gated-merge channel primitive. Gate on channel already supports `requiredLevel`.
+2. **Add a feature flag** `space.useLegacyCompletionActions` (default `true`). New spaces get `false`.
+3. **Rewrite the four built-in workflows** under the flag: when `false`, use gates + Merge nodes; when `true`, current shape. Same workflow names.
+4. **Migration job** per-space on `false` enablement: convert `node.completionActions[]` into an equivalent gate/node pair, preserving audit-trail data.
+5. **Deprecate** the completion-action RPCs/tools behind warnings for one release.
+6. **Remove** completion-action code once no active spaces are on the legacy flag.
+
+### 11.7 Risks of the consolidation
+
+- **Nodes are less tamper-resistant.** An agent can decide not to call the Merge tool. Mitigation: constrain the Merge node's agent to a single allowed tool (`gh pr merge`) and autoapprove — the session is effectively a "run this command" runner.
+- **More rows in `spaces/workflows` tables.** Each former completion action becomes a node + gate. Acceptable.
+- **Breaking change for user-authored workflows.** Mitigated by the migration flag + conversion job. Completion actions are not yet common outside the built-ins.
+- **Agent context tokens.** A minimal Merge node agent has ~0 token overhead (single tool, one-shot). No meaningful cost.
+
+### 11.8 Recommendation
+
+Treat this consolidation as the **resolution of Gaps #1, #2, and #3 jointly**, not as three separate fixes. Fixing each gap in place either patches symptoms (Gap #2: add an autonomy check) or introduces a new mental-model wrinkle (Gap #3: "sometimes `approvePendingCompletion` triggers completion actions, sometimes not"). Removing the layer is the simpler move.
+
+If shipping the removal is too invasive short-term, the **minimum viable fix** for the user-observed "approved but nothing happens" bug is Gap #3 option 1: chain `approvePendingCompletion` → `resolveCompletionWithActions` so the existing `MERGE_PR_COMPLETION_ACTION` at least fires. That unblocks users without prejudging the larger design direction.
+
+---
+
 ## Appendix A — Glossary
 
 - **`completionAction`** — declarative side effect attached to a workflow node (usually end node) that runs when a task would otherwise close. Three types: `script`, `instruction`, `mcp_call`.
