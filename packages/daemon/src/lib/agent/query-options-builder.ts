@@ -287,6 +287,66 @@ export class QueryOptionsBuilder {
 			queryOptions.settingSources = [];
 		}
 
+		// ============ Space Chat Session Restrictions ============
+		// Space chat sessions are read-only coordinators — they can read files and run
+		// diagnostics but must not create or modify files.  File editing tools
+		// (Write/Edit/NotebookEdit) are excluded; the agent uses its space-agent-tools
+		// MCP server for all coordination operations.
+		if (this.ctx.session.type === 'space_chat') {
+			const spaceAllowedBuiltinTools = [
+				'Read',
+				'Glob',
+				'Grep',
+				'Bash',
+				'WebFetch',
+				'WebSearch',
+				'ToolSearch',
+				'AskUserQuestion',
+			];
+			const spaceRestrictedBuiltinTools = [
+				'Task',
+				'TaskOutput',
+				'TaskStop',
+				'Edit',
+				'Write',
+				'NotebookEdit',
+			];
+
+			// Space chat must not use Claude Code preset prompt.
+			const systemPrompt = queryOptions.systemPrompt;
+			if (
+				typeof systemPrompt === 'object' &&
+				systemPrompt !== null &&
+				(systemPrompt as ClaudeCodePreset).type === 'preset' &&
+				(systemPrompt as ClaudeCodePreset).preset === 'claude_code'
+			) {
+				queryOptions.systemPrompt = undefined;
+			}
+
+			// Restrict space chat to coordinator-appropriate built-in tool set.
+			queryOptions.tools = spaceAllowedBuiltinTools;
+
+			// Auto-allow all explicitly configured MCP server tools (space-agent-tools + db-query).
+			const mcpServerWildcards = Object.keys(queryOptions.mcpServers ?? {}).map(
+				(name) => `${name}__*`
+			);
+			queryOptions.allowedTools = [
+				...new Set([
+					...(queryOptions.allowedTools ?? []),
+					...spaceAllowedBuiltinTools,
+					...mcpServerWildcards,
+				]),
+			];
+
+			queryOptions.disallowedTools = [
+				...new Set([...(queryOptions.disallowedTools ?? []), ...spaceRestrictedBuiltinTools]),
+			];
+			// Prevent user-configured MCP servers from being merged in (only runtime-injected servers allowed).
+			queryOptions.strictMcpConfig = true;
+			// Skip settings file loading so user's settings.json doesn't inject extra tools.
+			queryOptions.settingSources = [];
+		}
+
 		// ============ Coordinator Mode ============
 		// When coordinator mode is enabled, apply the coordinator agent to the main thread
 		// and merge specialist agents with any user-defined agents
