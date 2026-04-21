@@ -448,7 +448,9 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 							{hasUnifiedWorkflowThread ? (
 								<SpaceTaskUnifiedThread
 									taskId={task.id}
-									bottomInsetClass={showInlineComposer ? 'pb-16' : 'pb-3'}
+									bottomInsetClass={
+										showInlineComposer ? (threadSendError ? 'pb-24' : 'pb-16') : 'pb-3'
+									}
 									isAgentActive={isAgentActive}
 								/>
 							) : (

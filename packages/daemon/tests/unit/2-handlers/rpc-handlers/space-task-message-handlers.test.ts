@@ -798,10 +798,33 @@ describe('setupSpaceTaskMessageHandlers', () => {
 			expect(taskAgentManager.injectTaskAgentMessage).toHaveBeenCalled();
 		});
 
-		it('does not route to done/cancelled/blocked agents — excludes completed sessions', async () => {
+		it('routes @mention to idle agents — core fix for the reported bug', async () => {
+			// Idle agents (waiting for input) should receive @mention messages.
+			// Previously this was broken: only 'in_progress' and 'pending' passed the filter,
+			// so @Reviewer returned "Available agents: none" when the agent was idle.
 			const { injectSubSession } = setupWithMention([
-				{ agentName: 'Coder', agentSessionId: 'session-coder-done', status: 'done' },
+				{ agentName: 'Reviewer', agentSessionId: 'session-reviewer-idle', status: 'idle' },
+			]);
+
+			const result = await call('space.task.sendMessage', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				message: '@Reviewer please review',
+			});
+
+			expect(result).toMatchObject({ ok: true, routedTo: ['Reviewer'] });
+			expect(injectSubSession).toHaveBeenCalledWith(
+				'session-reviewer-idle',
+				'@Reviewer please review'
+			);
+		});
+
+		it('only excludes cancelled agents — idle, blocked, and pending are all routable', async () => {
+			// Only 'cancelled' is truly terminal. All other statuses (idle, blocked, pending,
+			// in_progress) can still receive and process messages.
+			const { injectSubSession } = setupWithMention([
 				{ agentName: 'Coder', agentSessionId: 'session-coder-cancelled', status: 'cancelled' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-idle', status: 'idle' },
 				{ agentName: 'Coder', agentSessionId: 'session-coder-blocked', status: 'blocked' },
 				{ agentName: 'Coder', agentSessionId: 'session-coder-active', status: 'in_progress' },
 			]);
@@ -812,19 +835,24 @@ describe('setupSpaceTaskMessageHandlers', () => {
 				message: '@Coder please check',
 			});
 
-			// Only the in_progress session should receive the message
+			// All non-cancelled sessions should receive the message
 			expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
-			expect(injectSubSession).toHaveBeenCalledTimes(1);
+			expect(injectSubSession).toHaveBeenCalledTimes(3); // idle + blocked + in_progress
+			expect(injectSubSession).not.toHaveBeenCalledWith(
+				'session-coder-cancelled',
+				expect.anything()
+			);
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-idle', '@Coder please check');
+			expect(injectSubSession).toHaveBeenCalledWith('session-coder-blocked', '@Coder please check');
 			expect(injectSubSession).toHaveBeenCalledWith('session-coder-active', '@Coder please check');
-			expect(injectSubSession).not.toHaveBeenCalledWith('session-coder-done', expect.anything());
 		});
 
-		it('@mention throws when all matching agents are in terminal status', async () => {
+		it('@mention throws when all matching agents are cancelled', async () => {
 			setupWithMention([
-				{ agentName: 'Coder', agentSessionId: 'session-coder-done', status: 'done' },
+				{ agentName: 'Coder', agentSessionId: 'session-coder-cancelled', status: 'cancelled' },
 			]);
 
-			// Coder exists but is done — should be treated as unavailable
+			// Coder exists but is cancelled — should be treated as unavailable
 			await expect(
 				call('space.task.sendMessage', {
 					spaceId: 'space-1',

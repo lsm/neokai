@@ -159,10 +159,11 @@ export function setupSpaceTaskMessageHandlers(
 			taskAgentManager.injectSubSessionMessage
 		) {
 			const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-			// Only route to agents that are actively running — exclude done/cancelled/blocked
-			// to avoid injecting into sessions that will never process the message.
+			// Exclude only cancelled agents — they are truly terminal and will never process
+			// messages. Idle agents (waiting for input), blocked agents (waiting on dependencies),
+			// and pending agents are all reachable and should receive @mention messages.
 			const activeAgents = executions.filter(
-				(e) => e.agentSessionId !== null && (e.status === 'in_progress' || e.status === 'pending')
+				(e) => e.agentSessionId !== null && e.status !== 'cancelled'
 			);
 
 			const routedTo: string[] = [];
