@@ -3,9 +3,9 @@
  *
  * Covers the Done criteria from the task:
  *   - renders name + description (type line) + required level vs space level
- *   - Approve calls spaceStore.updateTask with status='done'
- *   - Reject opens a confirmation modal; confirm cancels the task
- *   - Script details collapsed by default (<details>)
+ *   - Approve opens a modal; confirming calls spaceStore.updateTask with status='done'
+ *   - Reject opens a modal; confirming cancels the task
+ *   - Script details collapsed by default (<details>) inside the approve modal
  *   - Hidden when pendingCheckpointType !== 'completion_action'
  *
  * Plus regressions:
@@ -136,14 +136,26 @@ describe('PendingCompletionActionBanner', () => {
 		cleanup();
 	});
 
-	it('renders with action name, type, and required / current level', () => {
+	it('renders with action name in the compact banner', () => {
 		const task = makeTask();
 		const { getByTestId } = render(
 			<PendingCompletionActionBanner task={task} spaceId="space-1" spaceAutonomyLevel={1} />
 		);
 		const banner = getByTestId('pending-completion-action-banner');
 		expect(banner.textContent).toContain('merge-pr');
-		const typeLine = getByTestId('pending-completion-action-type').textContent ?? '';
+	});
+
+	it('approve modal shows action type, required level, and current space level', async () => {
+		const task = makeTask();
+		const { getByTestId } = render(
+			<PendingCompletionActionBanner task={task} spaceId="space-1" spaceAutonomyLevel={1} />
+		);
+		// Open the approve modal
+		fireEvent.click(getByTestId('pending-completion-action-approve-btn'));
+		// Modal is now open — type/level info is visible
+		const typeLine = await waitFor(
+			() => getByTestId('pending-completion-action-type').textContent ?? ''
+		);
 		expect(typeLine).toContain('Bash script');
 		expect(typeLine).toContain('Level 3');
 		const current = getByTestId('pending-completion-action-current-level').textContent ?? '';
@@ -183,10 +195,14 @@ describe('PendingCompletionActionBanner', () => {
 		expect(queryByTestId('pending-completion-action-banner')).toBeNull();
 	});
 
-	it('script details are collapsed by default', () => {
+	it('script details are collapsed by default inside the approve modal', async () => {
 		const task = makeTask();
 		const { getByTestId } = render(<PendingCompletionActionBanner task={task} spaceId="space-1" />);
-		const details = getByTestId('pending-completion-action-details') as HTMLDetailsElement;
+		// Open approve modal to access action details
+		fireEvent.click(getByTestId('pending-completion-action-approve-btn'));
+		const details = await waitFor(
+			() => getByTestId('pending-completion-action-details') as HTMLDetailsElement
+		);
 		expect(details.tagName.toLowerCase()).toBe('details');
 		expect(details.open).toBe(false);
 		// But the script source is in the DOM (ready to reveal).
@@ -194,20 +210,26 @@ describe('PendingCompletionActionBanner', () => {
 		expect(source).toContain('gh pr merge');
 	});
 
-	it('Approve calls spaceStore.updateTask with status="done"', async () => {
+	it('Approve opens modal; confirming calls spaceStore.updateTask with status="done"', async () => {
 		const task = makeTask();
 		const { getByTestId } = render(<PendingCompletionActionBanner task={task} spaceId="space-1" />);
+		// Click the inline Approve button → opens modal
 		fireEvent.click(getByTestId('pending-completion-action-approve-btn'));
+		// Click the confirm button inside the modal
+		const confirmBtn = await waitFor(() =>
+			getByTestId('pending-completion-action-approve-confirm')
+		);
+		fireEvent.click(confirmBtn);
 		await waitFor(() => expect(updateTaskMock).toHaveBeenCalledTimes(1));
 		expect(updateTaskMock).toHaveBeenCalledWith(task.id, { status: 'done' });
 	});
 
-	it('Reject opens confirmation modal; confirm cancels task and clears pending fields', async () => {
+	it('Reject opens modal; confirm cancels task and clears pending fields', async () => {
 		const task = makeTask();
 		const { getByTestId, queryByTestId } = render(
 			<PendingCompletionActionBanner task={task} spaceId="space-1" />
 		);
-		// Modal is not open by default
+		// Reject modal is not open by default
 		expect(queryByTestId('pending-completion-action-reject-confirm')).toBeNull();
 
 		fireEvent.click(getByTestId('pending-completion-action-reject-btn'));
@@ -241,16 +263,21 @@ describe('PendingCompletionActionBanner', () => {
 		expect(payload.result).toBeUndefined();
 	});
 
-	it('surfaces approval errors inline without throwing', async () => {
+	it('surfaces approval errors inside the modal without throwing', async () => {
 		updateTaskMock.mockRejectedValueOnce(new Error('network down'));
 		const task = makeTask();
 		const { getByTestId } = render(<PendingCompletionActionBanner task={task} spaceId="space-1" />);
+		// Open approve modal and confirm
 		fireEvent.click(getByTestId('pending-completion-action-approve-btn'));
+		const confirmBtn = await waitFor(() =>
+			getByTestId('pending-completion-action-approve-confirm')
+		);
+		fireEvent.click(confirmBtn);
 		const err = await waitFor(() => getByTestId('pending-completion-action-error'));
 		expect(err.textContent).toContain('network down');
 	});
 
-	it('renders instruction details for instruction actions', () => {
+	it('renders instruction details for instruction actions inside the approve modal', async () => {
 		workflowsSignal.value = [
 			makeWorkflow({
 				id: 'a2',
@@ -263,14 +290,16 @@ describe('PendingCompletionActionBanner', () => {
 		];
 		const task = makeTask();
 		const { getByTestId } = render(<PendingCompletionActionBanner task={task} spaceId="space-1" />);
-		const details = getByTestId('pending-completion-action-details');
+		// Open approve modal to see action details
+		fireEvent.click(getByTestId('pending-completion-action-approve-btn'));
+		const details = await waitFor(() => getByTestId('pending-completion-action-details'));
 		expect(details.getAttribute('data-action-type')).toBe('instruction');
 		expect(getByTestId('pending-completion-action-instruction').textContent).toContain(
 			'Post a summary'
 		);
 	});
 
-	it('renders MCP details for mcp_call actions', () => {
+	it('renders MCP details for mcp_call actions inside the approve modal', async () => {
 		workflowsSignal.value = [
 			makeWorkflow({
 				id: 'a3',
@@ -284,7 +313,9 @@ describe('PendingCompletionActionBanner', () => {
 		];
 		const task = makeTask();
 		const { getByTestId } = render(<PendingCompletionActionBanner task={task} spaceId="space-1" />);
-		const details = getByTestId('pending-completion-action-details');
+		// Open approve modal to see action details
+		fireEvent.click(getByTestId('pending-completion-action-approve-btn'));
+		const details = await waitFor(() => getByTestId('pending-completion-action-details'));
 		expect(details.getAttribute('data-action-type')).toBe('mcp_call');
 		const args = getByTestId('pending-completion-action-mcp-args').textContent ?? '';
 		expect(args).toContain('title');
