@@ -4,8 +4,8 @@
 #
 # | Trigger                              | Tests Run                                                    | Rationale                               |
 # |--------------------------------------|--------------------------------------------------------------|-----------------------------------------|
-# | PR to dev                            | check + unit + online                                        | Fast feedback for PRs                   |
-# | Push to dev                          | check + unit + online                                        | Same checks as PR for merge safety     |
+# | PR to dev                            | check + unit + online + web                                  | Fast feedback for PRs                   |
+# | Push to dev                          | check + unit + online + web                                  | Same checks as PR for merge safety      |
 # | PR to main                           | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
 # | Push to main                         | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
 # | workflow_dispatch (default)          | all tests including E2E                                      | Manual full run including E2E           |
