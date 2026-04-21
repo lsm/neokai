@@ -3,6 +3,8 @@ import { lazy, Suspense } from 'preact/compat';
 import type { Space } from '@neokai/shared';
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@neokai/ui';
 import { spaceStore } from '../../lib/space-store';
+import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
+import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
 
 const SpaceAgentList = lazy(() =>
@@ -51,7 +53,8 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 		spaceStore.ensureConfigData().catch(() => {});
 		spaceStore.ensureNodeExecutions().catch(() => {});
 	}, [space.id]);
-	const [activeTab, setActiveTab] = useState<ConfigureTab>('agents');
+	const activeTab = currentSpaceConfigureTabSignal.value;
+	const spaceId = currentSpaceIdSignal.value ?? '';
 	/** null = list view; 'new' = create editor; <id> = edit editor */
 	const [workflowEditId, setWorkflowEditId] = useState<string | null>(null);
 
@@ -80,7 +83,9 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 				{!showWorkflowEditor && (
 					<TabGroup
 						selectedIndex={selectedIndex}
-						onChange={(index: number) => setActiveTab(CONFIGURE_TABS[index]?.id ?? 'agents')}
+						onChange={(index: number) =>
+							navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'agents')
+						}
 					>
 						<TabList
 							class="flex items-center gap-6 border-b border-dark-700 px-6"

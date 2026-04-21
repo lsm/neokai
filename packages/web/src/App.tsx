@@ -21,6 +21,9 @@ import {
 	currentSpaceSessionIdSignal,
 	currentSpaceTaskIdSignal,
 	currentSpaceViewModeSignal,
+	currentSpaceConfigureTabSignal,
+	currentSpaceTasksFilterTabSignal,
+	currentSpaceTaskViewTabSignal,
 	navSectionSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
@@ -43,6 +46,7 @@ import {
 	navigateToSpaceAgent,
 	navigateToSpaceSession,
 	navigateToSpaceTask,
+	navigateToSettings,
 	createSessionPath,
 	createRoomPath,
 	createRoomAgentPath,
@@ -124,6 +128,9 @@ export function App() {
 			const spaceSessionId = currentSpaceSessionIdSignal.value;
 			const spaceTaskId = currentSpaceTaskIdSignal.value;
 			const spaceViewMode = currentSpaceViewModeSignal.value;
+			const spaceConfigureTab = currentSpaceConfigureTabSignal.value;
+			const spaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
+			const spaceTaskViewTab = currentSpaceTaskViewTabSignal.value;
 			const navSection = navSectionSignal.value;
 			const currentPath = window.location.pathname;
 			// Detect agent routes: new signal-based detection, with legacy session ID fallback
@@ -139,7 +146,11 @@ export function App() {
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
 				: spaceTaskId && spaceId
-					? createSpaceTaskPath(spaceId, spaceTaskId)
+					? createSpaceTaskPath(
+							spaceId,
+							spaceTaskId,
+							spaceTaskViewTab !== 'thread' ? spaceTaskViewTab : undefined
+						)
 					: isSpaceAgentRoute
 						? createSpaceAgentPath(spaceId)
 						: spaceSessionId && spaceId
@@ -147,9 +158,15 @@ export function App() {
 							: spaceId && spaceViewMode === 'sessions'
 								? createSpaceSessionsPath(spaceId)
 								: spaceId && spaceViewMode === 'tasks'
-									? createSpaceTasksPath(spaceId)
+									? createSpaceTasksPath(
+											spaceId,
+											spaceTasksFilterTab !== 'active' ? spaceTasksFilterTab : undefined
+										)
 									: spaceId && spaceViewMode === 'configure'
-										? createSpaceConfigurePath(spaceId)
+										? createSpaceConfigurePath(
+												spaceId,
+												spaceConfigureTab !== 'agents' ? spaceConfigureTab : undefined
+											)
 										: spaceId
 											? createSpacePath(spaceId)
 											: roomTaskId && roomId
@@ -166,7 +183,9 @@ export function App() {
 																	? '/spaces'
 																	: navSection === 'chats'
 																		? '/sessions'
-																		: '/';
+																		: navSection === 'settings'
+																			? '/settings'
+																			: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
@@ -174,7 +193,7 @@ export function App() {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
 				} else if (spaceTaskId && spaceId) {
-					navigateToSpaceTask(spaceId, spaceTaskId, true);
+					navigateToSpaceTask(spaceId, spaceTaskId, undefined, true);
 				} else if (isSpaceAgentRoute) {
 					navigateToSpaceAgent(spaceId, true);
 				} else if (spaceSessionId && spaceId) {
@@ -182,9 +201,9 @@ export function App() {
 				} else if (spaceId && spaceViewMode === 'sessions') {
 					navigateToSpaceSessions(spaceId, true);
 				} else if (spaceId && spaceViewMode === 'tasks') {
-					navigateToSpaceTasks(spaceId, true);
+					navigateToSpaceTasks(spaceId, undefined, true);
 				} else if (spaceId && spaceViewMode === 'configure') {
-					navigateToSpaceConfigure(spaceId, true);
+					navigateToSpaceConfigure(spaceId, undefined, true);
 				} else if (spaceId) {
 					navigateToSpace(spaceId, true);
 				} else if (roomTaskId && roomId) {
@@ -201,6 +220,8 @@ export function App() {
 					navigateToSpacesPage(true);
 				} else if (navSection === 'chats') {
 					// Already at /sessions or no navigation needed
+				} else if (navSection === 'settings') {
+					navigateToSettings(true);
 				} else {
 					navigateToHome(true);
 				}

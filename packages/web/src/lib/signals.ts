@@ -46,6 +46,18 @@ export const currentSpaceTaskIdSignal = signal<string | null>(null);
 export type SpaceViewMode = 'overview' | 'tasks' | 'sessions' | 'configure';
 export const currentSpaceViewModeSignal = signal<SpaceViewMode>('overview');
 
+// Configure sub-tab (agents | workflows | settings) — driven by URL
+export type SpaceConfigureTab = 'agents' | 'workflows' | 'settings';
+export const currentSpaceConfigureTabSignal = signal<SpaceConfigureTab>('agents');
+
+// Tasks filter tab (action | active | completed | archived) — driven by URL
+export type SpaceTasksFilterTab = 'action' | 'active' | 'completed' | 'archived';
+export const currentSpaceTasksFilterTabSignal = signal<SpaceTasksFilterTab>('active');
+
+// Task detail sub-view (thread | canvas | artifacts) — driven by URL
+export type SpaceTaskViewTab = 'thread' | 'canvas' | 'artifacts';
+export const currentSpaceTaskViewTabSignal = signal<SpaceTaskViewTab>('thread');
+
 // Tasks-view pre-filter, used by callers like the SpaceOverview awaiting-approval
 // summary to deep-link into a filtered tasks list (e.g. "completion-action pauses
 // only"). Set on navigation; SpaceTasks consumes it and reverts to null on the
