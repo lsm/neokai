@@ -10,19 +10,31 @@ import { describe, it, expect } from 'vitest';
  * and triggering mobile horizontal scrolling.
  */
 
+import { vi } from 'vitest';
 import { render } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 import { SubagentBlock } from '../SubagentBlock';
 import { SlashCommandOutput } from '../SlashCommandOutput';
 
+// Mock MarkdownRenderer so the .prose container renders synchronously.
+// SyntheticMessageBlock text blocks route through MarkdownRenderer; the .prose
+// wrapper div is always present in JSX (sync), providing overflow-wrap via CSS.
+vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
+	default: ({ content, class: className }: { content: string; class?: string }) => (
+		<div class={`prose ${className || ''}`}>{content}</div>
+	),
+}));
+
 describe('Overflow Protection', () => {
 	describe('SyntheticMessageBlock', () => {
-		it('should apply break-words to text content', () => {
+		it('should render text content through MarkdownRenderer (prose class provides overflow protection)', () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Test text content" timestamp={Date.now()} />
 			);
-			const textDiv = container.querySelector('.whitespace-pre-wrap');
-			expect(textDiv?.className).toContain('break-words');
+			// Text blocks are now rendered via MarkdownRenderer which applies the .prose
+			// CSS class — that class sets overflow-wrap: break-word via stylesheet.
+			const proseEl = container.querySelector('.prose');
+			expect(proseEl).toBeTruthy();
 		});
 
 		it('should apply overflow-x-auto to tool_use JSON blocks', () => {
@@ -156,15 +168,16 @@ describe('Overflow Protection', () => {
 	});
 
 	describe('Long content handling', () => {
-		it('should contain very long text without overflow', () => {
+		it('should render very long text inside a MarkdownRenderer (prose handles overflow)', () => {
 			const longText = 'VeryLongWordWithNoBreaks'.repeat(100);
 			const { container } = render(
 				<SyntheticMessageBlock content={longText} timestamp={Date.now()} />
 			);
 
-			// The text container should have break-words class
-			const textDiv = container.querySelector('.break-words');
-			expect(textDiv).toBeTruthy();
+			// Text blocks are rendered via MarkdownRenderer which uses the .prose CSS class.
+			// That class applies overflow-wrap: break-word so long unbreakable strings don't overflow.
+			const proseEl = container.querySelector('.prose');
+			expect(proseEl).toBeTruthy();
 		});
 
 		it('should contain very long JSON without overflow', () => {
@@ -187,14 +200,15 @@ describe('Overflow Protection', () => {
 			expect(scrollableDiv).toBeTruthy();
 		});
 
-		it('should contain long URLs and file paths', () => {
+		it('should render long URLs and file paths inside a MarkdownRenderer (prose handles overflow)', () => {
 			const longPath = '/very/long/file/path/that/goes/on/and/on/'.repeat(20);
 			const { container } = render(
 				<SyntheticMessageBlock content={longPath} timestamp={Date.now()} />
 			);
 
-			const textDiv = container.querySelector('.break-words');
-			expect(textDiv).toBeTruthy();
+			// Text blocks are rendered via MarkdownRenderer; .prose CSS handles word-break.
+			const proseEl = container.querySelector('.prose');
+			expect(proseEl).toBeTruthy();
 		});
 	});
 });
