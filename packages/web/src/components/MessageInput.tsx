@@ -70,7 +70,7 @@ interface MessageInputProps {
 		content: string,
 		images?: MessageImage[],
 		deliveryMode?: MessageDeliveryMode
-	) => Promise<void>;
+	) => Promise<void | boolean>;
 	disabled?: boolean;
 	autoScroll?: boolean;
 	onAutoScrollChange?: (autoScroll: boolean) => void;
@@ -336,12 +336,20 @@ export default function MessageInput({
 			const outgoing = extractOutgoingMessage();
 			if (!outgoing) return;
 
-			// Clear UI
+			// Save content before clearing so we can restore it if the send fails.
+			const savedContent = outgoing.content;
+
+			// Clear UI optimistically
 			clearDraft();
 			clearAttachments();
 
-			// Send message with images
-			await onSend(outgoing.content, outgoing.images, deliveryMode);
+			// Send message with images; a boolean false return signals failure
+			const result = await onSend(savedContent, outgoing.images, deliveryMode);
+			if (result === false) {
+				// Restore the draft so the user doesn't lose their message
+				setContent(savedContent);
+				return;
+			}
 			if (
 				agentWorking ||
 				deliveryMode === 'defer' ||
@@ -356,6 +364,7 @@ export default function MessageInput({
 			extractOutgoingMessage,
 			clearDraft,
 			clearAttachments,
+			setContent,
 			onSend,
 			agentWorking,
 			queuedForCurrentTurn.length,

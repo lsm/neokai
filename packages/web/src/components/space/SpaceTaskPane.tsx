@@ -477,6 +477,7 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 								hasTaskAgentSession={!!agentSessionId}
 								canSend={canSendThreadMessage}
 								isSending={sendingThread}
+								isProcessing={isAgentActive}
 								errorMessage={threadSendError}
 								onSend={sendThreadMessage}
 							/>

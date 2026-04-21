@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
+import type { ChatComposerProps } from '../../ChatComposer';
 
 // Mock useModelSwitcher — avoids real WebSocket/RPC calls in unit tests
 vi.mock('../../../hooks', () => ({
@@ -17,9 +17,9 @@ vi.mock('../../../hooks', () => ({
 // Mock ChatComposer — it depends on MessageInput, SessionStatusBar, and other
 // components that require WebSocket connections and complex browser APIs.
 // Capture the props passed to it so tests can inspect them.
-let lastChatComposerProps: Record<string, unknown> = {};
+let lastChatComposerProps: ChatComposerProps | null = null;
 vi.mock('../../ChatComposer', () => ({
-	ChatComposer: (props: Record<string, unknown>) => {
+	ChatComposer: (props: ChatComposerProps) => {
 		lastChatComposerProps = props;
 		return (
 			<div
@@ -48,6 +48,7 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 			hasTaskAgentSession={true}
 			canSend={true}
 			isSending={false}
+			isProcessing={false}
 			errorMessage={null}
 			onSend={onSend}
 			{...overrides}
@@ -59,7 +60,7 @@ function renderComposer(overrides: Partial<Parameters<typeof TaskSessionChatComp
 describe('TaskSessionChatComposer', () => {
 	beforeEach(() => {
 		cleanup();
-		lastChatComposerProps = {};
+		lastChatComposerProps = null;
 	});
 
 	afterEach(() => {
@@ -78,46 +79,51 @@ describe('TaskSessionChatComposer', () => {
 
 	it('passes sessionId to ChatComposer', () => {
 		renderComposer({ sessionId: 'my-session' });
-		expect(lastChatComposerProps.sessionId).toBe('my-session');
+		expect(lastChatComposerProps?.sessionId).toBe('my-session');
 	});
 
 	it('passes agentMentionCandidates to ChatComposer', () => {
 		renderComposer();
-		expect(lastChatComposerProps.agentMentionCandidates).toEqual(mentionCandidates);
+		expect(lastChatComposerProps?.agentMentionCandidates).toEqual(mentionCandidates);
 	});
 
 	it('passes errorMessage to ChatComposer when provided', () => {
 		renderComposer({ errorMessage: 'Something went wrong' });
-		expect(lastChatComposerProps.errorMessage).toBe('Something went wrong');
+		expect(lastChatComposerProps?.errorMessage).toBe('Something went wrong');
 	});
 
 	it('passes null errorMessage to ChatComposer when not provided', () => {
 		renderComposer({ errorMessage: null });
-		expect(lastChatComposerProps.errorMessage).toBeNull();
+		expect(lastChatComposerProps?.errorMessage).toBeNull();
 	});
 
 	it('disables input when canSend is false', () => {
 		renderComposer({ canSend: false, isSending: false });
-		expect(lastChatComposerProps.isWaitingForInput).toBe(true);
+		expect(lastChatComposerProps?.isWaitingForInput).toBe(true);
 	});
 
 	it('disables input when isSending is true', () => {
 		renderComposer({ canSend: true, isSending: true });
-		expect(lastChatComposerProps.isWaitingForInput).toBe(true);
+		expect(lastChatComposerProps?.isWaitingForInput).toBe(true);
 	});
 
 	it('enables input when canSend is true and not sending', () => {
 		renderComposer({ canSend: true, isSending: false });
-		expect(lastChatComposerProps.isWaitingForInput).toBe(false);
+		expect(lastChatComposerProps?.isWaitingForInput).toBe(false);
 	});
 
 	it('uses task agent session placeholder when hasTaskAgentSession is true', () => {
 		renderComposer({ hasTaskAgentSession: true });
-		expect(lastChatComposerProps.inputPlaceholder).toBe('Message task agent...');
+		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message task agent...');
 	});
 
 	it('uses auto-start placeholder when hasTaskAgentSession is false', () => {
 		renderComposer({ hasTaskAgentSession: false });
-		expect(lastChatComposerProps.inputPlaceholder).toBe('Message task agent (auto-start)...');
+		expect(lastChatComposerProps?.inputPlaceholder).toBe('Message task agent (auto-start)...');
+	});
+
+	it('forwards isProcessing to ChatComposer', () => {
+		renderComposer({ isProcessing: true });
+		expect(lastChatComposerProps?.isProcessing).toBe(true);
 	});
 });

@@ -12,7 +12,7 @@ import SessionStatusBar from './SessionStatusBar.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 
-interface ChatComposerProps {
+export interface ChatComposerProps {
 	sessionId: string;
 	readonly: boolean;
 	sessionStatus?: string;
@@ -44,7 +44,7 @@ interface ChatComposerProps {
 		content: string,
 		images?: MessageImage[],
 		deliveryMode?: MessageDeliveryMode
-	) => Promise<void>;
+	) => Promise<void | boolean>;
 	onOpenTools: () => void;
 	onEnterRewindMode: () => void;
 	onExitRewindMode: () => void;

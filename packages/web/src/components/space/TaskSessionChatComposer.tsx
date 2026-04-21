@@ -8,6 +8,7 @@ interface TaskSessionChatComposerProps {
 	hasTaskAgentSession: boolean;
 	canSend: boolean;
 	isSending: boolean;
+	isProcessing: boolean;
 	errorMessage?: string | null;
 	onSend: (message: string) => Promise<boolean>;
 }
@@ -18,6 +19,7 @@ export function TaskSessionChatComposer({
 	hasTaskAgentSession,
 	canSend,
 	isSending,
+	isProcessing,
 	errorMessage,
 	onSend,
 }: TaskSessionChatComposerProps) {
@@ -30,12 +32,13 @@ export function TaskSessionChatComposer({
 		switchModel,
 	} = useModelSwitcher(sessionId);
 
+	// Return the boolean so MessageInput can restore the draft when sending fails
 	const handleSend = async (
 		content: string,
 		_images?: MessageImage[],
 		_deliveryMode?: MessageDeliveryMode
-	): Promise<void> => {
-		await onSend(content);
+	): Promise<boolean> => {
+		return onSend(content);
 	};
 
 	return (
@@ -43,7 +46,7 @@ export function TaskSessionChatComposer({
 			<ChatComposer
 				sessionId={sessionId}
 				readonly={false}
-				isProcessing={false}
+				isProcessing={isProcessing}
 				features={{
 					coordinator: false,
 					worktree: false,
