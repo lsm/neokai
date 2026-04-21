@@ -8,136 +8,59 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
-	ReportResultSchema,
+	ApproveTaskSchema,
+	SubmitForApprovalSchema,
 	RequestHumanInputSchema,
-	TaskResultStatusSchema,
 	TASK_AGENT_TOOL_SCHEMAS,
 	ListGroupMembersSchema,
 } from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
 
 // ---------------------------------------------------------------------------
-// TaskResultStatusSchema
+// ApproveTaskSchema
 // ---------------------------------------------------------------------------
 
-describe('TaskResultStatusSchema', () => {
-	test('accepts done', () => {
-		const result = TaskResultStatusSchema.safeParse('done');
+describe('ApproveTaskSchema', () => {
+	test('accepts empty object', () => {
+		const result = ApproveTaskSchema.safeParse({});
 		expect(result.success).toBe(true);
 	});
 
-	test('accepts needs_attention', () => {
-		const result = TaskResultStatusSchema.safeParse('blocked');
-		expect(result.success).toBe(true);
-	});
-
-	test('accepts cancelled', () => {
-		const result = TaskResultStatusSchema.safeParse('cancelled');
-		expect(result.success).toBe(true);
-	});
-
-	test('rejects unknown status', () => {
-		const result = TaskResultStatusSchema.safeParse('failed');
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects empty string', () => {
-		const result = TaskResultStatusSchema.safeParse('');
+	test('rejects extra fields (strict schema)', () => {
+		const result = ApproveTaskSchema.safeParse({ reason: 'done' });
 		expect(result.success).toBe(false);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// report_result (post-Stage-2: result-only; terminal status decided by runtime)
+// SubmitForApprovalSchema
 // ---------------------------------------------------------------------------
 
-describe('ReportResultSchema', () => {
-	test('accepts summary-only payload', () => {
-		const result = ReportResultSchema.safeParse({ summary: 'Task complete.' });
+describe('SubmitForApprovalSchema', () => {
+	test('accepts empty object (reason is optional)', () => {
+		const result = SubmitForApprovalSchema.safeParse({});
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.summary).toBe('Task complete.');
-			expect(result.data.evidence).toBeUndefined();
+			expect(result.data.reason).toBeUndefined();
 		}
 	});
 
-	test('accepts summary + evidence with the known fields', () => {
-		const result = ReportResultSchema.safeParse({
-			summary: 'Shipped PR.',
-			evidence: {
-				prUrl: 'https://github.com/o/r/pull/1',
-				commitSha: 'abc123',
-				testOutput: 'ok (12 tests)',
-			},
+	test('accepts reason string', () => {
+		const result = SubmitForApprovalSchema.safeParse({
+			reason: 'Risky change, needs human review',
 		});
 		expect(result.success).toBe(true);
 		if (result.success) {
-			expect(result.data.evidence?.prUrl).toBe('https://github.com/o/r/pull/1');
-			expect(result.data.evidence?.commitSha).toBe('abc123');
-			expect(result.data.evidence?.testOutput).toBe('ok (12 tests)');
+			expect(result.data.reason).toBe('Risky change, needs human review');
 		}
 	});
 
-	test('accepts evidence with extra fields (passthrough)', () => {
-		// Evidence is defined with `.passthrough()` so agents can attach domain-
-		// specific keys without needing the schema updated each time.
-		const result = ReportResultSchema.safeParse({
-			summary: 'Done.',
-			evidence: {
-				prUrl: 'https://github.com/o/r/pull/1',
-				deployUrl: 'https://staging.example.com',
-			},
-		});
-		expect(result.success).toBe(true);
-		if (result.success) {
-			expect(result.data.evidence?.prUrl).toBe('https://github.com/o/r/pull/1');
-			// Passthrough keeps the extra key reachable on the parsed value
-			expect((result.data.evidence as Record<string, unknown> | undefined)?.deployUrl).toBe(
-				'https://staging.example.com'
-			);
-		}
-	});
-
-	test('rejects payload carrying a `status` field (strict mode)', () => {
-		// Stage-2 invariant: agents can no longer self-certify terminal status.
-		// Passing `status` must be a validation error, not silently accepted.
-		const result = ReportResultSchema.safeParse({ status: 'done', summary: 'x' });
-		expect(result.success).toBe(false);
-		if (!result.success) {
-			// The error should mention the unrecognized key to give the caller a
-			// useful nudge toward the new shape.
-			const joined = result.error.issues.map((i) => i.message).join(' | ');
-			expect(joined.toLowerCase()).toContain('unrecognized');
-		}
-	});
-
-	test('rejects payload carrying an `error` field (strict mode)', () => {
-		const result = ReportResultSchema.safeParse({
-			summary: 'x',
-			error: 'something',
-		});
+	test('rejects non-string reason', () => {
+		const result = SubmitForApprovalSchema.safeParse({ reason: 42 });
 		expect(result.success).toBe(false);
 	});
 
-	test('rejects missing summary', () => {
-		const result = ReportResultSchema.safeParse({ evidence: { prUrl: 'x' } });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects empty object', () => {
-		const result = ReportResultSchema.safeParse({});
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects non-string summary', () => {
-		const result = ReportResultSchema.safeParse({ summary: 99 });
-		expect(result.success).toBe(false);
-	});
-
-	test('rejects evidence with non-string prUrl', () => {
-		const result = ReportResultSchema.safeParse({
-			summary: 'x',
-			evidence: { prUrl: 123 },
-		});
+	test('rejects extra fields (strict schema)', () => {
+		const result = SubmitForApprovalSchema.safeParse({ reason: 'ok', extra: 'bad' });
 		expect(result.success).toBe(false);
 	});
 });
@@ -193,14 +116,13 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 5 tool schemas', () => {
+	test('contains all 4 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
-		expect(keys).toContain('report_result');
 		expect(keys).toContain('approve_task');
 		expect(keys).toContain('submit_for_approval');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toHaveLength(5);
+		expect(keys).toHaveLength(4);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {
@@ -209,8 +131,9 @@ describe('TASK_AGENT_TOOL_SCHEMAS', () => {
 		}
 	});
 
-	test('does not contain old orchestration tools', () => {
+	test('does not contain removed tools', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
+		expect(keys).not.toContain('report_result');
 		expect(keys).not.toContain('spawn_node_agent');
 		expect(keys).not.toContain('check_node_status');
 		expect(keys).not.toContain('advance_workflow');

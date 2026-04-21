@@ -1,8 +1,7 @@
 /**
- * End-node tool handlers (Design v2 — Task #39).
+ * End-node tool handlers.
  *
- * Factory for the three "terminal" MCP tool handlers exposed to end-node agents:
- *   - report_result       — APPEND-ONLY audit. Does NOT mutate task state.
+ * Factory for the two "terminal" MCP tool handlers exposed to end-node agents:
  *   - approve_task        — Agent self-close. Gated by space.autonomyLevel >=
  *                           workflow.completionAutonomyLevel.
  *   - submit_for_approval — Request human sign-off. Always available.
@@ -13,29 +12,25 @@
  * manager focused on orchestration.
  *
  * Contract notes:
- *   - All three handlers return a `ToolResult` (never throw).
- *   - `onReportResult` never touches `reportedStatus`; splitting audit from
- *     closure is the whole point of the refactor.
+ *   - Both handlers return a `ToolResult` (never throw).
  *   - `onApproveTask` re-checks autonomy at call time as defense-in-depth;
  *     tool registration already gates the surface, but a racing autonomy-level
  *     downgrade between registration and invocation would otherwise slip
  *     through.
  *   - `onSubmitForApproval` sets `status='review'` plus pending-completion
  *     fields so the UI banner can route a human to approve/reject.
+ *
+ * Note: The `report_result` (append-only audit) handler was removed. Use
+ * `save_artifact({ type: 'result', append: true, ... })` instead.
  */
 
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceTaskReportResultRepository } from '../../../storage/repositories/space-task-report-result-repository';
 import type { SpaceManager } from '../managers/space-manager';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SpaceTask, SpaceWorkflow } from '@neokai/shared';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
-import type {
-	ApproveTaskInput,
-	ReportResultInput,
-	SubmitForApprovalInput,
-} from './task-agent-tool-schemas';
+import type { ApproveTaskInput, SubmitForApprovalInput } from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 
 const log = new Logger('end-node-handlers');
@@ -52,14 +47,12 @@ export interface EndNodeHandlerDeps {
 	spaceId: string;
 	/** Workflow the task was executed under. Needed for completionAutonomyLevel. */
 	workflow: SpaceWorkflow | null;
-	/** Workflow node ID of the calling agent — stored for audit + pending fields. */
+	/** Workflow node ID of the calling agent — stored for pending fields. */
 	workflowNodeId: string;
-	/** Agent name calling the tool — written to the audit log. */
+	/** Agent name calling the tool — for logging. */
 	agentName: string;
 	/** Task repository. */
 	taskRepo: SpaceTaskRepository;
-	/** Append-only report result repository (used by report_result). */
-	taskReportResultRepo: SpaceTaskReportResultRepository;
 	/** Space manager — used to look up current autonomy level for approve_task. */
 	spaceManager: Pick<SpaceManager, 'getSpace'>;
 	/** Optional hub for emitting `space.task.updated` events after state changes. */
@@ -67,28 +60,17 @@ export interface EndNodeHandlerDeps {
 }
 
 export interface EndNodeHandlers {
-	onReportResult: (args: ReportResultInput) => Promise<ToolResult>;
 	onApproveTask: (args: ApproveTaskInput) => Promise<ToolResult>;
 	onSubmitForApproval: (args: SubmitForApprovalInput) => Promise<ToolResult>;
 }
 
 /**
- * Create the three end-node tool handlers bound to a specific task/workflow/
+ * Create the two end-node tool handlers bound to a specific task/workflow/
  * agent context. The returned handlers are pure closures — repeated calls
  * with the same `deps` return independent instances.
  */
 export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers {
-	const {
-		taskId,
-		spaceId,
-		workflow,
-		workflowNodeId,
-		agentName,
-		taskRepo,
-		taskReportResultRepo,
-		spaceManager,
-		daemonHub,
-	} = deps;
+	const { taskId, spaceId, workflow, workflowNodeId, taskRepo, spaceManager, daemonHub } = deps;
 
 	const emitTaskUpdated = (task: SpaceTask): void => {
 		if (!daemonHub) return;
@@ -102,37 +84,6 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
 	};
 
 	return {
-		// -------------------------------------------------------------------
-		// report_result — APPEND-ONLY. Never mutates task state.
-		// -------------------------------------------------------------------
-		onReportResult: async (args: ReportResultInput) => {
-			const task = taskRepo.getTask(taskId);
-			if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
-
-			try {
-				taskReportResultRepo.append({
-					taskId,
-					spaceId,
-					workflowNodeId,
-					agentName,
-					summary: args.summary,
-					evidence: args.evidence ?? null,
-				});
-				return jsonResult({
-					success: true,
-					taskId,
-					summary: args.summary,
-					message:
-						'Result recorded to audit log. This does NOT close the task — call approve_task (if available) or submit_for_approval to finalize.',
-				});
-			} catch (err) {
-				return jsonResult({
-					success: false,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			}
-		},
-
 		// -------------------------------------------------------------------
 		// approve_task — self-close. Re-checks autonomy at call time.
 		// -------------------------------------------------------------------

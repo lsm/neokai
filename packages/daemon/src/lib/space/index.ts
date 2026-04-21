@@ -92,14 +92,14 @@ export type {
 
 export {
 	TASK_AGENT_TOOL_SCHEMAS,
-	ReportResultSchema,
 	RequestHumanInputSchema,
-	TaskResultStatusSchema,
+	ApproveTaskSchema,
+	SubmitForApprovalSchema,
 } from './tools/task-agent-tool-schemas';
 export type {
-	ReportResultInput,
 	RequestHumanInputInput,
-	TaskResultStatus,
+	ApproveTaskInput,
+	SubmitForApprovalInput,
 	TaskAgentToolName,
 } from './tools/task-agent-tool-schemas';
 
