@@ -127,15 +127,6 @@ sync-sdk-types:
 release: compile-all package-npm
 	@echo "Release artifacts ready in dist/npm/"
 
-# Prepare release sync branch for protected dev/main workflow
-# Usage: make release-prepare VERSION=0.8.0
-release-prepare:
-	@if [ -z "$(VERSION)" ]; then \
-		echo "Usage: make release-prepare VERSION=0.8.0"; \
-		exit 1; \
-	fi
-	@./scripts/release-prepare.sh --version $(VERSION)
-
 # Check for outdated dependencies across all workspace packages
 outdated:
 	@echo "📦 Checking for outdated dependencies..."

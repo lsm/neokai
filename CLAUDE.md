@@ -384,8 +384,7 @@ The Mission System (Goal V2) extends the room's goal tracking with structured, a
 
 ## Branching Strategy & CI
 
-- **`dev`** (default): Active development. PRs target `dev`. E2E tests run after merge.
-- **`main`**: Production-ready. Only accepts PRs from `dev` (enforced by CI). Full test suite on PR.
+- **`dev`** (default): Active development. PRs target `dev`. Releases go directly from `dev` via version tags. E2E tests run after merge.
 - Feature branches are created from `dev`.
 
 ### Credential-Dependent Online Tests — Hard Fail Rule
@@ -402,8 +401,8 @@ This rule ensures CI always verifies that external API credentials are properly 
 | Event | Tests Run |
 |-------|-----------|
 | PR → `dev` | Lint, type check, unit tests, integration tests (fast) |
-| Merge to `dev` | All tests including E2E |
-| PR → `main` | All tests including E2E |
+| Merge to `dev` | Lint, type check, unit tests, integration tests |
+| `workflow_dispatch` | All tests including E2E |
 
 ## Commit Convention
 

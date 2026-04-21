@@ -68,9 +68,9 @@ kai [path] [options]
 This project uses a `dev` branch for active development. See [CONTRIBUTING.md](CONTRIBUTING.md) for details on the branching strategy and contribution guidelines.
 
 Quick overview:
-- All feature PRs should target the `dev` branch for faster CI feedback (E2E tests skipped)
-- E2E tests run automatically when changes are merged to `dev`
-- PRs from `dev` to `main` run full test suite for production deployment
+- All feature PRs should target the `dev` branch
+- Releases go directly from `dev` via version tags
+- E2E tests run on-demand via `workflow_dispatch`
 
 ## License
 

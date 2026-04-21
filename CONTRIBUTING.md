@@ -11,20 +11,16 @@ Thank you for your interest in contributing to NeoKai! This document provides gu
 
 ## Branching Strategy
 
-This project uses a two-branch workflow to optimize development speed while maintaining quality:
+This project uses `dev` as the sole integration and release branch:
 
 ### Branches
 
-- **`dev`** (default branch) - Active development branch
+- **`dev`** (default branch) - Active development and release branch
   - All feature branches should target `dev`
-  - PRs to `dev` run fast checks only (lint, type check, unit tests, integration tests)
-  - E2E tests run automatically **after** merge to `dev`
-  - Provides fast feedback loops for rapid iteration
-
-- **`main`** - Production-ready code
-  - Only accepts PRs from `dev` branch
-  - Full test suite runs for PRs to `main` (including E2E tests)
-  - Represents stable, release-ready code
+  - PRs to `dev` run lint, type check, unit tests, and integration tests
+  - Push to `dev` triggers the full CI gate (including web tests, CLI tests, build)
+  - Releases go directly from `dev` via version tags
+  - E2E tests run on-demand via `workflow_dispatch`
 
 ### Workflow
 
@@ -39,50 +35,21 @@ This project uses a two-branch workflow to optimize development speed while main
    ```
 
 2. **After PR is merged to `dev`**
-   - E2E tests run automatically
-   - Monitor CI to ensure all tests pass
-   - Dev branch remains stable for other contributors
+   - Monitor CI to ensure all checks pass
+   - Dev branch is the source of truth
 
-3. **Releasing to `main`**
-   - Use the protected-branch release flow in [`docs/release-process.md`](docs/release-process.md)
-   - Recommended prep command: `./scripts/release-prepare.sh --version <x.y.z>`
-   - Create PR from `dev` to `main`
-   - Full test suite runs (all tests including E2E)
-   - After merge, production deployment can proceed
+3. **Releasing**
+   - Bump version and create a PR to `dev` (see [`docs/release-process.md`](docs/release-process.md))
+   - Tag the merge commit: `git tag vX.Y.Z && git push origin vX.Y.Z`
+   - The release pipeline builds, publishes to npm, and creates a GitHub Release
 
 ### CI/CD Pipeline
 
 | Event | Target Branch | Tests Run |
 |-------|---------------|-----------|
-| PR → `dev` | `dev` | Lint, type check, unit tests, integration tests (⚡ **fast**) |
-| Merge to `dev` | `dev` | **All** tests including E2E (📊 comprehensive) |
-| PR → `main` | `main` | **All** tests including E2E (📊 comprehensive) |
-| Merge to `main` | `main` | **All** tests including E2E (📊 comprehensive) |
-
-**Why this approach?**
-- **Speed**: Skip expensive E2E tests during active feature development
-- **Quality**: Full validation before production deployment
-- **Stability**: Dev branch validated with E2E after merge
-
-### 🔒 Merge Enforcement
-
-To maintain code quality and workflow integrity, only the `dev` branch can merge into `main`. This protection is enforced automatically by CI - no manual approval needed.
-
-**How it works:**
-- The `enforce-merge-policy` CI job runs on every PR to `main`
-- It validates that the source branch is `dev` and nothing else
-- Attempting to create a PR from any other branch to `main` will fail immediately
-
-**What happens on bypass attempt:**
-- The CI check will fail with a clear error message: `❌ Only 'dev' branch can merge into 'main'. Current source: <branch>`
-- The PR cannot be merged until the source branch is changed to `dev`
-- This prevents accidental or intentional bypass of the intended workflow
-
-**Proper workflow reminder:**
-1. Feature branches → `dev` (fast feedback, quick iteration)
-2. After `dev` is validated with E2E tests → create PR from `dev` to `main`
-
-This ensures all code going to production has been properly validated through the dev branch.
+| PR → `dev` | `dev` | Lint, type check, unit tests, integration tests |
+| Push to `dev` | `dev` | Lint, type check, unit tests, integration tests, web tests, CLI tests, build |
+| `workflow_dispatch` | any | **All** tests including E2E |
 ## Development Guidelines
 
 ### Code Style
@@ -135,7 +102,7 @@ feat: add model switching support in coordinator mode
    - Are there any breaking changes?
 
 4. **Wait for CI checks to pass**
-   - PRs to dev will skip E2E tests (faster feedback)
+   - PRs to dev run lint, type check, unit tests, and integration tests
    - All other checks must pass
 
 5. **Request review** from maintainers
