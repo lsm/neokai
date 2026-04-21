@@ -407,6 +407,44 @@ describe('SpaceOverview', () => {
 		});
 	});
 
+	describe('Stat Card Navigation', () => {
+		beforeEach(() => {
+			navigateToSpaceTasksMock.mockClear();
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'open'),
+				makeTask('t2', 'in_progress'),
+				makeTask('t3', 'review'),
+				makeTask('t4', 'done'),
+			];
+		});
+
+		it('clicking Active stat card navigates to tasks with active tab', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByText('Active').closest('button')!);
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'active');
+		});
+
+		it('clicking Review stat card navigates to tasks with action tab', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByText('Review').closest('button')!);
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
+		});
+
+		it('clicking Done stat card navigates to tasks with completed tab', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByText('Done').closest('button')!);
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'completed');
+		});
+
+		it('stat cards have cursor-pointer class', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('Active').closest('button')!.className).toContain('cursor-pointer');
+			expect(getByText('Review').closest('button')!.className).toContain('cursor-pointer');
+			expect(getByText('Done').closest('button')!.className).toContain('cursor-pointer');
+		});
+	});
+
 	describe('Awaiting Approval Summary', () => {
 		beforeEach(() => {
 			navigateToSpaceTasksMock.mockClear();

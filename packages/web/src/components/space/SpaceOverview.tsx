@@ -45,6 +45,7 @@ function StatCard({
 			class={cn(
 				'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all',
 				'bg-dark-850/80 hover:bg-dark-800',
+				onClick ? 'cursor-pointer' : 'cursor-default',
 				color
 			)}
 		>
@@ -400,16 +401,19 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 						label="Active"
 						count={activeTasks.length}
 						color="border-blue-800/30 text-blue-400"
+						onClick={() => navigateToSpaceTasks(spaceId, 'active')}
 					/>
 					<StatCard
 						label="Review"
 						count={reviewTasks.length}
 						color="border-purple-800/30 text-purple-400"
+						onClick={() => navigateToSpaceTasks(spaceId, 'action')}
 					/>
 					<StatCard
 						label="Done"
 						count={doneTasks.length}
 						color="border-green-800/30 text-green-400"
+						onClick={() => navigateToSpaceTasks(spaceId, 'completed')}
 					/>
 				</div>
 
