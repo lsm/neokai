@@ -6,8 +6,6 @@
 # |--------------------------------------|--------------------------------------------------------------|-----------------------------------------|
 # | PR to dev                            | check + unit + online + web                                  | Fast feedback for PRs                   |
 # | Push to dev                          | check + unit + online + web                                  | Same checks as PR for merge safety      |
-# | PR to main                           | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
-# | Push to main                         | check + unit + online + web + CLI + build (no E2E)           | Full gate for main (E2E is manual)      |
 # | workflow_dispatch (default)          | all tests including E2E                                      | Manual full run including E2E           |
 # | workflow_dispatch (run_e2e_only=true) | discover + build + e2e only                                 | Selective E2E on any branch             |
 #
@@ -22,9 +20,9 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [dev]
   pull_request:
-    branches: [main, dev]
+    branches: [dev]
   workflow_dispatch:
     inputs:
       run_e2e_only:
@@ -43,23 +41,8 @@ permissions:
 
 jobs:
   # ============================================
-  # MERGE POLICY ENFORCEMENT
-  # ============================================
-
-  enforce-merge-policy:
-    name: Enforce Merge Policy
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
-
-    steps:
-      - name: Check source branch
-        run: |
-          echo "✅ Merge policy check passed - source: ${{ github.head_ref }}"
-
-  # ============================================
   # CODE QUALITY CHECKS
-  # Run on: PR to dev, PR to main, push to dev, push to main
+  # Run on: PR to dev, push to dev
   # ============================================
 
   check:
@@ -138,7 +121,7 @@ jobs:
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
-  # Run on: PR to dev, PR to main, push to dev, push to main
+  # Run on: PR to dev, push to dev
   # ============================================
 
   test-daemon-online:
@@ -447,7 +430,7 @@ jobs:
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
-  # Run on: PR to dev, PR to main, push to dev, push to main
+  # Run on: PR to dev, push to dev
   # ============================================
 
   test-daemon-shared-unit:
@@ -511,14 +494,14 @@ jobs:
 
   # ============================================
   # WEB TESTS
-  # Run on: PR to dev, PR to main, push to dev, push to main, workflow_dispatch
+  # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    if: (github.event_name == 'pull_request' && (github.base_ref == 'dev' || github.base_ref == 'main') || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v6
@@ -576,14 +559,14 @@ jobs:
 
   # ============================================
   # CLI TESTS
-  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
+  # Run on: push to dev, workflow_dispatch (skip on PR to dev)
   # ============================================
 
   test-cli:
     name: CLI Tests
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
 
     steps:
       - uses: actions/checkout@v6
@@ -625,7 +608,7 @@ jobs:
   # ============================================
   # COVERALLS FINALIZATION
   # Merges all parallel coverage uploads
-  # Run on: PR to dev, PR to main, push to dev, push to main, workflow_dispatch
+  # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 
   coveralls-finalize:
@@ -646,7 +629,7 @@ jobs:
   # ============================================
   # COVERAGE QUALITY GATE
   # Verifies minimum coverage and regression thresholds via Coveralls API.
-  # Run on: PR to dev, PR to main, push to dev, push to main, workflow_dispatch
+  # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 
   coverage-gate:
@@ -732,7 +715,7 @@ jobs:
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
-  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev, push to dev)
+  # Run on: push to dev, workflow_dispatch
   # Waits for test jobs; proceeds if they passed or were skipped.
   # Discover may be skipped (E2E is workflow_dispatch-only); we tolerate that.
   # ============================================
@@ -743,8 +726,7 @@ jobs:
     needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli, discover]
     if: >-
       always() &&
-      (github.event_name == 'pull_request' && github.base_ref == 'main' ||
-       github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/dev' ||
        github.event_name == 'workflow_dispatch') &&
       (github.event.inputs.run_e2e_only == 'true' ||
        (contains(fromJSON('["success", "skipped"]'), needs.discover.result) &&
@@ -1189,7 +1171,6 @@ jobs:
     timeout-minutes: 1
     if: always()
     needs:
-      - enforce-merge-policy
       - check
       - test-daemon-online
       - test-daemon-shared-unit
@@ -1206,49 +1187,43 @@ jobs:
         run: |
           FAILED=0
 
-          # Merge policy check (only for PRs to main)
-          if [[ "${{ needs.enforce-merge-policy.result }}" == "failure" ]]; then
-            echo "❌ Merge policy failed"
-            FAILED=1
-          fi
-
-          # Check job: PR to dev, PR to main, push to dev, push to main
+          # Check job: PR to dev, push to dev
           if [[ "${{ needs.check.result }}" == "failure" ]]; then
             echo "❌ check failed"
             FAILED=1
           fi
 
-          # test-daemon-online: PR to dev, PR to main, push to dev, push to main
+          # test-daemon-online: PR to dev, push to dev
           if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
             echo "❌ test-daemon-online failed"
             FAILED=1
           fi
 
-          # test-daemon-shared-unit: PR to dev, PR to main, push to dev, push to main
+          # test-daemon-shared-unit: PR to dev, push to dev
           if [[ "${{ needs.test-daemon-shared-unit.result }}" == "failure" ]]; then
             echo "❌ test-daemon-shared-unit failed"
             FAILED=1
           fi
 
-          # test-web: PR to dev, PR to main, push to dev, push to main
+          # test-web: PR to dev, push to dev
           if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
             echo "❌ test-web failed"
             FAILED=1
           fi
 
-          # test-cli: PR to main, push to main (skip on PR to dev and push to dev)
+          # test-cli: push to dev, workflow_dispatch
           if [[ "${{ needs.test-cli.result }}" == "failure" ]]; then
             echo "❌ test-cli failed"
             FAILED=1
           fi
 
-          # coverage-gate: PR to dev, PR to main, push to main (skip on push to dev)
+          # coverage-gate: PR to dev, push to dev
           if [[ "${{ needs.coverage-gate.result }}" == "failure" ]]; then
             echo "❌ coverage-gate failed"
             FAILED=1
           fi
 
-          # build: PR to main, push to main, workflow_dispatch (skip on PR to dev, push to dev)
+          # build: push to dev, workflow_dispatch
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
             FAILED=1
@@ -1275,7 +1250,6 @@ jobs:
           if [ $FAILED -eq 1 ]; then
             echo ""
             echo "One or more required jobs failed:"
-            echo "  enforce-merge-policy: ${{ needs.enforce-merge-policy.result }}"
             echo "  check: ${{ needs.check.result }}"
             echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
