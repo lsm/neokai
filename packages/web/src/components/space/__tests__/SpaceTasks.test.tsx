@@ -11,6 +11,57 @@ import type { SpaceTask } from '@neokai/shared';
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockAttentionCount: ReturnType<typeof signal<number>>;
 
+// Bridge pattern: hoisted bridge objects allow mockNavigateToSpaceTasks to update
+// the real Preact signals (which are created after import).
+const { filterTabBridge, filterBridge, idBridge } = vi.hoisted(() => ({
+	filterTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
+	filterBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
+	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
+}));
+
+// Hoisted mock for navigateToSpaceTasks — updates the real signal at call time
+const { mockNavigateToSpaceTasks } = vi.hoisted(() => ({
+	mockNavigateToSpaceTasks: vi.fn((_spaceId: string, tab: string) => {
+		if (filterTabBridge.signal) {
+			filterTabBridge.signal.value = tab;
+		}
+	}),
+}));
+
+// Plain holders for non-reactive signals (only read in useEffect, not render)
+const { mockCurrentSpaceTasksFilterSignal, mockCurrentSpaceIdSignal } = vi.hoisted(() => ({
+	mockCurrentSpaceTasksFilterSignal: { value: null as string | null },
+	mockCurrentSpaceIdSignal: { value: null as string | null },
+}));
+
+// Real Preact signal for the filter tab (read during render — needs reactivity)
+const mockCurrentSpaceTasksFilterTabSignal = signal<string>('active');
+
+// Wire bridge so mockNavigateToSpaceTasks can update the real signal
+filterTabBridge.signal = mockCurrentSpaceTasksFilterTabSignal;
+filterBridge.signal = mockCurrentSpaceTasksFilterSignal;
+idBridge.signal = mockCurrentSpaceIdSignal;
+
+vi.mock('../../../lib/signals', async (importOriginal) => {
+	const actual = await importOriginal();
+	return {
+		...actual,
+		get currentSpaceTasksFilterTabSignal() {
+			return mockCurrentSpaceTasksFilterTabSignal;
+		},
+		get currentSpaceTasksFilterSignal() {
+			return mockCurrentSpaceTasksFilterSignal;
+		},
+		get currentSpaceIdSignal() {
+			return mockCurrentSpaceIdSignal;
+		},
+	};
+});
+
+vi.mock('../../../lib/router', () => ({
+	navigateToSpaceTasks: mockNavigateToSpaceTasks,
+}));
+
 vi.mock('../../../lib/space-store', () => ({
 	get spaceStore() {
 		return { tasks: mockTasks, attentionCount: mockAttentionCount };
@@ -57,6 +108,10 @@ describe('SpaceTasks', () => {
 		cleanup();
 		mockTasks.value = [];
 		mockAttentionCount.value = 0;
+		mockCurrentSpaceTasksFilterTabSignal.value = 'active';
+		mockCurrentSpaceTasksFilterSignal.value = null;
+		mockCurrentSpaceIdSignal.value = null;
+		mockNavigateToSpaceTasks.mockClear();
 	});
 
 	afterEach(() => {

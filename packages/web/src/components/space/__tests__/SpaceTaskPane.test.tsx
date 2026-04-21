@@ -10,23 +10,54 @@ import type {
 	SpaceWorkflowRun,
 } from '@neokai/shared';
 
-const { mockNavigateToSpaceAgent, mockPushOverlayHistory } = vi.hoisted(() => ({
-	mockNavigateToSpaceAgent: vi.fn(),
-	mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
-		mockSpaceOverlaySessionIdSignal.value = sessionId;
-		mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
-	}),
+// Bridge objects: created in vi.hoisted so mock factories can reference them.
+// Real Preact signals are assigned to .signal after module init so that mock
+// functions called at test-runtime can update the reactive signal.
+const {
+	mockSpaceOverlaySessionIdSignal,
+	mockSpaceOverlayAgentNameSignal,
+	viewTabBridge,
+	idBridge,
+} = vi.hoisted(() => ({
+	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
+	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
+	// Bridges to hold real signals for reactive tab/id updates
+	viewTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
+	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
+
+const { mockNavigateToSpaceAgent, mockPushOverlayHistory, mockNavigateToSpaceTask } = vi.hoisted(
+	() => ({
+		mockNavigateToSpaceAgent: vi.fn(),
+		mockPushOverlayHistory: vi.fn((sessionId: string, agentName?: string) => {
+			mockSpaceOverlaySessionIdSignal.value = sessionId;
+			mockSpaceOverlayAgentNameSignal.value = agentName ?? null;
+		}),
+		mockNavigateToSpaceTask: vi.fn((_spaceId: string, _taskId: string, view: string) => {
+			if (viewTabBridge.signal) {
+				viewTabBridge.signal.value = view ?? 'thread';
+			}
+			if (idBridge.signal) {
+				idBridge.signal.value = _spaceId;
+			}
+		}),
+	})
+);
+
+// Real Preact signals — these enable reactivity for values read during render
+const mockCurrentSpaceTaskViewTabSignal = signal<string>('thread');
+const mockCurrentSpaceIdSignal = signal<string | null>(null);
+
+// Wire bridges so mockNavigateToSpaceTask can update the real signals
+viewTabBridge.signal = mockCurrentSpaceTaskViewTabSignal;
+idBridge.signal = mockCurrentSpaceIdSignal;
+
 vi.mock('../../../lib/router', () => ({
 	navigateToSpaceAgent: mockNavigateToSpaceAgent,
 	pushOverlayHistory: mockPushOverlayHistory,
+	navigateToSpaceTask: mockNavigateToSpaceTask,
 }));
 
-// Plain signal-like holders for the overlay signals — hoisted so the mock factory can reference them
-const { mockSpaceOverlaySessionIdSignal, mockSpaceOverlayAgentNameSignal } = vi.hoisted(() => ({
-	mockSpaceOverlaySessionIdSignal: { value: null as string | null },
-	mockSpaceOverlayAgentNameSignal: { value: null as string | null },
-}));
 vi.mock('../../../lib/signals', async (importOriginal) => {
 	const actual = await importOriginal();
 	return {
@@ -36,6 +67,12 @@ vi.mock('../../../lib/signals', async (importOriginal) => {
 		},
 		get spaceOverlayAgentNameSignal() {
 			return mockSpaceOverlayAgentNameSignal;
+		},
+		get currentSpaceTaskViewTabSignal() {
+			return mockCurrentSpaceTaskViewTabSignal;
+		},
+		get currentSpaceIdSignal() {
+			return mockCurrentSpaceIdSignal;
 		},
 	};
 });
@@ -170,10 +207,13 @@ describe('SpaceTaskPane', () => {
 		);
 		mockSendTaskMessage.mockClear();
 		mockNavigateToSpaceAgent.mockClear();
+		mockNavigateToSpaceTask.mockClear();
 		mockSubscribeTaskActivity.mockClear();
 		mockUnsubscribeTaskActivity.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+		mockCurrentSpaceIdSignal.value = null;
 		mockWorkflowCanvasOnNodeClick.mockClear();
 	});
 
@@ -377,8 +417,11 @@ describe('SpaceTaskPane — canvas toggle', () => {
 			makeTask({ status: 'in_progress', taskAgentSessionId: 'session-ensured' })
 		);
 		mockWorkflowCanvasOnNodeClick.mockClear();
+		mockNavigateToSpaceTask.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+		mockCurrentSpaceIdSignal.value = null;
 	});
 
 	afterEach(() => {
@@ -684,6 +727,8 @@ describe('SpaceTaskPane — activity members actions', () => {
 		mockUnsubscribeTaskActivity.mockClear();
 		mockSpaceOverlaySessionIdSignal.value = null;
 		mockSpaceOverlayAgentNameSignal.value = null;
+		mockCurrentSpaceTaskViewTabSignal.value = 'thread';
+		mockCurrentSpaceIdSignal.value = null;
 	});
 
 	afterEach(() => {

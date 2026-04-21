@@ -21,6 +21,43 @@ let mockAgents = signal<SpaceAgent[]>([]);
 
 const mockSelectSpace = vi.fn().mockResolvedValue(undefined);
 
+// Bridge pattern: hoisted bridge so mockNavigateToSpaceConfigure can update
+// the real Preact signal (created after import) for reactivity.
+const { configureTabBridge, idBridge } = vi.hoisted(() => ({
+	configureTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
+	idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
+}));
+
+// Hoisted mock for navigateToSpaceConfigure — updates real signal at call time
+const { mockNavigateToSpaceConfigure } = vi.hoisted(() => ({
+	mockNavigateToSpaceConfigure: vi.fn((_spaceId: string, tab?: string) => {
+		if (configureTabBridge.signal) {
+			configureTabBridge.signal.value = tab ?? 'agents';
+		}
+	}),
+}));
+
+// Real Preact signal for the configure tab (read during render — needs reactivity)
+const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
+const mockCurrentSpaceIdSignal = signal<string | null>(null);
+
+// Wire bridge so mockNavigateToSpaceConfigure can update the real signal
+configureTabBridge.signal = mockCurrentSpaceConfigureTabSignal;
+idBridge.signal = mockCurrentSpaceIdSignal;
+
+vi.mock('../../lib/signals', async (importOriginal) => {
+	const actual = await importOriginal();
+	return {
+		...actual,
+		get currentSpaceConfigureTabSignal() {
+			return mockCurrentSpaceConfigureTabSignal;
+		},
+		get currentSpaceIdSignal() {
+			return mockCurrentSpaceIdSignal;
+		},
+	};
+});
+
 vi.mock('../../components/space/WorkflowList', () => ({
 	WorkflowList: (props: { onCreateWorkflow: () => void; onEditWorkflow: (id: string) => void }) => (
 		<div data-testid="workflow-list">
@@ -103,6 +140,7 @@ vi.mock('../../lib/space-store', () => ({
 vi.mock('../../lib/router', () => ({
 	navigateToSpace: vi.fn(),
 	navigateToSpaceTask: vi.fn(),
+	navigateToSpaceConfigure: mockNavigateToSpaceConfigure,
 	pushOverlayHistory: vi.fn(),
 	closeOverlayHistory: vi.fn(),
 }));
@@ -145,6 +183,9 @@ beforeEach(() => {
 	mockWorkflows = signal([makeWorkflow()]);
 	mockAgents = signal([]);
 	capturedVisualEditorProps = {};
+	configureTabBridge.signal.value = 'agents';
+	idBridge.signal.value = null;
+	mockNavigateToSpaceConfigure.mockClear();
 });
 
 afterEach(() => {
