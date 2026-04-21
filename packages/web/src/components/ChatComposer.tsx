@@ -51,6 +51,8 @@ interface ChatComposerProps {
 	agentMentionCandidates?: Array<{ id: string; name: string }>;
 	/** Override the default placeholder text in the message input */
 	inputPlaceholder?: string;
+	/** Optional inline error message rendered above the status bar (used by task sessions) */
+	errorMessage?: string | null;
 }
 
 export function ChatComposer({
@@ -87,9 +89,17 @@ export function ChatComposer({
 	onExitRewindMode,
 	agentMentionCandidates,
 	inputPlaceholder,
+	errorMessage,
 }: ChatComposerProps) {
 	return (
 		<div class="chat-footer absolute bottom-0 left-0 right-0 z-10 pt-4 bg-transparent">
+			{errorMessage && (
+				<div class="px-3 mb-1">
+					<p class="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+						{errorMessage}
+					</p>
+				</div>
+			)}
 			<SessionStatusBar
 				sessionId={sessionId}
 				isProcessing={isProcessing}

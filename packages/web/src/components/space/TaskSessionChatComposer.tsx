@@ -40,11 +40,6 @@ export function TaskSessionChatComposer({
 
 	return (
 		<div data-testid="task-session-chat-composer">
-			{errorMessage && (
-				<p class="mx-3 mb-1 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
-					{errorMessage}
-				</p>
-			)}
 			<ChatComposer
 				sessionId={sessionId}
 				readonly={false}
@@ -81,6 +76,7 @@ export function TaskSessionChatComposer({
 				inputPlaceholder={
 					hasTaskAgentSession ? 'Message task agent...' : 'Message task agent (auto-start)...'
 				}
+				errorMessage={errorMessage}
 			/>
 		</div>
 	);

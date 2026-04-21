@@ -86,14 +86,14 @@ describe('TaskSessionChatComposer', () => {
 		expect(lastChatComposerProps.agentMentionCandidates).toEqual(mentionCandidates);
 	});
 
-	it('shows error message when errorMessage is provided', () => {
-		const { getByText } = renderComposer({ errorMessage: 'Something went wrong' });
-		expect(getByText('Something went wrong')).toBeTruthy();
+	it('passes errorMessage to ChatComposer when provided', () => {
+		renderComposer({ errorMessage: 'Something went wrong' });
+		expect(lastChatComposerProps.errorMessage).toBe('Something went wrong');
 	});
 
-	it('does not show error banner when errorMessage is null', () => {
-		const { queryByText } = renderComposer({ errorMessage: null });
-		expect(queryByText('Something went wrong')).toBeNull();
+	it('passes null errorMessage to ChatComposer when not provided', () => {
+		renderComposer({ errorMessage: null });
+		expect(lastChatComposerProps.errorMessage).toBeNull();
 	});
 
 	it('disables input when canSend is false', () => {
