@@ -1446,21 +1446,19 @@ export class TaskAgentManager {
 			}
 		}
 
-		// Start streaming query for the sub-session
+		// Start streaming query for the sub-session.
+		//
+		// We intentionally do NOT await sdkSessionId capture on this path.
+		// The belt-and-braces "block until init" guarantee lives in
+		// `eagerlySpawnWorkflowNodeAgents`, which runs at the earliest point
+		// we have enough context to pre-create node-agent sessions. Blocking
+		// here regresses the kickoff path: when `spawnWorkflowNodeAgentForExecution`
+		// is called directly from `processRunTick` (no eager spawn yet), the
+		// caller immediately wants to inject the kickoff user message. A 15s
+		// wait ahead of that injection delays kickoff and — if the SDK init
+		// message is slow (dev-proxy) or never arrives — converts to a hard
+		// failure in the caller's `saveUserMessage` via the foreign-key path.
 		await subSession.startStreamingQuery();
-
-		// Block until the SDK has emitted its `init` message and the resulting
-		// sdkSessionId is persisted. See `spawnTaskAgent` for the full rationale —
-		// without this await the window between session creation and
-		// transcript persistence stays open, and any daemon restart inside it
-		// loses the sub-session's conversation history on rehydrate.
-		try {
-			await subSession.awaitSdkSessionCaptured(15_000);
-		} catch (err) {
-			log.warn(
-				`TaskAgentManager: sdkSessionId capture timed out for sub-session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-			);
-		}
 
 		// Flush any queued messages addressed to this agent name so that the
 		// reopen/startup race doesn't drop Task Agent → node-agent messages.
