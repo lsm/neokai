@@ -388,6 +388,105 @@ describe('Session RPC Handlers', () => {
 
 			expect(emitCallsAfter - emitCallsBefore).toBe(0);
 		});
+
+		it('synchronously attaches space tools before returning for ad-hoc Space sessions', async () => {
+			// Re-register handlers with a mock spaceRuntimeService so the synchronous
+			// attachment path fires. The shared beforeEach registers without one.
+			const attachSpaceToolsToMemberSession = mock(async () => {});
+			const mockSpaceRuntimeService = {
+				attachSpaceToolsToMemberSession,
+			} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service').SpaceRuntimeService;
+
+			const freshMessageHub = createMockMessageHub();
+			setupSessionHandlers(
+				freshMessageHub.hub,
+				sessionManagerData.sessionManager,
+				daemonHubData.daemonHub,
+				roomManager,
+				spaceManager,
+				mockSpaceRuntimeService
+			);
+
+			const handler = freshMessageHub.handlers.get('session.create');
+			expect(handler).toBeDefined();
+
+			const spaceSession = createMockAgentSession({
+				context: { spaceId: 'space-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.createSession.mockResolvedValueOnce('space-session-42');
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(spaceSession.agentSession);
+
+			await handler!({ workspacePath: '/workspace/test', spaceId: 'space-abc' }, {});
+
+			// Attachment must be invoked with the session object before RPC returns.
+			expect(attachSpaceToolsToMemberSession).toHaveBeenCalledTimes(1);
+			const attachArg = (attachSpaceToolsToMemberSession as ReturnType<typeof mock>).mock
+				.calls[0]?.[0] as { context?: { spaceId?: string } } | undefined;
+			expect(attachArg?.context?.spaceId).toBe('space-abc');
+		});
+
+		it('does not attach space tools when session has no spaceId context', async () => {
+			const attachSpaceToolsToMemberSession = mock(async () => {});
+			const mockSpaceRuntimeService = {
+				attachSpaceToolsToMemberSession,
+			} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service').SpaceRuntimeService;
+
+			const freshMessageHub = createMockMessageHub();
+			setupSessionHandlers(
+				freshMessageHub.hub,
+				sessionManagerData.sessionManager,
+				daemonHubData.daemonHub,
+				roomManager,
+				spaceManager,
+				mockSpaceRuntimeService
+			);
+
+			const handler = freshMessageHub.handlers.get('session.create');
+			expect(handler).toBeDefined();
+
+			// No spaceId in context (no overrides)
+			const plainSession = createMockAgentSession();
+			sessionManagerData.mocks.createSession.mockResolvedValueOnce('plain-session');
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(plainSession.agentSession);
+
+			await handler!({ workspacePath: '/workspace/test' }, {});
+
+			expect(attachSpaceToolsToMemberSession).not.toHaveBeenCalled();
+		});
+
+		it('still returns successfully when attachSpaceToolsToMemberSession throws', async () => {
+			const attachSpaceToolsToMemberSession = mock(async () => {
+				throw new Error('attach failed');
+			});
+			const mockSpaceRuntimeService = {
+				attachSpaceToolsToMemberSession,
+			} as unknown as import('../../../../src/lib/space/runtime/space-runtime-service').SpaceRuntimeService;
+
+			const freshMessageHub = createMockMessageHub();
+			setupSessionHandlers(
+				freshMessageHub.hub,
+				sessionManagerData.sessionManager,
+				daemonHubData.daemonHub,
+				roomManager,
+				spaceManager,
+				mockSpaceRuntimeService
+			);
+
+			const handler = freshMessageHub.handlers.get('session.create');
+			const spaceSession = createMockAgentSession({
+				context: { spaceId: 'space-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.createSession.mockResolvedValueOnce('space-session-99');
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(spaceSession.agentSession);
+
+			const result = (await handler!(
+				{ workspacePath: '/workspace/test', spaceId: 'space-abc' },
+				{}
+			)) as { sessionId: string };
+
+			expect(attachSpaceToolsToMemberSession).toHaveBeenCalledTimes(1);
+			expect(result.sessionId).toBe('space-session-99');
+		});
 	});
 
 	describe('session.setWorktreeMode', () => {

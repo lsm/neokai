@@ -191,13 +191,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		return { taskManager, taskRepo };
 	};
 
-	setupSessionHandlers(
-		deps.messageHub,
-		deps.sessionManager,
-		deps.daemonHub,
-		roomManager,
-		deps.spaceManager
-	);
+	// setupSessionHandlers is registered below, after spaceRuntimeService is
+	// constructed, so session.create can synchronously attach space-agent-tools
+	// to ad-hoc Space sessions (avoids a race with query startup).
 	setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -468,6 +464,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		daemonHub: deps.daemonHub,
 		artifactRepo,
 	});
+
+	// Session handlers — registered here (after spaceRuntimeService is built) so
+	// session.create can synchronously call attachSpaceToolsToMemberSession for
+	// ad-hoc Space sessions. Doing this via the daemonHub 'session.created' event
+	// is racy: TypedHub.dispatchLocally does not await async subscribers, so the
+	// query can start (and freeze its MCP config) before the attachment lands.
+	setupSessionHandlers(
+		deps.messageHub,
+		deps.sessionManager,
+		deps.daemonHub,
+		roomManager,
+		deps.spaceManager,
+		spaceRuntimeService
+	);
 
 	// Space task handlers — registered after spaceRuntimeService so the resume
 	// path for pending completion actions can delegate to the runtime.
