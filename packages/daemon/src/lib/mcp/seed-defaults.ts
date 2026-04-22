@@ -25,6 +25,7 @@ export function seedDefaultMcpEntries(db: Database): void {
 			args: ['-y', '@tokenizin/mcp-npx-fetch'],
 			env: {},
 			enabled: true,
+			source: 'builtin',
 		});
 	}
 
@@ -38,6 +39,7 @@ export function seedDefaultMcpEntries(db: Database): void {
 			args: ['chrome-devtools-mcp@latest', '--isolated'],
 			env: {},
 			enabled: false,
+			source: 'builtin',
 		});
 	}
 }

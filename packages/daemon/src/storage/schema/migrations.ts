@@ -442,6 +442,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   columns on `space_tasks`, and the `space_task_report_results` append-only
 	//   audit table used by the new `report_result` tool.
 	runMigration99(db);
+
+	// Migration 100: MCP registry provenance — adds `source` and `source_path`
+	//   columns to `app_mcp_servers`. Backfills existing rows as 'builtin' (for
+	//   seeded names) or 'user' (everything else). Adds a partial unique index
+	//   on `(source_path, name)` WHERE source='imported' so the M2 import service
+	//   can upsert idempotently from `.mcp.json` scans.
+	runMigration100(db);
 }
 
 /**
@@ -6579,4 +6586,70 @@ export function runMigration99(db: BunDatabase): void {
 			}
 		}
 	}
+}
+
+/**
+ * Migration 100: Add `source` and `source_path` columns to `app_mcp_servers`.
+ *
+ * Part of the MCP config unification work (docs/plans/unify-mcp-config-model).
+ * Introduces provenance tracking so the registry can distinguish:
+ *   - `builtin`  — seeded by `seedDefaultMcpEntries` on daemon startup.
+ *   - `user`     — created via the MCP Servers UI / `mcp.registry.create` RPC.
+ *   - `imported` — discovered by `McpImportService` scanning workspace and
+ *                  user-level `.mcp.json` files. `source_path` records the
+ *                  absolute path of the originating file so the import service
+ *                  can upsert/prune rows keyed by `(source_path, name)`.
+ *
+ * Backfill policy:
+ *   - Rows matching a known seed name are tagged `source='builtin'`. The seed
+ *     list is inlined to avoid rewriting history as new builtins are added —
+ *     subsequent seed runs upsert them with `source='builtin'`.
+ *   - All remaining rows are tagged `source='user'`, matching the M2 scope
+ *     note: before this migration every row was either seeded or user-authored.
+ *
+ * Imported rows get a partial unique index on `(source_path, name)` so the
+ * import service can upsert idempotently and reject the same server being
+ * imported twice from the same file. Imported rows still share the existing
+ * global `name UNIQUE` constraint — two `.mcp.json` files can't both import a
+ * server with the same name; the second is rejected at service level.
+ *
+ * Idempotent via `tableHasColumn` guards and `CREATE INDEX IF NOT EXISTS`.
+ */
+export function runMigration100(db: BunDatabase): void {
+	if (!tableExists(db, 'app_mcp_servers')) {
+		// Very fresh DB — `createTables` will create the table with the new
+		// columns already present, so this migration has nothing to do.
+		return;
+	}
+
+	// 1. Add `source` column. SQLite can't enforce NOT NULL on ALTER with no
+	//    default, so we add it nullable, backfill, then rely on application-
+	//    level validation (the repo requires `source` on writes).
+	if (!tableHasColumn(db, 'app_mcp_servers', 'source')) {
+		db.exec(`ALTER TABLE app_mcp_servers ADD COLUMN source TEXT`);
+
+		// Backfill: rows with a seeded name → 'builtin'; everything else → 'user'.
+		// Kept in sync with `seed-defaults.ts` at time of writing.
+		const builtinSeedNames = ['fetch-mcp', 'chrome-devtools'];
+		const placeholders = builtinSeedNames.map(() => '?').join(', ');
+		db.prepare(
+			`UPDATE app_mcp_servers SET source = 'builtin' WHERE name IN (${placeholders}) AND source IS NULL`
+		).run(...builtinSeedNames);
+
+		db.exec(`UPDATE app_mcp_servers SET source = 'user' WHERE source IS NULL`);
+	}
+
+	// 2. Add `source_path` column. NULL for `builtin`/`user`; absolute path for `imported`.
+	if (!tableHasColumn(db, 'app_mcp_servers', 'source_path')) {
+		db.exec(`ALTER TABLE app_mcp_servers ADD COLUMN source_path TEXT`);
+	}
+
+	// 3. Partial unique index on `(source_path, name)` WHERE source = 'imported'.
+	//    Enables idempotent upserts from the import service: re-scanning the same
+	//    `.mcp.json` finds the existing row instead of creating a duplicate.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
+		 ON app_mcp_servers(source_path, name)
+		 WHERE source = 'imported' AND source_path IS NOT NULL`
+	);
 }

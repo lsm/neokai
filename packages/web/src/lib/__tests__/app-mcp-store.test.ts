@@ -89,6 +89,7 @@ function makeMcpServer(id: string, overrides: Partial<AppMcpServer> = {}): AppMc
 		args: ['-y', '@some/server'],
 		env: {},
 		enabled: true,
+		source: 'user',
 		...overrides,
 	};
 }
@@ -506,6 +507,7 @@ describe('MCP API helpers types', () => {
 					args: ['-y', '@tokenizin/mcp-npx-fetch'],
 					env: {},
 					enabled: true,
+					source: 'user',
 				},
 			],
 		};
@@ -530,6 +532,7 @@ describe('MCP API helpers types', () => {
 				args: ['-y', '@some/server'],
 				env: {},
 				enabled: true,
+				source: 'user',
 			},
 		};
 

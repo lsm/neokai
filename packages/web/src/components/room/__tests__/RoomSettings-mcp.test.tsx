@@ -94,6 +94,7 @@ function makeMcpServer(id: string, overrides: Partial<AppMcpServer> = {}): AppMc
 		args: ['-y', '@some/server'],
 		env: {},
 		enabled: true,
+		source: 'user',
 		...overrides,
 	};
 }
