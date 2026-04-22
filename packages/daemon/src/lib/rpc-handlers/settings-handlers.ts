@@ -58,40 +58,6 @@ export function registerSettingsHandlers(
 	});
 
 	/**
-	 * Toggle MCP server enabled/disabled
-	 */
-	messageHub.onRequest(
-		'settings.mcp.toggle',
-		async (data: { serverName: string; enabled: boolean }) => {
-			await settingsManager.toggleMcpServer(data.serverName, data.enabled);
-			// Emit event for StateManager to broadcast (global event)
-			const settings = settingsManager.getGlobalSettings();
-			daemonHub.emit('settings.updated', { sessionId: 'global', settings });
-			return { success: true };
-		}
-	);
-
-	/**
-	 * Get list of disabled MCP servers
-	 */
-	messageHub.onRequest('settings.mcp.getDisabled', async () => {
-		return {
-			disabledServers: settingsManager.getDisabledMcpServers(),
-		};
-	});
-
-	/**
-	 * Set list of disabled MCP servers
-	 */
-	messageHub.onRequest('settings.mcp.setDisabled', async (data: { disabledServers: string[] }) => {
-		await settingsManager.setDisabledMcpServers(data.disabledServers);
-		// Emit event for StateManager to broadcast (global event)
-		const settings = settingsManager.getGlobalSettings();
-		daemonHub.emit('settings.updated', { sessionId: 'global', settings });
-		return { success: true };
-	});
-
-	/**
 	 * Read file-only settings from .claude/settings.local.json
 	 */
 	messageHub.onRequest('settings.fileOnly.read', async () => {
@@ -128,23 +94,8 @@ export function registerSettingsHandlers(
 
 		return {
 			servers: effectiveSettings.listMcpServersFromSources(),
-			serverSettings: settingsManager.getMcpServerSettings(), // Global server settings
 		};
 	});
-
-	/**
-	 * Update per-server MCP settings (allowed/defaultOn)
-	 */
-	messageHub.onRequest(
-		'settings.mcp.updateServerSettings',
-		async (data: { serverName: string; settings: { allowed?: boolean; defaultOn?: boolean } }) => {
-			settingsManager.updateMcpServerSettings(data.serverName, data.settings);
-			// Emit event for StateManager to broadcast (global event)
-			const settings = settingsManager.getGlobalSettings();
-			daemonHub.emit('settings.updated', { sessionId: 'global', settings });
-			return { success: true };
-		}
-	);
 
 	/**
 	 * Refresh `.mcp.json` imports.
