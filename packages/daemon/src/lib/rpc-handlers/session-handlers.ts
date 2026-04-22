@@ -8,11 +8,14 @@
  */
 
 import type {
+	ListRuntimeMcpServersRequest,
+	ListRuntimeMcpServersResponse,
 	MessageDeliveryMode,
 	MessageHub,
 	MessageImage,
 	Session,
 	NeokaiActionMessage,
+	RuntimeMcpServerEntry,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
@@ -28,6 +31,7 @@ import {
 } from '../sdk-session-file-manager';
 import type { RoomManager } from '../room';
 import type { SpaceManager } from '../space/managers/space-manager';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
@@ -59,7 +63,8 @@ export function setupSessionHandlers(
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
 	roomManager: RoomManager,
-	spaceManager: SpaceManager
+	spaceManager: SpaceManager,
+	spaceRuntimeService?: SpaceRuntimeService
 ): void {
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -95,16 +100,64 @@ export function setupSessionHandlers(
 		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession?.getSessionData();
 
-		// Bridge to daemonHub so subscribers like SpaceRuntimeService can react.
-		// session-lifecycle.ts emits 'session.created' only on eventBus; nothing
-		// forwards it to daemonHub, so SpaceRuntimeService.attachSpaceToolsToMemberSession
-		// never fires for RPC-created sessions (e.g. ad-hoc Space sessions). This
-		// matches the pattern used by space-handlers.ts for 'space.created'.
+		// Attach space-agent-tools synchronously for ad-hoc Space sessions.
+		// The daemonHub event path (below) is racy — TypedHub.dispatchLocally does
+		// not await async subscribers, so the query can start (and freeze its MCP
+		// config) before attachSpaceToolsToMemberSession completes. Mirrors the
+		// pattern space-handlers.ts uses for setupSpaceAgentSession on space.create.
+		if (session && session.context?.spaceId && spaceRuntimeService) {
+			try {
+				await spaceRuntimeService.attachSpaceToolsToMemberSession(session);
+			} catch (err) {
+				log.warn(
+					`Failed to attach space tools to session ${sessionId} (space ${session.context.spaceId}):`,
+					err
+				);
+			}
+		}
+
+		// Broadcast to daemonHub so other subscribers (StateManager, etc.) can react.
+		// Kept for non-critical side effects; critical attachment above is synchronous.
 		if (session) {
 			daemonHub.emit('session.created', { sessionId, session }).catch(() => {});
 		}
 
 		return { sessionId, session };
+	});
+
+	/**
+	 * List runtime-attached (in-process, SDK-type) MCP servers for a session.
+	 *
+	 * These are servers injected by SpaceRuntimeService, TaskAgentManager, and
+	 * similar subsystems via `mergeRuntimeMcpServers`. They never appear in the
+	 * skills registry or in file-based MCP settings, so the chat composer's
+	 * Tool Modal needs a separate path to surface them.
+	 *
+	 * Truth-based: reads the live `session.config.mcpServers` map and filters
+	 * to entries with `type === 'sdk'`. Anything future subsystems attach (e.g.
+	 * room-tools, coordinator-agents) will show up automatically.
+	 */
+	messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
+		const { sessionId } = data as ListRuntimeMcpServersRequest;
+		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+
+		const mcpServers = agentSession.getSessionData().config?.mcpServers;
+		const servers: RuntimeMcpServerEntry[] = [];
+		if (mcpServers) {
+			for (const [name, config] of Object.entries(mcpServers)) {
+				// Only report in-process SDK-type servers. stdio/sse/http entries
+				// are user-managed subprocess MCPs surfaced through config.mcp.get
+				// and the file-MCP UI path.
+				if ((config as { type?: string } | undefined)?.type === 'sdk') {
+					servers.push({ name });
+				}
+			}
+		}
+
+		return { servers } satisfies ListRuntimeMcpServersResponse;
 	});
 
 	/**

@@ -408,6 +408,26 @@ export interface RemoveMcpServerResponse {
 	message?: string;
 }
 
+/**
+ * Entry describing a runtime-attached (in-process, SDK-type) MCP server.
+ * These are injected by SpaceRuntimeService, TaskAgentManager, and similar
+ * subsystems via `mergeRuntimeMcpServers`, and never appear in the skills
+ * registry or in file-based MCP settings — so the Tool Modal needs a separate
+ * path to surface them.
+ */
+export interface RuntimeMcpServerEntry {
+	/** Key used in session.config.mcpServers (e.g. 'space-agent-tools'). */
+	name: string;
+}
+
+export interface ListRuntimeMcpServersRequest {
+	sessionId: string;
+}
+
+export interface ListRuntimeMcpServersResponse {
+	servers: RuntimeMcpServerEntry[];
+}
+
 // --- Per-Room MCP Enablement ---
 
 export interface McpRoomGetEnabledRequest {
