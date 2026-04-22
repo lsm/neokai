@@ -44,8 +44,7 @@ const SETTINGS_SECTIONS: Array<{
 }> = [
 	{ id: 'general', label: 'General', icon: 'settings' },
 	{ id: 'providers', label: 'Providers', icon: 'cloud' },
-	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
-	{ id: 'app-mcp-servers', label: 'Application MCP Servers', icon: 'app-server' },
+	{ id: 'app-mcp-servers', label: 'MCP Servers', icon: 'server' },
 	{ id: 'skills', label: 'Skills', icon: 'skills' },
 	{ id: 'fallback-models', label: 'Fallback Models', icon: 'swap' },
 	{ id: 'neo', label: 'Neo Agent', icon: 'neo' },
@@ -126,19 +125,6 @@ function SectionIcon({ type }: { type: string }) {
 						stroke-width={2}
 						d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
 					/>
-				</svg>
-			);
-		case 'app-server':
-			return (
-				<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"
-					/>
-					<circle cx="8" cy="8" r="1" fill="currentColor" />
-					<circle cx="12" cy="8" r="1" fill="currentColor" />
 				</svg>
 			);
 		case 'skills':
