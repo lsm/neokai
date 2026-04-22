@@ -1251,6 +1251,7 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 				if (agentName === 'coder') return { session: { id: 'session-coder' } };
 				return null;
 			},
+			tryResumeNodeAgentSession: async () => {},
 		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
 
 		const delivered: Array<{ sessionId: string; message: string }> = [];
@@ -1485,5 +1486,157 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 		);
 		const parsed2 = JSON.parse(out2.content[0].text);
 		expect(parsed2.queued[0].deduped).toBe(true);
+	});
+});
+
+// ===========================================================================
+// send_message auto-resume (Task #70)
+// ===========================================================================
+
+describe('createTaskAgentToolHandlers — send_message auto-resume on queue', () => {
+	let ctx: TestCtx;
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('calls tryResumeNodeAgentSession after queuing a non-deduped message', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		// Declare "reviewer" as pending (no session yet)
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const resumeAttempts: Array<{ workflowRunId: string; agentName: string }> = [];
+
+		// Mock taskAgentManager with tryResumeNodeAgentSession spy
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async (_taskId: string) => [],
+			getSubSessionByAgentName: async (_taskId: string, _agentName: string) => null,
+			tryResumeNodeAgentSession: async (workflowRunId: string, agentName: string) => {
+				resumeAttempts.push({ workflowRunId, agentName });
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'ping',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
+
+		// Auto-resume must have been attempted
+		expect(resumeAttempts).toHaveLength(1);
+		expect(resumeAttempts[0].agentName).toBe('reviewer');
+		expect(resumeAttempts[0].workflowRunId).toBe(run.id);
+	});
+
+	test('does NOT call tryResumeNodeAgentSession for deduped (already-queued) messages', async () => {
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		const resumeAttempts: string[] = [];
+
+		const mockTaskAgentManager = {
+			getAgentNamesForTask: async (_taskId: string) => [],
+			getSubSessionByAgentName: async (_taskId: string, _agentName: string) => null,
+			tryResumeNodeAgentSession: async (_workflowRunId: string, agentName: string) => {
+				resumeAttempts.push(agentName);
+			},
+		} as unknown as TaskAgentToolsConfig['taskAgentManager'];
+
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			taskAgentManager: mockTaskAgentManager,
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		// First call — new enqueue → auto-resume triggered
+		await handlers.send_message({
+			target: 'reviewer',
+			message: 'ping',
+			idempotency_key: 'auto-resume-dedup-1',
+		});
+		expect(resumeAttempts).toHaveLength(1);
+
+		// Second call with same key — deduped → auto-resume NOT triggered again
+		resumeAttempts.length = 0;
+		await handlers.send_message({
+			target: 'reviewer',
+			message: 'ping (retry)',
+			idempotency_key: 'auto-resume-dedup-1',
+		});
+		expect(resumeAttempts).toHaveLength(0);
+	});
+
+	test('does NOT call tryResumeNodeAgentSession when taskAgentManager is absent', async () => {
+		// Regression guard: the code path must not throw when taskAgentManager is unset
+		const wf = buildTwoStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId);
+		const { run, mainTask } = await startRun(ctx, wf);
+
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: run.id,
+			workflowNodeId: 'declared-node',
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const { PendingAgentMessageRepository } = await import(
+			'../../../../src/storage/repositories/pending-agent-message-repository.ts'
+		);
+		const pendingRepo = new PendingAgentMessageRepository(ctx.db);
+
+		// No taskAgentManager — should not throw
+		const config: TaskAgentToolsConfig = {
+			...makeConfig(ctx, mainTask.id, run.id),
+			pendingMessageRepo: pendingRepo,
+			// taskAgentManager deliberately absent
+		};
+		const handlers = createTaskAgentToolHandlers(config);
+
+		const result = await handlers.send_message({
+			target: 'reviewer',
+			message: 'ping',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+
+		// Still queues successfully; just no auto-resume
+		expect(parsed.success).toBe(true);
+		expect(parsed.queued).toHaveLength(1);
 	});
 });

@@ -657,6 +657,21 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 							deduped,
 						});
 						if (!deduped) emitQueued(record);
+						// Best-effort auto-resume: if the target already has a known session
+						// (e.g. it ran in a previous execution and is now idle/completed),
+						// try to resume it immediately so the queued message is delivered
+						// without waiting for the next external activation trigger.
+						if (!deduped && taskAgentManager) {
+							void taskAgentManager
+								.tryResumeNodeAgentSession(workflowRunId, targetAgentName)
+								.catch((err) => {
+									// Non-fatal — the message stays queued and will be
+									// delivered when the session next activates normally.
+									log.warn(
+										`send_message: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+									);
+								});
+						}
 						continue;
 					}
 					notFound.push(targetAgentName);

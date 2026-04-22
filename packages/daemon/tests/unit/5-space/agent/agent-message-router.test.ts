@@ -1155,3 +1155,155 @@ describe('AgentMessageRouter: pure topology target (no execution, no nodeGroups)
 		expect(pending[0].message).toContain('activate and review');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: onMessageQueued callback — auto-resume hook (Task #70)
+// ---------------------------------------------------------------------------
+
+describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enqueues', () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+	});
+
+	afterEach(() => {
+		ctx.db.close();
+		rmSync(ctx.dir, { recursive: true, force: true });
+	});
+
+	test('calls onMessageQueued with agent name when message is newly queued', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// reviewer declared but no session
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const resumedAgents: string[] = [];
+
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer')],
+			messageInjector: async () => {},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+			onMessageQueued: (agentName) => resumedAgents.push(agentName),
+		});
+
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'activate and review',
+		});
+
+		expect(resumedAgents).toHaveLength(1);
+		expect(resumedAgents[0]).toBe('reviewer');
+	});
+
+	test('does NOT call onMessageQueued when pendingMessageRepo returns deduped=true', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		ctx.nodeExecutionRepo.createOrIgnore({
+			workflowRunId,
+			workflowNodeId: ctx.nodeId,
+			agentName: 'reviewer',
+			status: 'pending',
+		});
+
+		// Mock repo that always reports deduped=true (simulating an already-queued message)
+		const existingRecord = {
+			id: 'existing-msg-id',
+			workflowRunId,
+			spaceId: ctx.spaceId,
+			taskId: null,
+			sourceAgentName: 'coder',
+			targetAgentName: 'reviewer',
+			targetKind: 'node_agent',
+			message: 'already queued',
+			status: 'pending',
+			attempts: 0,
+			maxAttempts: 3,
+			idempotencyKey: null,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			expiresAt: Date.now() + 600_000,
+			lastAttemptAt: null,
+			lastError: null,
+		};
+		const dedupedRepo = {
+			enqueue: () => ({ record: existingRecord, deduped: true }),
+			listPendingForTarget: () => [existingRecord],
+		} as unknown as PendingAgentMessageRepository;
+
+		const resumedAgents: string[] = [];
+
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer')],
+			messageInjector: async () => {},
+			pendingMessageRepo: dedupedRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+			onMessageQueued: (agentName) => resumedAgents.push(agentName),
+		});
+
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'review please again',
+		});
+
+		// Deduped → callback must NOT fire
+		expect(resumedAgents).toHaveLength(0);
+	});
+
+	test('does NOT call onMessageQueued when message is delivered directly (live session)', async () => {
+		const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+			makeChannel('coder', 'reviewer'),
+		]);
+
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+		// reviewer has a live session
+		seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+
+		const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+		const resumedAgents: string[] = [];
+
+		const router = new AgentMessageRouter({
+			nodeExecutionRepo: ctx.nodeExecutionRepo,
+			workflowRunId,
+			workflowChannels: [makeChannel('coder', 'reviewer')],
+			messageInjector: async () => {},
+			pendingMessageRepo,
+			spaceId: ctx.spaceId,
+			taskId: null,
+			onMessageQueued: (agentName) => resumedAgents.push(agentName),
+		});
+
+		await router.deliverMessage({
+			fromAgentName: 'coder',
+			fromSessionId: ctx.coderSessionId,
+			target: 'reviewer',
+			message: 'review ready',
+		});
+
+		// Message delivered directly — callback must not have fired
+		expect(resumedAgents).toHaveLength(0);
+	});
+});
