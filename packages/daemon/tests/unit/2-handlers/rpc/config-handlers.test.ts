@@ -116,6 +116,7 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
 		setMaxThinkingTokens: ReturnType<typeof mock>;
 		setPermissionMode: ReturnType<typeof mock>;
 		updateConfig: ReturnType<typeof mock>;
+		updateUserMcpServers: ReturnType<typeof mock>;
 		resetQuery: ReturnType<typeof mock>;
 		getMcpServerStatus: ReturnType<typeof mock>;
 	};
@@ -128,6 +129,7 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
 		setMaxThinkingTokens: mock(async () => ({ success: true })),
 		setPermissionMode: mock(async () => ({ success: true })),
 		updateConfig: mock(async () => {}),
+		updateUserMcpServers: mock(async () => {}),
 		resetQuery: mock(async () => ({ success: true })),
 		getMcpServerStatus: mock(async () => ({})),
 	};

@@ -2349,6 +2349,161 @@ describe('AgentSession', () => {
 		});
 	});
 
+	describe('detachRuntimeMcpServer', () => {
+		const makeMockSession = (existingServers?: Record<string, unknown>): Session => ({
+			id: 'space:worker:test',
+			title: 'Space Worker',
+			workspacePath: '/test/workspace',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: {
+				model: 'claude-sonnet-4-5-20250929',
+				maxTokens: 8192,
+				temperature: 1.0,
+				mcpServers: existingServers as Record<string, McpServerConfig> | undefined,
+			},
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+			},
+			type: 'general',
+		});
+
+		const makeMocks = () => {
+			const mockDb = {
+				getSession: mock(() => null),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-api-key');
+			return { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey };
+		};
+
+		it('should remove the named server from mcpServers', () => {
+			const existing = {
+				'node-agent': { type: 'sdk' } as unknown as McpServerConfig,
+				'space-agent-tools': { type: 'sdk' } as unknown as McpServerConfig,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			agentSession.detachRuntimeMcpServer('node-agent');
+
+			const servers = agentSession.getSessionData().config.mcpServers;
+			expect(servers?.['node-agent']).toBeUndefined();
+			// Other server must survive
+			expect(servers?.['space-agent-tools']).toBe(existing['space-agent-tools']);
+		});
+
+		it('should be a no-op when name is not present', () => {
+			const existing = {
+				'space-agent-tools': { type: 'sdk' } as unknown as McpServerConfig,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			// Should not throw
+			agentSession.detachRuntimeMcpServer('node-agent');
+
+			const servers = agentSession.getSessionData().config.mcpServers;
+			expect(servers?.['space-agent-tools']).toBe(existing['space-agent-tools']);
+		});
+
+		it('should be a no-op when mcpServers is not defined', () => {
+			const mockSession = makeMockSession(); // no existing servers
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			// Should not throw even with no mcpServers key at all
+			expect(() => agentSession.detachRuntimeMcpServer('node-agent')).not.toThrow();
+		});
+
+		it('should not persist the removal to the database', () => {
+			const existing = {
+				'node-agent': { type: 'sdk' } as unknown as McpServerConfig,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			agentSession.detachRuntimeMcpServer('node-agent');
+
+			const updateSessionCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
+				.updateSession.mock.calls;
+			expect(updateSessionCalls.length).toBe(0);
+		});
+
+		it('supports rotate pattern: detach then merge a replacement', () => {
+			const staleNodeAgent = { type: 'sdk', tag: 'stale' } as unknown as McpServerConfig;
+			const existing = {
+				'node-agent': staleNodeAgent,
+				'space-agent-tools': { type: 'sdk' } as unknown as McpServerConfig,
+			};
+			const mockSession = makeMockSession(existing);
+			const { mockDb, mockMessageHub, mockDaemonHub, mockGetApiKey } = makeMocks();
+
+			const agentSession = new AgentSession(
+				mockSession,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey
+			);
+
+			const freshNodeAgent = { type: 'sdk', tag: 'fresh' } as unknown as McpServerConfig;
+			agentSession.detachRuntimeMcpServer('node-agent');
+			agentSession.mergeRuntimeMcpServers({ 'node-agent': freshNodeAgent });
+
+			const servers = agentSession.getSessionData().config.mcpServers;
+			// Fresh server replaces stale one
+			expect(servers?.['node-agent']).toBe(freshNodeAgent);
+			expect(servers?.['node-agent']).not.toBe(staleNodeAgent);
+			// Unrelated server is untouched
+			expect(servers?.['space-agent-tools']).toBe(existing['space-agent-tools']);
+		});
+	});
+
 	describe('startupTimeoutTimer', () => {
 		let mockSession: Session;
 		let mockDb: Database;

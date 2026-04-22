@@ -10,7 +10,7 @@
  * - SettingsManager recreation when workspace changes
  */
 
-import type { Session } from '@neokai/shared';
+import type { Session, McpServerConfig } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import { SettingsManager } from '../settings-manager';
@@ -41,11 +41,53 @@ export class SessionConfigHandler {
 	 *
 	 * Merges the provided config updates with existing config,
 	 * persists to database, and broadcasts the update event.
+	 *
+	 * **Warning:** If `configUpdates.mcpServers` is set, the entire `mcpServers`
+	 * key is replaced — this will drop any runtime-injected in-process servers
+	 * (`node-agent`, `task-agent`, `space-agent-tools`, `db-query`).
+	 * For user-facing MCP configuration changes use `updateUserMcpServers` instead.
 	 */
 	async updateConfig(configUpdates: Partial<Session['config']>): Promise<void> {
 		const { session, db, daemonHub } = this.ctx;
 
 		session.config = { ...session.config, ...configUpdates };
+		db.updateSession(session.id, { config: session.config });
+
+		await daemonHub.emit('session.updated', {
+			sessionId: session.id,
+			source: 'config-update',
+			session: { config: session.config },
+		});
+	}
+
+	/**
+	 * Update only the user-managed (subprocess) MCP servers, preserving all
+	 * in-process (SDK-type) servers already present in the session config.
+	 *
+	 * In-process servers (`node-agent`, `task-agent`, `space-agent-tools`, `db-query`)
+	 * are identified by `server.type === 'sdk'` and are never overwritten here.
+	 * User-managed subprocess servers (`type: 'stdio' | 'sse' | 'http'`) are replaced
+	 * wholesale with the provided `servers` map.
+	 *
+	 * Persists to DB and emits a `session.updated` event like `updateConfig`.
+	 */
+	async updateUserMcpServers(servers: Record<string, McpServerConfig>): Promise<void> {
+		const { session, db, daemonHub } = this.ctx;
+
+		// Collect in-process (SDK-type) servers that must be preserved.
+		const existing = (session.config?.mcpServers ?? {}) as Record<string, McpServerConfig>;
+		const runtimeServers: Record<string, McpServerConfig> = {};
+		for (const [name, cfg] of Object.entries(existing)) {
+			// In-process servers are McpSdkServerConfigWithInstance with type === 'sdk'.
+			if ((cfg as { type?: string }).type === 'sdk') {
+				runtimeServers[name] = cfg;
+			}
+		}
+
+		// Merge: runtime servers take precedence, then user-provided subprocess servers.
+		const merged: Record<string, McpServerConfig> = { ...servers, ...runtimeServers };
+
+		session.config = { ...session.config, mcpServers: merged };
 		db.updateSession(session.id, { config: session.config });
 
 		await daemonHub.emit('session.updated', {

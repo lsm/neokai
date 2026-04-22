@@ -634,7 +634,11 @@ export class TaskAgentManager {
 			});
 			taskMcpServers['space-agent-tools'] = spaceAgentMcpServer as unknown as McpServerConfig;
 
-			agentSession.setRuntimeMcpServers(taskMcpServers);
+			// Use merge semantics so any servers already present (e.g. injected by a
+			// concurrent subsystem before this path runs) are preserved. In practice the
+			// session is freshly created and the map is empty, but merge is safer than
+			// the deprecated replace-all setRuntimeMcpServers.
+			agentSession.mergeRuntimeMcpServers(taskMcpServers);
 
 			// --- Persist taskAgentSessionId on the SpaceTask
 			this.config.taskRepo.updateTask(taskId, { taskAgentSessionId: sessionId });
@@ -825,11 +829,48 @@ export class TaskAgentManager {
 				workspacePath,
 				execution.workflowNodeId
 			);
+
+			// Build space-agent-tools for this sub-session so it has the same Space
+			// tool surface as the task-agent (list_peers, approve_gate, etc.). This server
+			// is NOT re-attached by SpaceRuntimeService because workflow sub-sessions are
+			// created via AgentSession.fromInit + registerSession (not SessionLifecycle
+			// which fires the `session.created` event that drives attachSpaceToolsToMemberSession).
+			//
+			// Note: onRestoreNodeAgent is not wired here because the final session ID
+			// may differ from `sessionId` in the reuse path — the callback would target
+			// the wrong session. The rehydrate path wires it correctly where the ID is known.
+			const subSessionSpaceAgentMcpServer = createSpaceAgentMcpServer({
+				spaceId: space.id,
+				runtime: this.config.spaceRuntimeService.getSharedRuntime(),
+				workflowManager: this.config.spaceWorkflowManager,
+				taskRepo: this.config.taskRepo,
+				nodeExecutionRepo: this.config.nodeExecutionRepo,
+				workflowRunRepo: this.config.workflowRunRepo,
+				taskManager: new SpaceTaskManager(
+					this.config.db.getDatabase(),
+					space.id,
+					this.config.reactiveDb
+				),
+				spaceAgentManager: this.config.spaceAgentManager,
+				taskAgentManager: this,
+				gateDataRepo: this.config.gateDataRepo,
+				daemonHub: this.config.daemonHub,
+				onGateChanged: (runId, gateId) => {
+					void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
+				},
+				getSpaceAutonomyLevel: async (sid) => {
+					const s = await this.config.spaceManager.getSpace(sid);
+					return s?.autonomyLevel ?? 1;
+				},
+				myAgentName: execution.agentName,
+			});
+
 			init = {
 				...init,
 				mcpServers: {
 					...init.mcpServers,
 					'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+					'space-agent-tools': subSessionSpaceAgentMcpServer as unknown as McpServerConfig,
 				},
 			};
 
@@ -862,7 +903,7 @@ export class TaskAgentManager {
 			// This is a belt-and-braces check to prevent silent recurrence of the
 			// "No such tool available" failure mode where the Coder→Reviewer handoff
 			// died because mcp__node-agent__send_message was unregistered.
-			this.ensureNodeAgentAttached(spawned, {
+			await this.ensureNodeAgentAttached(spawned, {
 				taskId,
 				subSessionId: actualSessionId,
 				agentName: execution.agentName,
@@ -974,6 +1015,29 @@ export class TaskAgentManager {
 							}
 						}
 
+						// P1-4: Rebuild the node-agent MCP server with the new node context.
+						//
+						// When a session is reused across workflow node activations (e.g. a Coder
+						// that processes multiple review cycles), its previous `node-agent` closure
+						// captures the OLD workflowNodeId, workspaceRunId, and channel resolver.
+						// `send_message` uses workflowNodeId to resolve the "from" node — if stale,
+						// the topology check fails or routes incorrectly ("message never arrived").
+						//
+						// Re-merging with a fresh node-agent and restarting the query ensures the
+						// session's tool surface reflects the new node activation context.
+						if (memberInfo.nodeId) {
+							const reuseWorkspacePath = this.taskWorktreePaths.get(taskId) ?? init.workspacePath;
+							await this.reinjectNodeAgentMcpServer(existing, {
+								taskId,
+								subSessionId: existingSessionId,
+								agentName: memberInfo.agentName,
+								spaceId: parentTask.spaceId,
+								workflowRunId: parentTask.workflowRunId,
+								workspacePath: reuseWorkspacePath,
+								workflowNodeId: memberInfo.nodeId,
+							});
+						}
+
 						// Register a fresh completion callback for this execution turn.
 						// Clear any stale callback registered by a previous execution (e.g. from
 						// rehydrateSubSession, which registers with the old nodeId). Without this,
@@ -1034,7 +1098,11 @@ export class TaskAgentManager {
 			...init.mcpServers,
 		};
 		if (Object.keys(mergedSubSessionMcpServers).length > 0) {
-			subSession.setRuntimeMcpServers(mergedSubSessionMcpServers);
+			// Use merge semantics: the session is freshly created here so the map is
+			// empty in practice, but mergeRuntimeMcpServers is safer than the deprecated
+			// replace-all setRuntimeMcpServers because it won't clobber servers injected
+			// by a concurrent subsystem before this path runs.
+			subSession.mergeRuntimeMcpServers(mergedSubSessionMcpServers);
 		}
 
 		// Determine node ID from session convention or task context.
@@ -2224,7 +2292,40 @@ export class TaskAgentManager {
 			rehydrateMcpServers['db-query'] = rehydrateDbQueryServer as unknown as McpServerConfig;
 		}
 
-		agentSession.setRuntimeMcpServers(rehydrateMcpServers);
+		// Re-attach `space-agent-tools` so the rehydrated task agent has the same
+		// tool surface as a freshly spawned task agent. This server is not persisted to
+		// DB (see session-repository.ts) and is not re-attached by SpaceRuntimeService
+		// because rehydrated sessions do not fire the `session.created` event that the
+		// service subscribes to. Without this, the task agent cannot call list_peers /
+		// send_message / read_gate / etc. after a daemon restart.
+		const rehydrateSpaceAgentMcpServer = createSpaceAgentMcpServer({
+			spaceId,
+			runtime: this.config.spaceRuntimeService.getSharedRuntime(),
+			workflowManager: this.config.spaceWorkflowManager,
+			taskRepo: this.config.taskRepo,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			taskManager,
+			spaceAgentManager: this.config.spaceAgentManager,
+			taskAgentManager: this,
+			gateDataRepo: this.config.gateDataRepo,
+			daemonHub: this.config.daemonHub,
+			onGateChanged: (runId, gateId) => {
+				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
+			},
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await this.config.spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
+			myAgentName: 'task-agent',
+		});
+		rehydrateMcpServers['space-agent-tools'] =
+			rehydrateSpaceAgentMcpServer as unknown as McpServerConfig;
+
+		// Use merge semantics: the restored session has no in-memory MCP servers
+		// (they are stripped from DB persistence) so this is effectively a full set,
+		// but mergeRuntimeMcpServers is safer than the deprecated replace-all API.
+		agentSession.mergeRuntimeMcpServers(rehydrateMcpServers);
 
 		// Re-attach system prompt (runtime-only, not persisted).
 		// Generated fresh from createTaskAgentInit() so it reflects the current task/workflow state.
@@ -2357,10 +2458,70 @@ export class TaskAgentManager {
 			...registryMcpServers,
 			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
 		};
-		agentSession.setRuntimeMcpServers(mergedMcpServers);
+
+		// Re-attach `space-agent-tools` so the rehydrated sub-session has the same
+		// tool surface as a freshly spawned one. This server is stripped from DB
+		// persistence and is NOT re-attached by SpaceRuntimeService for rehydrated
+		// sessions (which do not fire `session.created`). Without this, the sub-session
+		// loses access to read_gate / write_gate / approve_gate / etc. after a daemon
+		// restart mid-workflow.
+		const subSessionTaskManager = new SpaceTaskManager(
+			this.config.db.getDatabase(),
+			spaceId,
+			this.config.reactiveDb
+		);
+		const subSessionSpaceAgentMcpServer = createSpaceAgentMcpServer({
+			spaceId,
+			runtime: this.config.spaceRuntimeService.getSharedRuntime(),
+			workflowManager: this.config.spaceWorkflowManager,
+			taskRepo: this.config.taskRepo,
+			nodeExecutionRepo: this.config.nodeExecutionRepo,
+			workflowRunRepo: this.config.workflowRunRepo,
+			taskManager: subSessionTaskManager,
+			spaceAgentManager: this.config.spaceAgentManager,
+			taskAgentManager: this,
+			gateDataRepo: this.config.gateDataRepo,
+			daemonHub: this.config.daemonHub,
+			onGateChanged: (runId, gateId) => {
+				void this.config.spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch(() => {});
+			},
+			getSpaceAutonomyLevel: async (sid) => {
+				const s = await this.config.spaceManager.getSpace(sid);
+				return s?.autonomyLevel ?? 1;
+			},
+			myAgentName: execution.agentName,
+			// P3-8: wire restore_node_agent into space-agent-tools so it is callable even
+			// when node-agent is missing. Closures capture the rehydrate-time values of
+			// taskId, subSessionId, agentName, etc. which are stable for this session.
+			onRestoreNodeAgent: async (_args) => {
+				const liveSession = this.getSubSession(subSessionId);
+				if (!liveSession) {
+					log.warn(
+						`space-agent-tools.restore_node_agent: no live session found for sub-session ${subSessionId}`
+					);
+					return;
+				}
+				await this.reinjectNodeAgentMcpServer(liveSession, {
+					taskId,
+					subSessionId,
+					agentName: execution.agentName,
+					spaceId,
+					workflowRunId,
+					workspacePath,
+					workflowNodeId: execution.workflowNodeId,
+				});
+			},
+		});
+		mergedMcpServers['space-agent-tools'] =
+			subSessionSpaceAgentMcpServer as unknown as McpServerConfig;
+
+		// Use merge semantics: the restored session has no in-memory MCP servers
+		// (stripped from DB) so this is effectively a full set, but mergeRuntimeMcpServers
+		// is safer than the deprecated replace-all setRuntimeMcpServers.
+		agentSession.mergeRuntimeMcpServers(mergedMcpServers);
 
 		// Defensive guarantee — see ensureNodeAgentAttached docs.
-		this.ensureNodeAgentAttached(agentSession, {
+		await this.ensureNodeAgentAttached(agentSession, {
 			taskId,
 			subSessionId,
 			agentName: execution.agentName,
@@ -2542,7 +2703,7 @@ export class TaskAgentManager {
 	 *   3. Re-verifies attachment; if still missing, throws — better to fail spawn
 	 *      visibly than to start an unrecoverable session.
 	 */
-	ensureNodeAgentAttached(
+	async ensureNodeAgentAttached(
 		session: AgentSession,
 		ctx: {
 			taskId: string;
@@ -2554,7 +2715,7 @@ export class TaskAgentManager {
 			workflowNodeId: string;
 			phase: 'spawn' | 'rehydrate';
 		}
-	): void {
+	): Promise<void> {
 		// `session.config` may be absent on restored ghost sessions before the first
 		// query setup, so read defensively — treat as empty servers map.
 		const currentMcpServers =
@@ -2574,7 +2735,7 @@ export class TaskAgentManager {
 				`Self-healing by re-injecting before first turn — but this indicates a regression in the spawn/rehydrate merge logic.`
 		);
 
-		this.reinjectNodeAgentMcpServer(session, ctx);
+		await this.reinjectNodeAgentMcpServer(session, ctx);
 
 		const verifyMcpServers =
 			(session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined) ?? {};
@@ -2596,11 +2757,16 @@ export class TaskAgentManager {
 	 * restore primitive callable when a sub-session needs node-agent re-attached
 	 * (e.g., after a refactor regression or registry collision drops it).
 	 *
-	 * Note: `setRuntimeMcpServers` REPLACES the in-memory mcpServers map, so we
-	 * must merge with the current map to avoid dropping registry-sourced servers
-	 * that were attached at session creation.
+	 * After merging the new server, if a query is currently running the method calls
+	 * `restartQuery()` so the SDK picks up the fresh tool registry. Without the restart
+	 * the running turn keeps the old (pre-merge) tool surface and the self-heal has no
+	 * visible effect until the next turn boundary.
+	 *
+	 * `restartQuery()` is safe to call even when no query is running — it is a no-op
+	 * in that case — so calling it from `ensureNodeAgentAttached` (before `startStreamingQuery`)
+	 * is harmless.
 	 */
-	reinjectNodeAgentMcpServer(
+	async reinjectNodeAgentMcpServer(
 		session: AgentSession,
 		ctx: {
 			taskId: string;
@@ -2611,7 +2777,7 @@ export class TaskAgentManager {
 			workspacePath: string;
 			workflowNodeId: string;
 		}
-	): void {
+	): Promise<void> {
 		const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
 			ctx.taskId,
 			ctx.subSessionId,
@@ -2622,13 +2788,16 @@ export class TaskAgentManager {
 			ctx.workflowNodeId
 		);
 
-		const currentMcpServers =
-			(session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined) ?? {};
-		const merged: Record<string, McpServerConfig> = {
-			...currentMcpServers,
+		// Use merge semantics so other runtime servers (space-agent-tools, db-query, etc.)
+		// are preserved. The deprecated setRuntimeMcpServers would clobber them.
+		session.mergeRuntimeMcpServers({
 			'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-		};
-		session.setRuntimeMcpServers(merged);
+		});
+
+		// Restart the running query so the SDK mounts the fresh node-agent server.
+		// If no query is running this is a no-op (restartQuery returns early when
+		// messageQueue.isRunning() is false).
+		await session.restartQuery();
 	}
 
 	/**
@@ -2758,12 +2927,13 @@ export class TaskAgentManager {
 
 		// Self-heal callback for the agent-callable `restore_node_agent` tool.
 		// Looks up the live AgentSession by the enclosing-scope subSessionId, then
-		// calls reinjectNodeAgentMcpServer to (re)attach node-agent. Belt-and-braces:
+		// calls reinjectNodeAgentMcpServer to (re)attach node-agent and restart the query
+		// so the SDK mounts the fresh tool registry for the next turn. Belt-and-braces:
 		// the tool call itself is proof the server is already attached, but re-injecting
 		// protects against partial/torn registry state and emits a structured log entry
 		// for diagnosis. All identity vars (taskId, subSessionId, etc.) are `const` in
 		// the enclosing scope, so the closure captures them safely without aliasing.
-		const onRestoreNodeAgent = (args: { reason?: string }): void => {
+		const onRestoreNodeAgent = async (args: { reason?: string }): Promise<void> => {
 			const liveSession = this.getSubSession(subSessionId);
 			if (!liveSession) {
 				log.warn(
@@ -2773,7 +2943,7 @@ export class TaskAgentManager {
 				return;
 			}
 			try {
-				this.reinjectNodeAgentMcpServer(liveSession, {
+				await this.reinjectNodeAgentMcpServer(liveSession, {
 					taskId,
 					subSessionId,
 					agentName,

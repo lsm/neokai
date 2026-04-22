@@ -254,13 +254,40 @@ export class QueryRunner {
 					`[${mcpServerNames.join(', ')}]` +
 					(isWorkflowSubSession ? ' (workflow sub-session)' : '')
 			);
-			if (isWorkflowSubSession && !mcpServerNames.includes('node-agent')) {
-				logger.error(
-					`QueryRunner.start(): workflow sub-session ${session.id} is MISSING the 'node-agent' MCP server. ` +
-						`Visible servers: [${mcpServerNames.join(', ')}]. ` +
-						`The agent will not be able to call mcp__node-agent__* tools (send_message, save, list_peers, etc). ` +
-						`This is a runtime injection failure — see TaskAgentManager.spawnWorkflowNodeAgentForExecution and createSubSession.`
-				);
+			// P2-6: Structured metric — detect missing required MCP servers for workflow sub-sessions.
+			// Required servers: node-agent (peer comms) and space-agent-tools (space tool surface).
+			// Emit a structured error log with joinable fields (sessionId, spaceId, context) so
+			// production monitoring can detect and alert on MCP injection failures without requiring
+			// grep-based log analysis.
+			if (isWorkflowSubSession) {
+				const requiredServers = ['node-agent', 'space-agent-tools'];
+				const missingServers = requiredServers.filter((name) => !mcpServerNames.includes(name));
+				if (missingServers.length > 0) {
+					const diagnosticPayload = {
+						event: 'workflow.mcp.missing',
+						sessionId: session.id,
+						spaceId: session.context?.spaceId,
+						sessionType: session.type,
+						missingServers,
+						presentServers: mcpServerNames,
+					};
+					logger.error(
+						`QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
+							`Missing: [${missingServers.join(', ')}]. ` +
+							`Present: [${mcpServerNames.join(', ')}]. ` +
+							`The agent will not be able to call the corresponding tools. ` +
+							`This is a runtime injection failure — see TaskAgentManager.spawnWorkflowNodeAgentForExecution, createSubSession, and rehydrateSubSession. ` +
+							`Diagnostic: ${JSON.stringify(diagnosticPayload)}`
+					);
+					// P2-7: Debug-build invariant assertion — throws in test/dev environments
+					// to surface injection regressions immediately rather than letting them
+					// silently produce "No such tool available" failures at runtime.
+					if (process.env.NODE_ENV === 'test' || process.env.NEOKAI_DEBUG_MCP_INVARIANTS === '1') {
+						throw new Error(
+							`[MCP invariant] Workflow sub-session ${session.id} is missing required MCP servers: [${missingServers.join(', ')}]`
+						);
+					}
+				}
 			}
 
 			// Apply provider env vars

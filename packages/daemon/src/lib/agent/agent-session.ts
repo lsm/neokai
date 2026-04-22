@@ -666,6 +666,17 @@ export class AgentSession
 	/**
 	 * Apply runtime MCP servers to in-memory session config only.
 	 * These servers may contain non-serializable instances and must not be persisted.
+	 *
+	 * @deprecated Prefer `mergeRuntimeMcpServers` (which preserves existing entries)
+	 * plus `detachRuntimeMcpServer` (which removes a single named entry) over this
+	 * replace-all API. Using `setRuntimeMcpServers` when other subsystems have already
+	 * attached servers (e.g. `space-agent-tools`, `db-query`) silently drops those
+	 * attachments, causing "No such tool available" failures during workflow execution.
+	 *
+	 * Remaining callers to migrate (do not add new call sites):
+	 *   - room-runtime-service.ts × 4  (room-tools, room-chat, workflow-chat injection)
+	 *   - neo-agent-manager.ts × 1     (neo session bootstrap)
+	 *   - space-runtime-service.ts × 1 (space_chat session attachment)
 	 */
 	setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
 		this.session.config = {
@@ -693,6 +704,39 @@ export class AgentSession
 				...additional,
 			},
 		};
+	}
+
+	/**
+	 * Remove a single named runtime MCP server from the in-memory session config.
+	 *
+	 * Use this alongside `mergeRuntimeMcpServers` when you need to rotate a server
+	 * (e.g. rebuild `node-agent` with a fresh closure for a new node activation).
+	 * Removing a name that is not present is a no-op.
+	 */
+	detachRuntimeMcpServer(name: string): void {
+		const existing = this.session.config?.mcpServers;
+		if (!existing || !(name in existing)) return;
+		const updated = { ...existing };
+		delete updated[name];
+		this.session.config = {
+			...this.session.config,
+			mcpServers: updated,
+		};
+	}
+
+	/**
+	 * Update only the user-managed (subprocess) MCP servers in the session config,
+	 * preserving all in-process (SDK-type) servers such as `node-agent`, `task-agent`,
+	 * `space-agent-tools`, and `db-query`.
+	 *
+	 * Call this instead of `updateConfig({ mcpServers })` from RPC handlers that handle
+	 * user-facing MCP configuration (config.mcp.update, config.mcp.addServer,
+	 * config.mcp.removeServer). Using `updateConfig` directly would replace the whole
+	 * `mcpServers` key, dropping runtime-injected in-process servers and causing
+	 * "No such tool available" failures on the next query start.
+	 */
+	async updateUserMcpServers(servers: Record<string, McpServerConfig>): Promise<void> {
+		await this.sessionConfigHandler.updateUserMcpServers(servers);
 	}
 
 	/**

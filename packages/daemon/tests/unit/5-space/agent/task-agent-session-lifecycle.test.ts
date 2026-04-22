@@ -74,11 +74,18 @@ class TestDaemonHub {
 // ---------------------------------------------------------------------------
 
 interface MockAgentSession {
-	session: { id: string; context?: Record<string, unknown> };
+	session: {
+		id: string;
+		context?: Record<string, unknown>;
+		config?: { mcpServers?: Record<string, unknown> };
+	};
 	getProcessingState: () => AgentProcessingState;
 	getSDKMessageCount: () => number;
 	getSessionData: () => { id: string; context?: Record<string, unknown> };
 	setRuntimeMcpServers: (servers: Record<string, unknown>) => void;
+	mergeRuntimeMcpServers: (servers: Record<string, unknown>) => void;
+	detachRuntimeMcpServer: (name: string) => void;
+	restartQuery: () => Promise<void>;
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
@@ -118,6 +125,22 @@ function makeMockSession(
 		setRuntimeMcpServers(servers) {
 			this._mcpServers = servers;
 		},
+		mergeRuntimeMcpServers(servers) {
+			this._mcpServers = { ...this._mcpServers, ...servers };
+			this.session.config = {
+				...(this.session.config ?? {}),
+				mcpServers: { ...(this.session.config?.mcpServers ?? {}), ...servers },
+			};
+		},
+		detachRuntimeMcpServer(name) {
+			const updated = { ...this._mcpServers };
+			delete updated[name];
+			this._mcpServers = updated;
+			const updatedCfg = { ...(this.session.config?.mcpServers ?? {}) };
+			delete updatedCfg[name];
+			this.session.config = { ...(this.session.config ?? {}), mcpServers: updatedCfg };
+		},
+		async restartQuery() {},
 		setRuntimeSystemPrompt(_systemPrompt: unknown) {},
 		async startStreamingQuery() {
 			this._startCalled = true;
