@@ -9,7 +9,7 @@ export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceOverview } from './SpaceOverview';
 export { SpaceSettings } from './SpaceSettings';
 export { SpaceTaskPane } from './SpaceTaskPane';
-export { WorkflowEditor, filterAgents, initFromWorkflow } from './WorkflowEditor';
+export { filterAgents } from './workflow-templates';
 export { WorkflowList } from './WorkflowList';
 
 export { GateArtifactsView } from './GateArtifactsView';

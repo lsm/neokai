@@ -21,11 +21,18 @@
  */
 
 import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
-import type { SpaceWorkflow, WorkflowNode, WorkflowChannel, Gate } from '@neokai/shared';
+import type {
+	SpaceWorkflow,
+	WorkflowNode,
+	WorkflowChannel,
+	Gate,
+	SpaceAutonomyLevel,
+} from '@neokai/shared';
 import { generateUUID, TASK_AGENT_NODE_ID, isChannelCyclic } from '@neokai/shared';
 import { spaceStore } from '../../../lib/space-store';
-import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../WorkflowEditor';
-import type { WorkflowTemplate } from '../WorkflowEditor';
+import { AUTONOMY_LEVELS } from '../../../lib/space-constants';
+import { filterAgents, buildTemplateNodes, getAvailableTemplates } from '../workflow-templates';
+import type { WorkflowTemplate } from '../workflow-templates';
 import { ConfirmModal } from '../../ui/ConfirmModal';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import type { ViewportState, Point, VisualTransition, WorkflowConditionType } from './types';
@@ -222,6 +229,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 	const [endNodeId, setEndNodeId] = useState<string | undefined>(() => initState?.endNodeId);
 	const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
 	const [gates, setGates] = useState<Gate[]>(() => initState?.gates ?? []);
+	const [completionAutonomyLevel, setCompletionAutonomyLevel] = useState<SpaceAutonomyLevel>(
+		() =>
+			(initState?.completionAutonomyLevel ??
+				workflow?.completionAutonomyLevel ??
+				3) as SpaceAutonomyLevel
+	);
 	const [viewportState, setViewportState] = useState<ViewportState>({
 		offsetX: 0,
 		offsetY: 0,
@@ -1079,6 +1092,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 			tags,
 			channels,
 			gates,
+			completionAutonomyLevel,
 		};
 
 		setSaving(true);
@@ -1175,6 +1189,38 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 				>
 					{saving ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Workflow'}
 				</button>
+			</div>
+
+			{/* ---- Autonomy level selector ---- */}
+			<div class="flex items-center gap-1.5 px-4 py-1.5 border-b border-dark-700 flex-shrink-0">
+				<span class="text-xs text-gray-500 shrink-0">Autonomy:</span>
+				{AUTONOMY_LEVELS.map(({ level, label, description }) => (
+					<button
+						key={level}
+						type="button"
+						data-testid={`autonomy-level-${level}`}
+						onClick={() => setCompletionAutonomyLevel(level)}
+						title={`${label}: ${description}`}
+						class={[
+							'flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition-colors',
+							completionAutonomyLevel === level
+								? 'border-blue-500/60 bg-blue-500/10 text-blue-300'
+								: 'border-dark-700 text-gray-500 hover:text-gray-300 hover:border-dark-600',
+						].join(' ')}
+					>
+						<span
+							class={[
+								'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0',
+								completionAutonomyLevel === level
+									? 'bg-blue-500/20 text-blue-400'
+									: 'bg-dark-700 text-gray-600',
+							].join(' ')}
+						>
+							{level}
+						</span>
+						{label}
+					</button>
+				))}
 			</div>
 
 			{/* ---- Error banner ---- */}
