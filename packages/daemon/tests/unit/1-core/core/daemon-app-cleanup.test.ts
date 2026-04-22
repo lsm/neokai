@@ -9,7 +9,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { existsSync, unlinkSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonApp } from '../../../../src/app';
@@ -316,7 +316,6 @@ describe('Daemon App Cleanup', () => {
 
 		afterEach(() => {
 			try {
-				const { rmSync } = require('node:fs');
 				rmSync(tmpDbDir, { recursive: true, force: true });
 			} catch {
 				// Ignore cleanup errors
