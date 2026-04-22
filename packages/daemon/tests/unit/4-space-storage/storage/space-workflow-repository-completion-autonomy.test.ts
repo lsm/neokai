@@ -2,7 +2,7 @@
  * SpaceWorkflowRepository — completionAutonomyLevel round-trip tests (Task #39).
  *
  * Covers:
- *   - createWorkflow throws when `completionAutonomyLevel` is omitted.
+ *   - createWorkflow defaults to 3 when `completionAutonomyLevel` is omitted.
  *   - createWorkflow stores the provided value; getWorkflow reads it back.
  *   - updateWorkflow can raise or lower the value, preserving other fields.
  *   - listWorkflows returns the value for every row.
@@ -33,14 +33,15 @@ describe('SpaceWorkflowRepository — completionAutonomyLevel', () => {
 		db.close();
 	});
 
-	test('createWorkflow throws when completionAutonomyLevel is missing', () => {
-		expect(() => {
-			repo.createWorkflow({
-				spaceId,
-				name: 'Missing Level',
-				nodes: [{ name: 'Only', agentId: 'agent-1' }],
-			});
-		}).toThrow(/completionAutonomyLevel/);
+	test('createWorkflow defaults completionAutonomyLevel to 3 when omitted', () => {
+		const wf = repo.createWorkflow({
+			spaceId,
+			name: 'Missing Level',
+			nodes: [{ name: 'Only', agentId: 'agent-1' }],
+		});
+		expect(wf.completionAutonomyLevel).toBe(3);
+		const fetched = repo.getWorkflow(wf.id);
+		expect(fetched?.completionAutonomyLevel).toBe(3);
 	});
 
 	test('createWorkflow stores and reads back completionAutonomyLevel', () => {
