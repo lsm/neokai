@@ -66,7 +66,12 @@ merge_pr(args: {
 `createTaskAgentMcpServer`):
 
 1. Validate `pr_url` against `^https://github.com/[^/]+/[^/]+/pull/\d+$`.
-2. Look up `space = spaceManager.getSpace(spaceId)`, `level = space.autonomyLevel ?? 1`.
+2. Resolve the current autonomy level via the injected
+   `getSpaceAutonomyLevel(config.space.id)` resolver (already present on
+   `TaskAgentToolsConfig`); `level = (await getSpaceAutonomyLevel(space.id)) ?? 1`.
+   This re-reads live state, so a racing autonomy downgrade between tool
+   registration and invocation is caught. The space ID and workspace path are
+   available as `config.space.id` / `config.space.workspacePath`.
 3. `const MERGE_AUTONOMY_THRESHOLD = 4` (constant — matches the current
    `MERGE_PR_COMPLETION_ACTION.requiredLevel`, so no behavioural change at the
    autonomy boundary).
@@ -123,9 +128,17 @@ Add a §"Post-Approval Actions" subsection to the Task Agent system prompt
 
 `createTaskAgentMcpServer` in
 [`packages/daemon/src/lib/space/tools/task-agent-tools.ts:965-1061`](../../packages/daemon/src/lib/space/tools/task-agent-tools.ts)
-already takes a `TaskAgentToolsConfig` with
-`spaceManager`, `artifactRepo`, `taskRepo`, `getSpaceAutonomyLevel` — all the
-dependencies the new handler needs. Add:
+already takes a `TaskAgentToolsConfig` whose existing fields cover every
+dependency the new handler needs:
+
+- `space: Space` — provides `space.id` and `space.workspacePath` (the merge
+  script's `cwd`).
+- `taskId: string` — for logging / audit.
+- `getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>` — live
+  autonomy resolver (required — register the tool only when this is set).
+- `artifactRepo` is reachable through the same path `save_artifact` uses today.
+
+No new field on `TaskAgentToolsConfig` is required. Add:
 
 - `tool definition` in the MCP `tools` list (around line 1044)
 - `handler` registration (around line 975)
@@ -469,6 +482,7 @@ File paths from the completion-action inventory:
 | `packages/daemon/src/lib/space/runtime/pending-action.ts` | Entire file (60 lines). |
 | `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` | `resumeCompletionActions` public API (lines 795-807). |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts` | `approve_completion_action` handler (lines 944-1006) and its tool registration (line 1246). |
+| `packages/daemon/src/lib/space/tools/task-agent-tools.ts` | Update the `approve_task` tool **description string** at [line 1043](../../packages/daemon/src/lib/space/tools/task-agent-tools.ts): replace `"… the completion-action pipeline runs and resolves the terminal status. …"` with `"… the task closes directly; if a post-approval action (e.g. PR merge) was signalled by the end node via send_message, call merge_pr after approve_task. …"` so the tool surface stops lying about a removed pipeline. |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts` | The `pendingCheckpointType === 'completion_action'` intercept in `spaceTask.update` (lines 154-203). |
 | `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` | `PR_MERGE_BASH_SCRIPT` (move to new `pr-merge-script.ts` instead of deleting — see §1.1 step 6). `MERGE_PR_COMPLETION_ACTION` (lines 187-194). `VERIFY_PR_MERGED_BASH_SCRIPT` + `VERIFY_PR_MERGED_COMPLETION_ACTION` (lines 204-239). `VERIFY_REVIEW_POSTED_BASH_SCRIPT` + `VERIFY_REVIEW_POSTED_COMPLETION_ACTION` (lines 246-282). `PLAN_AND_DECOMPOSE_VERIFY_SCRIPT` + `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION` (lines 792-830). Every `completionActions: [...]` entry on a node (lines 518, 664, 766, 972, 1135). |
 | `packages/web/src/components/space/PendingCompletionActionBanner.tsx` | Entire file (385 lines). |
