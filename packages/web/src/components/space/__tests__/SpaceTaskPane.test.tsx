@@ -782,12 +782,70 @@ describe('SpaceTaskPane — activity members actions', () => {
 		cleanup();
 	});
 
-	it('does not show activity member actions when no activity members exist', () => {
-		mockTasks.value = [makeTask({ taskAgentSessionId: 'session-abc' })];
+	it('does not show dropdown when task is archived and has no activity members', () => {
+		mockTasks.value = [makeTask({ status: 'archived', taskAgentSessionId: 'session-abc' })];
 		const { queryByTestId, queryByText } = render(<SpaceTaskPane taskId="task-1" />);
-		// No activity members → dropdown trigger is not rendered
+		// archived has no valid transitions and no activity members → dropdown trigger is not rendered
 		expect(queryByTestId('task-actions-menu-trigger')).toBeNull();
 		expect(queryByText('Open Task Agent (Active)')).toBeNull();
+	});
+
+	it('shows dropdown trigger when no activity members but task has valid transitions', () => {
+		mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" />);
+		// open has transitions → dropdown is visible even with no activity members
+		expect(getByTestId('task-actions-menu-trigger')).toBeTruthy();
+	});
+
+	it('shows status transition actions in dropdown', () => {
+		mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		// done → in_progress = 'Reopen', done → archived = 'Archive'
+		expect(getByText('Reopen')).toBeTruthy();
+		expect(getByText('Archive')).toBeTruthy();
+	});
+
+	it('calls updateTask when a transition action is clicked in the dropdown', async () => {
+		mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
+		const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		fireEvent.click(getByText('Reopen'));
+		await waitFor(() =>
+			expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'in_progress' })
+		);
+	});
+
+	it('shows divider between activity members and transition actions', () => {
+		mockTasks.value = [makeTask({ status: 'done', taskAgentSessionId: 'session-abc' })];
+		mockTaskActivity.value = new Map([
+			['task-1', [makeActivityMember({ id: 'm1', label: 'Task Agent', state: 'active' })]],
+		]);
+		const { getByTestId, container } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		const dividers = container.querySelectorAll('.h-px.bg-dark-700');
+		expect(dividers.length).toBeGreaterThan(0);
+	});
+
+	it('hides done and cancelled transitions when pendingCheckpointType is task_completion', () => {
+		mockTasks.value = [
+			makeTask({
+				status: 'review',
+				pendingCheckpointType: 'task_completion',
+				taskAgentSessionId: 'session-abc',
+			}),
+		];
+		const { getByTestId, getByRole } = render(<SpaceTaskPane taskId="task-1" />);
+		fireEvent.click(getByTestId('task-actions-menu-trigger'));
+		// Scope assertions to the dropdown menu to avoid false positives from the
+		// PendingTaskCompletionBanner which also renders an "Approve" button.
+		const menu = getByRole('menu');
+		// done (Approve) and cancelled (Cancel) are owned by the banner when pendingCheckpointType is set
+		expect(menu.textContent).not.toContain('Approve');
+		expect(menu.textContent).not.toContain('Cancel');
+		// non-approval transitions stay visible in the dropdown
+		expect(menu.textContent).toContain('Reopen');
+		expect(menu.textContent).toContain('Archive');
 	});
 
 	it('shows activity members as task action menu items with state', () => {

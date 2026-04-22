@@ -12,7 +12,7 @@ import { cn } from '../../lib/utils';
 import { borderColors } from '../../lib/design-tokens';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { TaskArtifactsPanel } from './TaskArtifactsPanel';
-import { getTransitionActions, TaskStatusActions } from './TaskStatusActions';
+import { getTransitionActions } from './TaskStatusActions';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { PendingGateBanner } from './PendingGateBanner';
 import { PendingCompletionActionBanner } from './PendingCompletionActionBanner';
@@ -163,7 +163,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 	const canShowCanvasTab = !!task.workflowRunId && !!canvasWorkflowId;
 	const canShowArtifactsTab = !!task.workflowRunId;
 	const activitySummary = STATUS_LABELS[task.status];
-	const transitionActions = getTransitionActions(task.status);
 	const agentActionLabel =
 		task.activeSession === 'leader'
 			? 'View Leader Session'
@@ -246,6 +245,14 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 		}
 	};
 
+	const allTransitionActions = getTransitionActions(task.status);
+	const filteredTransitionActions =
+		task.pendingCheckpointType === 'completion_action' ||
+		task.pendingCheckpointType === 'task_completion' ||
+		task.pendingCheckpointType === 'gate'
+			? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
+			: allTransitionActions;
+
 	const taskActionItems: DropdownMenuItem[] = [];
 	if (activityMembers.length > 0) {
 		taskActionItems.push(
@@ -257,8 +264,21 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 			}))
 		);
 	}
-	// Status transition actions are rendered inline (TaskStatusActions) rather
-	// than in the dropdown, so they're always visible without an extra click.
+	if (filteredTransitionActions.length > 0) {
+		if (taskActionItems.length > 0) {
+			taskActionItems.push({ type: 'divider' as const });
+		}
+		taskActionItems.push(
+			...filteredTransitionActions.map(({ target, label }) => ({
+				label,
+				onClick: () => {
+					handleStatusTransition(target);
+				},
+				disabled: statusTransitioning,
+				danger: target === 'cancelled' || target === 'archived',
+			}))
+		);
+	}
 
 	return (
 		<div class="flex flex-col h-full overflow-hidden bg-dark-900">
@@ -316,17 +336,6 @@ export function SpaceTaskPane({ taskId, spaceId, onClose }: SpaceTaskPaneProps) 
 					)}
 				</div>
 			</div>
-
-			{transitionActions.length > 0 && (
-				<div class="px-4 pb-2 flex-shrink-0">
-					<TaskStatusActions
-						status={task.status}
-						onTransition={handleStatusTransition}
-						disabled={statusTransitioning}
-						pendingCheckpointType={task.pendingCheckpointType}
-					/>
-				</div>
-			)}
 
 			<div class="px-4 pb-2 flex-shrink-0 flex justify-center">
 				<div class="flex items-center gap-1 rounded-3xl border border-dark-700 bg-dark-800/60 p-1 backdrop-blur-sm">
