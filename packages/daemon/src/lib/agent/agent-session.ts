@@ -412,13 +412,35 @@ export class AgentSession
 					runtimeInitFingerprint,
 				};
 				updates.metadata = nextMetadata;
-				// Invalidate stale SDK resume chain when runtime init surface changes.
-				updates.sdkSessionId = undefined;
-				session = {
-					...session,
-					sdkSessionId: undefined,
-					metadata: nextMetadata,
-				};
+				// Task-agent orchestration state is long-lived — the whole point is the
+				// agent remembers context across restarts. Never clear sdkSessionId for
+				// these sessions; the rehydrate path uses `restore()` (not fromInit) so
+				// hitting this branch for a space_task_agent would be a defensive regression
+				// that silently drops the conversation history.
+				//
+				// Node-agent sub-sessions (type: 'worker' with a spaceId+taskId context) are
+				// equally long-lived under the "one session per named agent per task" reuse
+				// contract — see `createSubSession`'s reuse path. Preserve sdkSessionId for
+				// them too so a fingerprint mismatch cannot wipe their conversation history.
+				const preserveSdkSessionId =
+					session.type === 'space_task_agent' ||
+					(session.type === 'worker' &&
+						typeof session.context?.spaceId === 'string' &&
+						typeof session.context?.taskId === 'string');
+				if (!preserveSdkSessionId) {
+					// Invalidate stale SDK resume chain when runtime init surface changes.
+					updates.sdkSessionId = undefined;
+					session = {
+						...session,
+						sdkSessionId: undefined,
+						metadata: nextMetadata,
+					};
+				} else {
+					session = {
+						...session,
+						metadata: nextMetadata,
+					};
+				}
 				hasUpdates = true;
 			}
 
@@ -811,6 +833,70 @@ export class AgentSession
 	getSDKSessionId(): string | null {
 		if (!this.queryObject || !('sessionId' in this.queryObject)) return null;
 		return this.queryObject.sessionId as string;
+	}
+
+	/**
+	 * Wait until the SDK has published its `init` message and the resulting
+	 * `sdkSessionId` has been persisted on the in-memory `session` object.
+	 *
+	 * The sdkSessionId is what lets a future daemon restart resume the exact
+	 * same SDK conversation (via `~/.claude/projects/{cwd}/{sdkSessionId}.jsonl`).
+	 * Without it the SDK has no way to find the prior transcript and the
+	 * conversation is effectively lost.
+	 *
+	 * Orchestration call sites (TaskAgentManager.spawnTaskAgent, eager
+	 * sub-session spawn) should `await` this after `startStreamingQuery()`
+	 * so that the spawn contract is "session exists AND SDK has been
+	 * initialised" — a restart immediately after spawn can then safely
+	 * rehydrate.
+	 *
+	 * Resolves immediately if sdkSessionId is already set. Rejects on timeout.
+	 */
+	async awaitSdkSessionCaptured(timeoutMs = 15000): Promise<string> {
+		if (this.session.sdkSessionId) return this.session.sdkSessionId;
+
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			let unsubscribe: (() => void) | null = null;
+
+			const finish = (err: Error | null, id?: string) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				if (unsubscribe) unsubscribe();
+				if (err) reject(err);
+				else resolve(id as string);
+			};
+
+			const timer = setTimeout(() => {
+				finish(
+					new Error(
+						`Timed out after ${timeoutMs}ms waiting for sdkSessionId on session ${this.session.id}`
+					)
+				);
+			}, timeoutMs);
+
+			// Listen for sdk-session update emitted by SDKMessageHandler.handleSystemMessage
+			unsubscribe = this.daemonHub.on('session.updated', (payload) => {
+				if (payload.sessionId !== this.session.id) return;
+				// Fast path: payload carries the new id
+				const payloadId = payload.session?.sdkSessionId;
+				if (typeof payloadId === 'string' && payloadId.length > 0) {
+					finish(null, payloadId);
+					return;
+				}
+				// Fallback: check the mutated session object
+				if (this.session.sdkSessionId) {
+					finish(null, this.session.sdkSessionId);
+				}
+			});
+
+			// Re-check synchronously in case the init arrived between the top
+			// check and subscription wiring.
+			if (this.session.sdkSessionId) {
+				finish(null, this.session.sdkSessionId);
+			}
+		});
 	}
 
 	async getSlashCommands(): Promise<string[]> {

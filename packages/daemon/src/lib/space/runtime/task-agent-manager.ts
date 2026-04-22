@@ -264,6 +264,20 @@ export class TaskAgentManager {
 	private taskDbQueryServers = new Map<string, DbQueryMcpServer>();
 
 	/**
+	 * Eager sub-session index: taskId → (agentName → sessionId).
+	 *
+	 * Populated by `eagerlySpawnWorkflowNodeAgents()` at task-agent spawn time.
+	 * Consulted by `createSubSession()`'s reuse path so that a later
+	 * workflow-node activation for the same `agentName` picks up the already-
+	 * alive eager session instead of creating a second one.
+	 *
+	 * This is an in-memory fast path. The authoritative record is the
+	 * corresponding `node_executions` row (with `agentSessionId` set), which
+	 * also drives DB-backed rehydration after daemon restarts.
+	 */
+	private eagerSubSessionIds = new Map<string, Map<string, string>>();
+
+	/**
 	 * Unsubscribe function for the `space.task.updated` listener that triggers
 	 * full session cleanup when a task reaches `archived` state.
 	 * Populated on first cleanup subscription attempt; cleared in `cleanupAll()`.
@@ -655,6 +669,47 @@ export class TaskAgentManager {
 			// --- Start streaming query
 			await agentSession.startStreamingQuery();
 
+			// --- Block until the SDK has emitted its `init` message and the
+			// resulting sdkSessionId is persisted. Without this await, a daemon
+			// restart between `startStreamingQuery()` and the first inbound SDK
+			// message would leave the DB row with `sdkSessionId = null` — on
+			// rehydrate the SDK has no transcript to resume, so the agent's
+			// conversation history is silently lost. This is the primary root
+			// cause of the "task-agent session lost after daemon restart" bug.
+			//
+			// Best-effort with timeout: worst case we fall through and accept
+			// the pre-fix behaviour, but in practice the SDK init message
+			// arrives within ~1–2 seconds.
+			try {
+				await agentSession.awaitSdkSessionCaptured(15_000);
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager: sdkSessionId capture timed out for task-agent session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+
+			// --- Eagerly spawn sub-sessions for all workflow node agents.
+			// Each gets `startStreamingQuery` + `awaitSdkSessionCaptured` so the
+			// SDK transcript is persisted before any kickoff work happens.
+			// Deliberately runs BEFORE the task-agent kickoff message so that
+			// a daemon restart at any later point can always resume every
+			// session with a valid sdkSessionId.
+			if (workflow && workflowRun) {
+				try {
+					await this.eagerlySpawnWorkflowNodeAgents({
+						task,
+						space,
+						workflow,
+						workflowRun,
+						workspacePath,
+					});
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager: eager sub-session spawn failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+			}
+
 			// --- Optional kickoff message
 			// Event-driven mode can spawn the session in an idle state and let
 			// explicit inbound messages (human/agent) wake orchestration.
@@ -959,6 +1014,229 @@ export class TaskAgentManager {
 	}
 
 	/**
+	 * Eagerly pre-spawn one sub-session per distinct agent slot referenced by
+	 * the workflow graph, _before_ the task-agent kickoff message is injected.
+	 *
+	 * Why:
+	 * - The task-agent session already exists with its SDK init captured
+	 *   (see `awaitSdkSessionCaptured` in `spawnTaskAgent`).
+	 * - Without eager spawn, node-agent sub-sessions are only created when
+	 *   the workflow activates a node. Any daemon restart between the
+	 *   task-agent kickoff and that activation leaves the node-agent SDK
+	 *   transcripts non-existent, so the workflow effectively starts from
+	 *   scratch on rehydrate.
+	 * - By spawning all referenced agents now and awaiting their SDK init
+	 *   capture, every sub-session's `sdkSessionId` is persisted up front.
+	 *   A restart at any later point can safely resume every session with
+	 *   full history.
+	 *
+	 * The sub-sessions are started but _not_ kicked off — no user message
+	 * is injected. When the workflow activates the corresponding node later,
+	 * `spawnWorkflowNodeAgentForExecution` calls `createSubSession` which
+	 * discovers the pre-spawned session via `eagerSubSessionIds` and reuses
+	 * it (re-attaching the node-agent MCP server with fresh node context
+	 * and firing the kickoff message).
+	 *
+	 * Best-effort per-agent: one slot failure must not break the whole
+	 * pre-spawn pass.
+	 */
+	private async eagerlySpawnWorkflowNodeAgents(ctx: {
+		task: SpaceTask;
+		space: Space;
+		workflow: SpaceWorkflow;
+		workflowRun: SpaceWorkflowRun;
+		workspacePath: string;
+	}): Promise<void> {
+		const { task, space, workflow, workflowRun, workspacePath } = ctx;
+		const taskId = task.id;
+		const spaceId = space.id;
+
+		// Build a map of unique (agentName → {slot, nodeId}) picking the first
+		// occurrence in workflow.nodes iteration order. This matches the reuse
+		// contract: one session per agent name per task lifetime.
+		const eagerTargets = new Map<
+			string,
+			{ slot: ReturnType<typeof resolveNodeAgents>[number]; nodeId: string }
+		>();
+		for (const node of workflow.nodes) {
+			for (const slot of resolveNodeAgents(node)) {
+				if (!slot.agentId) continue;
+				if (eagerTargets.has(slot.name)) continue;
+				eagerTargets.set(slot.name, { slot, nodeId: node.id });
+			}
+		}
+
+		if (eagerTargets.size === 0) return;
+
+		const nameIndex = this.eagerSubSessionIds.get(taskId) ?? new Map<string, string>();
+
+		for (const [agentName, { slot, nodeId }] of eagerTargets) {
+			try {
+				// Stable per-agent session ID so the DB row survives daemon restarts
+				// without needing a NodeExecution link.
+				const baseSessionId = `space:${spaceId}:task:${taskId}:agent:${this.sanitizeAgentNameForId(agentName)}`;
+				const sessionId = this.resolveSessionId(baseSessionId);
+
+				// Resolve slot overrides (same shape as spawnWorkflowNodeAgentForExecution).
+				let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
+				if (!slotCustomPrompt) {
+					const legacySlot = slot as {
+						systemPrompt?: { value: string };
+						instructions?: { value: string };
+					};
+					const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+					const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+					if (legacySp && legacyInstr) {
+						slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
+					} else {
+						slotCustomPrompt = legacySp || legacyInstr || undefined;
+					}
+				}
+				const slotOverrides: SlotOverrides = {
+					model: slot.model,
+					customPrompt: slotCustomPrompt,
+					disabledSkillIds: slot.disabledSkillIds,
+					extraMcpServers: slot.extraMcpServers,
+				};
+
+				let init = resolveAgentInit({
+					task,
+					space,
+					agentManager: this.config.spaceAgentManager,
+					sessionId,
+					workspacePath,
+					workflowRun,
+					workflow,
+					slotOverrides,
+					agentId: slot.agentId!,
+				});
+
+				// Attach the same MCP server surface that spawnWorkflowNodeAgentForExecution
+				// attaches, so the session is indistinguishable from a normally-spawned one
+				// the moment the workflow activates its node.
+				const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+					taskId,
+					sessionId,
+					agentName,
+					spaceId,
+					workflowRun.id,
+					workspacePath,
+					nodeId
+				);
+				const subSessionSpaceAgentMcpServer = createSpaceAgentMcpServer({
+					spaceId,
+					runtime: this.config.spaceRuntimeService.getSharedRuntime(),
+					workflowManager: this.config.spaceWorkflowManager,
+					taskRepo: this.config.taskRepo,
+					nodeExecutionRepo: this.config.nodeExecutionRepo,
+					workflowRunRepo: this.config.workflowRunRepo,
+					taskManager: new SpaceTaskManager(
+						this.config.db.getDatabase(),
+						spaceId,
+						this.config.reactiveDb
+					),
+					spaceAgentManager: this.config.spaceAgentManager,
+					taskAgentManager: this,
+					gateDataRepo: this.config.gateDataRepo,
+					daemonHub: this.config.daemonHub,
+					onGateChanged: (runId, gateId) => {
+						void this.config.spaceRuntimeService
+							.notifyGateDataChanged(runId, gateId)
+							.catch(() => {});
+					},
+					getSpaceAutonomyLevel: async (sid) => {
+						const s = await this.config.spaceManager.getSpace(sid);
+						return s?.autonomyLevel ?? 1;
+					},
+					myAgentName: agentName,
+				});
+				init = {
+					...init,
+					mcpServers: {
+						...init.mcpServers,
+						'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+						'space-agent-tools': subSessionSpaceAgentMcpServer as unknown as McpServerConfig,
+					},
+				};
+
+				// Create the session via fromInit (bypass createSubSession's reuse path
+				// because we are the first caller and there's nothing to reuse yet).
+				const subSession = AgentSession.fromInit(
+					init,
+					this.config.db,
+					this.config.messageHub,
+					this.config.daemonHub,
+					this.config.getApiKey,
+					this.config.defaultModel,
+					this.config.skillsManager,
+					this.config.appMcpServerRepo
+				);
+
+				// Merge registry-sourced MCP servers alongside the per-session ones.
+				const registryMcpServers = this.config.appMcpManager?.getEnabledMcpConfigs() ?? {};
+				const mergedMcpServers = {
+					...registryMcpServers,
+					...init.mcpServers,
+				};
+				if (Object.keys(mergedMcpServers).length > 0) {
+					subSession.mergeRuntimeMcpServers(mergedMcpServers);
+				}
+
+				// Register in the same in-memory maps as normal sub-sessions so the rest
+				// of the manager can find them transparently.
+				if (!this.subSessions.has(taskId)) {
+					this.subSessions.set(taskId, new Map());
+				}
+				this.subSessions.get(taskId)!.set(sessionId, subSession);
+				this.agentSessionIndex.set(sessionId, subSession);
+				this.config.sessionManager.registerSession(subSession);
+
+				// Record in the eager index so createSubSession's reuse path picks this up
+				// on the real node activation.
+				nameIndex.set(agentName, sessionId);
+
+				// Start the streaming query so the SDK subprocess launches and emits its
+				// init message. No kickoff user message — the session sits idle until the
+				// workflow activation triggers the real spawn call.
+				await subSession.startStreamingQuery();
+				try {
+					await subSession.awaitSdkSessionCaptured(15_000);
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager.eagerlySpawn: sdkSessionId capture timed out for eager sub-session ${sessionId} (agent=${agentName}): ${err instanceof Error ? err.message : String(err)}`
+					);
+				}
+
+				log.info(
+					`TaskAgentManager.eagerlySpawn: pre-spawned sub-session ${sessionId} for agent "${agentName}" (task ${taskId}, node ${nodeId})`
+				);
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager.eagerlySpawn: failed to pre-spawn sub-session for agent "${agentName}" (task ${taskId}): ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
+
+		if (nameIndex.size > 0) {
+			this.eagerSubSessionIds.set(taskId, nameIndex);
+		}
+	}
+
+	/**
+	 * Sanitize an agent slot name so it is safe to use as a component of a
+	 * session ID: lowercase, alphanumerics + single hyphens, max 40 chars.
+	 */
+	private sanitizeAgentNameForId(name: string): string {
+		return (
+			name
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-+|-+$/g, '')
+				.slice(0, 40) || 'agent'
+		);
+	}
+
+	/**
 	 * Create a sub-session for a workflow node.
 	 *
 	 * Called internally from the SubSessionFactory.create() closure. Creates the
@@ -982,14 +1260,40 @@ export class TaskAgentManager {
 		// spawning a fresh one. Sessions are only torn down when the task is archived.
 		// Primary state is in DB: query nodeExecutionRepo for the most recent session ID
 		// for this agent, then check agentSessionIndex (fast path) or lazily rehydrate.
+		//
+		// Eager-spawn fast path: when `eagerlySpawnWorkflowNodeAgents()` has
+		// pre-created a session for this agent name at task-start time, no
+		// NodeExecution row with `agentSessionId` exists yet. Resolve the
+		// eager session directly from the in-memory index so the reuse logic
+		// below picks it up instead of creating a second session.
 		if (memberInfo?.agentName) {
 			const parentTask = this.config.taskRepo.getTask(taskId);
 			if (parentTask?.workflowRunId) {
-				const existingExecs = this.config.nodeExecutionRepo
+				const eagerSessionId = this.eagerSubSessionIds.get(taskId)?.get(memberInfo.agentName);
+				let prevExec = this.config.nodeExecutionRepo
 					.listByWorkflowRun(parentTask.workflowRunId)
-					.filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId);
-				// listByWorkflowRun returns rows ORDER BY created_at ASC, so .at(-1) is the most recent.
-				const prevExec = existingExecs.at(-1);
+					.filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId)
+					// listByWorkflowRun returns rows ORDER BY created_at ASC, so .at(-1) is the most recent.
+					.at(-1);
+				if (!prevExec && eagerSessionId) {
+					// Synthesize a pseudo-execution record pointing at the eager session
+					// so the downstream reuse logic applies without duplicating it.
+					prevExec = {
+						id: '',
+						workflowRunId: parentTask.workflowRunId,
+						workflowNodeId: memberInfo.nodeId ?? '',
+						agentName: memberInfo.agentName,
+						agentId: memberInfo.agentId ?? null,
+						agentSessionId: eagerSessionId,
+						status: 'pending',
+						result: null,
+						data: null,
+						createdAt: 0,
+						startedAt: null,
+						completedAt: null,
+						updatedAt: 0,
+					};
+				}
 				if (prevExec?.agentSessionId) {
 					// Reuse existing session — get from memory or restore from DB
 					const existing =
@@ -1142,7 +1446,18 @@ export class TaskAgentManager {
 			}
 		}
 
-		// Start streaming query for the sub-session
+		// Start streaming query for the sub-session.
+		//
+		// We intentionally do NOT await sdkSessionId capture on this path.
+		// The belt-and-braces "block until init" guarantee lives in
+		// `eagerlySpawnWorkflowNodeAgents`, which runs at the earliest point
+		// we have enough context to pre-create node-agent sessions. Blocking
+		// here regresses the kickoff path: when `spawnWorkflowNodeAgentForExecution`
+		// is called directly from `processRunTick` (no eager spawn yet), the
+		// caller immediately wants to inject the kickoff user message. A 15s
+		// wait ahead of that injection delays kickoff and — if the SDK init
+		// message is slow (dev-proxy) or never arrives — converts to a hard
+		// failure in the caller's `saveUserMessage` via the foreign-key path.
 		await subSession.startStreamingQuery();
 
 		// Flush any queued messages addressed to this agent name so that the
@@ -1451,9 +1766,26 @@ export class TaskAgentManager {
 	/**
 	 * Returns the worktree path for a task, or undefined if no worktree was created.
 	 * Useful for test assertions and M6 artifact RPCs.
+	 *
+	 * Source of truth is the `space_worktrees` table (populated at worktree-creation
+	 * time and kept there for the full task lifetime). The in-memory map is a cache
+	 * populated on spawn/rehydrate; on cache miss we fall back to a sync DB read so
+	 * callers after a daemon restart or ad-hoc RPC access still get the right path
+	 * without needing a prior in-memory warm-up.
 	 */
 	getTaskWorktreePath(taskId: string): string | undefined {
-		return this.taskWorktreePaths.get(taskId);
+		const cached = this.taskWorktreePaths.get(taskId);
+		if (cached) return cached;
+		if (!this.config.worktreeManager) return undefined;
+		const task = this.config.taskRepo.getTask(taskId);
+		if (!task) return undefined;
+		const stored = this.config.worktreeManager.getTaskWorktreePathSync(task.spaceId, task.id);
+		if (stored) {
+			// Warm the cache so subsequent reads hit the fast path.
+			this.taskWorktreePaths.set(taskId, stored);
+			return stored;
+		}
+		return undefined;
 	}
 
 	/** Returns the Task Agent's AgentSession, or undefined if not spawned. */
@@ -1655,6 +1987,9 @@ export class TaskAgentManager {
 		// 3. Drop the in-memory worktree path (DB record is preserved)
 		this.taskWorktreePaths.delete(taskId);
 
+		// Drop the eager sub-session index (DB NodeExecution rows are preserved).
+		this.eagerSubSessionIds.delete(taskId);
+
 		// 4. Close db-query server to release SQLite handles held by the session
 		const dbQueryServer = this.taskDbQueryServers.get(taskId);
 		if (dbQueryServer) {
@@ -1745,6 +2080,9 @@ export class TaskAgentManager {
 		}
 		// Always remove from in-memory path map regardless of worktreeManager presence.
 		this.taskWorktreePaths.delete(taskId);
+
+		// Drop the eager sub-session index.
+		this.eagerSubSessionIds.delete(taskId);
 
 		// Close db-query server connection for this task.
 		const dbQueryServer = this.taskDbQueryServers.get(taskId);

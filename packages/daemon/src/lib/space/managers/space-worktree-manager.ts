@@ -287,6 +287,16 @@ export class SpaceWorktreeManager {
 	 * Return the filesystem path for a task's worktree, or null if none exists.
 	 */
 	async getTaskWorktreePath(spaceId: string, taskId: string): Promise<string | null> {
+		return this.getTaskWorktreePathSync(spaceId, taskId);
+	}
+
+	/**
+	 * Synchronous variant of `getTaskWorktreePath`. Exposed so that sync call sites
+	 * (e.g. the public `TaskAgentManager.getTaskWorktreePath(taskId)` getter used by
+	 * tool handlers and RPCs) can read the persisted path without bouncing through
+	 * a Promise. The underlying repository access is already synchronous.
+	 */
+	getTaskWorktreePathSync(spaceId: string, taskId: string): string | null {
 		const record = this.worktreeRepo.getByTaskId(spaceId, taskId);
 		return record?.path ?? null;
 	}
