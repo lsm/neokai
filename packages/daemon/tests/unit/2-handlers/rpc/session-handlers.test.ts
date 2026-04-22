@@ -328,6 +328,66 @@ describe('Session RPC Handlers', () => {
 
 			expect(roomManager.assignSession).toHaveBeenCalledWith('room-123', 'session-456');
 		});
+
+		it('emits session.created on daemonHub after session creation', async () => {
+			const handler = messageHubData.handlers.get('session.create');
+			expect(handler).toBeDefined();
+
+			const { agentSession, mocks } = createMockAgentSession();
+			sessionManagerData.mocks.createSession.mockResolvedValueOnce('new-session-789');
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(agentSession);
+
+			await handler!({ workspacePath: '/workspace/test' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'session.created',
+				expect.objectContaining({
+					sessionId: 'new-session-789',
+					session: mocks.getSessionData(),
+				})
+			);
+		});
+
+		it('emits session.created on daemonHub for space sessions', async () => {
+			const handler = messageHubData.handlers.get('session.create');
+			expect(handler).toBeDefined();
+
+			const spaceSession = createMockAgentSession({
+				context: { spaceId: 'space-abc' },
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.createSession.mockResolvedValueOnce('space-session-1');
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(spaceSession.agentSession);
+
+			await handler!({ workspacePath: '/workspace/test', spaceId: 'space-abc' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'session.created',
+				expect.objectContaining({
+					sessionId: 'space-session-1',
+				})
+			);
+		});
+
+		it('does not emit session.created on daemonHub when session is not found', async () => {
+			const handler = messageHubData.handlers.get('session.create');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.createSession.mockResolvedValueOnce('orphan-session');
+			// getSession returns null — session was just created but not yet loaded
+			sessionManagerData.mocks.getSession.mockReturnValueOnce(null);
+
+			const emitCallsBefore = (daemonHubData.emit as ReturnType<typeof mock>).mock.calls.filter(
+				(c) => c[0] === 'session.created'
+			).length;
+
+			await handler!({ workspacePath: '/workspace/test' }, {});
+
+			const emitCallsAfter = (daemonHubData.emit as ReturnType<typeof mock>).mock.calls.filter(
+				(c) => c[0] === 'session.created'
+			).length;
+
+			expect(emitCallsAfter - emitCallsBefore).toBe(0);
+		});
 	});
 
 	describe('session.setWorktreeMode', () => {
