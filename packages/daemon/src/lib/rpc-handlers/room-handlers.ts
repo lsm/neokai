@@ -317,6 +317,24 @@ export function setupRoomHandlers(
 				log.warn(`Failed to emit room.deleted for room ${room.id}:`, error);
 			});
 
+		// Task #85: UI room delete must also free each session's external
+		// resources (worktree + SDK `.jsonl`) and the sessions DB row.
+		// `roomManager.deleteRoom` only deletes DB-level rows and leaves
+		// worktrees / jsonl files orphaned — route each session through the
+		// UI-only delete primitive before the room row itself is removed.
+		if (sessionManager) {
+			for (const sessionId of room.sessionIds) {
+				try {
+					await sessionManager.deleteSessionResources(sessionId, 'ui_room_delete');
+				} catch (err) {
+					log.warn(
+						`room.delete: failed to delete session ${sessionId} during room ${room.id} deletion:`,
+						err
+					);
+				}
+			}
+		}
+
 		// Permanently delete the room (CASCADE will delete related data)
 		const deleted = roomManager.deleteRoom(params.roomId);
 		if (!deleted) {

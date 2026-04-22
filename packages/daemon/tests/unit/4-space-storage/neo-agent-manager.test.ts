@@ -86,15 +86,26 @@ function makeSession(
 function makeSessionManager(
 	opts: {
 		existingSession?: AgentSession | null;
-		/** Sessions to return from successive createSession() calls (one per call, in order). */
+		/**
+		 * Sessions returned to the Neo runtime, in order, on successive
+		 * `getSessionAsync` rehydration calls that happen *after* an
+		 * `interruptInMemorySession` tear-down. This mimics the real-world
+		 * behaviour where the in-memory SDK session is refreshed from the
+		 * still-present DB row.
+		 */
 		createdSessions?: Array<AgentSession | null>;
-		/** Convenience alias for a single created session (ignored when createdSessions is set). */
+		/** Convenience alias for a single rehydrated session (ignored when createdSessions is set). */
 		createdSession?: AgentSession | null;
 	} = {}
 ): NeoSessionManager & {
 	_sessions: Map<string, AgentSession | null>;
 	_createCalls: number;
-	_deleteCalls: number;
+	/**
+	 * Task #85: Neo recovery is a non-UI caller and therefore may never
+	 * invoke delete primitives. `_interruptCalls` tracks the only sanctioned
+	 * stop path (`SessionManager.interruptInMemorySession`).
+	 */
+	_interruptCalls: number;
 	_unregisterCalls: number;
 } {
 	const sessions = new Map<string, AgentSession | null>();
@@ -108,12 +119,13 @@ function makeSessionManager(
 	const sm = {
 		_sessions: sessions,
 		_createCalls: 0,
-		_deleteCalls: 0,
+		_interruptCalls: 0,
 		_unregisterCalls: 0,
 
 		createSession: mock(async (_params: unknown) => {
 			sm._createCalls++;
-			// Pop the next session from the queue; fall back to a fresh makeSession().
+			// Called only when the Neo DB row is missing. Fall back to a
+			// fresh in-memory session unless the queue still has an entry.
 			const next = sessionQueue.length > 0 ? sessionQueue.shift()! : makeSession();
 			sessions.set(NEO_SESSION_ID, next);
 			return NEO_SESSION_ID;
@@ -130,9 +142,20 @@ function makeSessionManager(
 			return sessions.get(NEO_SESSION_ID) ?? null;
 		}),
 
-		deleteSession: mock(async (_id: string) => {
-			sm._deleteCalls++;
-			sessions.delete(NEO_SESSION_ID);
+		interruptInMemorySession: mock(async (_id: string) => {
+			sm._interruptCalls++;
+			// Simulate the real `interruptInMemorySession`: it drops the
+			// in-memory AgentSession but PRESERVES the DB row. The next
+			// `getSessionAsync` rehydrates a fresh `AgentSession` from that
+			// preserved DB row, which we represent by popping from the
+			// sessionQueue. If nothing is queued we drop to null to force
+			// `createSession` (the explicit "DB row gone" recovery path).
+			const next = sessionQueue.shift();
+			if (next !== undefined) {
+				sessions.set(NEO_SESSION_ID, next);
+			} else {
+				sessions.delete(NEO_SESSION_ID);
+			}
 		}),
 
 		unregisterSession: mock((_id: string) => {
@@ -218,10 +241,16 @@ describe('NeoAgentManager', () => {
 
 			await mgr.provision();
 
-			// Should have cleaned up the stuck session and created a fresh one.
-			expect(stuckSession.cleanup).toHaveBeenCalledTimes(1);
-			expect(sm._deleteCalls).toBe(1);
-			expect(sm._createCalls).toBe(1);
+			// Task #85: recovery MUST NOT delete the Neo DB row. The old
+			// `deleteSession` + `createSession` sequence is replaced by a
+			// single `interruptInMemorySession` + rehydrate. The fresh
+			// AgentSession comes from the rehydration path, not from a new
+			// DB row. (The concrete SessionManager implementation calls
+			// AgentSession.cleanup inside interruptInMemorySession; the
+			// mock doesn't simulate that internal detail — we verify the
+			// delegation via _interruptCalls instead.)
+			expect(sm._interruptCalls).toBe(1);
+			expect(sm._createCalls).toBe(0);
 			expect(mgr.getSession()).toBe(freshSession);
 		});
 
@@ -236,7 +265,11 @@ describe('NeoAgentManager', () => {
 
 			await mgr.provision();
 
-			expect(sm._createCalls).toBe(1);
+			// Task #85: recovery drops the in-memory session via
+			// interruptInMemorySession and rehydrates from the preserved DB
+			// row — no createSession call, no DB-row deletion.
+			expect(sm._interruptCalls).toBe(1);
+			expect(sm._createCalls).toBe(0);
 			expect(mgr.getSession()).toBe(freshSession);
 		});
 
@@ -249,7 +282,7 @@ describe('NeoAgentManager', () => {
 
 			// No destroy/recreate — same session remains.
 			expect(sm._createCalls).toBe(0);
-			expect(sm._deleteCalls).toBe(0);
+			expect(sm._interruptCalls).toBe(0);
 			expect(mgr.getSession()).toBe(healthySession);
 		});
 	});
@@ -338,7 +371,7 @@ describe('NeoAgentManager', () => {
 			expect(healthy).toBe(false);
 			// Startup mode does NOT auto-recover — that is the caller's (provision's) job.
 			expect(sm._createCalls).toBe(0);
-			expect(sm._deleteCalls).toBe(0);
+			expect(sm._interruptCalls).toBe(0);
 		});
 	});
 
@@ -561,7 +594,7 @@ function makeMinimalQueryConfig(): NeoToolsConfig {
 
 function makeDbSessionManager(
 	opts: { createdSession?: AgentSession | null } = {}
-): NeoSessionManager & { _createCalls: number } {
+): NeoSessionManager & { _createCalls: number; _interruptCalls: number } {
 	const sessions = new Map<string, AgentSession | null>();
 	let getCallCount = 0;
 	const sessionQueue: Array<AgentSession | null> =
@@ -569,6 +602,7 @@ function makeDbSessionManager(
 
 	const sm = {
 		_createCalls: 0,
+		_interruptCalls: 0,
 
 		createSession: mock(async () => {
 			sm._createCalls++;
@@ -584,8 +618,17 @@ function makeDbSessionManager(
 			return sessions.get(NEO_SESSION_ID) ?? null;
 		}),
 
-		deleteSession: mock(async (_id: string) => {
-			sessions.delete(NEO_SESSION_ID);
+		// Task #85: daemon-internal recovery may only drop the in-memory
+		// SDK subprocess. The mock pops the next queued AgentSession to
+		// simulate rehydration from the still-preserved DB row.
+		interruptInMemorySession: mock(async (_id: string) => {
+			sm._interruptCalls++;
+			const next = sessionQueue.shift();
+			if (next !== undefined) {
+				sessions.set(NEO_SESSION_ID, next);
+			} else {
+				sessions.delete(NEO_SESSION_ID);
+			}
 		}),
 
 		unregisterSession: mock((_id: string) => {}),
@@ -680,8 +723,16 @@ describe('NeoAgentManager — setDbPath() / db-query server', () => {
 				}
 				return sessions.get(NEO_SESSION_ID) ?? null;
 			}),
-			deleteSession: mock(async () => {
-				sessions.delete(NEO_SESSION_ID);
+			// Task #85: clearSession() is a daemon-internal reset and must
+			// only drop the in-memory SDK subprocess. Pop the next queued
+			// session to simulate rehydration from the preserved DB row.
+			interruptInMemorySession: mock(async () => {
+				const next = sessionQueue.shift();
+				if (next !== undefined) {
+					sessions.set(NEO_SESSION_ID, next);
+				} else {
+					sessions.delete(NEO_SESSION_ID);
+				}
 			}),
 			unregisterSession: mock(() => {}),
 		};

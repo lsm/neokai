@@ -101,7 +101,12 @@ const log = new Logger('task-agent-manager');
 export interface TaskAgentManagerConfig {
 	/** Custom Database wrapper — used to persist sessions */
 	db: Database;
-	/** SessionManager — used to delete sessions during cleanup */
+	/**
+	 * SessionManager — used to register externally-created AgentSessions
+	 * (Task Agent + sub-sessions) in the shared cache and to interrupt
+	 * in-memory sessions during cleanup. Task #85: never used here to delete
+	 * persisted session data.
+	 */
 	sessionManager: SessionManager;
 	/** Reactive DB invalidation hooks for LiveQuery-backed task activity */
 	reactiveDb?: ReactiveDatabase;
@@ -289,26 +294,96 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Subscribe to `space.task.updated` and run full cleanup for tasks that
-	 * reach the `archived` state.
+	 * Subscribe to `space.task.updated` and run the archive pipeline for tasks
+	 * that reach the `archived` state.
 	 *
 	 * `archived` is the only truly non-recoverable terminal state for a task —
 	 * per issue #1515, node agent sessions must remain reachable (e.g. for
 	 * cross-node `send_message` from a reviewer to a completed coder) for the
 	 * full lifetime of the parent task run, and are only torn down when the
 	 * task is archived.
+	 *
+	 * Task #85: archive is a UI-initiated action. It removes the task's
+	 * worktree + each attached session's SDK `.jsonl` files, but preserves
+	 * the `sessions` DB row + `sdk_messages` so the conversation history
+	 * remains viewable.
 	 */
 	private subscribeToTaskArchiveEvents(): void {
 		if (this.taskArchiveListenerUnsub) return;
 		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', (event) => {
 			if (event.task?.status !== 'archived') return;
 			const taskId = event.taskId;
-			// Fire-and-forget — cleanup is idempotent and safe to skip on failure
-			// (cleanupAll still sweeps leftovers on daemon shutdown).
-			void this.cleanup(taskId, 'done').catch((err) => {
-				log.warn(`TaskAgentManager: failed to clean up sessions for archived task ${taskId}:`, err);
+			// Fire-and-forget — archiveOnTaskArchived is idempotent and safe to
+			// skip on failure (cleanupAll still sweeps leftovers on daemon shutdown).
+			void this.archiveOnTaskArchived(taskId).catch((err) => {
+				log.warn(`TaskAgentManager: failed to archive resources for archived task ${taskId}:`, err);
 			});
 		});
+	}
+
+	/**
+	 * Archive pipeline for a task that has transitioned to `archived`.
+	 *
+	 * Task #85 invariant:
+	 *   - DB row + `sdk_messages` for each attached session: PRESERVED.
+	 *   - Worktree + SDK `.jsonl` files for each attached session: REMOVED
+	 *     (archive is user-initiated; disk space is freed but the DB row
+	 *     keeps a pointer to the archived jsonl via `sdkArchivePath`).
+	 *
+	 * Steps:
+	 *   1. Collect IDs of the attached task-agent + sub-session sessions.
+	 *   2. `cleanup(taskId)` — stop in-memory sessions and clear maps.
+	 *   3. For each collected session, call
+	 *      `SessionManager.archiveSessionResources(id, 'ui_task_archive')`,
+	 *      which stamps the session row as `archived` and archives its
+	 *      SDK `.jsonl` files to a `.archive/` sidecar.
+	 *   4. Remove the space-level task worktree so disk space is freed.
+	 */
+	private async archiveOnTaskArchived(taskId: string): Promise<void> {
+		// 1. Snapshot session IDs BEFORE cleanup clears the maps.
+		const sessionIds = new Set<string>();
+		const taskAgentSession = this.taskAgentSessions.get(taskId);
+		if (taskAgentSession) sessionIds.add(taskAgentSession.session.id);
+		const nodeMap = this.subSessions.get(taskId);
+		if (nodeMap) {
+			for (const [sid] of nodeMap) sessionIds.add(sid);
+		}
+		// Fallback: if the in-memory map is empty (e.g. after daemon restart
+		// without rehydrate), use the DB-recorded task-agent session ID.
+		const task = this.config.taskRepo.getTask(taskId);
+		if (task?.taskAgentSessionId) sessionIds.add(task.taskAgentSessionId);
+
+		// 2. In-memory teardown (DB + worktree + jsonl preserved by cleanup).
+		try {
+			await this.cleanup(taskId, 'done');
+		} catch (err) {
+			log.warn(`TaskAgentManager.archiveOnTaskArchived: cleanup failed for task ${taskId}:`, err);
+		}
+
+		// 3. Archive SDK .jsonl files + mark each attached session as archived.
+		for (const sessionId of sessionIds) {
+			try {
+				await this.config.sessionManager.archiveSessionResources(sessionId, 'ui_task_archive');
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager.archiveOnTaskArchived: failed to archive session ${sessionId} for task ${taskId}:`,
+					err
+				);
+			}
+		}
+
+		// 4. Remove the space-level task worktree (disk cleanup). The DB task
+		// row remains so the UI can still display the archived task.
+		if (this.config.worktreeManager && task?.spaceId) {
+			try {
+				await this.config.worktreeManager.removeTaskWorktree(task.spaceId, taskId);
+				log.info(`TaskAgentManager: removed worktree for archived task ${taskId}`);
+			} catch (err) {
+				log.warn(
+					`TaskAgentManager: failed to remove worktree for archived task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -1821,9 +1896,13 @@ export class TaskAgentManager {
 		// Remove from reverse index immediately to prevent double-cancel
 		// if cleanup(taskId) is called later for the same task.
 		this.agentSessionIndex.delete(agentSessionId);
-		void this.stopAndDeleteSession(agentSessionId, session).catch((err) => {
+		// Task #85 invariant: only UI archive/delete RPCs may touch the DB row,
+		// worktree, or SDK .jsonl files. Workflow-driven cancellation only stops
+		// the in-memory SDK subprocess so the DB row + sdk_messages remain
+		// readable from the UI afterwards.
+		void this.stopSessionPreserveDb(agentSessionId, session).catch((err) => {
 			log.warn(
-				`TaskAgentManager.cancelBySessionId: failed to cancel session ${agentSessionId}:`,
+				`TaskAgentManager.cancelBySessionId: failed to stop session ${agentSessionId}:`,
 				err
 			);
 		});
@@ -2005,53 +2084,62 @@ export class TaskAgentManager {
 	}
 
 	/**
-	 * Stop and clean up all sessions for a task.
+	 * Stop all in-memory resources for a task **without deleting any persisted state**.
 	 *
-	 * Stops the Task Agent session and all sub-sessions, removes DB records
-	 * via SessionManager.deleteSession(), and clears in-memory maps.
+	 * Task #85 invariant: the only code paths allowed to remove a session's
+	 * worktree, SDK `.jsonl` files, or DB row are the two UI RPC handlers
+	 * (`session.archive`/`task.archive` and `session.delete`/`room.delete`).
+	 * Every other lifecycle event — task done, task cancelled, workflow end,
+	 * daemon shutdown, spawn rollback — must preserve persisted state and
+	 * only interrupt the in-memory SDK subprocess so the user keeps their
+	 * conversation history, worktree checkout, and session metadata.
+	 *
+	 * This method:
+	 *   - Interrupts and cleans up every in-memory AgentSession for the task.
+	 *   - Drops completion callbacks and session listeners.
+	 *   - Clears in-memory maps (`subSessions`, `taskAgentSessions`,
+	 *     `taskWorktreePaths`, `taskDbQueryServers`, `agentSessionIndex`).
+	 *   - Closes any db-query MCP server file handles.
+	 *
+	 * It does NOT delete any DB row, remove any worktree, or archive any
+	 * SDK files. Marking the worktree `completed` also belongs to archive
+	 * (which moves the worktree entirely) — so neither
+	 * `removeTaskWorktree` nor `markTaskWorktreeCompleted` is called here.
 	 *
 	 * @param taskId - The task to clean up.
-	 * @param reason - 'cancelled': remove the worktree immediately.
-	 *                 'completed' (default): mark the worktree as completed for TTL-based cleanup.
+	 * @param reason - Retained for logging only; behavior is identical for
+	 *                'done' and 'cancelled'.
 	 */
 	async cleanup(taskId: string, reason: 'done' | 'cancelled' = 'done'): Promise<void> {
-		// Collect the exact session IDs that belong to this task so that
-		// the callback/listener cleanup in steps 3 & 4 uses precise matches
-		// rather than a fragile substring check.
 		const sessionIdsToClean = new Set<string>();
 
-		// 1. Cleanup sub-sessions first
+		// 1. Stop sub-sessions (interrupt + cleanup, preserve DB).
 		const nodeMap = this.subSessions.get(taskId);
 		if (nodeMap) {
 			for (const [subSessionId, session] of nodeMap) {
 				sessionIdsToClean.add(subSessionId);
-				await this.stopAndDeleteSession(subSessionId, session);
+				await this.stopSessionPreserveDb(subSessionId, session);
 			}
 			this.subSessions.delete(taskId);
-			// Clean up reverse index entries for all sub-sessions of this task
 			for (const sid of sessionIdsToClean) {
 				this.agentSessionIndex.delete(sid);
 			}
 		}
 
-		// 2. Cleanup Task Agent session
+		// 2. Stop Task Agent session (interrupt + cleanup, preserve DB).
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
 			const agentSessionId = taskAgentSession.session.id;
 			sessionIdsToClean.add(agentSessionId);
-			await this.stopAndDeleteSession(agentSessionId, taskAgentSession);
+			await this.stopSessionPreserveDb(agentSessionId, taskAgentSession);
 			this.taskAgentSessions.delete(taskId);
 		}
 
-		// 3. Remove any dangling completion callbacks for known session IDs.
-		// We use the exact session IDs collected above (sub-sessions + task agent)
-		// rather than a substring match to avoid false positives.
+		// 3. stopSessionPreserveDb already removed per-session listeners and
+		// completion callbacks, but run the cleanup defensively in case any
+		// stragglers slipped in through a different registration path.
 		for (const sessionId of sessionIdsToClean) {
 			this.completionCallbacks.delete(sessionId);
-		}
-
-		// 4. Remove session listeners for known session IDs
-		for (const sessionId of sessionIdsToClean) {
 			const unsub = this.sessionListeners.get(sessionId);
 			if (unsub) {
 				unsub();
@@ -2059,32 +2147,14 @@ export class TaskAgentManager {
 			}
 		}
 
-		// 5. Worktree lifecycle: remove on cancellation, mark completed otherwise.
-		if (this.config.worktreeManager) {
-			const spaceId = this.config.taskRepo.getTask(taskId)?.spaceId;
-			if (spaceId) {
-				if (reason === 'cancelled') {
-					try {
-						await this.config.worktreeManager.removeTaskWorktree(spaceId, taskId);
-						log.info(`TaskAgentManager: removed worktree for cancelled task ${taskId}`);
-					} catch (err) {
-						log.warn(
-							`TaskAgentManager: failed to remove worktree for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
-						);
-					}
-				} else {
-					this.config.worktreeManager.markTaskWorktreeCompleted(spaceId, taskId);
-					log.info(`TaskAgentManager: marked worktree completed for task ${taskId}`);
-				}
-			}
-		}
-		// Always remove from in-memory path map regardless of worktreeManager presence.
+		// 4. Drop the in-memory worktree path. The on-disk worktree is
+		// preserved — archive is the only path that removes it.
 		this.taskWorktreePaths.delete(taskId);
 
-		// Drop the eager sub-session index.
+		// 5. Drop the eager sub-session index.
 		this.eagerSubSessionIds.delete(taskId);
 
-		// Close db-query server connection for this task.
+		// 6. Close db-query server connection for this task.
 		const dbQueryServer = this.taskDbQueryServers.get(taskId);
 		if (dbQueryServer) {
 			try {
@@ -2095,7 +2165,9 @@ export class TaskAgentManager {
 			this.taskDbQueryServers.delete(taskId);
 		}
 
-		log.info(`TaskAgentManager: cleaned up all sessions for task ${taskId} (reason: ${reason})`);
+		log.info(
+			`TaskAgentManager: cleaned up in-memory state for task ${taskId} (reason: ${reason}, DB + worktree preserved)`
+		);
 	}
 
 	// -------------------------------------------------------------------------
@@ -3041,11 +3113,16 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Interrupt and clean up a session's in-memory state, **preserving its DB row**.
+	 * Interrupt and clean up a session's in-memory state, **preserving its DB row**
+	 * and all persisted artifacts (worktree + SDK `.jsonl` files).
 	 *
-	 * Used by the daemon-shutdown path (`shutdownTask`) so that `rehydrate()` can
-	 * restore the session when the daemon restarts. The reverse is
-	 * `stopAndDeleteSession`, which is used for task completion / cancellation.
+	 * Task #85: this is the only primitive non-UI code paths may use to stop
+	 * a task agent / sub-session. Task completion, cancellation, workflow end,
+	 * spawn rollback, daemon shutdown, and Neo recovery all route through here
+	 * so that `rehydrate()` (or a subsequent UI visit) can restore the session.
+	 * Worktree/DB/jsonl removal happens only via
+	 * `SessionManager.archiveSessionResources` or
+	 * `SessionManager.deleteSessionResources`.
 	 */
 	private async stopSessionPreserveDb(sessionId: string, session: AgentSession): Promise<void> {
 		const unsub = this.sessionListeners.get(sessionId);
@@ -3068,37 +3145,13 @@ export class TaskAgentManager {
 		}
 	}
 
-	/**
-	 * Interrupt and clean up a session, then delete its DB record.
-	 */
-	private async stopAndDeleteSession(sessionId: string, session: AgentSession): Promise<void> {
-		// Unsubscribe any completion listeners first
-		const unsub = this.sessionListeners.get(sessionId);
-		if (unsub) {
-			unsub();
-			this.sessionListeners.delete(sessionId);
-		}
-		this.completionCallbacks.delete(sessionId);
-
-		try {
-			await session.handleInterrupt();
-		} catch (err) {
-			log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);
-		}
-
-		try {
-			await session.cleanup();
-		} catch (err) {
-			log.warn(`TaskAgentManager: failed to cleanup session ${sessionId}:`, err);
-		}
-
-		// Remove DB record via SessionManager
-		try {
-			await this.config.sessionManager.deleteSession(sessionId);
-		} catch (err) {
-			log.warn(`TaskAgentManager: failed to delete session record ${sessionId}:`, err);
-		}
-	}
+	// Task #85: `stopAndDeleteSession` has been removed. Non-UI code paths must
+	// use `stopSessionPreserveDb` (or `SessionManager.interruptInMemorySession`),
+	// which preserves the DB row + `sdk_messages` + worktree + SDK `.jsonl`
+	// files. Only the `session.archive`/`task.archive` and
+	// `session.delete`/`room.delete` RPC handlers may touch those artifacts,
+	// via `SessionManager.archiveSessionResources` /
+	// `SessionManager.deleteSessionResources`.
 
 	// -------------------------------------------------------------------------
 	// Private — utility lookups
