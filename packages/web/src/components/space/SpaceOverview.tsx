@@ -45,6 +45,7 @@ function StatCard({
 			class={cn(
 				'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all',
 				'bg-dark-850/80 hover:bg-dark-800',
+				onClick ? 'cursor-pointer' : 'cursor-default',
 				color
 			)}
 		>
@@ -349,9 +350,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	// Task counts
 	const activeTasks = tasks.filter((t) => t.status === 'open' || t.status === 'in_progress');
 	const reviewTasks = tasks.filter((t) => t.status === 'blocked' || t.status === 'review');
-	const doneTasks = tasks.filter(
-		(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
-	);
+	const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'cancelled');
 
 	// Recent tasks — sorted by updatedAt, top 5
 	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
@@ -400,16 +399,19 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 						label="Active"
 						count={activeTasks.length}
 						color="border-blue-800/30 text-blue-400"
+						onClick={() => navigateToSpaceTasks(spaceId, 'active')}
 					/>
 					<StatCard
 						label="Review"
 						count={reviewTasks.length}
 						color="border-purple-800/30 text-purple-400"
+						onClick={() => navigateToSpaceTasks(spaceId, 'action')}
 					/>
 					<StatCard
 						label="Done"
 						count={doneTasks.length}
 						color="border-green-800/30 text-green-400"
+						onClick={() => navigateToSpaceTasks(spaceId, 'completed')}
 					/>
 				</div>
 
