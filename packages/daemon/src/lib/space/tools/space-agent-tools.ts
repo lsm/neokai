@@ -368,12 +368,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
 		/**
 		 * Create a standalone task not associated with any workflow run.
+		 *
+		 * Supports structured dependencies via `depends_on`. The underlying
+		 * SpaceTaskManager.createTask() validates that every dependency ID
+		 * exists in the same space and rejects circular references; those
+		 * errors are surfaced here as `{ success: false, error }`.
 		 */
 		async create_standalone_task(args: {
 			title: string;
 			description: string;
 			priority?: SpaceTaskPriority;
 			workflow_id?: string;
+			depends_on?: string[];
 		}): Promise<ToolResult> {
 			try {
 				const task = await taskManager.createTask({
@@ -381,6 +387,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 					description: args.description,
 					priority: args.priority,
 					preferredWorkflowId: args.workflow_id ?? null,
+					dependsOn: args.depends_on,
 				});
 				return jsonResult({ success: true, task });
 			} catch (err) {
@@ -1108,7 +1115,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 		),
 		tool(
 			'create_standalone_task',
-			'Create a task request. Runtime may attach and execute a workflow for this task during orchestration.',
+			'Create a task request. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
 			{
 				title: z.string().describe('Short title for the task'),
 				description: z.string().describe('Detailed description of the work to be done'),
@@ -1125,6 +1132,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 					.optional()
 					.describe(
 						'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Example: "67b42e04-ae03-425d-b267-40527b042dcc" for Coding with QA Workflow.'
+					),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe(
+						'List of task IDs this task depends on. All must be in the same space. The task will be blocked until every dependency reaches status=done. Cycles and non-existent IDs are rejected.'
 					),
 			},
 			(args) => handlers.create_standalone_task(args)
