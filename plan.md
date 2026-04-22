@@ -27,6 +27,7 @@ Replace the entire `completionActions` pipeline with a single, uniform post-appr
 - **Env-var parsing in the hoisted bash script.** `pr-merge-script.ts` must parse `NEOKAI_ARTIFACT_DATA_JSON` via `jq -r` (or equivalent) — never `eval` / `$(…)` expansion of the raw JSON string. `pr_url` is regex-validated upstream, but lock the invariant in the hoisted module so future edits don't regress it.
 - **Structured logging for the audit line.** Emit the `task-agent.merge_pr: spaceId=... taskId=... prUrl=... level=... autoApproved=... outcome=... reason=...` line via the structured key-value logger — not format-string concatenation — so `approvalReason` (agent-generated, potentially containing newlines / ANSI) cannot forge adjacent log lines.
 - **Snapshot-test the `request_human_input` question format.** §3.3 of the source plan specifies the question template ("Approve merging PR `<pr_url>`?" plus context block). Add a snapshot test that exercises the level < 4 code path end-to-end and pins the question string the Task Agent produces, so prompt drift is caught.
+- **Idempotency implementation note (correctness #2).** The `workflow-run-artifact-repository.ts` `listByRun(runId, { nodeId, artifactType })` API filters by `nodeId` + `artifactType` only — it does not support `json_extract` field filters. The idempotency check therefore calls `listByRun(runId, { nodeId: 'task-agent', artifactType: 'result' })` and scans the returned rows in-memory for `record.data.merged_pr_url === pr_url`. Do **not** add a new SQLite index or column to satisfy a literal reading of "query for matching URL". Add a unit test that mocks `listByRun` to return a row with matching `merged_pr_url` and asserts the handler short-circuits without executing the script.
 
 ### 2. End-node handoff protocol: prompt changes, Task Agent prompt addition, `[TASK_APPROVED]` injection, feature-flag flip
 
@@ -38,6 +39,15 @@ Replace the entire `completionActions` pipeline with a single, uniform post-appr
 
 - **QA-loop workflow:** QA agents no longer invoke `gh pr merge` directly. Post-approval merge is now performed by the Task Agent under a separate autonomy check (level ≥ 4 for auto-merge; otherwise `request_human_input` surfaces a banner). Operators running Coding-with-QA at space level 3 will observe that QA's `approve_task` closes the work but the PR is **not** auto-merged — a human-merge prompt appears instead. This is the intended behaviour post-refactor; it is the same decoupling the source plan describes in §5.
 - **Coding + Research workflows:** Reviewer/Research end-nodes still call `approve_task`, but the actual merge now happens asynchronously through the Task Agent after the signal is received. Operators may observe a small latency (seconds) between `approve_task` completing and the PR showing as merged in GitHub.
+
+**Acceptance criteria — critical (correctness #1, #3, #7, #8):**
+
+- **Storage for the `post_approval_action` signal.** Add a transient field `SpaceTask.pendingPostApprovalAction: { action: 'merge_pr'; pr_url: string } | null` to the task row (mapper + repo + shared type). When `agent-message-router` routes a `send_message({ target: 'task-agent', data: { pr_url, post_approval_action } })` from an end-node session, persist that signal onto the currently-active task's `pendingPostApprovalAction`. Clear it once `[TASK_APPROVED]` is injected (or on explicit task reset). This makes the injection **deterministic and restartable** — an in-memory map in `TaskAgentManager` would lose the signal on daemon restart; always-injecting would produce spurious notifications. The new column can piggy-back on Work Item 4's migration (TEXT JSON nullable, no backfill needed since no live rows will have it when migration runs).
+- **`[TASK_APPROVED]` injection is gated by `pendingPostApprovalAction != null`.** When a task transitions to `done` with no signal stored, the injection is skipped entirely — matching the source plan §2.3 "Verify NOT injected when no `post_approval_action` was signalled" test case.
+- **`[TASK_APPROVED]` text includes `pr_url` and `action`.** Even though the Task Agent also has the structured-data appendix in its context, include the URL + action in the injection body so a test can assert deterministic content.
+- **Silent-skip path test.** Add a runtime test: "End node calls `approve_task` without prior `send_message` → task transitions to `done`, `pendingPostApprovalAction` is null, `[TASK_APPROVED]` is **not** injected, Task Agent does not call `merge_pr`." Graceful degradation: the work is approved, merge is the operator's responsibility.
+- **Session-wake parity with `[NODE_COMPLETE]`.** The `[TASK_APPROVED]` injection path must resume/wake the Task Agent session if idle — reuse whatever mechanism `[NODE_COMPLETE]` uses (see `task-agent-manager.ts:1822-1834`). AC check: "Task Agent session idle before injection; after injection, the SDK turn completes and the agent calls `merge_pr` or `request_human_input` within the usual turn timeout."
+- **`FULLSTACK_QA_PROMPT` duplicate-constant checklist item.** Explicit checkbox in the PR checklist that the QA end-node prompt changes are mirrored in the `FULLSTACK_QA_PROMPT` constant at `built-in-workflows.ts:384-396`. The prompt-snapshot test must cover this constant alongside the per-node `customPrompt`.
 
 ### 3. Delete completion-action runtime pipeline, RPC intercept, MCP tool, and UI banner
 
@@ -54,6 +64,10 @@ Replace the entire `completionActions` pipeline with a single, uniform post-appr
 **Security follow-ups for the deletion sweep:**
 
 - Add a `rg "merge_pr"` grep step to the PR checklist and confirm the symbol is not inadvertently registered by `createNodeAgentMcpServer` or `createSpaceAgentMcpServer` (`packages/daemon/src/lib/space/tools/`). The only registration site must remain `createTaskAgentMcpServer`.
+
+**Architecture note (architecture-reviewer observation):**
+
+- Keep the new `resolveTaskCompletion(workflow, spaceLevel)` helper as a **private method inside `space-runtime.ts`** near the two collapsed call sites — do **not** extract it to a new file. It is an implementation detail of the completion resolution path, not a public API.
 
 ### 4. Schema cleanup + shared types + DB migration
 
@@ -77,12 +91,23 @@ Replace the entire `completionActions` pipeline with a single, uniform post-appr
 **QA workflow autonomy drop 4 → 3 — PR description callout:**
 
 - **Behavioural intent change.** Before: Coding-with-QA required space level 4 to self-close because the QA agent was the merger. After: the QA agent no longer merges (that moved to the Task Agent `merge_pr` tool in Work Items 1–3), so self-close threshold lowers to 3 — aligned with Coding. Auto-merge still requires level 4 (enforced by the `merge_pr` handler, not the workflow). Net effect: spaces at level 3 running Coding-with-QA will now see QA tasks self-close without human intervention where they previously required human approval; merge still requires human approval at level 3. Call this out in the migration notes and changelog.
+- **Operator-facing migration note** (enforced via Work Item 5 changelog entry): `"If your space runs the QA workflow at autonomy level 3, tasks will now auto-close without human approval on work quality (auto-merge still requires level 4). To preserve the old behaviour, copy the built-in workflow into a custom one and set completionAutonomyLevel: 4."`
+
+**DB migration acceptance criteria (correctness #5):**
+
+- The entire migration — step 1 (UPDATE of legacy `completion_action` rows), step 2 (table rebuild to drop `pending_action_index`), step 3 (CHECK-constraint tightening), step 4 (drop `completion_actions_fired_at`) — must be wrapped in a **single `BEGIN … COMMIT` transaction**. A daemon crash mid-rebuild with partial steps applied leaves the DB with the old CHECK constraint and partially-modified rows. Follow the transaction pattern already used by the existing migrations in `packages/daemon/src/storage/schema/migrations.ts`.
+- The new `SpaceTask.pendingPostApprovalAction` column (added per Work Item 2's AC) should land in the same migration as a nullable `TEXT` column storing JSON `{ action, pr_url }`, no backfill needed.
+
+**Soft-migration implementation specifics (correctness #6):**
+
+- The unknown-field stripping pass lives in `SpaceWorkflowManager.loadWorkflow()` (or the equivalent load-time entry point in `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`) — **not** in the shared-types validator. Implement it as an `unknownFieldStripper(workflow, schema)` helper that removes any top-level or `nodes[].*` field absent from the current schema, returning the stripped payload plus a `strippedFields: string[]` list.
+- `workflow.migrated` is a **structured daemon log line**, not an RPC event or in-app notification: `workflow.migrated: workflowId=<id> workflowName=<name> strippedFields=[completionActions,…]`. The user-facing banner described above (per-workflow editor banner with dismiss) is a **separate** UX surface driven from a new `workflow.migration_acked_at` column on the workflow row; the daemon log line is for operator observability / CI / log aggregation.
 
 ### 5. Docs refresh, E2E coverage, changelog, and rollout closeout
 
 **Priority:** normal
 
-**Description:** Add a closing section to `docs/research/pr-merging-completion-actions.md` pointing at this plan and its PR chain. Update `docs/design/autonomy-levels-and-completion-actions.md` to reflect the removal. Add a changelog entry describing the breaking change (shared types, built-in workflow schema, DB columns) and the new `NEOKAI_TASK_AGENT_MERGE_EXECUTOR` flag default. Sweep the repo for other stale references (grep for `completionActions`, `CompletionAction`, `approve_completion_action`, `pendingActionIndex`, `PendingCompletionActionBanner`, `completionActionsFiredAt`, `MERGE_PR_COMPLETION_ACTION`, `VERIFY_PR_MERGED_COMPLETION_ACTION`, `VERIFY_REVIEW_POSTED_COMPLETION_ACTION`, `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION`, `resolveCompletionWithActions`, `resumeCompletionActions`, `executeCompletionAction`, `EMPTY_ACTIONS_AUTONOMY_THRESHOLD`). Add the three E2E tests from §4.6 of the source plan: `task-agent-merge-autonomy-high.e2e.ts` (level 4 auto-merge), `task-agent-merge-autonomy-low.e2e.ts` (level 1 human-approves-through-`request_human_input` path), and `task-agent-merge-human-rejects.e2e.ts` (level 1 human rejection — merge skipped, task stays `done`, audit artifact written). Provide a `tests/e2e/helpers/mock-gh.sh` PATH shim for the mock GitHub CLI if the existing E2E fixture infrastructure doesn't already cover it. Add online-test runs under `packages/daemon/tests/online/space/` simulating full Coding / Research / QA runs with dev-proxy at representative autonomy levels. Add the structured daemon log line `task-agent.merge_pr: spaceId=... taskId=... prUrl=... level=... autoApproved=bool outcome=... reason=...` described in §6.4. Manually trigger E2E in CI for UI changes (`PendingCompletionActionBanner` removal) per the workflow_dispatch pattern. Depends on Work Item 4.
+**Description:** Include an operator-facing migration note in the changelog entry for the QA workflow behavioural change: `"If your space runs the QA workflow at autonomy level 3, tasks will now auto-close without human approval on work quality (auto-merge still requires level 4). To preserve the old behaviour, copy the built-in QA workflow into a custom one and set completionAutonomyLevel: 4."` Add a closing section to `docs/research/pr-merging-completion-actions.md` pointing at this plan and its PR chain. Update `docs/design/autonomy-levels-and-completion-actions.md` to reflect the removal. Add a changelog entry describing the breaking change (shared types, built-in workflow schema, DB columns) and the new `NEOKAI_TASK_AGENT_MERGE_EXECUTOR` flag default. Sweep the repo for other stale references (grep for `completionActions`, `CompletionAction`, `approve_completion_action`, `pendingActionIndex`, `PendingCompletionActionBanner`, `completionActionsFiredAt`, `MERGE_PR_COMPLETION_ACTION`, `VERIFY_PR_MERGED_COMPLETION_ACTION`, `VERIFY_REVIEW_POSTED_COMPLETION_ACTION`, `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION`, `resolveCompletionWithActions`, `resumeCompletionActions`, `executeCompletionAction`, `EMPTY_ACTIONS_AUTONOMY_THRESHOLD`). Add the three E2E tests from §4.6 of the source plan: `task-agent-merge-autonomy-high.e2e.ts` (level 4 auto-merge), `task-agent-merge-autonomy-low.e2e.ts` (level 1 human-approves-through-`request_human_input` path), and `task-agent-merge-human-rejects.e2e.ts` (level 1 human rejection — merge skipped, task stays `done`, audit artifact written). Provide a `tests/e2e/helpers/mock-gh.sh` PATH shim for the mock GitHub CLI if the existing E2E fixture infrastructure doesn't already cover it. Add online-test runs under `packages/daemon/tests/online/space/` simulating full Coding / Research / QA runs with dev-proxy at representative autonomy levels. Add the structured daemon log line `task-agent.merge_pr: spaceId=... taskId=... prUrl=... level=... autoApproved=bool outcome=... reason=...` described in §6.4. Manually trigger E2E in CI for UI changes (`PendingCompletionActionBanner` removal) per the workflow_dispatch pattern. Depends on Work Item 4.
 
 ---
 
@@ -111,17 +136,34 @@ All PRs stack linearly: 1 → 2 → 3 → 4 → 5. Each targets `dev` and uses s
 
 ## Plan Review feedback addressed
 
-The following caveats from Plan Review (ux-reviewer + security-reviewer, PR #1592 review comments) have been folded into the relevant work item descriptions above and do **not** require re-opening the plan:
+All 4 reviewers (ux, security, architecture, correctness) on PR #1592 voted **APPROVE**. Their caveats have been folded into the relevant work item descriptions above and do **not** require re-opening the plan:
 
+**UX reviewer (4 caveats):**
 - **ux #1 (regressions):** Review-Only / Plan-and-Decompose verification loss surfaced in Work Item 3; QA autonomy drop surfaced in Work Items 2 and 4.
 - **ux #2 (in-flight run migration UX):** Folded into Work Item 4 — `PendingCompletionActionBanner` → `PendingTaskCompletionBanner` transition described; `task.migrated` notification specified.
 - **ux #3 (`workflow.migrated` notification):** Folded into Work Item 4 — per-workflow banner, copy, dismiss behaviour, and schema-validation fallback specified.
 - **ux #4 (snapshot-test `request_human_input` question):** Folded into Work Item 1.
+
+**Security reviewer (5 recommendations):**
 - **security #1 (bind `pr_url` to signalled URL):** Folded into Work Item 1.
 - **security #2 (verify real `request_human_input` response at level < 4):** Folded into Work Item 1 with acceptable-fallback path described.
 - **security #3 (`jq`-based env-var parsing):** Folded into Work Item 1.
 - **security #4 (structured logging for audit line):** Folded into Work Item 1.
 - **security #5 (grep sweep for stray `merge_pr` registrations):** Folded into Work Item 3.
+
+**Architecture reviewer (clean approve + 3 minor observations):**
+- **arch #1 (`resolveTaskCompletion` stays private in `space-runtime.ts`, no new file):** Folded into Work Item 3.
+- arch #2 + #3 (WI 2 cross-cutting kept-together, soft-migration defensive) were already the plan's posture — no edit needed.
+
+**Correctness reviewer (1 critical + 5 notable + 2 minor):**
+- **correctness #1 (`[TASK_APPROVED]` storage mechanism — critical):** Folded into Work Item 2 as an AC — new `SpaceTask.pendingPostApprovalAction` JSON column, survives daemon restart, gated injection.
+- **correctness #2 (idempotency is in-memory scan, not direct SQL):** Folded into Work Item 1.
+- **correctness #3 (silent-skip test for missing `send_message`):** Folded into Work Item 2.
+- **correctness #4 (QA autonomy-drop operator migration note in changelog):** Folded into Work Items 4 and 5.
+- **correctness #5 (DB migration transactional):** Folded into Work Item 4.
+- **correctness #6 (soft-migration location specificity):** Folded into Work Item 4 — `SpaceWorkflowManager.loadWorkflow` + structured daemon log line `workflow.migrated`.
+- **correctness #7 (`FULLSTACK_QA_PROMPT` duplicate checklist):** Folded into Work Item 2.
+- **correctness #8 (session wake-up parity on `[TASK_APPROVED]`):** Folded into Work Item 2.
 
 ## Open questions
 
