@@ -1556,6 +1556,54 @@ describe('TaskAgentManager', () => {
 			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(false);
 		});
 
+		test('cleanupAll preserves DB state for rehydration after daemon restart', async () => {
+			const task1 = await makeTask(ctx.taskManager);
+			const task2 = await makeTask(ctx.taskManager);
+			const session1Id = await ctx.manager.spawnTaskAgent(task1, ctx.space, null, null);
+			const session2Id = await ctx.manager.spawnTaskAgent(task2, ctx.space, null, null);
+
+			await ctx.manager.cleanupAll();
+
+			// Must NOT delete session DB rows — rehydrate depends on them
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(session1Id);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(session2Id);
+
+			// The task_agent_session_id in space_tasks must still point at the live session
+			const reloaded1 = ctx.taskRepo.getTask(task1.id);
+			const reloaded2 = ctx.taskRepo.getTask(task2.id);
+			expect(reloaded1?.taskAgentSessionId).toBe(session1Id);
+			expect(reloaded2?.taskAgentSessionId).toBe(session2Id);
+		});
+
+		test('cleanupAll preserves sub-session DB rows and stops their in-memory queries', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:shutdown-sub`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId);
+			expect(subSession).toBeDefined();
+			// Sub-session is registered in memory and backed by a DB row
+			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			await ctx.manager.cleanupAll();
+
+			// The in-memory sub-session is cleared so rehydrate can restore cleanly
+			expect(ctx.manager.getSubSession(subSessionId)).toBeUndefined();
+
+			// But the DB row is preserved (rehydrateSubSession looks it up by ID on next run)
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			// The sub-session's streaming query was stopped via AgentSession.cleanup()
+			expect(subSession?._cleanupCalled).toBe(true);
+		});
+
 		test('cleanupAll is a no-op when no sessions are active', async () => {
 			// Should not throw
 			await expect(ctx.manager.cleanupAll()).resolves.toBeUndefined();
@@ -1919,6 +1967,50 @@ describe('TaskAgentManager', () => {
 			}
 
 			restoreSpy.mockRestore();
+		});
+
+		test('self-heals dangling task_agent_session_id when session row is missing', async () => {
+			// Simulate post-bad-shutdown state: task still marks itself in_progress
+			// with a taskAgentSessionId, but the session row was deleted.
+			const task = await ctx.taskManager.createTask({
+				title: 'Dangling FK task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const danglingSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: danglingSessionId });
+			// NOTE: no mockDb.createSession — session row is intentionally absent
+
+			await ctx.manager.rehydrate();
+
+			// No task agent added to the map
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+
+			// The dangling FK on space_tasks was cleared so the UI LiveQuery
+			// (spaceTaskActivity.byTask) stops inner-joining on a ghost session.
+			const reloaded = ctx.taskRepo.getTask(task.id);
+			expect(reloaded?.taskAgentSessionId).toBeUndefined();
+		});
+
+		test('self-heals when session exists but is the wrong type', async () => {
+			// The session row exists but is a worker (sub-session), not a
+			// space_task_agent. The FK is still logically dangling — clear it.
+			const task = await ctx.taskManager.createTask({
+				title: 'Wrong-type FK task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const wrongTypeSessionId = `space:${ctx.spaceId}:task:${task.id}:wrong`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: wrongTypeSessionId });
+			ctx.mockDb.createSession({ id: wrongTypeSessionId, type: 'worker' });
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+			const reloaded = ctx.taskRepo.getTask(task.id);
+			expect(reloaded?.taskAgentSessionId).toBeUndefined();
 		});
 	});
 
