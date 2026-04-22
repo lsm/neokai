@@ -698,6 +698,14 @@ export class StateManager {
 	 * FIX: Uses per-channel versioning
 	 */
 	async broadcastSessionStateChange(sessionId: string): Promise<void> {
+		// Guard: an empty sessionId indicates an upstream event emitted without a
+		// valid session (e.g. a provider error surfacing before session binding).
+		// Broadcasting to `session:` with no ID is meaningless and throws inside
+		// getSessionState() producing noisy "Session not found" warnings.
+		if (!sessionId) {
+			return;
+		}
+
 		const version = this.incrementVersion(`${STATE_CHANNELS.SESSION}:${sessionId}`);
 
 		try {

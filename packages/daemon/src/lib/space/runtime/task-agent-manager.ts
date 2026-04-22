@@ -1551,6 +1551,7 @@ export class TaskAgentManager {
 
 		let attempted = 0;
 		let failed = 0;
+		let selfHealed = 0;
 
 		for (const task of activeTasks) {
 			const sessionId = task.taskAgentSessionId;
@@ -1560,8 +1561,26 @@ export class TaskAgentManager {
 			if (this.taskAgentSessions.has(task.id)) continue;
 
 			const dbSession = this.config.db.getSession(sessionId);
-			if (!dbSession) continue;
-			if (dbSession.type !== 'space_task_agent') continue;
+			if (!dbSession || dbSession.type !== 'space_task_agent') {
+				// Dangling FK: task still references a session that no longer exists
+				// in the DB (or was replaced by another type). Clear the reference so
+				// the UI's `spaceTaskActivity.byTask` LiveQuery stops inner-joining on
+				// a ghost row (which hides the task agent and canvas) and so the task
+				// becomes eligible to spawn a fresh Task Agent on its next run.
+				log.warn(
+					`TaskAgentManager.rehydrate: task ${task.id} references missing session ${sessionId} — clearing dangling task_agent_session_id`
+				);
+				try {
+					this.config.taskRepo.updateTask(task.id, { taskAgentSessionId: null });
+					selfHealed++;
+				} catch (err) {
+					log.warn(
+						`TaskAgentManager.rehydrate: failed to clear dangling task_agent_session_id for task ${task.id}:`,
+						err
+					);
+				}
+				continue;
+			}
 
 			attempted++;
 			try {
@@ -1577,13 +1596,27 @@ export class TaskAgentManager {
 
 		const succeeded = attempted - failed;
 		log.info(
-			`TaskAgentManager.rehydrate: attempted=${attempted} succeeded=${succeeded} failed=${failed}`
+			`TaskAgentManager.rehydrate: attempted=${attempted} succeeded=${succeeded} failed=${failed} selfHealed=${selfHealed}`
 		);
 	}
 
 	/**
-	 * Stop and clean up all active Task Agent sessions and their sub-sessions.
-	 * Called on daemon shutdown to release all resources.
+	 * Stop all active Task Agent sessions and their sub-sessions for daemon shutdown.
+	 *
+	 * **Preserves DB state** so that `rehydrate()` can restore every task on the next
+	 * daemon start. Specifically:
+	 * - Does NOT delete the session DB row (would orphan `space_tasks.task_agent_session_id`
+	 *   and break the `spaceTaskActivity.byTask` LiveQuery that feeds the Task Agent /
+	 *   reviewer dropdown and canvas).
+	 * - Does NOT mark worktrees completed (the task is still in progress; marking it
+	 *   completed starts the 7-day TTL reaper clock).
+	 *
+	 * Steps per task:
+	 * 1. Interrupt and cleanup the in-memory AgentSession (stops SDK query & subprocesses).
+	 *    `stopSessionPreserveDb` also unsubscribes session.updated listeners and
+	 *    drops completion callbacks for each session ID.
+	 * 2. Close db-query MCP server file handles.
+	 * 3. Clear in-memory maps so a subsequent rehydrate starts from a clean slate.
 	 */
 	async cleanupAll(): Promise<void> {
 		if (this.taskArchiveListenerUnsub) {
@@ -1591,8 +1624,49 @@ export class TaskAgentManager {
 			this.taskArchiveListenerUnsub = null;
 		}
 		const taskIds = Array.from(this.taskAgentSessions.keys());
-		await Promise.allSettled(taskIds.map((taskId) => this.cleanup(taskId)));
-		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks cleaned up)`);
+		await Promise.allSettled(taskIds.map((taskId) => this.shutdownTask(taskId)));
+		log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks shut down)`);
+	}
+
+	/**
+	 * Stop all in-memory resources for a task without touching DB state.
+	 * Used by shutdown only — for task completion / cancellation use `cleanup()`.
+	 */
+	private async shutdownTask(taskId: string): Promise<void> {
+		// 1. Stop sub-sessions (interrupt + cleanup, no DB delete).
+		// stopSessionPreserveDb unsubscribes listeners and drops completion
+		// callbacks for each session ID as part of its teardown.
+		const nodeMap = this.subSessions.get(taskId);
+		if (nodeMap) {
+			for (const [subSessionId, session] of nodeMap) {
+				await this.stopSessionPreserveDb(subSessionId, session);
+				this.agentSessionIndex.delete(subSessionId);
+			}
+			this.subSessions.delete(taskId);
+		}
+
+		// 2. Stop Task Agent session
+		const taskAgentSession = this.taskAgentSessions.get(taskId);
+		if (taskAgentSession) {
+			await this.stopSessionPreserveDb(taskAgentSession.session.id, taskAgentSession);
+			this.taskAgentSessions.delete(taskId);
+		}
+
+		// 3. Drop the in-memory worktree path (DB record is preserved)
+		this.taskWorktreePaths.delete(taskId);
+
+		// 4. Close db-query server to release SQLite handles held by the session
+		const dbQueryServer = this.taskDbQueryServers.get(taskId);
+		if (dbQueryServer) {
+			try {
+				dbQueryServer.close();
+			} catch (err) {
+				log.warn(`TaskAgentManager: failed to close db-query server for task ${taskId}:`, err);
+			}
+			this.taskDbQueryServers.delete(taskId);
+		}
+
+		log.info(`TaskAgentManager: shutdown complete for task ${taskId} (DB state preserved)`);
 	}
 
 	/**
@@ -2627,6 +2701,34 @@ export class TaskAgentManager {
 	// -------------------------------------------------------------------------
 	// Private — session cleanup helpers
 	// -------------------------------------------------------------------------
+
+	/**
+	 * Interrupt and clean up a session's in-memory state, **preserving its DB row**.
+	 *
+	 * Used by the daemon-shutdown path (`shutdownTask`) so that `rehydrate()` can
+	 * restore the session when the daemon restarts. The reverse is
+	 * `stopAndDeleteSession`, which is used for task completion / cancellation.
+	 */
+	private async stopSessionPreserveDb(sessionId: string, session: AgentSession): Promise<void> {
+		const unsub = this.sessionListeners.get(sessionId);
+		if (unsub) {
+			unsub();
+			this.sessionListeners.delete(sessionId);
+		}
+		this.completionCallbacks.delete(sessionId);
+
+		try {
+			await session.handleInterrupt();
+		} catch (err) {
+			log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);
+		}
+
+		try {
+			await session.cleanup();
+		} catch (err) {
+			log.warn(`TaskAgentManager: failed to cleanup session ${sessionId}:`, err);
+		}
+	}
 
 	/**
 	 * Interrupt and clean up a session, then delete its DB record.
