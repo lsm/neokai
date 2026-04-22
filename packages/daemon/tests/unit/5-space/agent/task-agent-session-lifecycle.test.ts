@@ -89,6 +89,7 @@ interface MockAgentSession {
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
+	awaitSdkSessionCaptured: (timeoutMs?: number) => Promise<string>;
 	handleInterrupt: () => Promise<void>;
 	cleanup: () => Promise<void>;
 	messageQueue: { enqueueWithId: (id: string, msg: string) => Promise<void> };
@@ -147,6 +148,9 @@ function makeMockSession(
 		},
 		async ensureQueryStarted() {
 			this._startCalled = true;
+		},
+		async awaitSdkSessionCaptured() {
+			return `sdk-${sessionId}`;
 		},
 		async handleInterrupt() {},
 		async cleanup() {
@@ -513,6 +517,10 @@ describe('Task Agent Session Lifecycle', () => {
 				},
 				removeTaskWorktree: async () => {},
 				markTaskWorktreeCompleted: () => {},
+				// DB-fallback stub: returns null so the path read in getTaskWorktreePath
+				// after cleanup (which clears the in-memory cache) remains undefined.
+				// Matches real behaviour when no `space_worktrees` row exists.
+				getTaskWorktreePathSync: () => null,
 			};
 
 			const manager = new TaskAgentManager({
@@ -675,6 +683,8 @@ describe('Task Agent Session Lifecycle', () => {
 					void spaceId;
 					void taskId;
 				},
+				// DB-fallback stub: no stored record in this test → null.
+				getTaskWorktreePathSync: () => null,
 			};
 
 			const manager = new TaskAgentManager({
@@ -734,6 +744,8 @@ describe('Task Agent Session Lifecycle', () => {
 					removedWorktrees.push(`${spaceId}:${taskId}`);
 				},
 				markTaskWorktreeCompleted: () => {},
+				// DB-fallback stub: no stored record in this test → null.
+				getTaskWorktreePathSync: () => null,
 			};
 
 			const manager = new TaskAgentManager({
@@ -789,6 +801,8 @@ describe('Task Agent Session Lifecycle', () => {
 				markTaskWorktreeCompleted: (spaceId: string, taskId: string) => {
 					completedWorktrees.push(`${spaceId}:${taskId}`);
 				},
+				// DB-fallback stub: no stored record in this test → null.
+				getTaskWorktreePathSync: () => null,
 			};
 
 			const manager = new TaskAgentManager({
