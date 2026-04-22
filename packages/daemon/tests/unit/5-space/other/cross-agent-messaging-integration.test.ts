@@ -1000,7 +1000,11 @@ describe('error paths — missing workflowRunId', () => {
 		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
-	test('send_message returns unknown-target when workflowRunId is empty', async () => {
+	test('send_message fails with no-active-sessions when workflowRunId is empty', async () => {
+		// When workflowRunId is empty, no execution records exist. The target 'reviewer' is
+		// topology-declared (via the channel), so it's no longer "unknown" — it correctly falls
+		// through to "no active sessions" since the channel resolves it as a permitted target but
+		// no session can be found (there are none in an empty run).
 		const { messages, injector } = makeMessageCapture();
 		const channelResolver = new ChannelResolver([makeResolvedChannel('coder', 'reviewer')]);
 		const agentMessageRouter = new AgentMessageRouter({
@@ -1028,8 +1032,8 @@ describe('error paths — missing workflowRunId', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain("unknown target 'reviewer'");
-		expect((data.error as string).toLowerCase()).toContain('no reachable targets available');
+		expect((data.error as string).toLowerCase()).toContain('no active sessions found');
+		expect((data.error as string).toLowerCase()).toContain('reviewer');
 		expect(messages).toHaveLength(0);
 	});
 
@@ -1118,10 +1122,12 @@ describe('Task Agent channel participation', () => {
 		expect(permitted).toContain('coder');
 	});
 
-	test('send_message to task-agent returns unknown-target when no taskAgentRouter is injected', async () => {
+	test('send_message to task-agent fails when no taskAgentRouter is injected', async () => {
 		// Seed coder task only.
 		// A declared coder→task-agent channel does not make task-agent targetable unless
 		// AgentMessageRouter is configured with taskAgentRouter.
+		// After the fix: 'task-agent' is topology-declared so it's no longer "unknown" —
+		// it falls through to "no active sessions" since no taskAgentRouter is wired up.
 		seedTask(tdb.db, tdb.spaceId, tdb.workflowRunId, 'coder', 'session-coder');
 
 		// Channel coder→task-agent is declared
@@ -1135,7 +1141,8 @@ describe('Task Agent channel participation', () => {
 		const data = JSON.parse(result.content[0].text);
 
 		expect(data.success).toBe(false);
-		expect((data.error as string).toLowerCase()).toContain("unknown target 'task-agent'");
+		expect((data.error as string).toLowerCase()).toContain('no active sessions found');
+		expect((data.error as string).toLowerCase()).toContain('task-agent');
 		expect(messages).toHaveLength(0);
 	});
 
