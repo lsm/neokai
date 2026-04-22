@@ -9,6 +9,9 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createDaemonApp } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 
@@ -297,6 +300,79 @@ describe('Daemon App Cleanup', () => {
 
 			// Cleanup
 			await daemonContext.cleanup();
+		});
+	});
+
+	describe('lock file cleanup on graceful shutdown', () => {
+		let tmpDbDir: string;
+
+		beforeEach(() => {
+			tmpDbDir = join(
+				tmpdir(),
+				`neokai-cleanup-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+			);
+			mkdirSync(tmpDbDir, { recursive: true });
+		});
+
+		afterEach(() => {
+			try {
+				const { rmSync } = require('node:fs');
+				rmSync(tmpDbDir, { recursive: true, force: true });
+			} catch {
+				// Ignore cleanup errors
+			}
+		});
+
+		test('should remove the lock file after cleanup() when using a file-based DB', async () => {
+			const tmpDbPath = join(tmpDbDir, 'daemon.db');
+			const lockPath = `${tmpDbPath}.lock`;
+
+			const fileConfig: Config = {
+				...config,
+				dbPath: tmpDbPath,
+			};
+
+			const daemonContext = await createDaemonApp({
+				config: fileConfig,
+				verbose: false,
+				standalone: false,
+			});
+
+			// Lock file must exist while the daemon is running
+			expect(existsSync(lockPath)).toBe(true);
+
+			// Graceful shutdown
+			await daemonContext.cleanup();
+
+			// Lock file must be removed after cleanup
+			expect(existsSync(lockPath)).toBe(false);
+		});
+
+		test('should have process.exit fallback handler registered after startup', async () => {
+			const tmpDbPath = join(tmpDbDir, 'daemon-exit.db');
+			const lockPath = `${tmpDbPath}.lock`;
+
+			const fileConfig: Config = {
+				...config,
+				dbPath: tmpDbPath,
+			};
+
+			const exitListenersBefore = process.listenerCount('exit');
+
+			const daemonContext = await createDaemonApp({
+				config: fileConfig,
+				verbose: false,
+				standalone: false,
+			});
+
+			// At least one 'exit' listener should have been added by DatabaseLock
+			expect(process.listenerCount('exit')).toBeGreaterThan(exitListenersBefore);
+
+			// After cleanup the listener should be removed
+			await daemonContext.cleanup();
+
+			expect(process.listenerCount('exit')).toBe(exitListenersBefore);
+			expect(existsSync(lockPath)).toBe(false);
 		});
 	});
 });

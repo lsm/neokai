@@ -165,6 +165,42 @@ describe('DatabaseCore', () => {
 			// After close, operations should fail
 			expect(() => db.prepare('SELECT 1').get()).toThrow();
 		});
+
+		it('should checkpoint the WAL before closing (WAL file is empty or absent after close)', async () => {
+			dbCore = new DatabaseCore(dbPath);
+			await dbCore.initialize();
+
+			const db = dbCore.getDb();
+			// Write data to ensure WAL frames are created
+			db.exec(`
+				INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
+				VALUES ('wal-close-test', 'WAL Close Test', '/test', datetime('now'), datetime('now'), 'active', '{}', '{}')
+			`);
+
+			dbCore.close();
+			dbCore = null as unknown as typeof dbCore; // prevent double-close in afterEach
+
+			// After a TRUNCATE checkpoint, the WAL file should be zero bytes or absent
+			const walPath = dbPath + '-wal';
+			if (existsSync(walPath)) {
+				const { size } = statSync(walPath);
+				expect(size).toBe(0);
+			}
+			// Lock file should be released
+			expect(existsSync(dbPath + '.lock')).toBe(false);
+		});
+
+		it('should release the lock file on close', async () => {
+			dbCore = new DatabaseCore(dbPath);
+			await dbCore.initialize();
+
+			expect(existsSync(dbPath + '.lock')).toBe(true);
+
+			dbCore.close();
+			dbCore = null as unknown as typeof dbCore; // prevent double-close in afterEach
+
+			expect(existsSync(dbPath + '.lock')).toBe(false);
+		});
 	});
 
 	describe('backup creation', () => {
