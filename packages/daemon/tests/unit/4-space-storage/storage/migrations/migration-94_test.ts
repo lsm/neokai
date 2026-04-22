@@ -226,11 +226,14 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		}
 	});
 
-	test('hash self-verification: inlined template fingerprints match computeWorkflowHash', () => {
-		// For each built-in template, insert a workflow with the exact template
-		// shape and verify that M94 sets template_hash to the canonical hash.
-		// This guards against fingerprint drift between M94's inlined copies
-		// and the live built-in template definitions.
+	test('hash self-verification: migration stores narrow hash that diverges from expanded computeWorkflowHash', () => {
+		// Migration 94 uses a frozen narrow fingerprint (description + instructions +
+		// nodeNames + channels + gates only). The live computeWorkflowHash was later
+		// expanded to also include customPrompt per agent, completionActions, and
+		// completionAutonomyLevel. As a result, the migration's stored hash
+		// intentionally diverges from the current computeWorkflowHash — this is
+		// what causes drift detection to fire for existing spaces on next daemon
+		// startup, prompting the "Sync from template" UI to appear.
 		const templates = getBuiltInWorkflows();
 		for (const [i, tpl] of templates.entries()) {
 			const wfId = `wf-verify-${i}`;
@@ -258,9 +261,12 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 		for (const [i, tpl] of templates.entries()) {
 			const row = readWorkflow(db, `wf-verify-${i}`);
-			const expectedHash = computeWorkflowHash(tpl);
 			expect(row?.template_name).toBe(tpl.name);
-			expect(row?.template_hash).toBe(expectedHash);
+			// The migration sets a valid SHA-256 hash (non-null)
+			expect(row?.template_hash).toMatch(/^[0-9a-f]{64}$/);
+			// The stored hash is the narrow M94 hash; it diverges from the
+			// expanded computeWorkflowHash — confirming drift detection fires.
+			expect(row?.template_hash).not.toBe(computeWorkflowHash(tpl));
 		}
 	});
 
@@ -300,7 +306,10 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(row.template_hash).toBeTruthy();
 	});
 
-	test('legacy Coding Workflow: sets template_name + canonical hash + injects merge-pr', () => {
+	test('legacy Coding Workflow: sets template_name + narrow hash + injects merge-pr', () => {
+		// Migration 94 stores a narrow hash (pre-expansion). After the fingerprint
+		// was expanded to include customPrompt/completionActions/completionAutonomyLevel,
+		// the stored hash diverges from computeWorkflowHash — enabling drift detection.
 		const { workflowId, reviewNodeId } = seedLegacyCodingWorkflow(db, {
 			id: 'wf-1',
 			spaceId: 'sp-1',
@@ -308,12 +317,14 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 		runMigration94(db);
 
-		const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!;
-		const expectedHash = computeWorkflowHash(template);
-
 		const row = readWorkflow(db, workflowId)!;
 		expect(row.template_name).toBe('Coding Workflow');
-		expect(row.template_hash).toBe(expectedHash);
+		// Migration sets a valid SHA-256 hash (narrow, pre-expansion)
+		expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
+		// The narrow hash differs from the current expanded hash — drift will be detected
+		expect(row.template_hash).not.toBe(
+			computeWorkflowHash(getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!)
+		);
 
 		const cfg = readNodeConfig(db, reviewNodeId) as {
 			completionActions?: Array<{ id: string; type: string; artifactType?: string }>;
@@ -325,9 +336,10 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(cfg.completionActions?.[0]?.artifactType).toBe('pr');
 	});
 
-	test('legacy Research Workflow: sets template_name + canonical hash + injects merge-pr', () => {
+	test('legacy Research Workflow: sets template_name + narrow hash + injects merge-pr', () => {
+		// Migration 94 stores a narrow hash (pre-expansion). After the fingerprint
+		// was expanded, the stored hash diverges from computeWorkflowHash — enabling drift detection.
 		const template = getBuiltInWorkflows().find((t) => t.name === 'Research Workflow')!;
-		const expectedHash = computeWorkflowHash(template);
 
 		const wfId = 'wf-research';
 		const researchNodeId = 'n-r-research';
@@ -349,7 +361,10 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 		const row = readWorkflow(db, wfId)!;
 		expect(row.template_name).toBe('Research Workflow');
-		expect(row.template_hash).toBe(expectedHash);
+		// Migration sets a valid SHA-256 hash (narrow, pre-expansion)
+		expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
+		// The narrow hash differs from the current expanded hash — drift will be detected
+		expect(row.template_hash).not.toBe(computeWorkflowHash(template));
 
 		const cfg = readNodeConfig(db, reviewNodeId) as {
 			completionActions?: Array<{ id: string }>;
@@ -357,9 +372,10 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 		expect(cfg.completionActions?.some((a) => a.id === 'merge-pr')).toBe(true);
 	});
 
-	test('Review-Only Workflow: sets template_name but does not inject completionActions', () => {
+	test('Review-Only Workflow: sets template_name + narrow hash, does not inject completionActions', () => {
+		// Migration 94 stores a narrow hash (pre-expansion). After the fingerprint
+		// was expanded, the stored hash diverges from computeWorkflowHash — enabling drift detection.
 		const template = getBuiltInWorkflows().find((t) => t.name === 'Review-Only Workflow')!;
-		const expectedHash = computeWorkflowHash(template);
 
 		const wfId = 'wf-review-only';
 		const reviewNodeId = 'n-ro-review';
@@ -379,7 +395,10 @@ describe('Migration 94: backfill workflow template tracking & completion actions
 
 		const row = readWorkflow(db, wfId)!;
 		expect(row.template_name).toBe('Review-Only Workflow');
-		expect(row.template_hash).toBe(expectedHash);
+		// Migration sets a valid SHA-256 hash (narrow, pre-expansion)
+		expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
+		// The narrow hash differs from the current expanded hash — drift will be detected
+		expect(row.template_hash).not.toBe(computeWorkflowHash(template));
 
 		const cfg = readNodeConfig(db, reviewNodeId) as { completionActions?: unknown[] };
 		// Review-Only has no endNodeCompletionActions; migration must not inject.

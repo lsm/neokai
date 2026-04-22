@@ -5,12 +5,14 @@
  * for template drift detection.
  *
  * The fingerprint covers node names, channel topology, gate internals (fields,
- * script, requiredLevel, resetOnCycle), description, and instructions.
- * It does NOT include agent UUIDs (which differ per-space) or layout coordinates
- * (which are cosmetic).
+ * script, requiredLevel, resetOnCycle), description, instructions, per-agent
+ * custom prompts, node completion actions, and the workflow-level
+ * completionAutonomyLevel.
+ * It does NOT include agent UUIDs (which differ per-space), layout coordinates,
+ * or tags (which are cosmetic).
  */
 
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { CompletionAction, SpaceWorkflow } from '@neokai/shared';
 
 /**
  * Canonical shape used for hashing — uses only template-portable fields.
@@ -27,12 +29,42 @@ interface WorkflowFingerprint {
 	 * gate internals (not just gate additions/removals).
 	 */
 	gates: string[];
-	// NOTE: `completionAutonomyLevel` is intentionally NOT part of the
-	// fingerprint. Including it would invalidate historical template hashes
-	// computed by Migration 94 and make every existing Space's workflow appear
-	// drifted on upgrade. The field is persisted and enforced at runtime, but
-	// structural drift detection continues to track only the node/channel/gate
-	// topology as before.
+	/**
+	 * Per-agent custom prompt entries, sorted. Format:
+	 * `<nodeName>|<agentName>|<customPrompt>` (empty string when absent).
+	 * Captures the most frequently updated field — agent behavior changes.
+	 */
+	nodePrompts: string[];
+	/**
+	 * Per-node completion action entries, sorted. Format:
+	 * `<nodeName>|<actionId>|<type>|<requiredLevel>|<contentKey>`.
+	 * Detects changes to what happens when the workflow finishes.
+	 */
+	completionActions: string[];
+	/**
+	 * Minimum space autonomy level required to auto-close the workflow.
+	 * Affects autonomy gating behavior.
+	 */
+	completionAutonomyLevel: number;
+}
+
+/**
+ * Serialize a single completion action into a stable canonical string.
+ * Format: `<id>|<type>|<requiredLevel>|<contentKey>`
+ * - script:      contentKey = full script source
+ * - instruction: contentKey = `<agentName>:<instruction>`
+ * - mcp_call:    contentKey = `<server>:<tool>`
+ */
+function serializeCompletionAction(action: CompletionAction): string {
+	let contentKey: string;
+	if (action.type === 'script') {
+		contentKey = action.script;
+	} else if (action.type === 'instruction') {
+		contentKey = `${action.agentName}:${action.instruction}`;
+	} else {
+		contentKey = `${action.server}:${action.tool}`;
+	}
+	return `${action.id}|${action.type}|${action.requiredLevel}|${contentKey}`;
 }
 
 /**
@@ -73,12 +105,29 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
 		})
 		.sort();
 
+	// Serialize per-agent custom prompts.
+	// Format: `<nodeName>|<agentName>|<customPrompt>` — empty string when absent.
+	const nodePrompts = workflow.nodes
+		.flatMap((n) => n.agents.map((a) => `${n.name}|${a.name}|${a.customPrompt?.value ?? ''}`))
+		.sort();
+
+	// Serialize per-node completion actions.
+	// Format: `<nodeName>|<actionId>|<type>|<requiredLevel>|<contentKey>`
+	const completionActions = workflow.nodes
+		.flatMap((n) =>
+			(n.completionActions ?? []).map((action) => `${n.name}|${serializeCompletionAction(action)}`)
+		)
+		.sort();
+
 	return {
 		description: workflow.description ?? '',
 		instructions: workflow.instructions ?? '',
 		nodeNames,
 		channels,
 		gates,
+		nodePrompts,
+		completionActions,
+		completionAutonomyLevel: workflow.completionAutonomyLevel,
 	};
 }
 
