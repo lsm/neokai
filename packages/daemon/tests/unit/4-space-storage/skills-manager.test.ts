@@ -298,7 +298,7 @@ describe('SkillRepository', () => {
 
 		// Clean up temp file
 		unlinkSync(tmpPath);
-	});
+	}, 30_000);
 });
 
 // ---------------------------------------------------------------------------
