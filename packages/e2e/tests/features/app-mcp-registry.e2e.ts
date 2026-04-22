@@ -2,7 +2,7 @@
  * App MCP Registry E2E Tests
  *
  * Tests for the Application MCP Registry UI and per-room MCP enable/disable:
- * - Global Application MCP Servers settings show pre-seeded fetch-mcp entry
+ * - Global MCP Servers settings show pre-seeded fetch-mcp entry
  * - Per-room MCP toggle in Room Settings allows enable/disable
  * - Toggle changes persist after page navigation (round-trip persistence)
  *
@@ -22,19 +22,20 @@ const FETCH_MCP_SERVER_NAME = 'fetch-mcp';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Navigate to the Application MCP Servers section in Global Settings.
+ * Navigate to the MCP Servers section in Global Settings.
  * Assumes Global Settings panel is already open.
  */
 async function navigateToAppMcpServersSection(
 	page: import('@playwright/test').Page
 ): Promise<void> {
-	// Click on "Application MCP Servers" in the settings section list
-	const appMcpServersButton = page.locator('button:has-text("Application MCP Servers")');
+	// Click on "MCP Servers" in the settings section list. Use exact match to
+	// disambiguate from the intra-Room "MCP Servers" heading.
+	const appMcpServersButton = page.getByRole('button', { name: 'MCP Servers', exact: true });
 	await appMcpServersButton.waitFor({ state: 'visible', timeout: 5000 });
 	await appMcpServersButton.click();
 
 	// Wait for the AppMcpServersSettings panel to appear
-	await page.locator('text=Application MCP servers are available to any room').waitFor({
+	await page.locator('text=MCP servers are available to any room').waitFor({
 		state: 'visible',
 		timeout: 5000,
 	});
@@ -66,7 +67,7 @@ async function navigateToRoomSettings(
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 test.describe('App MCP Registry - Global Settings', () => {
-	test('should show fetch-mcp in Application MCP Servers list', async ({ page }) => {
+	test('should show fetch-mcp in MCP Servers list', async ({ page }) => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
@@ -79,7 +80,7 @@ test.describe('App MCP Registry - Global Settings', () => {
 			timeout: 5000,
 		});
 
-		// Navigate to Application MCP Servers section
+		// Navigate to MCP Servers section
 		await navigateToAppMcpServersSection(page);
 
 		// Verify fetch-mcp entry is present

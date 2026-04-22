@@ -328,7 +328,8 @@ export function setupSessionHandlers(
 		const roomIdForDelete = contextForDelete?.roomId;
 		const spaceIdForDelete = contextForDelete?.spaceId;
 
-		await sessionManager.deleteSession(targetSessionId);
+		// UI-only delete primitive (Task #85): removes worktree + SDK .jsonl + DB row.
+		await sessionManager.deleteSessionResources(targetSessionId, 'ui_session_delete');
 
 		// Remove from space so deleted sessions don't linger in space.sessionIds
 		if (spaceIdForDelete) {
@@ -392,113 +393,60 @@ export function setupSessionHandlers(
 			}
 		}
 
-		// No worktree - direct archive
-		if (!session.worktree) {
-			const sdkWorkspacePath = session.workspacePath;
-			const archiveResult = sdkWorkspacePath
-				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
-				: { archivedFiles: [], totalSize: 0, archivePath: null };
+		// Commits-ahead confirmation check still lives here so the UI can
+		// surface pending work before data is archived. The actual
+		// archive work (stop agent, archive SDK files, remove worktree,
+		// stamp DB row) is funnelled through the UI-only primitive
+		// `sessionManager.archiveSessionResources` (Task #85).
+		// Note: `session` aliases the live AgentSession data, so fields like
+		// `session.worktree` and `session.context` can mutate once archive
+		// runs. Snapshot anything we need after the archive now.
+		const hadWorktree = !!session.worktree;
+		const roomIdForArchive = session.context?.roomId;
+		let commitsRemoved = 0;
+		if (session.worktree) {
+			const { WorktreeManager } = await import('../worktree-manager');
+			const worktreeManager = new WorktreeManager();
+			const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
 
-			const updatedMetadata = {
-				...session.metadata,
-				...(archiveResult.archivePath && {
-					sdkArchivePath: archiveResult.archivePath,
-					sdkArchivedAt: new Date().toISOString(),
-					sdkArchivedFileCount: archiveResult.archivedFiles.length,
-					sdkArchivedSize: archiveResult.totalSize,
-				}),
-			};
-
-			await sessionManager.updateSession(targetSessionId, {
-				status: 'archived',
-				archivedAt: new Date().toISOString(),
-				metadata: updatedMetadata,
-			} as Partial<Session>);
-
-			// Broadcast session.updated so RoomStore and session subscribers stay in sync
-			const archivedPayloadNoWorktree = {
-				sessionId: targetSessionId,
-				status: 'archived',
-				roomId: session.context?.roomId,
-			};
-			messageHub.event('session.updated', archivedPayloadNoWorktree, {
-				channel: `session:${targetSessionId}`,
-			});
-			if (session.context?.roomId) {
-				messageHub.event('session.updated', archivedPayloadNoWorktree, {
-					channel: `room:${session.context.roomId}`,
-				});
+			if (!confirmed && commitStatus.hasCommitsAhead) {
+				return {
+					success: false,
+					requiresConfirmation: true,
+					commitStatus,
+				};
 			}
-
-			return { success: true, requiresConfirmation: false };
+			commitsRemoved = commitStatus.commits.length;
 		}
 
-		// Check commits ahead
-		const { WorktreeManager } = await import('../worktree-manager');
-		const worktreeManager = new WorktreeManager();
-		const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
-
-		// If has commits and not confirmed, return commit info
-		if (!confirmed && commitStatus.hasCommitsAhead) {
-			return {
-				success: false,
-				requiresConfirmation: true,
-				commitStatus,
-			};
-		}
-
-		// Archive: remove worktree and update session
 		try {
-			await worktreeManager.removeWorktree(session.worktree, true);
-
-			// Archive SDK session files
-			const sdkWorkspacePath = session.worktree?.worktreePath ?? session.workspacePath;
-			const archiveResult = sdkWorkspacePath
-				? archiveSDKSessionFiles(sdkWorkspacePath, session.sdkSessionId ?? null, targetSessionId)
-				: { archivedFiles: [], totalSize: 0, archivePath: null };
-
-			const updatedMetadata = {
-				...session.metadata,
-				...(archiveResult.archivePath && {
-					sdkArchivePath: archiveResult.archivePath,
-					sdkArchivedAt: new Date().toISOString(),
-					sdkArchivedFileCount: archiveResult.archivedFiles.length,
-					sdkArchivedSize: archiveResult.totalSize,
-				}),
-			};
-
-			await sessionManager.updateSession(targetSessionId, {
-				status: 'archived',
-				archivedAt: new Date().toISOString(),
-				worktree: undefined,
-				metadata: updatedMetadata,
-			} as Partial<Session>);
-
-			// Broadcast session.updated so RoomStore and session subscribers stay in sync
-			const archivedPayloadWithWorktree = {
-				sessionId: targetSessionId,
-				status: 'archived',
-				roomId: session.context?.roomId,
-			};
-			messageHub.event('session.updated', archivedPayloadWithWorktree, {
-				channel: `session:${targetSessionId}`,
-			});
-			if (session.context?.roomId) {
-				messageHub.event('session.updated', archivedPayloadWithWorktree, {
-					channel: `room:${session.context.roomId}`,
-				});
-			}
-
-			return {
-				success: true,
-				requiresConfirmation: false,
-				commitsRemoved: commitStatus.commits.length,
-			};
+			await sessionManager.archiveSessionResources(targetSessionId, 'ui_session_archive');
 		} catch (error) {
 			throw new Error(
 				`Failed to archive: ${error instanceof Error ? error.message : String(error)}`
 			);
 		}
+
+		// Broadcast session.updated so RoomStore and session subscribers stay in sync.
+		const archivedPayload = {
+			sessionId: targetSessionId,
+			status: 'archived',
+			roomId: roomIdForArchive,
+		};
+		messageHub.event('session.updated', archivedPayload, {
+			channel: `session:${targetSessionId}`,
+		});
+		if (roomIdForArchive) {
+			messageHub.event('session.updated', archivedPayload, {
+				channel: `room:${roomIdForArchive}`,
+			});
+		}
+
+		return {
+			success: true,
+			requiresConfirmation: false,
+			...(hadWorktree ? { commitsRemoved } : {}),
+		};
 	});
 
 	// Handle message sending to a session

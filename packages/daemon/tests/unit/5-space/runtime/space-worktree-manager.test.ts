@@ -348,6 +348,17 @@ describe('getTaskWorktreePath', () => {
 		const result = await manager.getTaskWorktreePath(spaceId, 'does-not-exist');
 		expect(result).toBeNull();
 	});
+
+	// Sync variant was introduced so sync call sites (e.g. TaskAgentManager's
+	// public getter used by tool handlers and RPCs) can read the persisted
+	// path without bouncing through a Promise. The two variants must agree.
+	test('getTaskWorktreePathSync mirrors the async variant', async () => {
+		const taskId = seedTask(db, spaceId, 'task-path-sync-01', 6);
+		const { path } = await manager.createTaskWorktree(spaceId, taskId, 'Sync Task', 6);
+
+		expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBe(path);
+		expect(manager.getTaskWorktreePathSync(spaceId, 'no-such-task')).toBeNull();
+	});
 });
 
 // ---------------------------------------------------------------------------

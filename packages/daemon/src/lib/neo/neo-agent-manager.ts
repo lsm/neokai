@@ -36,7 +36,12 @@ const NEO_SESSION_TITLE = 'Neo';
 export interface NeoSessionManager {
 	createSession(params: { sessionId: string; sessionType: 'neo'; title: string }): Promise<string>;
 	getSessionAsync(sessionId: string): Promise<AgentSession | null>;
-	deleteSession(sessionId: string): Promise<void>;
+	/**
+	 * Stop the in-memory SDK subprocess for a session and drop the cache
+	 * entry. Must preserve the DB row, SDK `.jsonl` files, and any worktree.
+	 * (See Task #85 — non-UI callers may never delete persisted session data.)
+	 */
+	interruptInMemorySession(sessionId: string): Promise<void>;
 	unregisterSession(sessionId: string): void;
 }
 
@@ -326,49 +331,55 @@ export class NeoAgentManager {
 	// ============================================================================
 
 	/**
-	 * Destroy the current Neo session and create a fresh one.
+	 * Recover from a stale in-memory Neo session.
+	 *
+	 * Task #85 invariant: daemon-internal recovery MUST NOT touch the
+	 * `sessions` DB row, `sdk_messages`, the worktree, or the SDK `.jsonl`
+	 * files. Only the two UI primitives (`session.delete`/`session.archive`
+	 * plus their room/task cascades) may delete persisted session data.
 	 *
 	 * Recovery flow:
-	 * 1. Stop any in-flight SDK queries (cleanup).
-	 * 2. Unregister the session from the session cache.
-	 * 3. Delete the session from DB.
-	 * 4. Create a fresh session and re-attach.
+	 * 1. Stop any in-flight SDK queries and drop the cached AgentSession
+	 *    (preserves DB + worktree + jsonl).
+	 * 2. Re-hydrate from the DB row via `getSessionAsync`. The session
+	 *    cache will construct a fresh `AgentSession` from the DB row on
+	 *    next access.
+	 * 3. If and only if the DB row has been removed (e.g. user explicitly
+	 *    deleted the Neo session from the UI), create a brand-new session
+	 *    row to keep Neo available.
 	 */
 	private async destroyAndRecreate(): Promise<void> {
-		this.logger.info('Destroying and re-creating Neo session');
+		this.logger.info('Recovering Neo session from stale in-memory state');
 
-		// Step 1: Stop any in-flight SDK queries.
-		if (this.session) {
-			try {
-				await this.session.cleanup();
-			} catch (error) {
-				this.logger.warn('Error cleaning up stale Neo session (ignoring):', error);
-			}
-			this.session = null;
-		}
-
-		// Step 2 & 3: Unregister from cache and delete from DB.
-		this.sessionManager.unregisterSession(NEO_SESSION_ID);
+		// Step 1: Interrupt the in-memory SDK subprocess and drop the cache
+		// entry. DB + worktree + jsonl are preserved.
 		try {
-			await this.sessionManager.deleteSession(NEO_SESSION_ID);
+			await this.sessionManager.interruptInMemorySession(NEO_SESSION_ID);
 		} catch (error) {
-			this.logger.warn('Error deleting stale Neo session from DB (ignoring):', error);
+			this.logger.warn('Error interrupting stale Neo session (ignoring):', error);
 		}
+		this.session = null;
 
-		// Step 4: Create a fresh session.
-		await this.sessionManager.createSession({
-			sessionId: NEO_SESSION_ID,
-			sessionType: 'neo',
-			title: NEO_SESSION_TITLE,
-		});
+		// Step 2: Re-hydrate from the DB row.
+		let agentSession = await this.sessionManager.getSessionAsync(NEO_SESSION_ID);
 
-		const agentSession = await this.sessionManager.getSessionAsync(NEO_SESSION_ID);
+		// Step 3: Only if the DB row is gone (prior UI delete), create a new one.
 		if (!agentSession) {
-			throw new Error(`Failed to get AgentSession for ${NEO_SESSION_ID} after recovery`);
+			this.logger.info('Neo DB row missing; creating a fresh Neo session');
+			await this.sessionManager.createSession({
+				sessionId: NEO_SESSION_ID,
+				sessionType: 'neo',
+				title: NEO_SESSION_TITLE,
+			});
+			agentSession = await this.sessionManager.getSessionAsync(NEO_SESSION_ID);
+			if (!agentSession) {
+				throw new Error(`Failed to get AgentSession for ${NEO_SESSION_ID} after recovery`);
+			}
 		}
+
 		this.session = agentSession;
 		this.applyRuntimeConfig();
-		this.logger.info('Neo session re-created successfully');
+		this.logger.info('Neo session recovered successfully (DB preserved)');
 	}
 
 	/**

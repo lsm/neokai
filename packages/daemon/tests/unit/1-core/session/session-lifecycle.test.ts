@@ -530,14 +530,14 @@ describe('SessionLifecycle', () => {
 		});
 	});
 
-	describe('delete', () => {
+	describe('deleteResources (UI-only: session.delete + room.delete)', () => {
 		it('should delete session from database', async () => {
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
 				id: 'test-id',
 				workspacePath: '/test',
 			});
 
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 
 			expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
 		});
@@ -549,7 +549,7 @@ describe('SessionLifecycle', () => {
 				workspacePath: '/test',
 			});
 
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 
 			expect(mockSessionCache.remove).toHaveBeenCalledWith('test-id');
 		});
@@ -565,7 +565,7 @@ describe('SessionLifecycle', () => {
 				workspacePath: '/test',
 			});
 
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 
 			expect(mockAgentSession.cleanup).toHaveBeenCalled();
 		});
@@ -582,7 +582,7 @@ describe('SessionLifecycle', () => {
 			};
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(sessionWithWorktree);
 
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 
 			expect(mockWorktreeManager.removeWorktree).toHaveBeenCalledWith(
 				sessionWithWorktree.worktree,
@@ -596,7 +596,7 @@ describe('SessionLifecycle', () => {
 				workspacePath: '/test',
 			});
 
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 
 			expect(mockMessageHub.event).toHaveBeenCalledWith(
 				'session.deleted',
@@ -623,7 +623,7 @@ describe('SessionLifecycle', () => {
 			});
 
 			// Should complete deletion despite cleanup failure
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 			expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
 		});
 
@@ -642,8 +642,54 @@ describe('SessionLifecycle', () => {
 			});
 
 			// Should complete deletion despite worktree removal failure
-			await lifecycle.delete('test-id');
+			await lifecycle.deleteResources('test-id', 'ui_session_delete');
 			expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
+		});
+	});
+
+	describe('archiveResources (UI-only: session.archive + task.archive)', () => {
+		it('should NOT delete the DB row — archive preserves conversation history', async () => {
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+				id: 'archive-id',
+				workspacePath: '/test',
+			});
+
+			await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+			expect(mockDb.deleteSession).not.toHaveBeenCalled();
+		});
+
+		it('should still stop the in-memory SDK subprocess via AgentSession.cleanup', async () => {
+			const mockAgentSession = {
+				cleanup: mock(async () => {}),
+				updateMetadata: mock(() => {}),
+			};
+			(mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
+			(mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+				id: 'archive-id',
+				workspacePath: '/test',
+				metadata: {},
+			});
+
+			await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+			expect(mockAgentSession.cleanup).toHaveBeenCalled();
+		});
+
+		it('should stamp the session row as archived without deleting it', async () => {
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+				id: 'archive-id',
+				workspacePath: '/test',
+				metadata: {},
+			});
+
+			await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+			// Archive must never hit `deleteSession` — only `updateSession`
+			// gets a `status: 'archived'` payload.
+			expect(mockDb.deleteSession).not.toHaveBeenCalled();
+			expect(mockDb.updateSession).toHaveBeenCalled();
 		});
 	});
 

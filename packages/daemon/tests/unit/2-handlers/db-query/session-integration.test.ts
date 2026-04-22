@@ -144,7 +144,9 @@ function makeSessionManager(createdSession?: AgentSession): NeoSessionManager {
 			}
 			return sessions.get(NEO_SESSION_ID) ?? null;
 		}),
-		deleteSession: mock(async (_id: string) => {
+		// Task #85: daemon-internal recovery may only drop the in-memory
+		// SDK subprocess. The DB row is preserved.
+		interruptInMemorySession: mock(async (_id: string) => {
 			sessions.delete(NEO_SESSION_ID);
 		}),
 		unregisterSession: mock((_id: string) => {}),

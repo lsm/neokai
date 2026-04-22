@@ -2086,6 +2086,314 @@ describe('AgentSession', () => {
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 			expect(agentSession.getSessionData().type).toBe('room');
 		});
+
+		// -------------------------------------------------------------------------
+		// sdkSessionId preservation on runtime-init fingerprint mismatch
+		//
+		// Regression test: the fingerprint branch used to unconditionally clear
+		// `sdkSessionId`. For long-lived orchestration sessions (space_task_agent,
+		// and worker sessions that carry both spaceId + taskId) this silently
+		// dropped the SDK resume chain — after a daemon restart the agent lost
+		// its entire conversation history. The preservation guard in
+		// AgentSession.fromInit keeps these sessions resumable.
+		// -------------------------------------------------------------------------
+
+		const baseMetadata = {
+			messageCount: 3,
+			totalTokens: 1000,
+			inputTokens: 500,
+			outputTokens: 500,
+			totalCost: 0.01,
+			toolCallCount: 2,
+		};
+
+		function existingSession(opts: {
+			id: string;
+			type: Session['type'];
+			context?: Session['context'];
+		}): Session {
+			return {
+				id: opts.id,
+				title: 'Existing',
+				workspacePath: '/test/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1,
+				},
+				// Populated sdkSessionId + stale fingerprint forces the mismatch branch.
+				sdkSessionId: 'sdk-existing-abc',
+				metadata: {
+					...baseMetadata,
+					runtimeInitFingerprint: 'stale-fingerprint',
+				},
+				type: opts.type,
+				context: opts.context,
+			} as Session;
+		}
+
+		function buildMockDb(session: Session) {
+			return {
+				getSession: mock(() => session),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+		}
+
+		const mockMessageHub = {} as MessageHub;
+		const mockDaemonHub = {
+			emit: mock(async () => {}),
+			on: mock(() => mock(() => {})),
+		} as unknown as DaemonHub;
+		const mockGetApiKey = mock(async () => 'test-key');
+
+		it('preserves sdkSessionId on fingerprint mismatch for space_task_agent sessions', () => {
+			const session = existingSession({
+				id: 'space:abc:task:t1',
+				type: 'space_task_agent',
+				context: { spaceId: 'abc', taskId: 't1' },
+			});
+			const mockDb = buildMockDb(session);
+
+			const init = {
+				sessionId: session.id,
+				workspacePath: '/test/workspace',
+				type: 'space_task_agent' as const,
+				context: { spaceId: 'abc', taskId: 't1' },
+				model: 'claude-sonnet-4-5-20250929',
+				// Differs from session.config.systemPrompt (undefined) so fingerprint
+				// will change and the mismatch branch is exercised.
+				systemPrompt: 'fresh prompt',
+			};
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'claude-sonnet-4-5-20250929'
+			);
+
+			// In-memory session keeps the sdkSessionId (not reset to undefined).
+			expect(agentSession.getSessionData().sdkSessionId).toBe('sdk-existing-abc');
+
+			// Persistence call — fingerprint updated, sdkSessionId NOT in the update payload.
+			const updateCalls = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
+				.updateSession.mock.calls;
+			expect(updateCalls.length).toBeGreaterThan(0);
+			const updatePayload = updateCalls[0][1] as Record<string, unknown>;
+			// The preservation branch deliberately omits sdkSessionId from the update
+			// (no `updates.sdkSessionId = undefined`), so it is not a key on the payload.
+			expect(Object.prototype.hasOwnProperty.call(updatePayload, 'sdkSessionId')).toBe(false);
+			// Fingerprint is refreshed.
+			const metadata = updatePayload.metadata as Record<string, unknown>;
+			expect(metadata.runtimeInitFingerprint).toEqual(expect.any(String));
+			expect(metadata.runtimeInitFingerprint).not.toBe('stale-fingerprint');
+		});
+
+		it('leaves sdkSessionId untouched for worker sessions (fingerprint branch skipped entirely)', () => {
+			// Worker sessions skip fingerprint tracking inside
+			// `buildRuntimeInitFingerprint` (it returns undefined for workers), so
+			// the mismatch branch never fires for them. sdkSessionId is therefore
+			// preserved by construction — this test pins that invariant down so a
+			// future change that starts fingerprinting workers doesn't silently
+			// start clearing their resume chain.
+			const session = existingSession({
+				id: 'space:abc:task:t1:agent:coder',
+				type: 'worker',
+				context: { spaceId: 'abc', taskId: 't1' },
+			});
+			const mockDb = buildMockDb(session);
+
+			const init = {
+				sessionId: session.id,
+				workspacePath: '/test/workspace',
+				type: 'worker' as const,
+				context: { spaceId: 'abc', taskId: 't1' },
+				model: 'claude-sonnet-4-5-20250929',
+				systemPrompt: 'new prompt',
+			};
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'claude-sonnet-4-5-20250929'
+			);
+
+			expect(agentSession.getSessionData().sdkSessionId).toBe('sdk-existing-abc');
+		});
+
+		it('still clears sdkSessionId on fingerprint mismatch for room sessions', () => {
+			const session = existingSession({
+				id: 'room:foo',
+				type: 'room',
+				context: { roomId: 'foo' },
+			});
+			const mockDb = buildMockDb(session);
+
+			const init = {
+				sessionId: session.id,
+				workspacePath: '/test/workspace',
+				type: 'room' as const,
+				context: { roomId: 'foo' },
+				model: 'claude-sonnet-4-5-20250929',
+				systemPrompt: 'new prompt',
+			};
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'claude-sonnet-4-5-20250929'
+			);
+
+			// Room sessions are not orchestration carriers — fingerprint mismatch
+			// continues to invalidate the SDK resume chain as before.
+			expect(agentSession.getSessionData().sdkSessionId).toBeUndefined();
+			const updatePayload = (mockDb as unknown as { updateSession: ReturnType<typeof mock> })
+				.updateSession.mock.calls[0][1] as Record<string, unknown>;
+			expect(updatePayload.sdkSessionId).toBeUndefined();
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// awaitSdkSessionCaptured
+	// ---------------------------------------------------------------------------
+
+	describe('awaitSdkSessionCaptured', () => {
+		function makeAgentSessionWithCapturedId(
+			preCapturedSdkSessionId: string | undefined,
+			onListener: (handler: (payload: Record<string, unknown>) => void) => {
+				fire: (payload: Record<string, unknown>) => void;
+				unsubscribe: ReturnType<typeof mock>;
+			}
+		): { agentSession: AgentSession; controls: ReturnType<typeof onListener> } {
+			const session: Session = {
+				id: 'space:s1:task:t1',
+				title: 'Task Agent',
+				workspacePath: '/tmp/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4-5-20250929',
+					maxTokens: 8192,
+					temperature: 1,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+				type: 'space_task_agent',
+				context: { spaceId: 's1', taskId: 't1' },
+				sdkSessionId: preCapturedSdkSessionId,
+			} as Session;
+
+			const mockDb = {
+				getSession: mock(() => session),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			let captured: ReturnType<typeof onListener> | null = null;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(
+					(_event: string, handler: (payload: Record<string, unknown>) => void): (() => void) => {
+						captured = onListener(handler);
+						return captured.unsubscribe;
+					}
+				),
+			} as unknown as DaemonHub;
+			const mockMessageHub = {} as MessageHub;
+			const mockGetApiKey = mock(async () => 'test-key');
+
+			const init = {
+				sessionId: session.id,
+				workspacePath: session.workspacePath,
+				type: 'space_task_agent' as const,
+				context: session.context,
+				model: session.config.model,
+			};
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'claude-sonnet-4-5-20250929'
+			);
+
+			return {
+				agentSession,
+				// `controls` may still be null if `on()` wasn't called (fast path hit),
+				// callers that need it should trigger the slow path first.
+				controls: captured as unknown as ReturnType<typeof onListener>,
+			};
+		}
+
+		it('resolves immediately when sdkSessionId is already set', async () => {
+			const { agentSession } = makeAgentSessionWithCapturedId('sdk-already-here', () => ({
+				fire: () => {},
+				unsubscribe: mock(() => {}),
+			}));
+			const id = await agentSession.awaitSdkSessionCaptured(500);
+			expect(id).toBe('sdk-already-here');
+		});
+
+		it('resolves when session.updated fires with a sdkSessionId payload', async () => {
+			let handler: ((payload: Record<string, unknown>) => void) | null = null;
+			const unsubscribe = mock(() => {});
+			const { agentSession } = makeAgentSessionWithCapturedId(undefined, (h) => {
+				handler = h;
+				return { fire: h, unsubscribe };
+			});
+
+			const waiter = agentSession.awaitSdkSessionCaptured(2000);
+
+			// Fire an unrelated session.updated event (different sessionId) — ignored.
+			handler?.({ sessionId: 'other-session', session: { sdkSessionId: 'ignored' } });
+			// Fire a matching event → resolves.
+			handler?.({
+				sessionId: 'space:s1:task:t1',
+				session: { sdkSessionId: 'sdk-just-captured' },
+			});
+
+			const id = await waiter;
+			expect(id).toBe('sdk-just-captured');
+			// Listener must be torn down to avoid leaks.
+			expect(unsubscribe).toHaveBeenCalledTimes(1);
+		});
+
+		it('rejects on timeout if the SDK never publishes a sdkSessionId', async () => {
+			const unsubscribe = mock(() => {});
+			const { agentSession } = makeAgentSessionWithCapturedId(undefined, (_h) => ({
+				fire: () => {},
+				unsubscribe,
+			}));
+
+			await expect(agentSession.awaitSdkSessionCaptured(50)).rejects.toThrow(
+				/Timed out after 50ms/
+			);
+			// Listener must be torn down on timeout too.
+			expect(unsubscribe).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('setRuntimeSystemPrompt', () => {

@@ -64,6 +64,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { Logger } from '../../logger';
 import type { NeoActivityLogger } from '../activity-logger';
 import type {
 	Room,
@@ -91,6 +92,8 @@ import {
 	type NeoActionResult,
 	type PendingActionStore,
 } from '../security-tier';
+
+const log = new Logger('neo-action-tools');
 
 // ---------------------------------------------------------------------------
 // Minimal dependency interfaces
@@ -379,6 +382,15 @@ export interface NeoSessionManager {
 	 * Find the active worker session ID for a task. Returns null if not found.
 	 */
 	getActiveSessionForTask(taskId: string): string | null;
+	/**
+	 * Task #85: Route a session through the UI-only delete primitive, removing
+	 * its worktree + SDK `.jsonl` files AND its DB row (cascades to
+	 * `sdk_messages`). Used by `delete_room` so the AI-initiated room deletion
+	 * cleans up session artifacts identically to the `room.delete` RPC.
+	 * The accepted `trigger` is narrowed to `'ui_neo_room_delete'` so the
+	 * CI regression guard still catches accidental uses of other triggers.
+	 */
+	deleteSessionResources(sessionId: string, trigger: 'ui_neo_room_delete'): Promise<void>;
 }
 
 export interface NeoActionToolsConfig {
@@ -584,6 +596,27 @@ export function createNeoActionToolHandlers(config: NeoActionToolsConfig) {
 				if (!room) {
 					return errorResult(`Room not found: ${args.room_id}`);
 				}
+
+				// Task #85: RoomManager.deleteRoom no longer deletes session DB
+				// rows directly — callers must drive the full UI-delete
+				// primitive per session so worktrees and SDK `.jsonl` files are
+				// cleaned up too. The narrowed `ui_neo_room_delete` trigger lets
+				// the CI regression guard still catch accidental misuse from
+				// other code paths. Mirrors the `room.delete` RPC behaviour in
+				// `room-handlers.ts`.
+				if (sessionManager) {
+					for (const sessionId of room.sessionIds) {
+						try {
+							await sessionManager.deleteSessionResources(sessionId, 'ui_neo_room_delete');
+						} catch (err) {
+							log.warn(
+								`delete_room: failed to delete session ${sessionId} during room ${args.room_id} deletion:`,
+								err
+							);
+						}
+					}
+				}
+
 				const deleted = roomManager.deleteRoom(args.room_id);
 				if (!deleted) {
 					return errorResult(`Failed to delete room: ${args.room_id}`);

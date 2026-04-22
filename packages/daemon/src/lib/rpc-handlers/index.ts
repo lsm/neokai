@@ -660,6 +660,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 				const task = spaceTaskRepo.getTask(taskId);
 				return task?.taskAgentSessionId ?? null;
 			},
+			// Task #85: Neo `delete_room` must clean up each session's worktree
+			// and SDK `.jsonl` files before the room DB row is removed. It routes
+			// each session through the UI-only delete primitive; the narrowed
+			// `ui_neo_room_delete` trigger keeps the CI regression guard in play.
+			deleteSessionResources: (sessionId: string, trigger: 'ui_neo_room_delete') =>
+				deps.sessionManager.deleteSessionResources(sessionId, trigger),
 		},
 	};
 	// Wire Neo activity logger — records every tool invocation for the Activity Feed.

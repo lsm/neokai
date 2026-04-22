@@ -445,6 +445,19 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		spaceId: string;
 		taskId: string;
 		task: import('@neokai/shared').SpaceTask;
+		/**
+		 * Task #85: origin marker for transitions that set `status='archived'`.
+		 * - `'user'` (or absent) — originates from a UI archive action; the
+		 *   `TaskAgentManager` archive listener MUST run its cleanup cascade
+		 *   (remove worktree + archive SDK `.jsonl` files).
+		 * - `'system_reconcile'` — originates from an automated duplicate-run
+		 *   repair. DB rows + sdk_messages are preserved, but the cleanup
+		 *   cascade MUST be skipped so automated reconciliation never removes
+		 *   on-disk artifacts the user didn't ask to remove.
+		 *
+		 * Irrelevant for non-archived transitions.
+		 */
+		archiveSource?: 'user' | 'system_reconcile';
 	};
 
 	// Space Task Agent completion events (use 'global' as sessionId)

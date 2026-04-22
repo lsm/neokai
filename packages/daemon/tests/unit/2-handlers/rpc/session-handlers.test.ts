@@ -186,7 +186,9 @@ function createMockSessionManager(): {
 		getSessionFromDB: ReturnType<typeof mock>;
 		listSessions: ReturnType<typeof mock>;
 		updateSession: ReturnType<typeof mock>;
-		deleteSession: ReturnType<typeof mock>;
+		archiveSessionResources: ReturnType<typeof mock>;
+		deleteSessionResources: ReturnType<typeof mock>;
+		interruptInMemorySession: ReturnType<typeof mock>;
 		cleanupOrphanedWorktrees: ReturnType<typeof mock>;
 		markOutputRemoved: ReturnType<typeof mock>;
 		getDatabase: ReturnType<typeof mock>;
@@ -204,7 +206,9 @@ function createMockSessionManager(): {
 		getSessionFromDB: mock(() => null),
 		listSessions: mock(() => []),
 		updateSession: mock(async () => {}),
-		deleteSession: mock(async () => {}),
+		archiveSessionResources: mock(async () => {}),
+		deleteSessionResources: mock(async () => {}),
+		interruptInMemorySession: mock(async () => {}),
 		cleanupOrphanedWorktrees: mock(async () => []),
 		markOutputRemoved: mock(async () => {}),
 		getDatabase: mock(() => ({
@@ -746,13 +750,16 @@ describe('Session RPC Handlers', () => {
 	});
 
 	describe('session.delete', () => {
-		it('deletes session successfully', async () => {
+		it('deletes session via the UI-only deleteSessionResources primitive (Task #85)', async () => {
 			const handler = messageHubData.handlers.get('session.delete');
 			expect(handler).toBeDefined();
 
 			const result = await handler!({ sessionId: 'session-123' }, {});
 
-			expect(sessionManagerData.mocks.deleteSession).toHaveBeenCalledWith('session-123');
+			expect(sessionManagerData.mocks.deleteSessionResources).toHaveBeenCalledWith(
+				'session-123',
+				'ui_session_delete'
+			);
 			expect(result).toEqual({ success: true });
 		});
 
@@ -813,6 +820,26 @@ describe('Session RPC Handlers', () => {
 				success: true,
 				requiresConfirmation: false,
 			});
+		});
+
+		it('routes archive through the UI-only archiveSessionResources primitive (Task #85)', async () => {
+			const handler = messageHubData.handlers.get('session.archive');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession({
+				worktree: undefined,
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await handler!({ sessionId: 'session-123' }, {});
+
+			expect(sessionManagerData.mocks.archiveSessionResources).toHaveBeenCalledWith(
+				'session-123',
+				'ui_session_archive'
+			);
+			// Archive must NOT go through the delete primitive — that would
+			// wipe the DB row and sdk_messages.
+			expect(sessionManagerData.mocks.deleteSessionResources).not.toHaveBeenCalled();
 		});
 
 		it('throws error when session not found', async () => {

@@ -81,6 +81,7 @@ interface MockAgentSession {
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
+	awaitSdkSessionCaptured: (timeoutMs?: number) => Promise<string>;
 	handleInterrupt: () => Promise<void>;
 	cleanup: () => Promise<void>;
 	messageQueue: { enqueueWithId: (id: string, msg: string) => Promise<void> };
@@ -140,6 +141,9 @@ function makeMockSession(sessionId: string): MockAgentSession {
 		},
 		async ensureQueryStarted() {
 			this._startCalled = true;
+		},
+		async awaitSdkSessionCaptured() {
+			return `sdk-${sessionId}`;
 		},
 		async handleInterrupt() {},
 		async cleanup() {
@@ -280,9 +284,17 @@ function makeCtx(): TestCtx {
 	};
 
 	const mockSessionManager = {
+		// Task #85: legacy `deleteSession` has been removed from the real
+		// `SessionManager`. Retained as a stub so any accidental call from
+		// production code surfaces as a captured violation.
 		deleteSession: async (sessionId: string) => {
 			sessionManagerDeleteCalls.push(sessionId);
 		},
+		archiveSessionResources: async (_sessionId: string, _trigger: string) => {},
+		deleteSessionResources: async (sessionId: string, _trigger: string) => {
+			sessionManagerDeleteCalls.push(sessionId);
+		},
+		interruptInMemorySession: async (_sessionId: string) => {},
 		registerSession: (agentSession: unknown) => {
 			registeredSessions.push((agentSession as { session: { id: string } }).session.id);
 		},
