@@ -288,7 +288,7 @@ export function AppMcpServersSettings() {
 
 	if (loading && servers.length === 0) {
 		return (
-			<SettingsSection title="Application MCP Servers">
+			<SettingsSection title="MCP Servers">
 				<div class="text-sm text-gray-500 py-2">Loading servers...</div>
 			</SettingsSection>
 		);
@@ -296,7 +296,7 @@ export function AppMcpServersSettings() {
 
 	if (error) {
 		return (
-			<SettingsSection title="Application MCP Servers">
+			<SettingsSection title="MCP Servers">
 				<div class="text-sm text-red-400 py-2">Error: {error}</div>
 			</SettingsSection>
 		);
@@ -304,11 +304,11 @@ export function AppMcpServersSettings() {
 
 	return (
 		<>
-			<SettingsSection title="Application MCP Servers">
+			<SettingsSection title="MCP Servers">
 				<div class="mb-4">
 					<p class="text-xs text-gray-500 mb-3">
-						Application MCP servers are available to any room or session. Configure external MCP
-						servers here. For API keys and secrets, set them in your system environment (e.g.,{' '}
+						MCP servers are available to any room or session. Configure external MCP servers here.
+						For API keys and secrets, set them in your system environment (e.g.,{' '}
 						<code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export BRAVE_API_KEY=...</code>)
 						and reference them by name in the env vars field below. Values stored here are saved in
 						plain text.

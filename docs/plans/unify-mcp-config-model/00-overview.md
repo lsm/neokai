@@ -124,6 +124,8 @@ Work lands in order; each milestone is independently shippable and reduces the s
 
 **Risk**: existing sessions that relied on `.mcp.json` break until M2. Gate behind a kill switch (`NEOKAI_LEGACY_MCP_AUTOLOAD=1`) for one release if needed.
 
+**Kill switch semantics.** When `NEOKAI_LEGACY_MCP_AUTOLOAD=1` is set, `QueryOptionsBuilder.build()` preserves the *pre-M1* asymmetry: coordinators (`space_chat`, `room_chat`) stay strict with empty `settingSources`; workers / task agents / ad-hoc sessions retain `settingSources: ['project', 'local']` and `strictMcpConfig: false`. The flag does NOT globally re-enable auto-load across all session types — that would regress the coordinator hardening we already have. Implementation: one conditional per session type inside `build()`, guarded by the env var.
+
 **Tests**:
 - Daemon unit: `query-options-builder.test.ts` — all session types have `strictMcpConfig: true` and empty `settingSources`
 - Online: Space ad-hoc session should NOT see `chrome-devtools` when defined only in project `.mcp.json`
@@ -134,9 +136,14 @@ Work lands in order; each milestone is independently shippable and reduces the s
 
 **Effect**: users get the Claude Code convention back, but gated on an explicit accept. No ambient injection.
 
+**When scanning happens.** Only on explicit workspace-level triggers: daemon startup (for each registered workspace), workspace add/change events, and a user-initiated "Refresh imports" button in the MCP Servers panel. `session.create` must never touch the filesystem — scanning on every session is a latency trap and a silent fd/stat dependency. Treat the registry as the only source the session path reads from.
+
+**Dedupe key.** `(sourcePath, name)`. Rationale: one `.mcp.json` can define multiple servers, so `name` alone collides across files; `sourcePath` alone can't distinguish servers within a single file. If a user renames a server in `.mcp.json`, the old row is deleted (the old name disappeared from that sourcePath) and a new `imported+disabled` row appears under the new name — the rename is treated as a remove + add, intentionally, so the user has to re-accept. A future "rename detection" heuristic can be added if this proves annoying.
+
 **Tests**:
-- Repository unit tests for idempotent upsert (same `.mcp.json` re-scanned = no duplicates)
+- Repository unit tests for idempotent upsert under the dedupe key (same `.mcp.json` re-scanned = no duplicates; renaming a server in-place produces remove+add)
 - E2E: drop a `.mcp.json`, see the imported row appear disabled, enable it, verify it reaches a session
+- Unit: `session.create` does not call any `.mcp.json` scan path (observable via spy on the scanner)
 
 ### M3 — Generalize `mcp_enablement`
 
@@ -183,5 +190,5 @@ Work lands in order; each milestone is independently shippable and reduces the s
 ## Open questions
 
 1. Should `imported` rows auto-enable when they originated from a `.mcp.json` the user manually committed? Argues for yes (low friction) vs. no (explicit is better). Default to no; add a `trustLocalMcpJson` global setting if enough users complain.
-2. Workspace-change detection: daemon currently doesn't re-scan `.mcp.json` on `cd`. Do we re-scan on every session.create, or only on an explicit "refresh imports" button?
+2. ~~Workspace-change detection~~ — *resolved in M2 scope above: scan on workspace attach/change + explicit refresh button; never on session.create.*
 3. Do we want a fourth scope (`user` / `workspace`) between global and space? Probably not for v1 — YAGNI.
