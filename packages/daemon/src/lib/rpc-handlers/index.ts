@@ -92,7 +92,7 @@ import { setupLiveQueryHandlers } from './live-query-handlers';
 import { setupReferenceHandlers } from './reference-handlers';
 import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
-import type { AppMcpLifecycleManager } from '../mcp';
+import type { AppMcpLifecycleManager, McpImportService } from '../mcp';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
 import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
@@ -138,6 +138,13 @@ export interface RPCHandlerDependencies {
 	skillsManager: SkillsManager;
 	/** Neo agent manager — singleton global AI assistant */
 	neoAgentManager: NeoAgentManager;
+	/**
+	 * MCP `.mcp.json` import service — scans project + user-level files and
+	 * upserts `source='imported'` rows. Injected here so workspace and
+	 * settings RPC handlers can trigger scans on workspace.add and
+	 * settings.mcp.refreshImports.
+	 */
+	mcpImportService: McpImportService;
 }
 
 const log = new Logger('rpc-handlers');
@@ -204,7 +211,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// sessions live in RoomRuntimeService.agentSessions (separate from SessionManager),
 	// so the handler needs to check the runtime pool first.
 	registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
-	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
+	registerSettingsHandlers(
+		deps.messageHub,
+		deps.settingsManager,
+		deps.daemonHub,
+		deps.db,
+		deps.mcpImportService
+	);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
 	// Use reactiveDb.db so test-injected sdk_messages rows also invalidate LiveQuery.
 	setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
@@ -350,9 +363,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub, undefined);
 
-	// Workspace history RPC handlers
+	// Workspace history RPC handlers.
+	// The import service is passed in so `workspace.add` can trigger a
+	// per-workspace `.mcp.json` scan right after the path is persisted.
 	const workspaceHistoryRepo = new WorkspaceHistoryRepository(deps.db.getDatabase());
-	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo);
+	setupWorkspaceHandlers(deps.messageHub, workspaceHistoryRepo, deps.mcpImportService);
 
 	// Neo global agent RPC handlers
 	// The PendingActionStore is created here (application lifecycle) so it is
