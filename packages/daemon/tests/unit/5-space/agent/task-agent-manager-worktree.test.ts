@@ -92,6 +92,7 @@ interface MockAgentSession {
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
+	awaitSdkSessionCaptured: (timeoutMs?: number) => Promise<string>;
 	handleInterrupt: () => Promise<void>;
 	cleanup: () => Promise<void>;
 	messageQueue: { enqueueWithId: (id: string, msg: string) => Promise<void> };
@@ -152,6 +153,9 @@ function makeMockSession(
 		async ensureQueryStarted() {
 			this._startCalled = true;
 		},
+		async awaitSdkSessionCaptured() {
+			return `sdk-${sessionId}`;
+		},
 		async handleInterrupt() {},
 		async cleanup() {
 			this._cleanupCalled = true;
@@ -179,6 +183,10 @@ interface MockWorktreeManager {
 	worktreePath: string;
 	/** If set, createTaskWorktree throws this error */
 	createError?: Error;
+	/** Internal: taskIds that have a "stored" worktree record (mirrors the
+	 *  real `space_worktrees` table). Populated on successful create, cleared
+	 *  on remove. */
+	storedTaskIds: Set<string>;
 
 	createTaskWorktree(
 		spaceId: string,
@@ -191,6 +199,7 @@ interface MockWorktreeManager {
 	cleanupOrphaned(spaceId: string): Promise<void>;
 	reapExpiredWorktrees(ttlMs?: number): Promise<void>;
 	getTaskWorktreePath(spaceId: string, taskId: string): Promise<string | null>;
+	getTaskWorktreePathSync(spaceId: string, taskId: string): string | null;
 	listWorktrees(spaceId: string): Promise<[]>;
 }
 
@@ -202,14 +211,17 @@ function makeMockWorktreeManager(worktreePath = '/tmp/worktrees/test-task'): Moc
 		orphanedCleanupCalls: [],
 		reapCalls: 0,
 		worktreePath,
+		storedTaskIds: new Set<string>(),
 
 		async createTaskWorktree(spaceId, taskId, taskTitle, taskNumber) {
 			m.createCalls.push({ spaceId, taskId, taskTitle, taskNumber });
 			if (m.createError) throw m.createError;
+			m.storedTaskIds.add(taskId);
 			return { path: m.worktreePath, slug: 'test-slug' };
 		},
 		async removeTaskWorktree(spaceId, taskId) {
 			m.removeCalls.push({ spaceId, taskId });
+			m.storedTaskIds.delete(taskId);
 		},
 		markTaskWorktreeCompleted(spaceId, taskId) {
 			m.completedCalls.push({ spaceId, taskId });
@@ -220,8 +232,11 @@ function makeMockWorktreeManager(worktreePath = '/tmp/worktrees/test-task'): Moc
 		async reapExpiredWorktrees(_ttlMs) {
 			m.reapCalls++;
 		},
-		async getTaskWorktreePath(_spaceId, _taskId) {
-			return m.worktreePath;
+		async getTaskWorktreePath(_spaceId, taskId) {
+			return m.storedTaskIds.has(taskId) ? m.worktreePath : null;
+		},
+		getTaskWorktreePathSync(_spaceId, taskId) {
+			return m.storedTaskIds.has(taskId) ? m.worktreePath : null;
 		},
 		async listWorktrees(_spaceId) {
 			return [];

@@ -96,6 +96,7 @@ interface MockAgentSession {
 	setRuntimeSystemPrompt: (systemPrompt: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
+	awaitSdkSessionCaptured: (timeoutMs?: number) => Promise<string>;
 	handleInterrupt: () => Promise<void>;
 	cleanup: () => Promise<void>;
 	messageQueue: { enqueueWithId: (id: string, msg: string) => Promise<void> };
@@ -155,6 +156,9 @@ function makeMockSession(
 		},
 		async ensureQueryStarted() {
 			this._startCalled = true;
+		},
+		async awaitSdkSessionCaptured() {
+			return `sdk-${sessionId}`;
 		},
 		async handleInterrupt() {},
 		async cleanup() {

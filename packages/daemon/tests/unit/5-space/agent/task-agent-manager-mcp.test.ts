@@ -78,6 +78,7 @@ interface MockAgentSession {
 	setRuntimeSystemPrompt: (sp: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
+	awaitSdkSessionCaptured: (timeoutMs?: number) => Promise<string>;
 	handleInterrupt: () => Promise<void>;
 	cleanup: () => Promise<void>;
 	messageQueue: { enqueueWithId: (id: string, msg: string) => Promise<void> };
@@ -117,6 +118,9 @@ function makeMockSession(sessionId: string): MockAgentSession {
 		setRuntimeSystemPrompt(_sp: unknown) {},
 		async startStreamingQuery() {},
 		async ensureQueryStarted() {},
+		async awaitSdkSessionCaptured() {
+			return `sdk-${sessionId}`;
+		},
 		async handleInterrupt() {},
 		async cleanup() {},
 		messageQueue: {
