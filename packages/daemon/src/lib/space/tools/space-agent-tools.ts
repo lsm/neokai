@@ -21,6 +21,7 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { NodeExecution, SpaceTask, SpaceTaskStatus, SpaceTaskPriority } from '@neokai/shared';
 import type { SpaceRuntime } from '../runtime/space-runtime';
@@ -132,6 +133,18 @@ export interface SpaceAgentToolsConfig {
 	 * writer authorization.
 	 */
 	myAgentNameAliases?: string[];
+
+	/**
+	 * Optional self-heal callback exposed as the `restore_node_agent` tool.
+	 *
+	 * When provided, the tool is added to this MCP server so it remains callable
+	 * even if the `node-agent` MCP server is missing — breaking the namespace paradox
+	 * where the self-heal tool lived in the same namespace as the server it repairs.
+	 *
+	 * Wired by TaskAgentManager when building space-agent-tools for workflow sub-sessions.
+	 * Not set for task-agent or space-chat sessions (they have no node-agent to restore).
+	 */
+	onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,7 +1018,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 	const handlers = createSpaceAgentToolHandlers(config);
 
-	const tools = [
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const tools: SdkMcpToolDefinition<any>[] = [
 		tool(
 			'list_workflows',
 			'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
@@ -1243,6 +1257,52 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 			(args) => handlers.approve_completion_action(args)
 		),
 	];
+
+	// P3-8: expose restore_node_agent in the space-agent-tools namespace so it remains
+	// callable even when the node-agent MCP server is missing. The node-agent namespace
+	// has a self-referential paradox: if node-agent is gone, restore_node_agent (which
+	// lives inside that namespace) is also gone and cannot be called. Placing a copy here
+	// breaks the dependency — space-agent-tools is always present for workflow sub-sessions
+	// (attached both at spawn and rehydrate, independent of node-agent health).
+	if (config.onRestoreNodeAgent) {
+		const restoreCallback = config.onRestoreNodeAgent;
+		tools.push(
+			tool(
+				'restore_node_agent',
+				'Self-heal tool: re-attaches the node-agent MCP server for this session and restarts ' +
+					'the query so the new tool surface takes effect. Call this if a previous ' +
+					'mcp__node-agent__send_message or similar call returned "No such tool available". ' +
+					'The tool restarts your current turn — retry the failed tool call afterwards.',
+				{
+					reason: z
+						.string()
+						.optional()
+						.describe('Brief explanation of why you are calling this tool'),
+				},
+				async (args) => {
+					try {
+						await restoreCallback({ reason: args.reason });
+					} catch {
+						// Log but don't surface the error to the agent — the query restart
+						// may interrupt this response before we can return anyway.
+					}
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({
+									success: true,
+									message:
+										'node-agent MCP server re-attached and query restarted. ' +
+										'Your current turn will be interrupted — retry the failed tool call in the next turn.',
+								}),
+							},
+						],
+					};
+				}
+			)
+		);
+	}
 
 	return createSdkMcpServer({ name: 'space-agent', tools });
 }

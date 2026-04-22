@@ -391,12 +391,15 @@ export function setupConfigHandlers(
 			}
 		}
 
-		// Persist
-		const configUpdate: Partial<Session['config']> = {};
-		if (mcpServers !== undefined) configUpdate.mcpServers = mcpServers;
-		if (strictMcpConfig !== undefined) configUpdate.strictMcpConfig = strictMcpConfig;
-
-		await agentSession.updateConfig(configUpdate);
+		// Persist user-managed MCP servers via the safe merge API that preserves
+		// in-process runtime servers (node-agent, task-agent, space-agent-tools, db-query).
+		// Other config fields (strictMcpConfig) go through updateConfig as before.
+		if (mcpServers !== undefined) {
+			await agentSession.updateUserMcpServers(mcpServers);
+		}
+		if (strictMcpConfig !== undefined) {
+			await agentSession.updateConfig({ strictMcpConfig });
+		}
 
 		// Restart query if requested
 		if (restartQuery) {
@@ -430,15 +433,19 @@ export function setupConfigHandlers(
 			return { success: false, applied: false, error: validation.error };
 		}
 
-		// Merge with existing servers
+		// Merge with existing user-managed servers (subprocess/external only).
+		// Reading only the persisted (non-SDK) subset via the current in-memory config;
+		// updateUserMcpServers will preserve in-process servers on the way back in.
 		const currentConfig = agentSession.getSessionData().config;
-		const updatedServers = {
-			...currentConfig.mcpServers,
-			[name]: config,
-		};
+		const currentSubprocessServers = Object.fromEntries(
+			Object.entries(currentConfig.mcpServers ?? {}).filter(
+				([, cfg]) => (cfg as { type?: string }).type !== 'sdk'
+			)
+		);
+		const updatedServers = { ...currentSubprocessServers, [name]: config };
 
-		// Persist
-		await agentSession.updateConfig({ mcpServers: updatedServers });
+		// Persist via the safe merge API that preserves in-process runtime servers.
+		await agentSession.updateUserMcpServers(updatedServers);
 
 		// Restart if requested
 		if (restartQuery) {
@@ -466,12 +473,17 @@ export function setupConfigHandlers(
 		const agentSession = await sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) throw new Error('Session not found');
 
+		// Build updated subprocess-only server map without the removed entry.
 		const currentConfig = agentSession.getSessionData().config;
-		const updatedServers = { ...currentConfig.mcpServers };
-		delete updatedServers[name];
+		const currentSubprocessServers = Object.fromEntries(
+			Object.entries(currentConfig.mcpServers ?? {}).filter(
+				([, cfg]) => (cfg as { type?: string }).type !== 'sdk'
+			)
+		);
+		delete currentSubprocessServers[name];
 
-		// Persist
-		await agentSession.updateConfig({ mcpServers: updatedServers });
+		// Persist via the safe merge API that preserves in-process runtime servers.
+		await agentSession.updateUserMcpServers(currentSubprocessServers);
 
 		// Restart if requested
 		if (restartQuery) {
