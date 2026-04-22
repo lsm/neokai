@@ -667,6 +667,69 @@ describe('VisualWorkflowEditor', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Autonomy level selector
+	// -------------------------------------------------------------------------
+
+	describe('Autonomy level selector', () => {
+		it('renders all 5 autonomy level buttons', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			for (let level = 1; level <= 5; level++) {
+				expect(getByTestId(`autonomy-level-${level}`)).toBeTruthy();
+			}
+		});
+
+		it('defaults to level 3 in create mode', () => {
+			const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			// Level 3 button should have the active class
+			const btn3 = getByTestId('autonomy-level-3');
+			expect(btn3.className).toContain('bg-blue-500/10');
+		});
+
+		it('reflects workflow completionAutonomyLevel in edit mode', () => {
+			const { getByTestId } = render(
+				<VisualWorkflowEditor
+					{...makeProps({ workflow: makeWorkflow({ completionAutonomyLevel: 5 }) })}
+				/>
+			);
+			const btn5 = getByTestId('autonomy-level-5');
+			expect(btn5.className).toContain('bg-blue-500/10');
+		});
+
+		it('includes completionAutonomyLevel in createWorkflow call', async () => {
+			const { getByTestId, getAllByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
+			fireEvent.input(getByTestId('workflow-name-input'), { target: { value: 'WF' } });
+			fireEvent.click(getByTestId('autonomy-level-4'));
+			fireEvent.click(getByTestId('template-picker-button'));
+			fireEvent.click(
+				getAllByTestId('template-option').find(
+					(el) => el.getAttribute('data-template-label') === 'Review-Only Workflow'
+				)!
+			);
+			await act(async () => {
+				fireEvent.click(getByTestId('save-button'));
+			});
+			await waitFor(() => expect(mockCreateWorkflow).toHaveBeenCalledOnce());
+			const params = mockCreateWorkflow.mock.calls[0][0];
+			expect(params.completionAutonomyLevel).toBe(4);
+		});
+
+		it('includes completionAutonomyLevel in updateWorkflow call', async () => {
+			const { getByTestId } = render(
+				<VisualWorkflowEditor
+					{...makeProps({ workflow: makeWorkflow({ completionAutonomyLevel: 3 }) })}
+				/>
+			);
+			fireEvent.click(getByTestId('autonomy-level-2'));
+			await act(async () => {
+				fireEvent.click(getByTestId('save-button'));
+			});
+			await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+			const params = mockUpdateWorkflow.mock.calls[0][1];
+			expect(params.completionAutonomyLevel).toBe(2);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// Tags
 	// -------------------------------------------------------------------------
 
