@@ -78,12 +78,11 @@ test.describe('Settings Modal - Authentication Status', () => {
 	test('should display all settings navigation sections', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Verify all 8 settings navigation sections are visible in the ContextPanel
+		// Verify all settings navigation sections are visible in the ContextPanel
 		const expectedSections = [
 			'General',
 			'Providers',
 			'MCP Servers',
-			'Application MCP Servers',
 			'Skills',
 			'Fallback Models',
 			'Usage',
@@ -236,7 +235,8 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 	test('should display MCP Servers section from settings nav', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Navigate to MCP Servers section via nav button (exact match to avoid matching "Application MCP Servers")
+		// Navigate to MCP Servers section via nav button (exact match — other UI
+		// surfaces also use the string "MCP Servers" as a section heading)
 		await page.getByRole('button', { name: 'MCP Servers', exact: true }).click();
 
 		// Verify MCP Servers section is shown
@@ -358,7 +358,8 @@ test.describe('Settings Modal - MCP Servers', () => {
 	test('should display MCP Servers section in Global Settings', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Navigate to MCP Servers section via the settings nav (exact match to avoid matching "Application MCP Servers")
+		// Navigate to MCP Servers section via the settings nav (exact match — other
+		// UI surfaces also use the string "MCP Servers" as a section heading)
 		await page.getByRole('button', { name: 'MCP Servers', exact: true }).click();
 
 		// Verify MCP Servers section heading is displayed

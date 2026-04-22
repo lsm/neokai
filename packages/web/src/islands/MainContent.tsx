@@ -38,11 +38,6 @@ const ProvidersSettings = lazy(() =>
 		default: m.ProvidersSettings,
 	}))
 );
-const McpServersSettings = lazy(() =>
-	import('../components/settings/McpServersSettings.tsx').then((m) => ({
-		default: m.McpServersSettings,
-	}))
-);
 const AppMcpServersSettings = lazy(() =>
 	import('../components/settings/AppMcpServersSettings.tsx').then((m) => ({
 		default: m.AppMcpServersSettings,
@@ -189,7 +184,6 @@ export default function MainContent() {
 						<Suspense fallback={lazyFallback}>
 							{settingsSection === 'general' && <GeneralSettings />}
 							{settingsSection === 'providers' && <ProvidersSettings />}
-							{settingsSection === 'mcp-servers' && <McpServersSettings />}
 							{settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}
 							{settingsSection === 'skills' && <SkillsRegistry />}
 							{settingsSection === 'fallback-models' && <FallbackModelsSettings />}
