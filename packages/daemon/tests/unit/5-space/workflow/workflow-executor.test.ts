@@ -7,8 +7,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -24,18 +22,13 @@ import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@neokai
 // Test DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-workflow-executor',
-		`t-${Date.now()}-${Math.random()}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId = 'space-1', workspacePath = '/tmp/ws-1'): void {
@@ -75,7 +68,6 @@ function makeTimeoutRunner(): CommandRunner {
 
 describe('WorkflowExecutor', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let workflowRepo: SpaceWorkflowRepository;
 	let runRepo: SpaceWorkflowRunRepository;
 
@@ -89,7 +81,7 @@ describe('WorkflowExecutor', () => {
 	const STEP_B = 'step-b';
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
+		db = makeDb();
 		seedSpace(db, SPACE_ID, WORKSPACE);
 		seedAgent(db, AGENT_A, SPACE_ID, 'Agent A');
 		seedAgent(db, AGENT_B, SPACE_ID, 'Agent B');
@@ -101,11 +93,6 @@ describe('WorkflowExecutor', () => {
 	afterEach(() => {
 		try {
 			db.close();
-		} catch {
-			/* ignore */
-		}
-		try {
-			rmSync(dir, { recursive: true, force: true });
 		} catch {
 			/* ignore */
 		}
