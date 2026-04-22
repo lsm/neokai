@@ -1556,6 +1556,25 @@ describe('TaskAgentManager', () => {
 			expect(ctx.manager.isTaskAgentAlive(task2.id)).toBe(false);
 		});
 
+		test('cleanupAll preserves DB state for rehydration after daemon restart', async () => {
+			const task1 = await makeTask(ctx.taskManager);
+			const task2 = await makeTask(ctx.taskManager);
+			const session1Id = await ctx.manager.spawnTaskAgent(task1, ctx.space, null, null);
+			const session2Id = await ctx.manager.spawnTaskAgent(task2, ctx.space, null, null);
+
+			await ctx.manager.cleanupAll();
+
+			// Must NOT delete session DB rows — rehydrate depends on them
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(session1Id);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(session2Id);
+
+			// The task_agent_session_id in space_tasks must still point at the live session
+			const reloaded1 = ctx.taskRepo.getTask(task1.id);
+			const reloaded2 = ctx.taskRepo.getTask(task2.id);
+			expect(reloaded1?.taskAgentSessionId).toBe(session1Id);
+			expect(reloaded2?.taskAgentSessionId).toBe(session2Id);
+		});
+
 		test('cleanupAll is a no-op when no sessions are active', async () => {
 			// Should not throw
 			await expect(ctx.manager.cleanupAll()).resolves.toBeUndefined();
