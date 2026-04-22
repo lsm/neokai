@@ -23,7 +23,10 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import type { Space, SpaceWorkflow } from '@neokai/shared';
-import { setupSpaceWorkflowHandlers } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
+import {
+	setupSpaceWorkflowHandlers,
+	checkBuiltInWorkflowDriftOnStartup,
+} from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -1153,5 +1156,151 @@ describe('space-workflow-handlers', () => {
 			expect(workflowRunRepo.deleteByWorkflowId).toHaveBeenCalledWith('wf-older-2');
 			expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-newer');
 		});
+	});
+});
+
+// ─── checkBuiltInWorkflowDriftOnStartup ──────────────────────────────────────
+
+describe('checkBuiltInWorkflowDriftOnStartup', () => {
+	function makeSpaceManager(spaces: Space[]): SpaceManager {
+		return {
+			listSpaces: mock(async () => spaces),
+		} as unknown as SpaceManager;
+	}
+
+	function makeWorkflowManager(
+		workflowsBySpaceId: Record<string, SpaceWorkflow[]>
+	): SpaceWorkflowManager {
+		return {
+			listWorkflows: mock((spaceId: string) => workflowsBySpaceId[spaceId] ?? []),
+		} as unknown as SpaceWorkflowManager;
+	}
+
+	it('returns without logging when there are no spaces', async () => {
+		const sm = makeSpaceManager([]);
+		const wm = makeWorkflowManager({});
+		// Should complete without throwing
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+	});
+
+	it('returns without logging when all workflows are up-to-date', async () => {
+		const [template] = getBuiltInWorkflows();
+		const currentHash = computeWorkflowHash(template);
+		const space: Space = { ...mockSpace, id: 'sp-1', name: 'My Space' };
+		const workflow: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-fresh',
+			spaceId: 'sp-1',
+			templateName: template.name,
+			templateHash: currentHash,
+		};
+		const sm = makeSpaceManager([space]);
+		const wm = makeWorkflowManager({ 'sp-1': [workflow] });
+
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+		// listWorkflows was called for the one space
+		expect(wm.listWorkflows).toHaveBeenCalledWith('sp-1');
+	});
+
+	it('returns without logging when workflows have no templateName', async () => {
+		const space: Space = { ...mockSpace, id: 'sp-1', name: 'My Space' };
+		const workflow: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-custom',
+			spaceId: 'sp-1',
+			templateName: undefined,
+		};
+		const sm = makeSpaceManager([space]);
+		const wm = makeWorkflowManager({ 'sp-1': [workflow] });
+
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+	});
+
+	it('returns without logging when templateName does not match any built-in', async () => {
+		const space: Space = { ...mockSpace, id: 'sp-1', name: 'My Space' };
+		const workflow: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-orphan',
+			spaceId: 'sp-1',
+			templateName: 'Nonexistent Template',
+			templateHash: 'some-hash',
+		};
+		const sm = makeSpaceManager([space]);
+		const wm = makeWorkflowManager({ 'sp-1': [workflow] });
+
+		// No drift for unknown template names — they are skipped
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+	});
+
+	it('resolves without throwing when drift is detected (stale templateHash)', async () => {
+		const [template] = getBuiltInWorkflows();
+		const space: Space = { ...mockSpace, id: 'sp-1', name: 'My Space' };
+		const staleWorkflow: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-stale',
+			spaceId: 'sp-1',
+			templateName: template.name,
+			templateHash: 'stale-hash-from-old-version',
+		};
+		const sm = makeSpaceManager([space]);
+		const wm = makeWorkflowManager({ 'sp-1': [staleWorkflow] });
+
+		// Must resolve (not throw) even when drift is present
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+	});
+
+	it('resolves without throwing when templateHash is absent (null → drifted)', async () => {
+		const [template] = getBuiltInWorkflows();
+		const space: Space = { ...mockSpace, id: 'sp-1', name: 'My Space' };
+		const workflow: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-no-hash',
+			spaceId: 'sp-1',
+			templateName: template.name,
+			templateHash: undefined,
+		};
+		const sm = makeSpaceManager([space]);
+		const wm = makeWorkflowManager({ 'sp-1': [workflow] });
+
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+	});
+
+	it('scans workflows across multiple spaces', async () => {
+		const [template] = getBuiltInWorkflows();
+		const currentHash = computeWorkflowHash(template);
+		const spaceA: Space = { ...mockSpace, id: 'sp-a', name: 'Space A' };
+		const spaceB: Space = { ...mockSpace, id: 'sp-b', name: 'Space B' };
+		const freshWf: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-fresh',
+			spaceId: 'sp-a',
+			templateName: template.name,
+			templateHash: currentHash,
+		};
+		const staleWf: SpaceWorkflow = {
+			...mockWorkflow,
+			id: 'wf-stale',
+			spaceId: 'sp-b',
+			templateName: template.name,
+			templateHash: 'stale',
+		};
+		const sm = makeSpaceManager([spaceA, spaceB]);
+		const wm = makeWorkflowManager({ 'sp-a': [freshWf], 'sp-b': [staleWf] });
+
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+		expect(wm.listWorkflows).toHaveBeenCalledWith('sp-a');
+		expect(wm.listWorkflows).toHaveBeenCalledWith('sp-b');
+	});
+
+	it('resolves without throwing when spaceManager.listSpaces rejects (non-fatal)', async () => {
+		const sm = {
+			listSpaces: mock(async () => {
+				throw new Error('DB connection lost');
+			}),
+		} as unknown as SpaceManager;
+		const wm = makeWorkflowManager({});
+
+		// Errors must be swallowed — startup must never be blocked
+		await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
 	});
 });
