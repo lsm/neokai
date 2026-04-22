@@ -3,20 +3,30 @@
  *
  * Tests the RPC handlers for MCP and tools operations:
  * - tools.save - Save tools configuration
- * - mcp.updateDisabledServers - Update disabled MCP servers
- * - mcp.getDisabledServers - Get disabled MCP servers
  * - mcp.listServers - List available MCP servers
  * - globalTools.getConfig - Get global tools config
  * - globalTools.saveConfig - Save global tools config
+ * - mcp.registry.listErrors - Surface registry validation errors
+ *
+ * NOTE: The legacy `mcp.updateDisabledServers`, `mcp.getDisabledServers`,
+ * `settings.mcp.toggle`, and `settings.mcp.setDisabled` RPCs were removed in
+ * M5 of `unify-mcp-config-model`; their tests are gone too. MCP enablement
+ * now flows through the unified `app_mcp_servers` registry + `mcp_enablement`
+ * override table.
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach, afterAll } from 'bun:test';
-import { MessageHub, type ToolsConfig, type GlobalToolsConfig } from '@neokai/shared';
+import {
+	MessageHub,
+	type ToolsConfig,
+	type GlobalToolsConfig,
+	DEFAULT_GLOBAL_TOOLS_CONFIG,
+} from '@neokai/shared';
 import { registerMcpHandlers } from '../../../../src/lib/rpc-handlers/mcp-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import type { AppMcpLifecycleManager } from '../../../../src/lib/mcp';
 import type { Session } from '@neokai/shared';
-import * as fs from 'node:fs/promises';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -105,12 +115,7 @@ function createMockSessionManager(): {
 
 	const mocks = {
 		getSession: mock(() => agentSessionData.agentSession),
-		getGlobalToolsConfig: mock(
-			() =>
-				({
-					disabledMcpServers: ['server1', 'server2'],
-				}) as GlobalToolsConfig
-		),
+		getGlobalToolsConfig: mock(() => DEFAULT_GLOBAL_TOOLS_CONFIG),
 		saveGlobalToolsConfig: mock(() => {}),
 	};
 
@@ -121,16 +126,34 @@ function createMockSessionManager(): {
 	return { sessionManager, mocks, agentSessionData };
 }
 
+// Minimal AppMcpLifecycleManager mock; only `getStartupErrors` is exercised here.
+function createMockAppMcpManager(): {
+	manager: AppMcpLifecycleManager;
+	mocks: { getStartupErrors: ReturnType<typeof mock> };
+} {
+	const mocks = {
+		getStartupErrors: mock(() => []),
+	};
+	const manager = mocks as unknown as AppMcpLifecycleManager;
+	return { manager, mocks };
+}
+
 describe('MCP/Tools RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let sessionManagerData: ReturnType<typeof createMockSessionManager>;
+	let appMcpManagerData: ReturnType<typeof createMockAppMcpManager>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		sessionManagerData = createMockSessionManager();
+		appMcpManagerData = createMockAppMcpManager();
 
 		// Setup handlers with mocked dependencies
-		registerMcpHandlers(messageHubData.hub, sessionManagerData.sessionManager);
+		registerMcpHandlers(
+			messageHubData.hub,
+			sessionManagerData.sessionManager,
+			appMcpManagerData.manager
+		);
 	});
 
 	afterEach(() => {
@@ -157,7 +180,7 @@ describe('MCP/Tools RPC Handlers', () => {
 			const params = {
 				sessionId: 'session-123',
 				tools: {
-					disabledMcpServers: ['server1'],
+					useClaudeCodePreset: false,
 				} as ToolsConfig,
 			};
 
@@ -181,30 +204,14 @@ describe('MCP/Tools RPC Handlers', () => {
 			await expect(handler!(params, {})).rejects.toThrow('Session not found: non-existent');
 		});
 
-		it('handles tools config with allowedTools', async () => {
+		it('handles tools config with useClaudeCodePreset toggle', async () => {
 			const handler = messageHubData.handlers.get('tools.save');
 			expect(handler).toBeDefined();
 
 			const params = {
 				sessionId: 'session-123',
 				tools: {
-					allowedTools: ['Read', 'Write', 'Edit'],
-				} as ToolsConfig,
-			};
-
-			const result = await handler!(params, {});
-
-			expect(result).toEqual({ success: true });
-		});
-
-		it('handles tools config with disallowedTools', async () => {
-			const handler = messageHubData.handlers.get('tools.save');
-			expect(handler).toBeDefined();
-
-			const params = {
-				sessionId: 'session-123',
-				tools: {
-					disallowedTools: ['Bash', 'Execute'],
+					useClaudeCodePreset: true,
 				} as ToolsConfig,
 			};
 
@@ -230,133 +237,6 @@ describe('MCP/Tools RPC Handlers', () => {
 			const result = await handler!(params, {});
 
 			expect(result).toEqual({ success: false, error: 'Failed to update tools' });
-		});
-	});
-
-	describe('mcp.updateDisabledServers', () => {
-		it('updates disabled MCP servers list', async () => {
-			const handler = messageHubData.handlers.get('mcp.updateDisabledServers');
-			expect(handler).toBeDefined();
-
-			const params = {
-				sessionId: 'session-123',
-				disabledServers: ['server1', 'server2'],
-			};
-
-			const result = await handler!(params, {});
-
-			expect(sessionManagerData.agentSessionData.mocks.updateToolsConfig).toHaveBeenCalled();
-			expect(result).toEqual({ success: true });
-		});
-
-		it('clears disabled servers list with empty array', async () => {
-			const handler = messageHubData.handlers.get('mcp.updateDisabledServers');
-			expect(handler).toBeDefined();
-
-			const params = {
-				sessionId: 'session-123',
-				disabledServers: [],
-			};
-
-			const result = await handler!(params, {});
-
-			expect(result).toEqual({ success: true });
-		});
-
-		it('throws error when session not found', async () => {
-			const handler = messageHubData.handlers.get('mcp.updateDisabledServers');
-			expect(handler).toBeDefined();
-
-			sessionManagerData.mocks.getSession.mockReturnValueOnce(null);
-
-			const params = {
-				sessionId: 'non-existent',
-				disabledServers: ['server1'],
-			};
-
-			await expect(handler!(params, {})).rejects.toThrow('Session not found: non-existent');
-		});
-
-		it('preserves existing tools config when updating', async () => {
-			const handler = messageHubData.handlers.get('mcp.updateDisabledServers');
-			expect(handler).toBeDefined();
-
-			// Create session with existing tools config
-			const { agentSession, mocks } = createMockAgentSession();
-			mocks.getSessionData.mockReturnValue({
-				id: 'session-123',
-				config: {
-					model: 'claude-sonnet',
-					tools: {
-						allowedTools: ['Read', 'Write'],
-						disabledMcpServers: ['old-server'],
-					},
-				},
-			} as Session);
-			sessionManagerData.mocks.getSession.mockReturnValue(agentSession);
-
-			const params = {
-				sessionId: 'session-123',
-				disabledServers: ['new-server'],
-			};
-
-			await handler!(params, {});
-
-			// Should call updateToolsConfig with merged config
-			expect(mocks.updateToolsConfig).toHaveBeenCalled();
-		});
-	});
-
-	describe('mcp.getDisabledServers', () => {
-		it('returns disabled servers list', async () => {
-			const handler = messageHubData.handlers.get('mcp.getDisabledServers');
-			expect(handler).toBeDefined();
-
-			const { agentSession, mocks } = createMockAgentSession();
-			mocks.getSessionData.mockReturnValue({
-				id: 'session-123',
-				config: {
-					model: 'claude-sonnet',
-					tools: {
-						disabledMcpServers: ['server1', 'server2'],
-					},
-				},
-			} as Session);
-			sessionManagerData.mocks.getSession.mockReturnValue(agentSession);
-
-			const params = {
-				sessionId: 'session-123',
-			};
-
-			const result = (await handler!(params, {})) as { disabledServers: string[] };
-
-			expect(result.disabledServers).toEqual(['server1', 'server2']);
-		});
-
-		it('returns empty array when no disabled servers', async () => {
-			const handler = messageHubData.handlers.get('mcp.getDisabledServers');
-			expect(handler).toBeDefined();
-
-			const params = {
-				sessionId: 'session-123',
-			};
-
-			const result = (await handler!(params, {})) as { disabledServers: string[] };
-
-			expect(result.disabledServers).toEqual([]);
-		});
-
-		it('throws error when session not found', async () => {
-			const handler = messageHubData.handlers.get('mcp.getDisabledServers');
-			expect(handler).toBeDefined();
-
-			sessionManagerData.mocks.getSession.mockReturnValueOnce(null);
-
-			const params = {
-				sessionId: 'non-existent',
-			};
-
-			await expect(handler!(params, {})).rejects.toThrow('Session not found: non-existent');
 		});
 	});
 
@@ -453,20 +333,11 @@ describe('MCP/Tools RPC Handlers', () => {
 
 			expect(sessionManagerData.mocks.getGlobalToolsConfig).toHaveBeenCalled();
 			expect(result.config).toBeDefined();
-		});
-
-		it('returns config with disabled servers', async () => {
-			const handler = messageHubData.handlers.get('globalTools.getConfig');
-			expect(handler).toBeDefined();
-
-			sessionManagerData.mocks.getGlobalToolsConfig.mockReturnValueOnce({
-				disabledMcpServers: ['disabled-server-1', 'disabled-server-2'],
-			});
-
-			const result = (await handler!({}, {})) as { config: GlobalToolsConfig };
-
-			expect(result.config.disabledMcpServers).toContain('disabled-server-1');
-			expect(result.config.disabledMcpServers).toContain('disabled-server-2');
+			// Default config exposes the systemPrompt + settingSources + mcp shape; no
+			// per-server disabled list.
+			expect(result.config.systemPrompt).toBeDefined();
+			expect(result.config.settingSources).toBeDefined();
+			expect(result.config.mcp).toBeDefined();
 		});
 	});
 
@@ -476,29 +347,28 @@ describe('MCP/Tools RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			const params = {
-				config: {
-					disabledMcpServers: ['server1', 'server2'],
-				} as GlobalToolsConfig,
+				config: DEFAULT_GLOBAL_TOOLS_CONFIG,
 			};
 
 			await handler!(params, {});
 
 			expect(sessionManagerData.mocks.saveGlobalToolsConfig).toHaveBeenCalledWith(params.config);
 		});
+	});
 
-		it('saves empty configuration', async () => {
-			const handler = messageHubData.handlers.get('globalTools.saveConfig');
+	describe('mcp.registry.listErrors', () => {
+		it('surfaces startup validation errors from the app MCP registry', async () => {
+			const handler = messageHubData.handlers.get('mcp.registry.listErrors');
 			expect(handler).toBeDefined();
 
-			const params = {
-				config: {
-					disabledMcpServers: [],
-				} as GlobalToolsConfig,
-			};
+			appMcpManagerData.mocks.getStartupErrors.mockReturnValueOnce([
+				{ name: 'broken-server', error: 'missing command' },
+			]);
 
-			await handler!(params, {});
+			const result = await handler!({}, {});
 
-			expect(sessionManagerData.mocks.saveGlobalToolsConfig).toHaveBeenCalledWith(params.config);
+			expect(appMcpManagerData.mocks.getStartupErrors).toHaveBeenCalled();
+			expect(result).toEqual([{ name: 'broken-server', error: 'missing command' }]);
 		});
 	});
 });

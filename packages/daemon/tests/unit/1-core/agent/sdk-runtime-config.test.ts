@@ -30,7 +30,6 @@ describe('SDKRuntimeConfig', () => {
 
 	let updateSessionSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
-	let setDisabledMcpServersSpy: ReturnType<typeof mock>;
 	let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
 	let getContextUsageSpy: ReturnType<typeof mock>;
 	let restartQuerySpy: ReturnType<typeof mock>;
@@ -75,10 +74,11 @@ describe('SDKRuntimeConfig', () => {
 			emit: emitSpy,
 		} as unknown as DaemonHub;
 
-		setDisabledMcpServersSpy = mock(async () => {});
-		mockSettingsManager = {
-			setDisabledMcpServers: setDisabledMcpServersSpy,
-		} as unknown as SettingsManager;
+		// SettingsManager no longer exposes per-server disabled lists; the legacy
+		// `setDisabledMcpServers` method was removed in M5. Tests treat the
+		// manager as opaque; runtime config no longer calls into it for MCP
+		// enablement.
+		mockSettingsManager = {} as unknown as SettingsManager;
 
 		updateWithDetailedBreakdownSpy = mock(() => {});
 		mockContextTracker = {
@@ -387,23 +387,15 @@ describe('SDKRuntimeConfig', () => {
 			});
 		});
 
-		it('should write disabledMcpServers to settings and restart query', async () => {
-			config = createConfig();
-
-			const tools = { disabledMcpServers: ['server1', 'server2'] };
-			await config.updateToolsConfig(tools as Session['config']['tools']);
-
-			expect(setDisabledMcpServersSpy).toHaveBeenCalledWith(['server1', 'server2']);
-			expect(restartQuerySpy).toHaveBeenCalled();
-		});
-
-		it('should not restart query when no disabledMcpServers', async () => {
+		it('does not restart query for non-MCP tool changes', async () => {
+			// `disabledMcpServers` was removed in M5 — `updateToolsConfig` no
+			// longer triggers a query restart for tool changes. The query is
+			// only restarted via the dedicated MCP enablement override flow.
 			config = createConfig();
 
 			const tools = { disabledTools: ['Bash'] };
 			await config.updateToolsConfig(tools as Session['config']['tools']);
 
-			expect(setDisabledMcpServersSpy).not.toHaveBeenCalled();
 			expect(restartQuerySpy).not.toHaveBeenCalled();
 		});
 
@@ -504,16 +496,6 @@ describe('SDKRuntimeConfig', () => {
 			const result = await config.updateToolsConfig(tools as Session['config']['tools']);
 
 			expect(result).toEqual({ success: false, error: 'Unknown error' });
-		});
-
-		it('should handle empty disabledMcpServers array', async () => {
-			config = createConfig();
-
-			const tools = { disabledMcpServers: [] };
-			await config.updateToolsConfig(tools as Session['config']['tools']);
-
-			expect(setDisabledMcpServersSpy).toHaveBeenCalledWith([]);
-			expect(restartQuerySpy).toHaveBeenCalled();
 		});
 	});
 });

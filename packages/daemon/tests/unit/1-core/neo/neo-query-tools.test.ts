@@ -220,7 +220,6 @@ function makeSettingsManager(overrides: Record<string, unknown> = {}): NeoQueryS
 				neoModel: null,
 				showArchived: false,
 				fallbackModels: [],
-				disabledMcpServers: [],
 				...overrides,
 			}) as ReturnType<NeoQuerySettingsManager['getGlobalSettings']>,
 	};
@@ -748,7 +747,10 @@ describe('get_app_settings', () => {
 		expect(result.coordinatorMode).toBe(false);
 		expect(result.maxConcurrentWorkers).toBe(3);
 		expect(result.fallbackModels).toEqual([]);
-		expect(result.disabledMcpServers).toEqual([]);
+		// NOTE: `disabledMcpServers` was removed from the `get_app_settings`
+		// response in M5 (unify-mcp-config-model). MCP enablement now flows
+		// through the unified `app_mcp_servers` registry + `mcp_enablement`
+		// overrides, surfaced via `list_mcp_servers`.
 	});
 });
 

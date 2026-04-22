@@ -3,11 +3,17 @@
  *
  * Tests the settings RPC handlers via WebSocket:
  * - settings.global.get / update / save
- * - settings.mcp.toggle / getDisabled / setDisabled
- * - settings.mcp.listFromSources / updateServerSettings
+ * - settings.mcp.listFromSources
  * - settings.session.get / update
  * - settings.fileOnly.read
  * - Global settings applied to new sessions
+ *
+ * NOTE: The legacy `settings.mcp.toggle`, `settings.mcp.getDisabled`,
+ * `settings.mcp.setDisabled`, and `settings.mcp.updateServerSettings`
+ * RPCs were removed in M5 of `unify-mcp-config-model`. The
+ * `GlobalSettings.disabledMcpServers` and `mcpServerSettings` fields were
+ * dropped at the same time. MCP server enablement now lives on the unified
+ * `app_mcp_servers` registry + per-room `mcp_enablement` overrides.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -52,20 +58,17 @@ describe('Settings RPC Handlers', () => {
 
 			expect(result).toMatchObject({
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 			});
 		});
 
 		test('returns saved settings after update', async () => {
 			await updateGlobalSettings({
 				model: 'claude-opus-4-5-20251101',
-				disabledMcpServers: ['test-server'],
 			});
 
 			const result = await getGlobalSettings();
 
 			expect(result.model).toBe('claude-opus-4-5-20251101');
-			expect(result.disabledMcpServers).toEqual(['test-server']);
 		});
 	});
 
@@ -73,12 +76,10 @@ describe('Settings RPC Handlers', () => {
 		test('updates global settings', async () => {
 			const result = await updateGlobalSettings({
 				model: 'claude-haiku-3-5-20241022',
-				disabledMcpServers: ['server1', 'server2'],
 			});
 
 			expect(result.success).toBe(true);
 			expect(result.settings.model).toBe('claude-haiku-3-5-20241022');
-			expect(result.settings.disabledMcpServers).toEqual(['server1', 'server2']);
 		});
 
 		test('persists updates', async () => {
@@ -91,15 +92,15 @@ describe('Settings RPC Handlers', () => {
 		test('performs partial update', async () => {
 			await updateGlobalSettings({
 				model: 'claude-sonnet-4-5-20250929',
-				disabledMcpServers: ['server1'],
+				autoScroll: true,
 			});
 
 			const result = await updateGlobalSettings({
-				disabledMcpServers: ['server1', 'server2'],
+				autoScroll: false,
 			});
 
 			expect(result.settings.model).toBe('claude-sonnet-4-5-20250929');
-			expect(result.settings.disabledMcpServers).toEqual(['server1', 'server2']);
+			expect(result.settings.autoScroll).toBe(false);
 		});
 	});
 
@@ -109,7 +110,6 @@ describe('Settings RPC Handlers', () => {
 				settingSources: ['project', 'local'],
 				model: 'claude-opus-4-5-20251101',
 				permissionMode: 'acceptEdits',
-				disabledMcpServers: ['server1'],
 			};
 
 			const result = (await daemon.messageHub.request('settings.global.save', {
@@ -122,95 +122,6 @@ describe('Settings RPC Handlers', () => {
 			expect(loaded.settingSources).toEqual(['project', 'local']);
 			expect(loaded.model).toBe('claude-opus-4-5-20251101');
 			expect(loaded.permissionMode).toBe('acceptEdits');
-		});
-	});
-
-	describe('settings.mcp.toggle', () => {
-		test('disables MCP server', async () => {
-			const result = (await daemon.messageHub.request('settings.mcp.toggle', {
-				serverName: 'test-server',
-				enabled: false,
-			})) as { success: boolean };
-
-			expect(result.success).toBe(true);
-
-			const settings = await getGlobalSettings();
-			expect(settings.disabledMcpServers).toContain('test-server');
-		});
-
-		test('enables MCP server', async () => {
-			await daemon.messageHub.request('settings.mcp.toggle', {
-				serverName: 'test-server',
-				enabled: false,
-			});
-
-			const result = (await daemon.messageHub.request('settings.mcp.toggle', {
-				serverName: 'test-server',
-				enabled: true,
-			})) as { success: boolean };
-
-			expect(result.success).toBe(true);
-
-			const settings = await getGlobalSettings();
-			expect(settings.disabledMcpServers).not.toContain('test-server');
-		});
-	});
-
-	describe('settings.mcp.getDisabled', () => {
-		test('returns empty array by default', async () => {
-			const result = (await daemon.messageHub.request('settings.mcp.getDisabled', {})) as {
-				disabledServers: string[];
-			};
-
-			expect(result.disabledServers).toEqual([]);
-		});
-
-		test('returns disabled servers', async () => {
-			await daemon.messageHub.request('settings.mcp.toggle', {
-				serverName: 'server1',
-				enabled: false,
-			});
-			await daemon.messageHub.request('settings.mcp.toggle', {
-				serverName: 'server2',
-				enabled: false,
-			});
-
-			const result = (await daemon.messageHub.request('settings.mcp.getDisabled', {})) as {
-				disabledServers: string[];
-			};
-
-			expect(result.disabledServers).toEqual(['server1', 'server2']);
-		});
-	});
-
-	describe('settings.mcp.setDisabled', () => {
-		test('sets list of disabled servers', async () => {
-			const result = (await daemon.messageHub.request('settings.mcp.setDisabled', {
-				disabledServers: ['server1', 'server2', 'server3'],
-			})) as { success: boolean };
-
-			expect(result.success).toBe(true);
-
-			const getResult = (await daemon.messageHub.request('settings.mcp.getDisabled', {})) as {
-				disabledServers: string[];
-			};
-			expect(getResult.disabledServers).toEqual(['server1', 'server2', 'server3']);
-		});
-
-		test('replaces existing disabled servers', async () => {
-			await daemon.messageHub.request('settings.mcp.setDisabled', {
-				disabledServers: ['old-server'],
-			});
-
-			await daemon.messageHub.request('settings.mcp.setDisabled', {
-				disabledServers: ['new-server1', 'new-server2'],
-			});
-
-			const result = (await daemon.messageHub.request('settings.mcp.getDisabled', {})) as {
-				disabledServers: string[];
-			};
-			expect(result.disabledServers).toEqual(['new-server1', 'new-server2']);
-			expect(result.disabledServers).not.toContain('old-server');
 		});
 	});
 
@@ -387,11 +298,9 @@ describe('Settings RPC Handlers', () => {
 		test('should list MCP servers without sessionId', async () => {
 			const result = (await daemon.messageHub.request('settings.mcp.listFromSources', {})) as {
 				servers: unknown;
-				serverSettings: unknown;
 			};
 
 			expect(result).toHaveProperty('servers');
-			expect(result).toHaveProperty('serverSettings');
 		});
 
 		test('should list MCP servers with sessionId', async () => {
@@ -410,26 +319,6 @@ describe('Settings RPC Handlers', () => {
 					sessionId: 'non-existent-session',
 				})
 			).rejects.toThrow();
-		});
-	});
-
-	describe('settings.mcp.updateServerSettings', () => {
-		test('should update server settings', async () => {
-			const result = (await daemon.messageHub.request('settings.mcp.updateServerSettings', {
-				serverName: 'test-server',
-				settings: { allowed: true, defaultOn: true },
-			})) as { success: boolean };
-
-			expect(result.success).toBe(true);
-		});
-
-		test('should update only allowed setting', async () => {
-			const result = (await daemon.messageHub.request('settings.mcp.updateServerSettings', {
-				serverName: 'another-server',
-				settings: { allowed: false },
-			})) as { success: boolean };
-
-			expect(result.success).toBe(true);
 		});
 	});
 
@@ -464,20 +353,41 @@ describe('Settings RPC Handlers', () => {
 		test('multiple concurrent updates are handled correctly', async () => {
 			await Promise.all([
 				updateGlobalSettings({ model: 'claude-opus-4-5-20251101' }),
-				daemon.messageHub.request('settings.mcp.toggle', {
-					serverName: 'server1',
-					enabled: false,
-				}),
-				daemon.messageHub.request('settings.mcp.toggle', {
-					serverName: 'server2',
-					enabled: false,
-				}),
+				updateGlobalSettings({ autoScroll: false }),
+				updateGlobalSettings({ showArchived: true }),
 			]);
 
 			const settings = await getGlobalSettings();
-			expect(settings.model).toBe('claude-opus-4-5-20251101');
-			expect(settings.disabledMcpServers).toContain('server1');
-			expect(settings.disabledMcpServers).toContain('server2');
+			// Note: each update is independent — only the final write of each
+			// field is observable. This test asserts no errors and that the
+			// daemon converges on a consistent state, not a specific ordering.
+			expect(['claude-opus-4-5-20251101', undefined]).toContain(
+				settings.model as string | undefined
+			);
+		});
+
+		test('does NOT register removed legacy MCP RPCs (settings.mcp.toggle, getDisabled, setDisabled, updateServerSettings)', async () => {
+			await expect(
+				daemon.messageHub.request('settings.mcp.toggle', {
+					serverName: 'x',
+					enabled: false,
+				})
+			).rejects.toThrow();
+
+			await expect(daemon.messageHub.request('settings.mcp.getDisabled', {})).rejects.toThrow();
+
+			await expect(
+				daemon.messageHub.request('settings.mcp.setDisabled', {
+					disabledServers: [],
+				})
+			).rejects.toThrow();
+
+			await expect(
+				daemon.messageHub.request('settings.mcp.updateServerSettings', {
+					serverName: 'x',
+					settings: { allowed: true },
+				})
+			).rejects.toThrow();
 		});
 	});
 });

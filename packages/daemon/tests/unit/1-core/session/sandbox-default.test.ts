@@ -73,7 +73,6 @@ describe('Sandbox Default Configuration', () => {
 			getSession: mock(() => null),
 			getGlobalSettings: mock(() => ({
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 				sandbox: {
 					enabled: true,
 					autoAllowBashIfSandboxed: true,
@@ -131,14 +130,9 @@ describe('Sandbox Default Configuration', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		// Tools config manager mocks
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({
-				useClaudeCodePreset: true,
-				settingSources: ['project', 'local'],
-				disabledMcpServers: [],
-			})),
-		} as unknown as ToolsConfigManager;
+		// Tools config manager mocks (no methods are called by SessionLifecycle
+		// post-M5; an empty stub is sufficient for type compatibility).
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		// Agent session factory
 		mockAgentSessionFactory = mock(() => mockAgentSession);

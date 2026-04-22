@@ -199,7 +199,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 			getGlobalSettings: mock(() => ({
 				...DEFAULT_GLOBAL_SETTINGS,
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 			})),
 		} as unknown as Database;
 
@@ -228,13 +227,9 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({
-				useClaudeCodePreset: true,
-				settingSources: ['project', 'local'],
-				disabledMcpServers: [],
-			})),
-		} as unknown as ToolsConfigManager;
+		// (no methods are called by SessionLifecycle post-M5; an empty stub is
+		// sufficient for type compatibility).
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		config = {
 			defaultModel: 'claude-sonnet-4-20250514',

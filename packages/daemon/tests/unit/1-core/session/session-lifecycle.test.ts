@@ -102,7 +102,6 @@ describe('SessionLifecycle', () => {
 			getGlobalSettings: mock(() => ({
 				...DEFAULT_GLOBAL_SETTINGS,
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 			})),
 		} as unknown as Database;
 
@@ -153,14 +152,9 @@ describe('SessionLifecycle', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		// Tools config manager mocks
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({
-				useClaudeCodePreset: true,
-				settingSources: ['project', 'local'],
-				disabledMcpServers: [],
-			})),
-		} as unknown as ToolsConfigManager;
+		// Tools config manager mocks (no methods are called by SessionLifecycle
+		// post-M5; an empty stub is sufficient for type compatibility).
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		// Agent session factory
 		mockAgentSessionFactory = mock(() => mockAgentSession);
@@ -979,7 +973,6 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 			getGlobalSettings: mock(() => ({
 				...DEFAULT_GLOBAL_SETTINGS,
 				settingSources: ['user', 'project', 'local'],
-				disabledMcpServers: [],
 			})),
 		} as unknown as Database;
 
@@ -1030,14 +1023,9 @@ describe('SessionLifecycle - generateTitleAndRenameBranch', () => {
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		// Tools config manager mocks
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({
-				useClaudeCodePreset: true,
-				settingSources: ['project', 'local'],
-				disabledMcpServers: [],
-			})),
-		} as unknown as ToolsConfigManager;
+		// Tools config manager mocks (no methods are called by SessionLifecycle
+		// post-M5; an empty stub is sufficient for type compatibility).
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		// Agent session factory
 		mockAgentSessionFactory = mock(() => mockAgentSession);
@@ -1184,9 +1172,7 @@ describe('SessionLifecycle - completeWorktreeChoice edge cases', () => {
 			event: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({})),
-		} as unknown as ToolsConfigManager;
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		mockAgentSessionFactory = mock(() => mockAgentSession);
 
@@ -1294,13 +1280,7 @@ describe('SessionLifecycle - session creation with worktree', () => {
 			event: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({
-				useClaudeCodePreset: true,
-				settingSources: [],
-				disabledMcpServers: [],
-			})),
-		} as unknown as ToolsConfigManager;
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		mockAgentSessionFactory = mock(() => mockAgentSession);
 
@@ -1416,13 +1396,7 @@ describe('SessionLifecycle - setWorkspace', () => {
 			onRequest: mock((_method: string, _handler: Function) => () => {}),
 		} as unknown as MessageHub;
 
-		mockToolsConfigManager = {
-			getDefaultForNewSession: mock(() => ({
-				useClaudeCodePreset: true,
-				settingSources: ['project', 'local'],
-				disabledMcpServers: [],
-			})),
-		} as unknown as ToolsConfigManager;
+		mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
 		mockAgentSessionFactory = mock(() => ({}));
 

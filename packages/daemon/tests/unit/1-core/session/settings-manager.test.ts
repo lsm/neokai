@@ -1,14 +1,25 @@
 /**
  * SettingsManager Tests
  *
- * Unit tests for global and session-specific settings management.
+ * Unit tests for global settings management plus the file-only settings
+ * writer.
+ *
+ * NOTE: Legacy per-server MCP helpers (`toggleMcpServer`,
+ * `getDisabledMcpServers`, `setDisabledMcpServers`, `getMcpServerSettings`,
+ * `updateMcpServerSettings`) and the `extractSDKOptions` derivation were
+ * removed in M5 of `unify-mcp-config-model`. Their tests are gone with them.
+ * The file-only writer also no longer writes `disabledMcpjsonServers` /
+ * `enabledMcpjsonServers` / `enableAllProjectMcpServers` — MCP enablement
+ * flows through the unified `app_mcp_servers` registry + `mcp_enablement`
+ * overrides table, and `QueryOptionsBuilder` always emits `settingSources: []`
+ * so the SDK never reads those keys back.
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SettingsManager, type McpServerInfo } from '../../../../src/lib/settings-manager';
+import { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Database } from '../../../../src/storage/database';
 import type { GlobalSettings, SettingSource } from '@neokai/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@neokai/shared';
@@ -104,122 +115,39 @@ describe('SettingsManager', () => {
 	});
 
 	describe('prepareSDKOptions', () => {
-		it('should merge global settings with session overrides', async () => {
-			const sessionOverrides = {
-				model: 'claude-opus-4-20250514',
-				maxTurns: 10,
-			};
-
-			const result = await settingsManager.prepareSDKOptions(sessionOverrides);
-
-			expect(result.model).toBe('claude-opus-4-20250514');
-			expect(result.maxTurns).toBe(10);
+		it('writes file-only settings without returning SDK options', async () => {
+			// `prepareSDKOptions` no longer derives any SDK options (M5). It
+			// just writes file-only settings. The return value is `void`.
+			const result = await settingsManager.prepareSDKOptions();
+			expect(result).toBeUndefined();
 		});
 
-		it('should write file-only settings', async () => {
+		it('creates .claude directory if it does not exist', async () => {
+			await settingsManager.prepareSDKOptions();
+
+			const settingsDir = join(workspacePath, '.claude');
+			expect(existsSync(settingsDir)).toBe(true);
+		});
+
+		it('does NOT write legacy MCP enablement keys (M5)', async () => {
+			// Even when (legacy) MCP-related fields are present on settings,
+			// they must never appear in `.claude/settings.local.json` — the
+			// unified `app_mcp_servers` registry owns enablement now.
 			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
 				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: ['server1', 'server2'],
-			});
+				// Cast through unknown so leftover legacy fields can be
+				// asserted-against in tests without the type signature
+				// allowing them to be set in source code.
+			} as GlobalSettings);
 
 			await settingsManager.prepareSDKOptions();
 
-			// Check that settings.local.json was created
 			const settingsPath = join(workspacePath, '.claude/settings.local.json');
-			expect(existsSync(settingsPath)).toBe(true);
-
 			const content = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-			expect(content.disabledMcpjsonServers).toEqual(['server1', 'server2']);
-		});
 
-		it('should extract SDK-supported options', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				model: 'claude-sonnet-4-20250514',
-				permissionMode: 'acceptEdits',
-				allowedTools: ['tool1', 'tool2'],
-				maxThinkingTokens: 10000,
-				maxTurns: 5,
-				maxBudgetUsd: 10,
-			});
-
-			const result = await settingsManager.prepareSDKOptions();
-
-			expect(result.model).toBe('claude-sonnet-4-20250514');
-			expect(result.permissionMode).toBe('acceptEdits');
-			expect(result.allowedTools).toEqual(['tool1', 'tool2']);
-			expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 10000 });
-			expect(result.maxTurns).toBe(5);
-			expect(result.maxBudgetUsd).toBe(10);
-		});
-
-		it('should handle disabled thinking', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				maxThinkingTokens: null,
-			});
-
-			const result = await settingsManager.prepareSDKOptions();
-
-			expect(result.thinking).toEqual({ type: 'disabled' });
-		});
-
-		it('should include sandbox settings', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				sandbox: {
-					enabled: true,
-					autoAllowBashIfSandboxed: true,
-					network: {
-						allowLocalBinding: true,
-					},
-				},
-			});
-
-			const result = await settingsManager.prepareSDKOptions();
-
-			expect(result.sandbox).toEqual({
-				enabled: true,
-				autoAllowBashIfSandboxed: true,
-				network: {
-					allowLocalBinding: true,
-				},
-			});
-		});
-
-		it('should include env settings', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				env: {
-					CUSTOM_VAR: 'value',
-				},
-			});
-
-			const result = await settingsManager.prepareSDKOptions();
-
-			expect(result.env).toEqual({ CUSTOM_VAR: 'value' });
-		});
-
-		it('should include betas', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				betas: ['context-1m-2025-08-07'],
-			});
-
-			const result = await settingsManager.prepareSDKOptions();
-
-			expect(result.betas).toEqual(['context-1m-2025-08-07']);
-		});
-
-		it('should include system prompt', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				systemPrompt: 'You are a helpful assistant.',
-			});
-
-			const result = await settingsManager.prepareSDKOptions();
-
-			expect(result.systemPrompt).toBe('You are a helpful assistant.');
+			expect(content.disabledMcpjsonServers).toBeUndefined();
+			expect(content.enabledMcpjsonServers).toBeUndefined();
+			expect(content.enableAllProjectMcpServers).toBeUndefined();
 		});
 	});
 
@@ -238,7 +166,6 @@ describe('SettingsManager', () => {
 			writeFileSync(
 				settingsPath,
 				JSON.stringify({
-					disabledMcpjsonServers: ['server1'],
 					permissions: { ask: ['permission1'] },
 					outputStyle: 'concise',
 				})
@@ -246,7 +173,6 @@ describe('SettingsManager', () => {
 
 			const result = settingsManager.readFileOnlySettings();
 
-			expect(result.disabledMcpServers).toEqual(['server1']);
 			expect(result.askPermissions).toEqual(['permission1']);
 			expect(result.outputStyle).toBe('concise');
 		});
@@ -261,102 +187,6 @@ describe('SettingsManager', () => {
 			const result = settingsManager.readFileOnlySettings();
 
 			expect(result).toEqual({});
-		});
-	});
-
-	describe('toggleMcpServer', () => {
-		it('should remove server from disabled list when enabled', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: ['server1', 'server2', 'server3'],
-			});
-
-			await settingsManager.toggleMcpServer('server2', true);
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					disabledMcpServers: ['server1', 'server3'],
-				})
-			);
-		});
-
-		it('should add server to disabled list when disabled', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: ['server1'],
-			});
-
-			await settingsManager.toggleMcpServer('server2', false);
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					disabledMcpServers: ['server1', 'server2'],
-				})
-			);
-		});
-
-		it('should not add duplicate to disabled list', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: ['server1', 'server2'],
-			});
-
-			await settingsManager.toggleMcpServer('server2', false);
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					disabledMcpServers: ['server1', 'server2'],
-				})
-			);
-		});
-
-		it('should handle empty disabled list', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: undefined,
-			});
-
-			await settingsManager.toggleMcpServer('server1', false);
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					disabledMcpServers: ['server1'],
-				})
-			);
-		});
-	});
-
-	describe('getDisabledMcpServers', () => {
-		it('should return disabled servers list', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: ['server1', 'server2'],
-			});
-
-			const result = settingsManager.getDisabledMcpServers();
-
-			expect(result).toEqual(['server1', 'server2']);
-		});
-
-		it('should return empty array when undefined', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: undefined,
-			});
-
-			const result = settingsManager.getDisabledMcpServers();
-
-			expect(result).toEqual([]);
-		});
-	});
-
-	describe('setDisabledMcpServers', () => {
-		it('should update disabled servers and write to file', async () => {
-			await settingsManager.setDisabledMcpServers(['server1', 'server2']);
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith({
-				disabledMcpServers: ['server1', 'server2'],
-			});
 		});
 	});
 
@@ -529,112 +359,7 @@ describe('SettingsManager', () => {
 		});
 	});
 
-	describe('updateMcpServerSettings', () => {
-		it('should update per-server settings', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: {},
-			});
-
-			settingsManager.updateMcpServerSettings('server1', {
-				allowed: true,
-				defaultOn: true,
-			});
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith({
-				mcpServerSettings: {
-					server1: { allowed: true, defaultOn: true },
-				},
-			});
-		});
-
-		it('should merge with existing server settings', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: {
-					server1: { allowed: true },
-				},
-			});
-
-			settingsManager.updateMcpServerSettings('server1', {
-				defaultOn: true,
-			});
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith({
-				mcpServerSettings: {
-					server1: { allowed: true, defaultOn: true },
-				},
-			});
-		});
-
-		it('should add new server to existing settings', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: {
-					server1: { allowed: true },
-				},
-			});
-
-			settingsManager.updateMcpServerSettings('server2', {
-				allowed: false,
-			});
-
-			expect(mockDb.updateGlobalSettings).toHaveBeenCalledWith({
-				mcpServerSettings: {
-					server1: { allowed: true },
-					server2: { allowed: false },
-				},
-			});
-		});
-	});
-
-	describe('getMcpServerSettings', () => {
-		it('should return per-server settings', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: {
-					server1: { allowed: true, defaultOn: true },
-				},
-			});
-
-			const result = settingsManager.getMcpServerSettings();
-
-			expect(result).toEqual({
-				server1: { allowed: true, defaultOn: true },
-			});
-		});
-
-		it('should return empty object when undefined', () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: undefined,
-			});
-
-			const result = settingsManager.getMcpServerSettings();
-
-			expect(result).toEqual({});
-		});
-	});
-
-	describe('writeFileOnlySettings', () => {
-		it('should write MCP server control settings', async () => {
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				disabledMcpServers: ['disabled1'],
-				enabledMcpServers: ['enabled1'],
-				enableAllProjectMcpServers: true,
-			});
-
-			await settingsManager.prepareSDKOptions();
-
-			const settingsPath = join(workspacePath, '.claude/settings.local.json');
-			const content = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-
-			expect(content.disabledMcpjsonServers).toEqual(['disabled1']);
-			expect(content.enabledMcpjsonServers).toEqual(['enabled1']);
-			expect(content.enableAllProjectMcpServers).toBe(true);
-		});
-
+	describe('writeFileOnlySettings (via prepareSDKOptions)', () => {
 		it('should write permission settings', async () => {
 			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
 				...DEFAULT_GLOBAL_SETTINGS,
@@ -813,55 +538,6 @@ describe('SettingsManager', () => {
 
 			const result = settingsManager.getEnabledMcpServersConfig();
 			expect(result).toEqual({});
-		});
-
-		it('should exclude servers with allowed === false in mcpServerSettings', () => {
-			const settingsDir = join(workspacePath, '.claude');
-			mkdirSync(settingsDir, { recursive: true });
-			writeFileSync(
-				join(settingsDir, 'settings.json'),
-				JSON.stringify({
-					mcpServers: {
-						allowed_tool: { command: 'allowed-cmd' },
-						denied_tool: { command: 'denied-cmd' },
-					},
-				})
-			);
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: {
-					denied_tool: { allowed: false },
-					allowed_tool: { allowed: true },
-				},
-			});
-
-			const result = settingsManager.getEnabledMcpServersConfig();
-			expect(result).toHaveProperty('allowed_tool');
-			expect(result).not.toHaveProperty('denied_tool');
-		});
-
-		it('should include servers with allowed === true or no setting', () => {
-			const settingsDir = join(workspacePath, '.claude');
-			mkdirSync(settingsDir, { recursive: true });
-			writeFileSync(
-				join(settingsDir, 'settings.json'),
-				JSON.stringify({
-					mcpServers: {
-						tool_explicit_allow: { command: 'cmd1' },
-						tool_no_setting: { command: 'cmd2' },
-					},
-				})
-			);
-			(mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
-				...DEFAULT_GLOBAL_SETTINGS,
-				mcpServerSettings: {
-					tool_explicit_allow: { allowed: true },
-				},
-			});
-
-			const result = settingsManager.getEnabledMcpServersConfig();
-			expect(result).toHaveProperty('tool_explicit_allow');
-			expect(result).toHaveProperty('tool_no_setting');
 		});
 
 		it('should read MCP servers from user settings.json', () => {
