@@ -1575,6 +1575,35 @@ describe('TaskAgentManager', () => {
 			expect(reloaded2?.taskAgentSessionId).toBe(session2Id);
 		});
 
+		test('cleanupAll preserves sub-session DB rows and stops their in-memory queries', async () => {
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:shutdown-sub`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			const subSession = ctx.createdSessions.get(subSessionId);
+			expect(subSession).toBeDefined();
+			// Sub-session is registered in memory and backed by a DB row
+			expect(ctx.manager.getSubSession(subSessionId)).toBeDefined();
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			await ctx.manager.cleanupAll();
+
+			// The in-memory sub-session is cleared so rehydrate can restore cleanly
+			expect(ctx.manager.getSubSession(subSessionId)).toBeUndefined();
+
+			// But the DB row is preserved (rehydrateSubSession looks it up by ID on next run)
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			// The sub-session's streaming query was stopped via AgentSession.cleanup()
+			expect(subSession?._cleanupCalled).toBe(true);
+		});
+
 		test('cleanupAll is a no-op when no sessions are active', async () => {
 			// Should not throw
 			await expect(ctx.manager.cleanupAll()).resolves.toBeUndefined();
@@ -1938,6 +1967,50 @@ describe('TaskAgentManager', () => {
 			}
 
 			restoreSpy.mockRestore();
+		});
+
+		test('self-heals dangling task_agent_session_id when session row is missing', async () => {
+			// Simulate post-bad-shutdown state: task still marks itself in_progress
+			// with a taskAgentSessionId, but the session row was deleted.
+			const task = await ctx.taskManager.createTask({
+				title: 'Dangling FK task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const danglingSessionId = `space:${ctx.spaceId}:task:${task.id}`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: danglingSessionId });
+			// NOTE: no mockDb.createSession — session row is intentionally absent
+
+			await ctx.manager.rehydrate();
+
+			// No task agent added to the map
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+
+			// The dangling FK on space_tasks was cleared so the UI LiveQuery
+			// (spaceTaskActivity.byTask) stops inner-joining on a ghost session.
+			const reloaded = ctx.taskRepo.getTask(task.id);
+			expect(reloaded?.taskAgentSessionId).toBeUndefined();
+		});
+
+		test('self-heals when session exists but is the wrong type', async () => {
+			// The session row exists but is a worker (sub-session), not a
+			// space_task_agent. The FK is still logically dangling — clear it.
+			const task = await ctx.taskManager.createTask({
+				title: 'Wrong-type FK task',
+				description: '',
+				taskType: 'coding',
+				status: 'in_progress',
+			});
+			const wrongTypeSessionId = `space:${ctx.spaceId}:task:${task.id}:wrong`;
+			ctx.taskRepo.updateTask(task.id, { taskAgentSessionId: wrongTypeSessionId });
+			ctx.mockDb.createSession({ id: wrongTypeSessionId, type: 'worker' });
+
+			await ctx.manager.rehydrate();
+
+			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
+			const reloaded = ctx.taskRepo.getTask(task.id);
+			expect(reloaded?.taskAgentSessionId).toBeUndefined();
 		});
 	});
 

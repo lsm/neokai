@@ -1613,9 +1613,10 @@ export class TaskAgentManager {
 	 *
 	 * Steps per task:
 	 * 1. Interrupt and cleanup the in-memory AgentSession (stops SDK query & subprocesses).
-	 * 2. Unsubscribe session.updated listeners and drop completion callbacks.
-	 * 3. Close db-query MCP server file handles.
-	 * 4. Clear in-memory maps so a subsequent rehydrate starts from a clean slate.
+	 *    `stopSessionPreserveDb` also unsubscribes session.updated listeners and
+	 *    drops completion callbacks for each session ID.
+	 * 2. Close db-query MCP server file handles.
+	 * 3. Clear in-memory maps so a subsequent rehydrate starts from a clean slate.
 	 */
 	async cleanupAll(): Promise<void> {
 		if (this.taskArchiveListenerUnsub) {
@@ -1632,44 +1633,29 @@ export class TaskAgentManager {
 	 * Used by shutdown only — for task completion / cancellation use `cleanup()`.
 	 */
 	private async shutdownTask(taskId: string): Promise<void> {
-		const sessionIdsTouched = new Set<string>();
-
-		// 1. Stop sub-sessions (interrupt + cleanup, no DB delete)
+		// 1. Stop sub-sessions (interrupt + cleanup, no DB delete).
+		// stopSessionPreserveDb unsubscribes listeners and drops completion
+		// callbacks for each session ID as part of its teardown.
 		const nodeMap = this.subSessions.get(taskId);
 		if (nodeMap) {
 			for (const [subSessionId, session] of nodeMap) {
-				sessionIdsTouched.add(subSessionId);
 				await this.stopSessionPreserveDb(subSessionId, session);
+				this.agentSessionIndex.delete(subSessionId);
 			}
 			this.subSessions.delete(taskId);
-			for (const sid of sessionIdsTouched) {
-				this.agentSessionIndex.delete(sid);
-			}
 		}
 
 		// 2. Stop Task Agent session
 		const taskAgentSession = this.taskAgentSessions.get(taskId);
 		if (taskAgentSession) {
-			const agentSessionId = taskAgentSession.session.id;
-			sessionIdsTouched.add(agentSessionId);
-			await this.stopSessionPreserveDb(agentSessionId, taskAgentSession);
+			await this.stopSessionPreserveDb(taskAgentSession.session.id, taskAgentSession);
 			this.taskAgentSessions.delete(taskId);
 		}
 
-		// 3. Remove completion callbacks and session listeners for the exact session IDs
-		for (const sessionId of sessionIdsTouched) {
-			this.completionCallbacks.delete(sessionId);
-			const unsub = this.sessionListeners.get(sessionId);
-			if (unsub) {
-				unsub();
-				this.sessionListeners.delete(sessionId);
-			}
-		}
-
-		// 4. Drop the in-memory worktree path (DB record is preserved)
+		// 3. Drop the in-memory worktree path (DB record is preserved)
 		this.taskWorktreePaths.delete(taskId);
 
-		// 5. Close db-query server to release SQLite handles held by the session
+		// 4. Close db-query server to release SQLite handles held by the session
 		const dbQueryServer = this.taskDbQueryServers.get(taskId);
 		if (dbQueryServer) {
 			try {
