@@ -617,6 +617,53 @@ describe('SpaceTaskPane — canvas toggle', () => {
 		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder Node');
 	});
 
+	it('canvas node click matches by role (slot name), not by label — regression for Review node bug', () => {
+		// This test reproduces the bug where clicking a "Review" node opened the Task Agent
+		// session instead of the Reviewer session. The root cause was matching m.label against
+		// agentDisplayNames rather than m.role against _agentSlotNames.
+		// Here the activity member label ('Code Reviewer') differs from _agentSlotNames (['reviewer']),
+		// but m.role === 'reviewer' matches correctly.
+		mockTasks.value = [
+			makeTask({
+				id: 'task-1',
+				workflowRunId: 'run-1',
+				taskAgentSessionId: 'session-task',
+				activeSession: null,
+			}),
+		];
+		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
+		// No agents in the store — ensures no accidental label-based fallback works
+		mockAgents.value = [];
+		mockTaskActivity.value = new Map([
+			[
+				'task-1',
+				[
+					{
+						id: 'session-reviewer',
+						sessionId: 'session-reviewer',
+						kind: 'node_agent' as const,
+						// label differs from slot name — this is what broke the old code
+						label: 'Code Reviewer',
+						role: 'reviewer',
+						state: 'active' as const,
+						messageCount: 2,
+					},
+				],
+			],
+		]);
+		const { getByTestId } = render(<SpaceTaskPane taskId="task-1" spaceId="space-1" />);
+
+		fireEvent.click(getByTestId('canvas-toggle'));
+		expect(getByTestId('workflow-canvas')).toBeTruthy();
+
+		// Click the "Review" node — slot name is 'reviewer'
+		mockWorkflowCanvasOnNodeClick('node-review', 'Review', ['reviewer']);
+
+		// Must open the reviewer's session, NOT the task agent's session
+		expect(mockSpaceOverlaySessionIdSignal.value).toBe('session-reviewer');
+		expect(mockSpaceOverlayAgentNameSignal.value).toBe('Code Reviewer');
+	});
+
 	it('switching to canvas view closes the artifacts panel', () => {
 		mockTasks.value = [makeTask({ workflowRunId: 'run-1' })];
 		mockWorkflowRuns.value = [makeWorkflowRun({ id: 'run-1', workflowId: 'workflow-1' })];
