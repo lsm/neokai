@@ -312,6 +312,11 @@ export class TaskAgentManager {
 		if (this.taskArchiveListenerUnsub) return;
 		this.taskArchiveListenerUnsub = this.config.daemonHub.on('space.task.updated', (event) => {
 			if (event.task?.status !== 'archived') return;
+			// Task #85: skip the cleanup cascade for automated duplicate-run
+			// reconciliation archives. Only user-initiated archives (missing or
+			// explicit `'user'` marker) may remove the task worktree and archive
+			// the SDK `.jsonl` files.
+			if (event.archiveSource === 'system_reconcile') return;
 			const taskId = event.taskId;
 			// Fire-and-forget — archiveOnTaskArchived is idempotent and safe to
 			// skip on failure (cleanupAll still sweeps leftovers on daemon shutdown).

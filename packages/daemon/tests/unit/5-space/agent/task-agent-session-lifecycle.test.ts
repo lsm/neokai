@@ -1055,6 +1055,36 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
 			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
 		});
+
+		test('spawn rollback (cancelBySessionId path) preserves the DB row (Task #85)', async () => {
+			// Regression guard: spawnWorkflowNodeAgent rolls back via
+			// `cancelBySessionId(spawnedSessionId)` when a post-create step
+			// (e.g. injectMessageIntoSession) throws. That rollback must NOT
+			// delete the session row, archive the `.jsonl`, or otherwise touch
+			// persistent storage — the Task #85 invariant says only UI RPCs may.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:rollback-step`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			// Sanity: the DB row exists before the rollback call.
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			// Simulate the spawn-rollback code path exactly: cancelBySessionId
+			// is what the catch block in spawnWorkflowNodeAgent calls.
+			ctx.manager.cancelBySessionId(subSessionId);
+			await new Promise((r) => setTimeout(r, 50));
+
+			// DB row preserved.
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+			// Neither UI-only primitive (archive / delete) was invoked.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.sessionManagerArchiveCalls.map((c) => c.sessionId)).not.toContain(subSessionId);
+		});
 	});
 
 	// =======================================================================
@@ -1183,6 +1213,67 @@ describe('Task Agent Session Lifecycle', () => {
 			// And no archive event should have fired.
 			const archivedIds = ctx.sessionManagerArchiveCalls.map((c) => c.sessionId);
 			expect(archivedIds).not.toContain(subSessionId);
+		});
+
+		test('system_reconcile archiveSource does NOT trigger session cleanup (Task #85 follow-up)', async () => {
+			// Regression for reviewer follow-up: `archiveDuplicateRunTasks` in
+			// space-runtime.ts marks stale duplicate-run tasks as archived for
+			// DB consistency. Those system archives must NOT remove the
+			// session worktrees / SDK `.jsonl` files — only user-initiated
+			// archives may cascade cleanup.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:system-reconcile`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			// Fire `space.task.updated` with status='archived' AND the
+			// system_reconcile marker — the listener must skip cleanup.
+			await ctx.daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				task: { ...task, status: 'archived' },
+				archiveSource: 'system_reconcile',
+			});
+			await new Promise((r) => setTimeout(r, 50));
+
+			// Neither archive nor delete primitives should have been called
+			// for the attached sub-session.
+			const archivedIds = ctx.sessionManagerArchiveCalls.map((c) => c.sessionId);
+			expect(archivedIds).not.toContain(subSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+		});
+
+		test('user archiveSource (explicit) DOES trigger session cleanup', async () => {
+			// Sibling of the system_reconcile test: when the marker is
+			// explicitly `'user'`, the cleanup cascade must still fire
+			// (mirrors the missing-marker default path).
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:user-archive`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			await ctx.daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				task: { ...task, status: 'archived' },
+				archiveSource: 'user',
+			});
+			await new Promise((r) => setTimeout(r, 50));
+
+			const archivedSubSessionIds = ctx.sessionManagerArchiveCalls
+				.filter((c) => c.trigger === 'ui_task_archive')
+				.map((c) => c.sessionId);
+			expect(archivedSubSessionIds).toContain(subSessionId);
 		});
 	});
 

@@ -161,6 +161,102 @@ describe('SpaceRuntimeService', () => {
 		});
 	});
 
+	// ─── stopActiveWork ──────────────────────────────────────────────────────
+
+	describe('stopActiveWork() — Task #85 invariant', () => {
+		test('routes tasks through TaskAgentManager.cleanup (DB-preserving) and never deleteSession*', async () => {
+			// Regression guard for Task #85: `space.stop` calls `stopActiveWork`,
+			// which must only interrupt the in-memory SDK subprocess for each
+			// active task's agent session — never touch the DB row, SDK `.jsonl`,
+			// or worktree. That is gated behind the UI-only archive/delete
+			// primitives.
+			const activeTasks = [
+				{ id: 't1', status: 'in_progress' as const },
+				{ id: 't2', status: 'open' as const },
+				{ id: 't3', status: 'done' as const }, // should be filtered out
+			];
+
+			const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
+			const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+
+			const mockTaskRepo = {
+				listBySpace: () => activeTasks,
+				updateTask: (taskId: string, updates: unknown) => {
+					updateCalls.push({ taskId, updates });
+				},
+			} as unknown as SpaceTaskRepository;
+
+			const mockWorkflowRunRepo = {
+				listBySpace: () => [],
+				transitionStatus: () => {},
+			} as unknown as SpaceWorkflowRunRepository;
+
+			const mockTaskAgentManager = {
+				cleanup: async (taskId: string, reason: 'done' | 'cancelled') => {
+					cleanupCalls.push({ taskId, reason });
+				},
+			} as unknown as TaskAgentManager;
+
+			const svc = new SpaceRuntimeService({
+				...buildConfig(spaceManager),
+				taskRepo: mockTaskRepo,
+				workflowRunRepo: mockWorkflowRunRepo,
+			});
+			svc.setTaskAgentManager(mockTaskAgentManager);
+
+			await svc.stopActiveWork('space-1');
+
+			// Only in_progress / open tasks are cleaned up.
+			expect(cleanupCalls).toHaveLength(2);
+			expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2']);
+			// All cleanup calls use the 'cancelled' reason — the non-destructive
+			// path that preserves worktrees + DB rows. This is the sentinel that
+			// TaskAgentManager.cleanup uses to pick the DB-preserving branch.
+			expect(cleanupCalls.every((c) => c.reason === 'cancelled')).toBe(true);
+			// Tasks are marked cancelled in the DB, but their sessions / SDK
+			// transcripts are never deleted by this path.
+			expect(updateCalls).toHaveLength(2);
+			expect(
+				updateCalls.every((c) => (c.updates as { status: string }).status === 'cancelled')
+			).toBe(true);
+		});
+
+		test('swallows cleanup errors so a single stuck task does not block the stop', async () => {
+			const cleanupCalls: string[] = [];
+			const mockTaskRepo = {
+				listBySpace: () => [
+					{ id: 'ok-1', status: 'in_progress' as const },
+					{ id: 'broken', status: 'in_progress' as const },
+					{ id: 'ok-2', status: 'in_progress' as const },
+				],
+				updateTask: () => {},
+			} as unknown as SpaceTaskRepository;
+
+			const mockWorkflowRunRepo = {
+				listBySpace: () => [],
+				transitionStatus: () => {},
+			} as unknown as SpaceWorkflowRunRepository;
+
+			const mockTaskAgentManager = {
+				cleanup: async (taskId: string) => {
+					cleanupCalls.push(taskId);
+					if (taskId === 'broken') throw new Error('boom');
+				},
+			} as unknown as TaskAgentManager;
+
+			const svc = new SpaceRuntimeService({
+				...buildConfig(spaceManager),
+				taskRepo: mockTaskRepo,
+				workflowRunRepo: mockWorkflowRunRepo,
+			});
+			svc.setTaskAgentManager(mockTaskAgentManager);
+
+			// Must not throw — Promise.allSettled swallows per-task failures.
+			await expect(svc.stopActiveWork('space-1')).resolves.toBeUndefined();
+			expect(cleanupCalls.sort()).toEqual(['broken', 'ok-1', 'ok-2']);
+		});
+	});
+
 	// ─── setNotificationSink ─────────────────────────────────────────────────
 
 	describe('setNotificationSink()', () => {

@@ -83,7 +83,16 @@ export class RoomManager {
 	}
 
 	/**
-	 * Delete a room and all its associated data (atomic transaction)
+	 * Delete a room's DB-level rows (room + CASCADE to tasks/goals/etc., plus
+	 * session_groups that the FK can't reach).
+	 *
+	 * Task #85: this method does NOT touch per-session worktrees or SDK
+	 * `.jsonl` files. Callers must remove each room session's external
+	 * resources first via `SessionManager.deleteSessionResources(..., 'ui_room_delete')`
+	 * (or an equivalent UI trigger such as `ui_neo_room_delete`) before
+	 * invoking this. The `room.delete` RPC handler and the Neo `delete_room`
+	 * action tool both follow that contract; see
+	 * `scripts/check-session-deletion-callers.sh` for the enforced allowlist.
 	 */
 	deleteRoom(id: string): boolean {
 		const room = this.roomRepo.getRoom(id);
@@ -92,11 +101,6 @@ export class RoomManager {
 		}
 
 		const tx = this.db.transaction(() => {
-			// Delete all sessions associated with this room
-			for (const sessionId of room.sessionIds) {
-				this.sessionRepo.deleteSession(sessionId);
-			}
-
 			// Clean up orphaned session_groups that reference tasks in this room.
 			// session_groups.ref_id has no FK to tasks, so CASCADE won't clean them up.
 			// Deleting them before the room prevents FK errors if the runtime
