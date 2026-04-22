@@ -17,8 +17,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -36,18 +34,13 @@ import type { WorkflowChannel } from '@neokai/shared';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-send-message-unified',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
@@ -97,7 +90,6 @@ const NODE_ID = 'node-review';
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	nodeExecutionRepo: NodeExecutionRepository;
 	coderSessionId: string;
@@ -125,7 +117,7 @@ function seedPeerTask(
 }
 
 function makeCtx(): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-send-msg-unified-test';
 
 	seedSpaceRow(db, spaceId);
@@ -137,7 +129,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		nodeExecutionRepo,
 		coderSessionId,
@@ -190,7 +181,6 @@ describe('send_message with ChannelRouter injected', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('agent name target → DM delivery via ChannelRouter', async () => {
@@ -303,7 +293,6 @@ describe('send_message without ChannelRouter (legacy path)', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('role target → DM via legacy path', async () => {
@@ -365,7 +354,6 @@ describe('both paths produce same behavior for role-based DM', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('success result structure matches between legacy and ChannelRouter paths', async () => {
@@ -432,7 +420,6 @@ describe('send_message: node name→fan-out via AgentMessageRouter', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('node name target fans out to all agents mapped to that node', async () => {
@@ -524,7 +511,6 @@ describe('send_message: cross-node delivery', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('coder in Node A can send to reviewer in Node B via agent name', async () => {
@@ -603,7 +589,6 @@ describe('send_message: gate blocked via topology', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('send is blocked when no channel is declared from sender to target', async () => {

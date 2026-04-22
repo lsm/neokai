@@ -26,8 +26,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -59,18 +57,13 @@ import type { WorkflowChannel, Space, SpaceWorkflow } from '@neokai/shared';
 // DB / seed helpers
 // ===========================================================================
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-cross-agent-messaging',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId: string): void {
@@ -141,7 +134,6 @@ const STEP_NODE_ID = 'node-cam-step';
 
 interface StepCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunId: string;
@@ -207,7 +199,7 @@ function seedStepTask(
 function makeStepCtx(
 	members: Array<{ sessionId: string; agentName: string; status?: string }>
 ): StepCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	// Each DB is isolated; using a fixed spaceId within the DB is safe.
 	const spaceId = 'space-cam-step';
 	seedSpace(db, spaceId);
@@ -239,7 +231,6 @@ function makeStepCtx(
 
 	return {
 		db,
-		dir,
 		spaceId,
 		nodeExecutionRepo,
 		workflowRunId: run.id,
@@ -302,7 +293,6 @@ function makeStepConfig(
 
 interface TaskCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	agentId: string;
 	space: Space;
@@ -316,7 +306,7 @@ interface TaskCtx {
 }
 
 function makeTaskCtx(): TaskCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	// Each DB is isolated; using a fixed spaceId within the DB is safe.
 	const spaceId = 'space-cam-task';
 	seedSpace(db, spaceId);
@@ -361,7 +351,6 @@ function makeTaskCtx(): TaskCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		agentId,
 		space,
@@ -492,7 +481,6 @@ describe('send_message — point-to-point (target: role)', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('succeeds when channel is declared', async () => {
@@ -535,7 +523,6 @@ describe('send_message — broadcast (target: "*")', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to all permitted targets', async () => {
@@ -576,7 +563,6 @@ describe('send_message — multicast (target: [role1, role2])', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to all listed roles when all are permitted', async () => {
@@ -655,7 +641,6 @@ describe('send_message — no channels declared', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('all send_message calls fail when no channels declared', async () => {
@@ -682,7 +667,6 @@ describe('send_message — fan-out one-way: hub → spokes, spokes cannot reply'
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	beforeEach(() => {
@@ -737,7 +721,6 @@ describe('send_message — hub-spoke bidirectional: hub broadcasts, spokes reply
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	beforeEach(() => {
@@ -805,7 +788,6 @@ describe('list_peers — peer discovery with channel info', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns peers excluding self (task-agent is included when active)', async () => {
@@ -876,7 +858,6 @@ describe('list_group_members — Task Agent group view', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns all members with session IDs, roles, statuses, and permitted targets', async () => {
@@ -961,7 +942,6 @@ describe('Task Agent in channel topology — via list_group_members', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('coder permittedTargets includes task-agent when channel coder→task-agent is declared', async () => {
@@ -1126,9 +1106,7 @@ describe('Group scoping — messages cannot leak between task groups', () => {
 			expect(cfgB.injectedMessages).toHaveLength(0);
 		} finally {
 			ctxA.db.close();
-			rmSync(ctxA.dir, { recursive: true, force: true });
 			ctxB.db.close();
-			rmSync(ctxB.dir, { recursive: true, force: true });
 		}
 	});
 });
@@ -1141,7 +1119,6 @@ describe('Error cases — non-existent targets and injection failures', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('send_message to topology-declared but missing role fails with no-active-sessions', async () => {
@@ -1188,7 +1165,6 @@ describe('Step with no channels declared', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('send_message fails when no channels declared', async () => {
@@ -1230,7 +1206,6 @@ describe('send_message — sender attribution prefix', () => {
 	let ctx: StepCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('injected message includes [Message from <role>] prefix', async () => {
@@ -1257,7 +1232,6 @@ describe('Task Agent send_message — point-to-point (target: role)', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('succeeds when channel is declared', async () => {
@@ -1319,7 +1293,6 @@ describe('Task Agent send_message — broadcast (target: "*")', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to all permitted targets', async () => {
@@ -1367,7 +1340,6 @@ describe('Task Agent send_message — default task-agent channels', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('task-agent has default bidirectional channels to all node agents', async () => {
@@ -1421,7 +1393,6 @@ describe('Task Agent send_message — error cases', () => {
 	let ctx: TaskCtx;
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns error when no active sessions found for target', async () => {

@@ -17,8 +17,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -152,18 +150,13 @@ function makeMockSession(
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-task-agent-manager',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -212,7 +205,6 @@ async function makeTask(taskManager: SpaceTaskManager): Promise<SpaceTask> {
 
 interface TestCtx {
 	bunDb: BunDatabase;
-	dir: string;
 	spaceId: string;
 	space: Space;
 	agentId: string;
@@ -240,7 +232,7 @@ interface TestCtx {
 }
 
 function makeCtx(): TestCtx {
-	const { db: bunDb, dir } = makeDb();
+	const bunDb = makeDb();
 	const spaceId = 'space-tam-test';
 	const workspacePath = '/tmp/test-workspace';
 
@@ -348,7 +340,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		bunDb,
-		dir,
 		spaceId,
 		space,
 		agentId,
@@ -382,11 +373,6 @@ describe('TaskAgentManager', () => {
 
 	afterEach(() => {
 		ctx.fromInitSpy.mockRestore();
-		try {
-			rmSync(ctx.dir, { recursive: true, force: true });
-		} catch {
-			// ignore cleanup errors
-		}
 	});
 
 	// -----------------------------------------------------------------------
@@ -1898,7 +1884,7 @@ describe('TaskAgentManager', () => {
 
 	describe('flushPendingMessagesForSpaceAgent', () => {
 		test('delivers queued Space Agent message via spaceAgentInjector', async () => {
-			const { db: testDb, dir: testDir } = makeDb();
+			const testDb = makeDb();
 			const testSpaceId = 'space-flush-sa';
 			const testRunId = 'run-flush-sa';
 			const testWfId = 'wf-flush-sa';
@@ -1962,11 +1948,7 @@ describe('TaskAgentManager', () => {
 			expect(rows).toHaveLength(1);
 			expect(rows[0].status).toBe('delivered');
 
-			try {
-				rmSync(testDir, { recursive: true, force: true });
-			} catch {
-				// ignore
-			}
+			testDb.close();
 		});
 
 		test('no-op when pendingMessageRepo is absent', async () => {
@@ -1977,7 +1959,7 @@ describe('TaskAgentManager', () => {
 		});
 
 		test('no-op when there are no pending Space Agent messages', async () => {
-			const { db: testDb, dir: testDir } = makeDb();
+			const testDb = makeDb();
 			const testSpaceId = 'space-flush-empty';
 			const testRunId = 'run-flush-empty';
 			const testWfId = 'wf-flush-empty';
@@ -2027,11 +2009,7 @@ describe('TaskAgentManager', () => {
 			await emptyManager.flushPendingMessagesForSpaceAgent(testSpaceId, testRunId);
 			expect(injectorCalled).toBe(false);
 
-			try {
-				rmSync(testDir, { recursive: true, force: true });
-			} catch {
-				// ignore
-			}
+			testDb.close();
 		});
 	});
 });

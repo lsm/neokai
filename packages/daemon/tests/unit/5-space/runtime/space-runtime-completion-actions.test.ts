@@ -11,8 +11,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -102,21 +100,16 @@ class MockTaskAgentManager {
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-completion-actions',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	// createTables provisions the base schema (notably sdk_messages, needed by
 	// the thread-event emission path); runMigrations applies schema evolution.
 	createTables(db);
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(
@@ -195,7 +188,6 @@ function buildWorkflowWithActions(
 
 describe('SpaceRuntime — completion actions', () => {
 	let db: BunDatabase;
-	let dir: string;
 
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
@@ -228,8 +220,8 @@ describe('SpaceRuntime — completion actions', () => {
 	}
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
-		seedSpaceRow(db, SPACE_ID, dir, 1); // use test dir as workspace so scripts can run
+		db = makeDb();
+		seedSpaceRow(db, SPACE_ID, '/tmp', 1); // use /tmp as workspace so scripts can run
 		seedAgentRow(db, AGENT_A, SPACE_ID);
 
 		workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -248,11 +240,6 @@ describe('SpaceRuntime — completion actions', () => {
 	afterEach(() => {
 		try {
 			db?.close();
-		} catch {
-			/* ignore */
-		}
-		try {
-			rmSync(dir, { recursive: true, force: true });
 		} catch {
 			/* ignore */
 		}
@@ -1159,7 +1146,7 @@ describe('SpaceRuntime — completion actions', () => {
 		const rt = makeRuntime();
 
 		// A marker file we'd expect to be touched if the script actually ran.
-		const markerPath = join(dir, 'completion-marker.txt');
+		const markerPath = `/tmp/neokai-test-marker-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`;
 		const actions: CompletionAction[] = [
 			{
 				id: 'touch-marker',

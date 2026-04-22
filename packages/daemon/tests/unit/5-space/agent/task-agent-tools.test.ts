@@ -66,8 +66,6 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
 });
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -93,18 +91,13 @@ import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-task-agent-tools',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -234,7 +227,6 @@ function buildTaskResultWorkflow(
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	agentId: string;
 	space: Space;
@@ -248,7 +240,7 @@ interface TestCtx {
 }
 
 function makeCtx(): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-tat-test';
 	const workspacePath = '/tmp/test-workspace';
 
@@ -284,7 +276,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		agentId,
 		space,
@@ -397,7 +388,6 @@ describe('createTaskAgentToolHandlers — save_artifact', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('saves artifact with summary and does NOT mutate task state', async () => {
@@ -509,7 +499,7 @@ describe('createTaskAgentToolHandlers — approve_task', () => {
 	let ctx: TestCtx;
 	beforeEach(() => {
 		// Seed space with autonomy level 5 so approve_task works by default
-		const { db, dir } = makeDb();
+		const db = makeDb();
 		const spaceId = 'space-tat-test';
 		db.prepare(
 			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
@@ -548,7 +538,6 @@ describe('createTaskAgentToolHandlers — approve_task', () => {
 
 		ctx = {
 			db,
-			dir,
 			spaceId,
 			agentId,
 			space,
@@ -563,7 +552,6 @@ describe('createTaskAgentToolHandlers — approve_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('sets reportedStatus=done when space autonomy sufficient (no workflow run repo)', async () => {
@@ -631,7 +619,6 @@ describe('createTaskAgentToolHandlers — submit_for_approval', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('sets status=review and pending-completion fields', async () => {
@@ -726,7 +713,6 @@ describe('createTaskAgentToolHandlers — request_human_input', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('marks task as blocked and returns the question in the response', async () => {
@@ -841,7 +827,6 @@ describe('createTaskAgentMcpServer', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	// ---------------------------------------------------------------------------
@@ -1007,7 +992,6 @@ describe('createTaskAgentToolHandlers — list_group_members', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns empty member list when no tasks have taskAgentSessionId', async () => {
@@ -1134,7 +1118,6 @@ describe('createTaskAgentToolHandlers — send_message queue-until-active', () =
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('queues message when target is declared but inactive', async () => {

@@ -10,8 +10,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -31,18 +29,13 @@ import { computeGateDefaults } from '@neokai/shared';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-channel-router-auto-approval',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId: string, autonomyLevel: SpaceAutonomyLevel = 1): void {
@@ -96,7 +89,6 @@ function buildWorkflowWithGates(
 
 describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 	let db: BunDatabase;
-	let dir: string;
 
 	let taskRepo: SpaceTaskRepository;
 	let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -142,7 +134,7 @@ describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 	}
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
+		db = makeDb();
 		seedSpace(db, SPACE_ID, 1);
 		seedAgent(db, AGENT_A, SPACE_ID);
 		seedAgent(db, AGENT_B, SPACE_ID);
@@ -177,11 +169,6 @@ describe('ChannelRouter — gate auto-approval via requiredLevel', () => {
 	afterEach(() => {
 		try {
 			db?.close();
-		} catch {
-			/* ignore */
-		}
-		try {
-			rmSync(dir, { recursive: true, force: true });
 		} catch {
 			/* ignore */
 		}

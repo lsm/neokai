@@ -14,8 +14,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
@@ -30,18 +28,13 @@ import type { WorkflowChannel } from '@neokai/shared';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-channel-router',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
@@ -101,7 +94,6 @@ function makeResolvedChannel(
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
@@ -141,7 +133,7 @@ function seedPeerTask(
 }
 
 function makeCtx(): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-channel-router-test';
 
 	seedSpaceRow(db, spaceId);
@@ -156,7 +148,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		nodeExecutionRepo,
 		workflowRunRepo,
@@ -198,7 +189,6 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers message to single session with matching role', async () => {
@@ -240,7 +230,6 @@ describe('AgentMessageRouter: single agent per role (task-centric model)', () =>
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to the single session with the target role', async () => {
@@ -277,7 +266,6 @@ describe('AgentMessageRouter: broadcast * → all permitted targets', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to all topology-permitted targets', async () => {
@@ -343,7 +331,6 @@ describe('AgentMessageRouter: unknown target → clear error', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns error with "no agent or node found" when target unknown', async () => {
@@ -399,7 +386,6 @@ describe('AgentMessageRouter: unauthorized target → error with permitted targe
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns error when channel topology forbids the send', async () => {
@@ -435,7 +421,6 @@ describe('AgentMessageRouter: unauthorized target → error with structured fiel
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('populates unauthorizedAgentNames and permittedTargets structured fields on auth failure', async () => {
@@ -474,7 +459,6 @@ describe('AgentMessageRouter: empty topology → error', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns error when no channel topology is declared', async () => {
@@ -522,7 +506,6 @@ describe('AgentMessageRouter: partial delivery failure → partial success', () 
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns false success when the single session fails', async () => {
@@ -564,7 +547,6 @@ describe('AgentMessageRouter: all deliveries fail → false success', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns success: false when all injections fail', async () => {
@@ -603,7 +585,6 @@ describe('AgentMessageRouter: node name target with nodeGroups → fan-out', () 
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to all roles mapped to a node name', async () => {
@@ -651,7 +632,6 @@ describe('AgentMessageRouter: node name target without nodeGroups → unknown ta
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns unknown target error when nodeGroups not configured', async () => {
@@ -690,7 +670,6 @@ describe('AgentMessageRouter: fromNodeName resolution edge cases', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('isTopologyDeclared is false when slot name differs from node-name-addressed channel source (no nodeGroups)', async () => {
@@ -763,7 +742,6 @@ describe('AgentMessageRouter: notFoundAgentNames structured field', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('populates notFoundAgentNames on broadcast when some permitted roles have no active sessions', async () => {
@@ -811,7 +789,6 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('queues message when target has a pending execution but no active session', async () => {
@@ -997,7 +974,6 @@ describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', (
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('delivers to active targets and queues for inactive declared targets', async () => {
@@ -1064,7 +1040,6 @@ describe('AgentMessageRouter: queue enqueue failure graceful degradation', () =>
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('falls back to notFound when pendingMessageRepo.enqueue throws', async () => {
@@ -1118,7 +1093,6 @@ describe('AgentMessageRouter: pure topology target (no execution, no nodeGroups)
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('queues message when target is topology-declared but has no execution record', async () => {

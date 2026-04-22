@@ -8,8 +8,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -39,18 +37,13 @@ import type { Space } from '@neokai/shared';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-agent-completion',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
@@ -168,17 +161,13 @@ function makeMockSessionFactory(): SubSessionFactory {
 
 describe('Migration 51 — rename slot_role → agent_name, add completion_summary', () => {
 	let db: BunDatabase;
-	let dir: string;
 
 	beforeEach(() => {
-		const result = makeDb();
-		db = result.db;
-		dir = result.dir;
+		db = makeDb();
 	});
 
 	afterEach(() => {
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
 	});
 
 	test('space_tasks has labels column after migration', () => {
@@ -230,7 +219,6 @@ describe('Migration 51 — rename slot_role → agent_name, add completion_summa
 
 describe('list_peers — completion state via SpaceTaskRepository', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let spaceId: string;
 	let spaceTaskRepo: SpaceTaskRepository;
 	let nodeExecutionRepo: NodeExecutionRepository;
@@ -238,9 +226,7 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 	const coderSessionId = 'session-coder-cs';
 
 	beforeEach(() => {
-		const result = makeDb();
-		db = result.db;
-		dir = result.dir;
+		db = makeDb();
 		spaceId = 'space-lp-cs-test';
 		seedSpaceRow(db, spaceId);
 
@@ -251,7 +237,6 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 
 	afterEach(() => {
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
 	});
 
 	function makeConfig(overrides: Partial<NodeAgentToolsConfig> = {}): NodeAgentToolsConfig {
@@ -372,7 +357,6 @@ describe('list_peers — completion state via SpaceTaskRepository', () => {
 
 describe('list_group_members — completion state via SpaceTaskRepository', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let spaceId: string;
 	let taskRepo: SpaceTaskRepository;
 	let nodeExecutionRepo: NodeExecutionRepository;
@@ -380,9 +364,7 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 	const mainTaskId = 'main-task-lgm';
 
 	beforeEach(() => {
-		const result = makeDb();
-		db = result.db;
-		dir = result.dir;
+		db = makeDb();
 		spaceId = 'space-lgm-cs-test';
 		seedSpaceRow(db, spaceId);
 
@@ -393,7 +375,6 @@ describe('list_group_members — completion state via SpaceTaskRepository', () =
 
 	afterEach(() => {
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
 	});
 
 	function makeConfig(

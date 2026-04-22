@@ -33,8 +33,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -50,18 +48,13 @@ import type { WorkflowRunStatus } from '@neokai/shared';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-run-status-lifecycle',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	runMigrations(db, () => {});
 	db.exec('PRAGMA foreign_keys = OFF');
-	return { db, dir };
+	return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId: string): void {
@@ -95,18 +88,16 @@ function createWorkflowAndRun(db: BunDatabase, spaceId: string): { runId: string
 
 const SPACE = 'space-lifecycle-1';
 let db: BunDatabase;
-let dir: string;
 let runRepo: SpaceWorkflowRunRepository;
 
 beforeEach(() => {
-	({ db, dir } = makeDb());
+	db = makeDb();
 	seedSpace(db, SPACE);
 	runRepo = new SpaceWorkflowRunRepository(db);
 });
 
 afterEach(() => {
 	db.close();
-	rmSync(dir, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------

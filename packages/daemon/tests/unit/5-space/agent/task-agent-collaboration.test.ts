@@ -12,8 +12,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -37,18 +35,13 @@ import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-task-agent-collaboration',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -89,7 +82,6 @@ function makeSpace(spaceId: string, workspacePath = '/tmp/workspace'): Space {
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	coderAgentId: string;
 	reviewerAgentId: string;
@@ -103,7 +95,7 @@ interface TestCtx {
 }
 
 function makeCtx(): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-collab-test';
 	const workspacePath = '/tmp/test-workspace';
 
@@ -140,7 +132,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		coderAgentId,
 		reviewerAgentId,
@@ -274,7 +265,6 @@ describe('Task Agent — gate-blocked flow with escalation', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('escalation context is recorded on task error field', async () => {
@@ -309,7 +299,6 @@ describe('Task Agent — multi-agent node collaboration', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('collaboration workflow with channels: channel map in workflow is persisted and accessible', async () => {
