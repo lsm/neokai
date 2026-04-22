@@ -110,6 +110,73 @@ function buildTemplateUpdateParams(
 	};
 }
 
+/**
+ * Proactive drift check run once at daemon startup.
+ *
+ * Scans every space for workflows that were seeded from a built-in template but
+ * have since drifted (i.e. the stored `templateHash` no longer matches the
+ * current template's hash). Detected drifts are logged as warnings so operators
+ * and developers see them in the daemon log even when no user has opened the
+ * Workflow List UI.
+ *
+ * This function is intentionally non-blocking: failures (e.g. DB errors) are
+ * caught and logged rather than propagated, so startup is never blocked by drift
+ * detection.
+ */
+export async function checkBuiltInWorkflowDriftOnStartup(
+	workflowManager: SpaceWorkflowManager,
+	spaceManager: SpaceManager
+): Promise<void> {
+	try {
+		const spaces = await spaceManager.listSpaces();
+		if (spaces.length === 0) return;
+
+		const templates = getBuiltInWorkflows();
+		const templateMap = new Map(templates.map((t) => [t.name, t]));
+
+		const driftedWorkflows: Array<{
+			spaceName: string;
+			workflowName: string;
+			templateName: string;
+		}> = [];
+
+		for (const space of spaces) {
+			const workflows = workflowManager.listWorkflows(space.id);
+			for (const workflow of workflows) {
+				if (!workflow.templateName) continue;
+				const template = templateMap.get(workflow.templateName);
+				if (!template) continue;
+
+				const currentTemplateHash = computeWorkflowHash(template);
+				const storedHash = workflow.templateHash ?? null;
+
+				if (currentTemplateHash !== storedHash) {
+					driftedWorkflows.push({
+						spaceName: space.name,
+						workflowName: workflow.name,
+						templateName: workflow.templateName,
+					});
+				}
+			}
+		}
+
+		if (driftedWorkflows.length === 0) return;
+
+		log.warn(
+			`[startup] ${driftedWorkflows.length} workflow(s) have drifted from their built-in templates. ` +
+				`Open the Workflow List in the UI and click "Sync" to update them.`
+		);
+		for (const { spaceName, workflowName, templateName } of driftedWorkflows) {
+			log.warn(
+				`  • Space "${spaceName}" / Workflow "${workflowName}" (template: "${templateName}") is outdated`
+			);
+		}
+	} catch (err) {
+		// Non-fatal: drift detection errors must never break daemon startup.
+		log.warn('[startup] Workflow drift check failed (non-fatal):', err);
+	}
+}
+
 export function setupSpaceWorkflowHandlers(
 	messageHub: MessageHub,
 	spaceManager: SpaceManager,

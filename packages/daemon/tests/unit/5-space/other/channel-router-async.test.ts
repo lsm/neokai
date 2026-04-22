@@ -29,6 +29,7 @@ import {
 	ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
 import type { Gate, WorkflowChannel } from '@neokai/shared';
+import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers (shared with channel-router.test.ts)
@@ -1479,6 +1480,237 @@ describe('ChannelRouter async gate evaluation', () => {
 
 			const router = makeRouter({ workspacePath: '/tmp' });
 			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			expect(result.allowed).toBe(true);
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// Live gate script resolution (Issue 1 fix)
+	// ---------------------------------------------------------------------------
+	// When a workflow has a `templateName`, the gate evaluator must use the
+	// *current* template's gate script rather than the version stored in the DB
+	// at seed time. This ensures that script updates (bug fixes, new fallback
+	// logic, etc.) take effect for all running workflow instances immediately.
+
+	describe('live gate script resolution for template-based workflows', () => {
+		/**
+		 * Builds a two-node workflow that mimics a seeded Coding Workflow:
+		 * - Uses node/agent names from CODING_WORKFLOW
+		 * - Carries a STALE script in the stored code-ready-gate
+		 * - Has templateName set to CODING_WORKFLOW.name
+		 *
+		 * The stale script exits non-zero (which would block delivery if it ran).
+		 * The live template script exits 0 immediately (for testability).
+		 */
+		function buildStaleTemplateWorkflow(staleScript: string, liveGate: Gate) {
+			const staleGate: Gate = {
+				...liveGate,
+				script: {
+					interpreter: 'bash',
+					source: staleScript,
+					timeoutMs: 5000,
+				},
+			};
+
+			const wf = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Stale Template Workflow ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: NODE_A,
+						name: 'Coder Node',
+						agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+					},
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				startNodeId: NODE_A,
+				endNodeId: NODE_B,
+				tags: [],
+				channels: [
+					{
+						from: 'coder',
+						to: 'planner',
+						gateId: staleGate.id,
+					},
+				],
+				gates: [staleGate],
+				completionAutonomyLevel: 3,
+				// Mark as seeded from Coding Workflow template
+				templateName: CODING_WORKFLOW.name,
+				templateHash: 'stale-hash',
+			});
+
+			return wf;
+		}
+
+		test('uses the live template script instead of the stale stored script when templateName matches', async () => {
+			// A script that always fails — simulates a stale script with an old bug
+			const STALE_FAILING_SCRIPT = 'exit 1 # stale script that has a bug';
+
+			// The gate we are patching: code-ready-gate from the CODING_WORKFLOW template
+			// For this test we stub it with a simple passing script to avoid real `gh` calls
+			const LIVE_PASSING_SCRIPT = 'echo \'{"pr_url":"https://github.com/test/pr/1"}\'';
+
+			// Build a gate that matches code-ready-gate's field schema but with a stale script.
+			// The router will swap in the live template script at evaluation time.
+			const gateId = 'code-ready-gate';
+			const gateWithStaleScript: Gate = {
+				id: gateId,
+				fields: [
+					{
+						name: 'pr_url',
+						type: 'string',
+						writers: ['Coding'],
+						check: { op: 'exists' },
+					},
+				],
+				script: {
+					interpreter: 'bash',
+					source: STALE_FAILING_SCRIPT,
+					timeoutMs: 5000,
+				},
+				resetOnCycle: true,
+			};
+
+			// Patch: replace the live template's gate script so we can control it in tests
+			// without invoking real `gh` commands. We do this by temporarily overriding
+			// the gate in CODING_WORKFLOW's gates array.
+			const originalGate = CODING_WORKFLOW.gates!.find((g) => g.id === gateId)!;
+			const originalScript = originalGate.script;
+			// biome-ignore lint/suspicious/noExplicitAny: test-only mutation of template
+			(originalGate as any).script = {
+				interpreter: 'bash',
+				source: LIVE_PASSING_SCRIPT,
+				timeoutMs: 5000,
+			};
+
+			try {
+				const wf = buildStaleTemplateWorkflow(STALE_FAILING_SCRIPT, gateWithStaleScript);
+				const run = createActiveRun(wf);
+				// Seed pr_url in gate data so the pr_url field check passes after script runs
+				gateDataRepo.set(run.id, gateId, { pr_url: 'https://github.com/test/pr/1' });
+
+				const router = makeRouter({ workspacePath: '/tmp' });
+				// If the stale script ran, canDeliver would return { allowed: false }
+				// because exit 1 blocks the gate. The live script exits 0 with a pr_url
+				// JSON object → gate opens.
+				const result = await router.canDeliver(run.id, 'coder', 'planner');
+				expect(result.allowed).toBe(true);
+			} finally {
+				// Restore original script
+				// biome-ignore lint/suspicious/noExplicitAny: test-only restoration
+				(originalGate as any).script = originalScript;
+			}
+		});
+
+		test('stale stored script would block delivery without live resolution', async () => {
+			// Control test: without templateName set, the router uses the stored (stale) script
+			const STALE_FAILING_SCRIPT = 'exit 1 # stale script that has a bug';
+
+			const gateId = 'some-custom-gate';
+			const gateWithFailingScript: Gate = {
+				id: gateId,
+				fields: [
+					{
+						name: 'pr_url',
+						type: 'string',
+						writers: ['*'],
+						check: { op: 'exists' },
+					},
+				],
+				script: {
+					interpreter: 'bash',
+					source: STALE_FAILING_SCRIPT,
+					timeoutMs: 5000,
+				},
+				resetOnCycle: false,
+			};
+
+			// Build workflow WITHOUT templateName — uses the stored script directly
+			const wf = buildWorkflowWithGates(
+				SPACE_ID,
+				workflowManager,
+				[
+					{
+						id: NODE_A,
+						name: 'Coder Node',
+						agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+					},
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				[{ from: 'coder', to: 'planner', gateId }],
+				[gateWithFailingScript]
+			);
+			const run = createActiveRun(wf);
+
+			const router = makeRouter({ workspacePath: '/tmp' });
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			// Without templateName, the failing stored script blocks the gate
+			expect(result.allowed).toBe(false);
+		});
+
+		test('falls back to stored script when templateName does not match any built-in', async () => {
+			// A script that passes immediately
+			const PASSING_STORED_SCRIPT = 'echo \'{"pr_url":"https://github.com/x/1"}\'';
+
+			const gateId = 'gate-with-unknown-template';
+			const gate: Gate = {
+				id: gateId,
+				fields: [
+					{
+						name: 'pr_url',
+						type: 'string',
+						writers: ['*'],
+						check: { op: 'exists' },
+					},
+				],
+				script: {
+					interpreter: 'bash',
+					source: PASSING_STORED_SCRIPT,
+					timeoutMs: 5000,
+				},
+				resetOnCycle: false,
+			};
+
+			// Workflow with a non-existent templateName → no live script to resolve
+			const wf = workflowManager.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Unknown Template Workflow ${Date.now()}`,
+				description: '',
+				nodes: [
+					{
+						id: NODE_A,
+						name: 'Coder Node',
+						agents: [{ agentId: AGENT_CODER, name: 'coder' }],
+					},
+					{
+						id: NODE_B,
+						name: 'Planner Node',
+						agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+					},
+				],
+				startNodeId: NODE_A,
+				endNodeId: NODE_B,
+				tags: [],
+				channels: [{ from: 'coder', to: 'planner', gateId }],
+				gates: [gate],
+				completionAutonomyLevel: 3,
+				templateName: 'Unknown Template That Does Not Exist',
+			});
+			const run = createActiveRun(wf);
+
+			const router = makeRouter({ workspacePath: '/tmp' });
+			const result = await router.canDeliver(run.id, 'coder', 'planner');
+			// Stored script exits 0 → gate opens (fallback to stored script works)
 			expect(result.allowed).toBe(true);
 		});
 	});

@@ -52,6 +52,7 @@ import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-man
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
+import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import type { NotificationSink, SpaceNotificationEvent } from './notification-sink';
 import { Logger } from '../../logger';
 
@@ -818,12 +819,25 @@ export class ChannelRouter {
 		gateId: string,
 		workflow: SpaceWorkflow
 	): Promise<GateEvalResult> {
-		const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
-		if (!gateDef) {
+		const storedGateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
+		if (!storedGateDef) {
 			return {
 				open: false,
 				reason: `Gate "${gateId}" not found in workflow "${workflow.id}" — channel is closed (misconfiguration)`,
 			};
+		}
+
+		// When this workflow was seeded from a built-in template, always resolve the
+		// gate script from the *current* template definition rather than the copy that
+		// was baked in at seed time. This ensures that template script updates (bug
+		// fixes, new fallback logic, etc.) take immediate effect for all running
+		// workflow instances without requiring a resync.
+		let gateDef = storedGateDef;
+		if (workflow.templateName && storedGateDef.script) {
+			const liveScript = getBuiltInGateScript(workflow.templateName, gateId);
+			if (liveScript) {
+				gateDef = { ...storedGateDef, script: liveScript };
+			}
 		}
 
 		// Load runtime data from DB; fall back to computed defaults from fields
