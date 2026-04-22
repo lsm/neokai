@@ -475,10 +475,19 @@ export function setupConfigHandlers(
 
 		// Build updated subprocess-only server map without the removed entry.
 		const currentConfig = agentSession.getSessionData().config;
+		const allServers = currentConfig.mcpServers ?? {};
+
+		// Reject attempts to remove in-process (SDK-type) runtime servers —
+		// they are managed by the daemon, not user configuration.
+		const targetServer = allServers[name] as { type?: string } | undefined;
+		if (targetServer && targetServer.type === 'sdk') {
+			throw new Error(
+				`Cannot remove "${name}": it is a runtime-managed in-process server and cannot be removed via config`
+			);
+		}
+
 		const currentSubprocessServers = Object.fromEntries(
-			Object.entries(currentConfig.mcpServers ?? {}).filter(
-				([, cfg]) => (cfg as { type?: string }).type !== 'sdk'
-			)
+			Object.entries(allServers).filter(([, cfg]) => (cfg as { type?: string }).type !== 'sdk')
 		);
 		delete currentSubprocessServers[name];
 

@@ -1068,10 +1068,17 @@ describe('TaskAgentManager', () => {
 			const stepId = 'step-complete-1';
 			ctx.bunDb
 				.prepare(
-					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, created_at, updated_at)
-           VALUES (?, ?, ?, '', ?, ?)`
+					`INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, ?, ?)`
 				)
-				.run(stepId, wfId, 'Step 1', now, now);
+				.run(
+					stepId,
+					wfId,
+					'Step 1',
+					JSON.stringify({ agents: [{ agentId: ctx.agentId, name: 'coder' }] }),
+					now,
+					now
+				);
 			ctx.bunDb
 				.prepare(
 					`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)

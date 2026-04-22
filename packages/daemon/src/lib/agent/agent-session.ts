@@ -673,7 +673,10 @@ export class AgentSession
 	 * attached servers (e.g. `space-agent-tools`, `db-query`) silently drops those
 	 * attachments, causing "No such tool available" failures during workflow execution.
 	 *
-	 * Remaining callers are being migrated; do not add new call sites.
+	 * Remaining callers to migrate (do not add new call sites):
+	 *   - room-runtime-service.ts × 4  (room-tools, room-chat, workflow-chat injection)
+	 *   - neo-agent-manager.ts × 1     (neo session bootstrap)
+	 *   - space-runtime-service.ts × 1 (space_chat session attachment)
 	 */
 	setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
 		this.session.config = {
