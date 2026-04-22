@@ -18,8 +18,23 @@ import { Logger } from '../logger';
 import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
-import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
+import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+
+/**
+ * Trigger identifiers for the two UI-only primitives that touch session
+ * worktrees, SDK `.jsonl` files, or the `sessions` DB row.
+ *
+ * **Invariant (Task #85):** only UI-initiated code paths may invoke
+ * `archiveResources` / `deleteResources`. Every other lifecycle event
+ * (task done, cancelled, spawn rollback, workflow end, daemon shutdown,
+ * etc.) must stop at interrupting the in-memory SDK subprocess.
+ *
+ * Each trigger documents the originating UI RPC so non-UI callers stand
+ * out during code review and the CI regression guard can locate them.
+ */
+export type ArchiveResourcesTrigger = 'ui_session_archive' | 'ui_task_archive';
+export type DeleteResourcesTrigger = 'ui_session_delete' | 'ui_room_delete' | 'ui_neo_room_delete';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -551,48 +566,174 @@ export class SessionLifecycle {
 		});
 	}
 
+	// =========================================================================
+	// UI-only resource primitives (Task #85)
+	// =========================================================================
+	//
+	// These two methods are the ONLY code paths allowed to remove a session's
+	// worktree or SDK `.jsonl` files, or to delete its `sessions` DB row
+	// (which cascades to `sdk_messages`). Every other lifecycle event —
+	// task done, task cancelled, workflow end-node short-circuit, spawn
+	// rollback, duplicate-task reconciliation, `space.stop`, daemon
+	// shutdown/restart, Neo recovery — must preserve all persisted artifacts
+	// and only interrupt the in-memory SDK subprocess (see
+	// `SessionManager.interruptInMemorySession` and `TaskAgentManager.cleanup`).
+	//
+	// The `trigger` parameter documents the originating UI RPC. The CI
+	// regression guard (`scripts/check-session-deletion-callers.sh`) lets
+	// `archiveResources` / `deleteResources` be called only from the approved
+	// UI handler files. Adding a new caller requires either extending the
+	// guard allowlist or routing through an existing UI handler.
+
 	/**
-	 * Delete a session with atomic cleanup
+	 * Archive a session's external resources (worktree + SDK `.jsonl` files)
+	 * while preserving the DB row and all `sdk_messages`.
 	 *
-	 * Uses a phased approach with state tracking to ensure cleanup succeeds
-	 * or fails gracefully without leaving orphaned resources.
+	 * Stops the in-memory SDK subprocess (if any), archives the SDK session
+	 * files to a sibling `.archive/` directory (so they can be inspected or
+	 * recovered), removes the git worktree, and stamps the session as
+	 * `status='archived'` in the DB.
 	 *
-	 * Phases:
-	 * 1. Cleanup AgentSession (stops SDK subprocess)
-	 * 2. Delete worktree and branch
-	 * 3. Delete from database
-	 * 4. Remove from cache
-	 * 5. Broadcast deletion event
-	 *
-	 * If any phase fails, the error is logged but cleanup continues.
-	 * Orphaned resources (worktrees, branches) can be cleaned up via global teardown.
+	 * Callable from UI archive paths only:
+	 *   - `session.archive` RPC handler
+	 *   - `task.archive` RPC handler (for each session attached to the task)
 	 */
-	async delete(sessionId: string): Promise<void> {
-		// Get references before deletion
+	async archiveResources(sessionId: string, trigger: ArchiveResourcesTrigger): Promise<void> {
+		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+		const session = this.db.getSession(sessionId);
+		if (!session) {
+			this.logger.warn(`[SessionLifecycle] archiveResources: session ${sessionId} not found`);
+			return;
+		}
+
+		const completedPhases: string[] = [];
+
+		// PHASE 1: Stop in-memory SDK subprocess.
+		if (agentSession) {
+			try {
+				await agentSession.cleanup();
+				completedPhases.push('agent-cleanup');
+			} catch (error) {
+				this.logger.error(
+					`[SessionLifecycle] archiveResources: AgentSession cleanup failed:`,
+					error
+				);
+			}
+		}
+
+		// PHASE 2: Archive SDK .jsonl files (move to .archive/ sidecar).
+		let archiveMetadata:
+			| {
+					sdkArchivePath: string;
+					sdkArchivedAt: string;
+					sdkArchivedFileCount: number;
+					sdkArchivedSize: number;
+			  }
+			| undefined;
+		try {
+			const sdkWorkspacePath = session.worktree
+				? session.worktree.worktreePath
+				: session.workspacePath;
+			if (sdkWorkspacePath) {
+				const result = archiveSDKSessionFiles(
+					sdkWorkspacePath,
+					session.sdkSessionId ?? null,
+					sessionId
+				);
+				if (result.archivePath) {
+					archiveMetadata = {
+						sdkArchivePath: result.archivePath,
+						sdkArchivedAt: new Date().toISOString(),
+						sdkArchivedFileCount: result.archivedFiles.length,
+						sdkArchivedSize: result.totalSize,
+					};
+				}
+				completedPhases.push('sdk-files-archive');
+			} else {
+				completedPhases.push('sdk-files-archive-skipped');
+			}
+		} catch (error) {
+			this.logger.error(`[SessionLifecycle] archiveResources: SDK file archive failed:`, error);
+		}
+
+		// PHASE 3: Remove worktree.
+		if (session.worktree) {
+			try {
+				await this.worktreeManager.removeWorktree(session.worktree, true);
+				completedPhases.push('worktree-remove');
+			} catch (error) {
+				this.logger.error(`[SessionLifecycle] archiveResources: worktree removal failed:`, error);
+			}
+		}
+
+		// PHASE 4: Update session row (status=archived). DB row and sdk_messages are preserved.
+		// If the session had a worktree, clear it now that the on-disk worktree has been
+		// removed — otherwise UIs (and RPCs like `session.get`) would continue to surface a
+		// stale `session.worktree` pointing at a deleted path.
+		try {
+			await this.update(sessionId, {
+				status: 'archived',
+				archivedAt: new Date().toISOString(),
+				...(session.worktree ? { worktree: undefined } : {}),
+				...(archiveMetadata
+					? {
+							metadata: {
+								...session.metadata,
+								...archiveMetadata,
+							},
+						}
+					: {}),
+			});
+			completedPhases.push('db-mark-archived');
+		} catch (error) {
+			this.logger.error(`[SessionLifecycle] archiveResources: status update failed:`, error);
+			throw error;
+		}
+
+		this.logger.info(
+			`[SessionLifecycle] archiveResources: session ${sessionId} archived (trigger=${trigger}, phases=${completedPhases.join(',')})`
+		);
+	}
+
+	/**
+	 * Fully delete a session's external resources AND its DB row.
+	 *
+	 * Stops the in-memory SDK subprocess, deletes the SDK `.jsonl` files,
+	 * removes the worktree, deletes the `sessions` row (which cascades to
+	 * `sdk_messages`), removes the in-memory cache entry, and broadcasts
+	 * `session.deleted`.
+	 *
+	 * Callable from UI delete paths only:
+	 *   - `session.delete` RPC handler
+	 *   - `room.delete` RPC handler (cascades each room session through here)
+	 *
+	 * Uses a phased approach so partial failures are logged and surfaced via
+	 * global teardown rather than leaving the DB in an inconsistent state.
+	 */
+	async deleteResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
 		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
 		const session = this.db.getSession(sessionId);
 
-		// Track completed phases for potential rollback
 		const completedPhases: string[] = [];
 
 		try {
 			// PHASE 1: Cleanup AgentSession (stops SDK subprocess)
-			// This is critical - must complete before other cleanup
 			if (agentSession) {
 				try {
 					await agentSession.cleanup();
 					completedPhases.push('agent-cleanup');
 				} catch (error) {
-					this.logger.error(`[SessionLifecycle] AgentSession cleanup failed:`, error);
+					this.logger.error(
+						`[SessionLifecycle] deleteResources: AgentSession cleanup failed:`,
+						error
+					);
 					// Continue with deletion - SDK subprocess will be terminated when process exits
 				}
 			}
 
 			// PHASE 1.5: Delete SDK session files from ~/.claude/projects/
-			// This removes the .jsonl files created by Claude Agent SDK
 			if (session) {
 				try {
-					// Use worktree path when available — SDK creates session files based on CWD
 					const sdkWorkspacePath = session.worktree
 						? session.worktree.worktreePath
 						: session.workspacePath;
@@ -609,42 +750,31 @@ export class SessionLifecycle {
 						);
 					}
 				} catch (error) {
-					this.logger.error(`[SessionLifecycle] SDK file deletion failed:`, error);
-					// Non-critical - continue with other cleanup
+					this.logger.error(`[SessionLifecycle] deleteResources: SDK file deletion failed:`, error);
 				}
 			}
 
 			// PHASE 2: Delete worktree and branch
-			// Must happen before DB deletion (we need the worktree metadata)
 			if (session?.worktree) {
 				try {
 					await this.worktreeManager.removeWorktree(session.worktree, true);
-
-					// Verify worktree was actually removed
 					const stillExists = await this.worktreeManager.verifyWorktree(session.worktree);
-					if (stillExists) {
-						// Track for global teardown
-						completedPhases.push('worktree-cleanup-partial');
-					} else {
-						completedPhases.push('worktree-cleanup');
-					}
+					completedPhases.push(stillExists ? 'worktree-cleanup-partial' : 'worktree-cleanup');
 				} catch (error) {
 					const errorMsg = error instanceof Error ? error.message : String(error);
 					this.logger.error(
-						`[SessionLifecycle] Worktree removal failed (global teardown will handle): ${errorMsg}`
+						`[SessionLifecycle] deleteResources: worktree removal failed (global teardown will handle): ${errorMsg}`
 					);
-					// Don't add to completedPhases - worktree cleanup failed
 				}
 			}
 
-			// PHASE 3: Delete from database
-			// This is the point of no return - session is considered deleted
+			// PHASE 3: Delete from database (point of no return)
 			try {
 				this.db.deleteSession(sessionId);
 				completedPhases.push('db-delete');
 			} catch (error) {
-				this.logger.error(`[SessionLifecycle] Database deletion failed:`, error);
-				throw error; // Re-throw - if we can't delete from DB, deletion failed
+				this.logger.error(`[SessionLifecycle] deleteResources: Database deletion failed:`, error);
+				throw error;
 			}
 
 			// PHASE 4: Remove from cache
@@ -652,12 +782,10 @@ export class SessionLifecycle {
 				this.sessionCache.remove(sessionId);
 				completedPhases.push('cache-remove');
 			} catch (error) {
-				this.logger.error(`[SessionLifecycle] Cache removal failed:`, error);
-				// Non-critical - session will be garbage collected
+				this.logger.error(`[SessionLifecycle] deleteResources: Cache removal failed:`, error);
 			}
 
 			// PHASE 5: Broadcast deletion event
-			// Best-effort notification - failure doesn't affect deletion
 			try {
 				this.messageHub.event(
 					'session.deleted',
@@ -667,26 +795,17 @@ export class SessionLifecycle {
 				await this.eventBus.emit('session.deleted', { sessionId });
 				completedPhases.push('broadcast');
 			} catch (error) {
-				this.logger.error(`[SessionLifecycle] Failed to broadcast deletion:`, error);
-				// Non-critical - session is already deleted
+				this.logger.error(`[SessionLifecycle] deleteResources: Failed to broadcast:`, error);
 			}
+
+			this.logger.info(
+				`[SessionLifecycle] deleteResources: session ${sessionId} deleted (trigger=${trigger}, phases=${completedPhases.join(',')})`
+			);
 		} catch (error) {
-			// Critical failure - log what was completed
 			this.logger.error(
-				`[SessionLifecycle] Session deletion FAILED (completed phases: ${completedPhases.join(', ')}):`,
+				`[SessionLifecycle] deleteResources FAILED (trigger=${trigger}, phases=${completedPhases.join(',')}):`,
 				error
 			);
-
-			// Note: True rollback isn't feasible because:
-			// - We can't restore a deleted DB record without original data
-			// - We can't recreate a deleted worktree/branch
-			// - AgentSession can't be "uncleaned"
-			//
-			// The strategy instead is:
-			// - Track completed phases for diagnostics
-			// - Allow global teardown to clean up orphaned resources
-			// - Log clearly what succeeded and what failed
-
 			throw error;
 		}
 	}

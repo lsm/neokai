@@ -77,7 +77,7 @@ function makeSessionManager(
 		createdSessions?: Array<AgentSession | null>;
 		createdSession?: AgentSession | null;
 	} = {}
-): NeoSessionManager & { _createCalls: number } {
+): NeoSessionManager & { _createCalls: number; _interruptCalls: number } {
 	const sessions = new Map<string, AgentSession | null>();
 	let firstGet = true;
 	const queue: Array<AgentSession | null> = opts.createdSessions
@@ -86,8 +86,9 @@ function makeSessionManager(
 			? [opts.createdSession]
 			: [];
 
-	const sm: NeoSessionManager & { _createCalls: number } = {
+	const sm: NeoSessionManager & { _createCalls: number; _interruptCalls: number } = {
 		_createCalls: 0,
+		_interruptCalls: 0,
 
 		createSession: mock(async () => {
 			sm._createCalls++;
@@ -106,8 +107,19 @@ function makeSessionManager(
 			return sessions.get(NEO_SESSION_ID) ?? null;
 		}),
 
-		deleteSession: mock(async () => {
-			sessions.delete(NEO_SESSION_ID);
+		// Task #85: daemon-internal recovery may only drop the in-memory
+		// SDK subprocess — the DB row, sdk_messages, jsonl, and worktree
+		// all remain. Pop the next queued session to simulate the
+		// subsequent `getSessionAsync` rehydration from that preserved
+		// DB row.
+		interruptInMemorySession: mock(async () => {
+			sm._interruptCalls++;
+			const next = queue.shift();
+			if (next !== undefined) {
+				sessions.set(NEO_SESSION_ID, next);
+			} else {
+				sessions.delete(NEO_SESSION_ID);
+			}
 		}),
 
 		unregisterSession: mock(() => {}),
@@ -152,7 +164,7 @@ describe('healthCheck({ source: runtime }): null session → auto-recovery', () 
 		expect(healthy).toBe(false);
 	});
 
-	test('destroyAndRecreate is called: createSession invoked for recovery', async () => {
+	test('destroyAndRecreate is called: interruptInMemorySession invoked for recovery (Task #85)', async () => {
 		const freshSession = makeSession({ processingStatus: 'idle' });
 		// existingSession not set so firstGet does not poison the map after createSession()
 		const sm = makeSessionManager({ createdSession: freshSession });
@@ -160,8 +172,12 @@ describe('healthCheck({ source: runtime }): null session → auto-recovery', () 
 
 		await mgr.healthCheck({ source: 'runtime' });
 
-		// createSession called once during recovery
-		expect(sm._createCalls).toBe(1);
+		// Recovery drops the stale in-memory SDK subprocess via
+		// interruptInMemorySession and rehydrates from the preserved DB
+		// row — no createSession call (that would wipe conversation
+		// history).
+		expect(sm._interruptCalls).toBe(1);
+		expect(sm._createCalls).toBe(0);
 	});
 
 	test('getSession() returns a new session after runtime recovery', async () => {
@@ -196,13 +212,17 @@ describe('healthCheck({ source: runtime }): stuck session → auto-recovery', ()
 		// Provision sets stuckSession
 		await mgr.provision();
 
-		// Reset _createCalls after provision so we can count recovery-specific calls
+		// Reset counters after provision so we can count recovery-specific calls
 		sm._createCalls = 0;
+		sm._interruptCalls = 0;
 
 		// healthCheck at runtime (as called by neo.send before each message)
 		const healthy = await mgr.healthCheck({ source: 'runtime' });
 		expect(healthy).toBe(false);
-		expect(sm._createCalls).toBe(1); // recovery created a fresh session
+		// Task #85: recovery rehydrates from the preserved DB row —
+		// interruptInMemorySession is called, createSession is not.
+		expect(sm._interruptCalls).toBe(1);
+		expect(sm._createCalls).toBe(0);
 	});
 
 	test('getSession() returns fresh session after stuck-session recovery', async () => {
@@ -242,9 +262,12 @@ describe('healthCheck({ source: runtime }): cleaning-up session → auto-recover
 		await mgr.provision();
 
 		sm._createCalls = 0;
+		sm._interruptCalls = 0;
 		const healthy = await mgr.healthCheck({ source: 'runtime' });
 		expect(healthy).toBe(false);
-		expect(sm._createCalls).toBe(1);
+		// Task #85: recovery rehydrates from the preserved DB row.
+		expect(sm._interruptCalls).toBe(1);
+		expect(sm._createCalls).toBe(0);
 	});
 
 	test('fresh session is healthy after cleaning-up session recovery', async () => {
@@ -366,7 +389,7 @@ describe('clearSession(): destroys old session and creates fresh one', () => {
 		expect(mgr.getSession()).toBe(freshSession);
 	});
 
-	test('clearSession() calls cleanup() on the old session', async () => {
+	test('clearSession() interrupts the stale in-memory session (Task #85)', async () => {
 		const initialSession = makeSession();
 		const freshSession = makeSession();
 		const sm = makeSessionManager({
@@ -376,14 +399,17 @@ describe('clearSession(): destroys old session and creates fresh one', () => {
 		const mgr = new NeoAgentManager(sm, makeSettingsManager());
 
 		await mgr.provision();
+		sm._interruptCalls = 0;
 		await mgr.clearSession();
 
-		// Initial session should have had cleanup called
-		const cleanupCalls = (initialSession.cleanup as ReturnType<typeof mock>).mock.calls;
-		expect(cleanupCalls.length).toBeGreaterThanOrEqual(1);
+		// Under Task #85, clearSession delegates the SDK-subprocess teardown
+		// to SessionManager.interruptInMemorySession. The concrete
+		// implementation calls AgentSession.cleanup internally — here we
+		// just verify the delegation itself.
+		expect(sm._interruptCalls).toBe(1);
 	});
 
-	test('clearSession() triggers createSession for the replacement', async () => {
+	test('clearSession() interrupts the in-memory session and rehydrates from DB (Task #85)', async () => {
 		const sm = makeSessionManager({
 			existingSession: null,
 			createdSessions: [makeSession(), makeSession()],
@@ -392,9 +418,14 @@ describe('clearSession(): destroys old session and creates fresh one', () => {
 
 		await mgr.provision();
 		sm._createCalls = 0; // reset after provision
+		sm._interruptCalls = 0;
 
 		await mgr.clearSession();
-		expect(sm._createCalls).toBe(1);
+		// Task #85: clearSession must NOT call createSession — the DB row
+		// is preserved and the replacement AgentSession is rehydrated
+		// from it via getSessionAsync after interruptInMemorySession.
+		expect(sm._interruptCalls).toBe(1);
+		expect(sm._createCalls).toBe(0);
 	});
 
 	test('getSession() is not null after clearSession()', async () => {

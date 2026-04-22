@@ -33,6 +33,8 @@ import {
 	SessionLifecycle,
 	type SessionLifecycleConfig,
 	type CreateSessionParams,
+	type ArchiveResourcesTrigger,
+	type DeleteResourcesTrigger,
 } from './session-lifecycle';
 import { ToolsConfigManager } from './tools-config';
 import { MessagePersistence } from './message-persistence';
@@ -330,8 +332,59 @@ export class SessionManager {
 		return this.sessionLifecycle.markOutputRemoved(sessionId, messageUuid);
 	}
 
-	async deleteSession(sessionId: string): Promise<void> {
-		return this.sessionLifecycle.delete(sessionId);
+	/**
+	 * Archive a session's external resources (worktree + SDK `.jsonl`) while
+	 * keeping the DB row and all `sdk_messages` intact.
+	 *
+	 * **UI-only invariant (Task #85):** every non-UI lifecycle event (task
+	 * done/cancelled, spawn rollback, workflow end, daemon shutdown, Neo
+	 * recovery, etc.) must preserve session data and must only interrupt the
+	 * in-memory SDK subprocess via {@link interruptInMemorySession}. This
+	 * method is callable exclusively from the two UI archive RPC paths —
+	 * `session.archive` and `task.archive`.
+	 */
+	async archiveSessionResources(
+		sessionId: string,
+		trigger: ArchiveResourcesTrigger
+	): Promise<void> {
+		return this.sessionLifecycle.archiveResources(sessionId, trigger);
+	}
+
+	/**
+	 * Fully delete a session's external resources AND its DB row
+	 * (cascades to `sdk_messages` via FK).
+	 *
+	 * **UI-only invariant (Task #85):** callable exclusively from the two UI
+	 * delete RPC paths — `session.delete` and `room.delete` (cascade). Any
+	 * other caller must use {@link interruptInMemorySession} instead.
+	 */
+	async deleteSessionResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+		return this.sessionLifecycle.deleteResources(sessionId, trigger);
+	}
+
+	/**
+	 * Stop the in-memory SDK subprocess for a session and drop the cache
+	 * entry — WITHOUT touching the worktree, SDK `.jsonl` files, or the
+	 * `sessions` DB row.
+	 *
+	 * This is the primitive non-UI callers (TaskAgentManager cleanup,
+	 * spawn-rollback, space-runtime reconciliation, Neo recovery, ...) must
+	 * use instead of the old `deleteSession`. The next `getSessionAsync()`
+	 * will hydrate a fresh `AgentSession` from the DB row.
+	 */
+	async interruptInMemorySession(sessionId: string): Promise<void> {
+		const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+		if (agentSession) {
+			try {
+				await agentSession.cleanup();
+			} catch (error) {
+				this.logger.error(
+					`[SessionManager] interruptInMemorySession: cleanup failed for ${sessionId}:`,
+					error
+				);
+			}
+		}
+		this.sessionCache.remove(sessionId);
 	}
 
 	getActiveSessions(): number {

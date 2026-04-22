@@ -275,6 +275,9 @@ function buildManager(opts: {
 		db: mockDb as unknown as import('../../../../src/storage/database.ts').Database,
 		sessionManager: {
 			deleteSession: async () => {},
+			archiveSessionResources: async () => {},
+			deleteSessionResources: async () => {},
+			interruptInMemorySession: async () => {},
 			registerSession: () => {},
 		} as unknown as import('../../../../src/lib/session-manager.ts').SessionManager,
 		spaceManager,
