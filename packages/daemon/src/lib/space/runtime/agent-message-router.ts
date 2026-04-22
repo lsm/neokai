@@ -63,6 +63,16 @@ export interface AgentMessageRouterConfig {
 	 * Optional; defaults to null.
 	 */
 	taskId?: string;
+	/**
+	 * Optional callback fired after a message is persisted to `pendingMessageRepo`
+	 * for a declared-but-inactive target. Callers can use this to immediately
+	 * attempt to resume the target session if one is known (e.g. a session from a
+	 * previous execution that is currently idle/completed), so the queued message
+	 * is delivered without waiting for the next external activation trigger.
+	 *
+	 * Fires only for non-deduped enqueues (deduped = message already in queue).
+	 */
+	onMessageQueued?: (agentName: string) => void;
 }
 
 export interface AgentMessageParams {
@@ -147,6 +157,7 @@ export class AgentMessageRouter {
 			pendingMessageRepo,
 			spaceId,
 			taskId,
+			onMessageQueued,
 		} = this.config;
 
 		// --- Build channel resolver + slot-to-node translation map ---
@@ -402,7 +413,7 @@ export class AgentMessageRouter {
 					// adds it at delivery time so the source name is always accurate).
 					const rawMessage = `${message}${dataAppendix}`;
 					try {
-						const { record } = pendingMessageRepo.enqueue({
+						const { record, deduped } = pendingMessageRepo.enqueue({
 							workflowRunId,
 							spaceId,
 							taskId: taskId ?? null,
@@ -416,6 +427,11 @@ export class AgentMessageRouter {
 							`[AgentMessageRouter] queued message ${record.id} for agent "${agentName}" ` +
 								`(run=${workflowRunId}, from=${fromAgentName})`
 						);
+						// Best-effort auto-resume: if the target already has a known session
+						// (e.g. a previous execution that is now idle/completed), trigger an
+						// immediate resume so the queue is drained without waiting for the
+						// next activation cycle.
+						if (!deduped) onMessageQueued?.(agentName);
 					} catch (err) {
 						const errMsg = err instanceof Error ? err.message : String(err);
 						log.warn(
