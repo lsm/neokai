@@ -93,8 +93,18 @@ export class DatabaseCore {
 
 	/**
 	 * Close the database connection and release the lock file.
+	 *
+	 * Runs a WAL checkpoint before closing so all write-ahead log data is flushed
+	 * to the main database file. This prevents potential data loss on abrupt
+	 * termination where the WAL is replayed at next startup but uncommitted frames
+	 * were not yet checkpointed.
 	 */
 	close(): void {
+		try {
+			this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+		} catch {
+			// Ignore checkpoint errors — the DB may already be closed or in an error state
+		}
 		this.db.close();
 		this.lock.release();
 	}
