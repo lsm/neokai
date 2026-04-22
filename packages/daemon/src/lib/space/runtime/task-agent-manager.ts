@@ -677,7 +677,10 @@ export class TaskAgentManager {
 			// Note: task agent sessions are short-lived (one per task), so there is no
 			// mcp.registry.changed subscription here. Registry changes during a running task
 			// are not hot-reloaded; they take effect when the next task agent is spawned.
-			// Resolve overrides for the task agent session (scope='space' applies).
+			//
+			// Resolves the session's space > room > session scope chain against
+			// mcp_enablement so per-space overrides from the space settings UI
+			// are honored.
 			const registryMcpServers =
 				this.config.appMcpManager?.getEnabledMcpConfigsForSession({
 					id: sessionId,
@@ -2761,8 +2764,8 @@ export class TaskAgentManager {
 
 		// Merge registry-sourced MCP servers alongside the in-process task-agent server,
 		// mirroring the same logic in spawnTaskAgent() so rehydrated sessions have the
-		// same MCP configuration as freshly spawned ones.
-		// Session-aware resolver — scope='space' / scope='session' overrides apply.
+		// same MCP configuration as freshly spawned ones. Session-aware resolver
+		// — scope='space' / scope='session' overrides survive restarts.
 		const rehydrateRegistryMcpServers =
 			this.config.appMcpManager?.getEnabledMcpConfigsForSession({
 				id: sessionId,

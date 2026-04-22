@@ -478,6 +478,7 @@ export class SkillsManager {
 				args: ['chrome-devtools-mcp@latest', '--isolated'],
 				env: {},
 				enabled: false,
+				source: 'builtin',
 			});
 
 		// Step 2: upsert the skill referencing the app MCP entry

@@ -456,6 +456,80 @@ export interface McpRoomResetToGlobalResponse {
 	ok: boolean;
 }
 
+// --- Per-Space MCP Enablement (M4) ---
+
+/**
+ * One entry in the resolved per-space MCP list. Combines the registry row
+ * with the resolved enabled-for-this-space state so the UI can render the
+ * toggle without making a second call.
+ */
+export interface SpaceMcpEntry {
+	serverId: string;
+	name: string;
+	description?: string;
+	sourceType: 'stdio' | 'sse' | 'http';
+	/** Provenance of the registry row (builtin / user / imported). */
+	source: 'builtin' | 'user' | 'imported';
+	/** Populated only when `source === 'imported'`. */
+	sourcePath?: string;
+	/** Whether this server is enabled globally in the registry. */
+	globallyEnabled: boolean;
+	/**
+	 * True when there is an explicit `mcp_enablement` row for this
+	 * (server, space) pair. When false, `enabled` equals `globallyEnabled`.
+	 */
+	overridden: boolean;
+	/** Effective enabled state for this space (override if present, else global). */
+	enabled: boolean;
+}
+
+export interface SpaceMcpListRequest {
+	spaceId: string;
+}
+
+export interface SpaceMcpListResponse {
+	entries: SpaceMcpEntry[];
+}
+
+export interface SpaceMcpSetEnabledRequest {
+	spaceId: string;
+	serverId: string;
+	enabled: boolean;
+}
+
+export interface SpaceMcpSetEnabledResponse {
+	ok: boolean;
+}
+
+export interface SpaceMcpClearOverrideRequest {
+	spaceId: string;
+	serverId: string;
+}
+
+export interface SpaceMcpClearOverrideResponse {
+	ok: boolean;
+}
+
+// --- MCP Imports (explicit refresh trigger for .mcp.json discovery) ---
+
+export interface McpImportsRefreshRequest {
+	/**
+	 * Optional: limit the refresh scan to a single workspace path. When
+	 * omitted, scans every registered workspace + `~/.claude/.mcp.json`.
+	 */
+	workspacePath?: string;
+}
+
+export interface McpImportsRefreshResponse {
+	ok: boolean;
+	/** Number of imported rows inserted or updated by this refresh. */
+	imported: number;
+	/** Number of imported rows removed because their source file no longer lists them. */
+	removed: number;
+	/** Human-readable notes (e.g. files not found, parse errors). */
+	notes: string[];
+}
+
 // --- Per-Room Skill Enablement ---
 
 export interface SkillRoomGetOverridesRequest {
