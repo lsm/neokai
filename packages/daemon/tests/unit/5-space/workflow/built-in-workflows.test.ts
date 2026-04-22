@@ -29,6 +29,7 @@ import {
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
 	getBuiltInWorkflows,
+	getBuiltInGateScript,
 	seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import type { SpaceAgent, SpaceWorkflow } from '@neokai/shared';
@@ -1793,6 +1794,85 @@ describe('Coding Workflow export/import round-trip', () => {
 		const reviewToCode = reimported.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
 		expect(reviewToCode).toBeDefined();
 		expect(reviewToCode!.maxCycles).toBe(5);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getBuiltInGateScript()
+// ---------------------------------------------------------------------------
+// Tests for the live gate-script resolution helper. This function returns the
+// *current* script for a given built-in template + gate ID combination so that
+// gate evaluations always use the latest script rather than the version that was
+// baked into the database at seed time.
+
+describe('getBuiltInGateScript()', () => {
+	test('returns the bash script for code-ready-gate in Coding Workflow', () => {
+		const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'code-ready-gate');
+		expect(script).toBeDefined();
+		expect(script?.interpreter).toBe('bash');
+		expect(script?.source.length).toBeGreaterThan(0);
+		// The PR-ready script references gh pr view and checks mergeability
+		expect(script?.source).toContain('gh pr view');
+		expect(script?.source).toContain('MERGEABLE');
+	});
+
+	test('returns the bash script for review-posted-gate in Coding Workflow', () => {
+		const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
+		expect(script).toBeDefined();
+		expect(script?.interpreter).toBe('bash');
+		// The review-posted script should include the PR comment fallback path
+		expect(script?.source).toContain('gh pr view');
+		expect(script?.source).toContain('comments');
+		// Confirm the current fallback message is present (not the stale "No review submitted on…")
+		expect(script?.source).toContain('No review or PR comment found on');
+	});
+
+	test('returns the bash script for plan-pr-gate in Plan & Decompose Workflow', () => {
+		const script = getBuiltInGateScript(PLAN_AND_DECOMPOSE_WORKFLOW.name, 'plan-pr-gate');
+		expect(script).toBeDefined();
+		expect(script?.interpreter).toBe('bash');
+	});
+
+	test('returns undefined for a field-only gate (plan-approval-gate has no script)', () => {
+		const script = getBuiltInGateScript(PLAN_AND_DECOMPOSE_WORKFLOW.name, 'plan-approval-gate');
+		expect(script).toBeUndefined();
+	});
+
+	test('returns undefined when the template name does not match any built-in', () => {
+		const script = getBuiltInGateScript('Unknown Template', 'code-ready-gate');
+		expect(script).toBeUndefined();
+	});
+
+	test('returns undefined when the gate ID does not exist in the template', () => {
+		const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'nonexistent-gate-id');
+		expect(script).toBeUndefined();
+	});
+
+	test('returned script matches the gate definition directly from the template', () => {
+		// Verify the helper returns the exact same object reference as the template defines
+		const templateGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
+		const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
+		expect(script).toBe(templateGate.script); // same object reference
+	});
+
+	test('returns scripts for all script-based gates in all templates', () => {
+		// Every gate that has a script in any built-in template should be resolvable
+		for (const template of getBuiltInWorkflows()) {
+			for (const gate of template.gates ?? []) {
+				if (!gate.script) continue;
+				const script = getBuiltInGateScript(template.name, gate.id);
+				expect(script).toBeDefined();
+				expect(script?.interpreter).toBe(gate.script.interpreter);
+				expect(script?.source).toBe(gate.script.source);
+			}
+		}
+	});
+
+	test('review-posted-gate script includes NEOKAI_WORKFLOW_START_ISO usage', () => {
+		const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
+		// The review-posted-gate script must use NEOKAI_WORKFLOW_START_ISO to filter
+		// reviews that were posted after the workflow started
+		expect(script?.source).toContain('NEOKAI_WORKFLOW_START_ISO');
 	});
 });
 

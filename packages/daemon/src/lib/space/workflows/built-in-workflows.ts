@@ -22,6 +22,7 @@
 
 import { generateUUID } from '@neokai/shared';
 import type { SpaceWorkflow, CompletionAction } from '@neokai/shared';
+import type { GateScript } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { computeWorkflowHash } from './template-hash.ts';
 
@@ -1201,6 +1202,26 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns the current gate script for a given built-in template name and gate ID.
+ *
+ * Gate scripts are stored in the `space_workflows.gates` JSON column at seed time.
+ * When a template script is updated, existing workflow instances still carry the old
+ * script from when they were seeded. Callers that need the **live** script (e.g. the
+ * gate evaluator) should use this function to resolve the script at call time instead
+ * of relying on the stored copy.
+ *
+ * Returns `undefined` when the template or gate is not found, or when the gate has
+ * no script (field-only gate). Callers should fall back to the stored gate definition
+ * in that case.
+ */
+export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
+	const template = getBuiltInWorkflows().find((t) => t.name === templateName);
+	if (!template) return undefined;
+	const gate = (template.gates ?? []).find((g) => g.id === gateId);
+	return gate?.script;
+}
 
 /**
  * Returns all built-in workflow templates.

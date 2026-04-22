@@ -54,7 +54,10 @@ import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager';
 import { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
-import { setupSpaceWorkflowHandlers } from './space-workflow-handlers';
+import {
+	setupSpaceWorkflowHandlers,
+	checkBuiltInWorkflowDriftOnStartup,
+} from './space-workflow-handlers';
 import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
 import { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
@@ -437,6 +440,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 		deps.spaceAgentManager,
 		spaceWorkflowRunRepo
 	);
+
+	// Proactive drift detection — fire-and-forget; logs warnings for any workflows
+	// that have drifted from their built-in templates since the last sync.
+	void checkBuiltInWorkflowDriftOnStartup(spaceWorkflowManager, deps.spaceManager);
 
 	// Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
 	// Not started yet: TaskAgentManager is created next and injected before start().
