@@ -12,8 +12,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -30,18 +28,13 @@ import type { SpaceAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@neokai/s
 // DB setup helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-export-import-round-trip',
-		`t-${Date.now()}-${Math.random()}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId: string): void {
@@ -551,14 +544,13 @@ test('mix of plain strings and { value } objects in the same node normalize to c
 
 describe('full round-trip: export → import → DB read-back', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let repo: SpaceWorkflowRepository;
 	let manager: SpaceWorkflowManager;
 
 	const SPACE_ID = 'space-rt';
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
+		db = makeDb();
 		seedSpace(db, SPACE_ID);
 		seedAgent(db, 'agent-1', SPACE_ID, 'Coder Agent');
 		seedAgent(db, 'agent-2', SPACE_ID, 'Reviewer Agent');
@@ -568,7 +560,6 @@ describe('full round-trip: export → import → DB read-back', () => {
 
 	afterEach(() => {
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
 	});
 
 	test('per-slot systemPrompt override persists after import', () => {

@@ -14,8 +14,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -28,18 +26,13 @@ import type { DaemonHub } from '../../../../src/lib/daemon-hub.ts';
 // Fixtures
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-end-node-handlers',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, autonomyLevel = 1): void {
@@ -102,18 +95,16 @@ function makeMockHub(): MockHubCtx {
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	taskRepo: SpaceTaskRepository;
 }
 
 function makeCtx(autonomyLevel = 1): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-end-node-test';
 	seedSpaceRow(db, spaceId, autonomyLevel);
 	return {
 		db,
-		dir,
 		spaceId,
 		taskRepo: new SpaceTaskRepository(db),
 	};
@@ -149,7 +140,6 @@ describe('createEndNodeHandlers — approve_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns error when space.autonomyLevel < workflow.completionAutonomyLevel', async () => {
@@ -349,7 +339,6 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('sets status=review and populates pending-completion fields', async () => {
@@ -472,7 +461,6 @@ describe('createEndNodeHandlers — daemonHub is optional', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('approve_task succeeds without a daemonHub', async () => {

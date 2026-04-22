@@ -10,8 +10,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -35,18 +33,13 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 // DB + space setup helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-space-agent-tools',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -96,7 +89,6 @@ function buildSingleStepWorkflow(
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	agentId: string;
 	workflowManager: SpaceWorkflowManager;
@@ -109,7 +101,7 @@ interface TestCtx {
 }
 
 function makeCtx(): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-tools-test';
 	const workspacePath = '/tmp/test-workspace';
 
@@ -143,7 +135,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		agentId,
 		workflowManager,
@@ -201,7 +192,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('does not register start_workflow_run for Space Agent sessions', () => {
@@ -233,7 +223,6 @@ describe('createSpaceAgentToolHandlers — list_workflows', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns empty list when no workflows exist', async () => {
@@ -265,7 +254,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_run', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns run with executions', async () => {
@@ -321,7 +309,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('updates description of an in-progress run', async () => {
@@ -445,7 +432,6 @@ describe('createSpaceAgentToolHandlers — list_tasks', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns all tasks when no filter applied', async () => {
@@ -511,7 +497,6 @@ describe('createSpaceAgentToolHandlers — get_workflow_detail', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns full workflow definition including steps and rules', async () => {
@@ -572,7 +557,6 @@ describe('createSpaceAgentToolHandlers — suggest_workflow', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns empty list with message when no workflows exist', async () => {
@@ -670,7 +654,6 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('creates a task with required fields only', async () => {
@@ -758,7 +741,6 @@ describe('createSpaceAgentToolHandlers — get_task_detail', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns full task record by ID', async () => {
@@ -812,7 +794,6 @@ describe('createSpaceAgentToolHandlers — retry_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('resets a needs_attention task to pending', async () => {
@@ -896,7 +877,6 @@ describe('createSpaceAgentToolHandlers — cancel_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('cancels a pending task', async () => {
@@ -1008,7 +988,6 @@ describe('createSpaceAgentToolHandlers — reassign_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('reassigns a pending task (custom_agent_id is accepted, field removed in M71)', async () => {
@@ -1148,7 +1127,6 @@ describe('createSpaceAgentToolHandlers — task creation and planning node activ
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('create_standalone_task creates task with pending status (clear request)', async () => {
@@ -1279,7 +1257,6 @@ describe('createSpaceAgentToolHandlers — list_tasks search/pagination/compact'
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns total count in response', async () => {
@@ -1385,7 +1362,6 @@ describe('createSpaceAgentToolHandlers — approve_completion_action', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('rejects tasks that are not at a completion-action checkpoint', async () => {
@@ -1484,7 +1460,6 @@ describe('createSpaceAgentToolHandlers — approve_task guard', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('rejects tasks paused at a completion-action checkpoint', async () => {
@@ -1589,7 +1564,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	async function createTask(title = 'Test Task'): Promise<SpaceTask> {

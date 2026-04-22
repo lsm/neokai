@@ -22,8 +22,6 @@
  */
 
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
@@ -56,18 +54,13 @@ import type {
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-autonomy-gated',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(
@@ -231,7 +224,6 @@ function buildGatedWorkflowMixed(opts: {
 
 describe('ChannelRouter.onGateDataChanged — requiredLevel enforcement', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let gateDataRepo: GateDataRepository;
 	let nodeExecutionRepo: NodeExecutionRepository;
 
@@ -240,9 +232,7 @@ describe('ChannelRouter.onGateDataChanged — requiredLevel enforcement', () => 
 	const gateId = 'code-ready-gate';
 
 	beforeEach(() => {
-		const result = makeDb();
-		db = result.db;
-		dir = result.dir;
+		db = makeDb();
 		gateDataRepo = new GateDataRepository(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
 		seedSpaceRow(db, spaceId);
@@ -251,7 +241,6 @@ describe('ChannelRouter.onGateDataChanged — requiredLevel enforcement', () => 
 
 	afterEach(() => {
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
 	});
 
 	function makeRouter(spaceAutonomyLevel: number, workflow: SpaceWorkflow) {
@@ -934,7 +923,6 @@ describe('task-agent-tools approve_gate — autonomy enforcement', () => {
 
 describe('node-agent-tools send_message gate write — autonomy enforcement', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let gateDataRepo: GateDataRepository;
 	let nodeExecutionRepo: NodeExecutionRepository;
 
@@ -945,9 +933,7 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 	const reviewerNodeId = 'node-reviewer';
 
 	beforeEach(() => {
-		const result = makeDb();
-		db = result.db;
-		dir = result.dir;
+		db = makeDb();
 		gateDataRepo = new GateDataRepository(db);
 		nodeExecutionRepo = new NodeExecutionRepository(db);
 		seedSpaceRow(db, spaceId);
@@ -956,7 +942,6 @@ describe('node-agent-tools send_message gate write — autonomy enforcement', ()
 
 	afterEach(() => {
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
 	});
 
 	function makeHandlers(opts: {

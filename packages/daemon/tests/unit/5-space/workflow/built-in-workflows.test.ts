@@ -16,8 +16,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -42,18 +40,13 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-built-in-workflows',
-		`t-${Date.now()}-${Math.random()}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpace(db: BunDatabase, spaceId: string): void {
@@ -771,7 +764,6 @@ describe('getBuiltInWorkflows()', () => {
 
 describe('seedBuiltInWorkflows()', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let manager: SpaceWorkflowManager;
 	const SPACE_ID = 'seed-test-space';
 
@@ -795,7 +787,7 @@ describe('seedBuiltInWorkflows()', () => {
 	const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
+		db = makeDb();
 		seedSpace(db, SPACE_ID);
 		// Seed preset agents so the manager's agentLookup (when wired) would find them
 		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
@@ -813,11 +805,6 @@ describe('seedBuiltInWorkflows()', () => {
 	afterEach(() => {
 		try {
 			db.close();
-		} catch {
-			/* ignore */
-		}
-		try {
-			rmSync(dir, { recursive: true, force: true });
 		} catch {
 			/* ignore */
 		}
@@ -1635,7 +1622,6 @@ describe('seedBuiltInWorkflows()', () => {
 
 describe('Coding Workflow export/import round-trip', () => {
 	let db: BunDatabase;
-	let dir: string;
 	let manager: SpaceWorkflowManager;
 	const SPACE_ID = 'roundtrip-test-space';
 
@@ -1685,7 +1671,7 @@ describe('Coding Workflow export/import round-trip', () => {
 	];
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
+		db = makeDb();
 		seedSpace(db, SPACE_ID);
 		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
 		seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
@@ -1699,11 +1685,6 @@ describe('Coding Workflow export/import round-trip', () => {
 	afterEach(() => {
 		try {
 			db.close();
-		} catch {
-			/* ignore */
-		}
-		try {
-			rmSync(dir, { recursive: true, force: true });
 		} catch {
 			/* ignore */
 		}

@@ -40,8 +40,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -66,18 +64,13 @@ const STEP_NODE_ID = 'node-integration-step';
 // DB / seed helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-cross-agent-integration',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
@@ -154,7 +147,6 @@ function makeResolvedChannel(from: string, to: string | string[]): WorkflowChann
 
 interface TestDb {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	nodeExecutionRepo: NodeExecutionRepository;
 	workflowRunRepo: SpaceWorkflowRunRepository;
@@ -162,7 +154,7 @@ interface TestDb {
 }
 
 function makeTestDb(): TestDb {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = `space-${Math.random().toString(36).slice(2)}`;
 	seedSpaceRow(db, spaceId);
 	const nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -184,7 +176,6 @@ function makeTestDb(): TestDb {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		nodeExecutionRepo,
 		workflowRunRepo,
@@ -253,7 +244,6 @@ describe('cross-group isolation', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('send_message never reaches group B members (group scoping)', async () => {
@@ -293,9 +283,7 @@ describe('cross-group isolation', () => {
 			expect(deliveredIds).not.toContain('session-coder-e');
 		} finally {
 			tdbA.db.close();
-			rmSync(tdbA.dir, { recursive: true, force: true });
 			tdbB.db.close();
-			rmSync(tdbB.dir, { recursive: true, force: true });
 		}
 	});
 });
@@ -313,7 +301,6 @@ describe('channel direction enforcement', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('send on declared one-way channel succeeds', async () => {
@@ -390,7 +377,6 @@ describe('bidirectional point-to-point A↔B', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('both directions of bidirectional channel deliver correctly', async () => {
@@ -489,7 +475,6 @@ describe('fan-out one-way A→[B,C,D]', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	function setupFanOutTasks(tdb: TestDb) {
@@ -626,7 +611,6 @@ describe('hub-spoke bidirectional A↔[B,C,D]', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	function setupHubSpokeTasks(tdb: TestDb) {
@@ -807,7 +791,6 @@ describe('concurrent message injection — both messages delivered', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('two agents injecting to same target simultaneously delivers both messages', async () => {
@@ -896,7 +879,6 @@ describe('data reload and DB-based validation', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('channel topology resolves correctly after workflow run re-fetch', async () => {
@@ -997,7 +979,6 @@ describe('error paths — missing workflowRunId', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('send_message fails with no-active-sessions when workflowRunId is empty', async () => {
@@ -1083,7 +1064,6 @@ describe('Task Agent channel participation', () => {
 
 	afterEach(() => {
 		tdb.db.close();
-		rmSync(tdb.dir, { recursive: true, force: true });
 	});
 
 	test('ChannelResolver: canSend returns true when coder→task-agent channel declared', async () => {

@@ -40,8 +40,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { NodeExecutionManager } from '../../../../src/lib/space/managers/node-execution-manager.ts';
@@ -57,18 +55,13 @@ import type { NodeExecutionStatus } from '@neokai/shared';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-node-exec-mgr',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	runMigrations(db, () => {});
 	db.exec('PRAGMA foreign_keys = OFF');
-	return { db, dir };
+	return db;
 }
 
 function seedExecution(
@@ -106,17 +99,15 @@ function seedExecution(
 // ---------------------------------------------------------------------------
 
 let db: BunDatabase;
-let dir: string;
 let manager: NodeExecutionManager;
 
 beforeEach(() => {
-	({ db, dir } = makeDb());
+	db = makeDb();
 	manager = new NodeExecutionManager(db);
 });
 
 afterEach(() => {
 	db.close();
-	rmSync(dir, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
