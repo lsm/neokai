@@ -674,6 +674,319 @@ describe('db-query integration', () => {
 			expect(result.isError).toBe(true);
 			expect(parseResult(result).raw).toContain('not accessible in space scope');
 		});
+
+		// ── Space scope: sessions, sdk_messages, session_groups, session_group_members ──
+
+		it('can query sessions belonging to this space (session ID prefix filtering)', async () => {
+			// Insert sessions for space-int-1, space-int-2, and an unrelated session
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:task-1', 'Task Agent 1', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:task-1:node:n1', 'Node 1', datetime('now'), datetime('now'), 'ended', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:task-9', 'Other Space Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('regular-session-xyz', 'Regular', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT id, title FROM sessions' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// Only space-int-1 sessions should appear
+			expect(parsed.rows).toHaveLength(2);
+			const ids = parsed.rows.map((r: Record<string, unknown>) => r.id).sort();
+			expect(ids).toEqual([
+				'space:space-int-1:task:task-1',
+				'space:space-int-1:task:task-1:node:n1',
+			]);
+		});
+
+		it('sessions from other spaces are excluded (space isolation)', async () => {
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:task-A', 'Space 1 Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:task-B', 'Space 2 Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-2' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT id FROM sessions' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].id).toBe('space:space-int-2:task:task-B');
+		});
+
+		it('sessions rows exclude blacklisted columns (config, session_context)', async () => {
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata, session_context) VALUES ('space:space-int-1:task:task-X', 'Sensitive Test', datetime('now'), datetime('now'), 'active', '{\"secret\":true}', '{}', '{\"spaceId\":\"space-int-1\"}')"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT * FROM sessions' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			for (const row of parsed.rows) {
+				expect(row).not.toHaveProperty('config');
+				expect(row).not.toHaveProperty('session_context');
+				expect(row).toHaveProperty('id');
+				expect(row).toHaveProperty('title');
+				expect(row).toHaveProperty('status');
+			}
+		});
+
+		it('can query sdk_messages for sessions in this space', async () => {
+			// Create sessions first (sdk_messages FK requires session exists)
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:msg-task', 'Msg Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:msg-task2', 'Other Msg Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+
+			db.exec(
+				"INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp) VALUES ('msg-1', 'space:space-int-1:task:msg-task', 'user', '{\"role\":\"user\"}', '2024-01-01T00:00:00Z')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp) VALUES ('msg-2', 'space:space-int-1:task:msg-task', 'assistant', '{\"role\":\"assistant\"}', '2024-01-01T00:00:01Z')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp) VALUES ('msg-3', 'space:space-int-2:task:msg-task2', 'user', '{\"role\":\"user\"}', '2024-01-01T00:00:02Z')"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'SELECT id, session_id, message_type FROM sdk_messages',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// Only msg-1 and msg-2 belong to space-int-1
+			expect(parsed.rows).toHaveLength(2);
+			const ids = parsed.rows.map((r: Record<string, unknown>) => r.id).sort();
+			expect(ids).toEqual(['msg-1', 'msg-2']);
+			// All rows belong to the correct session
+			for (const row of parsed.rows) {
+				expect(row.session_id).toBe('space:space-int-1:task:msg-task');
+			}
+		});
+
+		it('sdk_messages from other spaces are excluded', async () => {
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:iso-1', 'Iso1', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:iso-2', 'Iso2', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp) VALUES ('iso-msg-1', 'space:space-int-1:task:iso-1', 'user', '{}', '2024-01-01T00:00:00Z')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp) VALUES ('iso-msg-2', 'space:space-int-2:task:iso-2', 'user', '{}', '2024-01-01T00:00:01Z')"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-2' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT id FROM sdk_messages' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].id).toBe('iso-msg-2');
+		});
+
+		it('can query session_group_members filtered by space session ID prefix', async () => {
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:sg-task', 'SG Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:sg-task2', 'SG Task2', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, created_at) VALUES ('grp-s1', 'task', 'ref-1', 1000)"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, created_at) VALUES ('grp-s2', 'task', 'ref-2', 2000)"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_group_members (group_id, session_id, role, joined_at) VALUES ('grp-s1', 'space:space-int-1:task:sg-task', 'coder', 1000)"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_group_members (group_id, session_id, role, joined_at) VALUES ('grp-s2', 'space:space-int-2:task:sg-task2', 'coder', 2000)"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'SELECT group_id, session_id FROM session_group_members',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].group_id).toBe('grp-s1');
+			expect(parsed.rows[0].session_id).toBe('space:space-int-1:task:sg-task');
+		});
+
+		it('can query session_groups scoped via session_group_members', async () => {
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:sgg-task', 'SGG Task', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:sgg-task2', 'SGG Task2', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, created_at) VALUES ('sgg-grp-1', 'task', 'ref-A', 1000)"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_groups (id, group_type, ref_id, created_at) VALUES ('sgg-grp-2', 'task', 'ref-B', 2000)"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_group_members (group_id, session_id, role, joined_at) VALUES ('sgg-grp-1', 'space:space-int-1:task:sgg-task', 'coder', 1000)"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO session_group_members (group_id, session_id, role, joined_at) VALUES ('sgg-grp-2', 'space:space-int-2:task:sgg-task2', 'coder', 2000)"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT id, group_type FROM session_groups' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// Only sgg-grp-1 has members from space-int-1
+			expect(parsed.rows).toHaveLength(1);
+			expect(parsed.rows[0].id).toBe('sgg-grp-1');
+		});
+
+		it('db_list_tables includes sessions, sdk_messages, session_groups, session_group_members in space scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_list_tables();
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.tables).toContain('sessions');
+			expect(parsed.tables).toContain('sdk_messages');
+			expect(parsed.tables).toContain('session_groups');
+			expect(parsed.tables).toContain('session_group_members');
+			// Still includes original space tables
+			expect(parsed.tables).toContain('space_tasks');
+			expect(parsed.tables).toContain('gate_data');
+			// Room/global tables still excluded from space scope
+			expect(parsed.tables).not.toContain('tasks');
+			expect(parsed.tables).not.toContain('rooms');
+		});
+
+		it('db_describe_table works for sessions in space scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'sessions' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.description).toContain('sessions');
+			// Blacklisted columns should not appear as data columns
+			expect(parsed.description).not.toContain('| config |');
+			expect(parsed.description).not.toContain('| session_context |');
+			// Non-blacklisted columns should appear
+			expect(parsed.description).toContain('id');
+			expect(parsed.description).toContain('title');
+			expect(parsed.description).toContain('status');
+		});
+
+		it('db_describe_table works for sdk_messages in space scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_describe_table({ table_name: 'sdk_messages' });
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			expect(parsed.description).toContain('sdk_messages');
+			expect(parsed.description).toContain('session_id');
+			expect(parsed.description).toContain('message_type');
+		});
+
+		it('COUNT aggregate on sessions in space scope counts only space sessions', async () => {
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:cnt-1', 'Count 1', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-1:task:cnt-2', 'Count 2', datetime('now'), datetime('now'), 'ended', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('space:space-int-2:task:cnt-3', 'Other', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+			db.exec(
+				"INSERT OR IGNORE INTO sessions (id, title, created_at, last_active_at, status, config, metadata) VALUES ('unrelated-session', 'Unrelated', datetime('now'), datetime('now'), 'active', '{}', '{}')"
+			);
+
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
+				db
+			);
+			const result = await handlers.db_query({
+				sql: 'SELECT COUNT(*) AS cnt FROM sessions',
+			});
+			const parsed = parseResult(result);
+
+			expect(parsed.isError).toBeFalsy();
+			// Only space-int-1 sessions (cnt-1, cnt-2) should be counted
+			expect(parsed.rows[0].cnt).toBe(2);
+		});
+
+		it('cannot access sessions from room scope (sessions not in room scope)', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT * FROM sessions' });
+
+			expect(result.isError).toBe(true);
+			expect(parseResult(result).raw).toContain('not accessible in room scope');
+		});
+
+		it('cannot access sdk_messages from room scope', async () => {
+			const handlers = createDbQueryToolHandlers(
+				{ dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-int-1' },
+				db
+			);
+			const result = await handlers.db_query({ sql: 'SELECT * FROM sdk_messages' });
+
+			expect(result.isError).toBe(true);
+			expect(parseResult(result).raw).toContain('not accessible in room scope');
+		});
 	});
 
 	// ── Global scope ─────────────────────────────────────────────────────────────

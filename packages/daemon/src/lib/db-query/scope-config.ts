@@ -15,6 +15,31 @@ export interface ScopeJoinConfig {
 	joinPkColumn: string;
 	/** The scope column on the join table (e.g., 'room_id' or 'space_id'). */
 	scopeColumn: string;
+	/**
+	 * When set, uses `LIKE ?` instead of `= ?` for the join's WHERE clause.
+	 * The LIKE parameter is constructed as: `likePrefix + scopeValue + likeSuffix`.
+	 * Example: likePrefix='space:', likeSuffix=':%' → WHERE session_id LIKE 'space:abc:%'
+	 */
+	likePrefix?: string;
+	/** Suffix for the LIKE pattern. Only used when likePrefix is set. Defaults to ''. */
+	likeSuffix?: string;
+}
+
+/**
+ * Configuration for LIKE-based scope filtering on a direct column.
+ *
+ * Used for tables where scope is encoded in a column value via a prefix pattern,
+ * such as session IDs with the format `space:<spaceId>:<rest>`.
+ *
+ * The LIKE parameter is constructed as: `patternPrefix + scopeValue + patternSuffix`.
+ */
+export interface ScopeLikeConfig {
+	/** Column to apply LIKE filter on (e.g., 'id', 'session_id'). */
+	column: string;
+	/** Text before the scope value in the LIKE pattern (e.g., 'space:'). */
+	patternPrefix: string;
+	/** Text after the scope value in the LIKE pattern (e.g., ':%'). */
+	patternSuffix: string;
 }
 
 /** Full configuration for a table within a given scope. */
@@ -25,6 +50,8 @@ export interface ScopeTableConfig {
 	scopeColumn?: string;
 	/** Indirect scope resolution via a join table. */
 	scopeJoin?: ScopeJoinConfig;
+	/** LIKE-based scope filter for prefix-encoded IDs (e.g., session ID prefix). */
+	scopeLike?: ScopeLikeConfig;
 	/** Columns to exclude from `db_describe_table` and `SELECT *`. */
 	blacklistedColumns: string[];
 	/** Human-readable description for the agent. */
@@ -293,22 +320,59 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
 		description:
 			'JSON-serialised cache of git-derived artifact data (gate diffs, commit log, per-file diffs) populated by background sync jobs and served to the TaskArtifactsPanel.',
 	},
+	// ── Main-DB tables exposed with space-scoped filtering via session ID prefix ──
+	{
+		tableName: 'sessions',
+		scopeLike: { column: 'id', patternPrefix: 'space:', patternSuffix: ':%' },
+		blacklistedColumns: COLUMN_BLACKLISTS.sessions,
+		description:
+			'Agent sessions belonging to this space — task agents, node agents, and sub-sessions. Filtered by session ID prefix (space:<space_id>:*). Includes status, type, workspace path, and timestamps.',
+	},
+	{
+		tableName: 'sdk_messages',
+		scopeLike: { column: 'session_id', patternPrefix: 'space:', patternSuffix: ':%' },
+		blacklistedColumns: [],
+		description:
+			'SDK conversation messages for sessions belonging to this space. Filtered by session_id prefix (space:<space_id>:*). Includes message type, subtype, content, timestamp, and send status.',
+	},
+	{
+		tableName: 'session_groups',
+		scopeJoin: {
+			localColumn: 'id',
+			joinTable: 'session_group_members',
+			joinPkColumn: 'group_id',
+			scopeColumn: 'session_id',
+			likePrefix: 'space:',
+			likeSuffix: ':%',
+		},
+		blacklistedColumns: [],
+		description:
+			'Session groups (multi-agent collaborations) whose members include sessions belonging to this space. Scoped via session_group_members.session_id prefix.',
+	},
+	{
+		tableName: 'session_group_members',
+		scopeLike: { column: 'session_id', patternPrefix: 'space:', patternSuffix: ':%' },
+		blacklistedColumns: [],
+		description:
+			'Session group memberships for sessions belonging to this space. Filtered by session_id prefix (space:<space_id>:*).',
+	},
 ];
 
 /**
  * Tables that are intentionally excluded from ALL scopes.
- * These include sensitive config tables, raw message stores, and internal infrastructure.
+ * These include sensitive config tables and internal infrastructure.
+ *
+ * Note: `sdk_messages`, `session_groups`, and `session_group_members` are now
+ * accessible in the **space** scope (with session ID prefix filtering) and are
+ * therefore NOT in this list. They remain inaccessible in global and room scopes.
  */
 const EXCLUDED_TABLE_NAMES: string[] = [
 	// Sensitive configuration (contains auth tokens, API keys)
 	'auth_config',
 	'global_tools_config',
 	'global_settings',
-	// Raw SDK message store (too large, not useful for ad-hoc queries)
-	'sdk_messages',
-	// Internal session group infrastructure
-	'session_groups',
-	'session_group_members',
+	// session_groups, session_group_members, and sdk_messages are now in SPACE_SCOPE_TABLES.
+	// task_group_events remains excluded — internal event log, not useful for ad-hoc queries.
 	'task_group_events',
 	// Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
 	'node_executions',
@@ -390,16 +454,18 @@ export function getExcludedTableNames(): string[] {
 /**
  * Builds a parameterized WHERE clause for a scoped table configuration.
  *
- * Direct scope:  `room_id = ?`  (one param)
- * Indirect scope: `goal_id IN (SELECT id FROM goals WHERE room_id = ?)`  (one param)
- * Global scope:  returns empty clause (no filtering)
+ * Direct scope:       `room_id = ?`  (one param)
+ * LIKE direct scope:  `id LIKE ?`    (one param — pattern is prefix+scopeValue+suffix)
+ * Indirect scope:     `goal_id IN (SELECT id FROM goals WHERE room_id = ?)`  (one param)
+ * LIKE indirect scope:`id IN (SELECT group_id FROM members WHERE session_id LIKE ?)`
+ * Global scope:       returns empty clause (no filtering)
  */
 export function buildScopeFilter(
 	tableConfig: ScopeTableConfig,
 	scopeValue: string
 ): ScopeFilterResult {
-	// Global tables have no scope column or join — no filter needed
-	if (!tableConfig.scopeColumn && !tableConfig.scopeJoin) {
+	// Global tables have no scope column, join, or like — no filter needed
+	if (!tableConfig.scopeColumn && !tableConfig.scopeJoin && !tableConfig.scopeLike) {
 		return { whereClause: '', params: [] };
 	}
 
@@ -411,9 +477,25 @@ export function buildScopeFilter(
 		};
 	}
 
+	// LIKE-based direct scope filter (e.g., session ID prefix matching)
+	if (tableConfig.scopeLike) {
+		const { column, patternPrefix, patternSuffix } = tableConfig.scopeLike;
+		return {
+			whereClause: `${column} LIKE ?`,
+			params: [`${patternPrefix}${scopeValue}${patternSuffix}`],
+		};
+	}
+
 	// Indirect scope filter via join table
 	if (tableConfig.scopeJoin) {
 		const join = tableConfig.scopeJoin;
+		if (join.likePrefix !== undefined) {
+			// LIKE-based join: e.g., session_groups scoped via session_group_members.session_id
+			return {
+				whereClause: `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
+				params: [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`],
+			};
+		}
 		return {
 			whereClause: `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`,
 			params: [scopeValue],

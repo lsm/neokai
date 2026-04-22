@@ -509,8 +509,8 @@ function buildPrefixedScopeFilter(
 	config: ScopeTableConfig,
 	scopeValue: string
 ): { whereClause: string; params: unknown[] } {
-	// No scope column or join — no filter needed (global tables)
-	if (!config.scopeColumn && !config.scopeJoin) {
+	// No scope column, join, or like — no filter needed (global tables)
+	if (!config.scopeColumn && !config.scopeJoin && !config.scopeLike) {
 		return { whereClause: '', params: [] };
 	}
 
@@ -522,9 +522,25 @@ function buildPrefixedScopeFilter(
 		};
 	}
 
+	// LIKE-based direct scope filter (e.g., session ID prefix matching)
+	if (config.scopeLike) {
+		const { column, patternPrefix, patternSuffix } = config.scopeLike;
+		return {
+			whereClause: `_dbq.${column} LIKE ?`,
+			params: [`${patternPrefix}${scopeValue}${patternSuffix}`],
+		};
+	}
+
 	// Indirect scope filter via join table
 	if (config.scopeJoin) {
 		const join = config.scopeJoin;
+		if (join.likePrefix !== undefined) {
+			// LIKE-based join: e.g., session_groups scoped via session_group_members.session_id
+			return {
+				whereClause: `_dbq.${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
+				params: [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`],
+			};
+		}
 		return {
 			whereClause: `_dbq.${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`,
 			params: [scopeValue],
@@ -606,11 +622,25 @@ function rewriteScopedQuery(
 					directFilters.set(clause, [scopeValue]);
 				}
 			}
+			if (config.scopeLike) {
+				const { column, patternPrefix, patternSuffix } = config.scopeLike;
+				const clause = `${column} LIKE ?`;
+				if (!directFilters.has(clause)) {
+					directFilters.set(clause, [`${patternPrefix}${scopeValue}${patternSuffix}`]);
+				}
+			}
 			if (config.scopeJoin) {
 				const join = config.scopeJoin;
-				const clause = `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`;
-				if (!directFilters.has(clause)) {
-					directFilters.set(clause, [scopeValue]);
+				if (join.likePrefix !== undefined) {
+					const clause = `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`;
+					if (!directFilters.has(clause)) {
+						directFilters.set(clause, [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`]);
+					}
+				} else {
+					const clause = `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`;
+					if (!directFilters.has(clause)) {
+						directFilters.set(clause, [scopeValue]);
+					}
 				}
 			}
 		}
