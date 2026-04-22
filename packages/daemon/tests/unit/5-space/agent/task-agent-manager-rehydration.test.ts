@@ -744,11 +744,6 @@ describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
 	afterEach(() => {
 		ctx.fromInitSpy.mockRestore();
 		restoreSpy.mockRestore();
-		try {
-			rmSync(ctx.dir, { recursive: true, force: true });
-		} catch {
-			// ignore cleanup errors
-		}
 	});
 
 	test('is a no-op when pendingMessageRepo is not configured', async () => {

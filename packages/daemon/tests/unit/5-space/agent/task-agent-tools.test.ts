@@ -1483,7 +1483,6 @@ describe('createTaskAgentToolHandlers — send_message auto-resume on queue', ()
 	});
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('calls tryResumeNodeAgentSession after queuing a non-deduped message', async () => {

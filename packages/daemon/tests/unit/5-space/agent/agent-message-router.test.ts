@@ -1143,7 +1143,6 @@ describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enq
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('calls onMessageQueued with agent name when message is newly queued', async () => {
