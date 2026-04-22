@@ -385,16 +385,44 @@ describe('SessionManager', () => {
 		});
 	});
 
-	describe('deleteSession', () => {
-		it('should delegate to sessionLifecycle.delete', async () => {
+	describe('deleteSessionResources (UI-only: session.delete RPC)', () => {
+		it('should delete the DB row when called with the ui_session_delete trigger', async () => {
 			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
 				id: 'test-id',
 				workspacePath: '/test',
 			});
 
-			await sessionManager.deleteSession('test-id');
+			// Task #85: `deleteSession(sessionId)` has been removed. The two
+			// UI RPC handlers (`session.delete` and `room.delete`) now call
+			// `deleteSessionResources(sessionId, trigger)`, which is the only
+			// path permitted to remove the sessions DB row + sdk_messages.
+			await sessionManager.deleteSessionResources('test-id', 'ui_session_delete');
 
 			expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
+		});
+	});
+
+	describe('archiveSessionResources (UI-only: session.archive + task.archive RPCs)', () => {
+		it('should NOT delete the DB row when archiving (preserves conversation history)', async () => {
+			(mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+				id: 'archive-id',
+				workspacePath: '/test',
+			});
+
+			// Task #85: archive is the "stash" path — worktree + SDK .jsonl
+			// are moved out of the live directory but the DB row + sdk_messages
+			// are preserved so the session is still viewable in the UI.
+			await sessionManager.archiveSessionResources('archive-id', 'ui_session_archive');
+
+			expect(mockDb.deleteSession).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('interruptInMemorySession (non-UI lifecycle callers)', () => {
+		it('should NOT delete the DB row — only stops the in-memory SDK subprocess', async () => {
+			await sessionManager.interruptInMemorySession('ephemeral-id');
+
+			expect(mockDb.deleteSession).not.toHaveBeenCalled();
 		});
 	});
 

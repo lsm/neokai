@@ -240,7 +240,17 @@ interface TestCtx {
 	spaceManager: SpaceManager;
 	runtime: SpaceRuntime;
 	daemonHub: TestDaemonHub;
+	/**
+	 * Task #85: `deleteSession` has been removed from `SessionManager`. The
+	 * mock still exposes a stub so any accidental call surfaces here, but
+	 * every assertion expects the array to remain empty for non-UI
+	 * lifecycle events.
+	 */
 	sessionManagerDeleteCalls: string[];
+	/** Tracks calls to `SessionManager.archiveSessionResources` (task archive path). */
+	sessionManagerArchiveCalls: Array<{ sessionId: string; trigger: string }>;
+	/** Tracks calls to `SessionManager.interruptInMemorySession` (preserve-DB path). */
+	sessionManagerInterruptCalls: string[];
 	mockDb: {
 		getSession: (id: string) => unknown;
 		createSession: (session: unknown) => void;
@@ -287,6 +297,8 @@ function makeCtx(): TestCtx {
 
 	const createdSessions = new Map<string, MockAgentSession>();
 	const sessionManagerDeleteCalls: string[] = [];
+	const sessionManagerArchiveCalls: Array<{ sessionId: string; trigger: string }> = [];
+	const sessionManagerInterruptCalls: string[] = [];
 
 	const dbSessions = new Map<string, unknown>();
 
@@ -310,8 +322,22 @@ function makeCtx(): TestCtx {
 	};
 
 	const mockSessionManager = {
+		// Task #85: legacy `deleteSession` has been removed from the real
+		// `SessionManager`. The stub remains so that any accidental call to
+		// it from production code is surfaced as a test failure.
 		deleteSession: async (sessionId: string) => {
 			sessionManagerDeleteCalls.push(sessionId);
+		},
+		archiveSessionResources: async (sessionId: string, trigger: string) => {
+			sessionManagerArchiveCalls.push({ sessionId, trigger });
+		},
+		deleteSessionResources: async (sessionId: string, _trigger: string) => {
+			// Task #85: forbidden from non-UI code paths — tracked so the
+			// assertions in this suite can verify nothing calls it.
+			sessionManagerDeleteCalls.push(sessionId);
+		},
+		interruptInMemorySession: async (sessionId: string) => {
+			sessionManagerInterruptCalls.push(sessionId);
 		},
 		registerSession: (_agentSession: unknown) => {},
 		getSessionFromDB: (sessionId: string) => {
@@ -385,6 +411,8 @@ function makeCtx(): TestCtx {
 		runtime,
 		daemonHub,
 		sessionManagerDeleteCalls,
+		sessionManagerArchiveCalls,
+		sessionManagerInterruptCalls,
 		mockDb,
 		manager,
 		createdSessions,
@@ -444,6 +472,15 @@ describe('Task Agent Session Lifecycle', () => {
 			const mockSessionManager = {
 				deleteSession: async (sessionId: string) => {
 					ctx.sessionManagerDeleteCalls.push(sessionId);
+				},
+				archiveSessionResources: async (sessionId: string, trigger: string) => {
+					ctx.sessionManagerArchiveCalls.push({ sessionId, trigger });
+				},
+				deleteSessionResources: async (sessionId: string, _trigger: string) => {
+					ctx.sessionManagerDeleteCalls.push(sessionId);
+				},
+				interruptInMemorySession: async (sessionId: string) => {
+					ctx.sessionManagerInterruptCalls.push(sessionId);
 				},
 				registerSession: (agentSession: unknown) => {
 					const session = agentSession as { session: { id: string } };
@@ -527,6 +564,9 @@ describe('Task Agent Session Lifecycle', () => {
 				db: ctx.mockDb as unknown as import('../../../../src/storage/database.ts').Database,
 				sessionManager: {
 					deleteSession: async () => {},
+					archiveSessionResources: async () => {},
+					deleteSessionResources: async () => {},
+					interruptInMemorySession: async () => {},
 					registerSession: () => {},
 					getSessionFromDB: () => null,
 				} as unknown as import('../../../../src/lib/session/session-manager.ts').SessionManager,
@@ -591,6 +631,9 @@ describe('Task Agent Session Lifecycle', () => {
 			const registerCalls: string[] = [];
 			const mockSessionManager = {
 				deleteSession: async () => {},
+				archiveSessionResources: async () => {},
+				deleteSessionResources: async () => {},
+				interruptInMemorySession: async () => {},
 				registerSession: (agentSession: unknown) => {
 					const session = agentSession as { session: { id: string } };
 					registerCalls.push(session.session.id);
@@ -691,6 +734,9 @@ describe('Task Agent Session Lifecycle', () => {
 				db: ctx.mockDb as unknown as import('../../../../src/storage/database.ts').Database,
 				sessionManager: {
 					deleteSession: async () => {},
+					archiveSessionResources: async () => {},
+					deleteSessionResources: async () => {},
+					interruptInMemorySession: async () => {},
 					registerSession: () => {},
 					getSessionFromDB: () => null,
 				} as unknown as import('../../../../src/lib/session/session-manager.ts').SessionManager,
@@ -733,8 +779,9 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(manager.getTaskWorktreePath(task.id)).toBeUndefined();
 		});
 
-		test('cleanup with reason cancelled removes worktree', async () => {
+		test('Task #85: cleanup with reason cancelled does NOT remove the worktree', async () => {
 			const removedWorktrees: string[] = [];
+			const completedWorktrees: string[] = [];
 			const mockWorktreeManager = {
 				createTaskWorktree: async (spaceId: string, taskId: string) => ({
 					path: `/worktrees/${spaceId}/${taskId}`,
@@ -743,7 +790,9 @@ describe('Task Agent Session Lifecycle', () => {
 				removeTaskWorktree: async (spaceId: string, taskId: string) => {
 					removedWorktrees.push(`${spaceId}:${taskId}`);
 				},
-				markTaskWorktreeCompleted: () => {},
+				markTaskWorktreeCompleted: (spaceId: string, taskId: string) => {
+					completedWorktrees.push(`${spaceId}:${taskId}`);
+				},
 				// DB-fallback stub: no stored record in this test → null.
 				getTaskWorktreePathSync: () => null,
 			};
@@ -752,6 +801,9 @@ describe('Task Agent Session Lifecycle', () => {
 				db: ctx.mockDb as unknown as import('../../../../src/storage/database.ts').Database,
 				sessionManager: {
 					deleteSession: async () => {},
+					archiveSessionResources: async () => {},
+					deleteSessionResources: async () => {},
+					interruptInMemorySession: async () => {},
 					registerSession: () => {},
 					getSessionFromDB: () => null,
 				} as unknown as import('../../../../src/lib/session/session-manager.ts').SessionManager,
@@ -787,17 +839,24 @@ describe('Task Agent Session Lifecycle', () => {
 			await manager.spawnTaskAgent(task, ctx.space, null, null);
 			await manager.cleanup(task.id, 'cancelled');
 
-			expect(removedWorktrees).toContain(`${ctx.spaceId}:${task.id}`);
+			// Task #85: worktree removal belongs exclusively to the UI-initiated
+			// task-archive pipeline. Cancellation cleanup must preserve the
+			// on-disk worktree so the user's changes are recoverable.
+			expect(removedWorktrees).not.toContain(`${ctx.spaceId}:${task.id}`);
+			expect(completedWorktrees).not.toContain(`${ctx.spaceId}:${task.id}`);
 		});
 
-		test('cleanup with reason done calls markTaskWorktreeCompleted', async () => {
+		test('Task #85: cleanup with reason done does NOT markTaskWorktreeCompleted', async () => {
 			const completedWorktrees: string[] = [];
+			const removedWorktrees: string[] = [];
 			const mockWorktreeManager = {
 				createTaskWorktree: async (spaceId: string, taskId: string) => ({
 					path: `/worktrees/${spaceId}/${taskId}`,
 					slug: `task-${taskId}`,
 				}),
-				removeTaskWorktree: async () => {},
+				removeTaskWorktree: async (spaceId: string, taskId: string) => {
+					removedWorktrees.push(`${spaceId}:${taskId}`);
+				},
 				markTaskWorktreeCompleted: (spaceId: string, taskId: string) => {
 					completedWorktrees.push(`${spaceId}:${taskId}`);
 				},
@@ -809,6 +868,9 @@ describe('Task Agent Session Lifecycle', () => {
 				db: ctx.mockDb as unknown as import('../../../../src/storage/database.ts').Database,
 				sessionManager: {
 					deleteSession: async () => {},
+					archiveSessionResources: async () => {},
+					deleteSessionResources: async () => {},
+					interruptInMemorySession: async () => {},
 					registerSession: () => {},
 					getSessionFromDB: () => null,
 				} as unknown as import('../../../../src/lib/session/session-manager.ts').SessionManager,
@@ -844,7 +906,10 @@ describe('Task Agent Session Lifecycle', () => {
 			await manager.spawnTaskAgent(task, ctx.space, null, null);
 			await manager.cleanup(task.id, 'done');
 
-			expect(completedWorktrees).toContain(`${ctx.spaceId}:${task.id}`);
+			// Task #85: marking the worktree "completed" starts the TTL reaper
+			// clock. Only the UI-initiated task-archive pipeline may do that.
+			expect(completedWorktrees).not.toContain(`${ctx.spaceId}:${task.id}`);
+			expect(removedWorktrees).not.toContain(`${ctx.spaceId}:${task.id}`);
 		});
 
 		test('cleanup clears completion callbacks for sub-sessions', async () => {
@@ -883,7 +948,7 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(ctx.manager.getSubSession(subSessionId2)).toBeUndefined();
 		});
 
-		test('cleanup deletes both task agent and sub-session DB records', async () => {
+		test('Task #85: cleanup preserves both task-agent and sub-session DB records', async () => {
 			const task = await makeTask(ctx.taskManager);
 			const taskSessionId = await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -895,8 +960,11 @@ describe('Task Agent Session Lifecycle', () => {
 
 			await ctx.manager.cleanup(task.id);
 
-			expect(ctx.sessionManagerDeleteCalls).toContain(taskSessionId);
-			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
+			// Cleanup must not delete any persisted session data — only the
+			// UI archive/delete RPC handlers are allowed to do that.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(taskSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
 		});
 	});
 
@@ -938,7 +1006,7 @@ describe('Task Agent Session Lifecycle', () => {
 	// =======================================================================
 
 	describe('cancelBySessionId', () => {
-		test('cancels a sub-session by its agent session ID', async () => {
+		test('stops a sub-session in-memory WITHOUT deleting its DB row (Task #85)', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -951,14 +1019,15 @@ describe('Task Agent Session Lifecycle', () => {
 			const subSession = ctx.createdSessions.get(subSessionId)!;
 			expect(subSession._cleanupCalled).toBe(false);
 
-			// cancelBySessionId is synchronous but internally calls stopAndDeleteSession asynchronously
+			// cancelBySessionId is synchronous; the in-memory stop is async.
 			ctx.manager.cancelBySessionId(subSessionId);
-
-			// Wait for async cleanup to complete
 			await new Promise((r) => setTimeout(r, 50));
 
+			// The SDK subprocess is interrupted + cleanup is called, but the
+			// DB row is preserved (only UI archive/delete RPC may delete).
 			expect(subSession._cleanupCalled).toBe(true);
-			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
 		});
 
 		test('is a no-op for non-existent session ID', () => {
@@ -966,7 +1035,7 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(() => ctx.manager.cancelBySessionId('non-existent-session')).not.toThrow();
 		});
 
-		test('prevents double-cancel of same session', async () => {
+		test('double-cancel does not delete or archive session data', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -982,9 +1051,39 @@ describe('Task Agent Session Lifecycle', () => {
 
 			await new Promise((r) => setTimeout(r, 50));
 
-			// Session should only be deleted once (deleteSession called once)
-			const deleteCount = ctx.sessionManagerDeleteCalls.filter((id) => id === subSessionId).length;
-			expect(deleteCount).toBe(1);
+			// Task #85: cancel must preserve DB + archived files regardless.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
+		});
+
+		test('spawn rollback (cancelBySessionId path) preserves the DB row (Task #85)', async () => {
+			// Regression guard: spawnWorkflowNodeAgent rolls back via
+			// `cancelBySessionId(spawnedSessionId)` when a post-create step
+			// (e.g. injectMessageIntoSession) throws. That rollback must NOT
+			// delete the session row, archive the `.jsonl`, or otherwise touch
+			// persistent storage — the Task #85 invariant says only UI RPCs may.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:rollback-step`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			// Sanity: the DB row exists before the rollback call.
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+
+			// Simulate the spawn-rollback code path exactly: cancelBySessionId
+			// is what the catch block in spawnWorkflowNodeAgent calls.
+			ctx.manager.cancelBySessionId(subSessionId);
+			await new Promise((r) => setTimeout(r, 50));
+
+			// DB row preserved.
+			expect(ctx.mockDb.getSession(subSessionId)).not.toBeNull();
+			// Neither UI-only primitive (archive / delete) was invoked.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.sessionManagerArchiveCalls.map((c) => c.sessionId)).not.toContain(subSessionId);
 		});
 	});
 
@@ -1058,7 +1157,7 @@ describe('Task Agent Session Lifecycle', () => {
 	// non-recoverable terminal state — should trigger full teardown.
 
 	describe('task-archive listener', () => {
-		test('archived task triggers cleanup() which deletes sub-sessions', async () => {
+		test('archived task triggers archiveSessionResources (preserves DB row, archives .jsonl)', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -1076,14 +1175,19 @@ describe('Task Agent Session Lifecycle', () => {
 				task: { ...task, status: 'archived' },
 			});
 
-			// Cleanup is async — wait for the fire-and-forget promise to settle.
+			// Archive pipeline is async — wait for the fire-and-forget promise to settle.
 			await new Promise((r) => setTimeout(r, 50));
 
-			// The sub-session was torn down and the DB session row was deleted.
-			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
+			// Task #85: attached sessions are archived (UI-initiated task archive)
+			// but their DB rows are preserved via archiveSessionResources.
+			const archivedSubSessionIds = ctx.sessionManagerArchiveCalls
+				.filter((c) => c.trigger === 'ui_task_archive')
+				.map((c) => c.sessionId);
+			expect(archivedSubSessionIds).toContain(subSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
 		});
 
-		test('non-archived status updates do NOT trigger cleanup', async () => {
+		test('non-archived status updates do NOT trigger archive or delete', async () => {
 			const task = await makeTask(ctx.taskManager);
 			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
 
@@ -1106,6 +1210,70 @@ describe('Task Agent Session Lifecycle', () => {
 
 			// Sub-session must remain alive — send_message targeting it must still work.
 			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			// And no archive event should have fired.
+			const archivedIds = ctx.sessionManagerArchiveCalls.map((c) => c.sessionId);
+			expect(archivedIds).not.toContain(subSessionId);
+		});
+
+		test('system_reconcile archiveSource does NOT trigger session cleanup (Task #85 follow-up)', async () => {
+			// Regression for reviewer follow-up: `archiveDuplicateRunTasks` in
+			// space-runtime.ts marks stale duplicate-run tasks as archived for
+			// DB consistency. Those system archives must NOT remove the
+			// session worktrees / SDK `.jsonl` files — only user-initiated
+			// archives may cascade cleanup.
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:system-reconcile`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			// Fire `space.task.updated` with status='archived' AND the
+			// system_reconcile marker — the listener must skip cleanup.
+			await ctx.daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				task: { ...task, status: 'archived' },
+				archiveSource: 'system_reconcile',
+			});
+			await new Promise((r) => setTimeout(r, 50));
+
+			// Neither archive nor delete primitives should have been called
+			// for the attached sub-session.
+			const archivedIds = ctx.sessionManagerArchiveCalls.map((c) => c.sessionId);
+			expect(archivedIds).not.toContain(subSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+		});
+
+		test('user archiveSource (explicit) DOES trigger session cleanup', async () => {
+			// Sibling of the system_reconcile test: when the marker is
+			// explicitly `'user'`, the cleanup cascade must still fire
+			// (mirrors the missing-marker default path).
+			const task = await makeTask(ctx.taskManager);
+			await ctx.manager.spawnTaskAgent(task, ctx.space, null, null);
+
+			const subSessionId = `space:${ctx.spaceId}:task:${task.id}:step:user-archive`;
+			await ctx.manager.createSubSession(task.id, subSessionId, {
+				sessionId: subSessionId,
+				workspacePath: '/tmp/ws',
+			} as unknown as import('../../../../src/lib/agent/agent-session.ts').AgentSessionInit);
+
+			await ctx.daemonHub.emit('space.task.updated', {
+				sessionId: 'global',
+				spaceId: ctx.spaceId,
+				taskId: task.id,
+				task: { ...task, status: 'archived' },
+				archiveSource: 'user',
+			});
+			await new Promise((r) => setTimeout(r, 50));
+
+			const archivedSubSessionIds = ctx.sessionManagerArchiveCalls
+				.filter((c) => c.trigger === 'ui_task_archive')
+				.map((c) => c.sessionId);
+			expect(archivedSubSessionIds).toContain(subSessionId);
 		});
 	});
 
@@ -1347,8 +1515,11 @@ describe('Task Agent Session Lifecycle', () => {
 			expect(ctx.manager.isTaskAgentAlive(task.id)).toBe(false);
 			expect(ctx.manager.getTaskAgent(task.id)).toBeUndefined();
 			expect(ctx.manager.getSubSession(subSessionId)).toBeUndefined();
-			expect(ctx.sessionManagerDeleteCalls).toContain(taskSessionId);
-			expect(ctx.sessionManagerDeleteCalls).toContain(subSessionId);
+			// Task #85: cleanup must preserve persisted session data — only the
+			// UI archive/delete RPC paths are allowed to touch the DB row.
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(taskSessionId);
+			expect(ctx.sessionManagerDeleteCalls).not.toContain(subSessionId);
+			expect(ctx.sessionManagerArchiveCalls).toHaveLength(0);
 		});
 
 		test('end-to-end: sub-session completion triggers [NODE_COMPLETE] notification with workflow run', async () => {

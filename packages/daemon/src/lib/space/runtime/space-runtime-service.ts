@@ -120,13 +120,14 @@ export class SpaceRuntimeService {
 			...config,
 			nodeExecutionRepo: this.nodeExecutionRepo,
 			selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
-			onTaskUpdated: async ({ spaceId, task }) => {
+			onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
 				if (!this.config.daemonHub) return;
 				await this.config.daemonHub.emit('space.task.updated', {
 					sessionId: 'global',
 					spaceId,
 					taskId: task.id,
 					task,
+					...(archiveSource ? { archiveSource } : {}),
 				});
 			},
 			onWorkflowRunCreated: async ({ spaceId, run }) => {

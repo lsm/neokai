@@ -491,16 +491,31 @@ function makeSettingsManager(initial: Partial<GlobalSettings> = {}): NeoSettings
 function makeSessionManager(
 	roomSessions: Map<string, string> = new Map(),
 	taskSessions: Map<string, string> = new Map()
-): NeoSessionManager {
+): NeoSessionManager & {
+	_injectedMessages: Array<{ sessionId: string; message: string }>;
+	_deletedSessions: Array<{ sessionId: string; trigger: string }>;
+	_deleteThrowsFor?: Set<string>;
+} {
 	const injectedMessages: Array<{ sessionId: string; message: string }> = [];
-	return {
-		injectMessage: async (sessionId, message) => {
+	const deletedSessions: Array<{ sessionId: string; trigger: string }> = [];
+	const deleteThrowsFor: Set<string> = new Set();
+	const mgr = {
+		injectMessage: async (sessionId: string, message: string) => {
 			injectedMessages.push({ sessionId, message });
 		},
-		getActiveSessionForRoom: (roomId) => roomSessions.get(roomId) ?? null,
-		getActiveSessionForTask: (taskId) => taskSessions.get(taskId) ?? null,
+		getActiveSessionForRoom: (roomId: string) => roomSessions.get(roomId) ?? null,
+		getActiveSessionForTask: (taskId: string) => taskSessions.get(taskId) ?? null,
+		deleteSessionResources: async (sessionId: string, trigger: 'ui_neo_room_delete') => {
+			if (deleteThrowsFor.has(sessionId)) {
+				throw new Error(`mock delete failed for ${sessionId}`);
+			}
+			deletedSessions.push({ sessionId, trigger });
+		},
 		_injectedMessages: injectedMessages,
-	} as NeoSessionManager & { _injectedMessages: typeof injectedMessages };
+		_deletedSessions: deletedSessions,
+		_deleteThrowsFor: deleteThrowsFor,
+	};
+	return mgr;
 }
 
 function makeConfig(
@@ -720,6 +735,81 @@ describe('delete_room', () => {
 		const result = parseResult(await delete_room({ room_id: 'quiet-room' }));
 		expect(result.success).toBe(true);
 		expect(result.roomId).toBe('quiet-room');
+	});
+
+	it('routes each room session through deleteSessionResources with ui_neo_room_delete trigger (Task #85)', async () => {
+		const room = makeRoom({
+			id: 'del-room-with-sessions',
+			sessionIds: ['session-a', 'session-b', 'session-c'],
+		});
+		const sessionManager = makeSessionManager();
+		const config = makeConfig({
+			rooms: [room],
+			securityMode: 'autonomous',
+			sessionManager,
+		});
+		const { delete_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_room({ room_id: 'del-room-with-sessions' }));
+
+		expect(result.success).toBe(true);
+		// Each session routed through the UI-only delete primitive with the
+		// narrowed trigger so the CI regression guard keeps catching misuse.
+		expect(
+			(
+				sessionManager as unknown as {
+					_deletedSessions: Array<{ sessionId: string; trigger: string }>;
+				}
+			)._deletedSessions
+		).toEqual([
+			{ sessionId: 'session-a', trigger: 'ui_neo_room_delete' },
+			{ sessionId: 'session-b', trigger: 'ui_neo_room_delete' },
+			{ sessionId: 'session-c', trigger: 'ui_neo_room_delete' },
+		]);
+	});
+
+	it('continues room delete even when a single session cleanup throws (best-effort)', async () => {
+		const room = makeRoom({
+			id: 'del-room-partial',
+			sessionIds: ['session-ok', 'session-bad', 'session-also-ok'],
+		});
+		const sessionManager = makeSessionManager();
+		(sessionManager as unknown as { _deleteThrowsFor: Set<string> })._deleteThrowsFor.add(
+			'session-bad'
+		);
+		const config = makeConfig({
+			rooms: [room],
+			securityMode: 'autonomous',
+			sessionManager,
+		});
+		const { delete_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_room({ room_id: 'del-room-partial' }));
+
+		expect(result.success).toBe(true);
+		expect(result.roomId).toBe('del-room-partial');
+		// Both non-throwing sessions still got cleaned up.
+		const deleted = (
+			sessionManager as unknown as {
+				_deletedSessions: Array<{ sessionId: string; trigger: string }>;
+			}
+		)._deletedSessions.map((d) => d.sessionId);
+		expect(deleted).toEqual(['session-ok', 'session-also-ok']);
+	});
+
+	it('still deletes room when no sessionManager is wired (no-op cleanup)', async () => {
+		// Older callers / tests may not wire sessionManager. Room deletion must
+		// still succeed; session cleanup just becomes a no-op.
+		const room = makeRoom({
+			id: 'del-room-no-sm',
+			sessionIds: ['session-orphan'],
+		});
+		const config = makeConfig({
+			rooms: [room],
+			securityMode: 'autonomous',
+			// sessionManager intentionally omitted
+		});
+		const { delete_room } = createNeoActionToolHandlers(config);
+		const result = parseResult(await delete_room({ room_id: 'del-room-no-sm' }));
+		expect(result.success).toBe(true);
 	});
 });
 
