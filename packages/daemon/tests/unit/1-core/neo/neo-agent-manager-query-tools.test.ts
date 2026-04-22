@@ -223,6 +223,7 @@ function makeMinimalToolsConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToo
 function makeAppMcpManager(configs: Record<string, McpServerConfig> = {}): NeoAppMcpManager {
 	return {
 		getEnabledMcpConfigs: mock(() => configs),
+		getEnabledMcpConfigsForSession: mock(() => configs),
 	};
 }
 

@@ -16,6 +16,7 @@ import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { RoomMcpEnablementRepository } from '../../../../src/storage/repositories/room-mcp-enablement-repository';
+import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository';
 import { AppMcpLifecycleManager } from '../../../../src/lib/mcp';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Database } from '../../../../src/storage/database';
@@ -30,11 +31,13 @@ function createTestDb(): { bunDb: BunDatabase; reactiveDb: ReactiveDatabase; db:
 	const reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
 	const appMcpServerRepo = new AppMcpServerRepository(bunDb, reactiveDb);
 	const roomMcpEnablementRepo = new RoomMcpEnablementRepository(bunDb, reactiveDb);
+	const mcpEnablementRepo = new McpEnablementRepository(bunDb, reactiveDb);
 
 	// Build a minimal Database facade that exposes both repositories
 	const db = {
 		appMcpServers: appMcpServerRepo,
 		roomMcpEnablement: roomMcpEnablementRepo,
+		mcpEnablement: mcpEnablementRepo,
 	} as unknown as Database;
 
 	return { bunDb, reactiveDb, db };
@@ -532,6 +535,104 @@ describe('AppMcpLifecycleManager', () => {
 			// Now falls back to global (which includes reset-test since it's globally enabled)
 			configs = manager.getEnabledMcpConfigsForRoom('room-reset');
 			expect(configs['reset-test']).toBeDefined();
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// getEnabledMcpConfigsForSession — unified scope-aware resolver
+	// -------------------------------------------------------------------------
+
+	describe('getEnabledMcpConfigsForSession', () => {
+		test('falls back to registry defaults when no overrides exist', () => {
+			repo.create({ name: 'on-by-default', sourceType: 'stdio', command: 'x', enabled: true });
+			repo.create({ name: 'off-by-default', sourceType: 'stdio', command: 'x', enabled: false });
+
+			const configs = manager.getEnabledMcpConfigsForSession({
+				id: 'sess-1',
+				context: { spaceId: 'space-1', roomId: 'room-1' },
+			});
+
+			expect(configs['on-by-default']).toBeDefined();
+			expect(configs['off-by-default']).toBeUndefined();
+		});
+
+		test('space override can disable a registry-enabled server', () => {
+			const server = repo.create({
+				name: 'space-disabled',
+				sourceType: 'stdio',
+				command: 'x',
+				enabled: true,
+			});
+			db.mcpEnablement.setOverride('space', 'space-1', server.id, false);
+
+			const configs = manager.getEnabledMcpConfigsForSession({
+				id: 'sess-1',
+				context: { spaceId: 'space-1' },
+			});
+
+			expect(configs['space-disabled']).toBeUndefined();
+		});
+
+		test('session override beats room override beats space override', () => {
+			const server = repo.create({
+				name: 'contested',
+				sourceType: 'stdio',
+				command: 'x',
+				enabled: true,
+			});
+
+			db.mcpEnablement.setOverride('space', 'space-1', server.id, false);
+			// Room override re-enables it — should win over space.
+			db.mcpEnablement.setOverride('room', 'room-1', server.id, true);
+
+			const sessionCtx = { spaceId: 'space-1', roomId: 'room-1' };
+			expect(
+				manager.getEnabledMcpConfigsForSession({ id: 'sess-1', context: sessionCtx })['contested']
+			).toBeDefined();
+
+			// Session override now disables it — should win over room + space.
+			db.mcpEnablement.setOverride('session', 'sess-1', server.id, false);
+			expect(
+				manager.getEnabledMcpConfigsForSession({ id: 'sess-1', context: sessionCtx })['contested']
+			).toBeUndefined();
+
+			// A second session without the session-level override still sees it
+			// (room override takes effect).
+			expect(
+				manager.getEnabledMcpConfigsForSession({ id: 'sess-2', context: sessionCtx })['contested']
+			).toBeDefined();
+		});
+
+		test('invalid entries are filtered out even when explicitly enabled', () => {
+			const broken = repo.create({
+				name: 'broken',
+				sourceType: 'stdio',
+				// missing command — invalid
+				enabled: true,
+			});
+			db.mcpEnablement.setOverride('session', 'sess-1', broken.id, true);
+
+			const configs = manager.getEnabledMcpConfigsForSession({
+				id: 'sess-1',
+				context: { spaceId: 'space-1' },
+			});
+
+			expect(configs['broken']).toBeUndefined();
+		});
+
+		test('context-less sessions see only registry defaults (neo path)', () => {
+			const server = repo.create({
+				name: 'global',
+				sourceType: 'stdio',
+				command: 'x',
+				enabled: true,
+			});
+			// This override belongs to some space the neo session is not in.
+			db.mcpEnablement.setOverride('space', 'some-space', server.id, false);
+
+			const configs = manager.getEnabledMcpConfigsForSession({ id: 'neo:global' });
+
+			expect(configs['global']).toBeDefined();
 		});
 	});
 });

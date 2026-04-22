@@ -1047,7 +1047,10 @@ describe('SessionFactory.restoreSession — worker MCP injection and skills', ()
 				getEnabledMcpServersConfig: mock(() => overrides.fileMcpServers ?? {}),
 			} as never,
 			appMcpManager: overrides.registryMcpServers
-				? { getEnabledMcpConfigs: mock(() => overrides.registryMcpServers) }
+				? {
+						getEnabledMcpConfigs: mock(() => overrides.registryMcpServers),
+						getEnabledMcpConfigsForSession: mock(() => overrides.registryMcpServers),
+					}
 				: undefined,
 			skillsManager: overrides.skillsManager as never,
 			appMcpServerRepo: overrides.appMcpServerRepo as never,

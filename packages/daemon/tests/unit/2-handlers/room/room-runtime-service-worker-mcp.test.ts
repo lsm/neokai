@@ -109,7 +109,10 @@ async function buildSessionFactory(opts: {
 	};
 
 	const appMcpManager = hasAppMcpManager
-		? { getEnabledMcpConfigs: () => registryMcpServers }
+		? {
+				getEnabledMcpConfigs: () => registryMcpServers,
+				getEnabledMcpConfigsForSession: () => registryMcpServers,
+			}
 		: undefined;
 
 	// Build a minimal RoomRuntimeService config
