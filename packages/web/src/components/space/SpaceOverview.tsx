@@ -350,9 +350,7 @@ export function SpaceOverview({ spaceId, onSelectTask }: SpaceOverviewProps) {
 	// Task counts
 	const activeTasks = tasks.filter((t) => t.status === 'open' || t.status === 'in_progress');
 	const reviewTasks = tasks.filter((t) => t.status === 'blocked' || t.status === 'review');
-	const doneTasks = tasks.filter(
-		(t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
-	);
+	const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'cancelled');
 
 	// Recent tasks — sorted by updatedAt, top 5
 	const recentTasks = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);

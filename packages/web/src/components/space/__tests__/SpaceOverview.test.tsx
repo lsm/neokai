@@ -416,6 +416,7 @@ describe('SpaceOverview', () => {
 				makeTask('t2', 'in_progress'),
 				makeTask('t3', 'review'),
 				makeTask('t4', 'done'),
+				makeTask('t5', 'archived'),
 			];
 		});
 
@@ -435,6 +436,15 @@ describe('SpaceOverview', () => {
 			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
 			fireEvent.click(getByText('Done').closest('button')!);
 			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'completed');
+		});
+
+		it('Done count excludes archived tasks to match the completed tab', () => {
+			// t4 (done) counts; t5 (archived) does NOT count
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Done')
+			)!;
+			expect(doneBtn.textContent).toContain('1');
 		});
 
 		it('stat cards have cursor-pointer class', () => {
