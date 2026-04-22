@@ -70,8 +70,13 @@ describe('scope-config', () => {
 				'channel_cycles',
 				'workflow_run_artifacts',
 				'workflow_run_artifact_cache',
+				// Main-DB tables exposed with space-scoped filtering via session ID prefix:
+				'sessions',
+				'sdk_messages',
+				'session_groups',
+				'session_group_members',
 			]);
-			expect(names).toHaveLength(11);
+			expect(names).toHaveLength(15);
 		});
 
 		it('all table configs have a description', () => {
@@ -192,19 +197,28 @@ describe('scope-config', () => {
 			}
 		});
 
-		it('sdk_messages is not in any scope', () => {
-			for (const scopeType of ['global', 'room', 'space'] as const) {
-				expect(getAccessibleTableNames(scopeType)).not.toContain('sdk_messages');
-			}
+		it('sdk_messages is accessible in space scope (with session ID prefix filtering)', () => {
+			// sdk_messages is now exposed in space scope (filtered by session_id LIKE 'space:<id>:%')
+			expect(getAccessibleTableNames('space')).toContain('sdk_messages');
+			// But NOT in global or room scope
+			expect(getAccessibleTableNames('global')).not.toContain('sdk_messages');
+			expect(getAccessibleTableNames('room')).not.toContain('sdk_messages');
 		});
 
-		it('internal infrastructure tables are not in any scope', () => {
-			const internalTables = ['session_groups', 'session_group_members', 'task_group_events'];
+		it('session_groups and session_group_members are accessible in space scope only', () => {
+			// Now exposed in space scope via session ID prefix filtering
+			expect(getAccessibleTableNames('space')).toContain('session_groups');
+			expect(getAccessibleTableNames('space')).toContain('session_group_members');
+			// But NOT in global or room scope
+			expect(getAccessibleTableNames('global')).not.toContain('session_groups');
+			expect(getAccessibleTableNames('global')).not.toContain('session_group_members');
+			expect(getAccessibleTableNames('room')).not.toContain('session_groups');
+			expect(getAccessibleTableNames('room')).not.toContain('session_group_members');
+		});
+
+		it('task_group_events is not in any scope', () => {
 			for (const scopeType of ['global', 'room', 'space'] as const) {
-				const names = getAccessibleTableNames(scopeType);
-				for (const table of internalTables) {
-					expect(names).not.toContain(table);
-				}
+				expect(getAccessibleTableNames(scopeType)).not.toContain('task_group_events');
 			}
 		});
 
@@ -251,14 +265,20 @@ describe('scope-config', () => {
 			expect(excluded).toContain('global_settings');
 		});
 
-		it('includes sdk_messages', () => {
-			expect(getExcludedTableNames()).toContain('sdk_messages');
+		it('does not include sdk_messages (now in space scope)', () => {
+			// sdk_messages is no longer globally excluded — it's accessible in space scope
+			// with session ID prefix filtering. It remains inaccessible in global/room scopes.
+			expect(getExcludedTableNames()).not.toContain('sdk_messages');
 		});
 
-		it('includes internal infrastructure tables', () => {
+		it('does not include session_groups or session_group_members (now in space scope)', () => {
+			// These tables are now accessible in space scope with session ID prefix filtering.
+			expect(getExcludedTableNames()).not.toContain('session_groups');
+			expect(getExcludedTableNames()).not.toContain('session_group_members');
+		});
+
+		it('includes remaining internal infrastructure tables', () => {
 			const excluded = getExcludedTableNames();
-			expect(excluded).toContain('session_groups');
-			expect(excluded).toContain('session_group_members');
 			expect(excluded).toContain('task_group_events');
 			expect(excluded).toContain('node_executions');
 		});
@@ -386,6 +406,66 @@ describe('scope-config', () => {
 			expect(result.params).toEqual(['space-gamma']);
 		});
 
+		it('produces LIKE filter for sessions in space scope (scopeLike)', () => {
+			const sessions = getScopeConfig('space').find((t) => t.tableName === 'sessions')!;
+			expect(sessions.scopeLike).toBeDefined();
+			expect(sessions.scopeLike!.column).toBe('id');
+			expect(sessions.scopeLike!.patternPrefix).toBe('space:');
+			expect(sessions.scopeLike!.patternSuffix).toBe(':%');
+
+			const result = buildScopeFilter(sessions, 'abc123');
+			expect(result.whereClause).toBe('id LIKE ?');
+			expect(result.params).toEqual(['space:abc123:%']);
+		});
+
+		it('produces LIKE filter for sdk_messages in space scope', () => {
+			const msgs = getScopeConfig('space').find((t) => t.tableName === 'sdk_messages')!;
+			expect(msgs.scopeLike).toBeDefined();
+			expect(msgs.scopeLike!.column).toBe('session_id');
+
+			const result = buildScopeFilter(msgs, 'space-xyz');
+			expect(result.whereClause).toBe('session_id LIKE ?');
+			expect(result.params).toEqual(['space:space-xyz:%']);
+		});
+
+		it('produces LIKE filter for session_group_members in space scope', () => {
+			const sgm = getScopeConfig('space').find((t) => t.tableName === 'session_group_members')!;
+			expect(sgm.scopeLike).toBeDefined();
+
+			const result = buildScopeFilter(sgm, 'sid-42');
+			expect(result.whereClause).toBe('session_id LIKE ?');
+			expect(result.params).toEqual(['space:sid-42:%']);
+		});
+
+		it('produces LIKE-based join filter for session_groups in space scope', () => {
+			const sg = getScopeConfig('space').find((t) => t.tableName === 'session_groups')!;
+			expect(sg.scopeJoin).toBeDefined();
+			expect(sg.scopeJoin!.likePrefix).toBe('space:');
+			expect(sg.scopeJoin!.likeSuffix).toBe(':%');
+			expect(sg.scopeJoin!.localColumn).toBe('id');
+			expect(sg.scopeJoin!.joinTable).toBe('session_group_members');
+			expect(sg.scopeJoin!.joinPkColumn).toBe('group_id');
+			expect(sg.scopeJoin!.scopeColumn).toBe('session_id');
+
+			const result = buildScopeFilter(sg, 'sp99');
+			expect(result.whereClause).toBe(
+				'id IN (SELECT group_id FROM session_group_members WHERE session_id LIKE ?)'
+			);
+			expect(result.params).toEqual(['space:sp99:%']);
+		});
+
+		it('all LIKE-based scope filters produce the correct pattern', () => {
+			const likeConfigs = getScopeConfig('space').filter((c) => c.scopeLike);
+			expect(likeConfigs.length).toBeGreaterThan(0);
+
+			for (const cfg of likeConfigs) {
+				const result = buildScopeFilter(cfg, 'my-space-id');
+				expect(result.whereClause).toContain('LIKE ?');
+				expect(result.params).toHaveLength(1);
+				expect(result.params[0] as string).toContain('my-space-id');
+			}
+		});
+
 		it('all indirect scope filters produce valid SQL with one parameter', () => {
 			// Collect all indirect configs across all scopes
 			const indirectConfigs: ScopeTableConfig[] = [];
@@ -408,7 +488,12 @@ describe('scope-config', () => {
 				expect(result.whereClause).toContain('?');
 				// Exactly one parameter
 				expect(result.params).toHaveLength(1);
-				expect(result.params[0]).toBe('test-scope-value');
+				// Standard join: param is the scope value. LIKE-based join: param is the full LIKE pattern.
+				if (cfg.scopeJoin?.likePrefix !== undefined) {
+					expect(result.params[0] as string).toContain('test-scope-value');
+				} else {
+					expect(result.params[0]).toBe('test-scope-value');
+				}
 			}
 		});
 
@@ -446,10 +531,11 @@ describe('scope-config', () => {
 			expect(unfiltered).toEqual([]);
 		});
 
-		it('every space-scoped table has scopeColumn or scopeJoin', () => {
+		it('every space-scoped table has scopeColumn, scopeJoin, or scopeLike', () => {
+			// Tables using scopeLike filter by session ID prefix (e.g., 'space:<id>:%').
 			const unfiltered: string[] = [];
 			for (const table of getScopeConfig('space')) {
-				if (!table.scopeColumn && !table.scopeJoin) {
+				if (!table.scopeColumn && !table.scopeJoin && !table.scopeLike) {
 					unfiltered.push(table.tableName);
 				}
 			}
@@ -457,10 +543,22 @@ describe('scope-config', () => {
 		});
 	});
 
-	// ── Cross-cutting: no duplicate table names across scopes ─────────────────
+	// ── Cross-cutting: intentional multi-scope tables and uniqueness ──────────
 
 	describe('table name uniqueness', () => {
-		it('no table appears in more than one scope', () => {
+		it('sessions intentionally appears in both global and space scope', () => {
+			// `sessions` is in global scope (no filter — Neo agent full access) AND
+			// in space scope (filtered by session ID prefix — space agent access).
+			// This is an intentional design: the two scopes apply different filtering.
+			expect(getAccessibleTableNames('global')).toContain('sessions');
+			expect(getAccessibleTableNames('space')).toContain('sessions');
+			expect(getAccessibleTableNames('room')).not.toContain('sessions');
+		});
+
+		it('no table other than sessions appears in more than one scope', () => {
+			// `sessions` is the only intentional cross-scope table (global + space).
+			const INTENTIONAL_MULTI_SCOPE = new Set(['sessions']);
+
 			const allTables = new Map<string, string[]>();
 			for (const scopeType of ['global', 'room', 'space'] as const) {
 				for (const name of getAccessibleTableNames(scopeType)) {
@@ -470,13 +568,13 @@ describe('scope-config', () => {
 				}
 			}
 
-			const duplicates: string[] = [];
+			const unexpectedDuplicates: string[] = [];
 			for (const [name, scopes] of allTables) {
-				if (scopes.length > 1) {
-					duplicates.push(`${name}: ${scopes.join(', ')}`);
+				if (scopes.length > 1 && !INTENTIONAL_MULTI_SCOPE.has(name)) {
+					unexpectedDuplicates.push(`${name}: ${scopes.join(', ')}`);
 				}
 			}
-			expect(duplicates).toEqual([]);
+			expect(unexpectedDuplicates).toEqual([]);
 		});
 	});
 
