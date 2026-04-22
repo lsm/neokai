@@ -158,10 +158,6 @@ vi.mock('../../components/settings/GeneralSettings.tsx', () => ({
 	GeneralSettings: () => <div data-testid="general-settings">General Settings</div>,
 }));
 
-vi.mock('../../components/settings/McpServersSettings.tsx', () => ({
-	McpServersSettings: () => <div data-testid="mcp-servers-settings">MCP Servers Settings</div>,
-}));
-
 vi.mock('../../components/settings/AboutSection.tsx', () => ({
 	AboutSection: () => <div data-testid="about-section">About Section</div>,
 }));

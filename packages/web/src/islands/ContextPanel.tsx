@@ -44,8 +44,7 @@ const SETTINGS_SECTIONS: Array<{
 }> = [
 	{ id: 'general', label: 'General', icon: 'settings' },
 	{ id: 'providers', label: 'Providers', icon: 'cloud' },
-	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
-	{ id: 'app-mcp-servers', label: 'Application MCP Servers', icon: 'app-server' },
+	{ id: 'app-mcp-servers', label: 'MCP Servers', icon: 'server' },
 	{ id: 'skills', label: 'Skills', icon: 'skills' },
 	{ id: 'fallback-models', label: 'Fallback Models', icon: 'swap' },
 	{ id: 'neo', label: 'Neo Agent', icon: 'neo' },
