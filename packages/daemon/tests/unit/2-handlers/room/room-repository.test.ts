@@ -12,27 +12,18 @@ import type { CreateRoomParams, WorkspacePath } from '@neokai/shared';
 
 describe('RoomRepository', () => {
 	let db: Database;
-	let tempDir: string;
 	let repository: RoomRepository;
 
 	beforeEach(() => {
-		// Create temp directory and file-based database
-		// Use process.env.TMPDIR to support custom temp directory setups
-		const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
-		tempDir = `${tmpBase}/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-		require('fs').mkdirSync(tempDir, { recursive: true });
-		db = new Database(`${tempDir}/test.db`);
+		// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+		// I/O contention that caused beforeEach hook timeouts in CI.
+		db = new Database(':memory:');
 		createTables(db);
 		repository = new RoomRepository(db);
 	});
 
 	afterEach(() => {
 		db.close();
-		try {
-			require('fs').rmSync(tempDir, { recursive: true, force: true });
-		} catch {
-			// Ignore cleanup errors
-		}
 	});
 
 	describe('createRoom', () => {
