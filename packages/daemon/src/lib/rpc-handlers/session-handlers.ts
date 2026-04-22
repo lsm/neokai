@@ -8,11 +8,14 @@
  */
 
 import type {
+	ListRuntimeMcpServersRequest,
+	ListRuntimeMcpServersResponse,
 	MessageDeliveryMode,
 	MessageHub,
 	MessageImage,
 	Session,
 	NeokaiActionMessage,
+	RuntimeMcpServerEntry,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
@@ -120,6 +123,41 @@ export function setupSessionHandlers(
 		}
 
 		return { sessionId, session };
+	});
+
+	/**
+	 * List runtime-attached (in-process, SDK-type) MCP servers for a session.
+	 *
+	 * These are servers injected by SpaceRuntimeService, TaskAgentManager, and
+	 * similar subsystems via `mergeRuntimeMcpServers`. They never appear in the
+	 * skills registry or in file-based MCP settings, so the chat composer's
+	 * Tool Modal needs a separate path to surface them.
+	 *
+	 * Truth-based: reads the live `session.config.mcpServers` map and filters
+	 * to entries with `type === 'sdk'`. Anything future subsystems attach (e.g.
+	 * room-tools, coordinator-agents) will show up automatically.
+	 */
+	messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
+		const { sessionId } = data as ListRuntimeMcpServersRequest;
+		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		if (!agentSession) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+
+		const mcpServers = agentSession.getSessionData().config?.mcpServers;
+		const servers: RuntimeMcpServerEntry[] = [];
+		if (mcpServers) {
+			for (const [name, config] of Object.entries(mcpServers)) {
+				// Only report in-process SDK-type servers. stdio/sse/http entries
+				// are user-managed subprocess MCPs surfaced through config.mcp.get
+				// and the file-MCP UI path.
+				if ((config as { type?: string } | undefined)?.type === 'sdk') {
+					servers.push({ name });
+				}
+			}
+		}
+
+		return { servers } satisfies ListRuntimeMcpServersResponse;
 	});
 
 	/**

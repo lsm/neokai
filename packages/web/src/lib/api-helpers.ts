@@ -209,6 +209,21 @@ export async function updateMcpServerSettings(
 	});
 }
 
+/**
+ * List runtime-attached (in-process, SDK-type) MCP servers for a session.
+ * Covers space-agent-tools, db-query, task-agent, node-agent, and any other
+ * MCPs injected via SpaceRuntimeService/TaskAgentManager at runtime.
+ */
+export async function listRuntimeMcpServers(
+	sessionId: string
+): Promise<import('@neokai/shared').ListRuntimeMcpServersResponse> {
+	const hub = await connectionManager.getHub();
+	return await hub.request<import('@neokai/shared').ListRuntimeMcpServersResponse>(
+		'session.listRuntimeMcpServers',
+		{ sessionId }
+	);
+}
+
 // ==================== Rewind Operations ====================
 
 export async function getRewindPoints(sessionId: string): Promise<{

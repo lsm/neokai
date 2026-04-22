@@ -489,6 +489,49 @@ describe('Session RPC Handlers', () => {
 		});
 	});
 
+	describe('session.listRuntimeMcpServers', () => {
+		it('returns only SDK-type entries from session.config.mcpServers', async () => {
+			const handler = messageHubData.handlers.get('session.listRuntimeMcpServers');
+			expect(handler).toBeDefined();
+
+			const mixedSession = createMockAgentSession({
+				config: {
+					mcpServers: {
+						'space-agent-tools': { type: 'sdk', name: 'space-agent-tools' },
+						'db-query': { type: 'sdk', name: 'db-query' },
+						'some-user-stdio': { command: 'bunx', args: ['pkg'] },
+					},
+				},
+			} as Partial<AgentSession>);
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(mixedSession.agentSession);
+
+			const result = (await handler!({ sessionId: 'session-abc' }, {})) as {
+				servers: Array<{ name: string }>;
+			};
+
+			const names = result.servers.map((s) => s.name).sort();
+			expect(names).toEqual(['db-query', 'space-agent-tools']);
+		});
+
+		it('returns empty list when session has no runtime MCPs', async () => {
+			const handler = messageHubData.handlers.get('session.listRuntimeMcpServers');
+			const plainSession = createMockAgentSession();
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(plainSession.agentSession);
+
+			const result = (await handler!({ sessionId: 'session-xyz' }, {})) as {
+				servers: unknown[];
+			};
+			expect(result.servers).toEqual([]);
+		});
+
+		it('throws when session is not found', async () => {
+			const handler = messageHubData.handlers.get('session.listRuntimeMcpServers');
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+
+			await expect(handler!({ sessionId: 'missing' }, {})).rejects.toThrow('Session not found');
+		});
+	});
+
 	describe('session.setWorktreeMode', () => {
 		it('sets worktree mode successfully', async () => {
 			const handler = messageHubData.handlers.get('session.setWorktreeMode');
