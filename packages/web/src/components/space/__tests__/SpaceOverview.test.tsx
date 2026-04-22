@@ -407,6 +407,54 @@ describe('SpaceOverview', () => {
 		});
 	});
 
+	describe('Stat Card Navigation', () => {
+		beforeEach(() => {
+			navigateToSpaceTasksMock.mockClear();
+			mockSpace.value = makeSpace();
+			mockTasks.value = [
+				makeTask('t1', 'open'),
+				makeTask('t2', 'in_progress'),
+				makeTask('t3', 'review'),
+				makeTask('t4', 'done'),
+				makeTask('t5', 'archived'),
+			];
+		});
+
+		it('clicking Active stat card navigates to tasks with active tab', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByText('Active').closest('button')!);
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'active');
+		});
+
+		it('clicking Review stat card navigates to tasks with action tab', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByText('Review').closest('button')!);
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
+		});
+
+		it('clicking Done stat card navigates to tasks with completed tab', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			fireEvent.click(getByText('Done').closest('button')!);
+			expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'completed');
+		});
+
+		it('Done count excludes archived tasks to match the completed tab', () => {
+			// t4 (done) counts; t5 (archived) does NOT count
+			const { container } = render(<SpaceOverview spaceId="space-1" />);
+			const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Done')
+			)!;
+			expect(doneBtn.textContent).toContain('1');
+		});
+
+		it('stat cards have cursor-pointer class', () => {
+			const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+			expect(getByText('Active').closest('button')!.className).toContain('cursor-pointer');
+			expect(getByText('Review').closest('button')!.className).toContain('cursor-pointer');
+			expect(getByText('Done').closest('button')!.className).toContain('cursor-pointer');
+		});
+	});
+
 	describe('Awaiting Approval Summary', () => {
 		beforeEach(() => {
 			navigateToSpaceTasksMock.mockClear();
