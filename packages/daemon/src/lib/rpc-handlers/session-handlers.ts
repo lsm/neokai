@@ -95,6 +95,15 @@ export function setupSessionHandlers(
 		const agentSession = sessionManager.getSession(sessionId);
 		const session = agentSession?.getSessionData();
 
+		// Bridge to daemonHub so subscribers like SpaceRuntimeService can react.
+		// session-lifecycle.ts emits 'session.created' only on eventBus; nothing
+		// forwards it to daemonHub, so SpaceRuntimeService.attachSpaceToolsToMemberSession
+		// never fires for RPC-created sessions (e.g. ad-hoc Space sessions). This
+		// matches the pattern used by space-handlers.ts for 'space.created'.
+		if (session) {
+			daemonHub.emit('session.created', { sessionId, session }).catch(() => {});
+		}
+
 		return { sessionId, session };
 	});
 
