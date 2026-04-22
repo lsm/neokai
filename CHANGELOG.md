@@ -2,6 +2,22 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.11.1] - 2026-04-22
+
+A patch release fixing session persistence and workflow fingerprint accuracy. 8 commits since v0.11.0.
+
+### Changed
+
+- Default `completionAutonomyLevel` set to 3; legacy `WorkflowEditor` removed
+- Task status actions moved from inline bar to dropdown menu
+
+### Fixed
+
+- Ad-hoc space sessions now get `space-agent-tools` MCP via `session.created` event
+- Task agent sessions preserved across daemon restart
+- Workflow fingerprint expanded to include customPrompt, completionActions, and completionAutonomyLevel
+- Lock file removed on process exit; WAL checkpointed on DB close
+
 ## [0.11.0] - 2026-04-22
 
 A refinement release improving workflow reliability, artifact display, and communication resilience. 15 commits since v0.10.0.
