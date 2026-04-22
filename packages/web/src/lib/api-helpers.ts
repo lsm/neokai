@@ -176,39 +176,6 @@ export async function updateGlobalSettings(
 	}>('settings.global.update', { updates });
 }
 
-export interface McpServerFromSource {
-	name: string;
-	source: import('@neokai/shared').SettingSource;
-	command?: string;
-	args?: string[];
-}
-
-export interface McpServersFromSourcesResponse {
-	servers: Record<import('@neokai/shared').SettingSource, McpServerFromSource[]>;
-	serverSettings: Record<string, { allowed?: boolean; defaultOn?: boolean }>;
-}
-
-export async function listMcpServersFromSources(
-	sessionId?: string
-): Promise<McpServersFromSourcesResponse> {
-	const hub = await connectionManager.getHub();
-	return await hub.request<McpServersFromSourcesResponse>(
-		'settings.mcp.listFromSources',
-		sessionId ? { sessionId } : {}
-	);
-}
-
-export async function updateMcpServerSettings(
-	serverName: string,
-	settings: { allowed?: boolean; defaultOn?: boolean }
-): Promise<{ success: boolean }> {
-	const hub = await connectionManager.getHub();
-	return await hub.request<{ success: boolean }>('settings.mcp.updateServerSettings', {
-		serverName,
-		settings,
-	});
-}
-
 /**
  * List runtime-attached (in-process, SDK-type) MCP servers for a session.
  * Covers space-agent-tools, db-query, task-agent, node-agent, and any other
