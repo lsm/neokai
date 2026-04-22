@@ -29,6 +29,7 @@ import type {
 	WorkflowNodeAgent,
 	WorkflowChannel,
 	Gate,
+	SpaceAutonomyLevel,
 } from '@neokai/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
@@ -89,6 +90,11 @@ export interface VisualEditorState {
 	channels: WorkflowChannel[];
 	/** First-class workflow gates referenced by channel.gateId. */
 	gates: Gate[];
+	/**
+	 * Minimum space autonomy level required to run this workflow without
+	 * human approval at each completion gate. Defaults to 3 when not set.
+	 */
+	completionAutonomyLevel?: SpaceAutonomyLevel;
 }
 
 // ============================================================================
@@ -171,6 +177,7 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
 			to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
 		})),
 		gates: workflow.gates ?? [],
+		completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
 	};
 }
 
@@ -365,6 +372,7 @@ export function visualStateToCreateParams(
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
+		completionAutonomyLevel: state.completionAutonomyLevel,
 	};
 }
 
@@ -389,5 +397,6 @@ export function visualStateToUpdateParams(
 		tags: fields.tags,
 		channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
 		gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
+		completionAutonomyLevel: state.completionAutonomyLevel,
 	};
 }

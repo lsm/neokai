@@ -148,15 +148,11 @@ export class SpaceWorkflowRepository {
 		const workflowId = generateUUID();
 		const now = Date.now();
 
-		if (params.completionAutonomyLevel === undefined || params.completionAutonomyLevel === null) {
-			// completion_autonomy_level is required — the runtime (MCP tool handlers,
-			// workflow builder, template seeder) must supply an explicit value. We
-			// never silently default here; the DB column has a NOT NULL default only
-			// to satisfy SQLite's ADD COLUMN backfill rules.
-			throw new Error(
-				`createWorkflow: completionAutonomyLevel is required (workflow name="${params.name}")`
-			);
-		}
+		// Default completionAutonomyLevel to 3 (supervised) when not provided.
+		// The DB column has NOT NULL DEFAULT 3; we mirror that here so callers
+		// (e.g. the visual editor) do not need to pass an explicit value.
+		const completionAutonomyLevel: SpaceAutonomyLevel =
+			params.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel);
 
 		// Pre-resolve node IDs so channels can reference them
 		const nodeInputs = params.nodes ?? [];
@@ -194,7 +190,7 @@ export class SpaceWorkflowRepository {
 				params.templateName ?? null,
 				params.templateHash ?? null,
 				params.instructions ?? null,
-				params.completionAutonomyLevel,
+				completionAutonomyLevel,
 				now,
 				now
 			);
