@@ -522,7 +522,10 @@ function buildPrefixedScopeFilter(
 		};
 	}
 
-	// LIKE-based direct scope filter (e.g., session ID prefix matching)
+	// LIKE-based direct scope filter (e.g., session ID prefix matching).
+	// No LIKE-escaping of scopeValue is needed: it is always a server-side
+	// crypto.randomUUID() string set in the MCP server closure before any agent
+	// interaction, so it can never contain the LIKE special chars '%' or '_'.
 	if (config.scopeLike) {
 		const { column, patternPrefix, patternSuffix } = config.scopeLike;
 		return {
