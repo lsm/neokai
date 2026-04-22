@@ -4,7 +4,7 @@
  *
  * Verifies that:
  * 1. Task agent sessions receive registry-sourced MCP servers merged into their
- *    setRuntimeMcpServers() call alongside the in-process task-agent server.
+ *    mergeRuntimeMcpServers() call alongside the in-process task-agent server.
  * 2. The in-process task-agent server always takes precedence over registry entries
  *    on name collision.
  * 3. The merged map is complete — registry entries are not dropped.
@@ -72,6 +72,9 @@ interface MockAgentSession {
 	session: { id: string; config: { mcpServers?: Record<string, unknown> } };
 	getProcessingState: () => AgentProcessingState;
 	setRuntimeMcpServers: (servers: Record<string, unknown>) => void;
+	mergeRuntimeMcpServers: (servers: Record<string, unknown>) => void;
+	detachRuntimeMcpServer: (name: string) => void;
+	restartQuery: () => Promise<void>;
 	setRuntimeSystemPrompt: (sp: unknown) => void;
 	startStreamingQuery: () => Promise<void>;
 	ensureQueryStarted: () => Promise<void>;
@@ -93,6 +96,24 @@ function makeMockSession(sessionId: string): MockAgentSession {
 			// merged map after spawn / self-heal.
 			m.session.config = { ...m.session.config, mcpServers: servers };
 		},
+		mergeRuntimeMcpServers(servers) {
+			// Merge into existing map (additive, not replace).
+			// Use config.mcpServers as the source of truth so that servers set directly
+			// on session.config (e.g. by test setup) are not lost.
+			const existing = m.session.config.mcpServers ?? {};
+			const merged = { ...existing, ...servers };
+			m._mcpServers = merged;
+			m.session.config = { ...m.session.config, mcpServers: merged };
+		},
+		detachRuntimeMcpServer(name) {
+			const updated = { ...m._mcpServers };
+			delete updated[name];
+			m._mcpServers = updated;
+			const updatedCfg = { ...(m.session.config.mcpServers ?? {}) };
+			delete updatedCfg[name];
+			m.session.config = { ...m.session.config, mcpServers: updatedCfg };
+		},
+		async restartQuery() {},
 		setRuntimeSystemPrompt(_sp: unknown) {},
 		async startStreamingQuery() {},
 		async ensureQueryStarted() {},
@@ -832,7 +853,7 @@ describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 		expect(args!.appMcpServerRepo).toBe(mockAppMcpServerRepo);
 	});
 
-	test('sub-session receives registry MCPs via setRuntimeMcpServers()', async () => {
+	test('sub-session receives registry MCPs via mergeRuntimeMcpServers()', async () => {
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
 		const { manager, fromInitSpy, createdSessions } = buildManager({
 			registryMcpServers: { 'registry-mcp': registryServer },
@@ -871,7 +892,7 @@ describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 
 		const subSession = createdSessions.get(subSessionId);
 		expect(subSession).toBeDefined();
-		// No registry MCPs — _mcpServers should be empty (no setRuntimeMcpServers called with entries)
+		// No registry MCPs — _mcpServers should be empty (no mergeRuntimeMcpServers called with entries)
 		expect(Object.keys(subSession!._mcpServers)).toHaveLength(0);
 	});
 });

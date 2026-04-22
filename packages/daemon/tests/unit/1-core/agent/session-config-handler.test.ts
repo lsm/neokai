@@ -200,4 +200,101 @@ describe('SessionConfigHandler', () => {
 			expect(ctx.ctx.settingsManager).toBeInstanceOf(SettingsManager);
 		});
 	});
+
+	describe('updateUserMcpServers', () => {
+		it('should replace subprocess servers with new map', async () => {
+			mockSession.config = {
+				model: 'default',
+				mcpServers: {
+					'my-tool': { type: 'stdio', command: 'old', args: [] },
+				},
+			} as unknown as Session['config'];
+
+			await handler.updateUserMcpServers({
+				'my-tool': { type: 'stdio', command: 'new', args: [] },
+			});
+
+			expect((mockSession.config.mcpServers as Record<string, unknown>)['my-tool']).toMatchObject({
+				command: 'new',
+			});
+		});
+
+		it('should preserve in-process (SDK-type) servers from existing config', async () => {
+			mockSession.config = {
+				model: 'default',
+				mcpServers: {
+					'node-agent': { type: 'sdk' } as unknown,
+					'space-agent-tools': { type: 'sdk' } as unknown,
+					'my-user-tool': { type: 'stdio', command: 'some-cmd', args: [] },
+				},
+			} as unknown as Session['config'];
+
+			// Provide only the subprocess server; SDK servers must survive.
+			await handler.updateUserMcpServers({
+				'my-user-tool': { type: 'stdio', command: 'some-cmd', args: [] },
+			});
+
+			const servers = mockSession.config.mcpServers as Record<string, unknown>;
+			expect(servers['node-agent']).toEqual({ type: 'sdk' });
+			expect(servers['space-agent-tools']).toEqual({ type: 'sdk' });
+			expect(servers['my-user-tool']).toMatchObject({ command: 'some-cmd' });
+		});
+
+		it('should not allow user-provided servers to overwrite SDK-type servers', async () => {
+			mockSession.config = {
+				model: 'default',
+				mcpServers: {
+					'node-agent': { type: 'sdk', secret: 'closure-value' } as unknown,
+				},
+			} as unknown as Session['config'];
+
+			// Attacker tries to overwrite the runtime node-agent with a subprocess.
+			await handler.updateUserMcpServers({
+				'node-agent': { type: 'stdio', command: 'evil', args: [] },
+			});
+
+			const servers = mockSession.config.mcpServers as Record<string, unknown>;
+			// Runtime SDK server must win.
+			expect((servers['node-agent'] as { type: string }).type).toBe('sdk');
+		});
+
+		it('should persist merged config to database', async () => {
+			mockSession.config = {
+				model: 'default',
+				mcpServers: { 'sdk-server': { type: 'sdk' } as unknown },
+			} as unknown as Session['config'];
+
+			await handler.updateUserMcpServers({
+				'user-server': { type: 'stdio', command: 'cmd', args: [] },
+			});
+
+			expect(updateSessionSpy).toHaveBeenCalledTimes(1);
+			const [, patch] = updateSessionSpy.mock.calls[0] as [string, { config: unknown }];
+			const servers = (patch.config as { mcpServers: Record<string, unknown> }).mcpServers;
+			expect(servers['sdk-server']).toBeDefined();
+			expect(servers['user-server']).toBeDefined();
+		});
+
+		it('should emit session.updated event after persisting', async () => {
+			await handler.updateUserMcpServers({
+				'user-server': { type: 'stdio', command: 'cmd', args: [] },
+			});
+
+			expect(emitSpy).toHaveBeenCalledTimes(1);
+			const [event, payload] = emitSpy.mock.calls[0] as [string, { source: string }];
+			expect(event).toBe('session.updated');
+			expect(payload.source).toBe('config-update');
+		});
+
+		it('should work when session has no existing mcpServers', async () => {
+			mockSession.config = { model: 'default' } as Session['config'];
+
+			await handler.updateUserMcpServers({
+				'my-tool': { type: 'stdio', command: 'cmd', args: [] },
+			});
+
+			const servers = mockSession.config.mcpServers as Record<string, unknown>;
+			expect(servers['my-tool']).toBeDefined();
+		});
+	});
 });
