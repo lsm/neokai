@@ -507,93 +507,97 @@ Any future completion action with non-idempotent side effects (create-release, p
 
 ---
 
-## 11. Proposal — Consolidate into Gates + Nodes
+## 11. Decision — Task Agent as Merge Executor
 
-Taken together, §6 (three gaps) + §10 (failure modes) argue that completion actions should be **removed**, not fixed. The two mechanisms we already have — **gates** and **nodes** — cover every job a completion action does today, with better UX.
+Taken together, §6 (three gaps) + §10 (failure modes) argue that completion actions should be **removed**, not fixed. The architectural decision is: **the Task Agent handles post-workflow actions like PR merging directly**, not a new workflow node and not the completion-action pipeline.
 
-### 11.1 What each mechanism gives you
+The Task Agent is the natural convergence point — it already orchestrates human gates via `request_human_input`, it already manages workflow lifecycle, and it is already the single authority that knows when a workflow run is truly terminal. Adding a "merge node" to every workflow would add graph complexity without adding capability; adding more completion-action plumbing would deepen the bugs catalogued in §6 and §10.
 
-| Concern | Completion action | Gate | Node |
-|---|---|---|---|
-| Runtime-enforced assertion | ✅ script | ✅ script with same env shape | — |
-| Waits-until-true retry UX | ❌ fails → `blocked` | ✅ closed → "not yet" | — |
-| Autonomy gating | `requiredLevel` | `requiredLevel` | — (via gate on inbound channel) |
-| Idempotency | `completionActionsFiredAt` (single flag) | Gate state in `gate_data` | Per-run state in agent session |
-| Streaming logs | ❌ | ❌ (but short) | ✅ full transcript |
-| Retry | ❌ | ✅ gate re-evaluates on write | ✅ re-activate node |
-| Error context | Single string | Gate check result | Full session |
-| Approval UI | Own banner | Existing gate banner | Task/thread UI |
-| Tamper resistance | ✅ declarative | ✅ declarative | ⚠️ agent can subvert via prompt |
+### 11.1 The new merge flow
 
-### 11.2 Migration table — one-for-one replacements
+```
+Workflow end node signals intent (structured message)
+    │
+    ▼
+Task Agent checks space.autonomyLevel
+    │
+    ├── Level 1-3 ──▶ request_human_input("Approve PR merge?")
+    │                      │
+    │                Human approves
+    │                      │
+    └── Level 4-5 ──▶ (skip approval) ──▶ Task Agent runs: gh pr merge <url> --squash
+                                                                │
+                                                          Task Agent closes task
+```
 
-| Existing completion action | Replacement |
-|---|---|
-| `MERGE_PR_COMPLETION_ACTION` | **Merge node** after Reviewer. Inbound channel has `approval-gate: approved=true` with `requiredLevel: 4`. Agent runs `gh pr merge --squash`. Thread shows stdout/stderr. Failures are the agent's session errors — retry by re-activating the node. |
-| `VERIFY_PR_MERGED_COMPLETION_ACTION` | **Delete.** The Merge node's agent is the evidence; no separate verification needed. (Also kills Gap #1 — no prompt can instruct a merge outside the Merge node.) |
-| `VERIFY_REVIEW_POSTED_COMPLETION_ACTION` | **Move into `review-posted-gate`** on the Review → Coding feedback channel. Gate already exists; extend its bash check with the review-count query. Reviewer posts → gate re-evaluates → channel unlocks. No task-blocked state. |
-| `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION` | **Move into a new `tasks-created-gate`** on the Task Dispatcher's outbound channel (or a post-dispatch self-gate). Same mechanics. |
+**Step-by-step:**
 
-### 11.3 What goes away
+1. The end-node agent calls `approve_task()` (or `submit_for_approval` at low autonomy levels). This signals that the workflow work is complete and a PR URL is available.
+2. The Task Agent — not the runtime's completion-action pipeline — picks up the terminal signal and checks `space.autonomyLevel`.
+3. At levels 1-3: Task Agent calls `request_human_input` with the PR URL and a prompt like "The Reviewer has approved this PR. Merge it?" This is the same approval UX already used for human gates — one unified pattern.
+4. Human approves (or at level 4-5 the step is skipped automatically).
+5. Task Agent runs `gh pr merge <url> --squash` directly.
+6. Task Agent closes the task.
 
-- `CompletionAction` type and its three variants (`script`, `instruction`, `mcp_call`)
+### 11.2 Why this is better than a new merge node
+
+| Concern | Merge node approach | Task Agent approach |
+|---|---|---|
+| Workflow graph changes | Every workflow needs a new Merge node + inbound gate | No graph changes; Task Agent handles it centrally |
+| Approval UX | New node banner alongside existing gate banners | Same `request_human_input` UX already used for gates |
+| QA bug (Gap #1) | QA prompt must be rewired to not self-merge | Task Agent is not in the QA agent's context; Gap #1 disappears |
+| Tamper resistance | Agent in Merge node could subvert | Task Agent is daemon-controlled, not an open-ended agent session |
+| Retry | Re-activate the Merge node | Task Agent retries its own tool call |
+| Works for all workflow shapes | Only Coding/Research (those that currently have MERGE_PR_COMPLETION_ACTION) | Uniform across all current and future workflows |
+
+### 11.3 What changes in the codebase
+
+**(a) Task Agent gains merge execution capability.**
+This is a carve-out from the "no direct code execution" policy for a narrow, well-defined class of post-task actions. The Task Agent is permitted to run `gh pr merge` after human approval (or autonomy-level auto-approval) as part of task teardown. Implementation: a new internal method on `TaskAgentManager`, called after the workflow run is confirmed terminal.
+
+**(b) End nodes signal merge intent via structured message.**
+Instead of a `completionAction` on the node, end-node agents include a structured `{action: 'merge_pr', pr_url: '...'}` field in their `report_result` call (or in `approve_task` metadata). The Task Agent reads this field and decides whether to execute the merge.
+
+**(c) `completionActions` removed from workflow schema.**
+The `CompletionAction` type and all its infrastructure are deleted:
+- `CompletionAction` type and variants (`script`, `instruction`, `mcp_call`)
 - `node.completionActions[]` field
-- `workflow.completionAutonomyLevel` (folded into gates' `requiredLevel`)
+- `workflow.completionAutonomyLevel` (superseded by Task Agent's autonomy check)
 - `pendingCheckpointType = 'completion_action'` — only `'gate'` and `'task_completion'` remain
 - `SpaceTask.pendingActionIndex`
 - `resolveCompletionWithActions`, `resumeCompletionActions`, `executeCompletionAction` in `space-runtime.ts`
 - `PendingCompletionActionBanner` in the web bundle
 - `spaceTask.update` special-case for `pendingCheckpointType === 'completion_action'`
-- `approve_completion_action` MCP tool (Gap #2 disappears)
+- `approve_completion_action` MCP tool (Gap #2 disappears with the whole mechanism)
 - `run.completionActionsFiredAt` column and idempotency logic
 - `buildAwaitingApprovalReason`, `emitTaskAwaitingApproval` helpers
 - The dead-code branch in `approvePendingCompletion` (Gap #3 disappears)
-- `isAutonomousWithoutActions` / `EMPTY_ACTIONS_AUTONOMY_THRESHOLD` — the zero-actions fallback is no longer needed because there are no completion actions
-- The `task-agent-manager.ts` logic that conditionally hides `approve_task` based on `completionAutonomyLevel` (the gate on the outbound channel handles this)
+- `isAutonomousWithoutActions` / `EMPTY_ACTIONS_AUTONOMY_THRESHOLD` — the zero-actions fallback is no longer needed
 
-### 11.4 What stays the same (and gets simpler)
+### 11.4 What stays the same
 
-- `approve_task` still closes the task. Gating moves to the outbound channel's gate.
-- `submit_for_approval` still pauses at `task_completion` for human sign-off on the task itself (the "is this work any good" question).
-- Autonomy levels (1-5) still determine which gates auto-approve.
-- Workflow editor: the graph gains a node instead of a fiddly "Add completion action" form.
+- `approve_task` still closes the workflow task from the end-node agent's perspective.
+- `submit_for_approval` still pauses at `task_completion` for human sign-off on the *work* (the "is this work any good" question), separate from the merge approval.
+- Autonomy levels (1-5) still govern when the merge approval is auto-skipped.
+- The `request_human_input` approval UX is unchanged — Task Agent simply adds merge as one more thing it can ask about.
 
-### 11.5 Shape of the new Coding workflow
+### 11.5 Gap resolution
 
-```
-Coder ──(code-ready-gate: pr_url + reviewable)──▶ Reviewer ──(approval-gate: approved + requiredLevel=4)──▶ Merge ──[end]
-  ▲                                                  │
-  └──(review-posted-gate: review_posted)─────────────┘
+- **Gap #1 (Coding-with-QA auto-merges at Level 1):** Disappears. The QA agent's Bash merge instruction in `built-in-workflows.ts:1127` is removed. The QA agent calls `approve_task()` and signals merge intent; the Task Agent handles the actual `gh pr merge` call under the autonomy check.
+- **Gap #2 (`approve_completion_action` has no autonomy check):** Disappears. The `approve_completion_action` MCP tool is deleted with the rest of the completion-action mechanism.
+- **Gap #3 (`merge-pr` dead code at Level 1):** Disappears. The Task Agent's merge path is always reachable — at Level 1 it simply routes through `request_human_input` first.
 
-  Merge.endNode = true
-  workflow.completionAutonomyLevel: REMOVED (gates handle it)
-```
+### 11.6 Risks
 
-At Level 1: `approval-gate` is closed, awaits human. Human approves → channel unlocks → Merge node activates → agent merges PR → `approve_task` → done. **Single approval UX. Single banner. Single retry path.**
+- **Task Agent's "no direct execution" policy.** This is a deliberate policy exception for a narrow, well-understood class of action (merge a specific PR URL after explicit approval). It should be documented as such and not silently broadened.
+- **End-node agent must correctly signal merge intent.** If an agent omits the `{action: 'merge_pr', pr_url}` payload, the Task Agent will not merge. Mitigation: schema validation at `report_result`/`approve_task` call sites; integration tests that verify the signal is present.
+- **Migration of user-authored workflows.** Workflows that currently declare `completionActions` with `MERGE_PR_COMPLETION_ACTION` need their end nodes updated to emit the structured intent signal. A migration script should handle the built-ins; user workflows need a one-time migration pass.
 
-At Level 4+: `approval-gate` auto-opens (via `requiredLevel: 4`). Merge node activates and runs end-to-end. Same code path, no auto_policy special case.
+### 11.7 Recommendation
 
-### 11.6 Migration plan (sketch, not a ship plan)
+Remove completion actions entirely. Implement merge execution in the Task Agent behind the `request_human_input` approval gate. This resolves Gaps #1, #2, and #3 in one move, eliminates the failure modes catalogued in §10, and produces a single unified approval UX across all workflow shapes.
 
-1. **Ship a new "Merge" preset node** agent and a gated-merge channel primitive. Gate on channel already supports `requiredLevel`.
-2. **Add a feature flag** `space.useLegacyCompletionActions` (default `true`). New spaces get `false`.
-3. **Rewrite the four built-in workflows** under the flag: when `false`, use gates + Merge nodes; when `true`, current shape. Same workflow names.
-4. **Migration job** per-space on `false` enablement: convert `node.completionActions[]` into an equivalent gate/node pair, preserving audit-trail data.
-5. **Deprecate** the completion-action RPCs/tools behind warnings for one release.
-6. **Remove** completion-action code once no active spaces are on the legacy flag.
-
-### 11.7 Risks of the consolidation
-
-- **Nodes are less tamper-resistant.** An agent can decide not to call the Merge tool. Mitigation: constrain the Merge node's agent to a single allowed tool (`gh pr merge`) and autoapprove — the session is effectively a "run this command" runner.
-- **More rows in `spaces/workflows` tables.** Each former completion action becomes a node + gate. Acceptable.
-- **Breaking change for user-authored workflows.** Mitigated by the migration flag + conversion job. Completion actions are not yet common outside the built-ins.
-- **Agent context tokens.** A minimal Merge node agent has ~0 token overhead (single tool, one-shot). No meaningful cost.
-
-### 11.8 Recommendation
-
-Treat this consolidation as the **resolution of Gaps #1, #2, and #3 jointly**, not as three separate fixes. Fixing each gap in place either patches symptoms (Gap #2: add an autonomy check) or introduces a new mental-model wrinkle (Gap #3: "sometimes `approvePendingCompletion` triggers completion actions, sometimes not"). Removing the layer is the simpler move.
-
-If shipping the removal is too invasive short-term, the **minimum viable fix** for the user-observed "approved but nothing happens" bug is Gap #3 option 1: chain `approvePendingCompletion` → `resolveCompletionWithActions` so the existing `MERGE_PR_COMPLETION_ACTION` at least fires. That unblocks users without prejudging the larger design direction.
+If the full removal is too invasive for the current release, the **minimum viable fix** for the immediately-observed "PR merged at Level 1" bug (Gap #1) is: remove the direct `gh pr merge` instruction from the QA agent's prompt and gate the merge on the Task Agent's autonomy check. That unblocks users without requiring the full `completionActions` teardown.
 
 ---
 
