@@ -345,6 +345,11 @@ export function setupSessionHandlers(
 		// archive work (stop agent, archive SDK files, remove worktree,
 		// stamp DB row) is funnelled through the UI-only primitive
 		// `sessionManager.archiveSessionResources` (Task #85).
+		// Note: `session` aliases the live AgentSession data, so fields like
+		// `session.worktree` and `session.context` can mutate once archive
+		// runs. Snapshot anything we need after the archive now.
+		const hadWorktree = !!session.worktree;
+		const roomIdForArchive = session.context?.roomId;
 		let commitsRemoved = 0;
 		if (session.worktree) {
 			const { WorktreeManager } = await import('../worktree-manager');
@@ -373,21 +378,21 @@ export function setupSessionHandlers(
 		const archivedPayload = {
 			sessionId: targetSessionId,
 			status: 'archived',
-			roomId: session.context?.roomId,
+			roomId: roomIdForArchive,
 		};
 		messageHub.event('session.updated', archivedPayload, {
 			channel: `session:${targetSessionId}`,
 		});
-		if (session.context?.roomId) {
+		if (roomIdForArchive) {
 			messageHub.event('session.updated', archivedPayload, {
-				channel: `room:${session.context.roomId}`,
+				channel: `room:${roomIdForArchive}`,
 			});
 		}
 
 		return {
 			success: true,
 			requiresConfirmation: false,
-			...(session.worktree ? { commitsRemoved } : {}),
+			...(hadWorktree ? { commitsRemoved } : {}),
 		};
 	});
 

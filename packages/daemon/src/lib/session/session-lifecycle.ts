@@ -667,10 +667,14 @@ export class SessionLifecycle {
 		}
 
 		// PHASE 4: Update session row (status=archived). DB row and sdk_messages are preserved.
+		// If the session had a worktree, clear it now that the on-disk worktree has been
+		// removed — otherwise UIs (and RPCs like `session.get`) would continue to surface a
+		// stale `session.worktree` pointing at a deleted path.
 		try {
 			await this.update(sessionId, {
 				status: 'archived',
 				archivedAt: new Date().toISOString(),
+				...(session.worktree ? { worktree: undefined } : {}),
 				...(archiveMetadata
 					? {
 							metadata: {
