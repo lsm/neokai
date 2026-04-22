@@ -835,6 +835,17 @@ export class TaskAgentManager {
 
 			const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
 				agentId: slot.agentId,
+				// agentName + nodeId enable two critical behaviours inside createSubSession:
+				//   1. Session reuse — if this agent already ran (agentSessionId set on an
+				//      older NodeExecution), the existing session is reused rather than spawning
+				//      a redundant second session. Each named agent lives in one session per
+				//      task lifetime; subsequent activations inject a new message into it.
+				//   2. Pending message flush — after the session is created/reused, any
+				//      messages queued via PendingAgentMessageRepository (e.g. from a Task
+				//      Agent send_message call that raced ahead of this spawn) are drained
+				//      into the session. Without agentName this flush is skipped entirely.
+				agentName: execution.agentName,
+				nodeId: execution.workflowNodeId,
 			});
 			spawnedSessionId = actualSessionId;
 
@@ -1130,6 +1141,44 @@ export class TaskAgentManager {
 				repo.markAttemptFailed(row.id, errMsg);
 				// Keep going — a single per-row failure must not block the rest of the queue.
 			}
+		}
+	}
+
+	/**
+	 * Best-effort attempt to resume a node-agent session and drain its pending
+	 * message queue immediately after a message has been queued for it.
+	 *
+	 * Called by send_message (task-agent-tools) right after `pendingMessageRepo.enqueue()`
+	 * so that if the target already has a known session (e.g. it ran before and is now
+	 * idle/completed), the queued message is delivered without waiting for the next
+	 * activation trigger.
+	 *
+	 * Flow:
+	 *  1. Look for the most recent NodeExecution for this agent that has an `agentSessionId`.
+	 *  2. If found, look up the session in memory (fast path) or lazily rehydrate it from DB.
+	 *  3. If the session is live, call `flushPendingMessagesForTarget` to drain the queue.
+	 *
+	 * Idempotent and non-fatal — if the session cannot be found or restored the queue
+	 * is left intact for the next activation (e.g. when `createSubSession` spawns/reuses
+	 * the session and calls `flushPendingMessagesForTarget`).
+	 */
+	async tryResumeNodeAgentSession(workflowRunId: string, agentName: string): Promise<void> {
+		const repo = this.config.pendingMessageRepo;
+		if (!repo) return;
+
+		const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
+		const exec = executions.filter((e) => e.agentName === agentName && e.agentSessionId).at(-1);
+		if (!exec?.agentSessionId) return; // No known session for this agent — wait for spawn.
+
+		const sessionId = exec.agentSessionId;
+
+		if (this.agentSessionIndex.has(sessionId)) {
+			// Fast path: session is already live in memory — flush pending messages directly.
+			await this.flushPendingMessagesForTarget(workflowRunId, agentName, sessionId);
+		} else {
+			// Slow path: session is not in memory (e.g. after daemon restart).
+			// rehydrateSubSession restores it AND calls flushPendingMessagesForTarget internally.
+			await this.rehydrateSubSession(sessionId);
 		}
 	}
 
@@ -2668,6 +2717,16 @@ export class TaskAgentManager {
 			pendingMessageRepo: this.config.pendingMessageRepo,
 			spaceId,
 			taskId,
+			// Auto-resume callback: when a message is queued for an inactive peer,
+			// immediately attempt to resume that peer's last known session so the
+			// message is delivered without waiting for external activation.
+			onMessageQueued: (targetAgentName) => {
+				void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
+					log.warn(
+						`AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+					);
+				});
+			},
 		});
 
 		const agentNameAliases = execution

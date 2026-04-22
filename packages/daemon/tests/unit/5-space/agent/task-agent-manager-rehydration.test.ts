@@ -16,6 +16,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -713,5 +714,225 @@ describe('TaskAgentManager.rehydrateSubSession (lazy rehydration)', () => {
 		// Returns null for unknown session
 		const notFound = ctx.nodeExecutionRepo.getByAgentSessionId('no-such-session');
 		expect(notFound).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: TaskAgentManager.tryResumeNodeAgentSession (Task #70)
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: build a TaskAgentManager that reuses all mocked dependencies from
+ * `ctx` but also has a PendingAgentMessageRepository wired in.
+ * Uses bracket-notation access to the private `config` field, which is
+ * safe in test code because TypeScript's `private` is compile-time only.
+ */
+function makeManagerWithPendingRepo(
+	ctx: TestCtx,
+	pendingRepo: PendingAgentMessageRepository
+): TaskAgentManager {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const existingConfig = (ctx.manager as any).config as Record<string, unknown>;
+	return new TaskAgentManager({
+		...existingConfig,
+		pendingMessageRepo: pendingRepo,
+	} as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+}
+
+describe('TaskAgentManager.tryResumeNodeAgentSession', () => {
+	let ctx: TestCtx;
+	let restoreSpy: ReturnType<typeof spyOn<typeof AgentSession, 'restore'>>;
+
+	beforeEach(() => {
+		ctx = makeCtx();
+		restoreSpy = spyOn(AgentSession, 'restore').mockImplementation((sessionId: string) => {
+			if (!ctx.mockDb.getSession(sessionId)) return null;
+			const existing = ctx.createdSessions.get(sessionId);
+			if (existing) return existing as unknown as AgentSession;
+			const mockSession = makeMockSession(sessionId);
+			ctx.createdSessions.set(sessionId, mockSession);
+			return mockSession as unknown as AgentSession;
+		});
+	});
+
+	afterEach(() => {
+		ctx.fromInitSpy.mockRestore();
+		restoreSpy.mockRestore();
+		try {
+			rmSync(ctx.dir, { recursive: true, force: true });
+		} catch {
+			// ignore cleanup errors
+		}
+	});
+
+	test('is a no-op when pendingMessageRepo is not configured', async () => {
+		// ctx.manager has no pendingMessageRepo — should return immediately without throwing
+		const wfRunId = 'run-resume-noop-1';
+		const wfId = 'wf-resume-noop-1';
+		const nodeId = 'node-resume-noop-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		await expect(ctx.manager.tryResumeNodeAgentSession(wfRunId, 'coder')).resolves.toBeUndefined();
+
+		// No restore or fromInit should have been called
+		expect(restoreSpy).not.toHaveBeenCalled();
+		expect(ctx.fromInitSpy).not.toHaveBeenCalled();
+	});
+
+	test('is a no-op when no NodeExecution with agentSessionId exists for the agent', async () => {
+		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
+
+		const wfRunId = 'run-resume-nosession-1';
+		const wfId = 'wf-resume-nosession-1';
+		const nodeId = 'node-resume-nosession-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		// Execution exists but has no agentSessionId (agent was declared but never spawned)
+		ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'coder',
+			status: 'pending',
+		});
+
+		const manager = makeManagerWithPendingRepo(ctx, pendingRepo);
+		await expect(manager.tryResumeNodeAgentSession(wfRunId, 'coder')).resolves.toBeUndefined();
+
+		// No restore should have been triggered
+		expect(restoreSpy).not.toHaveBeenCalled();
+	});
+
+	test('rehydrates session and flushes pending messages when session is not in memory', async () => {
+		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
+
+		const wfRunId = 'run-resume-rehydrate-1';
+		const wfId = 'wf-resume-rehydrate-1';
+		const nodeId = 'node-resume-rehydrate-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task for resume test',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, { taskAgentSessionId, status: 'in_progress' });
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:resume-exec-1`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'coder',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		// Seed session in mock DB so AgentSession.restore() returns a session
+		ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+		// Queue a pending message for the coder
+		pendingRepo.enqueue({
+			workflowRunId: wfRunId,
+			spaceId: ctx.spaceId,
+			taskId: parentTask.id,
+			sourceAgentName: 'task-agent',
+			targetKind: 'node_agent',
+			targetAgentName: 'coder',
+			message: 'resume and continue',
+		});
+
+		const manager = makeManagerWithPendingRepo(ctx, pendingRepo);
+
+		// Session is NOT in memory — tryResumeNodeAgentSession should rehydrate it and flush
+		await manager.tryResumeNodeAgentSession(wfRunId, 'coder');
+
+		// restoreSpy must have been called to rehydrate the session (first arg is sessionId)
+		expect(restoreSpy).toHaveBeenCalled();
+		const restoreCalls = restoreSpy.mock.calls;
+		expect(restoreCalls.some((args) => args[0] === subSessionId)).toBe(true);
+
+		// flushPendingMessagesForTarget is called with `void` (fire-and-forget) inside
+		// rehydrateSubSession. Yield to the event loop so the flush microtask chain completes
+		// before we assert on its side-effects.
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		// Pending message should have been delivered to the rehydrated session
+		const rehydrated = ctx.createdSessions.get(subSessionId);
+		expect(rehydrated).toBeDefined();
+		const delivered = rehydrated!._enqueuedMessages.find((m) =>
+			m.msg.includes('resume and continue')
+		);
+		expect(delivered).toBeDefined();
+
+		// Queue should now be empty (markDelivered was called)
+		const remaining = pendingRepo.listPendingForTarget(wfRunId, 'coder');
+		expect(remaining).toHaveLength(0);
+	});
+
+	test('flushes pending messages directly (fast path) when session is already in memory', async () => {
+		const pendingRepo = new PendingAgentMessageRepository(ctx.bunDb);
+
+		const wfRunId = 'run-resume-live-1';
+		const wfId = 'wf-resume-live-1';
+		const nodeId = 'node-resume-live-1';
+		seedWorkflowRun(ctx, wfRunId, wfId, nodeId);
+
+		const parentTask = await ctx.taskManager.createTask({
+			title: 'Parent task for live-session resume',
+			description: '',
+			taskType: 'coding',
+			status: 'in_progress',
+			workflowRunId: wfRunId,
+		});
+		const taskAgentSessionId = `space:${ctx.spaceId}:task:${parentTask.id}`;
+		ctx.taskRepo.updateTask(parentTask.id, { taskAgentSessionId, status: 'in_progress' });
+		ctx.mockDb.createSession({ id: taskAgentSessionId, type: 'space_task_agent' });
+
+		const subSessionId = `space:${ctx.spaceId}:task:${parentTask.id}:exec:resume-live-exec`;
+		const execution = ctx.nodeExecutionRepo.create({
+			workflowRunId: wfRunId,
+			workflowNodeId: nodeId,
+			agentName: 'reviewer',
+			agentId: null,
+			status: 'in_progress',
+		});
+		ctx.nodeExecutionRepo.updateSessionId(execution.id, subSessionId);
+		ctx.mockDb.createSession({ id: subSessionId, type: 'worker' });
+
+		const manager = makeManagerWithPendingRepo(ctx, pendingRepo);
+
+		// Prime the session into memory by injecting a message (triggers rehydration)
+		await manager.injectSubSessionMessage(subSessionId, 'initial injection');
+		const rehydrateCallCount = restoreSpy.mock.calls.length;
+
+		// Queue a pending message AFTER the session is in memory
+		pendingRepo.enqueue({
+			workflowRunId: wfRunId,
+			spaceId: ctx.spaceId,
+			taskId: parentTask.id,
+			sourceAgentName: 'task-agent',
+			targetKind: 'node_agent',
+			targetAgentName: 'reviewer',
+			message: 'fast path delivery',
+		});
+
+		// Call tryResumeNodeAgentSession — session IS in memory → fast path (no restore call)
+		await manager.tryResumeNodeAgentSession(wfRunId, 'reviewer');
+
+		// restoreSpy should NOT have been called again (fast path skips rehydration)
+		expect(restoreSpy.mock.calls.length).toBe(rehydrateCallCount);
+
+		// Pending message should have been flushed to the live session
+		const remaining = pendingRepo.listPendingForTarget(wfRunId, 'reviewer');
+		expect(remaining).toHaveLength(0);
+
+		const session = ctx.createdSessions.get(subSessionId);
+		const fastPathMsg = session?._enqueuedMessages.find((m) =>
+			m.msg.includes('fast path delivery')
+		);
+		expect(fastPathMsg).toBeDefined();
 	});
 });
