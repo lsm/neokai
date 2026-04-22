@@ -147,7 +147,7 @@ vi.mock('../ReadOnlyWorkflowCanvas', () => ({
 		workflowId: string;
 		runId?: string | null;
 		spaceId: string;
-		onNodeClick?: (nodeId: string) => void;
+		onNodeClick?: (nodeId: string, nodeName: string, agentNames: string[]) => void;
 		class?: string;
 	}) => {
 		// Expose the onNodeClick for testing
