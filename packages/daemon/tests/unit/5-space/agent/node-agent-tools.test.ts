@@ -14,8 +14,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -37,18 +35,13 @@ import type { SpaceWorkflow, Gate, WorkflowChannel } from '@neokai/shared';
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-node-agent-tools',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string): void {
@@ -170,7 +163,6 @@ function makeResolvedChannel(
 
 interface TestCtx {
 	db: BunDatabase;
-	dir: string;
 	spaceId: string;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
@@ -191,7 +183,7 @@ interface TestCtx {
 }
 
 function makeCtx(): TestCtx {
-	const { db, dir } = makeDb();
+	const db = makeDb();
 	const spaceId = 'space-node-tools-test';
 
 	seedSpaceRow(db, spaceId);
@@ -243,7 +235,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		db,
-		dir,
 		spaceId,
 		taskRepo,
 		taskManager,
@@ -317,7 +308,6 @@ describe('node-agent-tools: list_peers', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns peers excluding self and task-agent', async () => {
@@ -449,7 +439,6 @@ describe('node-agent-tools: send_message', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('point-to-point succeeds when channel declared', async () => {
@@ -841,7 +830,6 @@ describe('node-agent-tools: save_artifact', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('save_artifact({ type, summary }) writes to artifact store and does NOT mutate task status', async () => {
@@ -962,7 +950,6 @@ describe('node-agent-tools: list_channels', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns empty channels when workflow is null', async () => {
@@ -1069,7 +1056,6 @@ describe('node-agent-tools: list_gates', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns empty gates when workflow is null', async () => {
@@ -1201,7 +1187,6 @@ describe('node-agent-tools: read_gate', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns error for non-existent gateId', async () => {
@@ -1310,7 +1295,6 @@ describe('node-agent-tools: send_message (gate-write)', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	/** Build a workflow with a gated channel from coder → reviewer. */
@@ -1539,7 +1523,6 @@ describe('node-agent-tools: list_reachable_agents', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns within-node peers excluding self and task-agent', async () => {
@@ -1790,7 +1773,6 @@ describe('node-agent-tools: createNodeAgentMcpServer', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('creates an MCP server with expected tools', () => {
@@ -1835,7 +1817,6 @@ describe('list_peers — completion state', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('list_peers includes completionState for each peer based on space_tasks', async () => {
@@ -1953,7 +1934,6 @@ describe('node-agent-tools: async gate evaluation', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	/**
@@ -2260,7 +2240,6 @@ describe('node-agent-tools: restore_node_agent', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('returns success with session/agent identity even without onRestoreNodeAgent callback', async () => {
@@ -2344,7 +2323,6 @@ describe('node-agent-tools: review-posted-gate multi-round artifact history', ()
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	/**
@@ -2573,7 +2551,6 @@ describe('node-agent-tools: list_peers — cross-node peer discovery', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('shows cross-node peer as not_started when node has not been activated yet', async () => {
@@ -2933,7 +2910,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
 
 	afterEach(() => {
 		ctx.db.close();
-		rmSync(ctx.dir, { recursive: true, force: true });
 	});
 
 	test('queues message for declared-but-inactive agent when pendingMessageRepo provided', async () => {

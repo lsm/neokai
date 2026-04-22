@@ -16,8 +16,6 @@
  */
 
 import { describe, test, expect, afterEach, spyOn, beforeEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -111,18 +109,13 @@ function makeMockSession(sessionId: string): MockAgentSession {
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-tam-mcp',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -167,7 +160,6 @@ function buildManager(opts: {
 	fromInitSpy: ReturnType<typeof spyOn<typeof AgentSession, 'fromInit'>>;
 	capturedFromInitArgs: Map<string, CapturedSessionArgs>;
 	bunDb: BunDatabase;
-	dir: string;
 	taskRepo: SpaceTaskRepository;
 	taskManager: SpaceTaskManager;
 	space: Space;
@@ -177,7 +169,7 @@ function buildManager(opts: {
 	seedSession: (id: string, type: string) => void;
 } {
 	const { registryMcpServers = {}, hasAppMcpManager = true } = opts;
-	const { db: bunDb, dir } = makeDb();
+	const bunDb = makeDb();
 	const spaceId = 'space-mcp-test';
 	seedSpaceRow(bunDb, spaceId);
 
@@ -287,7 +279,6 @@ function buildManager(opts: {
 		capturedFromInitArgs,
 		fromInitSpy,
 		bunDb,
-		dir,
 		taskRepo,
 		taskManager,
 		space,
@@ -305,26 +296,17 @@ function buildManager(opts: {
 
 describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				// best-effort cleanup
-			}
-		}
 	});
 
 	test('task agent session receives registry MCP servers merged with task-agent server', async () => {
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
-		const { manager, createdSessions, fromInitSpy, dir, taskManager, space } = buildManager({
+		const { manager, createdSessions, fromInitSpy, taskManager, space } = buildManager({
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Test task',
@@ -349,11 +331,10 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 	test('in-process task-agent server takes precedence over registry entry with same name', async () => {
 		// A registry entry named 'task-agent' should NOT override the in-process server.
 		const impostor: McpServerConfig = { type: 'stdio', command: 'impostor-cmd' };
-		const { manager, createdSessions, fromInitSpy, dir, taskManager, space } = buildManager({
+		const { manager, createdSessions, fromInitSpy, taskManager, space } = buildManager({
 			registryMcpServers: { 'task-agent': impostor },
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Collision task',
@@ -375,11 +356,10 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 	test('merged map contains all registry servers — none are dropped', async () => {
 		const serverA: McpServerConfig = { type: 'stdio', command: 'server-a' };
 		const serverB: McpServerConfig = { type: 'stdio', command: 'server-b' };
-		const { manager, createdSessions, fromInitSpy, dir, taskManager, space } = buildManager({
+		const { manager, createdSessions, fromInitSpy, taskManager, space } = buildManager({
 			registryMcpServers: { 'mcp-a': serverA, 'mcp-b': serverB },
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Multi-registry task',
@@ -398,11 +378,10 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 	});
 
 	test('works without appMcpManager — task-agent server is still injected', async () => {
-		const { manager, createdSessions, fromInitSpy, dir, taskManager, space } = buildManager({
+		const { manager, createdSessions, fromInitSpy, taskManager, space } = buildManager({
 			hasAppMcpManager: false,
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'No registry task',
@@ -420,11 +399,10 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 	});
 
 	test('works with empty registry — task-agent server is still injected', async () => {
-		const { manager, createdSessions, fromInitSpy, dir, taskManager, space } = buildManager({
+		const { manager, createdSessions, fromInitSpy, taskManager, space } = buildManager({
 			registryMcpServers: {},
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Empty registry task',
@@ -453,25 +431,16 @@ describe('TaskAgentManager — registry MCP merge (Task 3.4)', () => {
 
 describe('TaskAgentManager.rehydrate — registry MCP merge (Task 3.4)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				/* best-effort */
-			}
-		}
 	});
 
 	test('rehydrated task agent session receives registry MCP servers alongside task-agent server', async () => {
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
-		const { manager, createdSessions, fromInitSpy, bunDb, dir, taskManager, space, seedSession } =
+		const { manager, createdSessions, fromInitSpy, bunDb, taskManager, space, seedSession } =
 			buildManager({ registryMcpServers: { 'registry-mcp': registryServer } });
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		// Create a task that was in progress before the daemon restart
 		const task = await taskManager.createTask({
@@ -562,17 +531,9 @@ function makeResolvedChannel(
 
 describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				/* best-effort */
-			}
-		}
 	});
 
 	test('buildNodeAgentMcpServerForSession injects ChannelResolver (empty after M71 run.config removal)', () => {
@@ -580,9 +541,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 		// buildNodeAgentMcpServerForSession now creates an empty ChannelResolver via
 		// ChannelResolver.fromRunConfig(undefined). This test verifies the resolver is
 		// created and injected (though it has no channels since they're in-memory only).
-		const { manager, fromInitSpy, bunDb, dir, space, taskManager } = buildManager({});
+		const { manager, fromInitSpy, bunDb, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		// Seed a workflow run (channels param ignored since run.config no longer stores them)
 		const workflowRunId = seedWorkflowRunWithChannels(bunDb, space.id, [
@@ -634,9 +594,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when run has no channels', () => {
-		const { manager, fromInitSpy, bunDb, dir, space, taskManager } = buildManager({});
+		const { manager, fromInitSpy, bunDb, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		// Seed a workflow run with NO channels
 		const workflowRunId = seedWorkflowRunWithChannels(bunDb, space.id, []);
@@ -681,9 +640,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession injects empty ChannelResolver when workflowRunId is empty', () => {
-		const { manager, fromInitSpy, dir, space, taskManager } = buildManager({});
+		const { manager, fromInitSpy, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		let capturedConfig: Record<string, unknown> | null = null;
 		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
@@ -726,9 +684,8 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 	});
 
 	test('buildNodeAgentMcpServerForSession passes correct mySessionId, myAgentName, and taskId', () => {
-		const { manager, fromInitSpy, bunDb, dir, space, taskManager, taskRepo } = buildManager({});
+		const { manager, fromInitSpy, bunDb, space, taskManager, taskRepo } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		// Seed a step task — workflowNodeId was removed in M71, buildNodeAgentMcpServerForSession
 		// now uses task.id as the workflowNodeId value
@@ -786,31 +743,15 @@ describe('TaskAgentManager — ChannelResolver injection (Task 3.3)', () => {
 
 describe('TaskAgentManager — skills injection into fresh task agent sessions (G1)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				// best-effort
-			}
-		}
 	});
 
 	test('AgentSession.fromInit receives skillsManager when spawning task agent', async () => {
-		const {
-			manager,
-			fromInitSpy,
-			capturedFromInitArgs,
-			dir,
-			taskManager,
-			space,
-			mockSkillsManager,
-		} = buildManager({});
+		const { manager, fromInitSpy, capturedFromInitArgs, taskManager, space, mockSkillsManager } =
+			buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Skills injection task',
@@ -828,17 +769,9 @@ describe('TaskAgentManager — skills injection into fresh task agent sessions (
 	});
 
 	test('AgentSession.fromInit receives appMcpServerRepo when spawning task agent', async () => {
-		const {
-			manager,
-			fromInitSpy,
-			capturedFromInitArgs,
-			dir,
-			taskManager,
-			space,
-			mockAppMcpServerRepo,
-		} = buildManager({});
+		const { manager, fromInitSpy, capturedFromInitArgs, taskManager, space, mockAppMcpServerRepo } =
+			buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'AppMcpServerRepo injection task',
@@ -857,23 +790,14 @@ describe('TaskAgentManager — skills injection into fresh task agent sessions (
 
 describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				// best-effort
-			}
-		}
 	});
 
 	test('AgentSession.fromInit receives skillsManager when creating sub-session', async () => {
-		const { manager, fromInitSpy, capturedFromInitArgs, dir, mockSkillsManager } = buildManager({});
+		const { manager, fromInitSpy, capturedFromInitArgs, mockSkillsManager } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		// Create sub-session directly via public createSubSession()
 		const subSessionId = 'sub-session-skills-test';
@@ -891,11 +815,8 @@ describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 	});
 
 	test('AgentSession.fromInit receives appMcpServerRepo when creating sub-session', async () => {
-		const { manager, fromInitSpy, capturedFromInitArgs, dir, mockAppMcpServerRepo } = buildManager(
-			{}
-		);
+		const { manager, fromInitSpy, capturedFromInitArgs, mockAppMcpServerRepo } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const subSessionId = 'sub-session-appmcp-test';
 		const init = {
@@ -913,11 +834,10 @@ describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 
 	test('sub-session receives registry MCPs via setRuntimeMcpServers()', async () => {
 		const registryServer: McpServerConfig = { type: 'stdio', command: 'registry-cmd' };
-		const { manager, fromInitSpy, createdSessions, dir } = buildManager({
+		const { manager, fromInitSpy, createdSessions } = buildManager({
 			registryMcpServers: { 'registry-mcp': registryServer },
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const subSessionId = 'sub-session-registry-mcp-test';
 		const init = {
@@ -935,11 +855,10 @@ describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 	});
 
 	test('sub-session receives no registry MCPs when appMcpManager is absent', async () => {
-		const { manager, fromInitSpy, createdSessions, dir } = buildManager({
+		const { manager, fromInitSpy, createdSessions } = buildManager({
 			hasAppMcpManager: false,
 		});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const subSessionId = 'sub-session-no-registry-test';
 		const init = {
@@ -959,17 +878,9 @@ describe('TaskAgentManager — skills injection into sub-sessions (G2)', () => {
 
 describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				/* best-effort */
-			}
-		}
 	});
 
 	test('AgentSession.restore receives skillsManager when rehydrating task agent', async () => {
@@ -978,14 +889,12 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 			fromInitSpy,
 			createdSessions,
 			bunDb,
-			dir,
 			taskManager,
 			space,
 			seedSession,
 			mockSkillsManager,
 		} = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Rehydration skills task',
@@ -1040,14 +949,12 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 			fromInitSpy,
 			createdSessions,
 			bunDb,
-			dir,
 			taskManager,
 			space,
 			seedSession,
 			mockAppMcpServerRepo,
 		} = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const task = await taskManager.createTask({
 			title: 'Rehydration appMcpServerRepo task',
@@ -1104,23 +1011,14 @@ describe('TaskAgentManager.rehydrate — skills injection (G3)', () => {
 
 describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session invariant (Task #37)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				/* best-effort */
-			}
-		}
 	});
 
 	test('does nothing when node-agent is already present in session.config.mcpServers', () => {
-		const { manager, fromInitSpy, dir } = buildManager({});
+		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const session = makeMockSession('sub-session-ok');
 		// Pre-populate node-agent in the session config — invariant already holds.
@@ -1155,9 +1053,8 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 	});
 
 	test('self-heals by re-injecting node-agent when missing', () => {
-		const { manager, fromInitSpy, dir } = buildManager({});
+		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const session = makeMockSession('sub-session-broken');
 		// node-agent is missing — registry servers may still be there.
@@ -1203,9 +1100,8 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 	});
 
 	test('throws when re-injection fails to add node-agent', () => {
-		const { manager, fromInitSpy, dir } = buildManager({});
+		const { manager, fromInitSpy } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const session = makeMockSession('sub-session-broken');
 		session.session.config.mcpServers = {};
@@ -1241,23 +1137,14 @@ describe('TaskAgentManager.ensureNodeAgentAttached — workflow sub-session inva
 
 describe('TaskAgentManager.reinjectNodeAgentMcpServer — server-side restore primitive (Task #37)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				/* best-effort */
-			}
-		}
 	});
 
 	test('builds and merges node-agent into session config without dropping existing servers', () => {
-		const { manager, fromInitSpy, dir, space } = buildManager({});
+		const { manager, fromInitSpy, space } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		const session = makeMockSession('sub-session-reinject');
 		session.session.config.mcpServers = { 'registry-mcp': { name: 'registry' } };
@@ -1296,23 +1183,14 @@ describe('TaskAgentManager.reinjectNodeAgentMcpServer — server-side restore pr
 
 describe('TaskAgentManager.buildNodeAgentMcpServerForSession — onRestoreNodeAgent callback wiring (Task #37)', () => {
 	const spies: Array<{ mockRestore: () => void }> = [];
-	const dirs: string[] = [];
 
 	afterEach(() => {
 		for (const spy of spies.splice(0)) spy.mockRestore();
-		for (const dir of dirs.splice(0)) {
-			try {
-				rmSync(dir, { recursive: true });
-			} catch {
-				/* best-effort */
-			}
-		}
 	});
 
 	test('passes an onRestoreNodeAgent callback into createNodeAgentMcpServer', () => {
-		const { manager, fromInitSpy, dir, space, taskManager } = buildManager({});
+		const { manager, fromInitSpy, space, taskManager } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		let capturedConfig: Record<string, unknown> | null = null;
 		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(
@@ -1354,9 +1232,8 @@ describe('TaskAgentManager.buildNodeAgentMcpServerForSession — onRestoreNodeAg
 	});
 
 	test('onRestoreNodeAgent callback re-injects node-agent on a live sub-session', async () => {
-		const { manager, fromInitSpy, dir, space } = buildManager({});
+		const { manager, fromInitSpy, space } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		// Step 1: stub the server builder so buildNodeAgentMcpServerForSession can run
 		// without requiring a full workflow definition. The first call (server build)
@@ -1433,9 +1310,8 @@ describe('TaskAgentManager.buildNodeAgentMcpServerForSession — onRestoreNodeAg
 	});
 
 	test('onRestoreNodeAgent is a no-op (logs only) when no live sub-session is found', () => {
-		const { manager, fromInitSpy, dir, space } = buildManager({});
+		const { manager, fromInitSpy, space } = buildManager({});
 		spies.push(fromInitSpy);
-		dirs.push(dir);
 
 		let capturedConfig: Record<string, unknown> | null = null;
 		const mcpServerSpy = spyOn(nodeAgentToolsModule, 'createNodeAgentMcpServer').mockImplementation(

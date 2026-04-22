@@ -15,8 +15,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -144,18 +142,13 @@ function makeMockSession(
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-task-agent-lifecycle',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -208,7 +201,6 @@ async function makeTask(
 
 interface TestCtx {
 	bunDb: BunDatabase;
-	dir: string;
 	spaceId: string;
 	space: Space;
 	agentId: string;
@@ -236,7 +228,7 @@ interface TestCtx {
 }
 
 function makeCtx(): TestCtx {
-	const { db: bunDb, dir } = makeDb();
+	const bunDb = makeDb();
 	const spaceId = 'space-tal-test';
 	const workspacePath = '/tmp/test-workspace';
 
@@ -353,7 +345,6 @@ function makeCtx(): TestCtx {
 
 	return {
 		bunDb,
-		dir,
 		spaceId,
 		space,
 		agentId,
@@ -387,11 +378,6 @@ describe('Task Agent Session Lifecycle', () => {
 
 	afterEach(() => {
 		ctx.fromInitSpy.mockRestore();
-		try {
-			rmSync(ctx.dir, { recursive: true, force: true });
-		} catch {
-			// ignore cleanup errors
-		}
 	});
 
 	// =======================================================================

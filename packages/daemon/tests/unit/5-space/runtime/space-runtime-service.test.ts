@@ -11,7 +11,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, type Mock } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
@@ -624,18 +624,13 @@ class MockSink implements NotificationSink {
 	}
 }
 
-function makeTestDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-srs-notif',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeTestDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 // ─── activateWorkflowNode — notification sink forwarding ─────────────────────
@@ -648,7 +643,7 @@ function makeTestDb(): { db: BunDatabase; dir: string } {
 
 describe('activateWorkflowNode() — notification forwarding', () => {
 	test('forwards workflow_run_reopened to the current NotificationSink when reopening a done run', async () => {
-		const { db, dir } = makeTestDb();
+		const db = makeTestDb();
 		try {
 			const SPACE_ID = 'space-act-sink-1';
 			const AGENT_ID = 'agent-act-sink-1';
@@ -752,7 +747,6 @@ describe('activateWorkflowNode() — notification forwarding', () => {
 			} catch {
 				/* ignore */
 			}
-			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

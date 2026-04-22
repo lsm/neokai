@@ -15,8 +15,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -66,18 +64,13 @@ class MockNotificationSink implements NotificationSink {
 // DB helpers
 // ---------------------------------------------------------------------------
 
-function makeDb(): { db: BunDatabase; dir: string } {
-	const dir = join(
-		process.cwd(),
-		'tmp',
-		'test-space-runtime-notif',
-		`t-${Date.now()}-${Math.random().toString(36).slice(2)}`
-	);
-	mkdirSync(dir, { recursive: true });
-	const db = new BunDatabase(join(dir, 'test.db'));
+function makeDb(): BunDatabase {
+	// Use in-memory SQLite — faster than file-based DB and avoids filesystem
+	// I/O contention that caused beforeEach hook timeouts in CI.
+	const db = new BunDatabase(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 	runMigrations(db, () => {});
-	return { db, dir };
+	return db;
 }
 
 function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/workspace'): void {
@@ -199,7 +192,6 @@ function withSyntheticEnd(endAgentId: string): {
 
 describe('SpaceRuntime — notification events', () => {
 	let db: BunDatabase;
-	let dir: string;
 
 	let workflowRunRepo: SpaceWorkflowRunRepository;
 	let taskRepo: SpaceTaskRepository;
@@ -232,7 +224,7 @@ describe('SpaceRuntime — notification events', () => {
 	}
 
 	beforeEach(() => {
-		({ db, dir } = makeDb());
+		db = makeDb();
 
 		seedSpaceRow(db, SPACE_ID, WORKSPACE);
 		seedAgentRow(db, AGENT_CODER, SPACE_ID);
@@ -258,7 +250,6 @@ describe('SpaceRuntime — notification events', () => {
 			/* ignore */
 		}
 		try {
-			rmSync(dir, { recursive: true, force: true });
 		} catch {
 			/* ignore */
 		}
