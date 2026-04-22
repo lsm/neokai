@@ -2,6 +2,28 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.11.0] - 2026-04-22
+
+A refinement release improving workflow reliability, artifact display, and communication resilience. 15 commits since v0.10.0.
+
+### Added
+
+**Space Workflow System**
+- **Stacked PR task chain**: Plan & Decompose workflow generates ordered tasks with branch name, base branch, and dependency instructions for bottom-up PR chains
+- **Data-driven artifact rendering**: Worktree commit display for artifacts
+- **Unified save_artifact tool**: Consolidated `save`, `write_artifact`, and `report_result` into one tool
+- **Clickable overview stat cards**: Navigate to tasks page from overview stats
+
+**Frontend & UI**
+- **Compact approval banners**: One-line + modal pattern replaces inline banners
+
+### Fixed
+
+- **Node-agent MCP tools**: Restored in workflow sessions after daemon restart; auto-resume idle sessions when messages are queued
+- **Gate scripts**: Resolved from live templates instead of stale DB rows; startup drift warnings added
+- **Communication**: `list_peers` shows topology peers; `send_message` queues for inactive nodes instead of failing
+- **db-query MCP**: Exposed `space_sessions` and `sdk_messages` in space scope
+
 ## [0.10.0] - 2026-04-21
 
 A focused release hardening the Space Workflow System for production use — autonomy enforcement, completion pipelines, workflow template sync, and significant UI polish. 76 commits since v0.9.0.
