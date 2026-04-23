@@ -38,7 +38,7 @@ new `approved` status and dispatches deterministically — spawning a fresh
 session for the target agent with interpolated instructions, or (when the
 target is `task-agent`) injecting an instruction turn into the existing Task
 Agent conversation. When post-approval completes, the task transitions to
-`done`. The target agent is a normal workflow-agent session with its normal
+`done`. The target agent is a normal space task node agent session with its normal
 toolkit (Bash, file ops, MCP servers, everything), so it can handle merge
 complexity the same way any other node handles its work — with LLM
 judgement, retries, and escalation.
@@ -65,26 +65,32 @@ Concretely:
    deterministic lookup against `workflow.postApproval`:
    - If the workflow has no `postApproval` → immediately transition to `done`
      (single-step workflows, documentation missions).
-   - If `targetAgent` is a workflow-agent role → spawn a new session for that
-     role with the interpolated `instructions` as kickoff. The session's
-     completion triggers `approved → done` via existing sub-session event
-     plumbing.
+   - If `targetAgent` is a **space task node agent** (an agent role declared
+     on a node in this workflow — see code-comment convention below) →
+     spawn a new session for that agent with the interpolated `instructions`
+     as kickoff. The agent calls a new `mark_complete` tool when finished,
+     transitioning `approved → done`.
    - If `targetAgent === 'task-agent'` → inject
      `[POST_APPROVAL_INSTRUCTIONS]` as a user turn into the existing Task
      Agent session. The Task Agent performs the work with its orchestrator
-     toolset and calls its existing (now idempotent) `approve_task` to
-     close — no new tools.
-5. The spawned post-approval session is a normal workflow-agent session: it
+     toolset and calls `mark_complete` when done — same tool as above.
+5. The spawned post-approval session is a normal space task node agent session: it
    has the agent's full system prompt, tool surface, and MCP servers. For a
    PR merge, the instructions direct it to run the appropriate shell
    commands (`gh pr view`, `gh pr merge`, worktree sync). For a different
    workflow's post-approval it could be publishing a release, notifying
    slack, etc. — all determined by the workflow author's instruction string.
-6. **No new MCP tools on the Task Agent server.** Routing is deterministic
-   runtime code; there is no decision for an LLM to mediate. The Task Agent
-   receives `[TASK_APPROVED]` as awareness only, and acts only when
-   `targetAgent === 'task-agent'` (handled via the existing `approve_task`
-   tool in its idempotent-completion mode).
+6. **One new MCP tool on the Task Agent server: `mark_complete`.** Routing
+   itself is deterministic runtime code — no LLM tool-call gates the
+   dispatch. But the `approved → done` transition needs an explicit signal
+   from the agent doing the post-approval work (whether that's a spawned
+   space task node agent or the Task Agent itself when `targetAgent === 'task-agent'`).
+   `mark_complete` takes no args and only succeeds on an `approved` task;
+   calling it transitions the task to `done`. It's deliberately distinct
+   from `approve_task` — overloading one tool across both the
+   "work-quality approval" transition (`in_progress → approved`) and the
+   "post-approval done" transition (`approved → done`) would confuse
+   callers about what the tool means in context.
 7. The entire `CompletionAction` type, its runtime pipeline, its RPC
    intercepts, its MCP tool (`approve_completion_action`), its DB columns,
    and its UI surface are deleted. The per-workflow knob
@@ -102,7 +108,7 @@ Task Agent or daemon.
 | Stage | PR | Scope | Dependency |
 |------|----|-------|------------|
 | 1 | Task state `approved` + workflow schema | Add `TaskStatus='approved'` (shared types + DB migration), add `WorkflowDefinition.postApproval` shape + validator, no behaviour change yet (nothing reads `approved` or `postApproval` beyond load/save). Unit-tested. | — |
-| 2 | Runtime post-approval routing | New `PostApprovalRouter` module dispatches on the `approved` boundary: no-target → direct `done`; workflow-agent target → spawn session; `task-agent` target → inject `[POST_APPROVAL_INSTRUCTIONS]` turn. `approve_task` tool becomes idempotent for `approved → done`. Runtime emits `[TASK_APPROVED]` as an awareness-only event. No new MCP tools. Behind a feature flag so callers continue seeing completion-actions behaviour until workflow templates migrate. | Stage 1 deployed |
+| 2 | Runtime post-approval routing | New `PostApprovalRouter` module dispatches on the `approved` boundary: no-target → direct `done`; space-task-node-agent target → spawn session; `task-agent` target → inject `[POST_APPROVAL_INSTRUCTIONS]` turn. New `mark_complete` MCP tool (Task Agent + spawned post-approval sessions) gates the `approved → done` transition; `approve_task` stays scoped to `in_progress → approved`. Runtime emits `[TASK_APPROVED]` as an awareness-only event. Behind a feature flag so callers continue seeing completion-actions behaviour until workflow templates migrate. | Stage 1 deployed |
 | 3 | End-node handoff + built-in workflow `postApproval` entries | Update built-in workflow prompts to `send_message` to `task-agent` with `{ pr_url, post_approval_action }` before `approve_task`. Populate `postApproval` on all 5 built-in workflows. Update Task Agent system prompt + kickoff. Flip the feature flag. | Stage 2 deployed |
 | 4 | Remove completion-action runtime pipeline | Delete `resolveCompletionWithActions` / `resumeCompletionActions` / `executeCompletionAction`; delete the `spaceTask.update` intercept for `completion_action`; delete `approve_completion_action` MCP tool; delete `PendingCompletionActionBanner`. Task/run completion now flows through the new `approved → done` path. | Stage 3 deployed |
 | 5 | Schema cleanup + docs | Drop `pending_action_index`, `pending_checkpoint_type='completion_action'` value, `completion_actions_fired_at`, `MERGE_PR_COMPLETION_ACTION` etc. from DB & shared types. Docs refresh. Changelog. | Stage 4 merged |
@@ -128,9 +134,9 @@ interface PostApprovalRoute {
      *     same MCP servers, same worktree), independent of any previous
      *     execution.
      *   - The literal string "task-agent". Post-approval runs in the Task
-     *     Agent's own session — used only when no workflow agent is
-     *     appropriate and the Task Agent's orchestrator-tool surface is
-     *     sufficient.
+     *     Agent's own session — used only when no space task node agent
+     *     is appropriate and the Task Agent's orchestrator-tool surface
+     *     is sufficient.
      * Validation runs at workflow save + load time; see §1.5.
      */
     targetAgent: string;
@@ -263,8 +269,20 @@ statuses that don't include `approved`.
 **Design decision (2026-04-23 revision):** routing is a deterministic
 runtime step, not an LLM decision. The Task Agent is *not* in the critical
 path for spawning the post-approval session — it only observes the
-transitions for conversational awareness. No new MCP tools are added to
-the Task Agent server.
+transitions for conversational awareness. **One** new MCP tool is added:
+`mark_complete`, used by whichever agent performs the post-approval work
+(a spawned space task node agent, or the Task Agent itself when
+`targetAgent === 'task-agent'`) to signal `approved → done`.
+
+> **Terminology — "space task node agent".** Throughout this plan,
+> "space task node agent" refers to an agent session spawned for a node
+> in a space workflow run — distinct from the Task Agent (the
+> orchestrator) and from ad-hoc chat sessions. In the current codebase
+> this is the `'node_agent'` kind in
+> `packages/shared/src/types/space.ts` (`SpaceMemberSession.kind`). When
+> the new `post-approval-router.ts` module is added, its doc comment
+> will introduce the full term and cross-reference the existing
+> `'node_agent'` kind so future readers can follow the vocabulary.
 
 Four event sites interact:
 
@@ -296,31 +314,33 @@ Four event sites interact:
      the interpolated `instructions` as a user-message turn into the
      existing Task Agent session (same channel the runtime already uses
      for `[TASK_APPROVED]` and `[NODE_COMPLETE]` events; see
-     `task-agent-manager.ts` ≈ line 2878). No session spawn; no new tools.
-     The Task Agent acts on the instructions using the tools already on
-     its MCP server (`send_message`, `request_human_input`,
-     `save_artifact`, etc.). Completion is signalled when the Task Agent
-     calls its existing `approve_task` tool again — that tool becomes
-     idempotent for `approved` tasks and transitions `approved → done`
-     (see §3.2).
+     `task-agent-manager.ts` ≈ line 2878). No session spawn. The Task
+     Agent acts on the instructions using the tools already on its MCP
+     server (`send_message`, `request_human_input`, `save_artifact`,
+     etc.) plus the new `mark_complete` tool. Completion is signalled
+     when the Task Agent calls `mark_complete` — which transitions
+     `approved → done` (see §3.2).
 
-   - **Otherwise (targetAgent is a workflow-agent role):** runtime spawns
-     a fresh session for that role:
+   - **Otherwise (targetAgent is a space task node agent):** runtime
+     spawns a fresh session for that agent:
      - Session kind: reuses the existing `space_task_agent` sub-session
-       model with an `isPostApproval: true` flag (confirmed decision —
-       §7.1).
+       model (DB row with `kind = 'node_agent'`) with an
+       `isPostApproval: true` flag (confirmed decision — §7.1).
      - Same worktree and MCP server config as the corresponding
        workflow-node session would have.
      - Kickoff user message = interpolated `instructions`.
      - Records `post_approval_session_id` + `post_approval_started_at` on
        the task.
-     - Awaits session completion via the existing sub-session event
-       plumbing (same path that handles `[NODE_COMPLETE]` today).
+     - The `mark_complete` tool is also available on this session's MCP
+       surface (mirrored from the Task Agent's), so the agent can close
+       the task directly when its work is done.
 
 4. **Post-approval session completes (non-task-agent path).** The spawned
-   session terminates normally (its agent calls `approve_task` or simply
-   reaches end-of-turn). Runtime observes the session-terminated event and
-   transitions `approved → done`. No Task Agent tool-call needed.
+   space task node agent either calls `mark_complete` explicitly
+   (preferred), or the runtime falls back to observing session termination
+   as an implicit completion signal and transitions `approved → done`
+   itself. Either way, no confusion between "approve the work" and "mark
+   the post-approval complete" — the tool names are distinct.
 
 5. **Post-approval session fails.** If the session exits with an error, or
    the spawned agent calls `submit_for_approval` on its post-approval work
@@ -365,12 +385,13 @@ Runs in `SpaceWorkflowManager.create` and `.update`, and on load from DB in
 but `postApproval` is disabled for that run until fixed, to protect against
 stale configs after a node removal).
 
-**Why restrict to workflow-declared agents + task-agent?** Any other target
-would require inventing a new agent role with ad-hoc config. The constraint
-keeps the surface narrow: a workflow author can only route to agents they
-already understand (because they already declared them) or the
-orchestrator. If a post-approval step needs a different agent, add it as a
-node in the workflow first.
+**Why restrict to declared space task node agents + task-agent?** Any
+other target would require inventing a new agent role with ad-hoc config.
+The constraint keeps the surface narrow: a workflow author can only route
+to agents they already understand (because they already declared them as
+space task node agents on nodes in this workflow) or the orchestrator. If
+a post-approval step needs a different agent, add it as a node in the
+workflow first.
 
 ### 1.6 Template grammar for `instructions`
 
@@ -499,10 +520,9 @@ The Task Agent observes two events for conversational awareness, but only
 3. **Active only when `targetAgent === 'task-agent'`.** In that specific
    case the runtime follows up the `[TASK_APPROVED]` event with a second
    injected user turn carrying the interpolated `instructions`. The Task
-   Agent then performs the post-approval work using tools it already owns
-   and calls `approve_task` a second time to signal completion. (The
-   `approve_task` tool becomes idempotent for `approved` tasks —
-   `approved → done`; see §3.2.)
+   Agent then performs the post-approval work using tools it already
+   owns plus the new `mark_complete` tool, which it calls when done to
+   transition the task from `approved → done` (see §3.2).
 
 **Runtime injection shape (`[TASK_APPROVED]` — awareness only):**
 
@@ -516,9 +536,9 @@ Post-approval routing:
   session_status: <spawning | self | none>
 
 No action required from you — this is informational. The runtime will
-spawn the post-approval session (if target_agent is a workflow agent) or
-deliver the instructions to you directly (if target_agent is "task-agent")
-or close the task immediately (if no target).
+spawn the post-approval session (if target_agent is a space task node
+agent) or deliver the instructions to you directly (if target_agent is
+"task-agent") or close the task immediately (if no target).
 ```
 
 **Runtime injection shape (post-approval instructions — only when
@@ -529,13 +549,15 @@ target_agent === "task-agent"):**
 
 <interpolated instructions from workflow.postApproval.instructions>
 
-When you finish (or need to abort), call approve_task() to close the task.
-If you need human input mid-work, call request_human_input as usual.
+When you finish (or need to abort), call mark_complete to transition the
+task from `approved` to `done`. If you need human input mid-work, call
+request_human_input as usual.
 ```
 
-No new MCP tools are added to the Task Agent server. The routing
-decision is deterministic and lives in `PostApprovalRouter.route` in the
-runtime layer (§1.4).
+One new MCP tool is added (`mark_complete`, §3.2). The routing decision
+itself stays deterministic and lives in `PostApprovalRouter.route` in the
+runtime layer (§1.4) — `mark_complete` only gates the final
+`approved → done` transition, not the dispatch.
 
 ### 2.4 Prompt changes by node
 
@@ -622,7 +644,7 @@ line:
    we want to (e.g. `gh` + `git` + `cd` but no arbitrary `curl`). Scoping
    decision deferred to §7.2.
 
-### 3.2 Task Agent system prompt addition + `approve_task` idempotency
+### 3.2 Task Agent system prompt addition + new `mark_complete` tool
 
 **System prompt addition.** Amend
 [`task-agent.ts:buildTaskAgentSystemPrompt`](../../packages/daemon/src/lib/space/agents/task-agent.ts)
@@ -645,27 +667,36 @@ MCP server (send_message, request_human_input, save_artifact,
 list_artifacts). Do not attempt shell commands — you are an orchestrator,
 not an executor.
 
-When you finish the post-approval work, call `approve_task()` again to
-close the task. Calling `approve_task` on an already-`approved` task is
-idempotent and transitions it to `done`.
+When you finish the post-approval work, call `mark_complete` to
+transition the task from `approved` to `done`. Note: `mark_complete` is
+distinct from `approve_task`. `approve_task` means "the work is good"
+(transitions `in_progress → approved`); `mark_complete` means
+"post-approval is finished" (transitions `approved → done`). Never call
+`approve_task` to close a task that's already `approved` — use
+`mark_complete`.
 
 If you need to abort post-approval (e.g. human rejection via
 `request_human_input`), record the reason via `save_artifact` and still
-call `approve_task()` — abandonment is a legitimate outcome, not a
-failure.
+call `mark_complete` — abandonment is a legitimate outcome of
+post-approval, not a failure.
 ```
 
-**`approve_task` tool behaviour change.** The existing tool in
-[`task-agent-tools.ts`](../../packages/daemon/src/lib/space/tools/task-agent-tools.ts)
-becomes status-aware:
+**New tool `mark_complete` in
+[`task-agent-tools.ts`](../../packages/daemon/src/lib/space/tools/task-agent-tools.ts).**
+Also mirrored onto the post-approval session's MCP surface so spawned
+space task node agents can use the same tool.
 
-| Current task status | Effect of `approve_task()` |
-|---------------------|----------------------------|
-| `in_progress` | Transitions `in_progress → approved`, then runtime routes (§1.4). Unchanged user-visible behaviour except the intermediate state. |
-| `approved` (new idempotent case) | Transitions `approved → done`. Used by the Task Agent to signal post-approval completion when `targetAgent === 'task-agent'`. |
-| Any other status | Rejected with an explanatory error (unchanged). |
+| Caller's current task status | Effect of `mark_complete()` |
+|------------------------------|----------------------------|
+| `approved` | Transitions `approved → done`. Clears `post_approval_session_id`. Emits observability log. |
+| Any other status | Rejected with an explanatory error (e.g. "task is not in `approved` status; did you mean `approve_task`?"). |
 
-No new MCP tools are added.
+Schema: `{ /* empty object — no args */ }`.
+
+**`approve_task` tool behaviour — unchanged.** It still only accepts
+`in_progress` and still transitions to `approved`. Rejecting it on an
+`approved` task is the guardrail that forces callers to use the correct
+signal for the correct transition.
 
 ### 3.3 `request_human_input` question scaffolding
 
@@ -728,9 +759,12 @@ If the target-agent session escalates (calls `submit_for_approval` on
 itself, or the template's `request_human_input` response is a rejection):
 
 1. The session records the rejection in an artifact.
-2. The session exits normally (completed, not failed).
-3. Runtime observes session completion and transitions `approved → done`
-   directly (no Task Agent tool-call required).
+2. The session calls `mark_complete` (rejection is a legitimate completion
+   outcome for post-approval, not a failure — the work itself was already
+   approved upstream). Task transitions `approved → done`.
+3. If the session exits without calling `mark_complete` (crashed,
+   timed out, etc.), the runtime falls back to observing session
+   termination and transitions `approved → done` with an audit note.
 4. An audit artifact on the task records "post-approval skipped:
    `human_rejected`".
 
@@ -768,7 +802,7 @@ is removed the same way regardless of what replaces it.)*
 | `packages/daemon/src/lib/space/runtime/pending-action.ts` | Entire file (60 lines). |
 | `packages/daemon/src/lib/space/runtime/space-runtime-service.ts` | `resumeCompletionActions` public API (lines 795-807). |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts` | `approve_completion_action` handler (lines 944-1006) and its tool registration (line 1246). |
-| `packages/daemon/src/lib/space/tools/task-agent-tools.ts` | Update `approve_task` tool description string to reference the new status-aware behaviour (`in_progress → approved` spawns routing; `approved → done` is idempotent post-approval completion). No new tools added. |
+| `packages/daemon/src/lib/space/tools/task-agent-tools.ts` | Add new tool `mark_complete` (takes no args; rejects unless task status is `approved`). Update `approve_task` description to clarify it only handles `in_progress → approved` — with a pointer to `mark_complete` for the other transition. `mark_complete` is also registered on the space-task-node-agent MCP surface (spawned post-approval sessions). |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts` | The `pendingCheckpointType === 'completion_action'` intercept in `spaceTask.update` (lines 154-203). `approvePendingCompletion` now transitions `review → approved` (not `review → done`) and invokes `PostApprovalRouter.route`. No new RPC. |
 | `packages/daemon/src/lib/space/workflows/built-in-workflows.ts` | `MERGE_PR_COMPLETION_ACTION` (lines 187-194). `VERIFY_PR_MERGED_BASH_SCRIPT` + `VERIFY_PR_MERGED_COMPLETION_ACTION` (lines 204-239). `VERIFY_REVIEW_POSTED_BASH_SCRIPT` + `VERIFY_REVIEW_POSTED_COMPLETION_ACTION` (lines 246-282). `PLAN_AND_DECOMPOSE_VERIFY_SCRIPT` + `PLAN_AND_DECOMPOSE_VERIFY_COMPLETION_ACTION` (lines 792-830). Every `completionActions: [...]` entry on a node (lines 518, 664, 766, 972, 1135). **Add** `postApproval` on the 2 workflows that need it (Coding, Research, QA). `PR_MERGE_BASH_SCRIPT` stays but moves to `pr-merge-script.ts` (see §3.4). |
 | `packages/web/src/components/space/PendingCompletionActionBanner.tsx` | Entire file (385 lines). |
@@ -860,7 +894,7 @@ WHERE pending_checkpoint_type = 'completion_action';
 Under `packages/daemon/tests/unit/5-space/`:
 
 - `workflow/post-approval-validator.test.ts`
-  - `targetAgent` = declared workflow agent → valid.
+  - `targetAgent` = declared space task node agent → valid.
   - `targetAgent` = `task-agent` → valid.
   - `targetAgent` = unknown → invalid + error lists eligible targets.
   - Missing `postApproval` → valid (optional).
@@ -872,9 +906,9 @@ Under `packages/daemon/tests/unit/5-space/`:
     escaping, no shell escaping — the downstream agent handles that).
 - `runtime/post-approval-router.test.ts`
   - `approved` task with no `postApproval` → router transitions directly
-    to `done`; no session spawned; no Task Agent tool-call.
-  - `approved` task with workflow-agent target → router spawns a new
-    sub-session with the interpolated kickoff and records
+    to `done`; no session spawned; no tool-call required.
+  - `approved` task with space-task-node-agent target → router spawns a
+    new sub-session with the interpolated kickoff and records
     `post_approval_session_id` + `post_approval_started_at`.
   - `approved` task with `target_agent: 'task-agent'` → router injects a
     `[POST_APPROVAL_INSTRUCTIONS]` turn into the existing Task Agent
@@ -886,15 +920,18 @@ Under `packages/daemon/tests/unit/5-space/`:
 - `runtime/task-status-transitions.test.ts`
   - `in_progress → approved` via `approve_task` (end node).
   - `review → approved` via `approvePendingCompletion` (human).
-  - `approved → done` via idempotent `approve_task` (Task Agent
-    post-approval completion).
-  - `approved → done` via runtime on non-task-agent session completion.
+  - `approved → done` via `mark_complete` (post-approval agent — spawned
+    node agent OR Task Agent for `'task-agent'` target).
+  - `approved → done` via runtime fallback on session termination
+    without `mark_complete`.
   - `approved → blocked` disallowed in Stage 2 (deferred to §7).
-- `agent/task-agent-approve-task-idempotent.test.ts`
-  - `approve_task` called on a task already in `approved` status
-    transitions to `done`; no runtime routing re-fires.
-  - `approve_task` called on a task in any non-`in_progress`/non-`approved`
-    status is rejected.
+- `agent/task-agent-mark-complete.test.ts`
+  - `mark_complete` called on a task in `approved` status transitions to
+    `done` and clears `post_approval_session_id`.
+  - `mark_complete` called on a task in any other status is rejected with
+    an explanatory error that points callers at `approve_task`.
+  - `approve_task` called on a task already in `approved` status is
+    rejected (the guardrail preventing accidental overload).
 - `workflows/end-node-handoff.test.ts`
   - For each of the 5 built-in workflows, snapshot-test the end-node's
     customPrompt to ensure the post-approval signalling instructions are
@@ -960,7 +997,10 @@ Steps:
 5. Save an audit artifact:
      save_artifact({ type: "result", append: true,
                      data: { merged_pr_url, mergedAt, approval: "auto"|"human" } })
-6. Call approve_task() to signal post-approval complete.
+6. Call mark_complete() to signal post-approval finished
+   (transitions the task from `approved` to `done`).
+   DO NOT call approve_task — that's for the initial "work is good"
+   transition (in_progress → approved), which already happened upstream.
 ```
 
 The QA-workflow `completionAutonomyLevel` drop from 4 → 3 is a behavioural
@@ -1008,11 +1048,13 @@ post-approval session layer rather than at the `merge_pr` tool layer.
   New `PostApprovalRouter` module in the runtime layer performs the
   deterministic dispatch: no-target → direct `approved → done`;
   task-agent target → inject `[POST_APPROVAL_INSTRUCTIONS]` turn;
-  workflow-agent target → spawn sub-session. `approve_task` tool becomes
-  idempotent for `approved` tasks. Runtime emits `[TASK_APPROVED]` as an
+  space-task-node-agent target → spawn sub-session. New `mark_complete`
+  MCP tool (Task Agent + spawned post-approval sessions) gates the
+  `approved → done` transition; `approve_task` stays scoped to
+  `in_progress → approved`. Runtime emits `[TASK_APPROVED]` as an
   awareness-only event. Task Agent system prompt gets a short
-  `## Post-Approval` section. No new MCP tools. Behind a feature flag
-  (`NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING`). ~700 LOC; depends on PR 1.
+  `## Post-Approval` section. Behind a feature flag
+  (`NEOKAI_TASK_AGENT_POST_APPROVAL_ROUTING`). ~750 LOC; depends on PR 1.
 - **PR 3** — **End-node handoff + built-in workflow `postApproval`
   entries.** Update all 5 built-in workflow prompts. Populate `postApproval`
   on Coding, Research, QA. Flip the feature flag. ~500 LOC; depends on PR 2.
@@ -1103,49 +1145,70 @@ post-approval session layer rather than at the `merge_pr` tool layer.
    **Recommendation:** accept the regression for Stage 4; revisit as a
    follow-up if operator feedback indicates the checks were load-bearing.
 
-7. **Completion signal for `targetAgent === 'task-agent'`.** The chosen
-   mechanism is idempotent `approve_task` (§3.2). Alternative considered:
-   infer completion from turn-end (no pending tool calls). Rejected
-   because turn-end is an ambiguous signal — the Task Agent may pause for
-   `request_human_input`, in which case turn-end does not mean the work
-   is done. An explicit `approve_task` call is unambiguous, matches what
-   end-node agents already do, and requires no new tool.
+7. **Completion signal for post-approval work.** ✅ Decided: a new
+   dedicated tool `mark_complete` (§3.2). Same tool is used by both
+   spawned space task node agents and the Task Agent (in the
+   `'task-agent'` target case). Alternatives considered and rejected:
+   - *Infer completion from turn-end (no pending tool calls).* Ambiguous —
+     a `request_human_input` pause looks the same as end-of-work.
+   - *Overload `approve_task`* (make it idempotent for `approved → done`).
+     Rejected by reviewer/user feedback: the same tool name would mean
+     two different things depending on caller status (work-approval vs.
+     post-approval-done), which is a surprising footgun for both humans
+     reading the prompts and LLMs picking the right call.
+   An explicit separately-named tool is unambiguous: `approve_task` =
+   "work is good" (`in_progress → approved`); `mark_complete` =
+   "post-approval finished" (`approved → done`).
 
 ---
 
 ## 8. Revision history
 
-**2026-04-23 revision 2 (this revision):** Dropped the proposed
+**2026-04-23 revision 3 (this revision):** Two follow-up refinements after
+more direct user feedback:
+
+1. **Drop the `approve_task` overload; introduce `mark_complete`.**
+   Rev 2 made `approve_task` idempotent so calling it on an already-
+   `approved` task would flip `approved → done`. User pushed back: same
+   tool name with two meanings is confusing. Introduce a new dedicated
+   tool `mark_complete` (no args, status-restricted to `approved`) used
+   by spawned space task node agents and by the Task Agent (for the
+   `'task-agent'` target case) to signal post-approval completion.
+   `approve_task` stays scoped to `in_progress → approved`.
+2. **Terminology: "space task node agent" replaces "workflow-agent
+   role".** Consistent label for agent sessions spawned per workflow
+   node. The term is not yet used in the codebase; the new
+   `post-approval-router.ts` module will introduce it in a doc comment
+   cross-referencing the existing `'node_agent'` kind in
+   `packages/shared/src/types/space.ts`.
+
+Key sections touched: §0 items 4+6 (new tool, new term), §1.4, §2.3
+(POST_APPROVAL_INSTRUCTIONS shape), §3.2 (rewritten around
+`mark_complete`), §3.5 (human-rejection signals via `mark_complete`),
+§4.1 (new tool registered), §4.6 (test renamed to
+`task-agent-mark-complete.test.ts`), §5 (merge template step 6 updated
+with explicit DO-NOT-call-approve_task note), §6.2 PR 2, §7.7 (decision
+locked in), §8, Appendix A, Appendix B (new row).
+
+**2026-04-23 revision 2:** Dropped the proposed
 `spawn_post_approval_session` + `completePostApproval` MCP tools on the
 Task Agent server after direct user feedback: routing is deterministic
 (a pure function of `workflow.postApproval`), so putting it behind an LLM
-tool-call gate is wrong. Routing moves to a new runtime module
-(`PostApprovalRouter`). The Task Agent's only new responsibility is
-**conversational awareness** plus, when `targetAgent === 'task-agent'`,
-acting on an injected `[POST_APPROVAL_INSTRUCTIONS]` turn and calling its
-existing (now idempotent) `approve_task` tool to close. Key changes:
+tool-call gate is wrong. Routing moved to a new runtime module
+(`PostApprovalRouter`). Task Agent's only new responsibility: receive
+`[TASK_APPROVED]` for awareness; when `targetAgent === 'task-agent'`,
+also act on an injected `[POST_APPROVAL_INSTRUCTIONS]` turn. Completion
+was signalled via idempotent `approve_task` — subsequently revised to
+`mark_complete` (see rev 3 above).
 
 - §1.4: renamed "Task Agent routing mechanics" → "Runtime-driven routing
   mechanics"; routing happens in `PostApprovalRouter.route`, not via Task
   Agent tool calls.
 - §2.3: reframed as "Task Agent observes (2 events), acts in 1 case".
   Added `[POST_APPROVAL_INSTRUCTIONS]` event shape.
-- §3.2: renamed to include "approve_task idempotency" — the existing tool
-  becomes status-aware (`in_progress → approved` triggers routing;
-  `approved → done` is idempotent completion). No new tools.
 - §3.4 / §3.5: retired Task Agent re-routing framing; completion and
   double-fire protection live in the runtime router.
-- §4.1 table: removed the "add new tools" row for `task-agent-tools.ts`;
-  also no new RPC in `space-task-handlers.ts`.
-- §4.6: renamed test files (`post-approval-router.test.ts`,
-  `task-agent-approve-task-idempotent.test.ts`); dropped the
-  spawn-tool-specific test.
-- §6.2 PR 2: no new MCP tools; smaller LOC estimate.
-- §7: removed the "expose `spawn_post_approval_session` to non-Task-Agent
-  sessions?" question (moot); added a new question on the task-agent
-  completion signal (decided: idempotent `approve_task`).
-- Appendix A: removed `spawn_post_approval_session` /
-  `completePostApproval` references; added `post-approval-router.ts`.
+- §4.1 table: removed the "add new tools" row for the two rev-1 tools.
 - Appendix B: added row for "Routing trigger: Task Agent LLM vs. runtime".
 
 **2026-04-23 revision 1:** Approach changed from "narrow `merge_pr` MCP
@@ -1180,8 +1243,9 @@ Key files referenced in this plan, grouped by area:
 **Task Agent wiring**
 - `packages/daemon/src/lib/space/agents/task-agent.ts` — system prompt + session init (add short §3.2 `## Post-Approval` section)
 - `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` — session lifecycle, sub-session events, post-approval session spawn plumbing (consumed by `PostApprovalRouter`)
-- `packages/daemon/src/lib/space/tools/task-agent-tools.ts` — `approve_task` handler becomes status-aware (idempotent `approved → done`). No new tools.
-- `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts` — unchanged
+- `packages/daemon/src/lib/space/tools/task-agent-tools.ts` — add new `mark_complete` tool (no-arg; accepts only `approved` status); `approve_task` description clarified to scope it to `in_progress → approved` (does not accept `approved`)
+- `packages/daemon/src/lib/space/tools/task-agent-tool-schemas.ts` — add `MarkCompleteSchema` (empty object) + export in `TASK_AGENT_TOOL_SCHEMAS`
+- `packages/daemon/src/lib/space/tools/space-task-node-agent-tools.ts` (or equivalent wiring site) — mirror the `mark_complete` tool onto spawned post-approval sessions' MCP surface so the spawned agent can close the task
 
 **Workflow schema**
 - `packages/shared/src/types/space.ts` — add `PostApprovalRoute`, `WorkflowDefinition.postApproval`
@@ -1226,7 +1290,9 @@ Key files referenced in this plan, grouped by area:
 | Task lifecycle addition | (A) Reuse `review` → `done` with a post-approval sub-state; (B) Add new `approved` status; (C) Track post-approval progress on the workflow-run row, not the task | **B** | `approved` is semantically distinct from `review` (work is accepted, not pending) and from `done` (terminal). Making it a first-class status is simpler to reason about in UI and queries. See §1.3. |
 | Template grammar | (A) Simple `{{var}}` substitute; (B) Full Handlebars; (C) JS expressions | **A** | Dumb substitute is sufficient because the LLM reading the prompt handles all the conditional logic. Handlebars + JS are overkill and create testing/security debt. |
 | Merge executor: Task Agent LLM (direct) vs. Task Agent routes to reviewer | Original revision: Task Agent LLM calls `merge_pr` MCP tool directly. This revision: the runtime routes to reviewer (workflow-declared agent). | **Route to reviewer** | Task Agent stays a pure orchestrator. The reviewer agent (or any target) already has the Bash/git/gh toolkit — reuse rather than duplicate. |
-| Routing trigger: Task Agent LLM tool-call vs. runtime dispatch | (A) New `spawn_post_approval_session` + `completePostApproval` MCP tools on the Task Agent server; LLM decides when to spawn/complete. (B) New `PostApprovalRouter` in the runtime layer; triggered deterministically on the `approved` transition; no new MCP tools. | **B** | Routing is a pure function of `workflow.postApproval` — there is no decision for an LLM to make. Putting dispatch behind an LLM tool call risks skip/mis-route. LLM judgement still fully present in the post-approval *work itself*. See §1.4 for full rationale. Decided by direct user feedback 2026-04-23. |
+| Routing trigger: Task Agent LLM tool-call vs. runtime dispatch | (A) New `spawn_post_approval_session` + `completePostApproval` MCP tools on the Task Agent server; LLM decides when to spawn/complete. (B) New `PostApprovalRouter` in the runtime layer; triggered deterministically on the `approved` transition. | **B** | Routing is a pure function of `workflow.postApproval` — there is no decision for an LLM to make. Putting dispatch behind an LLM tool call risks skip/mis-route. LLM judgement still fully present in the post-approval *work itself*. See §1.4 for full rationale. Decided by direct user feedback 2026-04-23. |
+| Post-approval completion signal tool | (A) Overload `approve_task` — make it idempotent for `approved → done` when the task is already `approved`. (B) New dedicated `mark_complete` tool, status-restricted to `approved`. | **B** | Same tool with two meanings (work-approval vs. post-approval-done) is a confusing footgun for both prompt authors and LLMs. A separately-named tool makes intent explicit at the call site. `approve_task` stays scoped to `in_progress → approved`. Decided by direct user feedback 2026-04-23. |
+| Terminology for per-node workflow agents | (A) "workflow role" / "workflow-agent role". (B) "space task node agent". | **B** | User preference. The codebase currently uses `'node_agent'` kind in `SpaceMemberSession`; the new `post-approval-router.ts` doc comment introduces the long-form name for prose and cross-references the existing kind enum. |
 | Handoff signal: new gate vs. structured send_message | Unchanged from original revision. | **send_message(task-agent, data)** | Already idiomatic; gates don't fit the task-agent's implicit channels. |
 | `completionAutonomyLevel`: keep, repurpose, or remove | Unchanged. | **Keep** | Independently controls `approve_task` vs `submit_for_approval` — a distinct "is the work any good" decision from post-approval. |
 | Verification completion actions (verify-pr-merged, verify-review-posted, verify-tasks-created): keep, convert, delete | Unchanged. | **Delete** (accept regression) | Lost verifications are soft guardrails; audit artifacts + human review are the primary safety nets. |
