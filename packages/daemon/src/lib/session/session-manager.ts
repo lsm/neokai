@@ -87,7 +87,7 @@ export class SessionManager {
 		this.worktreeManager = new WorktreeManager();
 
 		// Initialize tools config manager
-		this.toolsConfigManager = new ToolsConfigManager(db, settingsManager);
+		this.toolsConfigManager = new ToolsConfigManager(db);
 
 		// Factory function for creating AgentSession instances
 		const createAgentSession = (session: Session): AgentSession => {

@@ -337,25 +337,24 @@ describe('QueryOptionsBuilder', () => {
 			});
 		});
 
-		it('should leave mcpServers undefined for auto-load', async () => {
+		it('leaves mcpServers undefined when none are configured', async () => {
 			const options = await builder.build();
-			// When not configured, should be undefined to let SDK auto-load
+			// In M5 the SDK is locked to `strictMcpConfig: true` +
+			// `settingSources: []`, so it will not auto-load `.mcp.json` —
+			// `mcpServers` simply stays undefined when no skill/registry entry
+			// contributes one.
 			expect(options.mcpServers).toBeUndefined();
 		});
 	});
 
 	describe('setting sources configuration', () => {
-		// M1: by default every session type gets `settingSources: []` so the SDK
-		// cannot auto-load project `.mcp.json` or `.claude/settings.local.json`.
-		// The pre-M1 `['project', 'local']` default is only restored when
-		// `NEOKAI_LEGACY_MCP_AUTOLOAD=1` — covered in the M1 kill-switch suite below.
-		it('should default to empty settingSources (M1: no SDK auto-load)', async () => {
-			const options = await builder.build();
-			expect(options.settingSources).toEqual([]);
-		});
-
-		it('should still force empty settingSources even when loadSettingSources is false', async () => {
-			mockSession.config.tools = { loadSettingSources: false };
+		// M5 (unify-mcp-config-model): `settingSources` is unconditionally `[]`
+		// so the SDK never auto-loads `.mcp.json` / `settings.json` MCP servers.
+		// The unified `app_mcp_servers` registry (+ `mcp_enablement` overrides)
+		// is now the only source of truth — the legacy `loadSettingSources`
+		// override and the M1 `NEOKAI_LEGACY_MCP_AUTOLOAD` kill switch are both
+		// gone.
+		it('should always emit empty settingSources', async () => {
 			const options = await builder.build();
 			expect(options.settingSources).toEqual([]);
 		});
@@ -526,17 +525,21 @@ describe('QueryOptionsBuilder', () => {
 			// Worker sessions (type: 'worker') must not be affected by space_chat restrictions
 			mockSession.type = 'worker';
 			const options = await builder.build();
-			// Worker sessions use the default claude_code preset — no tool restrictions imposed.
-			// (M1 still forces `strictMcpConfig: true`, asserted separately below.)
+			// Worker sessions still pass through `strictMcpConfig: true` (set
+			// unconditionally in M5); `tools` is undefined because no preset
+			// or per-room override imposes a restriction.
+			expect(options.strictMcpConfig).toBe(true);
 			expect(options.tools).toBeUndefined();
 		});
 	});
 
 	// ============================================================================
-	// M1: Kill the `.mcp.json` auto-load leak
-	// docs/plans/unify-mcp-config-model/00-overview.md milestone M1
+	// M5 (unify-mcp-config-model): strictMcpConfig + settingSources are forced
+	// for ALL session types unconditionally; the M1 `NEOKAI_LEGACY_MCP_AUTOLOAD`
+	// kill switch was removed. These tests pin the post-M5 contract per session
+	// type so any regression that re-introduces auto-loading is caught.
 	// ============================================================================
-	describe('M1: strict MCP + empty settingSources default', () => {
+	describe('M5: unconditional strict MCP + empty settingSources', () => {
 		const sessionTypes: Array<'worker' | 'space_task_agent' | 'general' | 'coder' | 'planner'> = [
 			'worker',
 			'space_task_agent',
@@ -544,14 +547,6 @@ describe('QueryOptionsBuilder', () => {
 			'coder',
 			'planner',
 		];
-
-		beforeEach(() => {
-			delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
-		});
-
-		afterEach(() => {
-			delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
-		});
 
 		for (const type of sessionTypes) {
 			it(`forces strictMcpConfig=true and settingSources=[] on ${type} sessions`, async () => {
@@ -563,11 +558,11 @@ describe('QueryOptionsBuilder', () => {
 		}
 
 		it('does not inject project .mcp.json servers into the mcpServers map (regression)', async () => {
-			// Pre-M1 behavior: SDK auto-loads any `.mcp.json` at the workspace root
-			// because `settingSources` defaults to `['project', 'local']`. Post-M1
-			// `settingSources: []` means the SDK never looks at `.mcp.json` at all,
-			// and an ad-hoc worker session with no programmatic mcpServers emits an
-			// `undefined` mcpServers option — i.e. nothing to inject.
+			// Pre-M1 behavior was for the SDK to auto-load any `.mcp.json` at the
+			// workspace root because `settingSources` defaulted to `['project', 'local']`.
+			// Post-M5 the SDK never looks at `.mcp.json` at all, and an ad-hoc worker
+			// session with no programmatic mcpServers emits an `undefined` mcpServers
+			// option — i.e. nothing to inject.
 			mockSession.type = 'worker';
 			mockSession.config.mcpServers = undefined;
 			const options = await builder.build();
@@ -587,53 +582,25 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.mcpServers).toEqual({ 'task-agent': { command: 'task-cmd' } });
 		});
 
-		describe('kill switch: NEOKAI_LEGACY_MCP_AUTOLOAD=1', () => {
-			it('restores pre-M1 defaults for worker sessions', async () => {
-				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
-				mockSession.type = 'worker';
-				const options = await builder.build();
-				// Pre-M1: strictMcpConfig falls through to session config (undefined here)
-				expect(options.strictMcpConfig).toBeUndefined();
-				// Pre-M1: settingSources defaults to ['project', 'local']
-				expect(options.settingSources).toEqual(['project', 'local']);
-			});
-
-			it('restores pre-M1 defaults for space_task_agent sessions', async () => {
-				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
-				mockSession.type = 'space_task_agent';
-				const options = await builder.build();
-				expect(options.strictMcpConfig).toBeUndefined();
-				expect(options.settingSources).toEqual(['project', 'local']);
-			});
-
-			it('keeps room_chat strict even with the kill switch enabled', async () => {
-				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
-				mockSession.type = 'room_chat';
-				const options = await builder.build();
-				// Coordinator blocks override back to strict; the kill switch must not
-				// regress coordinator hardening.
-				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual([]);
-			});
-
-			it('keeps space_chat strict even with the kill switch enabled', async () => {
-				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
-				mockSession.type = 'space_chat';
-				const options = await builder.build();
-				expect(options.strictMcpConfig).toBe(true);
-				expect(options.settingSources).toEqual([]);
-			});
-
-			it('is only triggered by the exact string "1"', async () => {
-				// `true`, `yes`, `TRUE`, etc. must NOT re-enable legacy auto-load.
-				for (const val of ['true', 'yes', 'TRUE', '0', '', 'on']) {
+		it('ignores NEOKAI_LEGACY_MCP_AUTOLOAD — the M1 kill switch was removed in M5', async () => {
+			// Setting the legacy env var must have no effect; settingSources stays []
+			// and strictMcpConfig stays true regardless of value or session type.
+			const previous = process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+			try {
+				for (const val of ['1', 'true', 'yes']) {
 					process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = val;
 					mockSession.type = 'worker';
 					const options = await builder.build();
 					expect(options.strictMcpConfig).toBe(true);
 					expect(options.settingSources).toEqual([]);
 				}
-			});
+			} finally {
+				if (previous === undefined) {
+					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+				} else {
+					process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = previous;
+				}
+			}
 		});
 	});
 
@@ -1554,88 +1521,11 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
-	// Task G7: disabled MCP servers must be excluded from mcpServers map regardless of session type
-	describe('disabledMcpServers filtering', () => {
-		it('excludes disabled servers from mcpServers for normal sessions', async () => {
-			mockSession.config.mcpServers = {
-				'my-server': { command: 'run-server' },
-				'other-server': { command: 'run-other' },
-			};
-			mockSession.config.tools = {
-				disabledMcpServers: ['my-server'],
-			};
-
-			const options = await builder.build();
-
-			expect(options.mcpServers).not.toHaveProperty('my-server');
-			expect(options.mcpServers).toHaveProperty('other-server');
-		});
-
-		it('excludes disabled servers from mcpServers for room_chat sessions', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'room-cmd' },
-				'my-project-server': { command: 'project-cmd' },
-			};
-			mockSession.config.tools = {
-				disabledMcpServers: ['my-project-server'],
-			};
-
-			const options = await builder.build();
-
-			// room_chat always has strictMcpConfig: true and settingSources: []
-			expect(options.strictMcpConfig).toBe(true);
-			expect(options.settingSources).toEqual([]);
-			// Disabled server must not appear even though settingSources is empty
-			expect(options.mcpServers).not.toHaveProperty('my-project-server');
-			expect(options.mcpServers).toHaveProperty('room-agent-tools');
-		});
-
-		it('keeps all servers when disabledMcpServers is empty', async () => {
-			mockSession.config.mcpServers = {
-				'server-a': { command: 'cmd-a' },
-				'server-b': { command: 'cmd-b' },
-			};
-			mockSession.config.tools = {
-				disabledMcpServers: [],
-			};
-
-			const options = await builder.build();
-
-			expect(options.mcpServers).toHaveProperty('server-a');
-			expect(options.mcpServers).toHaveProperty('server-b');
-		});
-
-		it('returns undefined mcpServers when all servers are disabled', async () => {
-			mockSession.config.mcpServers = {
-				'only-server': { command: 'cmd' },
-			};
-			mockSession.config.tools = {
-				disabledMcpServers: ['only-server'],
-			};
-
-			const options = await builder.build();
-
-			expect(options.mcpServers).toBeUndefined();
-		});
-
-		it('room_chat allowedTools wildcards exclude disabled server', async () => {
-			mockSession.type = 'room_chat';
-			mockSession.config.mcpServers = {
-				'room-agent-tools': { command: 'room-cmd' },
-				'disabled-server': { command: 'dis-cmd' },
-			};
-			mockSession.config.tools = {
-				disabledMcpServers: ['disabled-server'],
-			};
-
-			const options = await builder.build();
-
-			// allowedTools wildcards are generated from the filtered mcpServers
-			expect(options.allowedTools).toContain('room-agent-tools__*');
-			expect(options.allowedTools).not.toContain('disabled-server__*');
-		});
-	});
+	// NOTE: Per-session `disabledMcpServers` filtering was removed in M5
+	// (unify-mcp-config-model). MCP enablement now flows through the unified
+	// `app_mcp_servers` registry plus per-room/per-session `mcp_enablement`
+	// overrides — `QueryOptionsBuilder` no longer trims `mcpServers` based on
+	// a per-session list. Tests for the legacy filter are gone.
 
 	describe('always-on agent/agents propagation (room agents)', () => {
 		const coderExplorerDef = {

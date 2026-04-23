@@ -19,8 +19,8 @@
  * When users configure custom env vars in ~/.Claude/settings.json:
  *
  * 1. **Non-provider env vars** (e.g., custom tool vars) are passed through to the SDK
- *    - Loaded via settingsManager.prepareSDKOptions()
- *    - Merged with session.config.env in query-options-builder.ts
+ *    - Read from globalSettings.env in query-options-builder.ts via getMergedEnvironmentVars()
+ *    - Merged with session.config.env (session takes precedence)
  *    - Passed to SDK via options.env
  *
  * 2. **Provider-specific env vars** are managed by the provider system:

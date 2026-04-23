@@ -163,7 +163,6 @@ function makeMinimalToolsConfig(overrides: Partial<NeoToolsConfig> = {}): NeoToo
 				neoModel: null,
 				showArchived: false,
 				fallbackModels: [],
-				disabledMcpServers: [],
 			}) as ReturnType<NeoQuerySettingsManager['getGlobalSettings']>,
 	};
 	const noopAuthManager: NeoQueryAuthManager = {

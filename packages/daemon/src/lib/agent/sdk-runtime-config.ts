@@ -173,7 +173,7 @@ export class SDKRuntimeConfig {
 	 * Update tools configuration and restart query to apply changes
 	 */
 	async updateToolsConfig(tools: Session['config']['tools']): Promise<ConfigUpdateResult> {
-		const { session, db, daemonHub, settingsManager, logger } = this.ctx;
+		const { session, db, daemonHub, logger } = this.ctx;
 
 		try {
 			// 1. Update session config in memory and DB
@@ -181,21 +181,13 @@ export class SDKRuntimeConfig {
 			session.config = newConfig;
 			db.updateSession(session.id, { config: newConfig });
 
-			// 2. Write MCP settings to .claude/settings.local.json
-			if (tools?.disabledMcpServers !== undefined) {
-				await settingsManager.setDisabledMcpServers(tools.disabledMcpServers);
-
-				// Restart query to reload MCP settings
-				await this.ctx.restartQuery();
-			}
-
-			// 3. Refresh context breakdown via the SDK's native method.
+			// 2. Refresh context breakdown via the SDK's native method.
 			// Previously this queued `/context` into the message stream, but we
 			// no longer consume those replies and they'd surface as visible
 			// messages in the transcript. Use `query.getContextUsage()` directly.
 			await this.refreshContextUsage();
 
-			// 4. Emit event for StateManager
+			// 3. Emit event for StateManager
 			await daemonHub.emit('session.updated', {
 				sessionId: session.id,
 				source: 'config',

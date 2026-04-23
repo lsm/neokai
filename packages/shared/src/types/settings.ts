@@ -61,13 +61,15 @@ export interface SDKSupportedSettings {
 /**
  * Settings that can only be configured via .claude/settings.local.json
  * These settings have no SDK option equivalent.
+ *
+ * NOTE: Legacy MCP toggles (disabledMcpServers, enabledMcpServers,
+ * enableAllProjectMcpServers) were removed in M5. The unified `app_mcp_servers`
+ * registry plus the `mcp_enablement` override table is now the only place MCP
+ * enablement is recorded; NeoKai no longer writes the SDK's
+ * `disabledMcpjsonServers` / `enabledMcpjsonServers` /
+ * `enableAllProjectMcpServers` keys into `.claude/settings.local.json`.
  */
 export interface FileOnlySettings {
-	// MCP Server Control (CRITICAL for NeoKai)
-	disabledMcpServers?: string[];
-	enabledMcpServers?: string[];
-	enableAllProjectMcpServers?: boolean;
-
 	// Permissions (file-only features)
 	askPermissions?: string[];
 
@@ -106,14 +108,6 @@ export interface FileOnlySettings {
 }
 
 /**
- * Per-server MCP settings (allowed/defaultOn)
- */
-export interface McpServerSettings {
-	allowed?: boolean;
-	defaultOn?: boolean;
-}
-
-/**
  * A single fallback model entry in the fallback chain.
  * Used when the primary model fails due to rate limits or usage limits.
  */
@@ -130,9 +124,6 @@ export interface FallbackModelEntry {
 export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 	// Setting sources to load (all enabled by default)
 	settingSources: SettingSource[];
-
-	// Per-server MCP settings (keyed by server name)
-	mcpServerSettings?: Record<string, McpServerSettings>;
 
 	// Default thinking level for new sessions
 	// Maps to maxThinkingTokens in SDK options
@@ -190,7 +181,6 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	settingSources: ['user', 'project', 'local'],
 	permissionMode: 'default',
 	model: 'sonnet', // Default model for new sessions
-	disabledMcpServers: [],
 	showArchived: false,
 	// Default auto-scroll to true so new sessions inherit this setting
 	// This must match the display default in GlobalSettingsEditor (autoScroll ?? true)

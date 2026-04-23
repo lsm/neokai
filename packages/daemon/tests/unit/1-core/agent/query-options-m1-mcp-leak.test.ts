@@ -1,5 +1,5 @@
 /**
- * M1 regression suite — "Kill the `.mcp.json` auto-load leak".
+ * MCP `.mcp.json` auto-load leak — regression suite (M1 + M5).
  *
  * This test exercises the three session spawn paths called out in the M1
  * task (docs/plans/unify-mcp-config-model/00-overview.md): Space ad-hoc
@@ -14,11 +14,12 @@
  *      `settingSources: []`, so the Claude Agent SDK has no path to
  *      auto-load a project-level `.mcp.json` or `.claude/settings.local.json`.
  *
- * We also verify the `NEOKAI_LEGACY_MCP_AUTOLOAD=1` escape hatch restores
- * pre-M1 behavior for these non-coordinator session types.
+ * M5 removed the `NEOKAI_LEGACY_MCP_AUTOLOAD=1` escape hatch entirely —
+ * setting it has no effect, which is also asserted below so any accidental
+ * resurrection is caught here.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import { createTaskAgentInit } from '../../../../src/lib/space/agents/task-agent';
 import { createCustomAgentInit } from '../../../../src/lib/space/agents/custom-agent';
@@ -112,15 +113,7 @@ function sessionFromInit(init: AgentSessionInit): Session {
 	} as Session;
 }
 
-describe('M1 leak regression: strictMcpConfig + empty settingSources per spawn path', () => {
-	beforeEach(() => {
-		delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
-	});
-
-	afterEach(() => {
-		delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
-	});
-
+describe('MCP leak regression: strictMcpConfig + empty settingSources per spawn path', () => {
 	describe('space_task_agent (createTaskAgentInit)', () => {
 		it('emits SDK options with strictMcpConfig=true and empty settingSources', async () => {
 			const init = createTaskAgentInit({
@@ -145,23 +138,32 @@ describe('M1 leak regression: strictMcpConfig + empty settingSources per spawn p
 			expect(options.mcpServers).toBeUndefined();
 		});
 
-		it('restores pre-M1 asymmetry when NEOKAI_LEGACY_MCP_AUTOLOAD=1', async () => {
-			process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
-			const init = createTaskAgentInit({
-				task: makeTask(),
-				space: makeSpace(),
-				sessionId: 'space:space-m1:task:task-m1',
-				workspacePath: '/workspace/task',
-			});
-			const session = sessionFromInit(init);
-			const builder = new QueryOptionsBuilder({
-				session,
-				settingsManager: mockSettingsManager(),
-			});
-			const options = await builder.build();
+		it('ignores NEOKAI_LEGACY_MCP_AUTOLOAD — kill switch was removed in M5', async () => {
+			const previous = process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+			try {
+				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
+				const init = createTaskAgentInit({
+					task: makeTask(),
+					space: makeSpace(),
+					sessionId: 'space:space-m1:task:task-m1',
+					workspacePath: '/workspace/task',
+				});
+				const session = sessionFromInit(init);
+				const builder = new QueryOptionsBuilder({
+					session,
+					settingsManager: mockSettingsManager(),
+				});
+				const options = await builder.build();
 
-			expect(options.strictMcpConfig).toBeUndefined();
-			expect(options.settingSources).toEqual(['project', 'local']);
+				expect(options.strictMcpConfig).toBe(true);
+				expect(options.settingSources).toEqual([]);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+				} else {
+					process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = previous;
+				}
+			}
 		});
 	});
 
@@ -194,26 +196,35 @@ describe('M1 leak regression: strictMcpConfig + empty settingSources per spawn p
 			expect(options.mcpServers).toBeUndefined();
 		});
 
-		it('restores pre-M1 asymmetry when NEOKAI_LEGACY_MCP_AUTOLOAD=1', async () => {
-			process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
-			const init = createCustomAgentInit({
-				customAgent: makeCustomAgent(),
-				task: makeTask(),
-				workflowRun: null,
-				workflow: null,
-				space: makeSpace(),
-				sessionId: 'space:space-m1:task:task-m1:exec:e1',
-				workspacePath: '/workspace/task',
-			});
-			const session = sessionFromInit(init);
-			const builder = new QueryOptionsBuilder({
-				session,
-				settingsManager: mockSettingsManager(),
-			});
-			const options = await builder.build();
+		it('ignores NEOKAI_LEGACY_MCP_AUTOLOAD — kill switch was removed in M5', async () => {
+			const previous = process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+			try {
+				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
+				const init = createCustomAgentInit({
+					customAgent: makeCustomAgent(),
+					task: makeTask(),
+					workflowRun: null,
+					workflow: null,
+					space: makeSpace(),
+					sessionId: 'space:space-m1:task:task-m1:exec:e1',
+					workspacePath: '/workspace/task',
+				});
+				const session = sessionFromInit(init);
+				const builder = new QueryOptionsBuilder({
+					session,
+					settingsManager: mockSettingsManager(),
+				});
+				const options = await builder.build();
 
-			expect(options.strictMcpConfig).toBeUndefined();
-			expect(options.settingSources).toEqual(['project', 'local']);
+				expect(options.strictMcpConfig).toBe(true);
+				expect(options.settingSources).toEqual([]);
+			} finally {
+				if (previous === undefined) {
+					delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+				} else {
+					process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = previous;
+				}
+			}
 		});
 	});
 

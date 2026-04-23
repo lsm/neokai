@@ -457,6 +457,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	//   `config.tools.disabledMcpServers`. Legacy columns/table are left intact
 	//   for this milestone — M5 removes them.
 	runMigration101(db);
+
+	// Migration 102: MCP M5 of `unify-mcp-config-model` — purge legacy MCP keys
+	//   from the `global_settings` JSON blob now that M101 has migrated the data
+	//   into `mcp_enablement`. The deleted keys (`disabledMcpServers`,
+	//   `mcpServerSettings`, `enabledMcpServers`, `enableAllProjectMcpServers`)
+	//   are superseded by the unified `app_mcp_servers` registry + the
+	//   `mcp_enablement` override table. Carries no schema changes — only data
+	//   cleanup. Runs strictly *after* M101 so the seed step still has the
+	//   legacy data to copy.
+	runMigration102(db);
 }
 
 /**
@@ -6811,5 +6821,62 @@ export function runMigration101(db: BunDatabase): void {
 				insert.run(srv.id, row.id);
 			}
 		}
+	}
+}
+
+/**
+ * Migration 102 — M5 of `unify-mcp-config-model`: strip legacy MCP keys from
+ * the `global_settings` JSON blob.
+ *
+ * The keys removed here were the previous-generation MCP toggling surface:
+ *   - `disabledMcpServers` (string[])           → enablement now lives in
+ *   - `mcpServerSettings`  (allowed/defaultOn)  → `app_mcp_servers` +
+ *   - `enabledMcpServers`  (string[])              `mcp_enablement` rows
+ *   - `enableAllProjectMcpServers` (boolean)
+ *
+ * The corresponding TypeScript fields were dropped in M5 (see
+ * `packages/shared/src/types/settings.ts`). On the next read after this
+ * migration the JSON-shape settings won't carry these keys back in.
+ *
+ * Order matters: this runs *after* M101, which seeds the new
+ * `mcp_enablement` table from these same legacy keys. If we stripped them
+ * first, M101 would have nothing to seed from on a pre-M3 DB.
+ *
+ * No schema changes; failures are logged-and-swallowed to match the rest of
+ * the JSON-blob migrations (autoScroll, etc.) — a malformed row should not
+ * prevent the daemon from starting.
+ */
+export function runMigration102(db: BunDatabase): void {
+	if (!tableExists(db, 'global_settings')) {
+		return;
+	}
+	try {
+		const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
+			| { settings: string }
+			| undefined;
+		if (!row) return;
+
+		const settings = JSON.parse(row.settings) as Record<string, unknown>;
+		const legacyKeys = [
+			'disabledMcpServers',
+			'mcpServerSettings',
+			'enabledMcpServers',
+			'enableAllProjectMcpServers',
+		] as const;
+
+		let mutated = false;
+		for (const key of legacyKeys) {
+			if (key in settings) {
+				delete settings[key];
+				mutated = true;
+			}
+		}
+		if (!mutated) return;
+
+		db.prepare(
+			`UPDATE global_settings SET settings = ?, updated_at = datetime('now') WHERE id = 1`
+		).run(JSON.stringify(settings));
+	} catch {
+		// Swallow — same policy as runMigration12.
 	}
 }
