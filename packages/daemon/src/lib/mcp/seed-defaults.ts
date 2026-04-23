@@ -16,7 +16,8 @@ import type { Database } from '../../storage/database';
 export function seedDefaultMcpEntries(db: Database): void {
 	const repo = db.appMcpServers;
 
-	if (!repo.getByName('fetch-mcp')) {
+	const existingFetch = repo.getByName('fetch-mcp');
+	if (!existingFetch) {
 		repo.create({
 			name: 'fetch-mcp',
 			description: 'Fetch web pages and convert to Markdown for reading documentation and articles',
@@ -27,9 +28,13 @@ export function seedDefaultMcpEntries(db: Database): void {
 			enabled: true,
 			source: 'builtin',
 		});
+	} else if (existingFetch.source !== 'builtin') {
+		// Upgrade provenance for legacy rows seeded before the `source` column existed.
+		repo.update(existingFetch.id, { source: 'builtin' });
 	}
 
-	if (!repo.getByName('chrome-devtools')) {
+	const existingChrome = repo.getByName('chrome-devtools');
+	if (!existingChrome) {
 		repo.create({
 			name: 'chrome-devtools',
 			description:
@@ -41,5 +46,7 @@ export function seedDefaultMcpEntries(db: Database): void {
 			enabled: false,
 			source: 'builtin',
 		});
+	} else if (existingChrome.source !== 'builtin') {
+		repo.update(existingChrome.id, { source: 'builtin' });
 	}
 }

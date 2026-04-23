@@ -18,6 +18,7 @@ import { navigateToSpaces } from '../../lib/router.ts';
 import { Button } from '../ui/Button.tsx';
 import { AUTONOMY_LEVELS } from '../../lib/space-constants.ts';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary.tsx';
+import { SpaceMcpSettings } from './SpaceMcpSettings.tsx';
 
 interface SpaceSettingsProps {
 	space: Space;
@@ -316,6 +317,9 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 						<p class="text-xs text-gray-500 font-mono break-all">{space.workspacePath}</p>
 					</div>
 				</section>
+
+				{/* MCP Servers — per-space overrides for the application MCP registry. */}
+				<SpaceMcpSettings spaceId={space.id} disabled={saving} />
 
 				{/* Export section */}
 				<section class="space-y-3">
