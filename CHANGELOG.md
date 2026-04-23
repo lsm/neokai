@@ -2,6 +2,24 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.12.0] - 2026-04-22
+
+A release improving tool surface area and session resilience. 5 commits since v0.11.1.
+
+### Added
+
+- **Runtime MCP surface**: Sync-attach space tools to all member sessions; surface runtime MCP servers in Tool Modal
+- **Standalone task dependencies**: `depends_on` parameter in `create_standalone_task` MCP tool
+
+### Changed
+
+- Remove global MCP Servers page; plan MCP unification
+
+### Fixed
+
+- Sessions only deleted/archived from UI actions (not agent)
+- Task-agent `sdkSessionId` preserved across restart; sub-sessions eagerly spawned
+
 ## [0.11.1] - 2026-04-22
 
 A patch release fixing session persistence and workflow fingerprint accuracy. 8 commits since v0.11.0.
