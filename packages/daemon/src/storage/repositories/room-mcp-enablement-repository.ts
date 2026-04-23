@@ -7,7 +7,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { AppMcpServer, AppMcpServerSourceType } from '@neokai/shared';
+import type { AppMcpServer, AppMcpServerSource, AppMcpServerSourceType } from '@neokai/shared';
 import type { ReactiveDatabase } from '../reactive-database';
 
 // ---------------------------------------------------------------------------
@@ -31,6 +31,8 @@ interface EnablementWithServerRow {
 	env: string | null;
 	url: string | null;
 	headers: string | null;
+	source: string | null;
+	source_path: string | null;
 	created_at: number | null;
 	updated_at: number | null;
 }
@@ -90,6 +92,8 @@ export class RoomMcpEnablementRepository {
           ams.env,
           ams.url,
           ams.headers,
+          ams.source,
+          ams.source_path,
           ams.created_at,
           ams.updated_at
         FROM room_mcp_enablement rme
@@ -127,6 +131,10 @@ export class RoomMcpEnablementRepository {
 // ---------------------------------------------------------------------------
 
 function rowToServer(row: EnablementWithServerRow): AppMcpServer {
+	// Mirrors AppMcpServerRepository.rowToServer: legacy rows pre-migration-100
+	// may have source=NULL; fall back to 'user' so the UI never receives an
+	// invalid discriminant during the brief window before migration 100 runs.
+	const source = (row.source ?? 'user') as AppMcpServerSource;
 	return {
 		id: row.server_id,
 		name: row.name,
@@ -138,6 +146,8 @@ function rowToServer(row: EnablementWithServerRow): AppMcpServer {
 		...(row.url !== null ? { url: row.url } : {}),
 		...(row.headers !== null ? { headers: JSON.parse(row.headers) as Record<string, string> } : {}),
 		enabled: true,
+		source,
+		...(row.source_path !== null ? { sourcePath: row.source_path } : {}),
 		...(row.created_at !== null ? { createdAt: row.created_at } : {}),
 		...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
 	};

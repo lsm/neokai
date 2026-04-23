@@ -10,6 +10,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 import type {
 	AppMcpServer,
+	AppMcpServerSource,
 	AppMcpServerSourceType,
 	CreateAppMcpServerRequest,
 	UpdateAppMcpServerRequest,
@@ -22,6 +23,7 @@ import type { SQLiteValue } from '../types';
 // ---------------------------------------------------------------------------
 
 const VALID_SOURCE_TYPES = new Set<AppMcpServerSourceType>(['stdio', 'sse', 'http']);
+const VALID_SOURCES = new Set<AppMcpServerSource>(['builtin', 'user', 'imported']);
 
 // ---------------------------------------------------------------------------
 // Internal row type (mirrors SQLite columns)
@@ -38,6 +40,8 @@ interface AppMcpServerRow {
 	url: string | null;
 	headers: string | null;
 	enabled: number;
+	source: string | null;
+	source_path: string | null;
 	created_at: number | null;
 	updated_at: number | null;
 }
@@ -47,6 +51,12 @@ interface AppMcpServerRow {
 // ---------------------------------------------------------------------------
 
 function rowToServer(row: AppMcpServerRow): AppMcpServer {
+	// Legacy rows written before migration 100 landed may have `source=NULL`.
+	// Treat them as 'user' for forward compatibility — migration 100 backfills
+	// on next startup, but we don't want a transient read to crash or return
+	// an invalid discriminant to the UI.
+	const source = (row.source ?? 'user') as AppMcpServerSource;
+
 	return {
 		id: row.id,
 		name: row.name,
@@ -58,6 +68,8 @@ function rowToServer(row: AppMcpServerRow): AppMcpServer {
 		...(row.url !== null ? { url: row.url } : {}),
 		...(row.headers !== null ? { headers: JSON.parse(row.headers) as Record<string, string> } : {}),
 		enabled: row.enabled === 1,
+		source,
+		...(row.source_path !== null ? { sourcePath: row.source_path } : {}),
 		...(row.created_at !== null ? { createdAt: row.created_at } : {}),
 		...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
 	};
@@ -68,6 +80,12 @@ function validateSourceType(sourceType: string): void {
 		throw new Error(
 			`Invalid sourceType "${sourceType}". Must be one of: ${[...VALID_SOURCE_TYPES].join(', ')}`
 		);
+	}
+}
+
+function validateSource(source: string): void {
+	if (!VALID_SOURCES.has(source as AppMcpServerSource)) {
+		throw new Error(`Invalid source "${source}". Must be one of: ${[...VALID_SOURCES].join(', ')}`);
 	}
 }
 
@@ -98,10 +116,18 @@ export class AppMcpServerRepository {
 
 	/**
 	 * Create a new MCP server registry entry.
-	 * Throws if the name is already taken or if sourceType is invalid.
+	 * Throws if the name is already taken, if sourceType is invalid, or if
+	 * `source` is supplied with an invalid value. Defaults:
+	 *   - `source` defaults to `'user'` (matches pre-M2 behaviour).
+	 *   - `sourcePath` must be an absolute path when `source === 'imported'`
+	 *     and must be omitted/null otherwise — callers are trusted to enforce
+	 *     this; the import service is the only sanctioned writer for 'imported'.
 	 */
 	create(req: CreateAppMcpServerRequest): AppMcpServer {
 		validateSourceType(req.sourceType);
+
+		const source: AppMcpServerSource = req.source ?? 'user';
+		validateSource(source);
 
 		if (this.isNameTaken(req.name)) {
 			throw new Error(`An MCP server named "${req.name}" already exists`);
@@ -113,8 +139,8 @@ export class AppMcpServerRepository {
 		this.db
 			.prepare(
 				`INSERT INTO app_mcp_servers
-          (id, name, description, source_type, command, args, env, url, headers, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, name, description, source_type, command, args, env, url, headers, enabled, source, source_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.run(
 				id,
@@ -127,12 +153,51 @@ export class AppMcpServerRepository {
 				req.url ?? null,
 				req.headers !== undefined ? JSON.stringify(req.headers) : null,
 				(req.enabled ?? true) ? 1 : 0,
+				source,
+				req.sourcePath ?? null,
 				now,
 				now
 			);
 
 		this.reactiveDb.notifyChange('app_mcp_servers');
 		return this.get(id)!;
+	}
+
+	/**
+	 * List all entries for a given `sourcePath`. Used by `McpImportService`
+	 * to diff the set of imported rows against what's currently declared in
+	 * a `.mcp.json` file on disk, so that removed entries can be pruned.
+	 */
+	listBySourcePath(sourcePath: string): AppMcpServer[] {
+		const rows = this.db
+			.prepare(`SELECT * FROM app_mcp_servers WHERE source_path = ? AND source = 'imported'`)
+			.all(sourcePath) as AppMcpServerRow[];
+		return rows.map(rowToServer);
+	}
+
+	/**
+	 * List all `source='imported'` entries. Used by `McpImportService` to find
+	 * stale rows whose originating file no longer exists (e.g. the workspace
+	 * was removed) and prune them.
+	 */
+	listImported(): AppMcpServer[] {
+		const rows = this.db
+			.prepare(`SELECT * FROM app_mcp_servers WHERE source = 'imported'`)
+			.all() as AppMcpServerRow[];
+		return rows.map(rowToServer);
+	}
+
+	/**
+	 * Look up an imported entry by its unique `(sourcePath, name)` key.
+	 * Returns null when no matching imported row exists.
+	 */
+	getImportedByPathAndName(sourcePath: string, name: string): AppMcpServer | null {
+		const row = this.db
+			.prepare(
+				`SELECT * FROM app_mcp_servers WHERE source = 'imported' AND source_path = ? AND name = ?`
+			)
+			.get(sourcePath, name) as AppMcpServerRow | undefined;
+		return row ? rowToServer(row) : null;
 	}
 
 	/**
@@ -193,6 +258,10 @@ export class AppMcpServerRepository {
 			validateSourceType(updates.sourceType);
 		}
 
+		if (updates.source !== undefined) {
+			validateSource(updates.source);
+		}
+
 		const now = Date.now();
 		const fields: string[] = [];
 		const values: SQLiteValue[] = [];
@@ -232,6 +301,14 @@ export class AppMcpServerRepository {
 		if (updates.enabled !== undefined) {
 			fields.push('enabled = ?');
 			values.push(updates.enabled ? 1 : 0);
+		}
+		if (updates.source !== undefined) {
+			fields.push('source = ?');
+			values.push(updates.source);
+		}
+		if ('sourcePath' in updates) {
+			fields.push('source_path = ?');
+			values.push(updates.sourcePath ?? null);
 		}
 
 		if (fields.length > 0) {

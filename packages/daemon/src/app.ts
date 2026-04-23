@@ -27,7 +27,7 @@ import { JobQueueProcessor } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
 import { JOB_QUEUE_CLEANUP, SKILL_VALIDATE } from './lib/job-queue-constants';
-import { AppMcpLifecycleManager, seedDefaultMcpEntries } from './lib/mcp';
+import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { SkillsManager } from './lib/skills-manager';
 import { NeoAgentManager } from './lib/neo/neo-agent-manager';
@@ -221,6 +221,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// so AgentSession can inject skills into SDK query options.
 	const appMcpManager = new AppMcpLifecycleManager(db);
 	seedDefaultMcpEntries(db);
+
+	// Import `.mcp.json` entries into the registry (M2 of the MCP config
+	// unification plan). Runs once on startup for every known workspace plus
+	// the user-level `~/.claude/.mcp.json`. Safe to skip under NODE_ENV=test so
+	// unit test DBs don't accidentally read the developer's home directory;
+	// online/e2e suites set their own `TEST_USER_SETTINGS_DIR` or construct the
+	// service explicitly.
+	const mcpImportService = new McpImportService(db);
+	if (process.env.NODE_ENV !== 'test') {
+		try {
+			const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
+			mcpImportService.refreshAll(workspacePaths);
+		} catch (err) {
+			// Non-fatal: a bad `.mcp.json` must never block daemon startup. The
+			// service already logs per-file; this outer catch is defensive.
+			logError('[Daemon] MCP import sweep failed (non-fatal):', err);
+		}
+	}
+
 	const skillsManager = new SkillsManager(db.skills, db.appMcpServers, jobQueue);
 	skillsManager.initializeBuiltins();
 
@@ -323,6 +342,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		appMcpManager,
 		skillsManager,
 		neoAgentManager,
+		mcpImportService,
 	});
 
 	// Create WebSocket handlers
