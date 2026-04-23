@@ -728,6 +728,125 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
 		const stored = ctx.taskRepo.getTask(parsed.task.id);
 		expect(stored?.preferredWorkflowId ?? null).toBeNull();
 	});
+
+	test('depends_on: [] succeeds and persists an empty dependency list', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'No deps',
+			description: 'Task with no prerequisites',
+			depends_on: [],
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.dependsOn).toEqual([]);
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.dependsOn).toEqual([]);
+	});
+
+	test('depends_on with one valid task ID persists the dependency', async () => {
+		const parentResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Parent task',
+			description: 'Bottom of the stack',
+		});
+		const parentId = JSON.parse(parentResult.content[0].text).task.id;
+
+		const childResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Child task',
+			description: 'Depends on parent',
+			depends_on: [parentId],
+		});
+		const parsed = JSON.parse(childResult.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.dependsOn).toEqual([parentId]);
+
+		const stored = ctx.taskRepo.getTask(parsed.task.id);
+		expect(stored?.dependsOn).toEqual([parentId]);
+	});
+
+	test('depends_on with multiple valid task IDs persists all dependencies', async () => {
+		const depAResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Dep A',
+			description: 'First dep',
+		});
+		const depAId = JSON.parse(depAResult.content[0].text).task.id;
+
+		const depBResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Dep B',
+			description: 'Second dep',
+		});
+		const depBId = JSON.parse(depBResult.content[0].text).task.id;
+
+		const childResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'Child task',
+			description: 'Depends on A and B',
+			depends_on: [depAId, depBId],
+		});
+		const parsed = JSON.parse(childResult.content[0].text);
+		expect(parsed.success).toBe(true);
+		expect(parsed.task.dependsOn).toEqual([depAId, depBId]);
+	});
+
+	test('depends_on with a non-existent task ID fails with a descriptive error', async () => {
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Orphan child',
+			description: 'References a missing task',
+			depends_on: ['task-does-not-exist'],
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain('task-does-not-exist');
+		expect(parsed.error).toMatch(/not found|dependency/i);
+	});
+
+	test('depends_on with a task from a different space fails (cross-space rejected)', async () => {
+		// Seed a second space and create a task there via its own task manager.
+		const otherSpaceId = 'space-other';
+		seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-workspace');
+		const otherTaskManager = new SpaceTaskManager(ctx.db, otherSpaceId);
+		const otherTask = await otherTaskManager.createTask({
+			title: 'Other-space task',
+			description: 'Belongs to a different space',
+		});
+
+		const result = await makeHandlers(ctx).create_standalone_task({
+			title: 'Cross-space child',
+			description: 'Tries to depend on another space',
+			depends_on: [otherTask.id],
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(false);
+		expect(parsed.error).toContain(otherTask.id);
+		expect(parsed.error).toMatch(/not found|dependency/i);
+	});
+
+	test('depends_on rejects a cycle when a dependency chain would loop back', async () => {
+		// Create three tasks: A, B, C, linked A → B → C (C depends on B, B depends on A).
+		const aResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'A',
+			description: 'root',
+		});
+		const aId = JSON.parse(aResult.content[0].text).task.id;
+
+		const bResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'B',
+			description: 'depends on A',
+			depends_on: [aId],
+		});
+		const bId = JSON.parse(bResult.content[0].text).task.id;
+
+		const cResult = await makeHandlers(ctx).create_standalone_task({
+			title: 'C',
+			description: 'depends on B',
+			depends_on: [bId],
+		});
+		expect(JSON.parse(cResult.content[0].text).success).toBe(true);
+		const cId = JSON.parse(cResult.content[0].text).task.id;
+
+		// Now attempt to update A to depend on C — this would form a cycle
+		// A → C → B → A. Cycle detection happens on updates via the manager.
+		await expect(ctx.taskManager.updateTask(aId, { dependsOn: [cId] })).rejects.toThrow(
+			/circular|cycle/i
+		);
+	});
 });
 
 // ---------------------------------------------------------------------------
