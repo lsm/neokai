@@ -417,6 +417,54 @@ function mapMcpEnablementRow(row: Record<string, unknown>): Record<string, unkno
 	};
 }
 
+/**
+ * SQL for `mcpEnablement.bySpace`. Returns a row per registry entry, with the
+ * per-space override (if any) applied. Columns match SpaceMcpEntry so the
+ * frontend can use the LiveQuery result without a separate RPC roundtrip.
+ *
+ * `overridden` is 1 when the entry has an explicit `mcp_enablement` row for
+ * this (space, server) pair, else 0. `enabled` is the effective state:
+ * override if present, else the registry's global `enabled` flag.
+ */
+const MCP_ENABLEMENT_BY_SPACE_SQL = `
+SELECT
+  ams.id                                                       AS serverId,
+  ams.name                                                     AS name,
+  ams.description                                              AS description,
+  ams.source_type                                              AS sourceType,
+  ams.source                                                   AS source,
+  ams.source_path                                              AS sourcePath,
+  ams.enabled                                                  AS globallyEnabled,
+  CASE WHEN me.enabled IS NOT NULL THEN 1 ELSE 0 END           AS overridden,
+  COALESCE(me.enabled, ams.enabled)                            AS enabled
+FROM app_mcp_servers ams
+LEFT JOIN mcp_enablement me
+  ON me.server_id = ams.id
+ AND me.scope_type = 'space'
+ AND me.scope_id = ?
+ORDER BY ams.source ASC, ams.created_at IS NULL, ams.created_at ASC, ams.id ASC
+`.trim();
+
+function mapMcpEnablementBySpaceRow(row: Record<string, unknown>): Record<string, unknown> {
+	const sourceRaw = typeof row.source === 'string' ? row.source : null;
+	const normalisedSource =
+		sourceRaw === 'builtin' || sourceRaw === 'imported' || sourceRaw === 'user'
+			? sourceRaw
+			: 'user';
+	const out: Record<string, unknown> = {
+		serverId: row.serverId,
+		name: row.name,
+		sourceType: row.sourceType,
+		source: normalisedSource,
+		globallyEnabled: row.globallyEnabled === 1,
+		overridden: row.overridden === 1,
+		enabled: row.enabled === 1,
+	};
+	if (row.description != null) out.description = row.description;
+	if (row.sourcePath != null) out.sourcePath = row.sourcePath;
+	return out;
+}
+
 const SKILLS_BY_ROOM_SQL = `
 SELECT
   s.id,
@@ -1355,6 +1403,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
 		},
 	],
 	[
+		'mcpEnablement.bySpace',
+		{
+			sql: MCP_ENABLEMENT_BY_SPACE_SQL,
+			paramCount: 1,
+			mapRow: mapMcpEnablementBySpaceRow,
+		},
+	],
+	[
 		'skills.byRoom',
 		{
 			sql: SKILLS_BY_ROOM_SQL,
@@ -1570,7 +1626,7 @@ export function setupLiveQueryHandlers(
 			if (!spaceTask) {
 				throw new Error(`Unauthorized: space task "${taskId}" not found`);
 			}
-		} else if (queryName === 'spaceSessions.bySpace') {
+		} else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
 			const spaceId = params[0] as string;
 			if (!stmtSpace.get(spaceId)) {
 				throw new Error(`Unauthorized: space "${spaceId}" not found`);

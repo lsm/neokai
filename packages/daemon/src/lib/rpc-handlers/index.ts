@@ -94,6 +94,7 @@ import { FileIndex } from '../file-index';
 import { LiveQueryEngine } from '../../storage/live-query';
 import type { AppMcpLifecycleManager, McpImportService } from '../mcp';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers';
+import { setupSpaceMcpHandlers } from './space-mcp-handlers';
 import { registerSkillHandlers } from './skill-handlers';
 import type { SkillsManager } from '../skills-manager';
 import { setupNeoHandlers } from './neo-handlers';
@@ -359,6 +360,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
 	// Per-room MCP enablement RPC handlers
 	setupAppMcpHandlers(deps.messageHub, deps.daemonHub, deps.db);
+
+	// Per-space MCP enablement RPC handlers + `.mcp.json` import refresh.
+	setupSpaceMcpHandlers(deps.messageHub, deps.daemonHub, deps.db, deps.spaceManager);
 
 	// Skills registry RPC handlers
 	registerSkillHandlers(deps.messageHub, deps.skillsManager, deps.daemonHub, undefined);
