@@ -315,7 +315,17 @@ export function useGroupMessages(
 		paginationReducer,
 		INITIAL_PAGINATION_STATE
 	);
-	const [isLoading, setIsLoading] = useState(false);
+	/**
+	 * The groupId whose LiveQuery snapshot has been applied to `allMessages`.
+	 * `null` means either no subscription is active or we are still waiting
+	 * for the first snapshot of the current `groupId`. `isLoading` is derived
+	 * from the mismatch between this and the incoming `groupId` so the first
+	 * render (before the subscription effect runs) already reports `true` —
+	 * callers never briefly see an empty message list paired with
+	 * `isLoading=false`, which is what caused the empty-state flash on mount
+	 * and on task switch.
+	 */
+	const [loadedForGroupId, setLoadedForGroupId] = useState<string | null>(null);
 
 	// Track the active subscriptionId to guard against stale events from prior
 	// group subscriptions (e.g., rapid task switching or reconnect cycles).
@@ -324,15 +334,18 @@ export function useGroupMessages(
 	useEffect(() => {
 		if (!groupId || !isConnected) {
 			dispatch({ type: 'reset' });
-			setIsLoading(false);
+			setLoadedForGroupId(null);
 			activeSubIdRef.current = null;
 			return;
 		}
 
 		const subscriptionId = generateGroupMessagesSubId(groupId);
 		activeSubIdRef.current = subscriptionId;
-		setIsLoading(true);
+		// Reset the visible message set + the "loaded" marker for the previous
+		// group so consumers see the loading state (not stale rows or the
+		// empty-state placeholder) while the new snapshot is in flight.
 		dispatch({ type: 'reset' });
+		setLoadedForGroupId(null);
 
 		// Register event listeners BEFORE sending the subscribe request so the
 		// snapshot that is delivered synchronously as part of the subscribe
@@ -344,7 +357,7 @@ export function useGroupMessages(
 				rows: event.rows as SessionGroupMessage[],
 				pageSize: pageSizeRef.current,
 			});
-			setIsLoading(false);
+			setLoadedForGroupId(groupId);
 		});
 
 		const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
@@ -382,7 +395,11 @@ export function useGroupMessages(
 					}, RETRY_DELAYS_MS[attempt]);
 				} else {
 					if (activeSubIdRef.current === subscriptionId) {
-						setIsLoading(false);
+						// Release the loading gate after exhausting retries so
+						// consumers can surface whatever terminal UI is
+						// appropriate (empty or error) rather than stalling
+						// on the loading state forever.
+						setLoadedForGroupId(groupId);
 					}
 				}
 			});
@@ -426,6 +443,13 @@ export function useGroupMessages(
 	const loadEarlier = useCallback(() => {
 		dispatch({ type: 'loadEarlier', pageSize: pageSizeRef.current });
 	}, []); // dispatch is stable from useReducer; pageSizeRef is a ref
+
+	// Derived: we are loading whenever we have an active groupId + connection
+	// but have not yet applied a snapshot for that group. Computing this
+	// (instead of tracking it as separate state) means the very first render —
+	// before the subscription effect runs — already returns `isLoading=true`,
+	// which suppresses the empty-state flash on mount and on task switch.
+	const isLoading = groupId !== null && isConnected && loadedForGroupId !== groupId;
 
 	return {
 		messages,
