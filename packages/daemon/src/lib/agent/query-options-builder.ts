@@ -82,12 +82,35 @@ export class QueryOptionsBuilder {
 	}
 
 	/**
+	 * M1: Kill the `.mcp.json` auto-load leak.
+	 *
+	 * Default (flag unset): every session type spawns with `strictMcpConfig: true`
+	 * and `settingSources: []`. This stops the Claude Agent SDK from auto-loading
+	 * project `.mcp.json` and `.claude/settings.local.json`, which previously
+	 * bypassed NeoKai's UI toggles for non-coordinator sessions (Space ad-hoc,
+	 * `space_task_agent`, and node-agent workers).
+	 *
+	 * Kill switch (`NEOKAI_LEGACY_MCP_AUTOLOAD=1`): preserves the pre-M1
+	 * asymmetry for exactly one release, then removed in M5. Coordinators
+	 * (`room_chat`, `space_chat`) still force strict config in their per-type
+	 * blocks below. Workers / task agents / ad-hoc sessions retain
+	 * `settingSources: ['project', 'local']` and whatever `strictMcpConfig`
+	 * came from their session config (i.e. the pre-M1 SDK auto-load path).
+	 *
+	 * See `docs/plans/unify-mcp-config-model/00-overview.md` milestone M1.
+	 */
+	private static isLegacyMcpAutoloadEnabled(): boolean {
+		return process.env.NEOKAI_LEGACY_MCP_AUTOLOAD === '1';
+	}
+
+	/**
 	 * Build complete SDK query options
 	 *
 	 * Maps all SessionConfig (which extends SDKConfig) options to SDK Options
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
+		const legacyMcpAutoload = QueryOptionsBuilder.isLegacyMcpAutoloadEnabled();
 
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
@@ -187,7 +210,12 @@ export class QueryOptionsBuilder {
 			// are always available regardless of strictMcpConfig setting.
 			// Disabled servers are already filtered out by filterDisabledMcpServers above.
 			mcpServers: mergedMcpServers as Options['mcpServers'],
-			strictMcpConfig: config.strictMcpConfig,
+			// M1: force strictMcpConfig: true on every session type by default.
+			// With NEOKAI_LEGACY_MCP_AUTOLOAD=1, fall back to the session config's
+			// value (undefined/false for workers) to preserve pre-M1 behavior.
+			// Coordinators (room_chat / space_chat) override back to `true` in
+			// their own blocks below so the legacy flag cannot regress them.
+			strictMcpConfig: legacyMcpAutoload ? config.strictMcpConfig : true,
 
 			// ============ Output Format ============
 			outputFormat: config.outputFormat,
@@ -211,7 +239,13 @@ export class QueryOptionsBuilder {
 			pathToClaudeCodeExecutable: sdkCliPath,
 
 			// ============ Settings ============
-			settingSources,
+			// M1: default to `settingSources: []` on every session type so the SDK
+			// does NOT auto-load project `.mcp.json` or `.claude/settings.local.json`.
+			// With NEOKAI_LEGACY_MCP_AUTOLOAD=1, fall back to the previously-derived
+			// value (['project', 'local'] by default) to preserve pre-M1 behavior.
+			// Coordinators (room_chat / space_chat) override back to [] in their own
+			// blocks below so the legacy flag cannot regress them.
+			settingSources: legacyMcpAutoload ? settingSources : [],
 
 			// ============ Streaming ============
 			includePartialMessages: config.includePartialMessages,
