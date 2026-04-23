@@ -345,15 +345,19 @@ describe('QueryOptionsBuilder', () => {
 	});
 
 	describe('setting sources configuration', () => {
-		it('should include project and local sources by default', async () => {
+		// M1: by default every session type gets `settingSources: []` so the SDK
+		// cannot auto-load project `.mcp.json` or `.claude/settings.local.json`.
+		// The pre-M1 `['project', 'local']` default is only restored when
+		// `NEOKAI_LEGACY_MCP_AUTOLOAD=1` — covered in the M1 kill-switch suite below.
+		it('should default to empty settingSources (M1: no SDK auto-load)', async () => {
 			const options = await builder.build();
-			expect(options.settingSources).toEqual(['project', 'local']);
+			expect(options.settingSources).toEqual([]);
 		});
 
-		it('should use local only when loadSettingSources is false', async () => {
+		it('should still force empty settingSources even when loadSettingSources is false', async () => {
 			mockSession.config.tools = { loadSettingSources: false };
 			const options = await builder.build();
-			expect(options.settingSources).toEqual(['local']);
+			expect(options.settingSources).toEqual([]);
 		});
 	});
 
@@ -518,13 +522,118 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.systemPrompt).toBe('You are the Space coordinator.');
 		});
 
-		it('should not affect worker sessions (coder/reviewer tool access unchanged)', async () => {
+		it('should not affect worker sessions tool allowlist (coder/reviewer tool access unchanged)', async () => {
 			// Worker sessions (type: 'worker') must not be affected by space_chat restrictions
 			mockSession.type = 'worker';
 			const options = await builder.build();
-			// Worker sessions use the default claude_code preset — no restrictions imposed
-			expect(options.strictMcpConfig).toBeUndefined();
+			// Worker sessions use the default claude_code preset — no tool restrictions imposed.
+			// (M1 still forces `strictMcpConfig: true`, asserted separately below.)
 			expect(options.tools).toBeUndefined();
+		});
+	});
+
+	// ============================================================================
+	// M1: Kill the `.mcp.json` auto-load leak
+	// docs/plans/unify-mcp-config-model/00-overview.md milestone M1
+	// ============================================================================
+	describe('M1: strict MCP + empty settingSources default', () => {
+		const sessionTypes: Array<'worker' | 'space_task_agent' | 'general' | 'coder' | 'planner'> = [
+			'worker',
+			'space_task_agent',
+			'general',
+			'coder',
+			'planner',
+		];
+
+		beforeEach(() => {
+			delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+		});
+
+		afterEach(() => {
+			delete process.env.NEOKAI_LEGACY_MCP_AUTOLOAD;
+		});
+
+		for (const type of sessionTypes) {
+			it(`forces strictMcpConfig=true and settingSources=[] on ${type} sessions`, async () => {
+				mockSession.type = type;
+				const options = await builder.build();
+				expect(options.strictMcpConfig).toBe(true);
+				expect(options.settingSources).toEqual([]);
+			});
+		}
+
+		it('does not inject project .mcp.json servers into the mcpServers map (regression)', async () => {
+			// Pre-M1 behavior: SDK auto-loads any `.mcp.json` at the workspace root
+			// because `settingSources` defaults to `['project', 'local']`. Post-M1
+			// `settingSources: []` means the SDK never looks at `.mcp.json` at all,
+			// and an ad-hoc worker session with no programmatic mcpServers emits an
+			// `undefined` mcpServers option — i.e. nothing to inject.
+			mockSession.type = 'worker';
+			mockSession.config.mcpServers = undefined;
+			const options = await builder.build();
+			expect(options.mcpServers).toBeUndefined();
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+		});
+
+		it('preserves explicit mcpServers from session config under strict mode', async () => {
+			mockSession.type = 'space_task_agent';
+			mockSession.config.mcpServers = {
+				'task-agent': { command: 'task-cmd' },
+			};
+			const options = await builder.build();
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+			expect(options.mcpServers).toEqual({ 'task-agent': { command: 'task-cmd' } });
+		});
+
+		describe('kill switch: NEOKAI_LEGACY_MCP_AUTOLOAD=1', () => {
+			it('restores pre-M1 defaults for worker sessions', async () => {
+				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
+				mockSession.type = 'worker';
+				const options = await builder.build();
+				// Pre-M1: strictMcpConfig falls through to session config (undefined here)
+				expect(options.strictMcpConfig).toBeUndefined();
+				// Pre-M1: settingSources defaults to ['project', 'local']
+				expect(options.settingSources).toEqual(['project', 'local']);
+			});
+
+			it('restores pre-M1 defaults for space_task_agent sessions', async () => {
+				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
+				mockSession.type = 'space_task_agent';
+				const options = await builder.build();
+				expect(options.strictMcpConfig).toBeUndefined();
+				expect(options.settingSources).toEqual(['project', 'local']);
+			});
+
+			it('keeps room_chat strict even with the kill switch enabled', async () => {
+				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
+				mockSession.type = 'room_chat';
+				const options = await builder.build();
+				// Coordinator blocks override back to strict; the kill switch must not
+				// regress coordinator hardening.
+				expect(options.strictMcpConfig).toBe(true);
+				expect(options.settingSources).toEqual([]);
+			});
+
+			it('keeps space_chat strict even with the kill switch enabled', async () => {
+				process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = '1';
+				mockSession.type = 'space_chat';
+				const options = await builder.build();
+				expect(options.strictMcpConfig).toBe(true);
+				expect(options.settingSources).toEqual([]);
+			});
+
+			it('is only triggered by the exact string "1"', async () => {
+				// `true`, `yes`, `TRUE`, etc. must NOT re-enable legacy auto-load.
+				for (const val of ['true', 'yes', 'TRUE', '0', '', 'on']) {
+					process.env.NEOKAI_LEGACY_MCP_AUTOLOAD = val;
+					mockSession.type = 'worker';
+					const options = await builder.build();
+					expect(options.strictMcpConfig).toBe(true);
+					expect(options.settingSources).toEqual([]);
+				}
+			});
 		});
 	});
 

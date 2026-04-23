@@ -331,8 +331,13 @@ const PD_TASK_DISPATCHER_PROMPT =
 	'support" → "add-file-upload". All branches in the stack share this prefix so they are ' +
 	'grouped: `plan/<prefix>/<item-slug>`.\n' +
 	'3. Create standalone tasks in BOTTOM-UP order (item 1 first, then item 2, etc.) by ' +
-	'calling `create_standalone_task({ title, description, priority })` for each. The ' +
-	'description must contain the original plan item content PLUS a ' +
+	'calling `create_standalone_task({ title, description, priority, depends_on })` for each. ' +
+	'ALWAYS pass `depends_on` as a structured array of prerequisite task IDs so the runtime can ' +
+	'enforce ordering, block dependents until prerequisites are done, and cascade-cancel on ' +
+	'failure. Do NOT rely on prose-only dependency hints — they are informational, not enforced.\n\n' +
+	'   - BOTTOM task (item 1): `depends_on: []` (no prerequisites).\n' +
+	'   - MIDDLE / TOP tasks (item N > 1): `depends_on: [<taskId of item N-1>]`.\n\n' +
+	'The `description` must contain the original plan item content PLUS a ' +
 	'"## Stacked PR Instructions" section appended at the end.\n\n' +
 	'   For the BOTTOM task (item 1 — PR base is `dev`):\n' +
 	'   ```\n' +
