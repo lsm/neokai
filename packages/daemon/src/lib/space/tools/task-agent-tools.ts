@@ -43,6 +43,7 @@ import {
 	SubmitForApprovalSchema,
 	RequestHumanInputSchema,
 	ListGroupMembersSchema,
+	MergePrSchema,
 } from './task-agent-tool-schemas';
 import {
 	SendMessageSchema,
@@ -60,6 +61,13 @@ import type {
 	SaveArtifactInput,
 	ListArtifactsInput,
 } from './node-agent-tool-schemas';
+import {
+	createMergePrHandler,
+	isMergeExecutorFeatureEnabled,
+	type HumanInputResponse,
+	type MergeScriptExecutor,
+	type PostApprovalSignal,
+} from './task-agent-merge-handler';
 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
@@ -174,6 +182,31 @@ export interface TaskAgentToolsConfig {
 	 * Optional — when absent, artifact tools are not registered.
 	 */
 	artifactRepo?: WorkflowRunArtifactRepository;
+	/**
+	 * Resolve the most recent post-approval signal persisted for this task
+	 * (from an end node's `send_message(target: 'task-agent', data: { pr_url, post_approval_action })`).
+	 * Required for `merge_pr` registration — when absent, the tool stays
+	 * unregistered even if the feature flag is on.
+	 */
+	getSignalledPostApprovalAction?: (taskId: string) => Promise<PostApprovalSignal | null>;
+	/**
+	 * Resolve the most recent `request_human_input` response artifact for
+	 * this task. Consulted by `merge_pr` at autonomy < 4. Required for
+	 * `merge_pr` registration — when absent, the tool stays unregistered.
+	 */
+	getRecentHumanInputResponse?: (taskId: string) => Promise<HumanInputResponse | null>;
+	/**
+	 * Optional merge-script executor override — only used by tests to stub
+	 * out the real `bash -c` spawn. Production leaves this undefined so the
+	 * handler's default `Bun.spawn`-backed executor runs.
+	 */
+	mergeScriptExecutor?: MergeScriptExecutor;
+	/**
+	 * Force-enable / force-disable the `merge_pr` feature flag. Tests set
+	 * this explicitly; production leaves it undefined so the handler reads
+	 * `NEOKAI_TASK_AGENT_MERGE_EXECUTOR` + `space.experimentalFeatures`.
+	 */
+	mergeExecutorFeatureEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +283,29 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 			});
 	}
 
+	// `merge_pr` handler is constructed only when all its resolvers are wired
+	// AND the artifact repo is available. Unwired callers see `merge_pr:
+	// undefined` on the returned handlers map so tests can assert gating.
+	const mergePrHandler =
+		config.artifactRepo &&
+		getSpaceAutonomyLevel &&
+		config.getSignalledPostApprovalAction &&
+		config.getRecentHumanInputResponse
+			? createMergePrHandler({
+					taskId,
+					space,
+					workflowRunId,
+					artifactRepo: config.artifactRepo,
+					getSpaceAutonomyLevel,
+					getSignalledPostApprovalAction: config.getSignalledPostApprovalAction,
+					getRecentHumanInputResponse: config.getRecentHumanInputResponse,
+					runScript: config.mergeScriptExecutor,
+				})
+			: undefined;
+
 	return {
+		/** The `merge_pr` handler — `undefined` when its resolvers aren't wired. */
+		merge_pr: mergePrHandler,
 		/**
 		 * Persist data to the workflow run artifact store.
 		 *
@@ -965,6 +1020,17 @@ export function createTaskAgentToolHandlers(config: TaskAgentToolsConfig) {
 export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 	const handlers = createTaskAgentToolHandlers(config);
 
+	// `merge_pr` registration is gated three ways:
+	//   1. The feature flag must be enabled (env var or space experimental bit).
+	//   2. All resolvers must be wired (enforced via mergePrHandler being defined).
+	//   3. Caller can force-disable via `config.mergeExecutorFeatureEnabled = false`.
+	// During Stage 1 rollout (Work Item 1) the flag is off by default, so the
+	// tool is defined + tested but not visible to agents in production.
+	const mergeFlagOn =
+		config.mergeExecutorFeatureEnabled ?? isMergeExecutorFeatureEnabled(config.space);
+	const mergePrHandler = handlers.merge_pr;
+	const mergePrEnabled = mergeFlagOn && mergePrHandler !== undefined;
+
 	const tools = [
 		tool(
 			'request_human_input',
@@ -1055,6 +1121,22 @@ export function createTaskAgentMcpServer(config: TaskAgentToolsConfig) {
 			SubmitForApprovalSchema.shape,
 			(args) => handlers.submit_for_approval(args)
 		),
+		...(mergePrEnabled && mergePrHandler
+			? [
+					tool(
+						'merge_pr',
+						'Execute a post-approval PR squash-merge for an end node that signalled ' +
+							'`post_approval_action: "merge_pr"`. The `pr_url` MUST equal the URL the end node ' +
+							'signalled — cross-checked against the stored post-approval signal. ' +
+							'At space.autonomyLevel >= 4 the merge runs automatically. Below level 4 the ' +
+							'handler requires `human_approval_reason` AND a preceding request_human_input ' +
+							'artifact with a non-rejecting human response. Idempotent: re-running with the ' +
+							'same URL after a successful merge returns `{ success: true, alreadyMerged: true }`.',
+						MergePrSchema.shape,
+						(args) => mergePrHandler(args)
+					),
+				]
+			: []),
 	];
 
 	return createSdkMcpServer({ name: 'task-agent', tools });

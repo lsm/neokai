@@ -116,13 +116,14 @@ describe('RequestHumanInputSchema', () => {
 // ---------------------------------------------------------------------------
 
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
-	test('contains all 4 tool schemas', () => {
+	test('contains all 5 tool schemas', () => {
 		const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
 		expect(keys).toContain('approve_task');
 		expect(keys).toContain('submit_for_approval');
 		expect(keys).toContain('request_human_input');
 		expect(keys).toContain('list_group_members');
-		expect(keys).toHaveLength(4);
+		expect(keys).toContain('merge_pr');
+		expect(keys).toHaveLength(5);
 	});
 
 	test('each schema value is a valid Zod schema with safeParse', () => {

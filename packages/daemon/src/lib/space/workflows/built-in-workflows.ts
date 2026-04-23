@@ -25,6 +25,7 @@ import type { SpaceWorkflow, CompletionAction } from '@neokai/shared';
 import type { GateScript } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { computeWorkflowHash } from './template-hash.ts';
+import { PR_MERGE_BASH_SCRIPT } from '../tools/pr-merge-script.ts';
 
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
@@ -139,50 +140,13 @@ const REVIEW_POSTED_BASH_SCRIPT = [
 ].join('\n');
 
 /**
- * Merge PR completion action script.
- *
- * Used as a `script` completion action on short workflows (Coding, Research).
- * Resolves the PR URL from the artifact env var or the current branch,
- * then squash-merges with branch deletion. Exits non-zero on failure.
- *
- * Environment variables injected by the completion action executor:
- *   NEOKAI_ARTIFACT_DATA_JSON — artifact data (contains pr_url for 'pr' artifacts)
- *   NEOKAI_WORKSPACE_PATH — workspace root (used as cwd)
- */
-const PR_MERGE_BASH_SCRIPT = [
-	'# Resolve PR URL from artifact data or current branch',
-	'PR_URL=$(jq -r \'.pr_url // .url // empty\' <<< "${NEOKAI_ARTIFACT_DATA_JSON:-{}}" 2>/dev/null || true)',
-	'if [ -z "$PR_URL" ]; then',
-	'  PR_URL=$(gh pr view --json url -q .url 2>/dev/null || true)',
-	'fi',
-	'if [ -z "$PR_URL" ]; then',
-	'  echo "No PR URL found — cannot merge" >&2',
-	'  exit 1',
-	'fi',
-	'# Idempotency guard: skip merge if PR is already merged',
-	'PR_STATE=$(gh pr view "$PR_URL" --json state -q .state 2>/dev/null || true)',
-	'if [ "$PR_STATE" = "MERGED" ]; then',
-	'  echo "PR already merged: $PR_URL"',
-	'  BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
-	'  git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
-	'  jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"already_merged"}\'',
-	'  exit 0',
-	'fi',
-	'echo "Merging PR: $PR_URL"',
-	'if ! gh pr merge "$PR_URL" --squash; then',
-	'  echo "Failed to merge PR: $PR_URL" >&2',
-	'  exit 1',
-	'fi',
-	'# Sync worktree with base branch after merge',
-	'BASE_BRANCH=$(gh pr view "$PR_URL" --json baseRefName -q .baseRefName 2>/dev/null || echo "main")',
-	'git checkout "$BASE_BRANCH" 2>/dev/null && git pull --ff-only 2>/dev/null || true',
-	'echo "PR merged and worktree synced"',
-	'jq -n --arg url "$PR_URL" \'{"merged_pr_url":$url,"status":"merged"}\'',
-].join('\n');
-
-/**
  * Standard "Merge PR" completion action for short workflows.
  * Attached to the end node's completionActions[].
+ *
+ * The underlying bash script `PR_MERGE_BASH_SCRIPT` has been hoisted to
+ * `packages/daemon/src/lib/space/tools/pr-merge-script.ts` so it can be
+ * reused by the Task Agent `merge_pr` MCP tool. The completion-action
+ * wiring that consumes it here stays unchanged for Stage 1 rollout.
  */
 const MERGE_PR_COMPLETION_ACTION: CompletionAction = {
 	id: 'merge-pr',

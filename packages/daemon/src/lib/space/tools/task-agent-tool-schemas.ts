@@ -8,6 +8,7 @@
  *   submit_for_approval   — request human sign-off
  *   request_human_input   — pause execution and surface a question to the human user
  *   list_group_members    — list all members of the current task's session group
+ *   merge_pr              — execute a post-approval PR merge (feature-flagged)
  *
  * This file is consumed by the MCP server factory. It intentionally
  * contains only schema definitions — no runtime logic or side effects.
@@ -107,6 +108,54 @@ export const ListGroupMembersSchema = z.object({});
 export type ListGroupMembersInput = z.infer<typeof ListGroupMembersSchema>;
 
 // ---------------------------------------------------------------------------
+// merge_pr
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `merge_pr` input.
+ *
+ * Single-purpose post-approval executor: runs a GitHub PR squash-merge on
+ * behalf of an end node that signalled `post_approval_action: 'merge_pr'`.
+ *
+ * Authorisation is enforced inside the handler based on the live
+ * `space.autonomyLevel`:
+ *   - level >= 4 → auto-approved, `human_approval_reason` ignored.
+ *   - level  < 4 → `human_approval_reason` is **required**; the handler
+ *     additionally verifies that a real `request_human_input` artifact exists
+ *     for this task and has a non-rejecting human response.
+ *
+ * Registration is gated behind the `NEOKAI_TASK_AGENT_MERGE_EXECUTOR`
+ * feature flag during Stage 1 rollout — see `task-agent-tools.ts`.
+ */
+export const MergePrSchema = z
+	.object({
+		/** Fully-qualified GitHub PR URL that was signalled by the end node. */
+		pr_url: z
+			.string()
+			.min(1)
+			.describe(
+				'Fully-qualified GitHub PR URL (https://github.com/<owner>/<repo>/pull/<n>). ' +
+					'Must match the URL the end node signalled via send_message(target: "task-agent", data: { pr_url, post_approval_action: "merge_pr" }).'
+			),
+		/**
+		 * Human-provided approval reason — required when space autonomy level is
+		 * below MERGE_AUTONOMY_THRESHOLD. Recorded verbatim on the merge audit
+		 * artifact so operators can later reconstruct who approved what.
+		 */
+		human_approval_reason: z
+			.string()
+			.min(1)
+			.describe(
+				"Human's verbatim approval text from a preceding request_human_input response. " +
+					'Required when space autonomy is below the merge threshold (level < 4). Ignored at level >= 4.'
+			)
+			.optional(),
+	})
+	.strict();
+
+export type MergePrInput = z.infer<typeof MergePrSchema>;
+
+// ---------------------------------------------------------------------------
 // Aggregate export for MCP server factory
 // ---------------------------------------------------------------------------
 
@@ -119,6 +168,7 @@ export const TASK_AGENT_TOOL_SCHEMAS = {
 	submit_for_approval: SubmitForApprovalSchema,
 	request_human_input: RequestHumanInputSchema,
 	list_group_members: ListGroupMembersSchema,
+	merge_pr: MergePrSchema,
 } as const;
 
 export type TaskAgentToolName = keyof typeof TASK_AGENT_TOOL_SCHEMAS;
