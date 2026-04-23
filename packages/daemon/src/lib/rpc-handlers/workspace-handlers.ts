@@ -3,14 +3,24 @@
  *
  * Provides backend-persisted workspace path history for the session creation flow.
  * The frontend calls these instead of (or in addition to) localStorage.
+ *
+ * As of the MCP config unification M2 milestone, `workspace.add` also triggers
+ * a `.mcp.json` scan for the newly-added path so that imported registry rows
+ * (source='imported') appear without waiting for the next daemon restart.
  */
 
+import { join } from 'path';
 import type { MessageHub } from '@neokai/shared';
+import type { McpImportService } from '../mcp';
+import { Logger } from '../logger';
 import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
+
+const log = new Logger('workspace-handlers');
 
 export function setupWorkspaceHandlers(
 	messageHub: MessageHub,
-	workspaceHistoryRepo: WorkspaceHistoryRepository
+	workspaceHistoryRepo: WorkspaceHistoryRepository,
+	mcpImportService?: McpImportService
 ): void {
 	// Get workspace history
 	messageHub.onRequest('workspace.history', async (_data) => {
@@ -31,6 +41,19 @@ export function setupWorkspaceHandlers(
 			throw new Error('path is required');
 		}
 		const row = workspaceHistoryRepo.upsert(path);
+
+		// Trigger a `.mcp.json` import for the newly-added workspace.
+		// Errors are logged but never thrown — a malformed `.mcp.json` must not
+		// cause the workspace addition itself to fail. The import service also
+		// swallows per-file failures internally; this outer catch is defensive.
+		if (mcpImportService) {
+			try {
+				mcpImportService.refreshFromFile(join(path, '.mcp.json'));
+			} catch (err) {
+				log.warn(`[workspace.add] MCP import scan failed for ${path}:`, err);
+			}
+		}
+
 		return {
 			entry: {
 				path: row.path,

@@ -59,6 +59,8 @@ export { runMigration97 } from './migrations';
 export { runMigration98 } from './migrations';
 // knip-ignore-next-line
 export { runMigration99 } from './migrations';
+// knip-ignore-next-line
+export { runMigration100 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -383,10 +385,20 @@ export function createTables(db: BunDatabase): void {
         url TEXT,
         headers TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
+        source TEXT NOT NULL DEFAULT 'user' CHECK(source IN ('builtin', 'user', 'imported')),
+        source_path TEXT,
         created_at INTEGER,
         updated_at INTEGER
       )
     `);
+
+	// Partial unique index on (source_path, name) for imported rows — enables
+	// idempotent upserts from McpImportService without a pre-check round trip.
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_app_mcp_servers_import
+		 ON app_mcp_servers(source_path, name)
+		 WHERE source = 'imported' AND source_path IS NOT NULL`
+	);
 
 	// Per-room MCP enablement overrides
 	db.exec(`
